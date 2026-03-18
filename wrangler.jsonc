@@ -12,16 +12,16 @@
 		"enabled": true
 	},
 	"vars": {
-		"OAUTH_PUBLIC_URL": "https://statusphere.atmo.tools"
+		"OAUTH_PUBLIC_URL": "https://atmo.rsvp"
 	},
 	"kv_namespaces": [
 		{
 			"binding": "OAUTH_SESSIONS",
-			"id": "c44fc97274b84f5a97a8399b1977ad0d"
+			"id": "3922ab84a8bb4fecb46526e3577a0665"
 		},
 		{
 			"binding": "OAUTH_STATES",
-			"id": "115d8089d9ca4592a3a5e4a7d9146610"
+			"id": "46cfb5c0bb8c41378e757b46afd7dd35"
 		}
 	]
 }
