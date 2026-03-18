@@ -4,13 +4,16 @@
 	import { user } from '$lib/atproto/auth.svelte';
 	import { Avatar as FoxAvatar, Badge, Button } from '@foxui/core';
 	import Map from '$lib/components/Map.svelte';
+	import ShareModal from '$lib/components/ShareModal.svelte';
 	import Avatar from 'svelte-boring-avatars';
 	import EventRsvp from './EventRsvp.svelte';
 	import EventAttendees from './EventAttendees.svelte';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { marked } from 'marked';
 	import { sanitize } from '$lib/cal/sanitize';
 	import { generateICalEvent } from '$lib/cal/ical';
+	import { launchConfetti } from '@foxui/visual';
 
 	let { data } = $props();
 
@@ -21,6 +24,8 @@
 	let attendees = $derived(data.attendees);
 
 	let hostUrl = $derived(`/p/${hostProfile?.handle || did}`);
+	let eventPath = $derived(`/p/${hostProfile?.handle || did}/e/${data.rkey}`);
+	let shareUrl = $derived(typeof window !== 'undefined' ? `${window.location.origin}${eventPath}` : eventPath);
 
 	let startDate = $derived(new Date(eventData.startsAt));
 	let endDate = $derived(eventData.endsAt ? new Date(eventData.endsAt) : null);
@@ -121,8 +126,24 @@
 		}
 	}
 
+	let showShareModal = $state(false);
+	let shareModalTitle = $state('Event created!');
+	let shareModalText: string | undefined = $state(undefined);
+
 	import { onMount } from 'svelte';
-	onMount(initGeoLocation);
+	onMount(() => {
+		initGeoLocation();
+
+		const url = new URL(window.location.href);
+		if (url.searchParams.has('created')) {
+			url.searchParams.delete('created');
+			history.replaceState({}, '', url.pathname);
+			launchConfetti();
+			shareModalTitle = 'Event created!';
+			shareModalText = `I'm hosting "${eventData.name}"!\n\n${shareUrl}`;
+			showShareModal = true;
+		}
+	});
 
 	let thumbnailImage = $derived.by(() => {
 		if (!eventData.media || eventData.media.length === 0) return null;
@@ -225,7 +246,6 @@
 			: null
 	);
 
-	// let smokesignalUrl = $derived(`https://smokesignal.events/${did}/${rkey}`);
 	let eventUri = $derived(`at://${did}/community.lexicon.calendar.event/${rkey}`);
 
 	let ogImageUrl = $derived(`${page.url.origin}${page.url.pathname}/og.png`);
@@ -244,6 +264,10 @@
 			handle: user.profile?.handle,
 			url: `/${user.profile?.handle || user.did}`
 		});
+		if(status === 'interested') return;
+		shareModalTitle = "You're going!";
+		shareModalText = `I'm going to "${eventData.name}"!\n\n${shareUrl}`;
+		showShareModal = true;
 	}
 
 	function handleRsvpCancel() {
@@ -548,3 +572,12 @@
 		</div>
 	</div>
 </div>
+
+<ShareModal
+	bind:open={showShareModal}
+	url={shareUrl}
+	title={shareModalTitle}
+	shareText={shareModalText}
+	eventName={eventData.name}
+	ogImageUrl={ogImageUrl}
+/>

@@ -4,6 +4,7 @@
 	import { notifyContrailOfUpdate } from '$lib/contrail';
 	import { atProtoLoginModalState } from '@foxui/social';
 	import { Avatar, Button } from '@foxui/core';
+	import { launchConfetti } from '@foxui/visual';
 
 	let {
 		eventUri,
@@ -56,6 +57,7 @@
 				notifyContrailOfUpdate(rsvpUri);
 				rsvpStatusOverride = status;
 				rsvpRkeyOverride = key;
+				launchConfetti();
 				onrsvp?.(status);
 			}
 		} catch (e) {

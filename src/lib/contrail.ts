@@ -300,13 +300,27 @@ export async function listEventAttendeesFromContrail(
 	const goingProfiles = goingResponse.ok ? (goingResponse.data.profiles ?? []) : [];
 	const interestedProfiles = interestedResponse.ok ? (interestedResponse.data.profiles ?? []) : [];
 
+	// Deduplicate by DID (keep first occurrence)
+	const seenGoing = new Set<string>();
+	const uniqueGoing = goingRecords.filter((r) => {
+		if (seenGoing.has(r.did)) return false;
+		seenGoing.add(r.did);
+		return true;
+	});
+	const seenInterested = new Set<string>();
+	const uniqueInterested = interestedRecords.filter((r) => {
+		if (seenInterested.has(r.did)) return false;
+		seenInterested.add(r.did);
+		return true;
+	});
+
 	return {
-		going: goingRecords.map((record) => buildAttendee(record.did, 'going', goingProfiles)),
-		interested: interestedRecords.map((record) =>
+		going: uniqueGoing.map((record) => buildAttendee(record.did, 'going', goingProfiles)),
+		interested: uniqueInterested.map((record) =>
 			buildAttendee(record.did, 'interested', interestedProfiles)
 		),
-		goingCount: goingRecords.length,
-		interestedCount: interestedRecords.length
+		goingCount: uniqueGoing.length,
+		interestedCount: uniqueInterested.length
 	};
 }
 
@@ -321,6 +335,7 @@ export async function listAttendingEventsFromContrail(actor: ActorIdentifier) {
 
 	if (!response.ok) return [];
 
+	const seen = new Set<string>();
 	return (response.data.records ?? [])
 		.filter((record) => {
 			const status = record.record?.status;
@@ -329,6 +344,8 @@ export async function listAttendingEventsFromContrail(actor: ActorIdentifier) {
 		.flatMap((record) => {
 			if (!record.event) return [];
 			const flatEvent = flattenEventRecord(record.event);
-			return flatEvent ? [flatEvent] : [];
+			if (!flatEvent || seen.has(flatEvent.uri)) return [];
+			seen.add(flatEvent.uri);
+			return [flatEvent];
 		});
 }

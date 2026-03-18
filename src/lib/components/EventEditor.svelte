@@ -574,7 +574,7 @@
 					user.profile?.handle && user.profile.handle !== 'handle.invalid'
 						? user.profile.handle
 						: user.did;
-				goto(`/p/${handle}/e/${rkey}`);
+				goto(`/p/${handle}/e/${rkey}${isNew ? '?created=true' : ''}`);
 			} else {
 				error = `Failed to ${isNew ? 'create' : 'save'} event. Please try again.`;
 			}
