@@ -21,7 +21,12 @@
 			</svg>
 		</a>
 		{#if user.isLoggedIn}
-			<Button href="/create">Create Event</Button>
+			<Button href="/create" class="hidden sm:inline-flex">Create Event</Button>
+			<Button href="/create" size="icon" class="sm:hidden">
+				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-5">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+				</svg>
+			</Button>
 			<a href="/p/{user.profile?.handle || user.did}" class="shrink-0">
 				<Avatar
 					src={user.profile?.avatar}
@@ -31,7 +36,12 @@
 				/>
 			</a>
 		{:else}
-			<Button onclick={() => atProtoLoginModalState.show()} variant="ghost">Create Event</Button>
+			<Button onclick={() => atProtoLoginModalState.show()} variant="ghost" class="hidden sm:inline-flex">Create Event</Button>
+			<Button onclick={() => atProtoLoginModalState.show()} variant="ghost" size="icon" class="sm:hidden">
+				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-5">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+				</svg>
+			</Button>
 			<Button onclick={() => atProtoLoginModalState.show()}>Login</Button>
 		{/if}
 	</div>
