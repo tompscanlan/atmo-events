@@ -1,5 +1,5 @@
 import type { Did } from '@atcute/lexicons';
-import { getDetailedProfile, describeRepo } from '../methods';
+import { getProfileFromContrail, getProfileBlobUrl } from '$lib/contrail';
 
 const PROFILE_CACHE_TTL = 60 * 60; // 1 hour
 
@@ -33,17 +33,18 @@ export async function loadProfile(did: Did, profileCache?: KVNamespace) {
 
 async function fetchProfile(did: Did) {
 	try {
-		let profile = await getDetailedProfile({ did });
+		const p = await getProfileFromContrail(did);
 
-		if (!profile || profile.handle === 'handle.invalid') {
-			const repo = await describeRepo({ did });
-			profile = {
-				did,
-				handle: repo?.handle || 'handle.invalid'
-			} as typeof profile;
+		if (!p || p.handle === 'handle.invalid') {
+			return { did, handle: 'handle.invalid' };
 		}
 
-		return profile;
+		return {
+			did: p.did,
+			handle: p.handle ?? 'handle.invalid',
+			displayName: p.record?.displayName,
+			avatar: p.record?.avatar ? getProfileBlobUrl(p.did, p.record.avatar) : undefined
+		};
 	} catch (e) {
 		console.error('Failed to load profile:', e);
 		return undefined;

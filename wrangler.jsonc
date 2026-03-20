@@ -3,7 +3,9 @@
 	"name": "atmo-events",
 	"main": ".svelte-kit/cloudflare/_worker.js",
 	"compatibility_date": "2025-12-25",
-	"compatibility_flags": ["nodejs_compat_v2"],
+	"compatibility_flags": [
+		"nodejs_compat_v2"
+	],
 	"assets": {
 		"binding": "ASSETS",
 		"directory": ".svelte-kit/cloudflare"
@@ -22,6 +24,10 @@
 		{
 			"binding": "OAUTH_STATES",
 			"id": "46cfb5c0bb8c41378e757b46afd7dd35"
+		},
+		{
+			"binding": "PROFILE_CACHE",
+			"id": "f0dd7b5baa3e498c9d762bce1599a280"
 		}
 	]
 }

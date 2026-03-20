@@ -8,7 +8,6 @@ export const load: PageServerLoad = async () => {
 		startsAtMin: now,
 		rsvpsGoingCountMin: 2,
 		hydrateRsvps: 5,
-		profiles: true,
 		sort: 'startsAt',
 		order: 'asc',
 		limit: 20

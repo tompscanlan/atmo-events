@@ -12,7 +12,6 @@ export async function load({ locals }) {
 		getProfileFromContrail(actor),
 		listEventRecordsFromContrail({
 			actor,
-			profiles: true,
 			sort: 'startsAt',
 			order: 'asc',
 			limit: 200
