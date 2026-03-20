@@ -15,6 +15,7 @@
 	import { sanitize } from '$lib/cal/sanitize';
 	import { generateICalEvent } from '$lib/cal/ical';
 	import { launchConfetti } from '@foxui/visual';
+	import { formatMonth, formatDay, formatWeekday, formatFullDate, formatTime } from '$lib/cal/helper';
 
 	let { data } = $props();
 
@@ -32,30 +33,6 @@
 
 	let startDate = $derived(new Date(eventData.startsAt));
 	let endDate = $derived(eventData.endsAt ? new Date(eventData.endsAt) : null);
-
-	function formatMonth(date: Date): string {
-		return date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase();
-	}
-
-	function formatDay(date: Date): number {
-		return date.getDate();
-	}
-
-	function formatWeekday(date: Date): string {
-		return date.toLocaleDateString('en-US', { weekday: 'long' });
-	}
-
-	function formatFullDate(date: Date): string {
-		const options: Intl.DateTimeFormatOptions = { month: 'long', day: 'numeric' };
-		if (date.getFullYear() !== new Date().getFullYear()) {
-			options.year = 'numeric';
-		}
-		return date.toLocaleDateString('en-US', options);
-	}
-
-	function formatTime(date: Date): string {
-		return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-	}
 
 	function getModeLabel(mode: string): string {
 		if (mode.includes('virtual')) return 'Virtual';
