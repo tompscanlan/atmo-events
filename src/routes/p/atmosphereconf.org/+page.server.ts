@@ -38,7 +38,7 @@ export async function load({ locals }) {
 	}
 
 	return {
-		profile,
+		hostProfile: profile,
 		events,
 		actor,
 		rsvpEventUris: [...rsvpEventUris],

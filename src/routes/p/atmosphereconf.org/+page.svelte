@@ -16,7 +16,7 @@
 
 	let { data } = $props();
 
-	let hostProfile = $derived(data.profile);
+	let hostProfile = $derived(data.hostProfile);
 	let hostDid = $derived(hostProfile?.did ?? '');
 	let hostName = $derived(
 		hostProfile?.record?.displayName || hostProfile?.handle || 'ATmosphereConf'
