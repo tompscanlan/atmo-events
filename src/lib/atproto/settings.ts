@@ -10,10 +10,14 @@ export const collections = [
 export type AllowedCollection = (typeof collections)[number];
 
 // OAuth scope — add scope.blob(), scope.rpc(), etc. as needed
+const OPENMEET_SERVICE_DID = import.meta.env.VITE_OPENMEET_SERVICE_DID;
 export const scopes = [
 	'atproto',
 	scope.repo({ collection: [...collections] }),
-	scope.blob({ accept: ['image/*'] })
+	scope.blob({ accept: ['image/*'] }),
+	...(OPENMEET_SERVICE_DID
+		? [scope.rpc({ lxm: ['net.openmeet.auth'], aud: OPENMEET_SERVICE_DID })]
+		: [])
 ];
 
 // set to false to disable signup
