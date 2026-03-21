@@ -52,7 +52,7 @@ export async function GET({ params }) {
 				return {
 					eventData: r,
 					uid: r.uri,
-					url: `https://events.atmo.tools/${actor}/e/${r.uri.split('/').pop()}`,
+					url: `https://atmo.rsvp/${actor}/e/${r.uri.split('/').pop()}`,
 					organizer: actor,
 					imageUrl,
 					attendees
