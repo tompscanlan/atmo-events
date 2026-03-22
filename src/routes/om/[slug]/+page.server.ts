@@ -1,23 +1,22 @@
-import { error, fail } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import { getEvent, attendEvent, cancelAttendEvent } from '$lib/openmeet/client';
 import type { PageServerLoad, Actions } from './$types';
 
 export const load: PageServerLoad = async ({ params, locals }) => {
 	if (!locals.openmeetToken) {
-		throw error(401, 'Not connected to OpenMeet');
+		return { state: 'unauthenticated' as const, event: null };
 	}
 
 	try {
 		const event = await getEvent(locals.openmeetToken, params.slug);
 
 		if (!event) {
-			throw error(404, 'Event not found');
+			return { state: 'not_found' as const, event: null };
 		}
 
-		return { event };
-	} catch (e) {
-		if (e && typeof e === 'object' && 'status' in e) throw e;
-		throw error(404, 'Event not found');
+		return { state: 'ok' as const, event };
+	} catch {
+		return { state: 'not_found' as const, event: null };
 	}
 };
 
