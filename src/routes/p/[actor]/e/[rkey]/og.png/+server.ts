@@ -49,7 +49,7 @@ export async function GET({ params, platform, request }) {
 	}
 	return new ImageResponse(
 		EventOgImage,
-		{ width: 1200, height: 630, debug: false },
+		{ width: 1200, height: 630, debug: false, format: 'png' },
 		{
 			name: eventData.name,
 			dateStr,

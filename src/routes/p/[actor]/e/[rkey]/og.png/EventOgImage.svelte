@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Avatar from 'svelte-boring-avatars';
+	import Avatar from './avatars';
 
 	let {
 		name,
@@ -14,7 +14,35 @@
 	} = $props();
 </script>
 
-<div class="flex h-full w-full p-0" style="background: radial-gradient(ellipse 100% 80% at 30% 120%, #14b8a6 0%, #042f2e 25%, #090b0c 65%);">
+<div
+	class="relative flex h-full w-full p-0 bg-black"
+>
+	{#if thumbnailUrl}
+		<img
+			src={thumbnailUrl}
+			alt=""
+			class="absolute inset-0 w-full h-full bg-black"
+			style="object-fit: cover; filter: blur(64px);"
+			width="400"
+			height="210"
+		/>
+	{:else}
+		<Avatar
+			class="absolute inset-0 h-full w-full scale-400"
+			size={300}
+			name={rkey}
+			variant="marble"
+			colors={['#92A1C6', '#146A7C', '#F0AB3D', '#C271B4', '#C20D90']}
+			square
+		/>
+	{/if}
+
+	<div
+		class="absolute inset-0"
+		style="background: linear-gradient(190deg, rgba(0,0,0,1) 0%, rgba(0,0,0,0.9) 50%, rgba(0,0,0,0.3) 100%);"
+	>
+		.
+	</div>
 	<div class="flex min-w-0 flex-1 flex-col justify-center p-12">
 		<h1
 			class="text-5xl leading-tight font-bold text-neutral-50"
