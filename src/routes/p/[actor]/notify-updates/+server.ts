@@ -1,7 +1,9 @@
 import { error, json } from '@sveltejs/kit';
 import { getActor } from '$lib/actor';
 import { isActorIdentifier, type ResourceUri } from '@atcute/lexicons/syntax';
-import { contrail, listEventRecordsFromContrail } from '$lib/contrail';
+import type { Did } from '@atcute/lexicons';
+import { contrail } from '$lib/contrail';
+import { listRecords } from '$lib/atproto/methods';
 
 export async function GET({ params }) {
 	if (!isActorIdentifier(params.actor)) {
@@ -14,25 +16,19 @@ export async function GET({ params }) {
 		throw error(404, 'Not found');
 	}
 
-	// Paginate through all events
-	const uris: string[] = [];
-	let cursor: string | undefined;
+	// List records directly from the PDS
+	const records = await listRecords({
+		did: did as Did,
+		collection: 'community.lexicon.calendar.event',
+		limit: 0
+	});
 
-	do {
-		const response = await listEventRecordsFromContrail({
-			actor: params.actor,
-			limit: 100,
-			cursor
-		});
+	const uris = records.map((r) => r.uri);
 
-		if (!response) {
-			if (uris.length === 0) throw error(500, 'Failed to list events');
-			break;
-		}
-
-		uris.push(...response.records.map((r) => r.uri));
-		cursor = response.cursor ?? undefined;
-	} while (cursor);
+	console.log(`[notify-updates] Found ${uris.length} events on PDS for ${params.actor}`);
+	for (const uri of uris) {
+		console.log(`[notify-updates]   - ${uri}`);
+	}
 
 	let totalIndexed = 0;
 	let totalDeleted = 0;
@@ -41,19 +37,31 @@ export async function GET({ params }) {
 	// Batch in groups of 25 (API limit)
 	for (let i = 0; i < uris.length; i += 25) {
 		const batch = uris.slice(i, i + 25);
+		const batchNum = Math.floor(i / 25) + 1;
 		try {
 			const result = await contrail.post('rsvp.atmo.notifyOfUpdate', {
 				input: { uris: batch as ResourceUri[] }
 			});
 			if (result.ok) {
+				console.log(
+					`[notify-updates] Batch ${batchNum} (${batch.length} uris): indexed=${result.data.indexed}, deleted=${result.data.deleted}${result.data.errors?.length ? `, errors=${JSON.stringify(result.data.errors)}` : ''}`
+				);
 				totalIndexed += result.data.indexed;
 				totalDeleted += result.data.deleted;
 				if (result.data.errors) allErrors.push(...result.data.errors);
+			} else {
+				console.log(`[notify-updates] Batch ${batchNum}: request failed (not ok)`);
+				allErrors.push(`Batch ${batchNum} returned non-ok response`);
 			}
-		} catch {
-			allErrors.push(`Batch starting at index ${i} failed`);
+		} catch (e) {
+			console.error(`[notify-updates] Batch ${batchNum} threw:`, e);
+			allErrors.push(`Batch ${batchNum} (index ${i}) failed`);
 		}
 	}
+
+	console.log(
+		`[notify-updates] Done: total=${uris.length}, indexed=${totalIndexed}, deleted=${totalDeleted}, errors=${allErrors.length}`
+	);
 
 	return json({
 		total: uris.length,
