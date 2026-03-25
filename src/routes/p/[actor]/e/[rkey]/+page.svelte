@@ -271,7 +271,7 @@
 		});
 		if (status === 'interested') return;
 		shareModalTitle = "You're going!";
-		shareModalText = `I'm going to "${eventData.name}"!\n\n${shareUrl}`;
+		shareModalText = `I'm going to "${eventData.name}".\n\n${shareUrl}`;
 		showShareModal = true;
 	}
 
