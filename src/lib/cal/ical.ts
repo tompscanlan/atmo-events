@@ -146,9 +146,17 @@ function generateVEvent(event: ICalEvent): string | null {
 		lines.push(`DESCRIPTION:${escapeText(descParts.join('\n'))}`);
 	}
 
-	const location = getLocationString(eventData.locations);
-	if (location) {
-		lines.push(`LOCATION:${escapeText(location)}`);
+	const locationParts: string[] = [];
+	const room = (eventData as { additionalData?: Record<string, unknown> }).additionalData?.room;
+	if (typeof room === 'string' && room && room !== 'none') {
+		locationParts.push(room);
+	}
+	const address = getLocationString(eventData.locations);
+	if (address) {
+		locationParts.push(address);
+	}
+	if (locationParts.length > 0) {
+		lines.push(`LOCATION:${escapeText(locationParts.join(', '))}`);
 	}
 
 	if (url) {

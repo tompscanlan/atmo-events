@@ -65,7 +65,7 @@ export async function GET({ params }) {
 		const events: ICalEvent[] = allEvents.map((r) => ({
 			eventData: r,
 			uid: r.uri,
-			url: `https://atmo.rsvp/p/${params.actor}/e/${r.rkey}`
+			url: `https://atmo.rsvp/p/${r.did}/e/${r.rkey}`
 		}));
 
 		const calendarName = `${params.actor}'s Calendar`;
