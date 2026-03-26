@@ -123,10 +123,10 @@
 	<script src="https://atmo.social/embed-sdk.js"></script>
 </svelte:head>
 
-<div class="@container bg-base-200 dark:bg-base-950/50 text-base-900 dark:text-base-50 flex h-full items-center gap-4 overflow-hidden p-3 @sm:gap-5 @sm:p-4 @lg:gap-8 @lg:p-6">
+<div class="@container bg-base-200 dark:bg-base-950/50 text-base-900 dark:text-base-50 flex h-full items-center gap-4.5 overflow-hidden px-5 py-3 @sm:gap-5 @sm:px-6 @sm:py-4 @lg:gap-8 @lg:px-8 @lg:py-6">
 	<!-- Thumbnail -->
 	<a href={eventUrl} target="_blank" rel="noopener noreferrer" class="shrink-0">
-		<div class="aspect-square h-[calc(100cqh-1.5rem)] max-h-40 overflow-hidden rounded-xl @sm:h-[calc(100cqh-2rem)] @sm:rounded-2xl @lg:h-[calc(100cqh-3rem)] @lg:max-h-56">
+		<div class="aspect-square h-[calc(90cqh-1.5rem)] max-h-36 overflow-hidden rounded-xl @sm:h-[calc(90cqh-2rem)] @sm:rounded-2xl @lg:h-[calc(90cqh-3rem)] @lg:max-h-48">
 			{#if data.thumbnailUrl}
 				<img
 					src={data.thumbnailUrl}
@@ -148,19 +148,14 @@
 	</a>
 
 	<!-- Details + RSVP -->
-	<div class="flex min-w-0 flex-1 flex-col justify-center gap-1 @sm:gap-1.5 @lg:gap-3">
+	<div class="flex min-w-0 flex-1 flex-col justify-center gap-2 @sm:gap-3 @lg:gap-4">
 		<a href={eventUrl} target="_blank" rel="noopener noreferrer" class="min-w-0">
 			<h2 class="line-clamp-2 text-xs leading-snug font-semibold @sm:text-base @lg:text-xl">{data.eventData.name}</h2>
-			<p class="text-base-500 dark:text-base-400 mt-0.5 truncate text-[11px] @sm:mt-1 @sm:text-sm @lg:text-base">
+			<p class="text-base-500 dark:text-base-400 mt-1 truncate text-[11px] @sm:mt-1.5 @sm:text-sm @lg:mt-2 @lg:text-base">
 				{formatDate(startDate)}, {formatTime(startDate)}{#if endDate && isSameDay} - {formatTime(endDate)}{/if}
 			</p>
 			{#if location}
 				<p class="text-base-500 dark:text-base-400 truncate text-[11px] @sm:text-sm @lg:text-base">{location}</p>
-			{/if}
-			{#if data.hostProfile}
-				<p class="text-base-400 dark:text-base-500 truncate text-[11px] @sm:text-sm @lg:text-base">
-					by {data.hostProfile.displayName || data.hostProfile.handle || data.actorDid}
-				</p>
 			{/if}
 		</a>
 
@@ -209,8 +204,13 @@
 					<button
 						onclick={() => submitRsvp('interested')}
 						disabled={submitting}
-						class="bg-base-300 dark:bg-base-800 hover:bg-base-400 dark:hover:bg-base-700 text-base-700 dark:text-base-300 flex-1 cursor-pointer rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 @sm:rounded-lg @sm:px-4 @sm:py-1.5 @sm:text-sm @lg:px-5 @lg:py-2 @lg:text-base"
-					>Interested</button>
+						class="bg-base-300 dark:bg-base-800 hover:bg-base-400 dark:hover:bg-base-700 text-base-700 dark:text-base-300 cursor-pointer rounded-md px-2 py-1 transition-colors disabled:opacity-50 @sm:flex-1 @sm:rounded-lg @sm:px-4 @sm:py-1.5 @sm:text-sm @lg:px-5 @lg:py-2 @lg:text-base"
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3.5 @sm:hidden">
+							<path fill-rule="evenodd" d="M10.868 2.884c-.321-.772-1.415-.772-1.736 0l-1.83 4.401-4.753.381c-.833.067-1.171 1.107-.536 1.651l3.62 3.102-1.106 4.637c-.194.813.691 1.456 1.405 1.02L10 15.591l4.069 2.485c.713.436 1.598-.207 1.404-1.02l-1.106-4.637 3.62-3.102c.635-.544.297-1.584-.536-1.65l-4.752-.382-1.831-4.401Z" clip-rule="evenodd" />
+						</svg>
+						<span class="hidden text-[11px] font-medium @sm:inline @sm:text-sm @lg:text-base">Interested</span>
+					</button>
 				</div>
 			{/if}
 		</div>

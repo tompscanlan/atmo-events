@@ -10,7 +10,7 @@
 	const sizes = [
 		{ label: '300 × 150', width: 300, height: 150 },
 		{ label: '400 × 200', width: 400, height: 200 },
-		{ label: '600 × 400', width: 600, height: 400 }
+		{ label: '600 × 300', width: 600, height: 300 }
 	];
 
 	let selectedSize = $state(sizes[1]);
@@ -121,7 +121,7 @@
 						height={selectedSize.height}
 						title="Embed preview"
 						class="rounded-lg"
-						sandbox="allow-scripts allow-same-origin"
+						sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
 					></iframe>
 				</div>
 			</div>
