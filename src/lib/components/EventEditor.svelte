@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { user } from '$lib/atproto/auth.svelte';
-	import { atProtoLoginModalState } from '@foxui/social';
+	import { atProtoLoginModalState } from '$lib/components/LoginModal.svelte';
 	import { uploadBlob, putRecord, deleteRecord, resolveHandle } from '$lib/atproto/methods';
 	import { getCDNImageBlobUrl } from '$lib/atproto';
 	import { notifyContrailOfUpdate } from '$lib/contrail';

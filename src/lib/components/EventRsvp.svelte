@@ -2,7 +2,7 @@
 	import { user } from '$lib/atproto/auth.svelte';
 	import { putRecord, deleteRecord, createTID } from '$lib/atproto/methods';
 	import { notifyContrailOfUpdate } from '$lib/contrail';
-	import { atProtoLoginModalState } from '@foxui/social';
+	import { atProtoLoginModalState } from '$lib/components/LoginModal.svelte';
 	import { Avatar, Button } from '@foxui/core';
 	import { launchConfetti } from '@foxui/visual';
 

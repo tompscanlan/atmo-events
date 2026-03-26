@@ -1,29 +1,61 @@
 <script lang="ts">
-	import { AtprotoLoginModal, atProtoLoginModalState } from '@foxui/social';
-	import { login, signup } from '$lib/atproto';
+	import { atProtoLoginModalState } from '$lib/components/LoginModal.svelte';
 	import { user } from '$lib/atproto/auth.svelte';
 	import { Head, Navbar, Button, Avatar } from '@foxui/core';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import { ModeWatcher } from 'mode-watcher';
+	import LoginModal from '$lib/components/LoginModal.svelte';
 
 	let { children } = $props();
 </script>
 
-<Navbar class="right-2 left-2 mx-auto max-w-3xl rounded-full pl-6 pr-3 top-2">
+<ModeWatcher />
+
+<Navbar class="top-2 right-2 left-2 mx-auto max-w-3xl rounded-full pr-3 pl-6">
 	<div class="flex items-center gap-6">
-		<a href={resolve("/")} class="text-base-500 hover:text-base-900 dark:text-base-400 dark:hover:text-base-50 text-sm font-medium transition-colors">events</a>
-		<a href="/calendar" class="text-base-500 hover:text-base-900 dark:text-base-400 dark:hover:text-base-50 text-sm font-medium transition-colors">calendar</a>
+		<a
+			href={resolve('/')}
+			class="text-base-500 hover:text-base-900 dark:text-base-400 dark:hover:text-base-50 text-sm font-medium transition-colors"
+			>events</a
+		>
+		<a
+			href="/calendar"
+			class="text-base-500 hover:text-base-900 dark:text-base-400 dark:hover:text-base-50 text-sm font-medium transition-colors"
+			>calendar</a
+		>
 	</div>
 	<div class="flex items-center gap-4">
-		<a href="/search" class="text-base-500 hover:text-base-900 dark:text-base-400 dark:hover:text-base-50 transition-colors">
-			<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-5">
-				<path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+		<a
+			href="/search"
+			class="text-base-500 hover:text-base-900 dark:text-base-400 dark:hover:text-base-50 transition-colors"
+		>
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke-width="2"
+				stroke="currentColor"
+				class="size-5"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"
+				/>
 			</svg>
 		</a>
 		{#if user.isLoggedIn}
 			<Button href="/create" class="hidden sm:inline-flex">Create Event</Button>
 			<Button href="/create" size="icon" class="sm:hidden">
-				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-5">
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke-width="2"
+					stroke="currentColor"
+					class="size-5"
+				>
 					<path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
 				</svg>
 			</Button>
@@ -36,9 +68,25 @@
 				/>
 			</a>
 		{:else}
-			<Button onclick={() => atProtoLoginModalState.show()} variant="ghost" class="hidden sm:inline-flex">Create Event</Button>
-			<Button onclick={() => atProtoLoginModalState.show()} variant="ghost" size="icon" class="sm:hidden">
-				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-5">
+			<Button
+				onclick={() => atProtoLoginModalState.show()}
+				variant="ghost"
+				class="hidden sm:inline-flex">Create Event</Button
+			>
+			<Button
+				onclick={() => atProtoLoginModalState.show()}
+				variant="ghost"
+				size="icon"
+				class="sm:hidden"
+			>
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke-width="2"
+					stroke="currentColor"
+					class="size-5"
+				>
 					<path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
 				</svg>
 			</Button>
@@ -51,16 +99,7 @@
 	{@render children()}
 </div>
 
-<AtprotoLoginModal
-	login={async (handle) => {
-		await login(handle);
-		return true;
-	}}
-	signup={async () => {
-		signup();
-		return true;
-	}}
-/>
+<LoginModal />
 
 <Head
 	title="atmo.rsvp"

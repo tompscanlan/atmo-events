@@ -2,7 +2,7 @@
 	import EventCard from '$lib/components/EventCard.svelte';
 	import { Button } from '@foxui/core';
 	import { user } from '$lib/atproto/auth.svelte';
-	import { atProtoLoginModalState } from '@foxui/social';
+	import { atProtoLoginModalState } from '$lib/components/LoginModal.svelte';
 
 	let { data } = $props();
 </script>

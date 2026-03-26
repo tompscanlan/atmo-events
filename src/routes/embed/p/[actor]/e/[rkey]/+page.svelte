@@ -120,80 +120,82 @@
 	<script src="https://atmo.social/embed-sdk.js"></script>
 </svelte:head>
 
-<div class="bg-base-50 dark:bg-base-900 text-base-900 dark:text-base-50 flex h-full items-center gap-3 overflow-hidden p-3">
+<div class="@container bg-base-50 dark:bg-base-900 text-base-900 dark:text-base-50 flex h-full items-center gap-4 overflow-hidden p-3 @sm:gap-5 @sm:p-4 @lg:gap-8 @lg:p-6">
 	<!-- Thumbnail -->
-	<a href={eventUrl} target="_blank" rel="noopener noreferrer" class="size-24 shrink-0 overflow-hidden rounded-xl">
-		{#if data.thumbnailUrl}
-			<img
-				src={data.thumbnailUrl}
-				alt={data.eventData.name}
-				class="size-full object-cover"
-			/>
-		{:else}
-			<div class="size-full [&>svg]:size-full">
-				<Avatar
-					size={96}
-					name={data.rkey}
-					variant="marble"
-					colors={['#92A1C6', '#146A7C', '#F0AB3D', '#C271B4', '#C20D90']}
-					square
+	<a href={eventUrl} target="_blank" rel="noopener noreferrer" class="shrink-0">
+		<div class="aspect-square h-[calc(100cqh-1.5rem)] max-h-40 overflow-hidden rounded-xl @sm:h-[calc(100cqh-2rem)] @sm:rounded-2xl @lg:h-[calc(100cqh-3rem)] @lg:max-h-56">
+			{#if data.thumbnailUrl}
+				<img
+					src={data.thumbnailUrl}
+					alt={data.eventData.name}
+					class="size-full object-cover"
 				/>
-			</div>
-		{/if}
+			{:else}
+				<div class="size-full [&>svg]:size-full">
+					<Avatar
+						size={200}
+						name={data.rkey}
+						variant="marble"
+						colors={['#92A1C6', '#146A7C', '#F0AB3D', '#C271B4', '#C20D90']}
+						square
+					/>
+				</div>
+			{/if}
+		</div>
 	</a>
 
 	<!-- Details + RSVP -->
-	<div class="flex min-w-0 flex-1 flex-col justify-center gap-1">
+	<div class="flex min-w-0 flex-1 flex-col justify-center gap-1 @sm:gap-1.5 @lg:gap-3">
 		<a href={eventUrl} target="_blank" rel="noopener noreferrer" class="min-w-0">
-			<h2 class="line-clamp-2 text-sm leading-tight font-semibold">{data.eventData.name}</h2>
-			<p class="text-base-500 dark:text-base-400 mt-0.5 truncate text-xs">
+			<h2 class="line-clamp-2 text-xs leading-snug font-semibold @sm:text-base @lg:text-xl">{data.eventData.name}</h2>
+			<p class="text-base-500 dark:text-base-400 mt-0.5 truncate text-[11px] @sm:mt-1 @sm:text-sm @lg:text-base">
 				{formatDate(startDate)}, {formatTime(startDate)}{#if endDate && isSameDay} - {formatTime(endDate)}{/if}
 			</p>
 			{#if location}
-				<p class="text-base-500 dark:text-base-400 truncate text-xs">{location}</p>
+				<p class="text-base-500 dark:text-base-400 truncate text-[11px] @sm:text-sm @lg:text-base">{location}</p>
 			{/if}
 			{#if data.hostProfile}
-				<p class="text-base-400 dark:text-base-500 truncate text-xs">
+				<p class="text-base-400 dark:text-base-500 truncate text-[11px] @sm:text-sm @lg:text-base">
 					by {data.hostProfile.displayName || data.hostProfile.handle || data.actorDid}
 				</p>
 			{/if}
 		</a>
 
 		<!-- RSVP -->
-		<div class="mt-1">
+		<div class="mt-0.5 @sm:mt-1 @lg:mt-2">
 			{#if !data.viewerDid}
-				<p class="text-base-400 dark:text-base-500 text-xs">Log in to RSVP</p>
+				<p class="text-base-400 dark:text-base-500 text-[11px] @sm:text-sm @lg:text-base">Log in to RSVP</p>
 			{:else if rsvpStatus === 'going'}
-				<div class="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-2.5 py-1.5 dark:border-green-900/50 dark:bg-green-900/20">
-					<div class="flex items-center gap-1.5">
-						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3.5 text-green-600 dark:text-green-400">
+				<div class="flex items-center justify-between rounded-md border border-green-200 bg-green-50 px-2 py-1 @sm:rounded-lg @sm:px-3 @sm:py-2 @lg:px-4 @lg:py-2.5 dark:border-green-900/50 dark:bg-green-900/20">
+					<div class="flex items-center gap-1 @sm:gap-2">
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3 @sm:size-4 @lg:size-5 text-green-600 dark:text-green-400">
 							<path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd" />
 						</svg>
-						<span class="text-xs font-semibold text-green-700 dark:text-green-300">You're Going!</span>
+						<span class="text-[11px] @sm:text-sm @lg:text-base font-semibold text-green-700 dark:text-green-300">You're Going!</span>
 					</div>
-					<button onclick={cancelRsvp} disabled={submitting} class="cursor-pointer text-xs text-green-600/60 transition-colors hover:text-green-700 dark:text-green-400/60 dark:hover:text-green-300">Remove</button>
+					<button onclick={cancelRsvp} disabled={submitting} class="cursor-pointer text-[11px] @sm:text-sm @lg:text-base text-green-600/60 transition-colors hover:text-green-700 dark:text-green-400/60 dark:hover:text-green-300">Remove</button>
 				</div>
 			{:else if rsvpStatus === 'interested'}
-				<div class="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 dark:border-amber-900/50 dark:bg-amber-900/20">
-					<div class="flex items-center gap-1.5">
-						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3.5 text-amber-600 dark:text-amber-400">
+				<div class="flex items-center justify-between rounded-md border border-amber-200 bg-amber-50 px-2 py-1 @sm:rounded-lg @sm:px-3 @sm:py-2 @lg:px-4 @lg:py-2.5 dark:border-amber-900/50 dark:bg-amber-900/20">
+					<div class="flex items-center gap-1 @sm:gap-2">
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3 @sm:size-4 @lg:size-5 text-amber-600 dark:text-amber-400">
 							<path fill-rule="evenodd" d="M10.868 2.884c-.321-.772-1.415-.772-1.736 0l-1.83 4.401-4.753.381c-.833.067-1.171 1.107-.536 1.651l3.62 3.102-1.106 4.637c-.194.813.691 1.456 1.405 1.02L10 15.591l4.069 2.485c.713.436 1.598-.207 1.404-1.02l-1.106-4.637 3.62-3.102c.635-.544.297-1.584-.536-1.65l-4.752-.382-1.831-4.401Z" clip-rule="evenodd" />
 						</svg>
-						<span class="text-xs font-semibold text-amber-700 dark:text-amber-300">You're Interested</span>
+						<span class="text-[11px] @sm:text-sm @lg:text-base font-semibold text-amber-700 dark:text-amber-300">You're Interested</span>
 					</div>
-					<button onclick={cancelRsvp} disabled={submitting} class="cursor-pointer text-xs text-amber-600/60 transition-colors hover:text-amber-700 dark:text-amber-400/60 dark:hover:text-amber-300">Remove</button>
+					<button onclick={cancelRsvp} disabled={submitting} class="cursor-pointer text-[11px] @sm:text-sm @lg:text-base text-amber-600/60 transition-colors hover:text-amber-700 dark:text-amber-400/60 dark:hover:text-amber-300">Remove</button>
 				</div>
 			{:else}
-				<div class="flex gap-2">
+				<div class="flex gap-1.5 @sm:gap-2 @lg:gap-3">
 					<button
 						onclick={() => submitRsvp('going')}
 						disabled={submitting}
-						class="bg-accent-600 hover:bg-accent-700 cursor-pointer rounded-lg px-3 py-1 text-xs font-medium text-white transition-colors disabled:opacity-50"
+						class="bg-accent-600 hover:bg-accent-700 cursor-pointer rounded-md px-2.5 py-1 text-[11px] @sm:rounded-lg @sm:px-4 @sm:py-1.5 @sm:text-sm @lg:px-5 @lg:py-2 @lg:text-base font-medium text-white transition-colors disabled:opacity-50"
 					>Going</button>
 					<button
 						onclick={() => submitRsvp('interested')}
 						disabled={submitting}
-						class="bg-base-200 dark:bg-base-800 hover:bg-base-300 dark:hover:bg-base-700 text-base-700 dark:text-base-300 cursor-pointer rounded-lg px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50"
+						class="bg-base-200 dark:bg-base-800 hover:bg-base-300 dark:hover:bg-base-700 text-base-700 dark:text-base-300 cursor-pointer rounded-md px-2.5 py-1 text-[11px] @sm:rounded-lg @sm:px-4 @sm:py-1.5 @sm:text-sm @lg:px-5 @lg:py-2 @lg:text-base font-medium transition-colors disabled:opacity-50"
 					>Interested</button>
 				</div>
 			{/if}
