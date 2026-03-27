@@ -272,7 +272,10 @@ export async function uploadBlob({
 	const bytes = Array.from(new Uint8Array(arrayBuffer));
 
 	const { uploadBlob: uploadBlobRemote } = await import('./server/repo.remote');
-	const result = await uploadBlobRemote({ bytes, mimeType: blob.type || 'application/octet-stream' });
+	const result = await uploadBlobRemote({
+		bytes,
+		mimeType: blob.type || 'application/octet-stream'
+	});
 
 	if (aspectRatio) {
 		return { ...result, aspectRatio };
@@ -349,22 +352,28 @@ export async function searchActorsTypeahead(
 	limit: number = 10,
 	host?: string
 ): Promise<{ actors: AppBskyActorDefs.ProfileViewBasic[]; q: string }> {
-	host ??= 'https://public.api.bsky.app';
+	host ??= 'https://typeahead.waow.tech';
 
-	const client = new Client({
-		handler: simpleFetchHandler({ service: host })
-	});
+	// const client = new Client({
+	// 	handler: simpleFetchHandler({ service: host })
+	// });
 
-	const response = await client.get('app.bsky.actor.searchActorsTypeahead', {
-		params: {
-			q,
-			limit
-		}
-	});
+	// const response = await client.get('app.bsky.actor.searchActorsTypeahead', {
+	// 	params: {
+	// 		q,
+	// 		limit
+	// 	}
+	// });
+
+	const response = await fetch(
+		`${host}/xrpc/app.bsky.actor.searchActorsTypeahead?q=${encodeURIComponent(q)}&limit=${limit}`,
+		{ headers: { 'X-Client': 'atmo.rsvp' } }
+	);
 
 	if (!response.ok) return { actors: [], q };
+	const data = (await response.json()) as { actors: AppBskyActorDefs.ProfileViewBasic[] };
 
-	return { actors: response.data.actors, q };
+	return { actors: data.actors, q };
 }
 
 /**
