@@ -376,7 +376,7 @@
 				<!-- VOD -->
 				{#if data.vod}
 					<div class="mb-6">
-						<VodPlayer playlistUrl={data.vod.playlistUrl} title={data.vod.vodTitle} />
+						<VodPlayer playlistUrl={data.vod.playlistUrl} title={eventData.name} />
 					</div>
 				{/if}
 
