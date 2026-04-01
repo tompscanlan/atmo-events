@@ -4,6 +4,7 @@ import {
 	listEventRecordsFromContrail,
 	contrail
 } from '$lib/contrail';
+import { getAllEventVods, type VodRecord } from '$lib/vods';
 
 export async function load({ locals }) {
 	const actor = 'atmosphereconf.org';
@@ -40,12 +41,21 @@ export async function load({ locals }) {
 		}
 	}
 
+	// Build event URI → VOD map from static mapping
+	const vodsByRkey = getAllEventVods();
+	const eventVods: Record<string, VodRecord> = {};
+	for (const event of events) {
+		const vod = vodsByRkey.get(event.rkey);
+		if (vod) eventVods[event.uri] = vod;
+	}
+
 	return {
 		hostProfile: profile,
 		events,
 		actor,
 		rsvpStatuses,
 		rsvpRkeys,
-		loggedIn: !!locals.did
+		loggedIn: !!locals.did,
+		eventVods
 	};
 }
