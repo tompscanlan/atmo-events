@@ -44,6 +44,7 @@
 					d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"
 				/>
 			</svg>
+			<span class="sr-only">search for events</span>
 		</a>
 		{#if user.isLoggedIn}
 			<Button href="/create" class="hidden sm:inline-flex">Create Event</Button>
@@ -71,7 +72,9 @@
 			<Button
 				onclick={() => atProtoLoginModalState.show()}
 				variant="ghost"
-				class="hidden sm:inline-flex">Create Event</Button
+				class="hidden sm:inline-flex"
+			>
+				Create Event</Button
 			>
 			<Button
 				onclick={() => atProtoLoginModalState.show()}
@@ -89,15 +92,16 @@
 				>
 					<path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
 				</svg>
+				<span class="sr-only">create event</span>
 			</Button>
 			<Button onclick={() => atProtoLoginModalState.show()}>Login</Button>
 		{/if}
 	</div>
 </Navbar>
 
-<div class="pt-14">
+<main class="pt-14">
 	{@render children()}
-</div>
+</main>
 
 <LoginModal />
 
