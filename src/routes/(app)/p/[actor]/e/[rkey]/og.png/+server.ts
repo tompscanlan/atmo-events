@@ -3,7 +3,8 @@ import { ImageResponse } from '@ethercorps/sveltekit-og';
 import { error } from '@sveltejs/kit';
 import EventOgImage from './EventOgImage.svelte';
 import { getActor } from '$lib/actor';
-import { flattenEventRecord, getEventRecordFromContrail } from '$lib/contrail';
+import { flattenEventRecord, getEventRecordFromContrail, getServerClient } from '$lib/contrail';
+import { render } from 'svelte/server';
 
 function formatDate(dateStr: string): string {
 	const date = new Date(dateStr);
@@ -13,7 +14,7 @@ function formatDate(dateStr: string): string {
 	return `${weekday}, ${month} ${day}`;
 }
 
-export async function GET({ params, platform, request }) {
+export async function GET({ params, platform }) {
 	const { rkey } = params;
 
 	const did = await getActor(params.actor);
@@ -25,7 +26,8 @@ export async function GET({ params, platform, request }) {
 	let eventData;
 
 	try {
-		const eventRecord = await getEventRecordFromContrail({ did, rkey });
+		const client = getServerClient(platform!.env.DB);
+		const eventRecord = await getEventRecordFromContrail(client, { did, rkey });
 		eventData = eventRecord ? flattenEventRecord(eventRecord) : null;
 	} catch (e) {
 		if (e && typeof e === 'object' && 'status' in e) throw e;
@@ -47,14 +49,19 @@ export async function GET({ params, platform, request }) {
 			thumbnailUrl = getCDNImageBlobUrl({ did, blob: media.content, format: 'png' }) ?? null;
 		}
 	}
+	const { body } = render(EventOgImage, {
+		props: { name: eventData.name, dateStr, thumbnailUrl, rkey }
+	});
+	// Decode HTML entities that Svelte SSR escapes, since satori-html doesn't decode them
+	const decoded = body
+		.replace(/&amp;/g, '&')
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>')
+		.replace(/&quot;/g, '"')
+		.replace(/&#39;/g, "'");
+
 	return new ImageResponse(
-		EventOgImage,
-		{ width: 1200, height: 630, debug: false, format: 'png' },
-		{
-			name: eventData.name,
-			dateStr,
-			thumbnailUrl,
-			rkey
-		}
+		decoded,
+		{ width: 1200, height: 630, debug: false, format: 'png' }
 	);
 }

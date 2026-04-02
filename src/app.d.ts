@@ -21,8 +21,7 @@ declare global {
 				CLIENT_ASSERTION_KEY: string;
 				COOKIE_SECRET: string;
 				OAUTH_PUBLIC_URL: string;
-				PROFILE_CACHE?: KVNamespace;
-				DB: D1Database;
+DB: D1Database;
 				CRON_SECRET: string;
 			};
 		}

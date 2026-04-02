@@ -7,11 +7,8 @@ export const load: PageServerLoad = async ({ locals, platform }) => {
 		redirect(303, '/login');
 	}
 
-	const profile = await loadProfile(locals.did, platform?.env?.PROFILE_CACHE);
-	const actor =
-		typeof profile?.handle === 'string' && profile.handle !== 'handle.invalid'
-			? profile.handle
-			: locals.did;
+	const profile = await loadProfile(locals.did, platform!.env.DB);
+	const actor = profile?.handle ?? locals.did;
 
 	redirect(303, `/p/${actor}`);
 };

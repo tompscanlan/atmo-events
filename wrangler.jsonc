@@ -33,10 +33,6 @@
 		{
 			"binding": "OAUTH_STATES",
 			"id": "46cfb5c0bb8c41378e757b46afd7dd35"
-		},
-		{
-			"binding": "PROFILE_CACHE",
-			"id": "f0dd7b5baa3e498c9d762bce1599a280"
 		}
 	]
 }
