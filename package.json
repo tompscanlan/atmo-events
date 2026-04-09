@@ -68,6 +68,7 @@
 		"@atcute/jetstream": "^1.1.2",
 		"@atmo-dev/contrail": "^0.0.6",
 		"@ethercorps/sveltekit-og": "^4.2.1",
+		"@foxui/colors": "^0.8.2",
 		"@foxui/core": "^0.8.2",
 		"@foxui/social": "^0.8.4",
 		"@foxui/text": "^0.8.2",

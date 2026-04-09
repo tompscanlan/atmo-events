@@ -32,6 +32,10 @@
 	import ThumbnailPresets from '$lib/components/ThumbnailPresets.svelte';
 	import { designs } from '$lib/components/thumbnails/designs';
 	import type { FlatEventRecord } from '$lib/contrail';
+	import ThemePicker from '$lib/components/ThemePicker.svelte';
+	import ThemeApply from '$lib/components/ThemeApply.svelte';
+	import ThemeBackground from '$lib/components/ThemeBackground.svelte';
+	import { defaultTheme, themeBackgrounds, type EventTheme } from '$lib/theme';
 
 	let {
 		eventData = null,
@@ -61,6 +65,7 @@
 		startsAt: string;
 		endsAt: string;
 		timezone?: string;
+		theme?: EventTheme;
 		links: Array<{ uri: string; name: string }>;
 		mode?: EventMode;
 		thumbnailKey?: string;
@@ -79,6 +84,8 @@
 	let endsAt = $state('');
 	let timezone = $state(Intl.DateTimeFormat().resolvedOptions().timeZone);
 	let mode: EventMode = $state('inperson');
+	let eventTheme: EventTheme = $state({ ...defaultTheme });
+	let showThemeModal = $state(false);
 	let thumbnailFile: File | null = $state(null);
 	let thumbnailPreview: string | null = $state(null);
 	let selectedPreset: { design: string; seed: number } | null = $state(null);
@@ -211,6 +218,7 @@
 		endsAt = eventData.endsAt ? isoToDatetimeLocal(eventData.endsAt) : '';
 		mode = eventData.mode ? stripModePrefix(eventData.mode) : 'inperson';
 		links = eventData.uris ? eventData.uris.map((l) => ({ uri: l.uri, name: l.name || '' })) : [];
+		if (eventData.theme) eventTheme = { ...eventData.theme };
 		populateLocationFromEventData();
 		populateThumbnailFromEventData();
 	}
@@ -234,6 +242,7 @@
 				startsAt = draft.startsAt || '';
 				endsAt = draft.endsAt || '';
 				if (draft.timezone) timezone = draft.timezone;
+				if (draft.theme) eventTheme = draft.theme;
 				links = draft.links || [];
 				mode = draft.mode || 'inperson';
 				locationChanged = draft.locationChanged || false;
@@ -280,6 +289,7 @@
 				startsAt,
 				endsAt,
 				timezone,
+				theme: eventTheme,
 				links,
 				mode,
 				thumbnailChanged,
@@ -299,6 +309,7 @@
 			startsAt,
 			endsAt,
 			timezone,
+			JSON.stringify(eventTheme),
 			mode,
 			JSON.stringify(links),
 			JSON.stringify(location)
@@ -611,7 +622,8 @@
 				mode: `community.lexicon.calendar.event#${mode}`,
 				status: 'community.lexicon.calendar.event#scheduled',
 				startsAt: datetimeLocalToISO(startsAt, timezone),
-				createdAt
+				createdAt,
+				theme: eventTheme
 			};
 			// Remove flattened fields that aren't part of the actual record
 			delete record.cid;
@@ -845,6 +857,9 @@
 	}
 </script>
 
+<ThemeApply accentColor={eventTheme.accentColor} baseColor={eventTheme.baseColor} />
+<ThemeBackground theme={eventTheme} />
+
 <div class="px-6 py-12 sm:py-12">
 	<div class="mx-auto max-w-3xl">
 		{#if !user.isLoggedIn}
@@ -950,6 +965,16 @@
 							{/if}
 						</div>
 					</div>
+						<Button
+							variant="secondary"
+							class="mt-3 w-full"
+							onclick={() => (showThemeModal = true)}
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M4.098 19.902a3.75 3.75 0 0 0 5.304 0l6.401-6.402M6.75 21A3.75 3.75 0 0 1 3 17.25V4.125C3 3.504 3.504 3 4.125 3h5.25c.621 0 1.125.504 1.125 1.125v4.072M6.75 21a3.75 3.75 0 0 0 3.75-3.75V8.197M6.75 21h13.125c.621 0 1.125-.504 1.125-1.125v-5.25c0-.621-.504-1.125-1.125-1.125h-4.072M10.5 8.197l2.88-2.88c.438-.439 1.15-.439 1.59 0l3.712 3.713c.44.44.44 1.152 0 1.59l-2.879 2.88M6.75 17.25h.008v.008H6.75v-.008Z" />
+							</svg>
+							Theme: {themeBackgrounds[eventTheme.name] || eventTheme.name}
+						</Button>
 					<Button
 						type="submit"
 						class="mt-3 w-full"
@@ -1303,6 +1328,14 @@
 		{/if}
 	</div>
 </div>
+
+<!-- Theme modal -->
+<Modal bind:open={showThemeModal}>
+	<p class="text-base-900 dark:text-base-50 text-lg font-semibold">Event theme</p>
+	<div class="mt-4">
+		<ThemePicker bind:theme={eventTheme} />
+	</div>
+</Modal>
 
 <!-- Thumbnail modal -->
 <Modal bind:open={showThumbnailModal}>

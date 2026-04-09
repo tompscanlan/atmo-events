@@ -16,6 +16,9 @@
 	import { sanitize } from '$lib/cal/sanitize';
 	import { generateICalEvent } from '$lib/cal/ical';
 	import { launchConfetti } from '@foxui/visual';
+	import ThemeBackground from '$lib/components/ThemeBackground.svelte';
+	import ThemeApply from '$lib/components/ThemeApply.svelte';
+	import { defaultTheme, type EventTheme } from '$lib/theme';
 
 	let { data } = $props();
 
@@ -24,6 +27,9 @@
 	let rkey: string = $derived(data.rkey);
 	let hostProfile = $derived(data.hostProfile);
 	let attendees = $derived(data.attendees);
+
+	let theme: EventTheme = $derived(eventData.theme ?? defaultTheme);
+
 
 	let hostUrl = $derived(`/p/${hostProfile?.handle || did}`);
 	let eventPath = $derived(`/p/${hostProfile?.handle || did}/e/${data.rkey}`);
@@ -307,6 +313,9 @@
 	<meta name="twitter:description" content={eventData.description || `Event: ${eventData.name}`} />
 	<meta name="twitter:image" content={ogImageUrl} />
 </svelte:head>
+
+<ThemeApply accentColor={theme.accentColor} baseColor={theme.baseColor} />
+<ThemeBackground {theme} />
 
 <div class="min-h-screen px-6 py-12 sm:py-12">
 	<div class="mx-auto max-w-3xl">

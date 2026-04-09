@@ -21,4 +21,9 @@ export type EventData = CommunityLexiconCalendarEvent.Main & {
 		features: Array<{ $type: string; did?: string; uri?: string; tag?: string }>;
 	}>;
 	additionalData?: Record<string, unknown>;
+	theme?: {
+		name: string;
+		accentColor: string;
+		baseColor: string;
+	};
 };
