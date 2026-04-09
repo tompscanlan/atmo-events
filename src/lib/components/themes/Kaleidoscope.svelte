@@ -12,9 +12,13 @@
 		const SEGMENTS = 12;
 		const ROTATION_SPEED = 0.06;
 
+		let lastWidth = 0;
 		function resize() {
-			canvas!.width = window.innerWidth;
-			canvas!.height = window.innerHeight;
+			const w = window.innerWidth;
+			if (w === lastWidth) return;
+			lastWidth = w;
+			canvas!.width = w;
+			canvas!.height = window.screen.height;
 		}
 		resize();
 		window.addEventListener('resize', resize);

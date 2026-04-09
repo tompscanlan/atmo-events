@@ -13,9 +13,13 @@
 		const COUNT = 600;
 		const SPEED = 300; // pixels per second
 
+		let lastWidth = 0;
 		function resize() {
-			canvas!.width = window.innerWidth;
-			canvas!.height = window.innerHeight;
+			const w = window.innerWidth;
+			if (w === lastWidth) return;
+			lastWidth = w;
+			canvas!.width = w;
+			canvas!.height = window.screen.height;
 		}
 		resize();
 		window.addEventListener('resize', resize);
