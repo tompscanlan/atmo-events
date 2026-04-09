@@ -29,6 +29,8 @@
 	import Avatar from 'svelte-boring-avatars';
 	import DateTimePicker from '$lib/components/DateTimePicker.svelte';
 	import TimezonePicker from '$lib/components/TimezonePicker.svelte';
+	import ThumbnailPresets from '$lib/components/ThumbnailPresets.svelte';
+	import { designs } from '$lib/components/thumbnails/designs';
 	import type { FlatEventRecord } from '$lib/contrail';
 
 	let {
@@ -79,6 +81,9 @@
 	let mode: EventMode = $state('inperson');
 	let thumbnailFile: File | null = $state(null);
 	let thumbnailPreview: string | null = $state(null);
+	let selectedPreset: { design: string; seed: number } | null = $state(null);
+	let presetPreviewCanvas: HTMLCanvasElement | undefined = $state(undefined);
+	let showThumbnailModal = $state(false);
 	let submitting = $state(false);
 	let error: string | null = $state(null);
 	import type { Readable } from 'svelte/store';
@@ -385,6 +390,7 @@
 	async function setThumbnail(file: File) {
 		thumbnailFile = file;
 		thumbnailChanged = true;
+		selectedPreset = null;
 		if (thumbnailPreview) URL.revokeObjectURL(thumbnailPreview);
 		thumbnailPreview = URL.createObjectURL(file);
 
@@ -425,6 +431,7 @@
 	function removeThumbnail() {
 		thumbnailFile = null;
 		thumbnailChanged = true;
+		selectedPreset = null;
 		if (thumbnailPreview) {
 			URL.revokeObjectURL(thumbnailPreview);
 			thumbnailPreview = null;
@@ -436,6 +443,24 @@
 		if (fileInput) fileInput.value = '';
 		saveDraft();
 	}
+
+	let thumbnailDateStr = $derived.by(() => {
+		if (!startsAt) return '';
+		const d = new Date(startsAt);
+		if (isNaN(d.getTime())) return '';
+		return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+	});
+
+	// Render preset preview canvas
+	$effect(() => {
+		if (selectedPreset && presetPreviewCanvas && designs[selectedPreset.design]) {
+			const ctx = presetPreviewCanvas.getContext('2d');
+			if (!ctx) return;
+			presetPreviewCanvas.width = 800;
+			presetPreviewCanvas.height = 800;
+			designs[selectedPreset.design](ctx, 800, 800, name || 'Event', thumbnailDateStr, selectedPreset.seed);
+		}
+	});
 
 	// Auto-set end date to 1 hour after start if empty
 	$effect(() => {
@@ -523,6 +548,20 @@
 		submitting = true;
 
 		try {
+			// Generate thumbnail from preset if selected and no custom upload
+			if (selectedPreset && !thumbnailFile && designs[selectedPreset.design]) {
+				const canvas = document.createElement('canvas');
+				canvas.width = 800;
+				canvas.height = 800;
+				const ctx = canvas.getContext('2d')!;
+				designs[selectedPreset.design](ctx, 800, 800, name.trim() || 'Event', thumbnailDateStr, selectedPreset.seed);
+				const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'));
+				if (blob) {
+					thumbnailFile = new File([blob], 'thumbnail.png', { type: 'image/png' });
+					thumbnailChanged = true;
+				}
+			}
+
 			let media: Array<Record<string, unknown>> | undefined;
 
 			// Start with existing media, excluding thumbnail role
@@ -689,6 +728,20 @@
 			const startNum = detectedStartNumber ?? 1;
 			const hasHash = titleNumberMatch ? titleNumberMatch[0].includes('#') : false;
 
+			// Generate thumbnail from preset if selected and no custom upload
+			if (selectedPreset && !thumbnailFile && designs[selectedPreset.design]) {
+				const canvas = document.createElement('canvas');
+				canvas.width = 800;
+				canvas.height = 800;
+				const ctx = canvas.getContext('2d')!;
+				designs[selectedPreset.design](ctx, 800, 800, name.trim() || 'Event', thumbnailDateStr, selectedPreset.seed);
+				const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'));
+				if (blob) {
+					thumbnailFile = new File([blob], 'thumbnail.png', { type: 'image/png' });
+					thumbnailChanged = true;
+				}
+			}
+
 			// Build the same record shape as handleSubmit
 			let media: Array<Record<string, unknown>> | undefined;
 			const existingMedia = (eventData?.media ?? []) as Array<Record<string, unknown>>;
@@ -826,7 +879,7 @@
 							bind:this={fileInput}
 							type="file"
 							accept="image/*"
-							onchange={onFileChange}
+							onchange={(e) => { onFileChange(e); showThumbnailModal = false; }}
 							class="hidden"
 						/>
 						<div class="group relative">
@@ -836,6 +889,10 @@
 									alt="Thumbnail preview"
 									class="border-base-200 dark:border-base-800 aspect-square w-full rounded-2xl border object-cover"
 								/>
+							{:else if selectedPreset && designs[selectedPreset.design]}
+								<div class="border-base-200 dark:border-base-800 aspect-square w-full overflow-hidden rounded-2xl border">
+									<canvas bind:this={presetPreviewCanvas} class="h-full w-full"></canvas>
+								</div>
 							{:else}
 								<div
 									class="bg-base-100 dark:bg-base-900 aspect-square w-full overflow-hidden rounded-2xl [&>svg]:h-full [&>svg]:w-full"
@@ -849,10 +906,9 @@
 									/>
 								</div>
 							{/if}
-							<!-- Upload overlay on hover -->
 							<button
 								type="button"
-								onclick={() => fileInput?.click()}
+								onclick={() => (showThumbnailModal = true)}
 								class="absolute inset-0 flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-2xl bg-black/0 text-white/0 transition-colors group-hover:bg-black/40 group-hover:text-white/90 {isDragOver
 									? 'bg-black/40 text-white/90'
 									: ''}"
@@ -871,9 +927,9 @@
 										d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z"
 									/>
 								</svg>
-								<span class="text-sm font-medium">Upload thumbnail</span>
+								<span class="text-sm font-medium">Change thumbnail</span>
 							</button>
-							{#if thumbnailPreview}
+							{#if thumbnailPreview || selectedPreset}
 								<Button
 									variant="ghost"
 									size="iconSm"
@@ -1247,6 +1303,40 @@
 		{/if}
 	</div>
 </div>
+
+<!-- Thumbnail modal -->
+<Modal bind:open={showThumbnailModal}>
+	<p class="text-base-900 dark:text-base-50 text-lg font-semibold">Choose thumbnail</p>
+	<div class="mt-4 flex max-h-[70vh] flex-col gap-6 overflow-y-auto">
+		<Button
+			variant="secondary"
+			class="w-full"
+			onclick={() => fileInput?.click()}
+		>
+			<svg
+				xmlns="http://www.w3.org/2000/svg"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke-width="1.5"
+				stroke="currentColor"
+				class="size-4"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
+				/>
+			</svg>
+			Upload own thumbnail
+		</Button>
+		<ThumbnailPresets
+			name={name}
+			dateStr={thumbnailDateStr}
+			bind:selected={selectedPreset}
+			onselect={() => { showThumbnailModal = false; thumbnailPreview = null; thumbnailFile = null; thumbnailChanged = true; }}
+		/>
+	</div>
+</Modal>
 
 <!-- Location modal -->
 <Modal bind:open={showLocationModal}>

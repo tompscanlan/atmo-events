@@ -119,7 +119,7 @@
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
-			class="border-base-300 bg-base-100 text-base-900 focus-within:border-accent-500 dark:border-base-700 dark:bg-base-800 dark:text-base-100 dark:focus-within:border-accent-400 flex shrink-0 cursor-pointer items-center whitespace-nowrap rounded-xl border px-2.5 py-1.5 text-sm transition-colors"
+			class="border-base-300 bg-base-100 text-base-900 focus-within:border-accent-500 dark:border-base-700 dark:bg-base-800 dark:text-base-100 dark:focus-within:border-accent-400 flex shrink-0 cursor-pointer items-center whitespace-nowrap rounded-xl border px-2.5 py-1.5 text-sm min-w-[7.5rem] transition-colors"
 			onfocusin={() => (isOpen = true)}
 		>
 			<TimeField.Input>
