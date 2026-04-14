@@ -9,11 +9,27 @@ export const collections = [
 
 export type AllowedCollection = (typeof collections)[number];
 
+/** Permissioned-spaces XRPC methods the app needs to call on the user's behalf.
+ *  `aud: '*'` lets one consent cover dev (tunnel DID) and prod (published DID) without re-consenting. */
+const spaceMethods = [
+	'tools.atmo.space.admin.createSpace',
+	'tools.atmo.space.admin.addMember',
+	'tools.atmo.space.putRecord',
+	'tools.atmo.space.listRecords',
+	'tools.atmo.space.getRecord',
+	'tools.atmo.space.getSpace',
+	'tools.atmo.space.invite.create',
+	'tools.atmo.space.invite.redeem',
+	'tools.atmo.space.invite.list',
+	'tools.atmo.space.invite.revoke'
+] as const;
+
 // OAuth scope — add scope.blob(), scope.rpc(), etc. as needed
 export const scopes = [
 	'atproto',
 	scope.repo({ collection: [...collections] }),
-	scope.blob({ accept: ['image/*'] })
+	scope.blob({ accept: ['image/*'] }),
+	...spaceMethods.map((lxm) => scope.rpc({ lxm: [lxm], aud: '*' }))
 ];
 
 // set to false to disable signup

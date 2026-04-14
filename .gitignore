@@ -25,3 +25,6 @@ scripts/vod-processing/model
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Tunnel-generated (only meaningful while tunnel is running)
+static/.well-known/did.json
