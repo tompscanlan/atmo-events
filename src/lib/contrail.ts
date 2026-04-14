@@ -2,9 +2,9 @@ import '../lexicon-types/index.js';
 import type { EventData } from '$lib/event-types';
 import type {
 	RsvpAtmoGetProfile,
-	CommunityLexiconCalendarEventGetRecord,
-	CommunityLexiconCalendarEventListRecords,
-	CommunityLexiconCalendarRsvpListRecords
+	RsvpAtmoEventGetRecord,
+	RsvpAtmoEventListRecords,
+	RsvpAtmoRsvpListRecords
 } from '../lexicon-types';
 import type { Client } from '@atcute/client';
 import type { ActorIdentifier } from '@atcute/lexicons';
@@ -16,14 +16,14 @@ export const RSVP_GOING = 'community.lexicon.calendar.rsvp#going';
 export const RSVP_INTERESTED = 'community.lexicon.calendar.rsvp#interested';
 
 type ProfileOutput = RsvpAtmoGetProfile.$output;
-type EventListOutput = CommunityLexiconCalendarEventListRecords.$output;
-type EventListRecord = CommunityLexiconCalendarEventListRecords.Record;
-type EventProfileEntry = CommunityLexiconCalendarEventListRecords.ProfileEntry;
-type EventGetOutput = CommunityLexiconCalendarEventGetRecord.$output;
-type EventGetProfileEntry = CommunityLexiconCalendarEventGetRecord.ProfileEntry;
-type RsvpListRecord = CommunityLexiconCalendarRsvpListRecords.Record;
-type RsvpProfileEntry = CommunityLexiconCalendarRsvpListRecords.ProfileEntry;
-type HydratedEventRecord = CommunityLexiconCalendarRsvpListRecords.RefEventRecord;
+type EventListOutput = RsvpAtmoEventListRecords.$output;
+type EventListRecord = RsvpAtmoEventListRecords.Record;
+type EventProfileEntry = RsvpAtmoEventListRecords.ProfileEntry;
+type EventGetOutput = RsvpAtmoEventGetRecord.$output;
+type EventGetProfileEntry = RsvpAtmoEventGetRecord.ProfileEntry;
+type RsvpListRecord = RsvpAtmoRsvpListRecords.Record;
+type RsvpProfileEntry = RsvpAtmoRsvpListRecords.ProfileEntry;
+type HydratedEventRecord = RsvpAtmoRsvpListRecords.RefEventRecord;
 type FlattenableEventRecord = EventListRecord | EventGetOutput | HydratedEventRecord;
 type EventProfiles = EventProfileEntry[] | EventGetProfileEntry[] | undefined;
 type EventRsvps = EventListRecord['rsvps'] | EventGetOutput['rsvps'];
@@ -33,6 +33,8 @@ export type FlatEventRecord = EventData & {
 	did: string;
 	rkey: string;
 	uri: string;
+	/** Populated when the event was read from a permissioned space. */
+	space?: string;
 	rsvps?: EventRsvps;
 	rsvpsCount?: number;
 	rsvpsGoingCount?: number;
@@ -113,6 +115,7 @@ export function flattenEventRecord(record: FlattenableEventRecord): FlatEventRec
 		did: record.did,
 		rkey: record.rkey,
 		uri: record.uri,
+		...('space' in record && typeof record.space === 'string' ? { space: record.space } : {}),
 		...('rsvps' in record ? { rsvps: record.rsvps } : {}),
 		...('rsvpsCount' in record ? { rsvpsCount: record.rsvpsCount } : {}),
 		...('rsvpsGoingCount' in record ? { rsvpsGoingCount: record.rsvpsGoingCount } : {}),
@@ -127,6 +130,20 @@ export function flattenEventRecords(records: EventListRecord[]): FlatEventRecord
 	return records
 		.map((record) => flattenEventRecord(record))
 		.filter((record): record is FlatEventRecord => record !== null);
+}
+
+/** Build the canonical path for an event. Private events (those with a `space`
+ *  field from contrail's union) live under `/p/<actor>/e/<rkey>/s/<skey>` so
+ *  the page knows both which event to show and which space to look in. Public
+ *  events use `/p/<actor>/e/<rkey>`. */
+export function eventUrl(event: FlatEventRecord, actor?: string): string {
+	const who = actor || event.did;
+	if (event.space) {
+		const m = event.space.match(/^at:\/\/[^/]+\/[^/]+\/([^/]+)$/);
+		const skey = m?.[1];
+		if (skey) return `/p/${who}/e/${event.rkey}/s/${skey}`;
+	}
+	return `/p/${who}/e/${event.rkey}`;
 }
 
 export function getHostProfile(did: string, profiles?: EventProfiles): HostProfile | null {
@@ -215,20 +232,20 @@ export async function notifyContrailOfUpdate(uri: string) {
 export async function getProfileFromContrail(
 	client: Client,
 	actor: ActorIdentifier
-): Promise<ProfileOutput | null> {
+): Promise<ProfileOutput['profiles'][number] | null> {
 	const response = await client.get('rsvp.atmo.getProfile', {
 		params: { actor }
 	});
 
 	if (!response.ok) return null;
-	return response.data;
+	return response.data.profiles?.[0] ?? null;
 }
 
 export async function listEventRecordsFromContrail(
 	client: Client,
 	params: ListEventsParams
 ): Promise<EventListOutput | null> {
-	const response = await client.get('community.lexicon.calendar.event.listRecords', {
+	const response = await client.get('rsvp.atmo.event.listRecords', {
 		params
 	});
 
@@ -250,7 +267,7 @@ export async function getEventRecordFromContrail(
 		profiles?: boolean;
 	}
 ): Promise<EventGetOutput | null> {
-	const response = await client.get('community.lexicon.calendar.event.getRecord', {
+	const response = await client.get('rsvp.atmo.event.getRecord', {
 		params: {
 			uri: `at://${did}/community.lexicon.calendar.event/${rkey}`,
 			...(hydrateRsvps ? { hydrateRsvps } : {}),
@@ -272,7 +289,7 @@ export async function getViewerRsvpFromContrail(
 		actor: ActorIdentifier;
 	}
 ): Promise<RsvpListRecord | null> {
-	const response = await client.get('community.lexicon.calendar.rsvp.listRecords', {
+	const response = await client.get('rsvp.atmo.rsvp.listRecords', {
 		params: {
 			actor,
 			subjectUri: eventUri,
@@ -289,7 +306,7 @@ export async function listEventAttendeesFromContrail(
 	eventUri: string
 ): Promise<EventAttendeesResult> {
 	const [goingResponse, interestedResponse] = await Promise.all([
-		client.get('community.lexicon.calendar.rsvp.listRecords', {
+		client.get('rsvp.atmo.rsvp.listRecords', {
 			params: {
 				subjectUri: eventUri,
 				status: RSVP_GOING,
@@ -297,7 +314,7 @@ export async function listEventAttendeesFromContrail(
 				limit: 200
 			}
 		}),
-		client.get('community.lexicon.calendar.rsvp.listRecords', {
+		client.get('rsvp.atmo.rsvp.listRecords', {
 			params: {
 				subjectUri: eventUri,
 				status: RSVP_INTERESTED,
@@ -337,7 +354,7 @@ export async function listEventAttendeesFromContrail(
 }
 
 export async function listAttendingEventsFromContrail(client: Client, actor: ActorIdentifier) {
-	const response = await client.get('community.lexicon.calendar.rsvp.listRecords', {
+	const response = await client.get('rsvp.atmo.rsvp.listRecords', {
 		params: {
 			actor,
 			hydrateEvent: true,

@@ -4,18 +4,26 @@ import {
 	getServerClient,
 	listEventRecordsFromContrail
 } from '$lib/contrail';
+import { getSpacesClient } from '$lib/spaces/server/client';
+import { spacesAvailable } from '$lib/spaces/config';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals, platform }) => {
-	const client = getServerClient(platform!.env.DB);
 	if (!locals.did) {
 		return { events: [], loggedIn: false };
 	}
+	// Authenticated + spaces configured → use the service-auth client so the
+	// server unions public events with events from every space the user is in.
+	// Falls back to the unauthenticated client otherwise (public-only).
+	const client =
+		locals.client && spacesAvailable()
+			? getSpacesClient(locals.client, platform!.env.DB)
+			: getServerClient(platform!.env.DB);
 
 	const now = new Date().toISOString();
 
 	const [rsvpResponse, hostingResponse] = await Promise.all([
-		client.get('community.lexicon.calendar.rsvp.listRecords', {
+		client.get('rsvp.atmo.rsvp.listRecords', {
 			params: { actor: locals.did, hydrateEvent: true, limit: 100 }
 		}),
 		listEventRecordsFromContrail(client, {

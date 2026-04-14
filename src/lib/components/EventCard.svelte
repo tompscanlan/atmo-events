@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getCDNImageBlobUrl } from '$lib/atproto';
-	import { isEventOngoing, type FlatEventRecord } from '$lib/contrail';
+	import { eventUrl, isEventOngoing, type FlatEventRecord } from '$lib/contrail';
 	import Avatar from 'svelte-boring-avatars';
 
 	let {
@@ -63,7 +63,7 @@
 </script>
 
 <a
-	href="/p/{actor || event.did}/e/{event.rkey}"
+	href={eventUrl(event, actor)}
 	class="group grid grid-cols-[4rem_1fr] gap-3 transition-colors sm:grid-cols-[5rem_1fr] sm:gap-4"
 >
 	<div class="w-full">
@@ -99,9 +99,24 @@
 			{/if}
 		</p>
 		<h3
-			class="text-base-900 dark:text-base-50 group-hover:text-base-700 dark:group-hover:text-base-200 mt-0.5 line-clamp-2 text-sm leading-snug font-semibold transition-colors sm:text-base"
+			class="text-base-900 dark:text-base-50 group-hover:text-base-700 dark:group-hover:text-base-200 mt-0.5 line-clamp-2 flex items-start gap-1.5 text-sm leading-snug font-semibold transition-colors sm:text-base"
 		>
-			{event.name}
+			{#if event.space}
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					class="text-base-500 dark:text-base-400 mt-0.5 size-3.5 shrink-0"
+					aria-label="Private event"
+				>
+					<rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+					<path d="M7 11V7a5 5 0 0 1 10 0v4" />
+				</svg>
+			{/if}
+			<span>{event.name}</span>
 		</h3>
 		{#if location || mode}
 			<p class="text-base-500 dark:text-base-400 mt-1 text-xs">

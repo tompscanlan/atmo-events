@@ -1,7 +1,10 @@
 import { dev } from '$app/environment';
 import { scope } from '@atcute/oauth-node-client';
 
-// writable collections
+// writable collections — declared as a standalone scope because their NSIDs
+// (`community.lexicon.*`) sit outside our namespace, so they can't go in
+// `rsvp.atmo.permissionSet` (permission sets can only reference NSIDs in their
+// own namespace).
 export const collections = [
 	'community.lexicon.calendar.event',
 	'community.lexicon.calendar.rsvp'
@@ -9,27 +12,16 @@ export const collections = [
 
 export type AllowedCollection = (typeof collections)[number];
 
-/** Permissioned-spaces XRPC methods the app needs to call on the user's behalf.
- *  `aud: '*'` lets one consent cover dev (tunnel DID) and prod (published DID) without re-consenting. */
-const spaceMethods = [
-	'tools.atmo.space.admin.createSpace',
-	'tools.atmo.space.admin.addMember',
-	'tools.atmo.space.putRecord',
-	'tools.atmo.space.listRecords',
-	'tools.atmo.space.getRecord',
-	'tools.atmo.space.getSpace',
-	'tools.atmo.space.invite.create',
-	'tools.atmo.space.invite.redeem',
-	'tools.atmo.space.invite.list',
-	'tools.atmo.space.invite.revoke'
-] as const;
-
-// OAuth scope — add scope.blob(), scope.rpc(), etc. as needed
+// OAuth scopes. `include:rsvp.atmo.permissionSet?aud=*` bundles every rpc method
+// the deployment exposes; `aud=*` lets the same consent cover dev (tunnel DID)
+// and prod (published DID) without re-consenting. Repo writes and blob uploads
+// live as standalone scopes since they reference NSIDs (or resource kinds)
+// outside the `rsvp.atmo` namespace.
 export const scopes = [
 	'atproto',
 	scope.repo({ collection: [...collections] }),
 	scope.blob({ accept: ['image/*'] }),
-	...spaceMethods.map((lxm) => scope.rpc({ lxm: [lxm], aud: '*' }))
+	'include:rsvp.atmo.permissionSet'
 ];
 
 // set to false to disable signup

@@ -26,7 +26,8 @@
 		"vods:download": "tsx scripts/vod-processing/download-audio.ts",
 		"vods:transcribe": "tsx scripts/vod-processing/transcribe.ts",
 		"vods:summarize": "tsx scripts/vod-processing/summarize.ts",
-		"vods:vtt": "tsx scripts/vod-processing/generate-vtt.ts"
+		"vods:vtt": "tsx scripts/vod-processing/generate-vtt.ts",
+		"publish-lexicons": "tsx --env-file=.env scripts/publish-lexicons.ts"
 	},
 	"devDependencies": {
 		"@atcute/atproto": "^3.1.10",

@@ -1,30 +1,68 @@
 {
   "lexicon": 1,
-  "id": "community.lexicon.calendar.event.getRecord",
+  "id": "rsvp.atmo.rsvp.listRecords",
   "defs": {
     "main": {
       "type": "query",
-      "description": "Get a single community.lexicon.calendar.event record by AT URI",
+      "description": "Query community.lexicon.calendar.rsvp records with filters",
       "parameters": {
         "type": "params",
-        "required": [
-          "uri"
-        ],
         "properties": {
-          "uri": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50
+          },
+          "cursor": {
+            "type": "string"
+          },
+          "actor": {
             "type": "string",
-            "format": "at-uri",
-            "description": "AT URI of the record"
+            "format": "at-identifier",
+            "description": "Filter by DID or handle (triggers on-demand backfill)"
           },
           "profiles": {
             "type": "boolean",
             "description": "Include profile + identity info keyed by DID"
           },
-          "hydrateRsvps": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 50,
-            "description": "Number of rsvps records to embed"
+          "spaceUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "If set, query records inside this permissioned space (requires service-auth JWT)."
+          },
+          "byUser": {
+            "type": "string",
+            "format": "did",
+            "description": "Only used with spaceUri — filter to records authored by this DID."
+          },
+          "status": {
+            "type": "string",
+            "description": "Filter by status"
+          },
+          "subjectUri": {
+            "type": "string",
+            "description": "Filter by subject.uri"
+          },
+          "hydrateEvent": {
+            "type": "boolean",
+            "description": "Embed the referenced event record"
+          },
+          "sort": {
+            "type": "string",
+            "knownValues": [
+              "status",
+              "subjectUri"
+            ],
+            "description": "Field to sort by (default: time_us)"
+          },
+          "order": {
+            "type": "string",
+            "knownValues": [
+              "asc",
+              "desc"
+            ],
+            "description": "Sort direction (default: desc for dates/numbers/counts, asc for strings)"
           }
         }
       },
@@ -33,57 +71,18 @@
         "schema": {
           "type": "object",
           "required": [
-            "uri",
-            "did",
-            "collection",
-            "rkey",
-            "time_us"
+            "records"
           ],
           "properties": {
-            "uri": {
-              "type": "string",
-              "format": "at-uri"
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "ref",
+                "ref": "#record"
+              }
             },
-            "did": {
-              "type": "string",
-              "format": "did"
-            },
-            "collection": {
-              "type": "string",
-              "format": "nsid"
-            },
-            "rkey": {
+            "cursor": {
               "type": "string"
-            },
-            "cid": {
-              "type": "string"
-            },
-            "record": {
-              "type": "ref",
-              "ref": "community.lexicon.calendar.event#main"
-            },
-            "time_us": {
-              "type": "integer"
-            },
-            "rsvpsCount": {
-              "type": "integer",
-              "description": "Total rsvps count"
-            },
-            "rsvpsInterestedCount": {
-              "type": "integer",
-              "description": "rsvps count where status = interested"
-            },
-            "rsvpsGoingCount": {
-              "type": "integer",
-              "description": "rsvps count where status = going"
-            },
-            "rsvpsNotgoingCount": {
-              "type": "integer",
-              "description": "rsvps count where status = notgoing"
-            },
-            "rsvps": {
-              "type": "ref",
-              "ref": "#hydrateRsvps"
             },
             "profiles": {
               "type": "array",
@@ -96,7 +95,7 @@
         }
       }
     },
-    "hydrateRsvpsRecord": {
+    "record": {
       "type": "object",
       "required": [
         "uri",
@@ -130,39 +129,57 @@
         },
         "time_us": {
           "type": "integer"
+        },
+        "space": {
+          "type": "string",
+          "format": "at-uri",
+          "description": "Present when the record was read from a permissioned space; its value is the space URI."
+        },
+        "event": {
+          "type": "ref",
+          "ref": "#refEventRecord"
         }
       }
     },
-    "hydrateRsvps": {
+    "refEventRecord": {
       "type": "object",
+      "required": [
+        "uri",
+        "did",
+        "collection",
+        "rkey",
+        "time_us"
+      ],
       "properties": {
-        "interested": {
-          "type": "array",
-          "items": {
-            "type": "ref",
-            "ref": "#hydrateRsvpsRecord"
-          }
+        "uri": {
+          "type": "string",
+          "format": "at-uri"
         },
-        "going": {
-          "type": "array",
-          "items": {
-            "type": "ref",
-            "ref": "#hydrateRsvpsRecord"
-          }
+        "did": {
+          "type": "string",
+          "format": "did"
         },
-        "notgoing": {
-          "type": "array",
-          "items": {
-            "type": "ref",
-            "ref": "#hydrateRsvpsRecord"
-          }
+        "collection": {
+          "type": "string",
+          "format": "nsid"
         },
-        "other": {
-          "type": "array",
-          "items": {
-            "type": "ref",
-            "ref": "#hydrateRsvpsRecord"
-          }
+        "rkey": {
+          "type": "string"
+        },
+        "cid": {
+          "type": "string"
+        },
+        "record": {
+          "type": "ref",
+          "ref": "community.lexicon.calendar.event#main"
+        },
+        "time_us": {
+          "type": "integer"
+        },
+        "space": {
+          "type": "string",
+          "format": "at-uri",
+          "description": "Present when the record was read from a permissioned space."
         }
       }
     },

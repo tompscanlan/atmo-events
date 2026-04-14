@@ -9,6 +9,6 @@ export default defineConfig({
 	server: {
 		host: '127.0.0.1',
 		port: DEV_PORT,
-		allowedHosts: ['scroll-heat-flowers-software.trycloudflare.com']
+		allowedHosts: ['kid-retention-reservation-proc.trycloudflare.com']
 	}
 });

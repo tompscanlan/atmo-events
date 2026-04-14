@@ -42,11 +42,14 @@
 	let {
 		eventData = null,
 		actorDid,
-		rkey
+		rkey,
+		privateMode = false
 	}: {
 		eventData: FlatEventRecord | null;
 		actorDid: string;
 		rkey: string;
+		/** If true, save writes into a permissioned space instead of the user's public PDS. */
+		privateMode?: boolean;
 	} = $props();
 
 	let isNew = $derived(eventData === null);
@@ -637,6 +640,20 @@
 				// If changed/new but no location, locations stays undefined (removed/absent)
 			} else if (eventData?.locations && eventData.locations.length > 0) {
 				record.locations = eventData.locations;
+			}
+
+			if (privateMode) {
+				const { createPrivateEvent } = await import('$lib/spaces/server/spaces.remote');
+				const { spaceUri, rkey: eventRkey } = await createPrivateEvent({ key: rkey, record });
+				localStorage.removeItem(DRAFT_KEY);
+				if (thumbnailKey) deleteImage(thumbnailKey);
+				const spaceKey = spaceUri.split('/').pop();
+				const handle =
+					user.profile?.handle && user.profile.handle !== 'handle.invalid'
+						? user.profile.handle
+						: user.did;
+				goto(`/p/${handle}/e/${eventRkey}/s/${spaceKey}?created=true`);
+				return;
 			}
 
 			const response = await putRecord({

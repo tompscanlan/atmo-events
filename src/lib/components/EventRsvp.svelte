@@ -11,6 +11,7 @@
 		eventCid,
 		initialRsvpStatus = null,
 		initialRsvpRkey = null,
+		spaceUri = null,
 		onrsvp,
 		oncancel,
 		onlogin
@@ -19,6 +20,8 @@
 		eventCid: string | null;
 		initialRsvpStatus?: 'going' | 'interested' | 'notgoing' | null;
 		initialRsvpRkey?: string | null;
+		/** If set, RSVPs write into this space instead of the user's public PDS. */
+		spaceUri?: string | null;
 		onrsvp?: (status: 'going' | 'interested', rkey: string) => void;
 		oncancel?: () => void;
 		onlogin?: () => void;
@@ -38,25 +41,40 @@
 		rsvpSubmitting = true;
 		try {
 			const key = rsvpRkey ?? createTID();
+			const record = {
+				$type: 'community.lexicon.calendar.rsvp',
+				createdWith: 'https://atmo.rsvp',
+				status: `community.lexicon.calendar.rsvp#${status}`,
+				subject: {
+					uri: eventUri,
+					...(eventCid ? { cid: eventCid } : {})
+				},
+				createdAt: new Date().toISOString()
+			};
 
-			const response = await putRecord({
-				collection: 'community.lexicon.calendar.rsvp',
-				rkey: key,
-				record: {
-					$type: 'community.lexicon.calendar.rsvp',
-					createdWith: 'https://atmo.rsvp',
-					status: `community.lexicon.calendar.rsvp#${status}`,
-					subject: {
-						uri: eventUri,
-						...(eventCid ? { cid: eventCid } : {})
-					},
-					createdAt: new Date().toISOString()
+			let ok = false;
+			if (spaceUri) {
+				const { putSpaceRecord } = await import('$lib/spaces/server/spaces.remote');
+				const result = await putSpaceRecord({
+					spaceUri,
+					collection: 'community.lexicon.calendar.rsvp',
+					rkey: key,
+					record
+				});
+				ok = !!result;
+			} else {
+				const response = await putRecord({
+					collection: 'community.lexicon.calendar.rsvp',
+					rkey: key,
+					record
+				});
+				ok = response.ok;
+				if (ok) {
+					notifyContrailOfUpdate(`at://${user.did}/community.lexicon.calendar.rsvp/${key}`);
 				}
-			});
+			}
 
-			if (response.ok) {
-				const rsvpUri = `at://${user.did}/community.lexicon.calendar.rsvp/${key}`;
-				notifyContrailOfUpdate(rsvpUri);
+			if (ok) {
 				rsvpStatusOverride = status;
 				rsvpRkeyOverride = key;
 				launchConfetti();
@@ -73,12 +91,22 @@
 		if (!user.isLoggedIn || !user.did || !rsvpRkey) return;
 		rsvpSubmitting = true;
 		try {
-			const rsvpUri = `at://${user.did}/community.lexicon.calendar.rsvp/${rsvpRkey}`;
-			await deleteRecord({
-				collection: 'community.lexicon.calendar.rsvp',
-				rkey: rsvpRkey
-			});
-			notifyContrailOfUpdate(rsvpUri);
+			if (spaceUri) {
+				const { deleteSpaceRecord } = await import('$lib/spaces/server/spaces.remote');
+				await deleteSpaceRecord({
+					spaceUri,
+					collection: 'community.lexicon.calendar.rsvp',
+					rkey: rsvpRkey
+				});
+			} else {
+				await deleteRecord({
+					collection: 'community.lexicon.calendar.rsvp',
+					rkey: rsvpRkey
+				});
+				notifyContrailOfUpdate(
+					`at://${user.did}/community.lexicon.calendar.rsvp/${rsvpRkey}`
+				);
+			}
 			rsvpStatusOverride = null;
 			rsvpRkeyOverride = null;
 			oncancel?.();

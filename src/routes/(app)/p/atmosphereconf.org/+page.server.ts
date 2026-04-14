@@ -19,7 +19,7 @@ export async function load({ locals, platform }) {
 			limit: 200
 		}),
 		locals.did
-			? client.get('community.lexicon.calendar.rsvp.listRecords', {
+			? client.get('rsvp.atmo.rsvp.listRecords', {
 					params: { actor: locals.did, limit: 200 }
 				})
 			: null

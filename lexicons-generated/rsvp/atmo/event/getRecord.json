@@ -1,10 +1,10 @@
 {
   "lexicon": 1,
-  "id": "community.lexicon.calendar.rsvp.getRecord",
+  "id": "rsvp.atmo.event.getRecord",
   "defs": {
     "main": {
       "type": "query",
-      "description": "Get a single community.lexicon.calendar.rsvp record by AT URI",
+      "description": "Get a single community.lexicon.calendar.event record by AT URI",
       "parameters": {
         "type": "params",
         "required": [
@@ -20,9 +20,16 @@
             "type": "boolean",
             "description": "Include profile + identity info keyed by DID"
           },
-          "hydrateEvent": {
-            "type": "boolean",
-            "description": "Embed the referenced event record"
+          "spaceUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "If set, fetch from this permissioned space (requires service-auth JWT)."
+          },
+          "hydrateRsvps": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "Number of rsvps records to embed"
           }
         }
       },
@@ -58,14 +65,35 @@
             },
             "record": {
               "type": "ref",
-              "ref": "community.lexicon.calendar.rsvp#main"
+              "ref": "community.lexicon.calendar.event#main"
             },
             "time_us": {
               "type": "integer"
             },
-            "event": {
+            "space": {
+              "type": "string",
+              "format": "at-uri",
+              "description": "Present when the record was read from a permissioned space; its value is the space URI."
+            },
+            "rsvpsCount": {
+              "type": "integer",
+              "description": "Total rsvps count"
+            },
+            "rsvpsInterestedCount": {
+              "type": "integer",
+              "description": "rsvps count where status = interested"
+            },
+            "rsvpsGoingCount": {
+              "type": "integer",
+              "description": "rsvps count where status = going"
+            },
+            "rsvpsNotgoingCount": {
+              "type": "integer",
+              "description": "rsvps count where status = notgoing"
+            },
+            "rsvps": {
               "type": "ref",
-              "ref": "#refEventRecord"
+              "ref": "#hydrateRsvps"
             },
             "profiles": {
               "type": "array",
@@ -78,7 +106,7 @@
         }
       }
     },
-    "refEventRecord": {
+    "hydrateRsvpsRecord": {
       "type": "object",
       "required": [
         "uri",
@@ -108,10 +136,48 @@
         },
         "record": {
           "type": "ref",
-          "ref": "community.lexicon.calendar.event#main"
+          "ref": "community.lexicon.calendar.rsvp#main"
         },
         "time_us": {
           "type": "integer"
+        },
+        "space": {
+          "type": "string",
+          "format": "at-uri",
+          "description": "Present when the record was read from a permissioned space."
+        }
+      }
+    },
+    "hydrateRsvps": {
+      "type": "object",
+      "properties": {
+        "interested": {
+          "type": "array",
+          "items": {
+            "type": "ref",
+            "ref": "#hydrateRsvpsRecord"
+          }
+        },
+        "going": {
+          "type": "array",
+          "items": {
+            "type": "ref",
+            "ref": "#hydrateRsvpsRecord"
+          }
+        },
+        "notgoing": {
+          "type": "array",
+          "items": {
+            "type": "ref",
+            "ref": "#hydrateRsvpsRecord"
+          }
+        },
+        "other": {
+          "type": "array",
+          "items": {
+            "type": "ref",
+            "ref": "#hydrateRsvpsRecord"
+          }
         }
       }
     },
