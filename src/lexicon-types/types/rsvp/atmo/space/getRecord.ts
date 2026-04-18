@@ -7,6 +7,10 @@ const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.space.getRecord", {
   params: /*#__PURE__*/ v.object({
     author: /*#__PURE__*/ v.didString(),
     collection: /*#__PURE__*/ v.nsidString(),
+    /**
+     * Read-grant invite token. When supplied, replaces JWT auth for this read.
+     */
+    inviteToken: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
     rkey: /*#__PURE__*/ v.string(),
     spaceUri: /*#__PURE__*/ v.resourceUriString(),
   }),

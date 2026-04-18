@@ -78,11 +78,15 @@ const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.rsvp.getRecord", {
      */
     hydrateEvent: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.boolean()),
     /**
+     * Read-grant invite token for anonymous bearer access. Replaces JWT auth when supplied.
+     */
+    inviteToken: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
+    /**
      * Include profile + identity info keyed by DID
      */
     profiles: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.boolean()),
     /**
-     * If set, fetch from this permissioned space (requires service-auth JWT).
+     * If set, fetch from this permissioned space (requires service-auth JWT or a read-grant invite token).
      */
     spaceUri: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.resourceUriString()),
     /**

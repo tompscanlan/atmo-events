@@ -18,12 +18,27 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 		return { authState: 'not-found' as const };
 	}
 
+	const spaceUri = `at://${ownerDid}/${SPACE_TYPE}/${params.skey}`;
+	const inviteToken = url.searchParams.get('invite') ?? undefined;
+	const hasInvite = inviteToken != null;
+
+	// Anonymous viewer with a `?invite=...` token: try to read the space using
+	// the bearer-token path (works only for `read` / `read-join` invites). On
+	// success we render the event in read-only mode; on failure we drop back to
+	// the standard auth flow (anon prompt or pending-invite redeem).
 	if (!locals.did) {
+		if (!hasInvite) return { authState: 'anon' as const };
+		const anon = await loadByInviteToken(
+			platform!.env.DB,
+			spaceUri,
+			inviteToken!,
+			ownerDid,
+			params.actor,
+			params.rkey
+		);
+		if (anon) return anon;
 		return { authState: 'anon' as const };
 	}
-
-	const spaceUri = `at://${ownerDid}/${SPACE_TYPE}/${params.skey}`;
-	const hasInvite = url.searchParams.has('invite');
 
 	const spaceResult = await getPrivateSpace({ spaceUri }).catch((e) => {
 		console.error('[private-event-load] getPrivateSpace threw unexpectedly:', e);
@@ -151,3 +166,138 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 		ogImage: undefined as string | undefined
 	};
 };
+
+/** Anonymous read using a `read` / `read-join` invite token. Hits the spaces
+ *  XRPCs through the in-process server client with `inviteToken=...` instead
+ *  of a service-auth JWT. Returns the page data on success, or null if the
+ *  token is invalid/expired/revoked or the event isn't in the space. */
+async function loadByInviteToken(
+	db: D1Database,
+	spaceUri: string,
+	inviteToken: string,
+	ownerDid: string,
+	_actor: string,
+	eventRkey: string
+) {
+	const client = getServerClient(db);
+	const spaceUriParam = spaceUri as unknown as import('@atcute/lexicons').ResourceUri;
+
+	const [spaceRes, eventsRes, rsvpsRes] = await Promise.all([
+		client.get('rsvp.atmo.space.getSpace', {
+			params: { uri: spaceUriParam, inviteToken }
+		}),
+		client.get('rsvp.atmo.space.listRecords', {
+			params: {
+				spaceUri: spaceUriParam,
+				collection: 'community.lexicon.calendar.event' as `${string}.${string}.${string}`,
+				inviteToken
+			}
+		}),
+		client.get('rsvp.atmo.space.listRecords', {
+			params: {
+				spaceUri: spaceUriParam,
+				collection: 'community.lexicon.calendar.rsvp' as `${string}.${string}.${string}`,
+				inviteToken
+			}
+		})
+	]);
+
+	if (!spaceRes.ok || !eventsRes.ok) return null;
+
+	const events = (eventsRes.data.records ?? []) as Array<{
+		authorDid: string;
+		rkey: string;
+		cid?: string | null;
+		collection: string;
+		record: Record<string, unknown>;
+	}>;
+	const stored = events.find((e) => e.rkey === eventRkey);
+	if (!stored) return null;
+
+	const eventData = flattenEventRecord({
+		record: stored.record,
+		cid: stored.cid ?? null,
+		did: stored.authorDid,
+		rkey: stored.rkey,
+		uri: `at://${stored.authorDid}/${stored.collection}/${stored.rkey}`,
+		space: spaceUri
+	} as never) as FlatEventRecord | null;
+	if (!eventData) return null;
+
+	const rsvps = (rsvpsRes.ok ? rsvpsRes.data.records ?? [] : []) as Array<{
+		authorDid: string;
+		rkey: string;
+		record: { status?: string; createdAt?: string };
+	}>;
+
+	// Resolve profiles for host + RSVP authors via the public profile endpoint
+	// (no auth needed). Without this, attendees show as bare DIDs.
+	const profileDids = Array.from(new Set([ownerDid, ...rsvps.map((r) => r.authorDid)]));
+	const profileMap = new Map<string, HostProfile>();
+	await Promise.all(
+		profileDids.map(async (d) => {
+			try {
+				const p = await getProfileFromContrail(client, d as ActorIdentifier);
+				if (p) {
+					profileMap.set(d, {
+						did: p.did,
+						handle: p.handle && p.handle !== 'handle.invalid' ? p.handle : d,
+						displayName: p.record?.displayName,
+						avatar: p.record?.avatar ? getProfileBlobUrl(p.did, p.record.avatar) : undefined
+					});
+				}
+			} catch {
+				/* best-effort */
+			}
+		})
+	);
+
+	const hostProfile = profileMap.get(ownerDid) ?? null;
+
+	const shapeAttendee = (a: { did: string; rkey: string; createdAt?: string }) => {
+		const p = profileMap.get(a.did);
+		return {
+			did: a.did,
+			rkey: a.rkey,
+			handle: p?.handle ?? a.did,
+			displayName: p?.displayName,
+			avatar: p?.avatar,
+			createdAt: a.createdAt
+		};
+	};
+
+	const going: Array<{ did: string; rkey: string; createdAt?: string }> = [];
+	const interested: Array<{ did: string; rkey: string; createdAt?: string }> = [];
+	for (const r of rsvps) {
+		const short = r.record?.status?.split('#')[1];
+		if (short === 'going')
+			going.push({ did: r.authorDid, rkey: r.rkey, createdAt: r.record?.createdAt });
+		else if (short === 'interested')
+			interested.push({ did: r.authorDid, rkey: r.rkey, createdAt: r.record?.createdAt });
+	}
+
+	return {
+		authState: 'member' as const,
+		ownerDid: ownerDid as Did,
+		spaceUri,
+		spaceKey: spaceUri.split('/').pop() ?? '',
+		isOwner: false,
+		eventData,
+		actorDid: ownerDid,
+		rkey: eventRkey,
+		hostProfile,
+		attendees: {
+			going: going.map(shapeAttendee),
+			interested: interested.map(shapeAttendee),
+			goingCount: going.length,
+			interestedCount: interested.length
+		},
+		viewerRsvpStatus: null as 'going' | 'interested' | 'notgoing' | null,
+		viewerRsvpRkey: null as string | null,
+		parentEvent: null,
+		vod: null,
+		speakerProfiles: [] as Array<{ id?: string; name: string; avatar?: string; handle?: string }>,
+		ogImage: undefined as string | undefined,
+		viaInviteToken: true
+	};
+}

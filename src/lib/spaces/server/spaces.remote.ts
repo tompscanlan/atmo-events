@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { command, query, getRequestEvent } from '$app/server';
+import { dev } from '$app/environment';
 import * as v from 'valibot';
 import '../../../lexicon-types/index.js';
 import { getSpacesClient } from './client';
@@ -26,6 +27,7 @@ export const createPrivateEvent = command(
 		record: v.record(v.string(), v.unknown())
 	}),
 	async (input) => {
+		if (!dev) error(403, 'Private events are not available yet');
 		const { client } = getClient();
 
 		const createRes = await client.post('rsvp.atmo.space.admin.createSpace', {
@@ -149,6 +151,7 @@ export const removeMember = command(
 export const createInvite = command(
 	v.object({
 		spaceUri: atUriSchema,
+		kind: v.optional(v.picklist(['join', 'read', 'read-join'])),
 		perms: v.optional(v.string()),
 		expiresAt: v.optional(v.number()),
 		maxUses: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),

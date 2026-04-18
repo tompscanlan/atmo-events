@@ -99,7 +99,7 @@
 			{/if}
 		</p>
 		<h3
-			class="text-base-900 dark:text-base-50 group-hover:text-base-700 dark:group-hover:text-base-200 mt-0.5 line-clamp-2 flex items-start gap-1.5 text-sm leading-snug font-semibold transition-colors sm:text-base"
+			class="text-base-900 dark:text-base-50 group-hover:text-base-700 dark:group-hover:text-base-200 mt-0.5 line-clamp-2 flex items-center gap-1.5 text-sm leading-snug font-semibold transition-colors sm:text-base"
 		>
 			{#if event.space}
 				<svg

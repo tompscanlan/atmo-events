@@ -156,6 +156,10 @@ const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.event.listRecords", {
       ]),
     ),
     /**
+     * Read-grant invite token for anonymous bearer access. Replaces JWT auth when supplied.
+     */
+    inviteToken: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
+    /**
      * @minimum 1
      * @maximum 200
      * @default 50
@@ -179,6 +183,12 @@ const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.event.listRecords", {
      */
     order: /*#__PURE__*/ v.optional(
       /*#__PURE__*/ v.string<"asc" | "desc" | (string & {})>(),
+    ),
+    /**
+     * Filter by preferences.showInDiscovery
+     */
+    preferencesShowInDiscovery: /*#__PURE__*/ v.optional(
+      /*#__PURE__*/ v.string(),
     ),
     /**
      * Include profile + identity info keyed by DID
@@ -216,6 +226,7 @@ const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.event.listRecords", {
         | "endsAt"
         | "mode"
         | "name"
+        | "preferencesShowInDiscovery"
         | "rsvpsCount"
         | "rsvpsGoingCount"
         | "rsvpsInterestedCount"
@@ -226,7 +237,7 @@ const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.event.listRecords", {
       >(),
     ),
     /**
-     * If set, query records inside this permissioned space (requires service-auth JWT).
+     * If set, query records inside this permissioned space (requires service-auth JWT or a read-grant invite token).
      */
     spaceUri: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.resourceUriString()),
     /**

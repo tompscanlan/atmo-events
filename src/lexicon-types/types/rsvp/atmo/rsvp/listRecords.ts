@@ -87,6 +87,10 @@ const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.rsvp.listRecords", {
      */
     hydrateEvent: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.boolean()),
     /**
+     * Read-grant invite token for anonymous bearer access. Replaces JWT auth when supplied.
+     */
+    inviteToken: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
+    /**
      * @minimum 1
      * @maximum 200
      * @default 50
@@ -114,7 +118,7 @@ const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.rsvp.listRecords", {
       /*#__PURE__*/ v.string<"status" | "subjectUri" | (string & {})>(),
     ),
     /**
-     * If set, query records inside this permissioned space (requires service-auth JWT).
+     * If set, query records inside this permissioned space (requires service-auth JWT or a read-grant invite token).
      */
     spaceUri: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.resourceUriString()),
     /**

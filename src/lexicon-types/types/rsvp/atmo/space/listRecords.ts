@@ -12,6 +12,10 @@ const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.space.listRecords", {
     collection: /*#__PURE__*/ v.nsidString(),
     cursor: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
     /**
+     * Read-grant invite token. When supplied, replaces JWT auth for this read.
+     */
+    inviteToken: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
+    /**
      * @minimum 1
      * @maximum 200
      * @default 50

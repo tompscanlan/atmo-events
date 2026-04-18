@@ -13,7 +13,15 @@ const _mainSchema = /*#__PURE__*/ v.procedure("rsvp.atmo.space.invite.create", {
        */
       expiresAt: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.integer()),
       /**
-       * Omit for unlimited uses.
+       * join: redeem to become a member. read: bearer-only read access, no membership. read-join: anonymous read + signed-in redeem to join.
+       * @default "join"
+       */
+      kind: /*#__PURE__*/ v.optional(
+        /*#__PURE__*/ v.string<"join" | "read" | "read-join" | (string & {})>(),
+        "join",
+      ),
+      /**
+       * Caps join redemptions only — read-token reads are unlimited. Omit for unlimited joins.
        * @minimum 1
        */
       maxUses: /*#__PURE__*/ v.optional(

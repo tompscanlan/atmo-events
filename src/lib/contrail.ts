@@ -75,6 +75,7 @@ type ListEventsParams = {
 	rsvpsGoingCountMin?: number;
 	hydrateRsvps?: number;
 	profiles?: boolean;
+	preferencesShowInDiscovery?: string;
 	sort?: string;
 	order?: 'asc' | 'desc';
 	limit?: number;
@@ -248,6 +249,25 @@ export async function listEventRecordsFromContrail(
 	const response = await client.get('rsvp.atmo.event.listRecords', {
 		params
 	});
+
+	if (!response.ok) return null;
+	return response.data;
+}
+
+/**
+ * Hits the `listDiscoverable` pipelineQuery, which reuses the listRecords
+ * pipeline but adds a WHERE condition excluding events where
+ * `preferences.showInDiscovery === false`. Missing field is treated as true.
+ * Response shape is identical to listRecords.
+ */
+export async function listDiscoverableEventsFromContrail(
+	client: Client,
+	params: Omit<ListEventsParams, 'preferencesShowInDiscovery'>
+): Promise<EventListOutput | null> {
+	const response = await client.get(
+		'rsvp.atmo.event.listDiscoverable' as 'rsvp.atmo.event.listRecords',
+		{ params }
+	);
 
 	if (!response.ok) return null;
 	return response.data;

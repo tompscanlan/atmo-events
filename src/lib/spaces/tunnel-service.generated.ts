@@ -2,5 +2,5 @@
  *  When the tunnel is running, this file is rewritten with the tunnel's
  *  service DID + URL; when the tunnel stops, it is reset to null values. */
 
-export const SERVICE_DID: string | null = "did:web:kid-retention-reservation-proc.trycloudflare.com";
-export const SERVICE_URL: string | null = "https://kid-retention-reservation-proc.trycloudflare.com";
+export const SERVICE_DID: string | null = "did:web:salary-lists-seas-species.trycloudflare.com";
+export const SERVICE_URL: string | null = "https://salary-lists-seas-species.trycloudflare.com";

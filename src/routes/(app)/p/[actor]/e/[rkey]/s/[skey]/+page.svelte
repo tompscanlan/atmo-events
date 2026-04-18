@@ -15,6 +15,9 @@
 		const token = page.url.searchParams.get('invite');
 		if (!token) return;
 		if (data.authState === 'anon') return;
+		// Anonymous viewer who got in via the read-token bearer path — no
+		// redemption to do (they're not logged in, the link is just for reading).
+		if ('viaInviteToken' in data && data.viaInviteToken) return;
 
 		inviteBusy = true;
 		try {

@@ -18,6 +18,7 @@ const _inviteViewSchema = /*#__PURE__*/ v.object({
   createdAt: /*#__PURE__*/ v.integer(),
   createdBy: /*#__PURE__*/ v.didString(),
   expiresAt: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.integer()),
+  kind: /*#__PURE__*/ v.string<"join" | "read" | "read-join" | (string & {})>(),
   maxUses: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.integer()),
   note: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
   perms: /*#__PURE__*/ v.string<"read" | "write" | (string & {})>(),

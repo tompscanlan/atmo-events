@@ -5,6 +5,10 @@ import * as RsvpAtmoSpaceDefs from "./defs.js";
 
 const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.space.getSpace", {
   params: /*#__PURE__*/ v.object({
+    /**
+     * Read-grant invite token. When supplied, replaces JWT auth for this read.
+     */
+    inviteToken: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
     uri: /*#__PURE__*/ v.resourceUriString(),
   }),
   output: {
