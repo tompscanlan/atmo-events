@@ -30,10 +30,13 @@ export const createPrivateEvent = command(
 		if (!dev) error(403, 'Private events are not available yet');
 		const { client } = getClient();
 
-		const createRes = await client.post('rsvp.atmo.space.admin.createSpace', {
+		const createRes = await client.post('rsvp.atmo.space.createSpace', {
 			input: { type: SPACE_TYPE, key: input.key }
 		});
-		if (!createRes.ok) error(500, 'createSpace failed');
+		if (!createRes.ok) {
+			console.error('createSpace failed', createRes.status, createRes.data);
+			error(500, `createSpace failed: ${createRes.status} ${JSON.stringify(createRes.data)}`);
+		}
 		const spaceUri = createRes.data.space.uri;
 
 		const putRes = await client.post('rsvp.atmo.space.putRecord', {
@@ -43,7 +46,10 @@ export const createPrivateEvent = command(
 				record: input.record
 			}
 		});
-		if (!putRes.ok) error(500, 'putRecord failed');
+		if (!putRes.ok) {
+			console.error('putRecord (space) failed', putRes.status, putRes.data);
+			error(500, `putRecord failed: ${putRes.status} ${JSON.stringify(putRes.data)}`);
+		}
 
 		return { spaceUri, rkey: putRes.data.rkey };
 	}
@@ -116,7 +122,7 @@ export const addMember = command(
 	}),
 	async (input) => {
 		const { client } = getClient();
-		const res = await client.post('rsvp.atmo.space.admin.addMember', {
+		const res = await client.post('rsvp.atmo.space.addMember', {
 			input: {
 				spaceUri: input.spaceUri as unknown as import('@atcute/lexicons').ResourceUri,
 				did: input.did as `did:${string}:${string}`,
@@ -135,7 +141,7 @@ export const removeMember = command(
 	}),
 	async (input) => {
 		const { client } = getClient();
-		const res = await client.post('rsvp.atmo.space.admin.removeMember', {
+		const res = await client.post('rsvp.atmo.space.removeMember', {
 			input: {
 				spaceUri: input.spaceUri as unknown as import('@atcute/lexicons').ResourceUri,
 				did: input.did as `did:${string}:${string}`

@@ -9,6 +9,6 @@ export default defineConfig({
 	server: {
 		host: '127.0.0.1',
 		port: DEV_PORT,
-		allowedHosts: ['salary-lists-seas-species.trycloudflare.com']
+		allowedHosts: ['described-yamaha-fame-social.trycloudflare.com']
 	}
 });
