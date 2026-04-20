@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getProfileBlobUrl } from '$lib/contrail';
+	import { user, logout } from '$lib/atproto/auth.svelte';
 	import UserProfile from '$lib/components/UserProfile.svelte';
 	import { Button, ToggleGroup, ToggleGroupItem } from '@foxui/core';
 	import DaySchedule from './DaySchedule.svelte';
@@ -18,6 +19,7 @@
 
 	let hostProfile = $derived(data.hostProfile);
 	let hostDid = $derived(hostProfile?.did ?? '');
+	let isOwnProfile = $derived(user.isLoggedIn && !!hostDid && user.did === hostDid);
 	let hostName = $derived(
 		hostProfile?.record?.displayName || hostProfile?.handle || 'ATmosphereConf'
 	);
@@ -114,7 +116,13 @@
 					? getProfileBlobUrl(hostDid, hostProfile.record.avatar)
 					: undefined
 			}}
-		/>
+		>
+			{#snippet actions()}
+				{#if isOwnProfile}
+					<Button onclick={logout} color="rose" variant="secondary">Logout</Button>
+				{/if}
+			{/snippet}
+		</UserProfile>
 
 		<p class="text-base-500 dark:text-base-400 mb-2 text-sm">
 			See all info on the <a
