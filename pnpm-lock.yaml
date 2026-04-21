@@ -21,23 +21,23 @@ importers:
         specifier: ^4.2.1
         version: 4.2.1(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))
       '@foxui/colors':
-        specifier: ^0.8.4
-        version: 0.8.4(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
+        specifier: ^0.8.5
+        version: 0.8.5(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
       '@foxui/core':
-        specifier: ^0.9.0
-        version: 0.9.0(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
+        specifier: ^0.9.1
+        version: 0.9.1(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
       '@foxui/social':
-        specifier: ^0.8.6
-        version: 0.8.6(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(@tiptap/extension-code-block@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(@tiptap/extensions@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(highlight.js@11.11.1)(svelte@5.55.0)(tailwindcss@4.2.2)
+        specifier: ^0.8.10
+        version: 0.8.10(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(@tiptap/extension-code-block@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(@tiptap/extensions@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(highlight.js@11.11.1)(svelte@5.55.0)(tailwindcss@4.2.2)
       '@foxui/text':
-        specifier: ^0.8.4
-        version: 0.8.4(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(@tiptap/extension-code-block@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(@tiptap/extensions@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(highlight.js@11.11.1)(svelte@5.55.0)(tailwindcss@4.2.2)
+        specifier: ^0.8.5
+        version: 0.8.5(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(@tiptap/extension-code-block@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(@tiptap/extensions@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(highlight.js@11.11.1)(svelte@5.55.0)(tailwindcss@4.2.2)
       '@foxui/time':
-        specifier: ^0.8.4
-        version: 0.8.4(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
+        specifier: ^0.8.5
+        version: 0.8.5(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
       '@foxui/visual':
-        specifier: ^0.8.4
-        version: 0.8.4(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
+        specifier: ^0.8.7
+        version: 0.8.7(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
       '@internationalized/date':
         specifier: ^3.12.0
         version: 3.12.0
@@ -718,38 +718,38 @@ packages:
   '@fontsource-variable/geist@5.2.8':
     resolution: {integrity: sha512-cJ6m9e+8MQ5dCYJsLylfZrgBh6KkG4bOLckB35Tr9J/EqdkEM6QllH5PxqP1dhTvFup+HtMRPuz9xOjxXJggxw==}
 
-  '@foxui/colors@0.8.4':
-    resolution: {integrity: sha512-YHAG7h87XAPCS3gWd1J22ZWyqRHicCk5tJelda0n7kTUNt9wBbdrIWokln0Fi9ptL0Xl8xJFDreQNw4b0k5IyA==}
+  '@foxui/colors@0.8.5':
+    resolution: {integrity: sha512-22nfzr158bAI5xgJYaUTrM6q7bi2fgNtlrUnxoe7MdwFW9ofJST96E/xl+8gaIZdzlDPnLsO2NZLEdaMx58tzQ==}
     peerDependencies:
       svelte: '>=5'
       tailwindcss: '>=3'
 
-  '@foxui/core@0.9.0':
-    resolution: {integrity: sha512-+zzya5pclKhyQYKdAAdpIGa6GG/oipvBi6PM/T/zynXmHEdSm6bWqHtlcL98Ulvp4cmML7VM9OtkvXVk4NeP/w==}
+  '@foxui/core@0.9.1':
+    resolution: {integrity: sha512-GnMegqx5gz71U85FK85ayEEHuD3bvpNET8HeNsJU1Gj+OVkKKvUY9q/XqmCY3tsfEqY0Mv+RM1iQSnsZn5LZ6w==}
     peerDependencies:
       svelte: '>=5'
       tailwindcss: '>=3'
 
-  '@foxui/social@0.8.6':
-    resolution: {integrity: sha512-Hk78zsc8/1sHzQTBiy95Kvu05k7YQTLZeqRjk/L0bZsjMItNRik8ocheKHEK4f01L8ZaOmxnREVhf4P2nUm/1w==}
+  '@foxui/social@0.8.10':
+    resolution: {integrity: sha512-d9FB1BjWFbvldNlrXogdJU/a90dDdNqvBWGAkLRK2i7iiBAaWkKceWL3xc8N5+79+hfD8Ydg4ptCk3wx3bkguw==}
     peerDependencies:
       svelte: '>=5'
       tailwindcss: '>=3'
 
-  '@foxui/text@0.8.4':
-    resolution: {integrity: sha512-eW5EJE9BSgJa1kx9u95960OTIKcVsO6+nFidpdvdBak1fMoIlZTb/HL2nlPG21HbWewBIys7th0SC5B4wMWfxw==}
+  '@foxui/text@0.8.5':
+    resolution: {integrity: sha512-K7XsJGWdyRdXlRxjD8Z4TQ9xy7T/rVrB/z+U0YGGIjIER1DQGLawPwBQ5WXYQeNCBS1ab8mG67uFZw2sA5aFPQ==}
     peerDependencies:
       svelte: '>=5'
       tailwindcss: '>=3'
 
-  '@foxui/time@0.8.4':
-    resolution: {integrity: sha512-HOa2DqHtOMSd5JDv9XZ+AVFnmJ5Oi1wnK+dCfbd/+2LXhuQKqg5kQcclyX9Ufhprwuhx59JO7JUe4Vix8jBmpw==}
+  '@foxui/time@0.8.5':
+    resolution: {integrity: sha512-InXhgKZW4URArJWW87hblhHMAoNii0iueKCxei72SCvlABZ/y5QoX/ewhrgk7/47qbfrlgyqBzshDtF60kTqcg==}
     peerDependencies:
       svelte: '>=5'
       tailwindcss: '>=3'
 
-  '@foxui/visual@0.8.4':
-    resolution: {integrity: sha512-/2h9CoT/xxPEanVRQ0WEODA2+cM/Ff5d0xCc9zOXhiEPB/Kki98fjFKni0qksmb8RbSJYssiuyrNXgO0tE1HgQ==}
+  '@foxui/visual@0.8.7':
+    resolution: {integrity: sha512-yoDrO3kLBl8B2ropA9b2c7NCjV9iVJzYwS1IXGilLywol6ifOudldSLgn+tXlpt/C8IWAZa9kS8R08q6gdjIEw==}
     peerDependencies:
       svelte: '>=5'
       tailwindcss: '>=3'
@@ -933,6 +933,9 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
+
+  '@lottiefiles/dotlottie-web@0.71.0':
+    resolution: {integrity: sha512-CliQttL0Rk0or/aDQkqUJXnC9Cm5TxzNdOqy/YlzKlU6mu+XgTMwyt5/HpPiltlMeaqBmM9mOzfevpyP4QmudQ==}
 
   '@lucide/svelte@1.8.0':
     resolution: {integrity: sha512-+zYQUKqEOVP5lxbGmxL1OVgGMQtRK91eIJ0bR+3Cr1ts4oQEsQfxyzzd5X47psJlblAuGFrl2xm4YuATjR9oaA==}
@@ -2163,6 +2166,9 @@ packages:
     resolution: {integrity: sha512-iPZK6eYjbxRu3uB4/WZ3EsEIMJFMqAoopl3R+zuq0UjcAm/MO6KCweDgPfP3elTztoKP3KtnVHxTn2NHBSDVUw==}
     engines: {node: '>=10'}
 
+  lottie-web@5.13.0:
+    resolution: {integrity: sha512-+gfBXl6sxXMPe8tKQm7qzLnUy5DUPJPKIyRHwtpCpyUEYjHYRJC/5gjUvdkuO2c3JllrPtHXH5UJJK8LRYl5yQ==}
+
   lowlight@3.3.0:
     resolution: {integrity: sha512-0JNhgFoPvP6U6lE/UdVsSq99tn6DhjjpAj5MxG49ewd2mOBVtwWYIT8ClyABhq198aXXODMU6Ox8DrGy/CpTZQ==}
 
@@ -2694,6 +2700,23 @@ packages:
   tapable@2.3.2:
     resolution: {integrity: sha512-1MOpMXuhGzGL5TTCZFItxCc0AARf1EZFQkGqMm7ERKj8+Hgr5oLvJOVFcC+lRmR8hCe2S3jC4T5D7Vg/d7/fhA==}
     engines: {node: '>=6'}
+
+  tegaki@0.11.1:
+    resolution: {integrity: sha512-Ie4SLKcOTNFoRznLLEsAUzRU+xnOkKt/82qbsFdbbMMoVHDwJnpeynrw3b3mu4XsZFSy6G4YiLYF3zlZ8Ot4BA==}
+    peerDependencies:
+      react: '>=18'
+      solid-js: '>=1'
+      svelte: '>=5'
+      vue: '>=3'
+    peerDependenciesMeta:
+      react:
+        optional: true
+      solid-js:
+        optional: true
+      svelte:
+        optional: true
+      vue:
+        optional: true
 
   tiny-inflate@1.0.3:
     resolution: {integrity: sha512-pkY1fj1cKHb2seWDy0B16HeWyczlJA9/WW3u3c4z/NiWDsO3DOU5D7nhTLE9CF0yXv/QZFY7sEJmj24dK+Rrqw==}
@@ -3394,9 +3417,9 @@ snapshots:
 
   '@fontsource-variable/geist@5.2.8': {}
 
-  '@foxui/colors@0.8.4(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)':
+  '@foxui/colors@0.8.5(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)':
     dependencies:
-      '@foxui/core': 0.9.0(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
+      '@foxui/core': 0.9.1(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
       '@texel/color': 1.1.11
       '@use-gesture/vanilla': 10.3.1
       bits-ui: 2.16.3(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)
@@ -3409,7 +3432,7 @@ snapshots:
       - react-dom
       - vue
 
-  '@foxui/core@0.9.0(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)':
+  '@foxui/core@0.9.1(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)':
     dependencies:
       '@fontsource-variable/geist': 5.2.8
       '@fontsource-variable/geist-mono': 5.2.7
@@ -3433,13 +3456,13 @@ snapshots:
       - react-dom
       - vue
 
-  '@foxui/social@0.8.6(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(@tiptap/extension-code-block@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(@tiptap/extensions@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(highlight.js@11.11.1)(svelte@5.55.0)(tailwindcss@4.2.2)':
+  '@foxui/social@0.8.10(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(@tiptap/extension-code-block@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(@tiptap/extensions@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(highlight.js@11.11.1)(svelte@5.55.0)(tailwindcss@4.2.2)':
     dependencies:
       '@atcute/bluesky': 3.3.0
       '@atcute/bluesky-richtext-segmenter': 3.0.0
-      '@foxui/core': 0.9.0(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
-      '@foxui/text': 0.8.4(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(@tiptap/extension-code-block@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(@tiptap/extensions@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(highlight.js@11.11.1)(svelte@5.55.0)(tailwindcss@4.2.2)
-      '@foxui/time': 0.8.4(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
+      '@foxui/core': 0.9.1(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
+      '@foxui/text': 0.8.5(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(@tiptap/extension-code-block@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(@tiptap/extensions@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(highlight.js@11.11.1)(svelte@5.55.0)(tailwindcss@4.2.2)
+      '@foxui/time': 0.8.5(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
       '@use-gesture/vanilla': 10.3.1
       bits-ui: 2.16.3(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)
       emoji-picker-element: 1.29.1
@@ -3458,10 +3481,10 @@ snapshots:
       - react-dom
       - vue
 
-  '@foxui/text@0.8.4(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(@tiptap/extension-code-block@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(@tiptap/extensions@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(highlight.js@11.11.1)(svelte@5.55.0)(tailwindcss@4.2.2)':
+  '@foxui/text@0.8.5(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(@tiptap/extension-code-block@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(@tiptap/extensions@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(highlight.js@11.11.1)(svelte@5.55.0)(tailwindcss@4.2.2)':
     dependencies:
       '@floating-ui/dom': 1.7.6
-      '@foxui/core': 0.9.0(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
+      '@foxui/core': 0.9.1(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
       '@tiptap/core': 3.20.5(@tiptap/pm@3.20.5)
       '@tiptap/extension-bubble-menu': 3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5)
       '@tiptap/extension-code-block-lowlight': 3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/extension-code-block@3.20.5(@tiptap/core@3.20.5(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5))(@tiptap/pm@3.20.5)(highlight.js@11.11.1)(lowlight@3.3.0)
@@ -3497,9 +3520,9 @@ snapshots:
       - react-dom
       - vue
 
-  '@foxui/time@0.8.4(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)':
+  '@foxui/time@0.8.5(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)':
     dependencies:
-      '@foxui/core': 0.9.0(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
+      '@foxui/core': 0.9.1(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
       '@number-flow/svelte': 0.4.0(svelte@5.55.0)
       bits-ui: 2.16.3(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)
       svelte: 5.55.0
@@ -3511,20 +3534,24 @@ snapshots:
       - react-dom
       - vue
 
-  '@foxui/visual@0.8.4(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)':
+  '@foxui/visual@0.8.7(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)':
     dependencies:
-      '@foxui/colors': 0.8.4(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
-      '@foxui/core': 0.9.0(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
+      '@foxui/colors': 0.8.5(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
+      '@foxui/core': 0.9.1(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(tailwindcss@4.2.2)
+      '@lottiefiles/dotlottie-web': 0.71.0
       bits-ui: 2.16.3(@internationalized/date@3.12.0)(@sveltejs/kit@2.55.0(@sveltejs/vite-plugin-svelte@7.0.0(svelte@5.55.0)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)(typescript@6.0.2)(vite@8.0.3(@types/node@25.0.10)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)))(svelte@5.55.0)
       canvas-confetti: 1.9.4
       cheerio: 1.2.0
+      lottie-web: 5.13.0
       svelte: 5.55.0
       tailwindcss: 4.2.2
+      tegaki: 0.11.1(svelte@5.55.0)
     transitivePeerDependencies:
       - '@internationalized/date'
       - '@sveltejs/kit'
       - react
       - react-dom
+      - solid-js
       - vue
 
   '@humanfs/core@0.19.1': {}
@@ -3665,6 +3692,8 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@lottiefiles/dotlottie-web@0.71.0': {}
 
   '@lucide/svelte@1.8.0(svelte@5.55.0)':
     dependencies:
@@ -4869,6 +4898,8 @@ snapshots:
     dependencies:
       p-locate: 5.0.0
 
+  lottie-web@5.13.0: {}
+
   lowlight@3.3.0:
     dependencies:
       '@types/hast': 3.0.4
@@ -5453,6 +5484,10 @@ snapshots:
   tailwindcss@4.2.2: {}
 
   tapable@2.3.2: {}
+
+  tegaki@0.11.1(svelte@5.55.0):
+    optionalDependencies:
+      svelte: 5.55.0
 
   tiny-inflate@1.0.3: {}
 
