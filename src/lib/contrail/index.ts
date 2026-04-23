@@ -2,8 +2,16 @@ import { Contrail } from '@atmo-dev/contrail';
 import { createHandler } from '@atmo-dev/contrail/server';
 import { Client } from '@atcute/client';
 import { config } from './config';
+import { getSpacesConfig, spacesAvailable } from '../spaces/config';
 
-export const contrail = new Contrail(config);
+const spaces = getSpacesConfig();
+if (!spacesAvailable()) {
+	console.warn(
+		'[contrail/spaces] No service DID configured — spaces features will be inactive. Run `pnpm tunnel` in dev to enable.'
+	);
+}
+
+export const contrail = new Contrail({ ...config, ...(spaces ? { spaces } : {}) });
 
 let initialized = false;
 

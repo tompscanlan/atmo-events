@@ -21,12 +21,7 @@
 		"env:setup-dev": "npx tsx src/lib/atproto/scripts/setup-dev.ts",
 		"tunnel": "npx tsx src/lib/atproto/scripts/tunnel.ts",
 		"lexicons": "lex-cli pull && lex-cli generate",
-		"vods": "tsx scripts/vod-processing/pipeline.ts",
-		"vods:fetch": "tsx scripts/vod-processing/fetch-events.ts",
-		"vods:download": "tsx scripts/vod-processing/download-audio.ts",
-		"vods:transcribe": "tsx scripts/vod-processing/transcribe.ts",
-		"vods:summarize": "tsx scripts/vod-processing/summarize.ts",
-		"vods:vtt": "tsx scripts/vod-processing/generate-vtt.ts"
+		"publish-lexicons": "tsx --env-file=.env scripts/publish-lexicons.ts"
 	},
 	"devDependencies": {
 		"@atcute/atproto": "^3.1.10",
@@ -66,7 +61,7 @@
 	"dependencies": {
 		"@atcute/bluesky-richtext-parser": "^2.1.1",
 		"@atcute/jetstream": "^1.1.2",
-		"@atmo-dev/contrail": "^0.0.6",
+		"@atmo-dev/contrail": "^0.1.1",
 		"@ethercorps/sveltekit-og": "^4.2.1",
 		"@foxui/colors": "^0.8.5",
 		"@foxui/core": "^0.9.1",

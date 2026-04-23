@@ -6,13 +6,22 @@ import {
 	listAttendingEventsFromContrail,
 	listEventRecordsFromContrail
 } from '$lib/contrail';
+import { getSpacesClient } from '$lib/spaces/server/client';
+import { spacesAvailable } from '$lib/spaces/config';
 import { isActorIdentifier } from '@atcute/lexicons/syntax';
 import { error } from '@sveltejs/kit';
 
 const PREVIEW_LIMIT = 6;
 
-export async function load({ params, platform }) {
-	const client = getServerClient(platform!.env.DB);
+export async function load({ params, platform, locals }) {
+	// Authenticated viewer + spaces configured → service-auth client so contrail
+	// unions public events with private events from spaces the viewer is in.
+	// Profile pages show another user's events; the viewer only sees the private
+	// ones where *they* are a member (filtered server-side by caller DID).
+	const client =
+		locals.client && locals.did && spacesAvailable()
+			? getSpacesClient(locals.client, platform!.env.DB)
+			: getServerClient(platform!.env.DB);
 	if (!isActorIdentifier(params.actor)) return;
 
 	const actor = params.actor;

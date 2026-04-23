@@ -9,6 +9,6 @@ export default defineConfig({
 	server: {
 		host: '127.0.0.1',
 		port: DEV_PORT,
-		allowedHosts: []
+		allowedHosts: ['described-yamaha-fame-social.trycloudflare.com']
 	}
 });

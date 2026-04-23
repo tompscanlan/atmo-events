@@ -78,9 +78,11 @@ const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.getProfile", {
   }),
   output: {
     type: "lex",
-    get schema() {
-      return profileEntrySchema;
-    },
+    schema: /*#__PURE__*/ v.object({
+      get profiles() {
+        return /*#__PURE__*/ v.array(profileEntrySchema);
+      },
+    }),
   },
 });
 const _profileEntrySchema = /*#__PURE__*/ v.object({
@@ -117,7 +119,7 @@ export interface AppBskyActorProfile extends v.InferInput<
 export interface ProfileEntry extends v.InferInput<typeof profileEntrySchema> {}
 
 export interface $params extends v.InferInput<mainSchema["params"]> {}
-export type $output = v.InferXRPCBodyInput<mainSchema["output"]>;
+export interface $output extends v.InferXRPCBodyInput<mainSchema["output"]> {}
 
 declare module "@atcute/lexicons/ambient" {
   interface XRPCQueries {

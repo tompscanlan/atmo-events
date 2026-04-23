@@ -26,7 +26,7 @@ export async function GET({ params, platform }) {
 
 		const actorId = did as ActorIdentifier;
 		const [rsvpResponse, hostingResponse] = await Promise.all([
-			client.get('community.lexicon.calendar.rsvp.listRecords', {
+			client.get('rsvp.atmo.rsvp.listRecords', {
 				params: { actor: actorId, hydrateEvent: true, limit: 100 }
 			}),
 			listEventRecordsFromContrail(client, {

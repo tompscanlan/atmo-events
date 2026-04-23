@@ -1,0 +1,316 @@
+<script lang="ts">
+	import { eventUrl, isEventOngoing, type FlatEventRecord } from '$lib/contrail';
+	import { getCDNImageBlobUrl } from '$lib/atproto';
+	import { user } from '$lib/atproto/auth.svelte';
+	import { Avatar as FoxAvatar, Button } from '@foxui/core';
+	import ShareModal from '$lib/components/ShareModal.svelte';
+	import Avatar from 'svelte-boring-avatars';
+	import EventRsvp from '$lib/components/EventRsvp.svelte';
+	import EventCard from '$lib/components/EventCard.svelte';
+	import EventAttendees from './EventAttendees.svelte';
+	import VodPlayer, { type VodPlayerApi } from '$lib/components/VodPlayer.svelte';
+	import { page } from '$app/state';
+	import { launchConfetti } from '@foxui/visual';
+	import ThemeBackground from '$lib/components/ThemeBackground.svelte';
+	import ThemeApply from '$lib/components/ThemeApply.svelte';
+	import { defaultTheme, type EventTheme } from '$lib/theme';
+	import { onMount } from 'svelte';
+
+	import EventBadges from './event-view/EventBadges.svelte';
+	import EventDateBlock from './event-view/EventDateBlock.svelte';
+	import EventLocationBlock from './event-view/EventLocationBlock.svelte';
+	import EventLocationMap from './event-view/EventLocationMap.svelte';
+	import EventHostedBy from './event-view/EventHostedBy.svelte';
+	import EventLinksList from './event-view/EventLinksList.svelte';
+	import AddToCalendarButton from './event-view/AddToCalendarButton.svelte';
+	import InviteShareFlow from './event-view/InviteShareFlow.svelte';
+	import { buildDescriptionHtml, getLocationData, resolveGeoLocation } from './event-view/format';
+
+	let { data } = $props();
+
+	let eventData: FlatEventRecord = $derived(data.eventData);
+	let did: string = $derived(data.actorDid);
+	let rkey: string = $derived(data.rkey);
+	let hostProfile = $derived(data.hostProfile);
+	let attendees = $derived(data.attendees);
+
+	let theme: EventTheme = $derived(eventData.theme ?? defaultTheme);
+
+	let hostUrl = $derived(`/p/${hostProfile?.handle || did}`);
+	let eventPath = $derived(eventUrl(eventData, hostProfile?.handle || did));
+	let shareUrl = $derived(
+		typeof window !== 'undefined' ? `${window.location.origin}${eventPath}` : eventPath
+	);
+
+	// Times are always rendered in the viewer's local timezone — the stored UTC
+	// instant is what the Date constructor parses, and toLocaleString/Time uses
+	// the browser's zone by default.
+	let startDate = $derived(new Date(eventData.startsAt));
+	let endDate = $derived(eventData.endsAt ? new Date(eventData.endsAt) : null);
+
+	let locationData = $derived(getLocationData(eventData.locations));
+	let geoLocation: { lat: number; lng: number } | null = $state(null);
+
+	let showShareModal = $state(false);
+	let shareModalTitle = $state('Event created!');
+	let shareModalText: string | undefined = $state(undefined);
+
+	onMount(async () => {
+		geoLocation = await resolveGeoLocation(eventData.locations, locationData);
+
+		const url = new URL(window.location.href);
+		if (url.searchParams.has('created')) {
+			url.searchParams.delete('created');
+			history.replaceState({}, '', url.pathname);
+			launchConfetti();
+			shareModalTitle = 'Event created!';
+			shareModalText = `I'm hosting "${eventData.name}"!\n\n${shareUrl}`;
+			showShareModal = true;
+		}
+	});
+
+	let thumbnailImage = $derived.by(() => {
+		if (!eventData.media || eventData.media.length === 0) return null;
+		const media = eventData.media.find((m) => m.role === 'thumbnail');
+		if (!media?.content) return null;
+		const url = getCDNImageBlobUrl({ did, blob: media.content });
+		if (!url) return null;
+		return { url, alt: media.alt || eventData.name };
+	});
+
+	let bannerImage = $derived.by(() => {
+		if (!eventData.media || eventData.media.length === 0) return null;
+		const media = eventData.media.find((m) => m.role === 'header');
+		if (!media?.content) return null;
+		const url = getCDNImageBlobUrl({ did, blob: media.content });
+		if (!url) return null;
+		return { url, alt: media.alt || eventData.name };
+	});
+
+	// Prefer thumbnail; fall back to header/banner image
+	let displayImage = $derived(thumbnailImage ?? bannerImage);
+	let isBannerOnly = $derived(!thumbnailImage && !!bannerImage);
+
+	let isOngoing = $derived(isEventOngoing(eventData.startsAt, eventData.endsAt));
+	let isPast = $derived(endDate ? endDate < new Date() : false);
+
+	let descriptionHtml = $derived(
+		buildDescriptionHtml(eventData.description, eventData.facets)
+	);
+
+	let eventUri = $derived(`at://${did}/community.lexicon.calendar.event/${rkey}`);
+
+	let ogImageUrl = $derived(`${page.url.origin}${page.url.pathname}/og.png`);
+
+	let isOwner = $derived(user.isLoggedIn && user.did === did);
+
+	let speakers = $derived(data.speakerProfiles ?? []);
+
+	let vodCurrentTime = $state(0);
+	let vodApi: VodPlayerApi | undefined = $state();
+
+	let attendeesRef: EventAttendees | undefined = $state();
+
+	function handleRsvp(status: 'going' | 'interested') {
+		if (!user.did) return;
+		attendeesRef?.addAttendee({
+			did: user.did,
+			status,
+			avatar: user.profile?.avatar,
+			name: user.profile?.displayName || user.profile?.handle || user.did,
+			handle: user.profile?.handle,
+			url: `/${user.profile?.handle || user.did}`
+		});
+		if (status === 'interested') return;
+		shareModalTitle = "You're going!";
+		shareModalText = `I'm going to "${eventData.name}".\n\n${shareUrl}`;
+		showShareModal = true;
+	}
+
+	function handleRsvpCancel() {
+		if (!user.did) return;
+		attendeesRef?.removeAttendee(user.did);
+	}
+</script>
+
+<svelte:head>
+	<title>{eventData.name}</title>
+	<meta name="description" content={eventData.description || `Event: ${eventData.name}`} />
+	<meta property="og:title" content={eventData.name} />
+	<meta property="og:description" content={eventData.description || `Event: ${eventData.name}`} />
+	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:title" content={eventData.name} />
+	<meta name="twitter:description" content={eventData.description || `Event: ${eventData.name}`} />
+	<meta name="twitter:image" content={ogImageUrl} />
+</svelte:head>
+
+<ThemeApply accentColor={theme.accentColor} baseColor={theme.baseColor} />
+<ThemeBackground {theme} />
+
+<div class="min-h-screen px-6 py-12 sm:py-12">
+	<div class="mx-auto max-w-3xl">
+		<!-- Banner image (full width, only when no thumbnail) -->
+		{#if isBannerOnly && displayImage}
+			<img
+				src={displayImage.url}
+				alt={displayImage.alt}
+				class="border-base-200 dark:border-base-800 mb-8 aspect-3/1 w-full rounded-2xl border object-cover"
+			/>
+		{/if}
+
+		<!-- Two-column layout: image left, details right -->
+		<div
+			class="grid grid-cols-1 gap-8 md:grid-cols-[14rem_1fr] md:grid-rows-[auto_1fr] md:gap-x-10 md:gap-y-6 lg:grid-cols-[16rem_1fr]"
+		>
+			<!-- Thumbnail image (left column) -->
+			{#if !isBannerOnly}
+				<div class="order-1 max-w-sm md:order-0 md:col-start-1 md:max-w-none">
+					{#if displayImage}
+						<img
+							src={displayImage.url}
+							alt={displayImage.alt}
+							class="border-base-200 dark:border-base-800 bg-base-200 dark:bg-base-950/50 aspect-square w-full rounded-2xl border object-cover"
+						/>
+					{:else}
+						<div
+							class="border-base-200 dark:border-base-800 aspect-square w-full overflow-hidden rounded-2xl border [&>svg]:h-full [&>svg]:w-full"
+						>
+							<Avatar
+								size={256}
+								name={data.rkey}
+								variant="marble"
+								colors={['#92A1C6', '#146A7C', '#F0AB3D', '#C271B4', '#C20D90']}
+								square
+							/>
+						</div>
+					{/if}
+					{#if isOwner}
+						<Button href="./{rkey}/edit" class="mt-9 w-full">Edit Event</Button>
+						{#if data.spaceUri}
+							<InviteShareFlow
+								spaceUri={data.spaceUri}
+								spaceKey={data.spaceKey}
+								{did}
+								{rkey}
+								eventName={eventData.name}
+								{hostProfile}
+							/>
+						{/if}
+					{/if}
+				</div>
+			{/if}
+
+			<!-- Right column: event details -->
+			<div class="order-2 min-w-0 md:order-0 md:col-start-2 md:row-span-2 md:row-start-1">
+				<div class="mb-2">
+					<h1 class="text-base-900 dark:text-base-50 text-3xl leading-tight font-bold sm:text-4xl">
+						{eventData.name}
+					</h1>
+				</div>
+
+				<EventBadges mode={eventData.mode} {isOngoing} />
+
+				<EventDateBlock {startDate} {endDate} />
+
+				<EventLocationBlock {locationData} />
+
+				<!-- Part of -->
+				{#if data.parentEvent}
+					<div
+						class="border-base-200 dark:border-base-800 bg-base-100 dark:bg-base-950/50 mt-8 mb-2 justify-center rounded-2xl border p-4"
+					>
+						<p
+							class="text-base-500 dark:text-base-400 mb-3 text-xs font-semibold tracking-wider uppercase"
+						>
+							Part of
+						</p>
+						<EventCard event={data.parentEvent} actor="atprotocol.dev" />
+						<Button href="/p/atmosphereconf.org" size="lg" class="mt-6 w-full">
+							See full schedule
+						</Button>
+					</div>
+				{/if}
+
+				{#if did === 'did:plc:lehcqqkwzcwvjvw66uthu5oq' && rkey === '3lte3c7x43l2e'}
+					<Button href="/p/atmosphereconf.org" size="lg" class="mb-4 w-full">
+						See full schedule
+					</Button>
+				{/if}
+
+				{#if !isPast}
+					<EventRsvp
+						{eventUri}
+						eventCid={eventData.cid ?? null}
+						initialRsvpStatus={data.viewerRsvpStatus}
+						initialRsvpRkey={data.viewerRsvpRkey}
+						spaceUri={data.spaceUri ?? null}
+						onrsvp={handleRsvp}
+						oncancel={handleRsvpCancel}
+					/>
+				{/if}
+
+				<!-- About Event -->
+				{#if descriptionHtml}
+					<div class="mt-8 mb-8">
+						<p
+							class="text-base-500 dark:text-base-400 mb-3 text-xs font-semibold tracking-wider uppercase"
+						>
+							About
+						</p>
+						<div
+							class="text-base-700 dark:text-base-300 prose dark:prose-invert prose-a:text-accent-600 dark:prose-a:text-accent-400 prose-a:hover:underline prose-a:no-underline max-w-none leading-relaxed wrap-break-word"
+						>
+							{@html descriptionHtml}
+						</div>
+					</div>
+				{/if}
+
+				<!-- Recording -->
+				{#if data.vod}
+					<div class="mt-8 mb-8">
+						<p
+							class="text-base-500 dark:text-base-400 mb-3 text-xs font-semibold tracking-wider uppercase"
+						>
+							Recording
+						</p>
+						<VodPlayer
+							playlistUrl={data.vod.playlistUrl}
+							title={eventData.name}
+							subtitlesUrl="/vods/{rkey}-karaoke.vtt"
+							bind:currentTime={vodCurrentTime}
+							bind:api={vodApi}
+						/>
+					</div>
+				{/if}
+
+				<EventLocationMap {locationData} {geoLocation} />
+			</div>
+
+			<!-- Left column: sidebar info -->
+			<div class="order-3 space-y-6 md:order-0 md:col-start-1">
+				<EventHostedBy {hostProfile} {hostUrl} {did} {speakers} />
+
+				<EventLinksList uris={eventData.uris} />
+
+				<AddToCalendarButton {eventData} {eventUri} pageHref={page.url.href} />
+
+				<EventAttendees
+					bind:this={attendeesRef}
+					going={attendees.going}
+					interested={attendees.interested}
+					goingCount={attendees.goingCount}
+					interestedCount={attendees.interestedCount}
+				/>
+			</div>
+		</div>
+	</div>
+</div>
+
+<ShareModal
+	bind:open={showShareModal}
+	url={shareUrl}
+	title={shareModalTitle}
+	shareText={shareModalText}
+	eventName={eventData.name}
+	{ogImageUrl}
+/>

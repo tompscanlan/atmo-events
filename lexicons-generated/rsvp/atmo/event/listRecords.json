@@ -1,6 +1,6 @@
 {
   "lexicon": 1,
-  "id": "community.lexicon.calendar.event.listRecords",
+  "id": "rsvp.atmo.event.listRecords",
   "defs": {
     "main": {
       "type": "query",
@@ -25,6 +25,20 @@
           "profiles": {
             "type": "boolean",
             "description": "Include profile + identity info keyed by DID"
+          },
+          "spaceUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "If set, query records inside this permissioned space (requires service-auth JWT or a read-grant invite token)."
+          },
+          "byUser": {
+            "type": "string",
+            "format": "did",
+            "description": "Only used with spaceUri — filter to records authored by this DID."
+          },
+          "inviteToken": {
+            "type": "string",
+            "description": "Read-grant invite token for anonymous bearer access. Replaces JWT auth when supplied."
           },
           "search": {
             "type": "string",
@@ -70,6 +84,10 @@
             "type": "string",
             "description": "Filter by description"
           },
+          "preferencesShowInDiscovery": {
+            "type": "string",
+            "description": "Filter by preferences.showInDiscovery"
+          },
           "rsvpsCountMin": {
             "type": "integer",
             "description": "Minimum total rsvps count"
@@ -102,6 +120,7 @@
               "startsAt",
               "createdAt",
               "description",
+              "preferencesShowInDiscovery",
               "rsvpsCount",
               "rsvpsInterestedCount",
               "rsvpsGoingCount",
@@ -183,6 +202,11 @@
         "time_us": {
           "type": "integer"
         },
+        "space": {
+          "type": "string",
+          "format": "at-uri",
+          "description": "Present when the record was read from a permissioned space; its value is the space URI."
+        },
         "rsvpsCount": {
           "type": "integer",
           "description": "Total rsvps count"
@@ -239,6 +263,11 @@
         },
         "time_us": {
           "type": "integer"
+        },
+        "space": {
+          "type": "string",
+          "format": "at-uri",
+          "description": "Present when the record was read from a permissioned space."
         }
       }
     },

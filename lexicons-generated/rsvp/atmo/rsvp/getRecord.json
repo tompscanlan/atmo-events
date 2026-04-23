@@ -1,6 +1,6 @@
 {
   "lexicon": 1,
-  "id": "community.lexicon.calendar.rsvp.getRecord",
+  "id": "rsvp.atmo.rsvp.getRecord",
   "defs": {
     "main": {
       "type": "query",
@@ -19,6 +19,15 @@
           "profiles": {
             "type": "boolean",
             "description": "Include profile + identity info keyed by DID"
+          },
+          "spaceUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "If set, fetch from this permissioned space (requires service-auth JWT or a read-grant invite token)."
+          },
+          "inviteToken": {
+            "type": "string",
+            "description": "Read-grant invite token for anonymous bearer access. Replaces JWT auth when supplied."
           },
           "hydrateEvent": {
             "type": "boolean",
@@ -62,6 +71,11 @@
             },
             "time_us": {
               "type": "integer"
+            },
+            "space": {
+              "type": "string",
+              "format": "at-uri",
+              "description": "Present when the record was read from a permissioned space; its value is the space URI."
             },
             "event": {
               "type": "ref",
@@ -112,6 +126,11 @@
         },
         "time_us": {
           "type": "integer"
+        },
+        "space": {
+          "type": "string",
+          "format": "at-uri",
+          "description": "Present when the record was read from a permissioned space."
         }
       }
     },

@@ -1,7 +1,10 @@
 import { dev } from '$app/environment';
 import { scope } from '@atcute/oauth-node-client';
 
-// writable collections
+// writable collections — declared as a standalone scope because their NSIDs
+// (`community.lexicon.*`) sit outside our namespace, so they can't go in
+// `rsvp.atmo.permissionSet` (permission sets can only reference NSIDs in their
+// own namespace).
 export const collections = [
 	'community.lexicon.calendar.event',
 	'community.lexicon.calendar.rsvp'
@@ -9,11 +12,16 @@ export const collections = [
 
 export type AllowedCollection = (typeof collections)[number];
 
-// OAuth scope — add scope.blob(), scope.rpc(), etc. as needed
+// OAuth scopes. `include:rsvp.atmo.permissionSet?aud=*` bundles every rpc method
+// the deployment exposes; `aud=*` lets the same consent cover dev (tunnel DID)
+// and prod (published DID) without re-consenting. Repo writes and blob uploads
+// live as standalone scopes since they reference NSIDs (or resource kinds)
+// outside the `rsvp.atmo` namespace.
 export const scopes = [
 	'atproto',
 	scope.repo({ collection: [...collections] }),
-	scope.blob({ accept: ['image/*'] })
+	scope.blob({ accept: ['image/*'] }),
+	'include:rsvp.atmo.permissionSet'
 ];
 
 // set to false to disable signup
