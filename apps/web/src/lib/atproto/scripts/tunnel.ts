@@ -201,7 +201,7 @@ function cleanup(): void {
 
 // ── main ─────────────────────────────────────────────────────────
 
-const child = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${DEV_PORT}`], {
+const child = spawn('cloudflared', ['tunnel', '--url', `http://127.0.0.1:${DEV_PORT}`], {
 	stdio: ['ignore', 'pipe', 'pipe']
 });
 
