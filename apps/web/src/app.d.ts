@@ -82,6 +82,7 @@ declare global {
 				 *  publish the `did:web` DID document. Set via `wrangler secret put`.
 				 *  When unset, notifications are disabled (the feature no-ops). */
 				ATMO_NOTIFY_PRIVATE_KEY?: string;
+				COMMUNITY_AUTHORITIES?: string;
 			};
 			/** Cloudflare Worker execution context. Use `ctx.waitUntil(promise)` to
 			 *  let the worker keep a fire-and-forget task alive after the response

@@ -20,13 +20,6 @@ vi.mock('$app/server', () => ({
 	getRequestEvent: () => mockGetRequestEvent()
 }));
 
-vi.mock('$env/dynamic/private', () => ({
-	env: {
-		COMMUNITY_AUTHORITIES:
-			'http://localhost:3000|did:web:community.atmo.rsvp|rsvp.atmo'
-	}
-}));
-
 vi.mock('@sveltejs/kit', () => ({
 	error: (status: number, message: string) => {
 		const err = new Error(typeof message === 'string' ? message : String(message));
@@ -53,20 +46,26 @@ describe('community.remote', () => {
 		vi.clearAllMocks();
 		mockGetRequestEvent.mockReturnValue({
 			locals: { client: mockOAuthClient, did: testDid },
-			fetch: mockFetch
+			fetch: mockFetch,
+			platform: {
+				env: {
+					COMMUNITY_AUTHORITIES:
+						'http://localhost:3000|did:web:community.atmo.rsvp|rsvp.atmo'
+				}
+			}
 		});
 	});
 
 	describe('listPublishTargets', () => {
 		it('returns empty when no authorities configured', async () => {
-			const envMod = await import('$env/dynamic/private');
-			(envMod.env as Record<string, string | undefined>).COMMUNITY_AUTHORITIES = '';
+			mockGetRequestEvent.mockReturnValue({
+				locals: { client: mockOAuthClient, did: testDid },
+				fetch: mockFetch,
+				platform: { env: { COMMUNITY_AUTHORITIES: '' } }
+			});
 
 			const result = await listPublishTargets();
 			expect(result).toEqual([]);
-
-			(envMod.env as Record<string, string | undefined>).COMMUNITY_AUTHORITIES =
-				'http://localhost:3000|did:web:community.atmo.rsvp|rsvp.atmo';
 		});
 
 		it('mints service-auth and fetches communities from each authority', async () => {

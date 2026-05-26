@@ -4,7 +4,6 @@ import * as v from 'valibot';
 import type { PublishTarget } from '@atmo-dev/events-ui';
 import { parseAuthorityRegistry } from './authority-registry';
 import { resolveSpaceHost } from './resolve-space-host';
-import { env as privateEnv } from '$env/dynamic/private';
 
 const didSchema = v.pipe(v.string(), v.regex(/^did:[a-z]+:.+/));
 
@@ -34,10 +33,10 @@ async function mintServiceAuth(
 
 export const listPublishTargets = query(async (): Promise<PublishTarget[]> => {
 	const { oauthClient, did } = getSession();
-	const registry = parseAuthorityRegistry(privateEnv.COMMUNITY_AUTHORITIES);
+	const { fetch, platform } = getRequestEvent();
+	const raw = platform?.env?.COMMUNITY_AUTHORITIES;
+	const registry = parseAuthorityRegistry(raw);
 	if (registry.length === 0) return [];
-
-	const { fetch } = getRequestEvent();
 	const targets: PublishTarget[] = [];
 
 	for (const authority of registry) {
@@ -51,7 +50,8 @@ export const listPublishTargets = query(async (): Promise<PublishTarget[]> => {
 			});
 
 			if (!res.ok) {
-				console.warn(`[listPublishTargets] ${authority.endpoint} returned ${res.status}`);
+				const body = await res.text().catch(() => '');
+				console.warn(`[listPublishTargets] ${authority.endpoint} returned ${res.status}: ${body}`);
 				continue;
 			}
 
@@ -95,10 +95,9 @@ export const putCommunityRecord = command(
 	}),
 	async (input) => {
 		const { oauthClient } = getSession();
-		const registry = parseAuthorityRegistry(privateEnv.COMMUNITY_AUTHORITIES);
+		const { fetch, platform } = getRequestEvent();
+		const registry = parseAuthorityRegistry(platform?.env?.COMMUNITY_AUTHORITIES);
 		const authority = await resolveSpaceHost(input.communityDid, registry);
-
-		const { fetch } = getRequestEvent();
 		const lxm = `${authority.namespace}.community.putRecord`;
 		const token = await mintServiceAuth(oauthClient, authority.serviceDid, lxm);
 

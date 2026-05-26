@@ -32,6 +32,11 @@ export const scopes = [
 	'rpc?lxm=pub.atmo.notify.revokeSelf&aud=*'
 ];
 
+export const devScopes = [
+	'atproto',
+	'transition:generic'
+];
+
 // set to false to disable signup
 export const ALLOW_SIGNUP = true;
 

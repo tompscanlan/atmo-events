@@ -3,7 +3,7 @@ import { error } from '@sveltejs/kit';
 import { command, getRequestEvent } from '$app/server';
 import { createOAuthClient } from './oauth';
 import { getSignedCookie } from './signed-cookie';
-import { scopes, signUpPDS } from '../settings';
+import { signUpPDS } from '../settings';
 import type { ActorIdentifier, Did } from '@atcute/lexicons';
 
 export const oauthLogin = command(
@@ -23,7 +23,6 @@ export const oauthLogin = command(
 
 			const { url } = await oauth.authorize({
 				target,
-				scope: scopes.join(' '),
 				prompt: input.signup ? 'create' : undefined
 			});
 
