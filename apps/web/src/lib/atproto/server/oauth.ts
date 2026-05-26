@@ -15,24 +15,32 @@ import {
 	LocalActorResolver,
 	PlcDidDocumentResolver,
 	WebDidDocumentResolver,
-	WellKnownHandleResolver
+	WellKnownHandleResolver,
+	XrpcHandleResolver
 } from '@atcute/identity-resolver';
 import { KVStore } from './kv-store';
-import { DOH_RESOLVER, REDIRECT_PATH, scopes } from '../settings';
+import { DOH_RESOLVER, REDIRECT_PATH, scopes, devScopes } from '../settings';
 import { DEV_PORT } from '../port';
 import { dev } from '$app/environment';
+import { env as privateEnv } from '$env/dynamic/private';
 
 function createActorResolver() {
+	const plcUrl = privateEnv.PLC_URL;
+	const pdsUrl = privateEnv.PDS_URL;
+
+	const handleMethods: Record<string, any> = {
+		dns: new DohJsonHandleResolver({ dohUrl: DOH_RESOLVER }),
+		http: new WellKnownHandleResolver()
+	};
+	if (pdsUrl) {
+		handleMethods.xrpc = new XrpcHandleResolver({ serviceUrl: pdsUrl });
+	}
+
 	return new LocalActorResolver({
-		handleResolver: new CompositeHandleResolver({
-			methods: {
-				dns: new DohJsonHandleResolver({ dohUrl: DOH_RESOLVER }),
-				http: new WellKnownHandleResolver()
-			}
-		}),
+		handleResolver: new CompositeHandleResolver({ methods: handleMethods }),
 		didDocumentResolver: new CompositeDidDocumentResolver({
 			methods: {
-				plc: new PlcDidDocumentResolver(),
+				plc: new PlcDidDocumentResolver(plcUrl ? { apiUrl: plcUrl } : undefined),
 				web: new WebDidDocumentResolver()
 			}
 		})
@@ -60,12 +68,13 @@ export function createOAuthClient(env?: App.Platform['env']): OAuthClient {
 
 	const actorResolver = createActorResolver();
 	const stores = createStores(env);
+	const effectiveScopes = dev ? devScopes : scopes;
 
 	if (dev && !env?.OAUTH_PUBLIC_URL) {
 		cachedClient = new OAuthClient({
 			metadata: {
 				redirect_uris: [`http://127.0.0.1:${DEV_PORT}${REDIRECT_PATH}`],
-				scope: scopes
+				scope: effectiveScopes
 			},
 			actorResolver,
 			stores
@@ -86,7 +95,7 @@ export function createOAuthClient(env?: App.Platform['env']): OAuthClient {
 		metadata: {
 			client_id: site + '/oauth-client-metadata.json',
 			redirect_uris: [site + REDIRECT_PATH],
-			scope: scopes,
+			scope: effectiveScopes,
 			jwks_uri: site + '/oauth/jwks.json'
 		},
 		keyset: [key],
