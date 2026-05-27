@@ -83,6 +83,9 @@ declare global {
 				 *  When unset, notifications are disabled (the feature no-ops). */
 				ATMO_NOTIFY_PRIVATE_KEY?: string;
 				COMMUNITY_AUTHORITIES?: string;
+				JETSTREAM_URLS?: string;
+				PLC_URL?: string;
+				PDS_URL?: string;
 			};
 			/** Cloudflare Worker execution context. Use `ctx.waitUntil(promise)` to
 			 *  let the worker keep a fire-and-forget task alive after the response
