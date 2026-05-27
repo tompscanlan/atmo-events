@@ -25,7 +25,48 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 	// (which previously also took the bot down with it).
 	try {
 		await ensureInit(db);
-		await contrail.ingest({}, db);
+		const env = platform!.env;
+		if (env.JETSTREAM_URLS) {
+			(contrail.config as any).jetstreams = env.JETSTREAM_URLS.split(',').filter(Boolean);
+		}
+		if (env.PLC_URL && !contrail.config.networkOverrides?.resolver) {
+			const { CompositeDidDocumentResolver, PlcDidDocumentResolver, WebDidDocumentResolver } =
+				await import('@atcute/identity-resolver');
+			(contrail.config as any).networkOverrides = {
+				...contrail.config.networkOverrides,
+				resolver: new CompositeDidDocumentResolver({
+					methods: {
+						plc: new PlcDidDocumentResolver({ apiUrl: env.PLC_URL }),
+						web: new WebDidDocumentResolver()
+					}
+				})
+			};
+		}
+		// Dev-only: devnet DIDs advertise https://devnet.test (Docker-internal)
+		// as the PDS endpoint. Rewrite to PDS_URL for host-side ingest.
+		const savedFetch = globalThis.fetch;
+		if (env.PDS_URL) {
+			const pdsOrigin = env.PDS_URL.replace(/\/$/, '');
+			globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+				if (typeof input === 'string' && input.includes('devnet.test')) {
+					input = input.replace(/https?:\/\/devnet\.test(:\d+)?/, pdsOrigin);
+				}
+				return savedFetch(input, init);
+			}) as typeof fetch;
+		}
+		try {
+			// Hard timeout: contrail's internal deadline only checks between events.
+			// On a quiet devnet the jetstream blocks indefinitely.
+			const INGEST_TIMEOUT_MS = 30_000;
+			await Promise.race([
+				contrail.ingest({ timeoutMs: INGEST_TIMEOUT_MS }, db),
+				new Promise((_, reject) =>
+					setTimeout(() => reject(new Error('ingest hard timeout')), INGEST_TIMEOUT_MS + 5_000)
+				)
+			]);
+		} finally {
+			globalThis.fetch = savedFetch;
+		}
 	} catch (e) {
 		console.error('[cron] contrail.ingest failed:', e);
 	}

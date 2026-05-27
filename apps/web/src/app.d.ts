@@ -87,6 +87,9 @@ declare global {
 				 *  or empty, community event authoring is disabled (the feature
 				 *  no-ops and only personal authoring is offered). */
 				COMMUNITY_AUTHORITIES?: string;
+				JETSTREAM_URLS?: string;
+				PLC_URL?: string;
+				PDS_URL?: string;
 			};
 			/** Cloudflare Worker execution context. Use `ctx.waitUntil(promise)` to
 			 *  let the worker keep a fire-and-forget task alive after the response
