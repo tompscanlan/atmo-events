@@ -19,7 +19,7 @@ function withCors(res: Response): Response {
 
 async function handler(request: Request, platform: App.Platform | undefined) {
 	const db = platform!.env.DB;
-	await ensureInit(db);
+	await ensureInit(db, platform!.env);
 	const res = (await handle(request, db)) as Response;
 	return withCors(res);
 }
