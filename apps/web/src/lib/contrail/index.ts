@@ -14,8 +14,26 @@ if (!spacesAvailable()) {
 export const contrail = new Contrail({ ...config, ...(spaces ? { spaces } : {}) });
 
 let initialized = false;
+let networkOverridesApplied = false;
 
-export async function ensureInit(db: D1Database) {
+function applyNetworkOverrides(env: App.Platform['env']) {
+	if (networkOverridesApplied) return;
+	networkOverridesApplied = true;
+
+	if (env.PDS_URL) {
+		const pdsOrigin = env.PDS_URL.replace(/\/$/, '');
+		const savedFetch = globalThis.fetch;
+		globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+			if (typeof input === 'string' && input.includes('devnet.test')) {
+				input = input.replace(/https?:\/\/devnet\.test(:\d+)?/, pdsOrigin);
+			}
+			return savedFetch(input, init);
+		}) as typeof fetch;
+	}
+}
+
+export async function ensureInit(db: D1Database, env?: App.Platform['env']) {
+	if (env) applyNetworkOverrides(env);
 	if (!initialized) {
 		await contrail.init(db);
 		initialized = true;
