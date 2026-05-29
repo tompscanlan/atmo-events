@@ -3,6 +3,8 @@ import { createHandler } from '@atmo-dev/contrail/server';
 import { Client } from '@atcute/client';
 import { config } from '../contrail.config';
 import { getSpacesConfig, spacesAvailable } from '../spaces/config';
+import { env } from '$env/dynamic/private';
+import { getHappyViewClient } from '$lib/happyview/client';
 
 const spaces = getSpacesConfig();
 if (!spacesAvailable()) {
@@ -29,6 +31,10 @@ const handle = createHandler(contrail);
  * No HTTP roundtrip — calls createHandler directly.
  */
 export function getServerClient(db: D1Database) {
+	const hvUrl = env.HAPPYVIEW_URL;
+	if (hvUrl) {
+		return getHappyViewClient(hvUrl, env.HAPPYVIEW_API_KEY);
+	}
 	return new Client({
 		handler: async (pathname, init) => {
 			await ensureInit(db);
