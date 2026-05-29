@@ -15,10 +15,33 @@
 
 local RSVP = "community.lexicon.calendar.rsvp"
 local EVENT = "community.lexicon.calendar.event"
+local PROFILE = "app.bsky.actor.profile"
 
 local function did_of(uri) return uri:match("^at://([^/]+)") end
 local function rkey_of(uri) return uri:match("([^/]+)$") end
 local function norm_status(s) return s and (s:match("([^#]+)$") or s) or nil end
+
+-- Resolve indexed profiles for dids (deduped); handle absent (see NOTES.md).
+local function profiles_for(dids)
+  local seen, list = {}, {}
+  for _, d in ipairs(dids) do
+    if d and not seen[d] then seen[d] = true; list[#list + 1] = d end
+  end
+  if #list == 0 then return {} end
+  local ph = {}
+  for i = 1, #list do ph[i] = "$" .. i end
+  local rows = db.raw(
+    "SELECT uri, did, cid, record FROM records WHERE collection = '" .. PROFILE ..
+    "' AND did IN (" .. table.concat(ph, ",") .. ")", list)
+  local out = {}
+  for _, row in ipairs(rows or {}) do
+    out[#out + 1] = {
+      did = row.did, uri = row.uri, cid = row.cid,
+      rkey = rkey_of(row.uri), collection = PROFILE, value = json.decode(row.record),
+    }
+  end
+  return out
+end
 
 -- Embed the event an rsvp points at (hydrateEvent). db.get yields body+uri; the
 -- envelope keys the body `record` per the lexicon's #refEventRecord.
@@ -89,5 +112,12 @@ function handle()
 
   local cursor = nil
   if #out == limit then cursor = tostring(offset + limit) end
-  return { records = out, cursor = cursor }
+
+  local result = { records = out, cursor = cursor }
+  if params.profiles then
+    local dids = {}
+    for _, rec in ipairs(out) do dids[#dids + 1] = rec.did end
+    result.profiles = profiles_for(dids)
+  end
+  return result
 end

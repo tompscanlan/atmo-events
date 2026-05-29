@@ -10,9 +10,44 @@
 
 local EVENT = "community.lexicon.calendar.event"
 local RSVP = "community.lexicon.calendar.rsvp"
+local PROFILE = "app.bsky.actor.profile"
 
 local function did_of(uri) return uri:match("^at://([^/]+)") end
 local function rkey_of(uri) return uri:match("([^/]+)$") end
+
+-- Resolve indexed app.bsky.actor.profile records for a list of dids (deduped).
+-- Profiles are a separately-ingested collection; handle is absent (no resolver in
+-- the Lua sandbox), so consumers fall back to displayName/DID. See NOTES.md.
+local function profiles_for(dids)
+  local seen, list = {}, {}
+  for _, d in ipairs(dids) do
+    if d and not seen[d] then seen[d] = true; list[#list + 1] = d end
+  end
+  if #list == 0 then return {} end
+  local ph = {}
+  for i = 1, #list do ph[i] = "$" .. i end
+  local rows = db.raw(
+    "SELECT uri, did, cid, record FROM records WHERE collection = '" .. PROFILE ..
+    "' AND did IN (" .. table.concat(ph, ",") .. ")", list)
+  local out = {}
+  for _, row in ipairs(rows or {}) do
+    out[#out + 1] = {
+      did = row.did, uri = row.uri, cid = row.cid,
+      rkey = rkey_of(row.uri), collection = PROFILE, value = json.decode(row.record),
+    }
+  end
+  return out
+end
+
+-- Gather every did referenced by an event envelope (host + grouped rsvp authors).
+local function collect_dids(rec, acc)
+  acc[#acc + 1] = rec.did
+  if rec.rsvps then
+    for _, bucket in pairs(rec.rsvps) do
+      for _, r in ipairs(bucket) do acc[#acc + 1] = r.did end
+    end
+  end
+end
 
 -- One grouped query for all event uris on the page -> map uri -> count table.
 local function counts_for(uris)
@@ -106,5 +141,11 @@ function handle()
     }
   end
 
-  return { records = out, cursor = page.cursor }
+  local result = { records = out, cursor = page.cursor }
+  if params.profiles then
+    local dids = {}
+    for _, rec in ipairs(out) do collect_dids(rec, dids) end
+    result.profiles = profiles_for(dids)
+  end
+  return result
 end

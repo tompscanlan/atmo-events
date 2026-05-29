@@ -51,3 +51,21 @@ g "rsvp.atmo.rsvp.listRecords?actor=$RSVPER&hydrateEvent=true&limit=5" | jq -e '
   and (.records[0].value.status | type == "string")
   and (.records[0].event | has("uri") and (.record.startsAt != null))' >/dev/null \
   && echo "  attending+hydrateEvent OK" || { echo "  FAIL attending"; exit 1; }
+# profiles=true -> top-level profiles[] of rsvp authors, each with a blob avatar/name
+g "rsvp.atmo.rsvp.listRecords?subjectUri=$(enc "$URI")&status=community.lexicon.calendar.rsvp%23going&profiles=true&limit=200" | jq -e '
+  (.profiles | type == "array") and (.profiles | length > 0)
+  and (.profiles[0] | has("did") and (.value | has("displayName") or has("avatar")))' >/dev/null \
+  && echo "  profiles OK" || { echo "  FAIL profiles"; exit 1; }
+
+echo "== getProfile =="
+HOSTDID=$(echo "$URI" | sed -E 's#at://([^/]+)/.*#\1#')
+g "rsvp.atmo.getProfile?actor=$HOSTDID" | jq -e '
+  (.profiles | type == "array") and (.profiles | length == 1)
+  and (.profiles[0] | (.did == "'"$HOSTDID"'") and (.rkey == "self")
+       and (.value | has("displayName") or has("avatar")))' >/dev/null \
+  && echo "  shape OK" || { echo "  FAIL"; exit 1; }
+# avatar (when present) is a raw blob object getProfileBlobUrl can resolve (ref.$link or cid)
+g "rsvp.atmo.getProfile?actor=$HOSTDID" | jq -e '
+  (.profiles[0].value.avatar == null)
+  or (.profiles[0].value.avatar | (.ref."$link" != null) or (.cid != null))' >/dev/null \
+  && echo "  avatar-blob OK" || { echo "  FAIL avatar-blob"; exit 1; }

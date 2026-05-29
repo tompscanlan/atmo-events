@@ -123,7 +123,46 @@ Confirmed by reading source (`~/openmeet/happyview/src`) + a throwaway probe scr
 - (Task 7)
 
 ## Profiles
-- (Task 6)
+- **Profiles are a THIRD collection that the event+rsvp ingest does not include.**
+  The seeded DB had 10,574 events + 5,070 rsvps and ZERO `app.bsky.actor.profile`
+  records. Serving host/attendee names+avatars requires separately registering the
+  profile record lexicon and populating it — so "serve the read path" is really
+  three ingest streams, not one. (Same in kind for in-process Contrail, but the
+  spike makes the dependency explicit.)
+- **No `app.bsky.actor.profile` lexicon ships with atmo** (atmo only generates its
+  own `rsvp.atmo.*` + `community.lexicon.*`). Had to hand-write a minimal record
+  lexicon doc (`happyview-spike/lexicons/app.bsky.actor.profile.json`) to make the
+  collection ingestable + backfill-eligible. Friction: one more hand-maintained
+  lexicon, and it's a Bluesky-owned schema we're now vendoring a partial copy of.
+- **No handle resolution available to Lua.** The sandbox's atproto API exposes
+  `resolve_service_endpoint`, `get_labels`, `sign`, `verify_signature`, spaces
+  membership — but NO identity/handle resolver, and the profile record carries no
+  handle. So `getProfile` returns `{did, uri, cid, rkey, collection, value=<profile
+  body>}` with NO `handle`. Consumer impact (verified against contrail.ts): names
+  fall back displayName → handle → DID (displayName covers it); `getHostProfile`
+  handle is undefined so profile-link hrefs degrade to the DID. Acceptable for the
+  spike; a real cutover would need a handle store or an identity-resolver Lua hook.
+- **Backfill is single-DID per job** (`POST /admin/backfill {collection, did}`).
+  Omitting `did` triggers relay-wide discovery via
+  `com.atproto.sync.listReposByCollection` (millions of repos) — not viable for a
+  targeted populate. So populating profiles for the feed meant deriving the distinct
+  host+attendee DIDs from the discover feed (21 of them) and POSTing 21 jobs. Each
+  job resolves the DID's PDS and pulls its repo over the network — external,
+  rate-limitable, and O(distinct authors). Registering the collection ALSO turned on
+  live jetstream ingest (count climbed past the 21 backfilled to 63), which is the
+  steady-state mechanism; backfill is only for history.
+- **`profiles=true` plumbing is hand-rolled per script.** Each of the four event/rsvp
+  scripts now re-declares `profiles_for(dids)` (a deduped `IN (...)` db.raw over the
+  profile collection) plus a did-collection pass over its own envelope shape. That's
+  the consumer contract — `getHostProfile(did, profiles)` and
+  `buildAttendee(did, status, profiles)` look profiles up by DID — re-implemented
+  four times because there are no shared helpers and no declarative "hydrate author
+  profiles" relation. Contrail expresses this as config; here it's ~25 lines copied
+  into every endpoint that takes `profiles`.
+- Avatar fidelity confirmed: profile `value.avatar` comes back as a raw blob object
+  (`{$type:'blob', ref:{$link:<cid>}, mimeType, size}`), which is exactly what
+  `getProfileBlobUrl(did, blob)` consumes (reads `ref.$link` || `cid`) to build the
+  `cdn.bsky.app/.../<did>/<blobCid>@webp` URL. No transformation needed in Lua.
 
 ## Latency
 - (Task 7)

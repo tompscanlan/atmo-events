@@ -16,9 +16,32 @@
 
 local EVENT = "community.lexicon.calendar.event"
 local RSVP = "community.lexicon.calendar.rsvp"
+local PROFILE = "app.bsky.actor.profile"
 
 local function did_of(uri) return uri:match("^at://([^/]+)") end
 local function rkey_of(uri) return uri:match("([^/]+)$") end
+
+-- Resolve indexed profiles for dids (deduped); handle absent (see NOTES.md).
+local function profiles_for(dids)
+  local seen, list = {}, {}
+  for _, d in ipairs(dids) do
+    if d and not seen[d] then seen[d] = true; list[#list + 1] = d end
+  end
+  if #list == 0 then return {} end
+  local ph = {}
+  for i = 1, #list do ph[i] = "$" .. i end
+  local rows = db.raw(
+    "SELECT uri, did, cid, record FROM records WHERE collection = '" .. PROFILE ..
+    "' AND did IN (" .. table.concat(ph, ",") .. ")", list)
+  local out = {}
+  for _, row in ipairs(rows or {}) do
+    out[#out + 1] = {
+      did = row.did, uri = row.uri, cid = row.cid,
+      rkey = rkey_of(row.uri), collection = PROFILE, value = json.decode(row.record),
+    }
+  end
+  return out
+end
 
 local function status_bucket(s)
   local norm = s and (s:match("([^#]+)$") or s)
@@ -62,7 +85,8 @@ function handle()
   if not row then return nil end
 
   local hydrate = tonumber(params.hydrateRsvps)
-  return {
+  local rsvps = (hydrate and hydrate > 0) and hydrate_rsvps(uri, hydrate) or nil
+  local result = {
     uri = uri,
     did = did_of(uri),
     rkey = rkey_of(uri),
@@ -73,6 +97,16 @@ function handle()
     rsvpsGoingCount = row.going,
     rsvpsInterestedCount = row.interested,
     rsvpsNotgoingCount = row.notgoing,
-    rsvps = (hydrate and hydrate > 0) and hydrate_rsvps(uri, hydrate) or nil,
+    rsvps = rsvps,
   }
+  if params.profiles then
+    local dids = { did_of(uri) }
+    if rsvps then
+      for _, bucket in pairs(rsvps) do
+        for _, r in ipairs(bucket) do dids[#dids + 1] = r.did end
+      end
+    end
+    result.profiles = profiles_for(dids)
+  end
+  return result
 end
