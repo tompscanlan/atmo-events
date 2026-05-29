@@ -37,14 +37,24 @@ local function counts_for(uris)
   return map
 end
 
--- Up to n raw rsvp sub-records for an event (hydrateRsvps).
+-- normalize status (bare "going" or qualified "...#going") to a bucket name.
+local function status_bucket(s)
+  local norm = s and (s:match("([^#]+)$") or s)
+  if norm == "going" or norm == "interested" or norm == "notgoing" then return norm end
+  return "other"
+end
+
+-- Up to n raw rsvp sub-records for an event, GROUPED by status. atmo's
+-- buildEventAttendees reads rsvps.going / rsvps.interested, so the envelope must
+-- be {going=[], interested=[], notgoing=[], other=[]} (NOT a flat array).
 local function hydrate_rsvps(uri, n)
-  local out = {}
+  local grouped = { going = {}, interested = {}, notgoing = {}, other = {} }
   local page = db.backlinks({ collection = RSVP, uri = uri, limit = n })
   for _, rec in ipairs(page.records or {}) do
-    out[#out + 1] = { uri = rec.uri, did = did_of(rec.uri), rkey = rkey_of(rec.uri), value = rec }
+    local g = grouped[status_bucket(rec.status)]
+    g[#g + 1] = { uri = rec.uri, did = did_of(rec.uri), rkey = rkey_of(rec.uri), record = rec }
   end
-  return out
+  return grouped
 end
 
 function handle()

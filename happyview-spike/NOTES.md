@@ -85,7 +85,27 @@ Confirmed by reading source (`~/openmeet/happyview/src`) + a throwaway probe scr
 - (filled per task)
 
 ## Response-shape fidelity
-- (Task 7)
+- **HappyView does NOT validate a query script's return against the lexicon's
+  declared `output` schema.** `execute_query_script` (execute.rs:865-971) calls
+  `handle()`, runs `lua.from_value(result)`, and returns that JSON verbatim — no
+  schema check. So `output.required` (e.g. getRecord's `time_us`, `collection`)
+  is decorative for scripts; every response field is hand-assembled in Lua and
+  unchecked. Parity is driven entirely by what atmo's *consumer* reads, not by the
+  lexicon. (Friction: the lexicon buys param coercion only, not response safety;
+  a typo'd field name fails silently downstream, not at the appview.)
+- **`rsvps` hydration must be a GROUPED object, not a flat array.** atmo's
+  `buildEventAttendees` (contrail.ts) reads `rsvps.going` / `rsvps.interested`, and
+  `EventRsvps` is shared across listRecords + getRecord. So all three event
+  endpoints return `rsvps = {going:[], interested:[], notgoing:[], other:[]}` where
+  each entry is `{uri, did, rkey, record=<rsvp body>}` (sub-record body keyed
+  `record`, matching the lexicon's `#hydrateRsvpsRecord`, not `value`). Caught only
+  by reading the consumer — the first cut returned flat arrays and the lexicon's
+  non-validation would have shipped it; the discover-feed avatar stacks
+  (`rsvps.going`) would have silently been empty. Status bucketed via the same
+  split_part normalization used for counts.
+- getRecord: a single `db.raw` returns the event body (TEXT `record` → json.decode),
+  `cid`, and all four counts via correlated subqueries — one round trip for scalars;
+  `hydrateRsvps` adds one `db.backlinks`. Returns `value` SINGULAR (not `records`).
 
 ## RSVP counts (the materialization gap)
 - (Task 7)

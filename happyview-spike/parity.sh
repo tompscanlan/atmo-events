@@ -23,5 +23,16 @@ g "rsvp.atmo.event.listDiscoverable?startsAtMin=2020-01-01T00:00:00Z&rsvpsCountM
   (.records | type == "array") and (.records | length > 0)
   and (all(.records[]; .rsvpsCount >= 2))
   and (.records[0] | has("uri") and has("did") and has("value") and has("cid")
-       and ((.rsvps // []) | type == "array"))' >/dev/null \
+       and (.rsvps | has("going") and (.going | type == "array")))' >/dev/null \
   && echo "  shape+filter OK" || { echo "  FAIL"; exit 1; }
+
+echo "== event.getRecord =="
+# pick a real event uri that has rsvps, then fetch it singularly
+URI=$(g "rsvp.atmo.event.listDiscoverable?startsAtMin=2020-01-01T00:00:00Z&rsvpsCountMin=2&limit=1" | jq -r '.records[0].uri')
+g "rsvp.atmo.event.getRecord?uri=$(enc "$URI")&hydrateRsvps=10" | jq -e '
+  (.uri | type == "string") and (.did | type == "string") and (.rkey | type == "string")
+  and (.value | has("$type")) and (.value.startsAt != null)
+  and (.rsvpsCount >= 2) and (.rsvpsGoingCount + .rsvpsInterestedCount + .rsvpsNotgoingCount == .rsvpsCount)
+  and (.rsvps | has("going") and has("interested"))
+  and ((.rsvps.going | length) == .rsvpsGoingCount)' >/dev/null \
+  && echo "  shape+counts OK" || { echo "  FAIL"; exit 1; }

@@ -14,13 +14,21 @@ local RSVP = "community.lexicon.calendar.rsvp"
 local function did_of(uri) return uri:match("^at://([^/]+)") end
 local function rkey_of(uri) return uri:match("([^/]+)$") end
 
+local function status_bucket(s)
+  local norm = s and (s:match("([^#]+)$") or s)
+  if norm == "going" or norm == "interested" or norm == "notgoing" then return norm end
+  return "other"
+end
+
+-- Grouped by status: atmo's buildEventAttendees reads rsvps.going / .interested.
 local function hydrate_rsvps(uri, n)
-  local out = {}
+  local grouped = { going = {}, interested = {}, notgoing = {}, other = {} }
   local page = db.backlinks({ collection = RSVP, uri = uri, limit = n })
   for _, rec in ipairs(page.records or {}) do
-    out[#out + 1] = { uri = rec.uri, did = did_of(rec.uri), rkey = rkey_of(rec.uri), value = rec }
+    local g = grouped[status_bucket(rec.status)]
+    g[#g + 1] = { uri = rec.uri, did = did_of(rec.uri), rkey = rkey_of(rec.uri), record = rec }
   end
-  return out
+  return grouped
 end
 
 function handle()
