@@ -17,3 +17,11 @@ g "rsvp.atmo.event.listRecords?limit=3&sort=startsAt&order=desc" | jq -e '
        and has("rsvpsGoingCount") and has("rsvpsCount")
        and (.value | has("$type")))' >/dev/null \
   && echo "  shape OK" || { echo "  FAIL"; exit 1; }
+
+echo "== event.listDiscoverable =="
+g "rsvp.atmo.event.listDiscoverable?startsAtMin=2020-01-01T00:00:00Z&rsvpsCountMin=2&hydrateRsvps=5&limit=5" | jq -e '
+  (.records | type == "array") and (.records | length > 0)
+  and (all(.records[]; .rsvpsCount >= 2))
+  and (.records[0] | has("uri") and has("did") and has("value") and has("cid")
+       and ((.rsvps // []) | type == "array"))' >/dev/null \
+  && echo "  shape+filter OK" || { echo "  FAIL"; exit 1; }
