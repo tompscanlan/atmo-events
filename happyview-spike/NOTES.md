@@ -150,22 +150,17 @@ Confirmed by reading source (`~/openmeet/happyview/src`) + a throwaway probe scr
   normalization right by hand (the first cut mis-tallied because `"notgoing"`
   contains `"going"`).
 
-## Integration risk: the global HAPPYVIEW_URL switch (blast radius)
+## Scope note: the global HAPPYVIEW_URL switch (NOT counted as friction)
 - The flag is a single switch inside `getServerClient` (contrail/index.ts:34): set
-  `HAPPYVIEW_URL` and EVERY server-side read is redirected to HappyView. There is no
-  per-endpoint or per-route gating.
-- The `getServerClient` surface invokes **22 distinct `rsvp.atmo.*` nsids across 20+
-  routes** (`rsvp.listRecords`, `space.*` ×10, `notifyOfUpdate`, `getFeed`,
-  `permissionSet`, `invite.*` ×4, plus the 5 the spike implemented). With the flag
-  ON, the 17 unimplemented ones also hit HappyView — which has no script bound for
-  them, so they fall to its default record flow or error. Pages that are safe with
-  the flag ON are ONLY those that exclusively use the 5 implemented read endpoints:
-  the public discover/events/calendar/event-detail paths. Space pages
-  (`/p/.../s/[skey]`), invite redemption, feeds, and update-notification all break or
-  behave undefined.
-- So the flag is fine as a SPIKE instrument (we only exercised in-scope pages) but is
-  NOT a safe production cutover lever as-is — a real switch would need per-endpoint
-  routing or full endpoint coverage. This is the biggest integration risk.
+  `HAPPYVIEW_URL` and every server-side read routes to HappyView. The `getServerClient`
+  surface spans 22 `rsvp.atmo.*` nsids (`space.*` ×10, `notifyOfUpdate`, `getFeed`,
+  `permissionSet`, `invite.*` ×4, plus the read endpoints); the spike implemented 5.
+- As a spike instrument this is fine — we exercised only the in-scope public read
+  pages (discover/events/calendar/event-detail), which use only the implemented
+  endpoints. Recorded here just so the blast radius is documented.
+- This is explicitly NOT a friction point: making the switch per-endpoint (route the
+  implemented nsids to HappyView, leave the rest in-process) is a small, well-understood
+  change, not a structural obstacle.
 
 ## Profiles
 - **Profiles are a THIRD collection that the event+rsvp ingest does not include.**
@@ -329,7 +324,6 @@ is structural, not cosmetic:
   past both the lexicon and parity.sh; two only surfaced by rendering a real page.
 - Counts/relations/profile-hydration are re-derived per query in the Lua scripts'
   SQL where Contrail materializes/declares them.
-- The single global switch has a 22-endpoint blast radius vs the 5 implemented.
 
 ### Go / no-go (read path)
 - **Feasible:** all 5 in-scope read endpoints render the real atmo pages
@@ -348,10 +342,9 @@ is structural, not cosmetic:
   22-endpoint surface — spaces, invites, feeds, and especially WRITES (out of spike
   scope entirely) — means a large body of endpoint-specific, Postgres-coupled Lua
   with no boundary type-safety, plus a profile/handle ingestion story that isn't
-  solved. If HappyView is pursued, prerequisites are: (1) per-endpoint flag routing
-  (not the all-or-nothing global switch), (2) an output-shape contract/validation
-  layer so empty-collection and field-name bugs fail loudly, (3) shared Lua helpers
-  or codegen to kill the 5× duplication, (4) a handle/identity resolution path. Until
-  those exist, Contrail's declarative config is the lower-friction option for atmo's
-  read path. The latency shape (discover-feed hydration is the hot path) is the first
+  solved. If HappyView is pursued, prerequisites are: (1) an output-shape
+  contract/validation layer so empty-collection and field-name bugs fail loudly,
+  (2) shared Lua helpers or codegen to kill the 5× duplication, (3) a handle/identity
+  resolution path. Until those exist, Contrail's declarative config is the
+  lower-friction option for atmo's read path. The latency shape (discover-feed hydration is the hot path) is the first
   thing to optimize in either world.
