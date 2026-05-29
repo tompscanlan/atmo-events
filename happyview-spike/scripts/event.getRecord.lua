@@ -51,10 +51,14 @@ end
 
 -- Up to n rsvp sub-records for the event, GROUPED by status.
 local function hydrate_rsvps(uri, n)
-  local grouped = { going = {}, interested = {}, notgoing = {}, other = {} }
+  -- Lazy, omit-empty buckets: an empty Lua table serializes to JSON `{}` (not
+  -- `[]`), which slips past the consumer's `rsvps?.going ?? []` and breaks `.map`.
+  local grouped = {}
   local page = db.backlinks({ collection = RSVP, uri = uri, limit = n })
   for _, rec in ipairs(page.records or {}) do
-    local g = grouped[status_bucket(rec.status)]
+    local b = status_bucket(rec.status)
+    local g = grouped[b]
+    if not g then g = {}; grouped[b] = g end
     g[#g + 1] = { uri = rec.uri, did = did_of(rec.uri), rkey = rkey_of(rec.uri), record = rec }
   end
   return grouped
@@ -106,7 +110,8 @@ function handle()
         for _, r in ipairs(bucket) do dids[#dids + 1] = r.did end
       end
     end
-    result.profiles = profiles_for(dids)
+    local profs = profiles_for(dids)
+    if #profs > 0 then result.profiles = profs end -- omit empty: {} would break .find
   end
   return result
 end

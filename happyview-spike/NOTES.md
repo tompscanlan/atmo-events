@@ -91,7 +91,7 @@ Confirmed by reading source (`~/openmeet/happyview/src`) + a throwaway probe scr
   always supplied in tests — a latent trap). rsvp.listRecords has up to 5 optional
   filters, so it must build the WHERE clause dynamically, appending a placeholder +
   arg only when a filter is present, keeping the args array dense. This is real
-  hand-written-Lua friction Contrail's declarative filter config would not impose.
+  endpoint-specific-Lua friction Contrail's declarative filter config would not impose.
 - Per-script helper duplication continues: did_of/rkey_of/norm_status/status_bucket
   are copy-pasted into every script (fresh sandbox, no shared module). Four scripts
   so far, each re-declaring the same ~6 lines.
@@ -118,9 +118,54 @@ Confirmed by reading source (`~/openmeet/happyview/src`) + a throwaway probe scr
 - getRecord: a single `db.raw` returns the event body (TEXT `record` → json.decode),
   `cid`, and all four counts via correlated subqueries — one round trip for scalars;
   `hydrateRsvps` adds one `db.backlinks`. Returns `value` SINGULAR (not `records`).
+- **Empty Lua table → JSON `{}`, never `[]` — and it broke a real page.** The
+  `json` global exposes only encode/decode (no array sentinel), and `lua.from_value`
+  serializes an empty table as a JSON object. So a grouped-rsvps envelope that
+  pre-created `{going={}, interested={}, ...}` emitted `"going": {}` for empty
+  buckets. The consumer's guard is `(rsvps?.going ?? []).map(...)` — `?? []` only
+  catches `undefined`, so `{}` sails through and `.map` throws. This surfaced as a
+  hard 500 on the **calendar page** (`event.listRecords` + hydrateRsvps), NOT in
+  parity.sh — because the test event had non-empty buckets. Fix: build buckets
+  lazily and OMIT empties, so the key is absent and `?? []` applies. Same hazard for
+  empty `profiles` (`{}` → `profiles?.find` throws), fixed by omitting when empty.
+  This is the sharpest finding of the spike: the appview can't express "empty
+  array," the lexicon doesn't validate output, and parity.sh missed it — only
+  rendering a real page with sparse data caught it. Endpoint-specific Lua scripts put
+  the entire empty-collection contract on the script author. (Throughout this doc,
+  "endpoint-specific Lua scripts" = the custom Lua query handler maintained per XRPC
+  endpoint, as contrasted with Contrail's declarative config/codegen path.)
 
 ## RSVP counts (the materialization gap)
-- (Task 7)
+- HappyView stores no materialized counts. Every event's rsvpsCount /
+  going/interested/notgoing is computed at QUERY TIME by scanning the rsvp
+  collection: `event.listRecords` does one batched `GROUP BY subject.uri, status`
+  over the page's event uris; `listDiscoverable` LEFT JOINs a grouped counts
+  subquery; `getRecord` uses four correlated subqueries. All normalize status with
+  `split_part(status,'#',-1)` because the data mixes bare (`going`) and qualified
+  (`...#going`) forms.
+- Consequence: count cost scales with rsvp volume per query, not O(1). At spike
+  scale (5,070 rsvps) it's fine; at real scale this is the kind of thing Contrail's
+  declarative relation/aggregation config would materialize once. The
+  endpoint-specific Lua scripts re-derive counts on every read, and get the status
+  normalization right by hand (the first cut mis-tallied because `"notgoing"`
+  contains `"going"`).
+
+## Integration risk: the global HAPPYVIEW_URL switch (blast radius)
+- The flag is a single switch inside `getServerClient` (contrail/index.ts:34): set
+  `HAPPYVIEW_URL` and EVERY server-side read is redirected to HappyView. There is no
+  per-endpoint or per-route gating.
+- The `getServerClient` surface invokes **22 distinct `rsvp.atmo.*` nsids across 20+
+  routes** (`rsvp.listRecords`, `space.*` ×10, `notifyOfUpdate`, `getFeed`,
+  `permissionSet`, `invite.*` ×4, plus the 5 the spike implemented). With the flag
+  ON, the 17 unimplemented ones also hit HappyView — which has no script bound for
+  them, so they fall to its default record flow or error. Pages that are safe with
+  the flag ON are ONLY those that exclusively use the 5 implemented read endpoints:
+  the public discover/events/calendar/event-detail paths. Space pages
+  (`/p/.../s/[skey]`), invite redemption, feeds, and update-notification all break or
+  behave undefined.
+- So the flag is fine as a SPIKE instrument (we only exercised in-scope pages) but is
+  NOT a safe production cutover lever as-is — a real switch would need per-endpoint
+  routing or full endpoint coverage. This is the biggest integration risk.
 
 ## Profiles
 - **Profiles are a THIRD collection that the event+rsvp ingest does not include.**
@@ -134,10 +179,13 @@ Confirmed by reading source (`~/openmeet/happyview/src`) + a throwaway probe scr
   lexicon doc (`happyview-spike/lexicons/app.bsky.actor.profile.json`) to make the
   collection ingestable + backfill-eligible. Friction: one more hand-maintained
   lexicon, and it's a Bluesky-owned schema we're now vendoring a partial copy of.
-- **No handle resolution available to Lua.** The sandbox's atproto API exposes
+- **No handle resolution anywhere in HappyView.** The sandbox's atproto API exposes
   `resolve_service_endpoint`, `get_labels`, `sign`, `verify_signature`, spaces
-  membership — but NO identity/handle resolver, and the profile record carries no
-  handle. So `getProfile` returns `{did, uri, cid, rkey, collection, value=<profile
+  membership — but NO identity/handle resolver; the profile record carries no handle;
+  and HappyView's Postgres schema has NO identities/handle table at all (verified
+  against its migrations). Contrail, by contrast, maintains an `identities` table
+  (1,280 DID↔handle rows after backfill) — so handle resolution is a built-in part
+  of its index that HappyView simply lacks. So `getProfile` returns `{did, uri, cid, rkey, collection, value=<profile
   body>}` with NO `handle`. Consumer impact (verified against contrail.ts): names
   fall back displayName → handle → DID (displayName covers it); `getHostProfile`
   handle is undefined so profile-link hrefs degrade to the DID. Acceptable for the
@@ -165,7 +213,145 @@ Confirmed by reading source (`~/openmeet/happyview/src`) + a throwaway probe scr
   `cdn.bsky.app/.../<did>/<blobCid>@webp` URL. No transformation needed in Lua.
 
 ## Latency
-- (Task 7)
+HappyView XRPC, local, warm, single-shot (Postgres on `:5433`, 10.5k events /
+5.1k rsvps / 63 profiles):
+
+| endpoint (params) | ~latency |
+|---|---|
+| getProfile | 11–14 ms |
+| rsvp.listRecords (attendees, limit 200, profiles) | 19–24 ms |
+| getRecord (hydrate 10, profiles) | 50–58 ms |
+| event.listRecords (actor, limit 100, hydrate 5, profiles) | 55–72 ms |
+| event.listDiscoverable (limit 20, hydrate 5, profiles) | **170–240 ms** |
+
+- `listDiscoverable` is 3–4× the others — and it's the home/discover landing query.
+  Its cost is the materialization gap made visible: a `GROUP BY` count-join across
+  the ENTIRE rsvp collection + a per-event `db.backlinks` hydrate (N+1, one round
+  trip per card) + a profiles `IN (...)` lookup. The batched-count `listRecords` is
+  much cheaper because counts are one grouped query over just the page's uris.
+- These are local/warm numbers with no network hop; a real deployment adds the
+  HappyView HTTP round trip on top of every call (vs in-process Contrail's zero-hop
+  D1 access). Not a fair head-to-head here (different datasets/backends), but the
+  relative shape — discover-feed hydration is the hot path to optimize — is real.
+
+## Render parity (A/B, real dev server)
+Ran atmo's `vite dev` twice against the SAME build: flag ON (`HAPPYVIEW_URL` set →
+HappyView/Postgres) and flag OFF (in-process Contrail → local D1). To give the
+flag-OFF side real data, `contrail backfill` populated local D1 (~21k records from
+1,281 discovered users). NOTE: the two datasets are NOT identical (HappyView = 15.6k
+prod-jetstream records + 21 hand-backfilled profiles; Contrail D1 = its own backfill
+universe), so this is STRUCTURAL/render parity, not a byte diff.
+
+Harness friction worth recording: `vite dev` would not boot at all until I changed
+the D1 binding from `"remote": true` to `false` in `wrangler.jsonc` — the cloudflare
+adapter's dev proxy tries to bind the remote D1 against the authenticated CF account
+(which lacks that database) and every request hung/500'd. (Temporary, uncommitted
+harness edit; reverted after.) The loaders read `platform.env.DB` even on the
+flag-ON path, so the binding must resolve regardless of the flag.
+
+Results:
+- **/events** — flag ON: 20 event cards rendered from HappyView; flag OFF: 6 cards
+  from Contrail. Both 200, no errors. (Card-count differs purely by dataset +
+  discover-filter population.)
+- **event-detail, SAME event** (`.../e/3mgy7ekssju2y`, "PublicSpaces Conference
+  2026") — structurally identical across backends: title rendered ×4, `og:title` ×2,
+  iCal links ×17 on BOTH. Only delta: attendee avatars (2 flag-ON vs 8 flag-OFF) =
+  dataset/profile-backfill difference, not a render divergence.
+- **calendar** (`.../e/calendar`) — flag ON: valid `BEGIN:VCALENDAR` iCal feed (200)
+  after the empty-bucket fix; this is the page that exposed the empty-table→`{}` bug.
+- **flag OFF baseline** (empty D1, before backfill) — pages rendered 200 with clean
+  empty-state, no errors: the fallback path runs unchanged when the flag is unset.
+
+Conclusion: the real atmo SvelteKit loaders + Svelte components consume the
+HappyView envelopes and render the public read path with parity to in-process
+Contrail. The differences observed are data, not structure.
+
+### Backfill count + schema asymmetry (the two indexes are NOT the same shape)
+Post-backfill record counts, measured directly:
+
+| collection | HappyView (Postgres) | Contrail (local D1) |
+|---|---|---|
+| events | 10,606 | 1,302 |
+| rsvps | 5,073 | 1,822 |
+| profiles | 3,681 | 604 |
+| follows | 0 (not ingested) | 19,874 |
+| identities (DID↔handle) | — (none) | 1,280 |
+
+Why so different, and why it matters:
+- **Different discovery universes.** HappyView was seeded from a prod **Jetstream
+  firehose capture** (a network-wide time window) → 10.6k events. Contrail's
+  `backfill` does **per-user repo discovery** (found 1,281 repos) and pulls only
+  those repos' records → 1.3k events. So a data-identical A/B was never possible;
+  this is exactly why /events rendered 20 cards flag-ON vs 6 flag-OFF. Structural
+  parity is the right (and achieved) bar.
+- **Contrail has an `identities` table (1,280 DID↔handle rows) — it RESOLVES
+  HANDLES.** This is precisely the gap called out for HappyView, whose Lua sandbox
+  exposes no handle resolver, so `getProfile` drops `handle`. Concrete config-vs-Lua
+  win for Contrail: handle resolution is built into the index; on HappyView it's
+  unsolved.
+- **Different schemas.** Contrail uses TYPED per-collection tables
+  (`records_event` / `records_rsvp` / `records_profile` / `records_follow`), an
+  `identities` table, FTS search tables, and a parallel `spaces_records_*` set for
+  permissioned spaces. HappyView uses ONE generic `records` table with a JSON
+  `record` column. This is the root reason the endpoint-specific Lua is
+  Postgres-jsonb-coupled (`record::jsonb->...`) and must compute counts per query
+  (no typed indexes), where Contrail's typed tables/relations express them
+  declaratively.
+- **Live vs snapshot.** HappyView profiles climbed 63 → 3,681 during the spike purely
+  from LIVE jetstream ingest (registering the collection opened a continuous stream);
+  Contrail's D1 is a static backfill snapshot (604 profiles). Steady-state vs
+  one-shot population is another operational difference.
 
 ## Overall
-- (Task 7)
+
+### The configuration difference is sharper than "the host changed"
+The spike's framing question was "how much friction is hand-maintained lexicons +
+Lua vs Contrail's declarative config." Having built the read path both ways, the gap
+is structural, not cosmetic:
+
+| | In-process Contrail (flag OFF) | HappyView (flag ON) |
+|---|---|---|
+| Deployment | embedded in the SvelteKit worker | external HTTP service, selected by `HAPPYVIEW_URL` |
+| Storage | D1 (Cloudflare, declarative bindings) | Postgres (separate process, `:5433`) |
+| Auth | in-process, none | `X-Client-Key` per XRPC call |
+| Schema/logic | declarative Contrail config | runtime-uploaded lexicons + bespoke Lua per endpoint |
+| Query portability | abstracted by Contrail | Postgres-specific: `record::jsonb`, `$N` placeholders, `split_part` |
+| Response safety | Contrail enforces shape | none — Lua return is emitted verbatim, lexicon output unchecked |
+
+### What endpoint-specific Lua + reused-lexicons actually cost (the friction tally)
+- You DON'T hand-write lexicons for endpoints atmo already generates (reuse buys
+  param coercion) — but you DO hand-write one for anything atmo doesn't ship
+  (`listDiscoverable`, `app.bsky.actor.profile`).
+- Every endpoint is bespoke Lua against a fresh sandbox: helpers copy-pasted 5×, no
+  shared module, Postgres-specific SQL, manual envelope assembly.
+- The lexicon gives you NO response-shape safety (output unvalidated). Three distinct
+  shape bugs (flat-vs-grouped rsvps, empty-table→`{}`, empty-profiles→`{}`) all got
+  past both the lexicon and parity.sh; two only surfaced by rendering a real page.
+- Counts/relations/profile-hydration are re-derived per query in the Lua scripts'
+  SQL where Contrail materializes/declares them.
+- The single global switch has a 22-endpoint blast radius vs the 5 implemented.
+
+### Go / no-go (read path)
+- **Feasible:** all 5 in-scope read endpoints render the real atmo pages
+  (discover/events/calendar/event-detail) against HappyView with correct data,
+  counts, grouped attendees, and profile avatars. The seam is clean (one env flag,
+  reversible by `git revert` + deleting `happyview-spike/`).
+- **But the friction is real and front-loaded:** ~8 runtime-model corrections + 3
+  silent shape bugs + per-script duplication + Postgres-coupled SQL, for 5 of 22
+  endpoints. Extrapolating to the full surface (spaces, invites, feeds, writes) is a
+  large, hand-maintained, untyped-at-the-boundary surface.
+- **Recommendation: NO-GO on a near-term cutover; the spike's value is the friction
+  map, not a migration.** The read path is provably feasible (5/5 endpoints render
+  the real pages with structural parity to Contrail), but the cost to get there for
+  just the read slice was high and front-loaded, and three of the bugs were silent
+  (lexicon doesn't validate output; parity.sh missed two). Extending this to the full
+  22-endpoint surface — spaces, invites, feeds, and especially WRITES (out of spike
+  scope entirely) — means a large body of endpoint-specific, Postgres-coupled Lua
+  with no boundary type-safety, plus a profile/handle ingestion story that isn't
+  solved. If HappyView is pursued, prerequisites are: (1) per-endpoint flag routing
+  (not the all-or-nothing global switch), (2) an output-shape contract/validation
+  layer so empty-collection and field-name bugs fail loudly, (3) shared Lua helpers
+  or codegen to kill the 5× duplication, (4) a handle/identity resolution path. Until
+  those exist, Contrail's declarative config is the lower-friction option for atmo's
+  read path. The latency shape (discover-feed hydration is the hot path) is the first
+  thing to optimize in either world.

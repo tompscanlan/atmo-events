@@ -117,7 +117,8 @@ function handle()
   if params.profiles then
     local dids = {}
     for _, rec in ipairs(out) do dids[#dids + 1] = rec.did end
-    result.profiles = profiles_for(dids)
+    local profs = profiles_for(dids)
+    if #profs > 0 then result.profiles = profs end -- omit empty: {} would break .find
   end
   return result
 end

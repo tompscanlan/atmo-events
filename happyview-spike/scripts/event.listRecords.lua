@@ -83,10 +83,16 @@ end
 -- buildEventAttendees reads rsvps.going / rsvps.interested, so the envelope must
 -- be {going=[], interested=[], notgoing=[], other=[]} (NOT a flat array).
 local function hydrate_rsvps(uri, n)
-  local grouped = { going = {}, interested = {}, notgoing = {}, other = {} }
+  -- Buckets are created lazily and only when non-empty: an EMPTY Lua table
+  -- serializes to JSON `{}` (object), not `[]`, and the consumer's
+  -- `rsvps?.going ?? []` only catches `undefined` — an empty `{}` slips through
+  -- and `.map` throws. Omitting empty buckets lets the `?? []` guard apply.
+  local grouped = {}
   local page = db.backlinks({ collection = RSVP, uri = uri, limit = n })
   for _, rec in ipairs(page.records or {}) do
-    local g = grouped[status_bucket(rec.status)]
+    local b = status_bucket(rec.status)
+    local g = grouped[b]
+    if not g then g = {}; grouped[b] = g end
     g[#g + 1] = { uri = rec.uri, did = did_of(rec.uri), rkey = rkey_of(rec.uri), record = rec }
   end
   return grouped
@@ -145,7 +151,8 @@ function handle()
   if params.profiles then
     local dids = {}
     for _, rec in ipairs(out) do collect_dids(rec, dids) end
-    result.profiles = profiles_for(dids)
+    local profs = profiles_for(dids)
+    if #profs > 0 then result.profiles = profs end -- omit empty: {} would break .find
   end
   return result
 end
