@@ -1,0 +1,93 @@
+-- rsvp.atmo.rsvp.listRecords — list RSVP records. Powers three atmo callers:
+--   * getViewerRsvp        (actor + subjectUri, limit 1)         -> records[0].value.status
+--   * listEventAttendees   (subjectUri + status, profiles, 200)  -> records[].did (+ profiles)
+--   * listAttendingEvents  (actor + hydrateEvent, 100)           -> records[].event, .value.status
+-- Per-record envelope: { uri, did, rkey, collection, cid?, value=<rsvp body>,
+--   event? } where event (#refEventRecord) is { uri, did, rkey, collection, cid?,
+--   record=<event body> } — note the embedded event body is keyed `record`, which
+--   flattenEventRecord accepts (it reads value||record).
+--
+-- db.raw (not db.query) because the `status` filter must be suffix-normalized:
+-- callers pass the qualified token ("community.lexicon.calendar.rsvp#going") but the
+-- data holds both bare ("going") and qualified forms, so we compare
+-- split_part(status,'#',-1) on both sides (see NOTES.md). actor matches the repo
+-- `did` column (assumed a DID, consistent with event.listRecords).
+
+local RSVP = "community.lexicon.calendar.rsvp"
+local EVENT = "community.lexicon.calendar.event"
+
+local function did_of(uri) return uri:match("^at://([^/]+)") end
+local function rkey_of(uri) return uri:match("([^/]+)$") end
+local function norm_status(s) return s and (s:match("([^#]+)$") or s) or nil end
+
+-- Embed the event an rsvp points at (hydrateEvent). db.get yields body+uri; the
+-- envelope keys the body `record` per the lexicon's #refEventRecord.
+local function hydrate_event(subject_uri)
+  if not subject_uri then return nil end
+  local ev = db.get(subject_uri)
+  if not ev then return nil end
+  return {
+    uri = ev.uri,
+    did = did_of(ev.uri),
+    rkey = rkey_of(ev.uri),
+    collection = EVENT,
+    record = ev,
+  }
+end
+
+function handle()
+  local limit = tonumber(params.limit) or 50
+  if limit > 200 then limit = 200 end
+  local offset = tonumber(params.cursor) or 0
+  local dir = (params.order == "asc") and "ASC" or "DESC"
+
+  -- Build WHERE dynamically: a Lua array cannot hold nil in a middle slot (it
+  -- collapses and misaligns positional binds), so we only append a placeholder +
+  -- arg for filters that are actually present, keeping `args` dense.
+  local where = { "collection = $1" }
+  local args = { RSVP }
+  local function add(tpl, val)
+    args[#args + 1] = val
+    where[#where + 1] = tpl:gsub("%$%?", "$" .. #args)
+  end
+  if params.actor then add("did = $?", params.actor) end
+  if params.subjectUri then add("record::jsonb->'subject'->>'uri' = $?", params.subjectUri) end
+  local ns = norm_status(params.status)
+  if ns then add("split_part(record::jsonb->>'status', '#', -1) = $?", ns) end
+  if params.createdAtMin then add("(record::jsonb->>'createdAt') >= $?", params.createdAtMin) end
+  if params.createdAtMax then add("(record::jsonb->>'createdAt') <= $?", params.createdAtMax) end
+
+  local lim_idx = #args + 1
+  local off_idx = #args + 2
+  args[lim_idx] = limit
+  args[off_idx] = offset
+
+  local sql = "SELECT uri, did, cid, record FROM records WHERE "
+    .. table.concat(where, " AND ")
+    .. " ORDER BY (record::jsonb->>'createdAt') " .. dir .. " NULLS LAST"
+    .. " LIMIT $" .. lim_idx .. " OFFSET $" .. off_idx
+  local rows = db.raw(sql, args)
+
+  local hydrate = params.hydrateEvent
+  local out = {}
+  for _, row in ipairs(rows or {}) do
+    local body = json.decode(row.record)
+    local rec = {
+      uri = row.uri,
+      did = row.did,
+      rkey = rkey_of(row.uri),
+      collection = RSVP,
+      cid = row.cid,
+      value = body,
+    }
+    if hydrate then
+      local subj = body.subject and body.subject.uri
+      rec.event = hydrate_event(subj)
+    end
+    out[#out + 1] = rec
+  end
+
+  local cursor = nil
+  if #out == limit then cursor = tostring(offset + limit) end
+  return { records = out, cursor = cursor }
+end

@@ -82,7 +82,19 @@ Confirmed by reading source (`~/openmeet/happyview/src`) + a throwaway probe scr
   `community.lexicon.calendar.rsvp`. From prod Jetstream.
 
 ## Lua authoring effort
-- (filled per task)
+- **A Lua array cannot hold `nil` in a middle slot.** The natural "static SQL +
+  positional NULL-guards" pattern — `WHERE ($2 IS NULL OR col=$2)` with
+  `db.raw(sql, { a, params.maybe, c })` — silently breaks when an optional middle
+  param is absent: the array collapses/misaligns and Postgres gets the wrong arg
+  count → 500. It only *appears* to work when the sole optional param is the LAST
+  positional one (as in listDiscoverable, whose only nil-able arg, startsAtMin, was
+  always supplied in tests — a latent trap). rsvp.listRecords has up to 5 optional
+  filters, so it must build the WHERE clause dynamically, appending a placeholder +
+  arg only when a filter is present, keeping the args array dense. This is real
+  hand-written-Lua friction Contrail's declarative filter config would not impose.
+- Per-script helper duplication continues: did_of/rkey_of/norm_status/status_bucket
+  are copy-pasted into every script (fresh sandbox, no shared module). Four scripts
+  so far, each re-declaring the same ~6 lines.
 
 ## Response-shape fidelity
 - **HappyView does NOT validate a query script's return against the lexicon's

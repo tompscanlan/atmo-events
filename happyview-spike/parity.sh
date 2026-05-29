@@ -36,3 +36,18 @@ g "rsvp.atmo.event.getRecord?uri=$(enc "$URI")&hydrateRsvps=10" | jq -e '
   and (.rsvps | has("going") and has("interested"))
   and ((.rsvps.going | length) == .rsvpsGoingCount)' >/dev/null \
   && echo "  shape+counts OK" || { echo "  FAIL"; exit 1; }
+
+echo "== rsvp.listRecords =="
+# attendees: subjectUri + qualified status -> records[].did, value.status normalizes
+g "rsvp.atmo.rsvp.listRecords?subjectUri=$(enc "$URI")&status=community.lexicon.calendar.rsvp%23going&limit=200" | jq -e '
+  (.records | type == "array") and (.records | length > 0)
+  and (all(.records[]; (.did | type == "string") and (.value.status | test("going$"))))
+  and (.records[0] | has("uri") and has("rkey") and has("value"))' >/dev/null \
+  && echo "  attendees OK" || { echo "  FAIL attendees"; exit 1; }
+# attending: actor + hydrateEvent -> records[].event has a flattenable body
+RSVPER=$(g "rsvp.atmo.rsvp.listRecords?subjectUri=$(enc "$URI")&limit=1" | jq -r '.records[0].did')
+g "rsvp.atmo.rsvp.listRecords?actor=$RSVPER&hydrateEvent=true&limit=5" | jq -e '
+  (.records | type == "array") and (.records | length > 0)
+  and (.records[0].value.status | type == "string")
+  and (.records[0].event | has("uri") and (.record.startsAt != null))' >/dev/null \
+  && echo "  attending+hydrateEvent OK" || { echo "  FAIL attending"; exit 1; }
