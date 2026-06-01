@@ -3,15 +3,14 @@ import { isDid } from '@atcute/lexicons/syntax';
 import { user } from './auth.svelte';
 import { DOH_RESOLVER, type AllowedCollection } from './settings';
 import {
-	CompositeDidDocumentResolver,
 	CompositeHandleResolver,
 	DohJsonHandleResolver,
-	PlcDidDocumentResolver,
-	WebDidDocumentResolver,
 	WellKnownHandleResolver
 } from '@atcute/identity-resolver';
 import { Client, simpleFetchHandler } from '@atcute/client';
 import { type AppBskyActorDefs } from '@atcute/bluesky';
+import { env } from '$env/dynamic/public';
+import { buildLocalResolver } from '$lib/contrail/resolver';
 
 export type Collection = `${string}.${string}.${string}`;
 import * as TID from '@atcute/tid';
@@ -73,12 +72,12 @@ export async function actorToDid(actor: string): Promise<Did> {
 	throw lastErr;
 }
 
-const didResolver = new CompositeDidDocumentResolver({
-	methods: {
-		plc: new PlcDidDocumentResolver(),
-		web: new WebDidDocumentResolver()
-	}
-});
+// Honor PUBLIC_PLC_URL so devnet did:plc (communities/users provisioned on the
+// local PLC) resolve in BOTH server and browser contexts — the in-app editor
+// resolves DIDs client-side, so a public-PLC-only default would 404 on devnet.
+// A PLC endpoint is not a secret, so it's a PUBLIC_ var (safe in this shared
+// client/server module). Unset in prod -> default public plc.directory.
+const didResolver = buildLocalResolver(env.PUBLIC_PLC_URL || undefined);
 
 /**
  * Gets the PDS (Personal Data Server) URL for a given DID.
