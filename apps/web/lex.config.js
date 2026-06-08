@@ -18,8 +18,7 @@ export default defineLexiconConfig({
                   "community.lexicon.location.address",
                   "community.lexicon.location.fsq",
                   "community.lexicon.location.geo",
-                  "community.lexicon.location.hthree",
-                  "follow"
+                  "community.lexicon.location.hthree"
         ],
       },
     ],
