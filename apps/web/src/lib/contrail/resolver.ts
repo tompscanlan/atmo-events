@@ -13,8 +13,10 @@ import {
  *
  * Without `{ apiUrl }`, devnet `did:plc` resolves against the public
  * plc.directory and 404s — communities/users provisioned on devnet (whose
- * records live only in the local PLC) are never found. Mirrors the inline
- * construction in `community/server/resolve-space-host.ts` and `atproto/server/oauth.ts`.
+ * records live only in the local PLC) are never found. Used by oauth.ts, the
+ * methods.ts resolver, and the cron ingest handler. `community/server/
+ * resolve-space-host.ts` keeps its own inline copy on purpose so the community
+ * feature carries no dependency on this devnet helper.
  */
 export function buildLocalResolver(plcUrl?: string) {
 	return new CompositeDidDocumentResolver({

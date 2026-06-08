@@ -9,15 +9,13 @@ import {
 } from '@atcute/oauth-node-client';
 import type { Did } from '@atcute/lexicons';
 import {
-	CompositeDidDocumentResolver,
 	CompositeHandleResolver,
 	DohJsonHandleResolver,
 	LocalActorResolver,
-	PlcDidDocumentResolver,
-	WebDidDocumentResolver,
 	WellKnownHandleResolver,
 	XrpcHandleResolver
 } from '@atcute/identity-resolver';
+import { buildLocalResolver } from '$lib/contrail/resolver';
 import { KVStore } from './kv-store';
 import { DOH_RESOLVER, REDIRECT_PATH, scopes, devScopes } from '../settings';
 import { DEV_PORT } from '../port';
@@ -38,12 +36,7 @@ function createActorResolver() {
 
 	return new LocalActorResolver({
 		handleResolver: new CompositeHandleResolver({ methods: handleMethods }),
-		didDocumentResolver: new CompositeDidDocumentResolver({
-			methods: {
-				plc: new PlcDidDocumentResolver(plcUrl ? { apiUrl: plcUrl } : undefined),
-				web: new WebDidDocumentResolver()
-			}
-		})
+		didDocumentResolver: buildLocalResolver(plcUrl)
 	});
 }
 
