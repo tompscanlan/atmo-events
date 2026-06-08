@@ -22,10 +22,20 @@ function applyNetworkOverrides(env: App.Platform['env']) {
 
 	if (env.PDS_URL) {
 		const pdsOrigin = env.PDS_URL.replace(/\/$/, '');
+		const rewrite = (u: string) =>
+			u.includes('devnet.test') ? u.replace(/https?:\/\/devnet\.test(:\d+)?/, pdsOrigin) : u;
 		const savedFetch = globalThis.fetch;
 		globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-			if (typeof input === 'string' && input.includes('devnet.test')) {
-				input = input.replace(/https?:\/\/devnet\.test(:\d+)?/, pdsOrigin);
+			// atcute identity resolvers and the jetstream client commonly call fetch
+			// with a URL or Request, not a string — rewrite all three so devnet.test
+			// is consistently redirected to the local PDS.
+			if (typeof input === 'string') {
+				input = rewrite(input);
+			} else if (input instanceof URL) {
+				input = rewrite(input.href);
+			} else if (input instanceof Request) {
+				const rewritten = rewrite(input.url);
+				if (rewritten !== input.url) input = new Request(rewritten, input);
 			}
 			return savedFetch(input, init);
 		}) as typeof fetch;

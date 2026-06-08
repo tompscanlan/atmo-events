@@ -25,23 +25,21 @@ export const POST: RequestHandler = async ({ request, platform }) => {
 	// (which previously also took the bot down with it).
 	try {
 		const env = platform!.env;
-		await ensureInit(db, env);
+		// Apply devnet config overrides BEFORE init: contrail.init() may snapshot the
+		// resolver/jetstreams from config, so setting them afterward would miss the
+		// first ingest of a fresh isolate (community/user did:plc records provisioned
+		// only on the local PLC would resolve against public plc.directory and 404).
 		if (env.JETSTREAM_URLS) {
 			(contrail.config as any).jetstreams = env.JETSTREAM_URLS.split(',').filter(Boolean);
 		}
 		if (env.PLC_URL && !contrail.config.networkOverrides?.resolver) {
-			const { CompositeDidDocumentResolver, PlcDidDocumentResolver, WebDidDocumentResolver } =
-				await import('@atcute/identity-resolver');
+			const { buildLocalResolver } = await import('$lib/contrail/resolver');
 			(contrail.config as any).networkOverrides = {
 				...contrail.config.networkOverrides,
-				resolver: new CompositeDidDocumentResolver({
-					methods: {
-						plc: new PlcDidDocumentResolver({ apiUrl: env.PLC_URL }),
-						web: new WebDidDocumentResolver()
-					}
-				})
+				resolver: buildLocalResolver(env.PLC_URL)
 			};
 		}
+		await ensureInit(db, env);
 		// Hard timeout: contrail's internal deadline only checks between events.
 		// On a quiet devnet the jetstream blocks indefinitely.
 		const INGEST_TIMEOUT_MS = 30_000;
