@@ -86,6 +86,13 @@ declare global {
 				JETSTREAM_URLS?: string;
 				PLC_URL?: string;
 				PDS_URL?: string;
+				/** Meilisearch base url for the search read path (search/near-me).
+				 *  When either var is unset, search falls back to the D1 path and
+				 *  near-me is unavailable. */
+				SEARCH_URL?: string;
+				/** Read-only Default Search API Key (set via `wrangler secret put`).
+				 *  Never the admin or root key. */
+				SEARCH_API_KEY?: string;
 			};
 			/** Cloudflare Worker execution context. Use `ctx.waitUntil(promise)` to
 			 *  let the worker keep a fire-and-forget task alive after the response
