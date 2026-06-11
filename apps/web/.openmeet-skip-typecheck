@@ -1,0 +1,5 @@
+# Opt out of the plugin tsc PostToolUse hook for this worktree.
+# Reason: same pre-existing project-wide tsc baseline as the main worktree
+# (missing $types until svelte-kit sync, @types/node wiring in atproto scripts,
+# om-99ru) blocks every .ts edit. Gate is `pnpm --filter web check`
+# (svelte-check), run per phase — see quality-gates step of om-duxq.
