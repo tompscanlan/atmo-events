@@ -6,9 +6,7 @@ allowBuilds:
   esbuild: true
   sharp: true
   workerd: true
+# Exempt our own scope from the 24h minimum-release-age cooldown (it would
+# otherwise block a just-published contrail). Glob so we don't re-add per version.
 minimumReleaseAgeExclude:
-  - '@atmo-dev/contrail-appview@0.11.0'
-  - '@atmo-dev/contrail-authority@0.11.0'
-  - '@atmo-dev/contrail-base@0.11.0'
-  - '@atmo-dev/contrail-record-host@0.11.0'
-  - '@atmo-dev/contrail@0.11.0'
+  - '@atmo-dev/*'

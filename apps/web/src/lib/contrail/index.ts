@@ -3,6 +3,12 @@ import { createHandler } from '@atmo-dev/contrail/server';
 import { Client } from '@atcute/client';
 import { config } from '../contrail.config';
 import { getSpacesConfig, spacesAvailable } from '../spaces/config';
+import {
+	createMeiliSink,
+	meiliSinkBackendFromEnv,
+	applyMeiliSettings,
+	type MeiliSinkBackend
+} from '../search/server/meili-sink';
 
 const spaces = getSpacesConfig();
 if (!spacesAvailable()) {
@@ -11,9 +17,23 @@ if (!spacesAvailable()) {
 	);
 }
 
-export const contrail = new Contrail({ ...config, ...(spaces ? { spaces } : {}) });
+// The Meili search sink reads its backend from this module-level holder rather
+// than construction-time config: in a Cloudflare Worker the env
+// (SEARCH_SINK_URL/KEY) only exists per invocation, while `contrail` is built
+// once at module load. ensureInit(db, env) — called by the cron and xrpc
+// handlers, which have env — populates it before ingest fires the sink; the
+// sink no-ops until then. The SSR read path calls ensureInit(db) with no env,
+// which is fine: reads never ingest, so the sink never fires there.
+let searchSinkBackend: MeiliSinkBackend | null = null;
+
+export const contrail = new Contrail({
+	...config,
+	...(spaces ? { spaces } : {}),
+	sinks: [createMeiliSink(() => searchSinkBackend)]
+});
 
 let initialized = false;
+let sinkConfigured = false;
 let networkOverridesApplied = false;
 
 function applyNetworkOverrides(env: App.Platform['env']) {
@@ -37,6 +57,23 @@ export async function ensureInit(db: D1Database, env?: App.Platform['env']) {
 	if (!initialized) {
 		await contrail.init(db);
 		initialized = true;
+	}
+	// Configure the search sink once, on the first env-bearing call. Apply the
+	// index settings (which also auto-creates the index) BEFORE arming the sink,
+	// so a Meili outage degrades to "no search feed" rather than upserting into
+	// an index whose filters the read path can't use. Failure is isolated:
+	// ingest and reads must continue even when Meili is unreachable.
+	if (env && !sinkConfigured) {
+		const backend = meiliSinkBackendFromEnv(env);
+		if (backend) {
+			try {
+				await applyMeiliSettings(backend);
+				searchSinkBackend = backend;
+				sinkConfigured = true;
+			} catch (e) {
+				console.error('[search-sink] applySettings failed; sink disabled this cycle:', e);
+			}
+		}
 	}
 }
 
