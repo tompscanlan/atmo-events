@@ -47,10 +47,16 @@ const backend = (fetchFn: typeof fetch) => ({
 describe('searchBackendFromEnv', () => {
 	it('requires both url and key', () => {
 		expect(searchBackendFromEnv({ SEARCH_URL: 'https://s' })).toBeNull();
-		expect(searchBackendFromEnv({ SEARCH_URL: 'https://s', SEARCH_API_KEY: 'k' })).toEqual({
+		expect(searchBackendFromEnv({ SEARCH_URL: 'https://s', SEARCH_API_KEY: 'k' })).toMatchObject({
 			url: 'https://s',
 			apiKey: 'k'
 		});
+	});
+
+	it('carries SEARCH_INDEX through so the read path can match the sink index', () => {
+		expect(
+			searchBackendFromEnv({ SEARCH_URL: 'https://s', SEARCH_API_KEY: 'k', SEARCH_INDEX: 'events-test' })
+		).toMatchObject({ url: 'https://s', apiKey: 'k', indexUid: 'events-test' });
 	});
 });
 
@@ -94,6 +100,21 @@ describe('runEventSearchPage', () => {
 		// Page fills at SEARCH_PAGE_SIZE hits; the next offset is that count.
 		expect(page.events).toHaveLength(SEARCH_PAGE_SIZE);
 		expect(page.cursor).toBe(String(SEARCH_PAGE_SIZE));
+	});
+
+	it('throws when D1 hydration fails so the caller can fall back instead of skipping hits', async () => {
+		// A full batch comes back from Meili, but the D1 hydration request fails
+		// (client.get not ok -> listDiscoverableEventsByUrisFromContrail returns
+		// null). Treating that as "empty" would drop every hit yet still advance
+		// the cursor, silently skipping a whole batch. It must throw instead.
+		const { fetchFn } = meiliFetch([{ uri: 'at://did:plc:a/c/1' }], 50);
+		const failingClient = {
+			get: vi.fn(async () => ({ ok: false }))
+		} as unknown as Client;
+
+		await expect(
+			runEventSearchPage(backend(fetchFn), failingClient, { q: 'fest', cursor: null })
+		).rejects.toThrow(/hydration failed/i);
 	});
 
 	it('ends pagination when fewer hits than requested come back', async () => {
