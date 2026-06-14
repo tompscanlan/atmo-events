@@ -11,7 +11,7 @@ export type GeocodeResult = {
 };
 
 const NOMINATIM_SEARCH_URL = 'https://nominatim.openstreetmap.org/search';
-const USER_AGENT = 'openmeet-atmo (https://openmeet.net)';
+const USER_AGENT = 'atmo-events (https://atmo.rsvp)';
 
 export async function geocodeLocation(
 	q: string,

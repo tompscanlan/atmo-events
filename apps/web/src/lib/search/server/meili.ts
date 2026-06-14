@@ -1,8 +1,8 @@
 // Read-only Meilisearch query client for the event search read path.
 // Only `search` and `near-me` talk to Meilisearch; every other read stays on
 // D1. Auth is the instance's auto-derived Default Search API Key — the Worker
-// never holds the admin or root key. Doc shape is written by the
-// openmeet-contrail search sink (uri + _geo per event record).
+// never holds the admin or root key. Doc shape is written by the search sink
+// in ./meili-sink.ts (uri + _geo per event record).
 
 export interface SearchBackend {
 	url: string;
