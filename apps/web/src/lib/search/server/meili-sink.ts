@@ -4,7 +4,7 @@
 // live (jetstream / notify) and backfill paths. We forward calendar-event
 // records into the Meilisearch `events` index that ./meili.ts reads from, so
 // atmo's own in-process cron ingest indexes search WITHOUT a separate
-// standalone indexer (replacing openmeet-contrail's role here).
+// standalone indexer.
 //
 // Constraints inherited from the seam:
 //   - sinks only ever observe PUBLIC records (space-scoped/private records

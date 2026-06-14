@@ -15,7 +15,7 @@ function fakeFetch(body: unknown, status = 200) {
 }
 
 const cfg = (fetchFn: typeof fetch) => ({
-	url: 'https://search.testnet.openmeet.net',
+	url: 'https://meili.example.test',
 	apiKey: 'read-only-key',
 	fetch: fetchFn
 });
@@ -38,7 +38,7 @@ describe('searchEvents', () => {
 		});
 
 		expect(calls).toHaveLength(1);
-		expect(calls[0].url).toBe('https://search.testnet.openmeet.net/indexes/events/search');
+		expect(calls[0].url).toBe('https://meili.example.test/indexes/events/search');
 		expect(calls[0].init.method).toBe('POST');
 		expect((calls[0].init.headers as Record<string, string>).authorization).toBe(
 			'Bearer read-only-key'

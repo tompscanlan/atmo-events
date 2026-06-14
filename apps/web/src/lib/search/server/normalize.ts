@@ -4,9 +4,6 @@
 // single canonical _geo point with precedence geo > fsq > hthree (hthree via
 // the h3 cell center); records with no coordinate-bearing location get no _geo
 // and are simply excluded from radius search while staying text-searchable.
-//
-// Ported from openmeet-contrail/src/search/normalize.ts so atmo's in-process
-// cron ingest produces docs identical to the standalone indexer it replaces.
 import { cellToLatLng, isValidCell } from 'h3-js';
 
 export interface SearchDoc {

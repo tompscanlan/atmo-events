@@ -26,7 +26,7 @@ describe('geocodeLocation', () => {
 		expect(url.searchParams.get('format')).toBe('jsonv2');
 		expect(url.searchParams.get('limit')).toBe('1');
 		// Nominatim's usage policy requires an identifying User-Agent.
-		expect(new Headers(init.headers).get('user-agent')).toMatch(/openmeet/i);
+		expect(new Headers(init.headers).get('user-agent')).toMatch(/atmo/i);
 
 		expect(result).toEqual({
 			lat: 38.2542,
