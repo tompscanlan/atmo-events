@@ -29,9 +29,12 @@ export interface SearchPageResult {
 export function searchBackendFromEnv(env?: {
 	SEARCH_URL?: string;
 	SEARCH_API_KEY?: string;
+	SEARCH_INDEX?: string;
 }): SearchBackend | null {
 	if (!env?.SEARCH_URL || !env?.SEARCH_API_KEY) return null;
-	return { url: env.SEARCH_URL, apiKey: env.SEARCH_API_KEY };
+	// SEARCH_INDEX must match the sink's SEARCH_SINK_INDEX (both default to
+	// `events`); otherwise the read path queries an index the sink never fills.
+	return { url: env.SEARCH_URL, apiKey: env.SEARCH_API_KEY, indexUid: env.SEARCH_INDEX };
 }
 
 function parseOffsetCursor(cursor: string | null | undefined): number {
@@ -47,14 +50,17 @@ async function hydrateToPage(
 	const hydration = await listDiscoverableEventsByUrisFromContrail(client, {
 		uris: result.hits.map((h: SearchHit) => h.uri)
 	});
-	const { items, consumed } = assembleSearchPage(
-		result.hits,
-		hydration?.records ?? [],
-		SEARCH_PAGE_SIZE
-	);
+	// A null hydration means the D1 read itself failed, distinct from an empty
+	// records list (a legitimately-empty result). Treating failure as "empty"
+	// would drop every hit yet still advance the cursor, silently skipping up to
+	// a full batch for the rest of the pagination session. Throw instead: text
+	// search recovers via its D1 fallback (see +page.server.ts), and near-me
+	// surfaces an error rather than quietly losing results.
+	if (!hydration) throw new Error('search hydration failed');
+	const { items, consumed } = assembleSearchPage(result.hits, hydration.records, SEARCH_PAGE_SIZE);
 
 	const handles: Record<string, string> = {};
-	for (const p of hydration?.profiles ?? []) {
+	for (const p of hydration.profiles ?? []) {
 		if (p.handle) handles[p.did] = p.handle;
 	}
 

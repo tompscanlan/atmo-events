@@ -12,7 +12,13 @@
 		e.preventDefault();
 		const q = query.trim();
 		if (q) {
-			goto(`${resolve('/search')}?q=${encodeURIComponent(q)}`);
+			const target = new URL(resolve('/search'), window.location.origin);
+			target.searchParams.set('q', q);
+			// resolve() covers the base path; the query string can't go through it,
+			// so the rule can't see the route is resolved. The URL is built from
+			// resolve('/search'), so navigation stays base-path safe.
+			// eslint-disable-next-line svelte/no-navigation-without-resolve
+			goto(target);
 		}
 	}
 </script>

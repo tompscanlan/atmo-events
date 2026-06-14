@@ -50,6 +50,14 @@ const HTHREE = 'community.lexicon.location.hthree';
 
 type Loc = Record<string, unknown>;
 
+// The source lexicons don't enforce coordinate ranges, so a record can carry a
+// finite-but-out-of-range value. Meilisearch rejects such a doc and can fail
+// the whole async indexing task (losing the rest of the batch), so we drop the
+// _geo here rather than index it. Bounds are WGS84: lat [-90, 90], lng [-180, 180].
+function inGeoRange(lat: number, lng: number): boolean {
+	return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
 function parseCoords(loc: Loc): { lat: number; lng: number } | null {
 	const lat = Number(loc.latitude);
 	const lng = Number(loc.longitude);
@@ -57,7 +65,8 @@ function parseCoords(loc: Loc): { lat: number; lng: number } | null {
 		typeof loc.latitude !== 'string' ||
 		typeof loc.longitude !== 'string' ||
 		!Number.isFinite(lat) ||
-		!Number.isFinite(lng)
+		!Number.isFinite(lng) ||
+		!inGeoRange(lat, lng)
 	) {
 		return null;
 	}
@@ -67,7 +76,7 @@ function parseCoords(loc: Loc): { lat: number; lng: number } | null {
 function h3Coords(loc: Loc): { lat: number; lng: number } | null {
 	if (typeof loc.value !== 'string' || !isValidCell(loc.value)) return null;
 	const [lat, lng] = cellToLatLng(loc.value);
-	return { lat, lng };
+	return inGeoRange(lat, lng) ? { lat, lng } : null;
 }
 
 function deriveGeo(locations: Loc[]): { lat: number; lng: number } | undefined {
