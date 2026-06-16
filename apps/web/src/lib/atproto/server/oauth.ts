@@ -68,7 +68,15 @@ export function createOAuthClient(env?: App.Platform['env']): OAuthClient {
 
 	const actorResolver = createActorResolver();
 	const stores = createStores(env);
-	const effectiveScopes = dev ? devScopes : scopes;
+	// The granular permission-set scopes (settings.ts `scopes`) require the
+	// authorization server to resolve lexicons (e.g. app.bsky.authCreatePosts).
+	// A PDS that only advertises transition scopes — like our isolated testnet
+	// PDS, which can't resolve lexicons off its own network — rejects the PAR
+	// with "Could not resolve Lexicon for NSID". OAUTH_TRANSITION_SCOPES=true
+	// makes such a deploy request the legacy transition scopes (the same set
+	// dev uses) instead; a public-network deploy leaves it unset for granular.
+	const useTransitionScopes = env?.OAUTH_TRANSITION_SCOPES === 'true';
+	const effectiveScopes = dev || useTransitionScopes ? devScopes : scopes;
 
 	if (dev && !env?.OAUTH_PUBLIC_URL) {
 		cachedClient = new OAuthClient({

@@ -86,6 +86,11 @@ declare global {
 				JETSTREAM_URLS?: string;
 				PLC_URL?: string;
 				PDS_URL?: string;
+				/** "true" makes OAuth request legacy transition scopes instead of
+				 *  the granular permission-set scopes. Needed when the target PDS
+				 *  only advertises transition scopes (can't resolve lexicons like
+				 *  app.bsky.authCreatePosts) — e.g. the isolated testnet PDS. */
+				OAUTH_TRANSITION_SCOPES?: string;
 				/** Meilisearch base url for the search read path (search/near-me).
 				 *  When either var is unset, search falls back to the D1 path and
 				 *  near-me is unavailable. */
