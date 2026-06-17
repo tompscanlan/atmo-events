@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { FlatEventRecord } from '$lib/contrail';
 	import { loadMoreEvents } from '$lib/contrail/events.remote';
+	import { dedupeByUri } from '$lib/dedupe-by-uri';
 	import { EventCard } from '@atmo-dev/events-ui';
 
 	let {
@@ -30,7 +31,11 @@
 		currentHandles = { ...handles };
 	});
 
-	let allEvents = $derived([...events, ...extraEvents]);
+	// Dedupe by uri so the keyed {#each} below cannot collide: a dirty source
+	// (e.g. the D1 FTS path fanning one event out across duplicate fts rows) or a
+	// uri overlapping between the initial page and a loadMore page would otherwise
+	// repeat a key and crash hydration with each_key_duplicate.
+	let allEvents = $derived(dedupeByUri([...events, ...extraEvents]));
 
 	async function loadMore() {
 		if (!currentCursor || loading) return;
