@@ -103,6 +103,15 @@ export class MeiliEventIndex {
 		await this.request('PUT', `/indexes/${this.indexUid}/documents?primaryKey=id`, docs);
 	}
 
+	/** Partial update (addOrUpdate, merges by primaryKey) that sets _geo only,
+	 *  without re-sending the whole doc. Used by the external geocode job to attach
+	 *  coordinates to an already-indexed address-only event. POST merges; PUT would
+	 *  replace and wipe name/description/etc. */
+	async updateGeo(updates: { id: string; _geo: { lat: number; lng: number } }[]): Promise<void> {
+		if (updates.length === 0) return;
+		await this.request('POST', `/indexes/${this.indexUid}/documents?primaryKey=id`, updates);
+	}
+
 	async remove(ids: string[]): Promise<void> {
 		if (ids.length === 0) return;
 		await this.request('POST', `/indexes/${this.indexUid}/documents/delete-batch`, ids);

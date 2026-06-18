@@ -3,6 +3,7 @@ import {
 	createMeiliSink,
 	meiliSinkBackendFromEnv,
 	applyMeiliSettings,
+	MeiliEventIndex,
 	type MeiliSinkBackend
 } from './meili-sink';
 import { searchDocId } from './normalize';
@@ -322,5 +323,24 @@ describe('createMeiliSink geocode cache lookup', () => {
 		const docs = calls.find((c) => c.method === 'PUT')!.body as Array<Record<string, unknown>>;
 		expect(docs[0]._geo).toBeUndefined();
 		warn.mockRestore();
+	});
+});
+
+describe('MeiliEventIndex.updateGeo', () => {
+	it('POSTs an addOrUpdate (merge) with only id + _geo', async () => {
+		const { fn, calls } = fakeFetch();
+		const index = new MeiliEventIndex(BACKEND, fn);
+		await index.updateGeo([{ id: 'abc', _geo: { lat: 50.84, lng: 4.36 } }]);
+
+		const post = calls.find((c) => c.url.includes('/documents'));
+		expect(post!.method).toBe('POST'); // POST = merge, not PUT = replace
+		expect(post!.url).toBe('http://meili.local/indexes/events/documents?primaryKey=id');
+		expect(post!.body).toEqual([{ id: 'abc', _geo: { lat: 50.84, lng: 4.36 } }]);
+	});
+
+	it('no-ops on an empty update list', async () => {
+		const { fn, calls } = fakeFetch();
+		await new MeiliEventIndex(BACKEND, fn).updateGeo([]);
+		expect(calls).toHaveLength(0);
 	});
 });
