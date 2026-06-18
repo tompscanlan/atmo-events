@@ -145,7 +145,7 @@ async function main() {
 					`INSERT INTO geocode_cache (address_norm, lat, lng, precision, source, geocoded_at, fail_count, last_error)
 					 VALUES (?, NULL, NULL, NULL, ?, ?, 1, 'no match')
 					 ON CONFLICT(address_norm) DO UPDATE SET
-					   geocoded_at=excluded.geocoded_at, fail_count=geocode_cache.fail_count+1, last_error='no match'`,
+					   source=excluded.source, geocoded_at=excluded.geocoded_at, fail_count=geocode_cache.fail_count+1, last_error='no match'`,
 					[norm, env.GEOCODER_KEY ? 'locationiq' : 'nominatim', now]
 				);
 				negative++;

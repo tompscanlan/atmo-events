@@ -30,7 +30,7 @@ export function createD1Client(cfg: D1HttpConfig, fetchImpl: typeof fetch = fetc
 				errors?: Array<{ message?: string }>;
 			};
 			if (!body.success) {
-				const msg = body.errors?.map((e) => e.message).join('; ') || 'unknown D1 error';
+				const msg = body.errors?.map((e) => e.message).filter(Boolean).join('; ') || 'unknown D1 error';
 				throw new Error(`D1 query error: ${msg}`);
 			}
 			return body.result?.[0]?.results ?? [];

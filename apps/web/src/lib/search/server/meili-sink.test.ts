@@ -332,7 +332,8 @@ describe('MeiliEventIndex.updateGeo', () => {
 		const index = new MeiliEventIndex(BACKEND, fn);
 		await index.updateGeo([{ id: 'abc', _geo: { lat: 50.84, lng: 4.36 } }]);
 
-		const post = calls.find((c) => c.url.includes('/documents'));
+		const post = calls.find((c) => c.url === 'http://meili.local/indexes/events/documents?primaryKey=id' && c.method === 'POST');
+		expect(post).toBeDefined();
 		expect(post!.method).toBe('POST'); // POST = merge, not PUT = replace
 		expect(post!.url).toBe('http://meili.local/indexes/events/documents?primaryKey=id');
 		expect(post!.body).toEqual([{ id: 'abc', _geo: { lat: 50.84, lng: 4.36 } }]);

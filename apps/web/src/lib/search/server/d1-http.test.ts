@@ -49,4 +49,9 @@ describe('createD1Client.query', () => {
 		const { fn } = fakeFetch({ success: false, errors: [{ message: 'bad sql' }] });
 		await expect(createD1Client(CFG, fn).query('SELECT')).rejects.toThrow(/bad sql/);
 	});
+
+	it('falls back to "unknown D1 error" when all error objects lack a message', async () => {
+		const { fn } = fakeFetch({ success: false, errors: [{}, {}] });
+		await expect(createD1Client(CFG, fn).query('SELECT 1')).rejects.toThrow(/unknown D1 error/);
+	});
 });
