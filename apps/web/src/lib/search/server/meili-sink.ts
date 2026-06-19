@@ -103,13 +103,16 @@ export class MeiliEventIndex {
 		await this.request('PUT', `/indexes/${this.indexUid}/documents?primaryKey=id`, docs);
 	}
 
-	/** Partial update (addOrUpdate, merges by primaryKey) that sets _geo only,
-	 *  without re-sending the whole doc. Used by the external geocode job to attach
-	 *  coordinates to an already-indexed address-only event. POST merges; PUT would
-	 *  replace and wipe name/description/etc. */
+	/** Partial update that sets _geo only, without re-sending the whole doc. Used
+	 *  by the external geocode job to attach coordinates to an already-indexed
+	 *  address-only event. In Meilisearch, PUT /documents is "add or update" and
+	 *  MERGES (fields not in the payload are kept), while POST /documents is "add
+	 *  or replace" and would wipe name/startsAt/etc. So this MUST be PUT —
+	 *  sending only {id, _geo} via POST replaces the whole event with a geo-only
+	 *  stub that no longer matches the read path's filters. */
 	async updateGeo(updates: { id: string; _geo: { lat: number; lng: number } }[]): Promise<void> {
 		if (updates.length === 0) return;
-		await this.request('POST', `/indexes/${this.indexUid}/documents?primaryKey=id`, updates);
+		await this.request('PUT', `/indexes/${this.indexUid}/documents?primaryKey=id`, updates);
 	}
 
 	async remove(ids: string[]): Promise<void> {

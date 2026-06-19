@@ -327,16 +327,17 @@ describe('createMeiliSink geocode cache lookup', () => {
 });
 
 describe('MeiliEventIndex.updateGeo', () => {
-	it('POSTs an addOrUpdate (merge) with only id + _geo', async () => {
+	it('PUTs a partial merge with only id + _geo', async () => {
 		const { fn, calls } = fakeFetch();
 		const index = new MeiliEventIndex(BACKEND, fn);
 		await index.updateGeo([{ id: 'abc', _geo: { lat: 50.84, lng: 4.36 } }]);
 
-		const post = calls.find((c) => c.url === 'http://meili.local/indexes/events/documents?primaryKey=id' && c.method === 'POST');
-		expect(post).toBeDefined();
-		expect(post!.method).toBe('POST'); // POST = merge, not PUT = replace
-		expect(post!.url).toBe('http://meili.local/indexes/events/documents?primaryKey=id');
-		expect(post!.body).toEqual([{ id: 'abc', _geo: { lat: 50.84, lng: 4.36 } }]);
+		// Must be PUT: in Meilisearch PUT /documents merges (keeps name/startsAt),
+		// POST /documents replaces (would wipe the event down to a geo-only stub).
+		const put = calls.find((c) => c.url === 'http://meili.local/indexes/events/documents?primaryKey=id' && c.method === 'PUT');
+		expect(put).toBeDefined();
+		expect(put!.method).toBe('PUT');
+		expect(put!.body).toEqual([{ id: 'abc', _geo: { lat: 50.84, lng: 4.36 } }]);
 	});
 
 	it('no-ops on an empty update list', async () => {
