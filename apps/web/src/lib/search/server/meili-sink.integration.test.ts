@@ -15,7 +15,7 @@ import {
 	type MeiliSinkBackend
 } from './meili-sink';
 import { searchEvents, nearMeEvents, type SearchBackend } from './meili';
-import { searchDocId } from './normalize';
+import { eventToSearchDoc } from './normalize';
 
 const URL = process.env.MEILI_TEST_URL;
 const KEY = process.env.MEILI_TEST_KEY ?? 'masterKey';
@@ -107,35 +107,38 @@ run('MeiliSink ↔ read client, live against real Meilisearch', () => {
 		expect(hit?.distanceMeters).toBeGreaterThanOrEqual(0);
 	});
 
-	it('updateGeo merges _geo into an existing event without wiping its other fields', async () => {
+	it('the geocode job upsert attaches _geo to an address-only event, keeping its other fields', async () => {
 		const addrUri = 'at://did:plc:alice/community.lexicon.calendar.event/addr-only';
+		const addrRecord = {
+			name: 'Antwerp Atproto Drinks',
+			description: 'address-only event',
+			startsAt: FUTURE,
+			locations: [
+				{ $type: 'community.lexicon.location.address', locality: 'Antwerp', country: 'BE' }
+			]
+		};
 		// An address-only event: indexed by the sink, but with no _geo yet.
-		await sink.onRecords(
-			[
-				created(addrUri, {
-					name: 'Antwerp Atproto Drinks',
-					description: 'address-only event',
-					startsAt: FUTURE,
-					locations: [
-						{ $type: 'community.lexicon.location.address', locality: 'Antwerp', country: 'BE' }
-					]
-				})
-			],
-			{ phase: 'live' }
-		);
+		await sink.onRecords([created(addrUri, addrRecord)], { phase: 'live' });
 		await eventually(
 			() => searchEvents(readBackend, { q: 'Antwerp Atproto', limit: 10, offset: 0 }),
 			(r) => r.hits.some((h) => h.uri === addrUri)
 		);
 
-		// Attach coordinates the way the external geocode job does.
-		await new MeiliEventIndex(backend).updateGeo([
-			{ id: searchDocId(addrUri), _geo: { lat: 51.2194, lng: 4.4025 } }
-		]);
+		// Attach coordinates the way the external geocode job does: rebuild the FULL
+		// doc (eventToSearchDoc) and upsert it with _geo — idempotent, stub-free, and
+		// identical to the doc the sink writes.
+		const doc = eventToSearchDoc({
+			uri: addrUri,
+			did: 'did:plc:alice',
+			collection: EVENT,
+			rkey: addrUri.split('/').pop()!,
+			record: addrRecord
+		});
+		doc._geo = { lat: 51.2194, lng: 4.4025 };
+		await new MeiliEventIndex(backend).upsert([doc]);
 
-		// The partial update MUST merge: keep name/startsAt (so text + upcoming
-		// filters still match) AND add _geo (so near-me finds it). A replace would
-		// reduce the doc to {id,_geo}, failing both assertions below.
+		// near-me finds it (so _geo landed) AND text still matches (so name/startsAt
+		// survived) — both read-path filters pass against the full doc.
 		const near = await eventually(
 			() =>
 				nearMeEvents(readBackend, {
@@ -151,25 +154,6 @@ run('MeiliSink ↔ read client, live against real Meilisearch', () => {
 
 		const text = await searchEvents(readBackend, { q: 'Antwerp Atproto', limit: 10, offset: 0 });
 		expect(text.hits.map((h) => h.uri)).toContain(addrUri); // name survived the merge
-	});
-
-	it('fetchIndexedIds returns the ids the sink indexed and omits never-indexed ids', async () => {
-		const idUri = 'at://did:plc:alice/community.lexicon.calendar.event/idset-probe';
-		await sink.onRecords([created(idUri, { name: 'IdSet Probe', startsAt: FUTURE })], {
-			phase: 'live'
-		});
-
-		// Indexing is async; wait until the probe id shows up in the id set.
-		const ids = await eventually(
-			() => new MeiliEventIndex(backend).fetchIndexedIds(),
-			(set) => set.has(searchDocId(idUri))
-		);
-		expect(ids.has(searchDocId(idUri))).toBe(true);
-		// A doc never indexed must be absent — this is exactly what lets the geocode
-		// job skip a PUT that would otherwise CREATE a {id,_geo} stub.
-		expect(ids.has(searchDocId('at://did:plc:alice/community.lexicon.calendar.event/never'))).toBe(
-			false
-		);
 	});
 
 	it('removes a deleted event so the read path no longer finds it', async () => {

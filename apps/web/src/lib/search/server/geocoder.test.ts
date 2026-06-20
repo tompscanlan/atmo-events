@@ -114,6 +114,13 @@ describe('requireGeocoderForBulk', () => {
 		).toThrow(/LocationIQ|allow-public-nominatim/);
 	});
 
+	it('blocks a keyless negative limit (uncapped, not a tiny drip)', () => {
+		// A stray `--limit -1` must not masquerade as a 1-call drip and slip the gate.
+		expect(() =>
+			requireGeocoderForBulk({ hasKey: false, dryRun: false, limit: -1, allowPublic: false })
+		).toThrow(/LocationIQ|allow-public-nominatim/);
+	});
+
 	it('lets --allow-public-nominatim override a bulk keyless run', () => {
 		expect(() =>
 			requireGeocoderForBulk({ hasKey: false, dryRun: false, limit: 0, allowPublic: true })

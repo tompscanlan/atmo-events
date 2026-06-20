@@ -40,9 +40,10 @@ export const PUBLIC_NOMINATIM_DRIP_MAX = 25;
 /** Enforce the file's contract that a BULK backfill uses LocationIQ, not public
  *  Nominatim (whose usage policy a large unkeyed run would breach, risking a
  *  silent IP ban). Throws for a keyless, non-dry-run, non-overridden run that is
- *  uncapped (limit 0) or over the drip ceiling; a small keyless drip stays
+ *  uncapped (limit <= 0) or over the drip ceiling; a small keyless drip stays
  *  allowed. The hazard is request VOLUME, so the gate is on size, not on the
- *  mere use of Nominatim. */
+ *  mere use of Nominatim. limit <= 0 (not just === 0) counts as uncapped so a
+ *  stray negative can't masquerade as a tiny drip and slip the gate. */
 export function requireGeocoderForBulk(opts: {
 	hasKey: boolean;
 	dryRun: boolean;
@@ -50,7 +51,7 @@ export function requireGeocoderForBulk(opts: {
 	allowPublic: boolean;
 }): void {
 	if (opts.hasKey || opts.dryRun || opts.allowPublic) return;
-	const bulk = opts.limit === 0 || opts.limit > PUBLIC_NOMINATIM_DRIP_MAX;
+	const bulk = opts.limit <= 0 || opts.limit > PUBLIC_NOMINATIM_DRIP_MAX;
 	if (bulk) {
 		throw new Error(
 			`Keyless public Nominatim is only allowed for a small drip (--limit 1..${PUBLIC_NOMINATIM_DRIP_MAX}). ` +

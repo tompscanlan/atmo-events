@@ -10,7 +10,7 @@
 //   CF_API_TOKEN=… MEILI_URL=https://search.testnet.openmeet.net MEILI_KEY=… \
 //   GEOCODER_URL=https://us1.locationiq.com/v1/search GEOCODER_KEY=… \
 //     pnpm -C apps/web exec tsx scripts/geocode-events.ts --limit 50
-import { createD1Client } from '../src/lib/search/server/d1-http';
+import { createD1Client, type D1Client } from '../src/lib/search/server/d1-http';
 import {
 	createGeocoder,
 	addressToQuery,
@@ -23,9 +23,9 @@ import {
 	type GeocodeCacheRow,
 	type WorklistEvent
 } from '../src/lib/search/server/geocode-cache';
-import { searchDocId } from '../src/lib/search/server/normalize';
+import { eventToSearchDoc } from '../src/lib/search/server/normalize';
 import { discoverableSql } from '../src/lib/search/server/discoverability';
-import { MeiliEventIndex } from '../src/lib/search/server/meili-sink';
+import { MeiliEventIndex, EVENT_COLLECTION } from '../src/lib/search/server/meili-sink';
 
 const env = process.env;
 const argv = process.argv.slice(2);
@@ -35,10 +35,24 @@ const opt = (name: string, def?: string) => {
 	return i >= 0 && i + 1 < argv.length ? argv[i + 1] : def;
 };
 
+// Strict: 0 = no cap, otherwise a positive integer. Reject negatives/non-integers
+// up front — `Number('-1') || 0` is -1, which used to slip past BOTH the bulk
+// guard (its old limit===0 check) and the cap (`limit > 0 ? slice : all`),
+// silently running an uncapped keyless backfill against public Nominatim.
+const parseLimit = (raw: string | undefined): number => {
+	const n = Number(raw);
+	if (!Number.isInteger(n) || n < 0) {
+		throw new Error(
+			`--limit must be a non-negative integer (0 = no cap); got ${JSON.stringify(raw)}`
+		);
+	}
+	return n;
+};
+
 const retryNegative = flag('--retry-negative');
 const dryRun = flag('--dry-run');
 const allowPublicNominatim = flag('--allow-public-nominatim');
-const limit = Number(opt('--limit', '0')) || 0; // 0 = no cap
+const limit = parseLimit(opt('--limit', '0')); // 0 = no cap
 const sleepMs = Number(env.GEOCODE_SLEEP_MS ?? '1100');
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -59,6 +73,32 @@ WHERE EXISTS (
     WHERE json_extract(value, '$."$type"') = 'community.lexicon.location.address')
   AND ${discoverableSql('r.record')}
 `;
+
+// Re-read events from records_event by uri, keeping only those still present and
+// discoverable. The parsed record drives a full-doc upsert, so it's read fresh
+// (not from the job-start worklist) — an event deleted or unlisted while the slow
+// geocode loop runs is skipped here instead of being resurrected as a stale doc.
+async function fetchLiveDocs(
+	d1: D1Client,
+	uris: string[]
+): Promise<{ uri: string; did: string; rkey: string; record: Record<string, unknown> }[]> {
+	if (uris.length === 0) return [];
+	const placeholders = uris.map(() => '?').join(',');
+	const rows = await d1.query<{ uri: string; did: string; rkey: string; record: string }>(
+		`SELECT uri, did, rkey, record FROM records_event
+		 WHERE uri IN (${placeholders}) AND ${discoverableSql('record')}`,
+		uris
+	);
+	const out: { uri: string; did: string; rkey: string; record: Record<string, unknown> }[] = [];
+	for (const r of rows) {
+		try {
+			out.push({ uri: r.uri, did: r.did, rkey: r.rkey, record: JSON.parse(r.record) });
+		} catch {
+			// Unparseable record JSON — skip, same as the worklist parse.
+		}
+	}
+	return out;
+}
 
 async function main() {
 	if (!env.CF_API_TOKEN) throw new Error('CF_API_TOKEN is required');
@@ -132,18 +172,10 @@ async function main() {
 			`eligible=${work.length} processing=${capped.length}${dryRun ? ' (dry-run)' : ''}`
 	);
 
-	// Guard: only _geo-update events the index ALREADY holds. A PUT for an id the
-	// index lacks CREATES a {id,_geo} stub (no name/startsAt) — junk that pollutes
-	// near-me. Load the index's id set once (like the cache above) and skip ids it
-	// lacks; the geocode_cache row we still write lets the sink attach _geo if/when
-	// that event is later indexed.
-	const indexedIds = dryRun ? new Set<string>() : await meili.fetchIndexedIds();
-	if (!dryRun) console.log(`[geocode] index holds ${indexedIds.size} docs`);
-
 	let resolved = 0;
 	let negative = 0;
 	let transient = 0;
-	let skippedNotIndexed = 0;
+	let skippedGone = 0;
 	for (const [norm, group] of capped) {
 		const query = addressToQuery(group[0].loc);
 		if (dryRun) {
@@ -168,15 +200,31 @@ async function main() {
 						now
 					]
 				);
-				// Skip ids the index doesn't hold so the PUT can't mint a stub.
-				const present = group.filter((e) => indexedIds.has(searchDocId(e.uri)));
-				skippedNotIndexed += group.length - present.length;
-				if (present.length) {
-					await meili.updateGeo(
-						present.map((e) => ({
-							id: searchDocId(e.uri),
-							_geo: { lat: point.lat, lng: point.lng }
-						}))
+				// Re-read the events fresh and upsert the FULL doc with _geo attached,
+				// keeping only those still present AND discoverable. A full-doc upsert is
+				// idempotent and needs no "is it indexed?" snapshot: it merges if the
+				// event is already indexed, lands a complete doc if not (never a {id,_geo}
+				// stub), and is identical to what the sink writes — so a concurrent sink
+				// write converges instead of clobbering.
+				const live = await fetchLiveDocs(
+					d1,
+					group.map((e) => e.uri)
+				);
+				skippedGone += group.length - live.length;
+				if (live.length) {
+					await meili.upsert(
+						live.map((r) => {
+							const doc = eventToSearchDoc({
+								uri: r.uri,
+								did: r.did,
+								collection: EVENT_COLLECTION,
+								rkey: r.rkey,
+								record: r.record
+							});
+							// Don't overwrite a coordinate _geo the record gained mid-run.
+							if (!doc._geo) doc._geo = { lat: point.lat, lng: point.lng };
+							return doc;
+						})
 					);
 				}
 				resolved++;
@@ -201,7 +249,7 @@ async function main() {
 
 	console.log(
 		`[geocode] done resolved=${resolved} negative=${negative} transient=${transient} ` +
-			`skipped-not-indexed=${skippedNotIndexed}`
+			`skipped-gone=${skippedGone}`
 	);
 }
 
