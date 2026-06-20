@@ -23,16 +23,20 @@ describe('createD1Client.query', () => {
 			success: true,
 			result: [{ results: [{ uri: 'at://x' }], success: true }]
 		});
-		const rows = await createD1Client(CFG, fn).query('SELECT uri FROM records_event WHERE did = ?', [
-			'did:plc:a'
-		]);
+		const rows = await createD1Client(CFG, fn).query(
+			'SELECT uri FROM records_event WHERE did = ?',
+			['did:plc:a']
+		);
 		expect(rows).toEqual([{ uri: 'at://x' }]);
 		expect(calls[0].url).toBe(
 			'https://api.cloudflare.com/client/v4/accounts/acct/d1/database/db/query'
 		);
 		expect(calls[0].method).toBe('POST');
 		expect(calls[0].auth).toBe('Bearer tok');
-		expect(calls[0].body).toEqual({ sql: 'SELECT uri FROM records_event WHERE did = ?', params: ['did:plc:a'] });
+		expect(calls[0].body).toEqual({
+			sql: 'SELECT uri FROM records_event WHERE did = ?',
+			params: ['did:plc:a']
+		});
 	});
 
 	it('returns [] when the result set is empty', async () => {

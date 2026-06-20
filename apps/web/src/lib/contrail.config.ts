@@ -1,12 +1,13 @@
 import type { ContrailConfig } from '@atmo-dev/contrail';
 import { SPACE_TYPE } from './spaces/config';
 import { MAX_HYDRATION_URIS } from './search/constants';
+import { discoverableSql } from './search/server/discoverability';
 
-// Events hidden from discovery (preferences.showInDiscovery === false) are
-// excluded; a missing field defaults to true so pre-existing records without
-// `preferences` are included. Shared by every discovery-facing pipelineQuery.
-const DISCOVERABLE_CONDITION = `(json_extract(r.record, '$.preferences.showInDiscovery') IS NULL
-	OR json_extract(r.record, '$.preferences.showInDiscovery') != 0)`;
+// Events hidden from discovery (a falsey preferences.showInDiscovery) are
+// excluded; a missing field defaults to discoverable so pre-existing records
+// without `preferences` are included. The predicate is the single source of
+// truth shared with the sink's in-memory filter and the geocode worklist.
+const DISCOVERABLE_CONDITION = discoverableSql('r.record');
 
 export const config: ContrailConfig = {
 	namespace: 'rsvp.atmo',
@@ -80,10 +81,7 @@ export const config: ContrailConfig = {
 						.slice(0, MAX_HYDRATION_URIS);
 					if (uris.length === 0) return { conditions: ['0 = 1'] };
 					return {
-						conditions: [
-							`r.uri IN (${uris.map(() => '?').join(', ')})`,
-							DISCOVERABLE_CONDITION
-						],
+						conditions: [`r.uri IN (${uris.map(() => '?').join(', ')})`, DISCOVERABLE_CONDITION],
 						params: uris
 					};
 				},

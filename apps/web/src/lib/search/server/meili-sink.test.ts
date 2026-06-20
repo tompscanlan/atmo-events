@@ -147,6 +147,27 @@ describe('createMeiliSink onRecords', () => {
 		expect(del!.body).toEqual([searchDocId(uri)]);
 	});
 
+	it('removes a created event whose showInDiscovery is a numeric 0 (matches the SQL != 0 filter)', async () => {
+		const { fn, calls } = fakeFetch();
+		const sink = createMeiliSink(
+			() => BACKEND,
+			() => null,
+			fn
+		);
+		const uri = 'at://did:plc:alice/community.lexicon.calendar.event/zero';
+
+		await sink.onRecords(
+			[created(uri, { name: 'SerializedFalse', preferences: { showInDiscovery: 0 } })],
+			{ phase: 'live' }
+		);
+
+		// Some serializers emit booleans as 0/1; the D1 worklist/read filter uses
+		// `!= 0`, so the sink must hide 0 too or it would index an event D1 drops.
+		expect(calls.find((c) => c.method === 'PUT')).toBeUndefined();
+		const del = calls.find((c) => c.url.endsWith('/documents/delete-batch'));
+		expect(del!.body).toEqual([searchDocId(uri)]);
+	});
+
 	it('indexes a created event when showInDiscovery is missing or true', async () => {
 		const { fn, calls } = fakeFetch();
 		const sink = createMeiliSink(

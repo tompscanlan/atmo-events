@@ -1,6 +1,11 @@
 // apps/web/src/lib/search/server/geocoder.test.ts
 import { describe, it, expect, vi } from 'vitest';
-import { addressToQuery, derivePrecision, createGeocoder } from './geocoder';
+import {
+	addressToQuery,
+	derivePrecision,
+	createGeocoder,
+	requireGeocoderForBulk
+} from './geocoder';
 
 describe('addressToQuery', () => {
 	it('joins present fields in fixed order with commas, preserving original case', () => {
@@ -75,5 +80,49 @@ describe('createGeocoder', () => {
 	it('throws on an HTTP error so the caller treats it as transient', async () => {
 		const { fn } = fakeFetch({}, 429);
 		await expect(createGeocoder({}, fn).geocode('x')).rejects.toThrow(/429/);
+	});
+});
+
+describe('requireGeocoderForBulk', () => {
+	it('allows any run when a geocoder key is set', () => {
+		expect(() =>
+			requireGeocoderForBulk({ hasKey: true, dryRun: false, limit: 0, allowPublic: false })
+		).not.toThrow();
+		expect(() =>
+			requireGeocoderForBulk({ hasKey: true, dryRun: false, limit: 5000, allowPublic: false })
+		).not.toThrow();
+	});
+
+	it('allows a keyless small drip (1..25)', () => {
+		expect(() =>
+			requireGeocoderForBulk({ hasKey: false, dryRun: false, limit: 25, allowPublic: false })
+		).not.toThrow();
+		expect(() =>
+			requireGeocoderForBulk({ hasKey: false, dryRun: false, limit: 1, allowPublic: false })
+		).not.toThrow();
+	});
+
+	it('blocks a keyless run over the drip ceiling', () => {
+		expect(() =>
+			requireGeocoderForBulk({ hasKey: false, dryRun: false, limit: 26, allowPublic: false })
+		).toThrow(/LocationIQ|allow-public-nominatim/);
+	});
+
+	it('blocks a keyless uncapped run (limit 0 = no cap, the worst case)', () => {
+		expect(() =>
+			requireGeocoderForBulk({ hasKey: false, dryRun: false, limit: 0, allowPublic: false })
+		).toThrow(/LocationIQ|allow-public-nominatim/);
+	});
+
+	it('lets --allow-public-nominatim override a bulk keyless run', () => {
+		expect(() =>
+			requireGeocoderForBulk({ hasKey: false, dryRun: false, limit: 0, allowPublic: true })
+		).not.toThrow();
+	});
+
+	it('never blocks a dry run (it makes no geocoder calls)', () => {
+		expect(() =>
+			requireGeocoderForBulk({ hasKey: false, dryRun: true, limit: 0, allowPublic: false })
+		).not.toThrow();
 	});
 });

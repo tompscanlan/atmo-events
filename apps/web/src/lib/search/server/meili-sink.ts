@@ -15,6 +15,7 @@
 //     "ingest stops".
 import { eventToSearchDoc, searchDocId, type SearchDoc } from './normalize';
 import { addressLocation, normalizeAddress } from './address-norm';
+import { isHiddenFromDiscovery } from './discoverability';
 import type { ContrailConfig } from '@atmo-dev/contrail';
 
 // The umbrella re-exports ContrailConfig (which carries `sinks?: Sink[]`) but
@@ -25,14 +26,6 @@ type RecordEvent = Parameters<Sink['onRecords']>[0][number];
 
 /** The one collection we index for search. */
 export const EVENT_COLLECTION = 'community.lexicon.calendar.event';
-
-/** True when the event author hid it from discovery. Mirrors the D1 filter in
- *  contrail.config.ts: only `preferences.showInDiscovery === false` hides;
- *  a missing/null field stays discoverable. */
-function isHiddenFromDiscovery(record: Record<string, unknown>): boolean {
-	const prefs = record?.preferences as { showInDiscovery?: boolean } | undefined;
-	return prefs?.showInDiscovery === false;
-}
 
 export interface MeiliSinkBackend {
 	url: string;
@@ -244,8 +237,8 @@ export function createMeiliSink(
 			const pending: { doc: SearchDoc; norm: string }[] = [];
 			for (const e of events) {
 				if (e.collection !== EVENT_COLLECTION) continue;
-				// Mirror the D1 discoverable filter (contrail.config.ts): only
-				// `showInDiscovery === false` hides; missing/null stays discoverable.
+				// Discoverability is decided by the shared predicate (discoverability.ts)
+				// so this in-memory filter and the D1 SQL filter never diverge.
 				// Index discoverable creates; for everything else — real deletes AND
 				// events hidden from discovery — remove the doc so the search index
 				// never holds a hidden event's name/description and a discoverable→

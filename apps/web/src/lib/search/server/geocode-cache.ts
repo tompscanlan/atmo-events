@@ -1,7 +1,8 @@
 // Pure decision logic for the geocode_cache worklist: the row shape, the
 // negative-cache retry/backoff policy, and grouping worklist events by their
 // normalized address. No I/O — the job feeds rows in and acts on the verdicts.
-import { normalizeAddress } from './address-norm';
+import { normalizeAddress, addressLocation } from './address-norm';
+import { recordGeo } from './normalize';
 
 export interface GeocodeCacheRow {
 	address_norm: string;
@@ -44,6 +45,21 @@ export function isEligible(
 	if (retryNegative) return true;
 	if (row.fail_count >= MAX_FAIL) return false;
 	return now - row.geocoded_at >= backoffMs(row.fail_count);
+}
+
+/** The address location to geocode for a record, or null when there's nothing
+ *  to do. Returns null if the record ALREADY resolves to coordinates the index
+ *  derives (recordGeo: geo/fsq/hthree, in-range) — geocoding it would overwrite
+ *  precise coords with approximate ones — and null if it carries no address at
+ *  all. So an event with an address plus an out-of-range geo/hthree location
+ *  (recordGeo undefined) correctly still gets its address geocoded. This is the
+ *  in-memory worklist filter that keeps "needs geocoding" aligned with the
+ *  sink's _geo derivation, since the SQL worklist can only coarsely pre-filter. */
+export function addressNeedingGeocode(
+	record: Record<string, unknown>
+): Record<string, unknown> | null {
+	if (recordGeo(record)) return null;
+	return addressLocation(record);
 }
 
 /** Bucket worklist events by their normalized address; events that don't

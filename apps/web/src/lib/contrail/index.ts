@@ -36,7 +36,12 @@ let geocodeCacheDb: D1Database | null = null;
 export const contrail = new Contrail({
 	...config,
 	...(spaces ? { spaces } : {}),
-	sinks: [createMeiliSink(() => searchSinkBackend, () => geocodeCacheDb)]
+	sinks: [
+		createMeiliSink(
+			() => searchSinkBackend,
+			() => geocodeCacheDb
+		)
+	]
 });
 
 let initialized = false;

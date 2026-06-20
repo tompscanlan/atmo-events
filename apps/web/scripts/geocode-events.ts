@@ -11,15 +11,20 @@
 //   GEOCODER_URL=https://us1.locationiq.com/v1/search GEOCODER_KEY=… \
 //     pnpm -C apps/web exec tsx scripts/geocode-events.ts --limit 50
 import { createD1Client } from '../src/lib/search/server/d1-http';
-import { createGeocoder, addressToQuery } from '../src/lib/search/server/geocoder';
+import {
+	createGeocoder,
+	addressToQuery,
+	requireGeocoderForBulk
+} from '../src/lib/search/server/geocoder';
 import {
 	isEligible,
 	groupEventsByNorm,
+	addressNeedingGeocode,
 	type GeocodeCacheRow,
 	type WorklistEvent
 } from '../src/lib/search/server/geocode-cache';
-import { addressLocation } from '../src/lib/search/server/address-norm';
 import { searchDocId } from '../src/lib/search/server/normalize';
+import { discoverableSql } from '../src/lib/search/server/discoverability';
 import { MeiliEventIndex } from '../src/lib/search/server/meili-sink';
 
 const env = process.env;
@@ -32,13 +37,19 @@ const opt = (name: string, def?: string) => {
 
 const retryNegative = flag('--retry-negative');
 const dryRun = flag('--dry-run');
+const allowPublicNominatim = flag('--allow-public-nominatim');
 const limit = Number(opt('--limit', '0')) || 0; // 0 = no cap
 const sleepMs = Number(env.GEOCODE_SLEEP_MS ?? '1100');
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Address-only worklist: events with a .address location and NO coordinate
-// location, still discoverable. json_each walks locations[]; the "$type" key is
+// Worklist: discoverable events carrying a .address location. We deliberately
+// do NOT exclude coordinate locations in SQL — that filtered by $type presence,
+// which diverges from the sink's actual _geo derivation (it ignored fsq, and
+// excluded events whose only geo/hthree coords are out of range and so never
+// get an in-index _geo). The precise "does this already resolve to coordinates?"
+// decision is made in memory by addressNeedingGeocode (recordGeo), the same
+// derivation the sink uses. json_each walks locations[]; the "$type" key is
 // quoted because it starts with $.
 const WORKLIST_SQL = `
 SELECT r.uri AS uri, r.did AS did, r.rkey AS rkey, r.record AS record
@@ -46,12 +57,7 @@ FROM records_event AS r
 WHERE EXISTS (
     SELECT 1 FROM json_each(r.record, '$.locations')
     WHERE json_extract(value, '$."$type"') = 'community.lexicon.location.address')
-  AND NOT EXISTS (
-    SELECT 1 FROM json_each(r.record, '$.locations')
-    WHERE json_extract(value, '$."$type"') IN (
-      'community.lexicon.location.geo', 'community.lexicon.location.hthree'))
-  AND (json_extract(r.record, '$.preferences.showInDiscovery') IS NULL
-       OR json_extract(r.record, '$.preferences.showInDiscovery') != 0)
+  AND ${discoverableSql('r.record')}
 `;
 
 async function main() {
@@ -63,6 +69,13 @@ async function main() {
 				'a bulk backfill against public Nominatim risks a silent IP ban. Use LocationIQ for backfill.'
 		);
 	}
+	// Hard-stop a bulk/uncapped keyless run before it can touch public Nominatim.
+	requireGeocoderForBulk({
+		hasKey: !!env.GEOCODER_KEY,
+		dryRun,
+		limit,
+		allowPublic: allowPublicNominatim
+	});
 
 	const d1 = createD1Client({
 		accountId: env.CF_ACCOUNT_ID ?? '312f04a766eb64123dd955e2cc12ad5f',
@@ -89,7 +102,9 @@ async function main() {
 	const cacheRows = await d1.query<GeocodeCacheRow>(`SELECT * FROM geocode_cache`);
 	const cache = new Map(cacheRows.map((r) => [r.address_norm, r]));
 
-	// Worklist → WorklistEvent[] (parse record JSON, pull the .address location).
+	// Worklist → WorklistEvent[] (parse record JSON; keep only events that need
+	// geocoding — an address location AND no coordinates the index already
+	// derives, per addressNeedingGeocode).
 	const rawEvents = await d1.query<{ uri: string; did: string; rkey: string; record: string }>(
 		WORKLIST_SQL
 	);
@@ -101,7 +116,7 @@ async function main() {
 		} catch {
 			continue;
 		}
-		const loc = addressLocation(record);
+		const loc = addressNeedingGeocode(record);
 		if (loc) events.push({ uri: e.uri, did: e.did, rkey: e.rkey, loc });
 	}
 

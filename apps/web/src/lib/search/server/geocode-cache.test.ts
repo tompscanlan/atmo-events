@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { backoffMs, isEligible, groupEventsByNorm, MAX_FAIL } from './geocode-cache';
+import {
+	backoffMs,
+	isEligible,
+	groupEventsByNorm,
+	addressNeedingGeocode,
+	MAX_FAIL
+} from './geocode-cache';
 import type { GeocodeCacheRow } from './geocode-cache';
 import { ADDRESS_TYPE } from './address-norm';
 
@@ -59,6 +65,46 @@ describe('isEligible', () => {
 
 	it('--retry-negative ignores backoff and the hard stop', () => {
 		expect(isEligible(negative(MAX_FAIL, 0), NOW, true)).toBe(true);
+	});
+});
+
+describe('addressNeedingGeocode', () => {
+	const addr = { $type: ADDRESS_TYPE, locality: 'Dayton', country: 'US' };
+	const geo = (lat: string, lng: string) => ({
+		$type: 'community.lexicon.location.geo',
+		latitude: lat,
+		longitude: lng
+	});
+	const fsq = (lat: string, lng: string) => ({
+		$type: 'community.lexicon.location.fsq',
+		latitude: lat,
+		longitude: lng
+	});
+
+	it('returns the address location for an address-only event', () => {
+		expect(addressNeedingGeocode({ locations: [addr] })).toMatchObject({
+			locality: 'Dayton',
+			country: 'US'
+		});
+	});
+
+	it('returns null when a geo location already resolves to coordinates (no overwrite)', () => {
+		expect(addressNeedingGeocode({ locations: [geo('40', '-105'), addr] })).toBeNull();
+	});
+
+	it('returns null when an fsq location already resolves to coordinates (F1a)', () => {
+		expect(addressNeedingGeocode({ locations: [fsq('50.8', '4.3'), addr] })).toBeNull();
+	});
+
+	it('returns the address location when the only coordinate location is out of range (F1b)', () => {
+		expect(addressNeedingGeocode({ locations: [geo('999', '0'), addr] })).toMatchObject({
+			locality: 'Dayton'
+		});
+	});
+
+	it('returns null when there is no address location to geocode', () => {
+		expect(addressNeedingGeocode({ locations: [geo('40', '-105')] })).toBeNull();
+		expect(addressNeedingGeocode({ locations: [] })).toBeNull();
 	});
 });
 
