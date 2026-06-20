@@ -107,7 +107,9 @@ async function main() {
 
 	const byNorm = groupEventsByNorm(events);
 	const now = Date.now();
-	const work = [...byNorm.entries()].filter(([norm]) => isEligible(cache.get(norm), now, retryNegative));
+	const work = [...byNorm.entries()].filter(([norm]) =>
+		isEligible(cache.get(norm), now, retryNegative)
+	);
 	const capped = limit > 0 ? work.slice(0, limit) : work;
 
 	console.log(
@@ -115,9 +117,18 @@ async function main() {
 			`eligible=${work.length} processing=${capped.length}${dryRun ? ' (dry-run)' : ''}`
 	);
 
+	// Guard: only _geo-update events the index ALREADY holds. A PUT for an id the
+	// index lacks CREATES a {id,_geo} stub (no name/startsAt) — junk that pollutes
+	// near-me. Load the index's id set once (like the cache above) and skip ids it
+	// lacks; the geocode_cache row we still write lets the sink attach _geo if/when
+	// that event is later indexed.
+	const indexedIds = dryRun ? new Set<string>() : await meili.fetchIndexedIds();
+	if (!dryRun) console.log(`[geocode] index holds ${indexedIds.size} docs`);
+
 	let resolved = 0;
 	let negative = 0;
 	let transient = 0;
+	let skippedNotIndexed = 0;
 	for (const [norm, group] of capped) {
 		const query = addressToQuery(group[0].loc);
 		if (dryRun) {
@@ -133,11 +144,26 @@ async function main() {
 					 ON CONFLICT(address_norm) DO UPDATE SET
 					   lat=excluded.lat, lng=excluded.lng, precision=excluded.precision,
 					   source=excluded.source, geocoded_at=excluded.geocoded_at, fail_count=0, last_error=NULL`,
-					[norm, point.lat, point.lng, point.precision ?? null, env.GEOCODER_KEY ? 'locationiq' : 'nominatim', now]
+					[
+						norm,
+						point.lat,
+						point.lng,
+						point.precision ?? null,
+						env.GEOCODER_KEY ? 'locationiq' : 'nominatim',
+						now
+					]
 				);
-				await meili.updateGeo(
-					group.map((e) => ({ id: searchDocId(e.uri), _geo: { lat: point.lat, lng: point.lng } }))
-				);
+				// Skip ids the index doesn't hold so the PUT can't mint a stub.
+				const present = group.filter((e) => indexedIds.has(searchDocId(e.uri)));
+				skippedNotIndexed += group.length - present.length;
+				if (present.length) {
+					await meili.updateGeo(
+						present.map((e) => ({
+							id: searchDocId(e.uri),
+							_geo: { lat: point.lat, lng: point.lng }
+						}))
+					);
+				}
 				resolved++;
 			} else {
 				// No-match: write/increment a negative row (backoff handled by isEligible).
@@ -158,7 +184,10 @@ async function main() {
 		await sleep(sleepMs);
 	}
 
-	console.log(`[geocode] done resolved=${resolved} negative=${negative} transient=${transient}`);
+	console.log(
+		`[geocode] done resolved=${resolved} negative=${negative} transient=${transient} ` +
+			`skipped-not-indexed=${skippedNotIndexed}`
+	);
 }
 
 main().catch((e) => {

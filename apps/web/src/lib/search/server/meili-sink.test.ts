@@ -68,7 +68,11 @@ describe('meiliSinkBackendFromEnv', () => {
 describe('createMeiliSink onRecords', () => {
 	it('upserts a created event as a normalized doc (PUT documents)', async () => {
 		const { fn, calls } = fakeFetch();
-		const sink = createMeiliSink(() => BACKEND, () => null, fn);
+		const sink = createMeiliSink(
+			() => BACKEND,
+			() => null,
+			fn
+		);
 
 		await sink.onRecords(
 			[
@@ -104,7 +108,11 @@ describe('createMeiliSink onRecords', () => {
 
 	it('removes a deleted event by derived id (delete-batch)', async () => {
 		const { fn, calls } = fakeFetch();
-		const sink = createMeiliSink(() => BACKEND, () => null, fn);
+		const sink = createMeiliSink(
+			() => BACKEND,
+			() => null,
+			fn
+		);
 		const uri = 'at://did:plc:alice/community.lexicon.calendar.event/2';
 
 		await sink.onRecords(
@@ -120,7 +128,11 @@ describe('createMeiliSink onRecords', () => {
 
 	it('removes (does not index) a created event hidden from discovery', async () => {
 		const { fn, calls } = fakeFetch();
-		const sink = createMeiliSink(() => BACKEND, () => null, fn);
+		const sink = createMeiliSink(
+			() => BACKEND,
+			() => null,
+			fn
+		);
 		const uri = 'at://did:plc:alice/community.lexicon.calendar.event/hidden';
 
 		await sink.onRecords(
@@ -137,7 +149,11 @@ describe('createMeiliSink onRecords', () => {
 
 	it('indexes a created event when showInDiscovery is missing or true', async () => {
 		const { fn, calls } = fakeFetch();
-		const sink = createMeiliSink(() => BACKEND, () => null, fn);
+		const sink = createMeiliSink(
+			() => BACKEND,
+			() => null,
+			fn
+		);
 
 		await sink.onRecords(
 			[
@@ -157,7 +173,11 @@ describe('createMeiliSink onRecords', () => {
 
 	it('ignores records from other collections', async () => {
 		const { fn, calls } = fakeFetch();
-		const sink = createMeiliSink(() => BACKEND, () => null, fn);
+		const sink = createMeiliSink(
+			() => BACKEND,
+			() => null,
+			fn
+		);
 
 		await sink.onRecords(
 			[
@@ -180,7 +200,11 @@ describe('createMeiliSink onRecords', () => {
 
 	it('no-ops (no fetch) when the backend is unconfigured', async () => {
 		const { fn, calls } = fakeFetch();
-		const sink = createMeiliSink(() => null, () => null, fn);
+		const sink = createMeiliSink(
+			() => null,
+			() => null,
+			fn
+		);
 
 		await sink.onRecords([created('at://did:plc:alice/community.lexicon.calendar.event/3', {})], {
 			phase: 'backfill'
@@ -209,7 +233,11 @@ describe('fetch is invoked detached (workerd Illegal invocation guard)', () => {
 	});
 
 	it('onRecords upsert/delete do not trip Illegal invocation', async () => {
-		const sink = createMeiliSink(() => BACKEND, () => null, strictFetch());
+		const sink = createMeiliSink(
+			() => BACKEND,
+			() => null,
+			strictFetch()
+		);
 		await expect(
 			sink.onRecords(
 				[created('at://did:plc:alice/community.lexicon.calendar.event/4', { name: 'x' })],
@@ -227,13 +255,15 @@ function fakeDb(
 	mode: 'ok' | 'throw' = 'ok'
 ) {
 	return {
-		prepare(_sql: string) {
+		prepare() {
 			return {
 				bind(...args: unknown[]) {
 					return {
 						async all<T>() {
 							if (mode === 'throw') throw new Error('no such table: geocode_cache');
-							return { results: rows.filter((r) => args.includes(r.address_norm)) as unknown as T[] };
+							return {
+								results: rows.filter((r) => args.includes(r.address_norm)) as unknown as T[]
+							};
 						}
 					};
 				}
@@ -334,7 +364,10 @@ describe('MeiliEventIndex.updateGeo', () => {
 
 		// Must be PUT: in Meilisearch PUT /documents merges (keeps name/startsAt),
 		// POST /documents replaces (would wipe the event down to a geo-only stub).
-		const put = calls.find((c) => c.url === 'http://meili.local/indexes/events/documents?primaryKey=id' && c.method === 'PUT');
+		const put = calls.find(
+			(c) =>
+				c.url === 'http://meili.local/indexes/events/documents?primaryKey=id' && c.method === 'PUT'
+		);
 		expect(put).toBeDefined();
 		expect(put!.method).toBe('PUT');
 		expect(put!.body).toEqual([{ id: 'abc', _geo: { lat: 50.84, lng: 4.36 } }]);
@@ -344,5 +377,56 @@ describe('MeiliEventIndex.updateGeo', () => {
 		const { fn, calls } = fakeFetch();
 		await new MeiliEventIndex(BACKEND, fn).updateGeo([]);
 		expect(calls).toHaveLength(0);
+	});
+});
+
+describe('MeiliEventIndex.fetchIndexedIds', () => {
+	/** A fetch double that serves the documents endpoint paged by offset/limit:
+	 *  the page at offset N..N+limit comes from `pages[N / limit]`, or empty when
+	 *  past the end (Meili returns `{ results: [] }` for an over-the-end offset). */
+	function pagedFetch(pages: string[][]) {
+		const calls: string[] = [];
+		const fn = vi.fn(async (input: RequestInfo | URL) => {
+			const url = new URL(String(input));
+			calls.push(String(input));
+			const offset = Number(url.searchParams.get('offset') ?? '0');
+			const limit = Number(url.searchParams.get('limit') ?? '1');
+			const page = pages[offset / limit] ?? [];
+			return new Response(
+				JSON.stringify({ results: page.map((id) => ({ id })), offset, limit, total: 0 }),
+				{ status: 200, headers: { 'content-type': 'application/json' } }
+			);
+		});
+		return { fn: fn as unknown as typeof fetch, calls };
+	}
+
+	it('collects every id across pages, requesting only the id field, and stops on a short page', async () => {
+		const { fn, calls } = pagedFetch([['a', 'b'], ['c', 'd'], ['e']]);
+		const ids = await new MeiliEventIndex(BACKEND, fn).fetchIndexedIds(2);
+
+		expect([...ids].sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
+		// Asks Meili for the id field only, paginated by offset.
+		expect(calls[0]).toBe('http://meili.local/indexes/events/documents?fields=id&limit=2&offset=0');
+		expect(calls[1]).toContain('offset=2');
+		// Three pages: two full + one short → stop after the short page.
+		expect(calls).toHaveLength(3);
+	});
+
+	it('makes one extra (empty) request when the count is an exact multiple of the page size', async () => {
+		const { fn, calls } = pagedFetch([['a', 'b']]); // exactly one full page, then empty
+		const ids = await new MeiliEventIndex(BACKEND, fn).fetchIndexedIds(2);
+		expect([...ids].sort()).toEqual(['a', 'b']);
+		expect(calls).toHaveLength(2); // full page (len 2) does not signal the end; empty page does
+	});
+
+	it('returns an empty set for an empty index', async () => {
+		const { fn } = pagedFetch([[]]);
+		const ids = await new MeiliEventIndex(BACKEND, fn).fetchIndexedIds(2);
+		expect(ids.size).toBe(0);
+	});
+
+	it('throws on a non-ok response rather than silently returning a partial set', async () => {
+		const fn = vi.fn(async () => new Response('nope', { status: 500 })) as unknown as typeof fetch;
+		await expect(new MeiliEventIndex(BACKEND, fn).fetchIndexedIds(2)).rejects.toThrow(/500/);
 	});
 });

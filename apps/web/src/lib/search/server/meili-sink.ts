@@ -93,7 +93,15 @@ export class MeiliEventIndex {
 	async applySettings(): Promise<void> {
 		await this.request('PATCH', `/indexes/${this.indexUid}/settings`, {
 			searchableAttributes: ['name', 'description'],
-			filterableAttributes: ['_geo', 'startsAt', 'endsAt', 'status', 'mode', 'did', 'locationTypes'],
+			filterableAttributes: [
+				'_geo',
+				'startsAt',
+				'endsAt',
+				'status',
+				'mode',
+				'did',
+				'locationTypes'
+			],
 			sortableAttributes: ['_geo', 'startsAt', 'endsAt']
 		});
 	}
@@ -118,6 +126,40 @@ export class MeiliEventIndex {
 	async remove(ids: string[]): Promise<void> {
 		if (ids.length === 0) return;
 		await this.request('POST', `/indexes/${this.indexUid}/documents/delete-batch`, ids);
+	}
+
+	/** Every primary-key id currently in the index, paginated and collected into a
+	 *  Set. The external geocode job intersects its worklist with this set so it
+	 *  only PUTs _geo onto events that ALREADY exist: a PUT for an id absent from
+	 *  the index does not merge — it CREATES a geo-only {id,_geo} stub (no
+	 *  name/startsAt), the junk partial docs a blind backfill leaves behind.
+	 *  Read-only; the job still caches every geocode result, so an as-yet-unindexed
+	 *  event picks up its _geo from the sink's fillGeoFromCache once it lands. */
+	async fetchIndexedIds(pageSize = 1000): Promise<Set<string>> {
+		const ids = new Set<string>();
+		for (let offset = 0; ; offset += pageSize) {
+			const page = await this.getJson<{ results?: { id: string }[] }>(
+				`/indexes/${this.indexUid}/documents?fields=id&limit=${pageSize}&offset=${offset}`
+			);
+			const rows = page.results ?? [];
+			for (const r of rows) ids.add(r.id);
+			// A short (or empty) page means we've read the last of the documents.
+			if (rows.length < pageSize) break;
+		}
+		return ids;
+	}
+
+	private async getJson<T>(path: string): Promise<T> {
+		// Detached call for the same workerd `this`-binding reason as request().
+		const doFetch = this.fetch;
+		const res = await doFetch(`${this.base}${path}`, {
+			method: 'GET',
+			headers: { authorization: `Bearer ${this.apiKey}` }
+		});
+		if (!res.ok) {
+			throw new Error(`Meilisearch GET ${path} failed: ${res.status}`);
+		}
+		return (await res.json()) as T;
 	}
 
 	private async request(method: string, path: string, body: unknown): Promise<void> {

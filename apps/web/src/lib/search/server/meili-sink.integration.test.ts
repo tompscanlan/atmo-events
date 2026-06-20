@@ -8,7 +8,12 @@
 //   MEILI_TEST_URL=http://localhost:7700 MEILI_TEST_KEY=masterKey \
 //     pnpm vitest run src/lib/search/server/meili-sink.integration.test.ts
 import { describe, it, expect, beforeAll } from 'vitest';
-import { createMeiliSink, applyMeiliSettings, MeiliEventIndex, type MeiliSinkBackend } from './meili-sink';
+import {
+	createMeiliSink,
+	applyMeiliSettings,
+	MeiliEventIndex,
+	type MeiliSinkBackend
+} from './meili-sink';
 import { searchEvents, nearMeEvents, type SearchBackend } from './meili';
 import { searchDocId } from './normalize';
 
@@ -132,13 +137,39 @@ run('MeiliSink ↔ read client, live against real Meilisearch', () => {
 		// filters still match) AND add _geo (so near-me finds it). A replace would
 		// reduce the doc to {id,_geo}, failing both assertions below.
 		const near = await eventually(
-			() => nearMeEvents(readBackend, { lat: 51.2194, lng: 4.4025, radiusMeters: 5000, limit: 10, offset: 0 }),
+			() =>
+				nearMeEvents(readBackend, {
+					lat: 51.2194,
+					lng: 4.4025,
+					radiusMeters: 5000,
+					limit: 10,
+					offset: 0
+				}),
 			(r) => r.hits.some((h) => h.uri === addrUri)
 		);
 		expect(near.hits.map((h) => h.uri)).toContain(addrUri);
 
 		const text = await searchEvents(readBackend, { q: 'Antwerp Atproto', limit: 10, offset: 0 });
 		expect(text.hits.map((h) => h.uri)).toContain(addrUri); // name survived the merge
+	});
+
+	it('fetchIndexedIds returns the ids the sink indexed and omits never-indexed ids', async () => {
+		const idUri = 'at://did:plc:alice/community.lexicon.calendar.event/idset-probe';
+		await sink.onRecords([created(idUri, { name: 'IdSet Probe', startsAt: FUTURE })], {
+			phase: 'live'
+		});
+
+		// Indexing is async; wait until the probe id shows up in the id set.
+		const ids = await eventually(
+			() => new MeiliEventIndex(backend).fetchIndexedIds(),
+			(set) => set.has(searchDocId(idUri))
+		);
+		expect(ids.has(searchDocId(idUri))).toBe(true);
+		// A doc never indexed must be absent — this is exactly what lets the geocode
+		// job skip a PUT that would otherwise CREATE a {id,_geo} stub.
+		expect(ids.has(searchDocId('at://did:plc:alice/community.lexicon.calendar.event/never'))).toBe(
+			false
+		);
 	});
 
 	it('removes a deleted event so the read path no longer finds it', async () => {
