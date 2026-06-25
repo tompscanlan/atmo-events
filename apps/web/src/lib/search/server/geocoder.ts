@@ -122,8 +122,12 @@ export function createGeocoder(env: GeocoderEnv = {}, fetchImpl: typeof fetch = 
 			const res = await fetchImpl(url, {
 				headers: { accept: 'application/json', 'user-agent': userAgent }
 			});
-			// Throw on transport/HTTP errors so the job treats them as TRANSIENT
-			// (retry next run), distinct from an empty body = NO-MATCH (negative cache).
+			// NO-MATCH vs TRANSIENT. Nominatim signals no-match as 200 + []; LocationIQ
+			// signals it as 404 (e.g. {"error":"Unable to geocode"}). Treat 404 as a
+			// no-match (return null → negative cache w/ backoff) so an ungeocodable
+			// address isn't retried every run. Other non-2xx (429 rate-limit, 5xx,
+			// transport) throw → the job treats them as TRANSIENT and retries next run.
+			if (res.status === 404) return null;
 			if (!res.ok) throw new Error(`geocode request failed: ${res.status}`);
 
 			const results = (await res.json()) as NominatimHit[];

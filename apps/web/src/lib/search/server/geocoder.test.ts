@@ -77,7 +77,12 @@ describe('createGeocoder', () => {
 		expect(await createGeocoder({}, fn).geocode('nowhere')).toBeNull();
 	});
 
-	it('throws on an HTTP error so the caller treats it as transient', async () => {
+	it('returns null on a 404 (LocationIQ no-match) so it negative-caches, not retries', async () => {
+		const { fn } = fakeFetch({ error: 'Unable to geocode' }, 404);
+		expect(await createGeocoder({}, fn).geocode('nowhere')).toBeNull();
+	});
+
+	it('throws on a transient HTTP error (429/5xx) so the caller retries', async () => {
 		const { fn } = fakeFetch({}, 429);
 		await expect(createGeocoder({}, fn).geocode('x')).rejects.toThrow(/429/);
 	});
