@@ -7,7 +7,7 @@
 // sleep between calls — the whole reason geocoding stays off Workers.
 //
 // Run (backfill MUST point the geocoder at LocationIQ, never public Nominatim):
-//   CF_API_TOKEN=… MEILI_URL=https://search.testnet.openmeet.net MEILI_KEY=… \
+//   CLOUDFLARE_API_TOKEN=… MEILI_URL=https://search.testnet.openmeet.net MEILI_KEY=… \
 //   GEOCODER_URL=https://us1.locationiq.com/v1/search GEOCODER_KEY=… \
 //     pnpm -C apps/web exec tsx scripts/geocode-events.ts --limit 50
 import { createD1Client, type D1Client } from '../src/lib/search/server/d1-http';
@@ -101,7 +101,11 @@ async function fetchLiveDocs(
 }
 
 async function main() {
-	if (!env.CF_API_TOKEN) throw new Error('CF_API_TOKEN is required');
+	if (!env.CLOUDFLARE_API_TOKEN) throw new Error('CLOUDFLARE_API_TOKEN is required');
+	// No hardcoded account/DB fallbacks: the target D1 must be chosen explicitly so the
+	// job can never silently write a baked-in database, and so no infra IDs live in source.
+	if (!env.CLOUDFLARE_ACCOUNT_ID || !env.D1_DATABASE_ID)
+		throw new Error('CLOUDFLARE_ACCOUNT_ID and D1_DATABASE_ID are required');
 	if (!env.MEILI_URL || !env.MEILI_KEY) throw new Error('MEILI_URL and MEILI_KEY are required');
 	if (!env.GEOCODER_KEY) {
 		console.warn(
@@ -118,9 +122,9 @@ async function main() {
 	});
 
 	const d1 = createD1Client({
-		accountId: env.CF_ACCOUNT_ID ?? '312f04a766eb64123dd955e2cc12ad5f',
-		databaseId: env.CF_D1_DATABASE_ID ?? '65641d99-327d-4a16-b9c4-f7142f068152',
-		apiToken: env.CF_API_TOKEN
+		accountId: env.CLOUDFLARE_ACCOUNT_ID,
+		databaseId: env.D1_DATABASE_ID,
+		apiToken: env.CLOUDFLARE_API_TOKEN
 	});
 	const geocoder = createGeocoder(env);
 	const meili = new MeiliEventIndex({
