@@ -4,7 +4,8 @@ import {
 	addressToQuery,
 	derivePrecision,
 	createGeocoder,
-	requireGeocoderForBulk
+	requireGeocoderForBulk,
+	isPublicNominatimHost
 } from './geocoder';
 
 describe('addressToQuery', () => {
@@ -82,6 +83,20 @@ describe('createGeocoder', () => {
 		expect(await createGeocoder({}, fn).geocode('nowhere')).toBeNull();
 	});
 
+	it('returns null on out-of-WGS84-range coords (so a bad hit negative-caches, not poisons Meili)', async () => {
+		// A finite-but-out-of-range result must not be cached as resolved: Meili
+		// silently fails the whole _geo batch on such a doc. Reject → null → negative.
+		const { fn } = fakeFetch([{ lat: '91.5', lon: '-85.76', addresstype: 'city' }]);
+		expect(await createGeocoder({}, fn).geocode('off the map')).toBeNull();
+		const { fn: fn2 } = fakeFetch([{ lat: '38.25', lon: '-200', addresstype: 'city' }]);
+		expect(await createGeocoder({}, fn2).geocode('off the map')).toBeNull();
+	});
+
+	it('returns null on non-finite coords', async () => {
+		const { fn } = fakeFetch([{ lat: 'not-a-number', lon: '4.36', addresstype: 'city' }]);
+		expect(await createGeocoder({}, fn).geocode('garbled')).toBeNull();
+	});
+
 	it('throws on a transient HTTP error (429/5xx) so the caller retries', async () => {
 		const { fn } = fakeFetch({}, 429);
 		await expect(createGeocoder({}, fn).geocode('x')).rejects.toThrow(/429/);
@@ -89,52 +104,119 @@ describe('createGeocoder', () => {
 });
 
 describe('requireGeocoderForBulk', () => {
-	it('allows any run when a geocoder key is set', () => {
+	it('allows any run against a non-public endpoint (keyed LocationIQ or self-hosted)', () => {
 		expect(() =>
-			requireGeocoderForBulk({ hasKey: true, dryRun: false, limit: 0, allowPublic: false })
+			requireGeocoderForBulk({
+				nonPublicEndpoint: true,
+				dryRun: false,
+				limit: 0,
+				allowPublic: false
+			})
 		).not.toThrow();
 		expect(() =>
-			requireGeocoderForBulk({ hasKey: true, dryRun: false, limit: 5000, allowPublic: false })
+			requireGeocoderForBulk({
+				nonPublicEndpoint: true,
+				dryRun: false,
+				limit: 5000,
+				allowPublic: false
+			})
 		).not.toThrow();
 	});
 
 	it('allows a keyless small drip (1..25)', () => {
 		expect(() =>
-			requireGeocoderForBulk({ hasKey: false, dryRun: false, limit: 25, allowPublic: false })
+			requireGeocoderForBulk({
+				nonPublicEndpoint: false,
+				dryRun: false,
+				limit: 25,
+				allowPublic: false
+			})
 		).not.toThrow();
 		expect(() =>
-			requireGeocoderForBulk({ hasKey: false, dryRun: false, limit: 1, allowPublic: false })
+			requireGeocoderForBulk({
+				nonPublicEndpoint: false,
+				dryRun: false,
+				limit: 1,
+				allowPublic: false
+			})
 		).not.toThrow();
 	});
 
 	it('blocks a keyless run over the drip ceiling', () => {
 		expect(() =>
-			requireGeocoderForBulk({ hasKey: false, dryRun: false, limit: 26, allowPublic: false })
+			requireGeocoderForBulk({
+				nonPublicEndpoint: false,
+				dryRun: false,
+				limit: 26,
+				allowPublic: false
+			})
 		).toThrow(/LocationIQ|allow-public-nominatim/);
 	});
 
 	it('blocks a keyless uncapped run (limit 0 = no cap, the worst case)', () => {
 		expect(() =>
-			requireGeocoderForBulk({ hasKey: false, dryRun: false, limit: 0, allowPublic: false })
+			requireGeocoderForBulk({
+				nonPublicEndpoint: false,
+				dryRun: false,
+				limit: 0,
+				allowPublic: false
+			})
 		).toThrow(/LocationIQ|allow-public-nominatim/);
 	});
 
 	it('blocks a keyless negative limit (uncapped, not a tiny drip)', () => {
 		// A stray `--limit -1` must not masquerade as a 1-call drip and slip the gate.
 		expect(() =>
-			requireGeocoderForBulk({ hasKey: false, dryRun: false, limit: -1, allowPublic: false })
+			requireGeocoderForBulk({
+				nonPublicEndpoint: false,
+				dryRun: false,
+				limit: -1,
+				allowPublic: false
+			})
 		).toThrow(/LocationIQ|allow-public-nominatim/);
 	});
 
 	it('lets --allow-public-nominatim override a bulk keyless run', () => {
 		expect(() =>
-			requireGeocoderForBulk({ hasKey: false, dryRun: false, limit: 0, allowPublic: true })
+			requireGeocoderForBulk({
+				nonPublicEndpoint: false,
+				dryRun: false,
+				limit: 0,
+				allowPublic: true
+			})
 		).not.toThrow();
 	});
 
 	it('never blocks a dry run (it makes no geocoder calls)', () => {
 		expect(() =>
-			requireGeocoderForBulk({ hasKey: false, dryRun: true, limit: 0, allowPublic: false })
+			requireGeocoderForBulk({
+				nonPublicEndpoint: false,
+				dryRun: true,
+				limit: 0,
+				allowPublic: false
+			})
 		).not.toThrow();
+	});
+});
+
+describe('isPublicNominatimHost', () => {
+	it('flags the public OSM Nominatim host', () => {
+		expect(isPublicNominatimHost('https://nominatim.openstreetmap.org/search')).toBe(true);
+	});
+
+	it('does not flag a keyed LocationIQ endpoint', () => {
+		expect(isPublicNominatimHost('https://us1.locationiq.com/v1/search')).toBe(false);
+	});
+
+	it('treats unset or malformed URLs as public (fail safe toward Nominatim limits)', () => {
+		expect(isPublicNominatimHost(undefined)).toBe(true);
+		expect(isPublicNominatimHost('')).toBe(true);
+		expect(isPublicNominatimHost('not a url')).toBe(true);
+	});
+
+	it('is host-based, not substring-based (a path mentioning the host is not public)', () => {
+		expect(isPublicNominatimHost('https://geo.example.com/nominatim.openstreetmap.org')).toBe(
+			false
+		);
 	});
 });

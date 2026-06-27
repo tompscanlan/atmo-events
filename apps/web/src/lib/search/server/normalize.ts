@@ -54,7 +54,11 @@ type Loc = Record<string, unknown>;
 // finite-but-out-of-range value. Meilisearch rejects such a doc and can fail
 // the whole async indexing task (losing the rest of the batch), so we drop the
 // _geo here rather than index it. Bounds are WGS84: lat [-90, 90], lng [-180, 180].
-function inGeoRange(lat: number, lng: number): boolean {
+// Exported so the geocoder (geocoder.ts) range-checks its results against the
+// EXACT same bounds — a geocoder hit and a record's own coords must not be able
+// to disagree on what Meili will accept. NaN fails every comparison, so this also
+// rejects non-finite input.
+export function inGeoRange(lat: number, lng: number): boolean {
 	return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 }
 

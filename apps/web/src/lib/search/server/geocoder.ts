@@ -6,6 +6,7 @@
 // behind an interface. Default = public Nominatim (parity with atmo today);
 // set GEOCODER_KEY (+ GEOCODER_URL) to use LocationIQ. Used only by the
 // external geocode job — geocoding never runs on the Worker hot path.
+import { inGeoRange } from './normalize';
 
 export interface GeoPoint {
 	lat: number;
@@ -26,6 +27,25 @@ export interface GeocoderEnv {
 
 const DEFAULT_URL = 'https://nominatim.openstreetmap.org/search';
 const DEFAULT_USER_AGENT = 'atmo-events (https://atmo.rsvp)';
+const PUBLIC_NOMINATIM_HOST = 'nominatim.openstreetmap.org';
+
+/** True when the effective geocoder endpoint is public OSM Nominatim — i.e. the
+ *  shared, usage-policy-bound host. The in-Worker drip uses this to pick SAFE
+ *  defaults (a smaller per-tick cap + a slower throttle floor) when on Nominatim,
+ *  rather than refusing to run: the drip works keyless out of the box, just
+ *  policy-compliantly. `createGeocoder` falls back to DEFAULT_URL (this host)
+ *  when GEOCODER_URL is unset — even with a key present, in which case the ?key=
+ *  is ignored and we're really on Nominatim — so an unset URL counts as public.
+ *  Malformed URL → treated as public (fail safe toward the slower limits). A
+ *  keyed, non-public GEOCODER_URL (LocationIQ) is the only way to lift them. */
+export function isPublicNominatimHost(url: string | undefined): boolean {
+	if (!url) return true;
+	try {
+		return new URL(url).hostname.toLowerCase() === PUBLIC_NOMINATIM_HOST;
+	} catch {
+		return true;
+	}
+}
 
 // Same fixed order as the cache key, but a human-readable freeform query (commas,
 // original case/diacritics) — both Nominatim and LocationIQ handle UTF-8 / non-
@@ -34,28 +54,40 @@ const DEFAULT_USER_AGENT = 'atmo-events (https://atmo.rsvp)';
 const QUERY_FIELDS = ['name', 'street', 'locality', 'region', 'postalCode', 'country'];
 
 /** Largest keyless run we treat as a sanctioned "small drip" against public
- *  Nominatim. Above this (or uncapped), a backfill must use LocationIQ. */
+ *  Nominatim. Above this (or uncapped), a backfill must use LocationIQ. The
+ *  in-Worker drip also clamps its per-tick cap to this when on public Nominatim. */
 export const PUBLIC_NOMINATIM_DRIP_MAX = 25;
 
-/** Enforce the file's contract that a BULK backfill uses LocationIQ, not public
- *  Nominatim (whose usage policy a large unkeyed run would breach, risking a
- *  silent IP ban). Throws for a keyless, non-dry-run, non-overridden run that is
- *  uncapped (limit <= 0) or over the drip ceiling; a small keyless drip stays
- *  allowed. The hazard is request VOLUME, so the gate is on size, not on the
- *  mere use of Nominatim. limit <= 0 (not just === 0) counts as uncapped so a
- *  stray negative can't masquerade as a tiny drip and slip the gate. */
+/** Throttle floor (ms between calls) for public Nominatim — its usage policy is
+ *  an absolute max of 1 request/second. The drip enforces this as a FLOOR when on
+ *  Nominatim (a faster GEOCODE_SLEEP_MS override can't undercut the policy); a
+ *  keyed LocationIQ endpoint honors the operator's own, possibly faster, value. */
+export const PUBLIC_NOMINATIM_MIN_SLEEP_MS = 1000;
+
+/** Enforce the file's contract that a BULK backfill runs against a NON-PUBLIC
+ *  endpoint (a keyed LocationIQ URL, or a self-hosted host), not public OSM
+ *  Nominatim — whose usage policy a large run would breach, risking a silent IP
+ *  ban. The deciding input is the EFFECTIVE endpoint, not key presence: a
+ *  GEOCODER_KEY with an unset/public GEOCODER_URL still hits public Nominatim (the
+ *  ?key= is ignored), so callers pass `!isPublicNominatimHost(GEOCODER_URL)` here
+ *  rather than `!!GEOCODER_KEY`. Throws for a public-Nominatim, non-dry-run,
+ *  non-overridden run that is uncapped (limit <= 0) or over the drip ceiling; a
+ *  small public drip stays allowed. The hazard is request VOLUME, so the gate is
+ *  on size. limit <= 0 (not just === 0) counts as uncapped so a stray negative
+ *  can't masquerade as a tiny drip and slip the gate. */
 export function requireGeocoderForBulk(opts: {
-	hasKey: boolean;
+	nonPublicEndpoint: boolean;
 	dryRun: boolean;
 	limit: number;
 	allowPublic: boolean;
 }): void {
-	if (opts.hasKey || opts.dryRun || opts.allowPublic) return;
+	if (opts.nonPublicEndpoint || opts.dryRun || opts.allowPublic) return;
 	const bulk = opts.limit <= 0 || opts.limit > PUBLIC_NOMINATIM_DRIP_MAX;
 	if (bulk) {
 		throw new Error(
 			`Keyless public Nominatim is only allowed for a small drip (--limit 1..${PUBLIC_NOMINATIM_DRIP_MAX}). ` +
-				'Set GEOCODER_KEY (LocationIQ) for a bulk/uncapped backfill, or pass --allow-public-nominatim to override.'
+				'Set GEOCODER_URL to your LocationIQ endpoint (with GEOCODER_KEY) for a bulk/uncapped backfill, ' +
+				'or pass --allow-public-nominatim to override.'
 		);
 	}
 }
@@ -136,7 +168,14 @@ export function createGeocoder(env: GeocoderEnv = {}, fetchImpl: typeof fetch = 
 
 			const lat = Number(top.lat);
 			const lng = Number(top.lon);
-			if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+			// Reject non-finite OR out-of-WGS84-range coordinates. Meilisearch
+			// silently fails the whole async index task on a bad _geo (losing the
+			// batch), and the sink guards its own path identically via the SAME
+			// inGeoRange (normalize.ts). An out-of-range hit therefore becomes a
+			// no-match (return null → negative cache w/ backoff) rather than a
+			// poisoned coordinate that's cached as "resolved" and never retried.
+			// inGeoRange returns false for NaN, so it subsumes the finite check.
+			if (!inGeoRange(lat, lng)) return null;
 
 			return { lat, lng, precision: derivePrecision(top) };
 		}
