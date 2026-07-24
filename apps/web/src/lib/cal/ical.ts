@@ -56,16 +56,19 @@ function getLocationString(locations: EventData['locations']): string | undefine
 	if (!locations || locations.length === 0) return undefined;
 
 	const loc = locations.find((v) => v.$type === 'community.lexicon.location.address') as
-		| { street?: string; locality?: string; region?: string }
+		| { name?: string; street?: string; locality?: string; region?: string }
 		| undefined;
-	if (!loc) return undefined;
 
-	const street = loc.street || undefined;
-	const locality = loc.locality || undefined;
-	const region = loc.region || undefined;
+	const parts = [loc?.street, loc?.locality, loc?.region].filter(Boolean);
+	if (parts.length > 0) return parts.join(', ');
 
-	const parts = [street, locality, region].filter(Boolean);
-	return parts.length > 0 ? parts.join(', ') : undefined;
+	// Mirrors packages/ui's locationSummary: prefer the address name, then a geo
+	// name. Kept inline because these server endpoints must not import the UI barrel.
+	if (typeof loc?.name === 'string' && loc.name.trim()) return loc.name;
+	const geo = locations.find((v) => v.$type === 'community.lexicon.location.geo') as
+		| { name?: string }
+		| undefined;
+	return typeof geo?.name === 'string' && geo.name.trim() ? geo.name : undefined;
 }
 
 function getModeLabel(mode: string): string {

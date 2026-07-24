@@ -37,7 +37,9 @@
 		<div>
 			{#if locationData.name}
 				<p class="text-base-900 dark:text-base-50 font-semibold">{locationData.name}</p>
-				<p class="text-base-500 dark:text-base-400 text-sm">{locationData.shortAddress}</p>
+				{#if locationData.shortAddress}
+					<p class="text-base-500 dark:text-base-400 text-sm">{locationData.shortAddress}</p>
+				{/if}
 			{:else}
 				<p class="text-base-900 dark:text-base-50 font-semibold">
 					{locationData.shortAddress}

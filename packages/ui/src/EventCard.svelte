@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getCDNImageBlobUrl } from './atproto-helpers.js';
 	import { eventUrl, isEventOngoing, type FlatEventRecord } from './contrail.js';
+	import { locationSummary } from './location-summary.js';
 	import Avatar from 'svelte-boring-avatars';
 
 	let {
@@ -30,14 +31,11 @@
 	}
 
 	function getLocationString(locations: FlatEventRecord['locations']): string | undefined {
-		if (!locations?.length) return undefined;
-
-		const loc = locations.find((v) => v.$type === 'community.lexicon.location.address') as
-			| { locality?: string; region?: string }
-			| undefined;
-		if (!loc) return undefined;
-
-		return [loc.locality, loc.region].filter(Boolean).join(', ') || undefined;
+		const summary = locationSummary(locations);
+		if (!summary) return undefined;
+		// Locality/region as before; fall back to the place name when there is no
+		// address (a named geo-only pick), so the card still shows a location.
+		return [summary.locality, summary.region].filter(Boolean).join(', ') || summary.name;
 	}
 
 	function getThumbnail(event: FlatEventRecord): { url: string; alt: string } | null {

@@ -1,3 +1,4 @@
+import { locationSummary } from '../location-summary.js';
 import type { EventData } from '../event-types.js';
 
 /**
@@ -53,19 +54,12 @@ function toICalDate(isoString: string): string {
  * Extract a location string from event locations array.
  */
 function getLocationString(locations: EventData['locations']): string | undefined {
-	if (!locations || locations.length === 0) return undefined;
-
-	const loc = locations.find((v) => v.$type === 'community.lexicon.location.address') as
-		| { street?: string; locality?: string; region?: string }
-		| undefined;
-	if (!loc) return undefined;
-
-	const street = loc.street || undefined;
-	const locality = loc.locality || undefined;
-	const region = loc.region || undefined;
-
-	const parts = [street, locality, region].filter(Boolean);
-	return parts.length > 0 ? parts.join(', ') : undefined;
+	const summary = locationSummary(locations);
+	if (!summary) return undefined;
+	// Street/locality/region as before; fall back to the place name when there is
+	// no address (a named geo-only pick), so the export still carries a location.
+	const parts = [summary.street, summary.locality, summary.region].filter(Boolean);
+	return parts.length > 0 ? parts.join(', ') : summary.name;
 }
 
 function getModeLabel(mode: string): string {

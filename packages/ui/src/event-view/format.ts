@@ -1,6 +1,7 @@
 import { marked } from 'marked';
 import { sanitize } from '../cal/sanitize.js';
 import { getProfileUrl } from '../profile-url.js';
+import { locationSummary } from '../location-summary.js';
 import type { FlatEventRecord } from '../contrail.js';
 
 export function formatMonth(date: Date): string {
@@ -52,24 +53,32 @@ export type LocationData = {
 };
 
 export function getLocationData(locations: FlatEventRecord['locations']): LocationData | null {
-	if (!locations?.length) return null;
+	const summary = locationSummary(locations);
+	if (!summary) return null;
 
-	const loc = locations.find((v) => v.$type === 'community.lexicon.location.address') as
-		| { name?: string; street?: string; locality?: string; region?: string; country?: string }
-		| undefined;
-	if (!loc) return null;
+	const fullParts = [summary.street, summary.locality, summary.region, summary.country].filter(
+		Boolean
+	);
+	// No address fields — a place the geocoder gave no ISO country code for, saved
+	// as a named geo entry alone. Show the name and point the map at the point.
+	if (fullParts.length === 0) {
+		if (!summary.name) return null;
+		const query = summary.lat && summary.lng ? `${summary.lat},${summary.lng}` : summary.name;
+		return {
+			name: summary.name,
+			shortAddress: '',
+			fullAddress: '',
+			fullString: summary.name,
+			googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`
+		};
+	}
 
-	const shortParts = [loc.street, loc.locality].filter(Boolean);
-	const fullParts = [loc.street, loc.locality, loc.region, loc.country].filter(Boolean);
-	if (fullParts.length === 0) return null;
-
-	const shortAddress = shortParts.join(', ');
+	const shortAddress = [summary.street, summary.locality].filter(Boolean).join(', ');
 	const fullAddress = fullParts.join(', ');
-	const displayName = loc.name || undefined;
-	const fullString = displayName ? `${displayName}, ${fullAddress}` : fullAddress;
+	const fullString = summary.name ? `${summary.name}, ${fullAddress}` : fullAddress;
 	const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullString)}`;
 
-	return { name: displayName, shortAddress, fullAddress, fullString, googleMapsUrl };
+	return { name: summary.name, shortAddress, fullAddress, fullString, googleMapsUrl };
 }
 
 export type GeoLocation = {
@@ -152,9 +161,7 @@ function renderDescription(text: string, facets?: Facet[]): string {
 			if (!feature) continue;
 			if (facet.index.byteStart < cursor) continue;
 
-			const segmentText = decoder.decode(
-				encoded.slice(facet.index.byteStart, facet.index.byteEnd)
-			);
+			const segmentText = decoder.decode(encoded.slice(facet.index.byteStart, facet.index.byteEnd));
 
 			let mdLink: string | null = null;
 			switch (feature.$type) {

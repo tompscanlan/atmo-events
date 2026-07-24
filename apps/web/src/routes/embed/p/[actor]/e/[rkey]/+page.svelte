@@ -2,6 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { resolve } from '$app/paths';
 	import Avatar from 'svelte-boring-avatars';
+	import { locationSummary } from '@atmo-dev/events-ui';
 	import { notifyContrailOfUpdate } from '$lib/contrail';
 
 	let { data } = $props();
@@ -57,14 +58,11 @@
 	}
 
 	function getLocationString(): string | null {
-		const locations = data.eventData.locations;
-		if (!locations || locations.length === 0) return null;
-		const loc = locations.find((v) => v.$type === 'community.lexicon.location.address') as
-			| { name?: string; street?: string; locality?: string; region?: string }
-			| undefined;
-		if (!loc) return null;
-		if (loc.name) return loc.name;
-		const parts = [loc.locality, loc.region].filter(Boolean);
+		const summary = locationSummary(data.eventData.locations);
+		if (!summary) return null;
+		// Prefer the place name (as before); this also covers a named geo-only pick.
+		if (summary.name) return summary.name;
+		const parts = [summary.locality, summary.region].filter(Boolean);
 		return parts.length > 0 ? parts.join(', ') : null;
 	}
 
