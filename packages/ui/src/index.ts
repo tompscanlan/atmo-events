@@ -58,7 +58,7 @@ export {
 export { eventUrl, isEventOngoing, RSVP_GOING, RSVP_INTERESTED } from './contrail.js';
 
 // Location helpers — reading a display location out of a record's locations[]
-export { locationSummary, type LocationSummary } from './location-summary.js';
+export { locationSummary, compactPlaceName, type LocationSummary } from './location-summary.js';
 
 // Atproto helpers (browser-safe, no client/session state)
 export { getCDNImageBlobUrl, compressImage } from './atproto-helpers.js';

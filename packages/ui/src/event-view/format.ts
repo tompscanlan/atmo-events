@@ -52,6 +52,15 @@ export type LocationData = {
 	googleMapsUrl: string;
 };
 
+/** Display form for a bare point, matching what the editor shows for the same
+ *  record. Rounded for display only; the stored coordinates are untouched. */
+function formatCoords(lat: string | undefined, lng: string | undefined): string {
+	const latitude = Number(lat);
+	const longitude = Number(lng);
+	if (!lat || !lng || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return '';
+	return `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+}
+
 export function getLocationData(locations: FlatEventRecord['locations']): LocationData | null {
 	const summary = locationSummary(locations);
 	if (!summary) return null;
@@ -59,17 +68,20 @@ export function getLocationData(locations: FlatEventRecord['locations']): Locati
 	const fullParts = [summary.street, summary.locality, summary.region, summary.country].filter(
 		Boolean
 	);
-	// No address fields — a place the geocoder gave no ISO country code for, saved
-	// as a named geo entry alone. Show the name and point the map at the point.
+	// No address fields — a place saved as a geo entry alone. Show its name, or the
+	// point itself when it has none, which is what the editor shows for the same
+	// record. Returning null here would render no location and no map for a record
+	// that does have a position.
 	if (fullParts.length === 0) {
-		if (!summary.name) return null;
-		const query = summary.lat && summary.lng ? `${summary.lat},${summary.lng}` : summary.name;
+		const point = summary.lat && summary.lng ? `${summary.lat},${summary.lng}` : '';
+		const label = summary.name || formatCoords(summary.lat, summary.lng);
+		if (!label) return null;
 		return {
 			name: summary.name,
 			shortAddress: '',
 			fullAddress: '',
-			fullString: summary.name,
-			googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`
+			fullString: label,
+			googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(point || label)}`
 		};
 	}
 
@@ -161,7 +173,9 @@ function renderDescription(text: string, facets?: Facet[]): string {
 			if (!feature) continue;
 			if (facet.index.byteStart < cursor) continue;
 
-			const segmentText = decoder.decode(encoded.slice(facet.index.byteStart, facet.index.byteEnd));
+			const segmentText = decoder.decode(
+				encoded.slice(facet.index.byteStart, facet.index.byteEnd)
+			);
 
 			let mdLink: string | null = null;
 			switch (feature.$type) {

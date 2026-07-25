@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { locationSummary } from './location-summary';
+import { compactPlaceName, locationSummary } from './location-summary';
 
 const ADDRESS = 'community.lexicon.location.address';
 const GEO = 'community.lexicon.location.geo';
@@ -62,5 +62,56 @@ describe('locationSummary', () => {
 		expect(locationSummary([])).toBeNull();
 		expect(locationSummary(undefined)).toBeNull();
 		expect(locationSummary(null)).toBeNull();
+	});
+
+	it('does not report an address entry that carries no fields', () => {
+		// Assigning undefined would still create the key, which would make an empty
+		// entry read as something to show.
+		expect(locationSummary([{ $type: ADDRESS }])).toBeNull();
+		expect(locationSummary([{ $type: ADDRESS, street: '   ' }])).toBeNull();
+	});
+});
+
+describe('compactPlaceName', () => {
+	// Names taken verbatim from records already in the index. Most of the ones
+	// carrying a place name and no address were written by other clients and hold a
+	// whole reverse-geocoded string.
+	it('leaves a name that already fits a card', () => {
+		for (const name of [
+			'Tokyo, Japan',
+			'Humboldt Park',
+			'San Francisco, California, United States',
+			'WellNest, Crucifix Lane, London, UK',
+			'Heanor Road, Ilkeston DE7 8TB, UK',
+			'Dana Cafe, Crookes, Sheffield'
+		]) {
+			expect(compactPlaceName(name)).toBe(name);
+		}
+	});
+
+	it('keeps the leading segments of a reverse-geocoded string', () => {
+		expect(
+			compactPlaceName('Peace Portal Drive, Blaine, Whatcom County, Washington, 98231, United States')
+		).toBe('Peace Portal Drive, Blaine');
+		expect(
+			compactPlaceName('Funkhaus Berlin, Oberschöneweide, Treptow-Köpenick, Berlin, 12459, Germany')
+		).toBe('Funkhaus Berlin, Oberschöneweide');
+		expect(compactPlaceName('1100 Louisiana Blvd SE, Albuquerque, NM 87108')).toBe(
+			'1100 Louisiana Blvd SE, Albuquerque'
+		);
+	});
+
+	it('keeps the first segment even when it is the only one that fits', () => {
+		// No postcode and only four commas, so a digit or comma count would miss it.
+		expect(
+			compactPlaceName(
+				'Beaverdell, Area E (Beaverdell/West Boundary), Regional District of Kootenay Boundary, British Columbia, Canada'
+			)
+		).toBe('Beaverdell');
+	});
+
+	it('returns a long single-segment name unchanged rather than cutting a word', () => {
+		const name = 'The Really Very Long Name Of One Single Place With No Commas At All';
+		expect(compactPlaceName(name)).toBe(name);
 	});
 });

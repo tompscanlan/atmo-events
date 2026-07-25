@@ -160,18 +160,17 @@ export function geocodeResponseToLocation(data: GeocodeResponse): EventLocation 
 	// An ISO code, never the free-text country name, which may exceed the lexicon cap.
 	const country = resolveCountryCode(addr);
 
-	// A name is redundant only with what the record will ACTUALLY store. With a
-	// country the address entry carries street/locality/region/country, so a name
-	// restating one of those adds nothing. Without a country there is no address
-	// entry (buildLocationEntries drops it), so none of those persist — the name is
-	// then the only descriptor and must survive, riding on the geo entry. Compare
-	// against the stored country CODE, never the free-text country name, which we
-	// don't keep (so "France"/"FR" is not treated as a restatement).
-	const name = resolvePlaceName(
-		data,
-		country ? [street, road, houseNumber, locality, region, country] : []
-	);
 	const coords = resolveCoords(data);
+	// A name is redundant only with what the record will ACTUALLY store, so this
+	// has to track the same condition buildLocationEntries emits on. With an
+	// address entry the name restating one of its fields adds nothing. With none,
+	// nothing here persists — the name is the only descriptor left and must
+	// survive, riding on the geo entry. Compare against the stored country CODE,
+	// never the free-text country name, which we don't keep (so "France"/"FR" is
+	// not treated as a restatement).
+	const stored = [street, road, houseNumber, locality, region, country];
+	const addressWillPersist = stored.some(Boolean) && Boolean(country || !coords);
+	const name = resolvePlaceName(data, addressWillPersist ? stored : []);
 
 	return {
 		...(name && { name }),
@@ -183,20 +182,39 @@ export function geocodeResponseToLocation(data: GeocodeResponse): EventLocation 
 	};
 }
 
-/** Build an address entry when country is present and a companion geo entry when
- *  coordinates are valid. Geo coordinates are strings; the address schema has no
- *  coordinate fields. */
+/** True when the address entry has something to carry. `name` alone does not
+ *  count: with no field to anchor it, the name belongs on the geo entry. */
+function hasAddressFields(location: EventLocation): boolean {
+	return Boolean(location.street || location.locality || location.region || location.country);
+}
+
+/** True when a geo entry will be emitted, so it can carry the place instead. */
+function hasStorableCoords(location: EventLocation): boolean {
+	return Boolean(location.coords && coordsInRange(location.coords.lat, location.coords.lng));
+}
+
+/** Build an address entry when there is an address field to put in it, and a
+ *  companion geo entry when coordinates are valid. Geo coordinates are strings;
+ *  the address schema has no coordinate fields. */
 export function buildLocationEntries(location: EventLocation): Array<Record<string, unknown>> {
 	const entries: Array<Record<string, unknown>> = [];
 
-	// `country` is required; omitting the whole address avoids an invalid record.
-	if (location.country) {
+	// `country` is required by the address lexicon. When coordinates will be stored
+	// the geo entry can carry the place instead, so the incomplete address is
+	// dropped rather than written for a validating consumer to reject. With no
+	// coordinates there is nowhere else for it to go, and dropping it would
+	// silently destroy a location the user can see in the editor — an imported
+	// event carries a street and no country — so it is written as it stands.
+	// Getting a country onto those values needs a name->ISO map and a migration for
+	// the legacy records carrying a free-text one, which is separate work.
+	const geoCanCarryThePlace = !location.country && hasStorableCoords(location);
+	if (hasAddressFields(location) && !geoCanCarryThePlace) {
 		const address: Record<string, unknown> = { $type: ADDRESS_TYPE };
 		if (location.name) address.name = location.name;
 		if (location.street) address.street = location.street;
 		if (location.locality) address.locality = location.locality;
 		if (location.region) address.region = location.region;
-		address.country = location.country;
+		if (location.country) address.country = location.country;
 		entries.push(address);
 	}
 

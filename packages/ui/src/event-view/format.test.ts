@@ -43,9 +43,18 @@ describe('getLocationData', () => {
 		expect(data?.googleMapsUrl).toContain(encodeURIComponent('41.9027884,-87.7209107'));
 	});
 
-	it('returns null for an unnamed geo-only record', () => {
+	it('shows the point for an unnamed geo-only record', () => {
+		// It has a position, so rendering nothing would hide a location the editor
+		// displays. Same form the editor uses for the same record.
+		const data = getLocationData(locations([{ $type: GEO, latitude: '41.9', longitude: '-87.7' }]));
+		expect(data?.fullString).toBe('41.90000, -87.70000');
+		expect(data?.name).toBeUndefined();
+		expect(data?.googleMapsUrl).toContain(encodeURIComponent('41.9,-87.7'));
+	});
+
+	it('returns null for a geo entry whose coordinates are not numbers', () => {
 		expect(
-			getLocationData(locations([{ $type: GEO, latitude: '41.9', longitude: '-87.7' }]))
+			getLocationData(locations([{ $type: GEO, latitude: '', longitude: 'north' }]))
 		).toBeNull();
 	});
 

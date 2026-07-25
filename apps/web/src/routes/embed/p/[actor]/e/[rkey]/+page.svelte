@@ -2,7 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { resolve } from '$app/paths';
 	import Avatar from 'svelte-boring-avatars';
-	import { locationSummary } from '@atmo-dev/events-ui';
+	import { compactPlaceName, locationSummary } from '@atmo-dev/events-ui';
 	import { notifyContrailOfUpdate } from '$lib/contrail';
 
 	let { data } = $props();
@@ -61,7 +61,9 @@
 		const summary = locationSummary(data.eventData.locations);
 		if (!summary) return null;
 		// Prefer the place name (as before); this also covers a named geo-only pick.
-		if (summary.name) return summary.name;
+		// Trimmed to fit: an embed is smaller than a card, and a name written by
+		// another client is often a whole reverse-geocoded address.
+		if (summary.name) return compactPlaceName(summary.name);
 		const parts = [summary.locality, summary.region].filter(Boolean);
 		return parts.length > 0 ? parts.join(', ') : null;
 	}

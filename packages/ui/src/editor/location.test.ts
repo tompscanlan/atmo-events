@@ -376,10 +376,10 @@ describe('geocodeResponseToLocation — address-like classes keep a name only wh
 		}
 	});
 
-	it('keeps a name that restates the locality when there is no country to anchor an address', () => {
-		// Without a country code no address entry is emitted, so locality/region are
-		// NOT stored — the name (which rides on the geo entry) is the only descriptor
-		// left and must survive, even though it equals the geocoder's `city`.
+	it('keeps a name that restates the locality when the geo entry carries the place', () => {
+		// With no country and storable coordinates the address entry is dropped, so
+		// locality/region are NOT stored — the name (which rides on the geo entry) is
+		// the only descriptor left and must survive, even though it equals `city`.
 		const loc = geocodeResponseToLocation({
 			lat: 41.8755616,
 			lng: -87.6244212,
@@ -390,6 +390,37 @@ describe('geocodeResponseToLocation — address-like classes keep a name only wh
 		});
 		expect(loc.country).toBeUndefined();
 		expect(loc.name).toBe('Chicago');
+	});
+
+	it('drops a name that restates a field the address entry will keep', () => {
+		// Same pick with no coordinates: nothing can carry the place but the address
+		// entry, so it IS emitted, `city` persists, and the name restating it adds
+		// nothing. The redundancy check tracks what gets emitted, not the country.
+		const loc = geocodeResponseToLocation({
+			name: 'Chicago',
+			category: 'boundary',
+			placeType: 'administrative',
+			address: { city: 'Chicago', state: 'Illinois' }
+		});
+		expect(loc.name).toBeUndefined();
+		expect(loc.locality).toBe('Chicago');
+	});
+
+	it('keeps a name when the pick has no address fields at all to restate', () => {
+		// Nothing will be stored on an address entry, so the name is the only
+		// descriptor left and rides on the geo entry.
+		const loc = geocodeResponseToLocation({
+			lat: 27.9881,
+			lng: 86.925,
+			name: 'Everest',
+			category: 'natural',
+			placeType: 'peak',
+			address: {}
+		});
+		expect(loc.name).toBe('Everest');
+		expect(buildLocationEntries(loc)).toEqual([
+			{ $type: GEO_TYPE, latitude: '27.9881', longitude: '86.925', name: 'Everest' }
+		]);
 	});
 });
 
@@ -554,7 +585,7 @@ describe('buildLocationEntries — emitted locations[]', () => {
 		expect(entries).toEqual([{ $type: GEO_TYPE, latitude: '41.9', longitude: '-87.7' }]);
 	});
 
-	it('emits NO address entry without a country, however many other fields there are', () => {
+	it('emits NO address entry without a country when the geo entry can carry the place', () => {
 		// `country` is required by the address lexicon, so an entry carrying only a
 		// name/locality/region is invalid — a validating consumer can reject the whole
 		// record. The place NAME still survives, on the geo entry (the geo lexicon has
@@ -574,10 +605,29 @@ describe('buildLocationEntries — emitted locations[]', () => {
 				name: 'Humboldt Park'
 			}
 		]);
+	});
 
-		// Nothing at all to emit when there are no coordinates either — locality and
-		// region have nowhere lexicon-valid to go.
-		expect(buildLocationEntries({ name: 'Humboldt Park', locality: 'Chicago' })).toEqual([]);
+	it('keeps a country-less address when there are no coordinates to carry it', () => {
+		// Nothing else can hold the location, so an incomplete address beats none:
+		// dropping it silently destroys a location the user can see in the editor.
+		expect(buildLocationEntries({ name: 'Humboldt Park', locality: 'Chicago' })).toEqual([
+			{ $type: ADDRESS_TYPE, name: 'Humboldt Park', locality: 'Chicago' }
+		]);
+	});
+
+	it('keeps an imported location that carries a street and nothing else', () => {
+		// The regression this guards: an .ics import sets `street` only, and a JSON-LD
+		// import omits the country whenever the page has no addressCountry. Gating the
+		// address entry on `country` dropped both on save, so an imported event the
+		// user could see in the editor saved with no location at all.
+		expect(buildLocationEntries({ street: 'The Empty Bottle, 1035 N Western Ave' })).toEqual([
+			{ $type: ADDRESS_TYPE, street: 'The Empty Bottle, 1035 N Western Ave' }
+		]);
+		expect(
+			buildLocationEntries({ street: '1035 N Western Ave', locality: 'Chicago', region: 'IL' })
+		).toEqual([
+			{ $type: ADDRESS_TYPE, street: '1035 N Western Ave', locality: 'Chicago', region: 'IL' }
+		]);
 	});
 
 	it('never puts the name on BOTH entries', () => {

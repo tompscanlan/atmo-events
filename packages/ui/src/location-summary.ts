@@ -27,6 +27,30 @@ export interface LocationSummary {
 	lng?: string;
 }
 
+/** Trim a place name down to something a card can show. Records authored by other
+ *  clients often put a whole reverse-geocoded string in `name` rather than a place
+ *  name, and a full postal address crowds everything else out of a card. Keep
+ *  leading segments while they fit, always keeping at least the first; a name that
+ *  already fits is returned untouched. Readers with room for the whole string (the
+ *  event page, the calendar exports) should not use this. */
+export function compactPlaceName(name: string, maxLength = 40): string {
+	if (name.length <= maxLength) return name;
+
+	const segments = name
+		.split(',')
+		.map((segment) => segment.trim())
+		.filter(Boolean);
+	if (segments.length === 0) return name;
+
+	let label = segments[0];
+	for (const segment of segments.slice(1)) {
+		const extended = `${label}, ${segment}`;
+		if (extended.length > maxLength) break;
+		label = extended;
+	}
+	return label;
+}
+
 /** Normalize a record's `locations[]` into the fields a reader displays, folding
  *  the address entry and the companion geo entry. Returns null when there is no
  *  address or (named/located) geo entry to show — e.g. an FSQ/H3-only record. */
@@ -38,18 +62,23 @@ export function locationSummary(
 	const address = locations.find((l) => l?.$type === ADDRESS_TYPE);
 	const geo = locations.find((l) => l?.$type === GEO_TYPE);
 
+	// Assign conditionally: setting a key to undefined would still create it, and an
+	// entry present but empty would then read as something to show.
 	const summary: LocationSummary = {};
+	const set = (key: keyof LocationSummary, value: string | undefined) => {
+		if (value) summary[key] = value;
+	};
 	if (address) {
-		summary.name = str(address, 'name');
-		summary.street = str(address, 'street');
-		summary.locality = str(address, 'locality');
-		summary.region = str(address, 'region');
-		summary.country = str(address, 'country');
+		set('name', str(address, 'name'));
+		set('street', str(address, 'street'));
+		set('locality', str(address, 'locality'));
+		set('region', str(address, 'region'));
+		set('country', str(address, 'country'));
 	}
 	if (geo) {
-		if (!summary.name) summary.name = str(geo, 'name');
-		summary.lat = str(geo, 'latitude');
-		summary.lng = str(geo, 'longitude');
+		if (!summary.name) set('name', str(geo, 'name'));
+		set('lat', str(geo, 'latitude'));
+		set('lng', str(geo, 'longitude'));
 	}
 
 	return Object.keys(summary).length > 0 ? summary : null;

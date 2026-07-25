@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getCDNImageBlobUrl } from './atproto-helpers.js';
 	import { eventUrl, isEventOngoing, type FlatEventRecord } from './contrail.js';
-	import { locationSummary } from './location-summary.js';
+	import { compactPlaceName, locationSummary } from './location-summary.js';
 	import Avatar from 'svelte-boring-avatars';
 
 	let {
@@ -34,8 +34,11 @@
 		const summary = locationSummary(locations);
 		if (!summary) return undefined;
 		// Locality/region as before; fall back to the place name when there is no
-		// address (a named geo-only pick), so the card still shows a location.
-		return [summary.locality, summary.region].filter(Boolean).join(', ') || summary.name;
+		// address (a named geo-only pick), so the card still shows a location. Most
+		// of those names come from other clients and are whole reverse-geocoded
+		// strings, so trim one to card size rather than let it fill the card.
+		const fallback = summary.name ? compactPlaceName(summary.name) : undefined;
+		return [summary.locality, summary.region].filter(Boolean).join(', ') || fallback;
 	}
 
 	function getThumbnail(event: FlatEventRecord): { url: string; alt: string } | null {
