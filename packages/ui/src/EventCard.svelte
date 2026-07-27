@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getCDNImageBlobUrl } from './atproto-helpers.js';
 	import { eventUrl, isEventOngoing, type FlatEventRecord } from './contrail.js';
+	import { locationShortLabel } from './location-summary.js';
 	import Avatar from 'svelte-boring-avatars';
 
 	let {
@@ -58,17 +59,6 @@
 		return 'Event';
 	}
 
-	function getLocationString(locations: FlatEventRecord['locations']): string | undefined {
-		if (!locations?.length) return undefined;
-
-		const loc = locations.find((v) => v.$type === 'community.lexicon.location.address') as
-			| { locality?: string; region?: string }
-			| undefined;
-		if (!loc) return undefined;
-
-		return [loc.locality, loc.region].filter(Boolean).join(', ') || undefined;
-	}
-
 	function getThumbnail(event: FlatEventRecord): { url: string; alt: string } | null {
 		const media = event.media?.find((m) => m.role === 'thumbnail');
 		if (media?.content) {
@@ -86,7 +76,7 @@
 	}
 
 	let thumbnail = $derived(getThumbnail(event));
-	let location = $derived(getLocationString(event.locations));
+	let location = $derived(locationShortLabel(event.locations));
 	let mode = $derived(getModeLabel(event.mode));
 	let isOngoing = $derived(isEventOngoing(event.startsAt, event.endsAt));
 </script>
