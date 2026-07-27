@@ -17,6 +17,7 @@
 	"scripts": {
 		"package": "svelte-kit sync && svelte-package -i src -o dist && publint",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"test": "vitest run",
 		"prepublishOnly": "pnpm package"
 	},
 	"files": [
@@ -90,6 +91,7 @@
 		"svelte-maplibre-gl": "^1.0.3",
 		"tailwindcss": "^4.2.2",
 		"typescript": "^6.0.2",
-		"vite": "^8.0.3"
+		"vite": "^8.0.3",
+		"vitest": "^4.1.7"
 	}
 }

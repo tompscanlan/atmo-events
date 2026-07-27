@@ -57,6 +57,19 @@ export {
 // Event helpers
 export { eventUrl, isEventOngoing, RSVP_GOING, RSVP_INTERESTED } from './contrail.js';
 
+// Location helpers — reading a display location out of a record's locations[].
+// locationShortLabel is what a space-constrained reader (card, embed) should use
+// and locationFullLabel what a calendar export should; the rest are the pieces
+// they are built from.
+export {
+	locationSummary,
+	locationShortLabel,
+	locationFullLabel,
+	compactPlaceName,
+	formatPoint,
+	type LocationSummary
+} from './location-summary.js';
+
 // Atproto helpers (browser-safe, no client/session state)
 export { getCDNImageBlobUrl, compressImage } from './atproto-helpers.js';
 export { getProfileUrl } from './profile-url.js';

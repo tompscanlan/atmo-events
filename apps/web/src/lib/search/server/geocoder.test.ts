@@ -53,10 +53,18 @@ describe('createGeocoder', () => {
 	}
 
 	it('defaults to public Nominatim with the atmo user-agent', async () => {
-		const { fn, calls } = fakeFetch([{ lat: '50.84', lon: '4.36', addresstype: 'city' }]);
+		const { fn, calls } = fakeFetch([
+			{ lat: '50.84', lon: '4.36', class: 'boundary', type: 'administrative' }
+		]);
 		const geo = createGeocoder({}, fn);
 		const point = await geo.geocode('Bruxelles, BE');
-		expect(point).toEqual({ lat: 50.84, lng: 4.36, precision: 'locality' });
+		expect(point).toEqual({
+			lat: 50.84,
+			lng: 4.36,
+			precision: 'locality',
+			category: 'boundary',
+			placeType: 'administrative'
+		});
 		expect(calls[0].url).toContain('https://nominatim.openstreetmap.org/search');
 		expect(calls[0].url).toContain('q=Bruxelles%2C+BE');
 		expect(calls[0].headers['user-agent']).toContain('atmo-events');
@@ -85,7 +93,8 @@ describe('createGeocoder', () => {
 				lat: '38.2542',
 				lon: '-85.7594',
 				display_name: 'Louisville, Jefferson County, Kentucky, United States',
-				addresstype: 'city',
+				class: 'boundary',
+				type: 'administrative',
 				osm_type: 'relation',
 				osm_id: 207611,
 				address: { city: 'Louisville', state: 'Kentucky', country: 'United States' }
@@ -98,9 +107,35 @@ describe('createGeocoder', () => {
 			precision: 'locality',
 			label: 'Louisville, Jefferson County, Kentucky, United States',
 			address: { city: 'Louisville', state: 'Kentucky', country: 'United States' },
+			category: 'boundary',
+			placeType: 'administrative',
 			osmType: 'relation',
 			osmId: 207611
 		});
+	});
+
+	it('requests namedetails and folds namedetails.name into name when top-level name is empty', async () => {
+		// LocationIQ leaves top-level `name` empty and only fills namedetails.
+		const { fn, calls } = fakeFetch([
+			{
+				lat: '41.9',
+				lon: '-87.72',
+				class: 'place',
+				type: 'suburb',
+				namedetails: { name: 'Humboldt Park' }
+			}
+		]);
+		const point = await createGeocoder({}, fn).geocode('Humboldt Park');
+		expect(calls[0].url).toContain('namedetails=1');
+		expect(point?.name).toBe('Humboldt Park');
+	});
+
+	it('does not invent a name for an unnamed feature (no top-level name, empty namedetails)', async () => {
+		const { fn } = fakeFetch([
+			{ lat: '42.0', lon: '-87.66', class: 'building', type: 'yes', namedetails: {} }
+		]);
+		const point = await createGeocoder({}, fn).geocode('1234 West Farwell Avenue');
+		expect(point?.name).toBeUndefined();
 	});
 
 	it('returns null on an empty result set (no-match)', async () => {
