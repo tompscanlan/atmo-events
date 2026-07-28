@@ -66,7 +66,7 @@ describe('authored location -> search _geo', () => {
 		expect(doc._geo).toEqual({ lat: 41.9027884, lng: -87.7209107 });
 	});
 
-	it('a city-only pick still yields a _geo (coordinates preserved, no bogus name)', () => {
+	it('a city-only pick still yields a _geo (coordinates preserved)', () => {
 		const record = recordFor({
 			lat: 41.8755616,
 			lng: -87.6244212,
@@ -83,7 +83,10 @@ describe('authored location -> search _geo', () => {
 			}
 		});
 		const locations = record.locations as Array<Record<string, unknown>>;
-		expect('name' in locations[0]).toBe(false);
+		// The name is stored even though it restates `locality`. Readers drop the
+		// repeat at display time (dropRepeats), which they must do anyway for the
+		// records other clients wrote, so the card still reads "Chicago, Illinois".
+		expect(locations[0]).toMatchObject({ name: 'Chicago', locality: 'Chicago' });
 		expect(recordGeo(record)).toEqual({ lat: 41.8755616, lng: -87.6244212 });
 	});
 

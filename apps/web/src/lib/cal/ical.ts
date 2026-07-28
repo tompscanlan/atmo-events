@@ -2,9 +2,8 @@ import type { EventData } from '$lib/event-types';
 // The ONE implementation of the LOCATION string, shared with the package's own
 // exporter and with every on-screen reader. Imported by SUBPATH, not from the
 // package barrel: the barrel pulls in Svelte components and these endpoints are
-// server-only, while `location-summary` is plain TypeScript (its only import is a
-// type). Same pattern as `@atmo-dev/events-ui/conference` in the +page.server.ts
-// routes.
+// server-only, while `location-summary` is plain TypeScript. Same pattern as
+// `@atmo-dev/events-ui/conference` in the +page.server.ts routes.
 //
 // This was a hand-maintained copy until it silently drifted: it tested `v.trim()`
 // but returned `v`, so a name with surrounding whitespace exported as

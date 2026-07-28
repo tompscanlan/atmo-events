@@ -5,67 +5,8 @@ import type { EventLocation } from './types.js';
 export const ADDRESS_TYPE = 'community.lexicon.location.address';
 export const GEO_TYPE = 'community.lexicon.location.geo';
 
-// place and boundary describe the address itself, so their name usually restates
-// a persisted field; keep it only when it adds information. Other classes are
-// named features whose name is the point of the pick, even when it matches a town.
-const ADDRESS_LIKE_CATEGORIES = new Set(['place', 'boundary']);
-
-// highway also covers named features such as bus stops and trailheads. Only road
-// types use the redundancy check; preserve unknown types because an extra name is
-// cosmetic while a dropped one is data loss.
-//
-// NOT the ways a name can BE the destination for — `path`, `footway`, `cycleway`,
-// `bridleway`, `steps`, `pedestrian`, `track`. They read like road classes, but each
-// is routinely the named thing a user picks rather than the way to it: a named trail
-// (`path`), a flight of steps that is itself the destination (`steps`, which OSM
-// gives its own `name=*` for), a square or plaza (`pedestrian`), a named forest road
-// (`track`). Dropping the name for those puts the card back on "Philadelphia,
-// Pennsylvania" for an event at the Rocky Steps — this bug, in the costume `raceway`
-// already wears below. The cost of keeping them is nil: a name that really does
-// restate its own road is dropped again at display time, by withoutRepeats in
-// locationShortLabel/locationFullLabel and by dropRepeats in getLocationData, so a
-// genuine sidewalk pick reads the same either way.
-const ROAD_HIGHWAY_TYPES = new Set([
-	'motorway',
-	'motorway_link',
-	'trunk',
-	'trunk_link',
-	'primary',
-	'primary_link',
-	'secondary',
-	'secondary_link',
-	'tertiary',
-	'tertiary_link',
-	'unclassified',
-	'residential',
-	'living_street',
-	'service',
-	'road',
-	// Roads whose highway tag records a state or a restricted use rather than a
-	// road class. They still carry the name of the road they are, so the redundancy
-	// check applies to them too; without these a road pick keeps both `name` and
-	// `street` as duplicates.
-	//
-	// NOT `raceway`. It reads like the others but is a motor-racing circuit, and
-	// its name is the venue the user picked, not a street: adding it here made
-	// "Indianapolis Motor Speedway" save as "Speedway, Indiana" — this bug, in a
-	// new costume. Anything where the name is the destination belongs on the
-	// preserve path, whatever its OSM class.
-	'construction',
-	'proposed',
-	'busway',
-	'bus_guideway',
-	'escape'
-]);
-
 // A postal code is a code, not a name, whichever class carries it.
 const POSTAL_TYPES = new Set(['postcode', 'postal_code']);
-
-function isAddressLike(category: string, placeType: string): boolean {
-	if (ADDRESS_LIKE_CATEGORIES.has(category)) return true;
-	if (category === 'highway') return ROAD_HIGHWAY_TYPES.has(placeType);
-	return false;
-}
 
 // ISO 3166-1 alpha-2, which is what both providers return, and the code the
 // address lexicon wants. The subdivision fallback reads the country half of an
@@ -88,11 +29,6 @@ export interface GeocodeResponse {
 
 function clean(v: unknown): string {
 	return typeof v === 'string' ? v.trim() : '';
-}
-
-// No diacritic normalization: an accented difference keeps the name, the safe direction.
-function fold(v: string): string {
-	return v.trim().toLowerCase();
 }
 
 // Do not let Number('') turn a blank coordinate into Null Island.
@@ -129,29 +65,26 @@ export function coordsUsableForDisplay(lat: number, lng: number): boolean {
 	return coordsInRange(lat, lng) && !(lat === 0 && lng === 0);
 }
 
-/** Resolve the place name to store, or undefined. `stored` is the values the
- *  record will ACTUALLY persist (so it is empty when no address entry will be
- *  emitted); for an address-like class a name equal to one of them is dropped.
- *  The name itself is always the geocoder's authoritative `name`, which is set
- *  only for genuinely named features — so an unnamed result (building=yes) yields
- *  none, and the display label, which for such a result is just a house number,
- *  is never used as a fallback. */
-function resolvePlaceName(
-	data: GeocodeResponse,
-	stored: ReadonlyArray<string>
-): string | undefined {
+/** The place name to store, or undefined. Always the geocoder's authoritative
+ *  `name`, which is set only for genuinely named features — so an unnamed result
+ *  (building=yes) yields none, and the display label, which for such a result is
+ *  just a house number, is never used as a fallback.
+ *
+ *  A name that merely restates a field the record also stores is NOT dropped here.
+ *  Readers already de-duplicate it (`dropRepeats` in location-summary.ts), and they
+ *  have to: records authored by other clients carry the same repetition and are
+ *  never rewritten. Deciding it a second time at write time only adds a way for the
+ *  two answers to disagree — and to disagree in the direction that loses data, since
+ *  a name dropped here is gone from the record for good. */
+function resolvePlaceName(data: GeocodeResponse): string | undefined {
 	const category = clean(data.category);
 	const placeType = clean(data.placeType);
 	// `name` alone cannot distinguish a venue from a city.
 	if (!category && !placeType) return undefined;
+	// A postal code is a code, not a name, whichever class carries it.
 	if (POSTAL_TYPES.has(placeType)) return undefined;
 
-	const name = clean(data.name);
-	if (!name) return undefined;
-	if (!isAddressLike(category, placeType)) return name;
-
-	const folded = fold(name);
-	return stored.some((v) => v && fold(v) === folded) ? undefined : name;
+	return clean(data.name) || undefined;
 }
 
 /** Resolve the ISO 3166 code for the address entry's required `country`. Both
@@ -196,23 +129,7 @@ export function geocodeResponseToLocation(data: GeocodeResponse): EventLocation 
 	const country = resolveCountryCode(addr);
 
 	const coords = resolveCoords(data);
-	// A name is redundant only with what the record will ACTUALLY store, so this
-	// has to track the same condition buildLocationEntries emits on. With an
-	// address entry the name restating one of its fields adds nothing. With none,
-	// nothing here persists — the name is the only descriptor left and must
-	// survive, riding on the geo entry. Compare against the stored country CODE,
-	// never the free-text country name, which we don't keep (so "France"/"FR" is
-	// not treated as a restatement).
-	// `road` and `houseNumber` are here only so a name restating either is caught
-	// even though what persists is the combined `street`. They are NOT evidence an
-	// address entry will exist: a house number with no road yields an empty street
-	// and nothing else to store. Test the fields the serializer actually emits on,
-	// which is exactly hasAddressFields — otherwise the two disagree and a pick
-	// serializes to nothing after being mapped as if it would persist.
-	const stored = [street, road, houseNumber, locality, region, country];
-	const addressWillPersist =
-		Boolean(street || locality || region || country) && Boolean(country || !coords);
-	const name = resolvePlaceName(data, addressWillPersist ? stored : []);
+	const name = resolvePlaceName(data);
 
 	return {
 		...(name && { name }),
@@ -295,7 +212,14 @@ export function eventLocationFromEntries(
 
 	const str = (source: Record<string, unknown>, k: string): string | undefined => {
 		const v = source[k];
-		return typeof v === 'string' && v.trim() ? v : undefined;
+		if (typeof v !== 'string') return undefined;
+		// Return the TRIMMED value, not the raw one. Records hold hand-entered
+		// fields with trailing spaces ("Copenhagen "); testing the trimmed value but
+		// returning the raw one reopens the editor with the space still on it and
+		// re-saves it, while every reader trims. Same rule as `str` in
+		// location-summary.ts, which this has to agree with.
+		const trimmed = v.trim();
+		return trimmed ? trimmed : undefined;
 	};
 
 	const address = entries.find((e) => e?.$type === ADDRESS_TYPE);

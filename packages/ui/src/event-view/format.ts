@@ -170,6 +170,12 @@ export async function resolveGeoLocation(
 		// record carrying it has a real address in its other fields, so falling through
 		// to geocode that beats pinning the map in the Gulf of Guinea.
 		if (coordsUsableForDisplay(lat, lng)) return { lat, lng, ...geoUrls(lat, lng) };
+		// ...but only fall through when there is address text to geocode INSTEAD.
+		// /api/geocoding is uncached, so every pageview of a sentinel-only record
+		// would otherwise fire a fresh upstream geocode for a query that cannot
+		// resolve to anything better. Before this PR these records returned here
+		// with zero network work; a bare `return null` keeps that.
+		if (!locationData?.geocodeQuery && !locationData?.fullAddress) return null;
 	}
 
 	// The un-de-duplicated query, so a venue named after its own city still geocodes

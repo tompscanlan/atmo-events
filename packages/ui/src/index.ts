@@ -58,17 +58,11 @@ export {
 export { eventUrl, isEventOngoing, RSVP_GOING, RSVP_INTERESTED } from './contrail.js';
 
 // Location helpers — reading a display location out of a record's locations[].
-// locationShortLabel is what a space-constrained reader (card, embed) should use
-// and locationFullLabel what a calendar export should; the rest are the pieces
-// they are built from.
-export {
-	locationSummary,
-	locationShortLabel,
-	locationFullLabel,
-	compactPlaceName,
-	formatPoint,
-	type LocationSummary
-} from './location-summary.js';
+// locationShortLabel is for a space-constrained reader (card, embed);
+// locationFullLabel for one with room for all of it (the calendar exports), which
+// reaches it by subpath to keep Svelte out of a server-only endpoint. The pieces
+// they are built from stay module-internal until something outside needs them.
+export { locationShortLabel, locationFullLabel } from './location-summary.js';
 
 // Atproto helpers (browser-safe, no client/session state)
 export { getCDNImageBlobUrl, compressImage } from './atproto-helpers.js';
