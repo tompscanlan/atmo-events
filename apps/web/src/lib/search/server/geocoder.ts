@@ -194,13 +194,16 @@ export function createGeocoder(env: GeocoderEnv = {}, fetchImpl: typeof fetch = 
 			// them onto its fields without a second client. Both Nominatim and
 			// LocationIQ honor this; the bulk drip simply ignores the extra fields.
 			url.searchParams.set('addressdetails', '1');
-			// The authoritative place name. Nominatim also puts it in the top-level
-			// `name`, but LocationIQ leaves that empty and only fills namedetails —
-			// and, unlike the display label, namedetails is populated ONLY when the
-			// feature actually has a name (an unnamed building=yes result has none),
-			// so it's the signal the address form uses to keep or drop a place name.
-			url.searchParams.set('namedetails', '1');
-			if (key) url.searchParams.set('key', key);
+			// The authoritative place name. Nominatim already puts it in the top-level
+			// `name`, so ask for namedetails only on LocationIQ, which leaves that
+			// empty and fills namedetails instead. `key` is what distinguishes the
+			// two. Unconditional, it costs the bulk backfill drip the whole `name:*`
+			// tag set — dozens of keys per hit for a well-known place — parsed and
+			// discarded, since the drip reads neither.
+			if (key) {
+				url.searchParams.set('namedetails', '1');
+				url.searchParams.set('key', key);
+			}
 
 			const res = await fetchImpl(url, {
 				headers: { accept: 'application/json', 'user-agent': userAgent }

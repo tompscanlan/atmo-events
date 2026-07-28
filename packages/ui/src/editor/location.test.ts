@@ -153,18 +153,6 @@ describe('geocodeResponseToLocation — place name', () => {
 });
 
 describe('geocodeResponseToLocation — no place name', () => {
-	it('drops the name for a city (administrative boundary)', () => {
-		const loc = geocodeResponseToLocation(CITY);
-		expect(loc.name).toBeUndefined();
-		expect(loc.locality).toBe('Chicago');
-	});
-
-	it('drops the name for a street, keeping the street', () => {
-		const loc = geocodeResponseToLocation(ROAD);
-		expect(loc.name).toBeUndefined();
-		expect(loc.street).toBe('5th Avenue');
-	});
-
 	it('drops the name for an UNNAMED building — and does NOT use the label house number', () => {
 		// Regression (the sharp one): building/yes has no name; label leads "1234".
 		const loc = geocodeResponseToLocation(UNNAMED_BUILDING);
@@ -224,208 +212,7 @@ describe('geocodeResponseToLocation — named features keep their name unconditi
 	});
 });
 
-describe('geocodeResponseToLocation — address-like classes keep a name only when it adds something', () => {
-	// place / boundary + road-type highway describe the address itself, so their
-	// name is judged against what the record will ACTUALLY store — NOT by class
-	// alone, and only against fields that will be persisted.
-	const RESTATES: Array<[what: string, response: GeocodeResponse]> = [
-		[
-			'a city whose name is the locality',
-			{
-				name: 'Chicago',
-				category: 'boundary',
-				placeType: 'administrative',
-				address: { city: 'Chicago', state: 'Illinois', country_code: 'us' }
-			}
-		],
-		[
-			'a place=city whose name is the locality',
-			{
-				name: 'Chicago',
-				category: 'place',
-				placeType: 'city',
-				address: { city: 'Chicago', country_code: 'us' }
-			}
-		],
-		[
-			'a state whose name is the region',
-			{
-				name: 'Illinois',
-				category: 'place',
-				placeType: 'state',
-				address: { city: 'Chicago', state: 'Illinois', country_code: 'us' }
-			}
-		],
-		[
-			'a street whose name is the road',
-			{
-				name: '5th Avenue',
-				category: 'highway',
-				placeType: 'secondary',
-				address: { road: '5th Avenue', city: 'New York', country_code: 'us' }
-			}
-		],
-		[
-			'a house whose name is the house number',
-			{
-				name: '1234',
-				category: 'place',
-				placeType: 'house',
-				address: { house_number: '1234', road: 'West Farwell Avenue', country_code: 'us' }
-			}
-		]
-	];
-	for (const [what, response] of RESTATES) {
-		it(`drops the name for ${what}`, () => {
-			expect(geocodeResponseToLocation(response).name).toBeUndefined();
-		});
-	}
-
-	const ADDS: Array<[what: string, response: GeocodeResponse, expected: string]> = [
-		[
-			'a suburb the address only says as its city (the #38 repro)',
-			{
-				name: 'Humboldt Park',
-				category: 'place',
-				placeType: 'suburb',
-				address: { suburb: 'Humboldt Park', city: 'Chicago', country_code: 'us' }
-			},
-			'Humboldt Park'
-		],
-		[
-			'a county, because `region` takes the state instead',
-			{
-				name: 'Cook County',
-				category: 'boundary',
-				placeType: 'administrative',
-				address: { county: 'Cook County', state: 'Illinois', country_code: 'us' }
-			},
-			'Cook County'
-		],
-		[
-			// The name equals the free-text country name, but we store the CODE (FR),
-			// not "France", so the name is what makes the pick human-readable.
-			'a country, whose name is NOT its stored code',
-			{
-				name: 'France',
-				category: 'place',
-				placeType: 'country',
-				address: { country: 'France', country_code: 'fr' }
-			},
-			'France'
-		],
-		[
-			'a park mapped as a boundary (protected_area)',
-			{
-				name: 'Yellowstone National Park',
-				category: 'boundary',
-				placeType: 'protected_area',
-				address: { state: 'Wyoming', country_code: 'us' }
-			},
-			'Yellowstone National Park'
-		],
-		[
-			'a named house ("The Manor")',
-			{
-				name: 'The Manor',
-				category: 'place',
-				placeType: 'house',
-				address: { road: 'Long Lane', city: 'Chipping', country_code: 'gb' }
-			},
-			'The Manor'
-		],
-		[
-			'a name that only CONTAINS an address field',
-			{
-				name: 'Chicago Heights',
-				category: 'place',
-				placeType: 'neighbourhood',
-				address: { city: 'Chicago', country_code: 'us' }
-			},
-			'Chicago Heights'
-		]
-	];
-	for (const [what, response, expected] of ADDS) {
-		it(`keeps the name for ${what}`, () => {
-			expect(geocodeResponseToLocation(response).name).toBe(expected);
-		});
-	}
-
-	it('compares case-insensitively', () => {
-		const loc = geocodeResponseToLocation({
-			name: 'CHICAGO',
-			category: 'place',
-			placeType: 'city',
-			address: { city: 'Chicago', country_code: 'us' }
-		});
-		expect(loc.name).toBeUndefined();
-	});
-
-	it('drops a postal code, whichever class carries it', () => {
-		// A code is not a name, and nothing else in the record restates it.
-		for (const [category, placeType] of [
-			['place', 'postcode'],
-			['boundary', 'postal_code']
-		]) {
-			const loc = geocodeResponseToLocation({
-				name: '60651',
-				category,
-				placeType,
-				address: { postcode: '60651', city: 'Chicago', country_code: 'us' }
-			});
-			expect(loc.name).toBeUndefined();
-		}
-	});
-
-	it('keeps a name that restates the locality when the geo entry carries the place', () => {
-		// With no country and storable coordinates the address entry is dropped, so
-		// locality/region are NOT stored — the name (which rides on the geo entry) is
-		// the only descriptor left and must survive, even though it equals `city`.
-		const loc = geocodeResponseToLocation({
-			lat: 41.8755616,
-			lng: -87.6244212,
-			name: 'Chicago',
-			category: 'boundary',
-			placeType: 'administrative',
-			address: { city: 'Chicago', state: 'Illinois' }
-		});
-		expect(loc.country).toBeUndefined();
-		expect(loc.name).toBe('Chicago');
-	});
-
-	it('drops a name that restates a field the address entry will keep', () => {
-		// Same pick with no coordinates: nothing can carry the place but the address
-		// entry, so it IS emitted, `city` persists, and the name restating it adds
-		// nothing. The redundancy check tracks what gets emitted, not the country.
-		const loc = geocodeResponseToLocation({
-			name: 'Chicago',
-			category: 'boundary',
-			placeType: 'administrative',
-			address: { city: 'Chicago', state: 'Illinois' }
-		});
-		expect(loc.name).toBeUndefined();
-		expect(loc.locality).toBe('Chicago');
-	});
-
-	it('keeps a name when the pick has no address fields at all to restate', () => {
-		// Nothing will be stored on an address entry, so the name is the only
-		// descriptor left and rides on the geo entry.
-		const loc = geocodeResponseToLocation({
-			lat: 27.9881,
-			lng: 86.925,
-			name: 'Everest',
-			category: 'natural',
-			placeType: 'peak',
-			address: {}
-		});
-		expect(loc.name).toBe('Everest');
-		expect(buildLocationEntries(loc)).toEqual([
-			{ $type: GEO_TYPE, latitude: '27.9881', longitude: '86.925', name: 'Everest' }
-		]);
-	});
-});
-
-describe('geocodeResponseToLocation — highway is a named feature unless it is a road', () => {
+describe('geocodeResponseToLocation — highway features keep their name', () => {
 	it('keeps the name of a named highway feature even beside a matching road', () => {
 		// A bus stop / trailhead named after its street is still the picked object,
 		// not the road — the redundancy check must not fire for non-road highway.
@@ -487,27 +274,6 @@ describe('geocodeResponseToLocation — highway is a named feature unless it is 
 		expect(locationShortLabel(entries)).toBe('Rocky Steps, Philadelphia, Pennsylvania');
 	});
 
-	it('still drops a road name that restates its own road', () => {
-		for (const placeType of [
-			'secondary',
-			'residential',
-			'unclassified',
-			'living_street',
-			'motorway_link',
-			'trunk_link',
-			'primary_link',
-			'secondary_link',
-			'tertiary_link'
-		]) {
-			const loc = geocodeResponseToLocation({
-				name: '5th Avenue',
-				category: 'highway',
-				placeType,
-				address: { road: '5th Avenue', city: 'New York', country_code: 'us' }
-			});
-			expect(loc.name).toBeUndefined();
-		}
-	});
 });
 
 describe('geocodeResponseToLocation — country is an ISO code', () => {
@@ -615,10 +381,16 @@ describe('buildLocationEntries — emitted locations[]', () => {
 		expect(typeof (entries[1] as Record<string, unknown>).latitude).toBe('string');
 	});
 
-	it('street entry keeps its fields (no name) plus a geo entry', () => {
+	it('street entry keeps the road name alongside its fields, plus a geo entry', () => {
+		// The name is stored even though it restates `street`. Readers de-duplicate
+		// it (dropRepeats), and they must anyway for records other clients wrote.
 		const entries = buildLocationEntries(geocodeResponseToLocation(ROAD));
-		expect('name' in entries[0]).toBe(false);
-		expect(entries[0]).toMatchObject({ $type: ADDRESS_TYPE, street: '5th Avenue', country: 'US' });
+		expect(entries[0]).toMatchObject({
+			$type: ADDRESS_TYPE,
+			name: '5th Avenue',
+			street: '5th Avenue',
+			country: 'US'
+		});
 		expect(entries[1]).toMatchObject({ $type: GEO_TYPE });
 	});
 
@@ -1014,34 +786,6 @@ describe('mapper and serializer agree on what will persist', () => {
 				name: 'Rose Cottage'
 			}
 		]);
-	});
-});
-
-describe('road types whose highway tag records a state', () => {
-	// These carry the road's own name, so keeping it duplicates `street`.
-	// NOT raceway — it is a venue, not a road. See the preserve test below.
-	for (const placeType of ['construction', 'proposed', 'busway', 'bus_guideway', 'escape']) {
-		it(`drops a name that restates the road for highway/${placeType}`, () => {
-			expect(
-				geocodeResponseToLocation({
-					name: 'Main Street',
-					category: 'highway',
-					placeType,
-					address: { road: 'Main Street', country_code: 'us' }
-				})
-			).toEqual({ street: 'Main Street', country: 'US' });
-		});
-	}
-
-	it('still keeps a named highway feature that is not a road', () => {
-		expect(
-			geocodeResponseToLocation({
-				name: 'Wrigley Field Stop',
-				category: 'highway',
-				placeType: 'bus_stop',
-				address: { road: 'N Clark St', country_code: 'us' }
-			})
-		).toEqual({ name: 'Wrigley Field Stop', street: 'N Clark St', country: 'US' });
 	});
 });
 

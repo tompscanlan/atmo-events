@@ -114,7 +114,7 @@ describe('createGeocoder', () => {
 		});
 	});
 
-	it('requests namedetails and folds namedetails.name into name when top-level name is empty', async () => {
+	it('asks LocationIQ for namedetails and folds namedetails.name into name', async () => {
 		// LocationIQ leaves top-level `name` empty and only fills namedetails.
 		const { fn, calls } = fakeFetch([
 			{
@@ -125,8 +125,19 @@ describe('createGeocoder', () => {
 				namedetails: { name: 'Humboldt Park' }
 			}
 		]);
-		const point = await createGeocoder({}, fn).geocode('Humboldt Park');
+		const point = await createGeocoder({ GEOCODER_KEY: 'k' }, fn).geocode('Humboldt Park');
 		expect(calls[0].url).toContain('namedetails=1');
+		expect(point?.name).toBe('Humboldt Park');
+	});
+
+	it('does NOT ask Nominatim for namedetails — it already fills top-level name', async () => {
+		// The param costs the whole `name:*` tag set per hit, and the bulk backfill
+		// drip shares this client and reads none of it.
+		const { fn, calls } = fakeFetch([
+			{ lat: '41.9', lon: '-87.72', class: 'leisure', type: 'park', name: 'Humboldt Park' }
+		]);
+		const point = await createGeocoder({}, fn).geocode('Humboldt Park');
+		expect(calls[0].url).not.toContain('namedetails');
 		expect(point?.name).toBe('Humboldt Park');
 	});
 
