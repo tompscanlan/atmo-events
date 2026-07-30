@@ -73,14 +73,17 @@ describe('getLocationData', () => {
 		expect(data?.fullAddress).toBe('Philadelphia, Pennsylvania, US');
 	});
 
-	it('does not repeat fields that restate each other', () => {
-		// A city-state: locality and region are the same place.
+	it('keeps a city that shares its state name', () => {
+		// Not a repetition: Berlin the city sits in Berlin the state, the same way
+		// New York does. Collapsing it would make the place more ambiguous, so only
+		// the NAME is de-duplicated against the fields, never the fields against
+		// each other.
 		const data = getLocationData(
 			locations([
 				{ $type: ADDRESS, name: 'Funkhaus', locality: 'Berlin', region: 'Berlin', country: 'DE' }
 			])
 		);
-		expect(data?.fullString).toBe('Funkhaus, Berlin, DE');
+		expect(data?.fullString).toBe('Funkhaus, Berlin, Berlin, DE');
 	});
 
 	it('keeps the geocoding query un-de-duplicated', () => {

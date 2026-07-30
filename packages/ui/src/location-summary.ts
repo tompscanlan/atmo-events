@@ -29,6 +29,45 @@ function namesAPlace(segment: string): boolean {
 	return !(HAS_DIGIT.test(segment) && segment.length <= CODE_MAX_LENGTH);
 }
 
+// Postal-code shapes, used to recognise a code riding along inside a segment that
+// also names a place: "Bristol BS9 2UN", "London N16 9HP", "CO 80123". Three
+// families cover what the corpus actually holds; anything unrecognised is simply
+// treated as part of the name, which is the safe direction.
+const UK_POSTCODE = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
+const CA_POSTCODE = /^[A-Z]\d[A-Z]\s*\d[A-Z]\d$/i;
+const US_POSTCODE = /^\d{5}(?:-\d{4})?$/;
+const isPostcode = (token: string) =>
+	UK_POSTCODE.test(token) || CA_POSTCODE.test(token) || US_POSTCODE.test(token);
+
+/** The same segment with a trailing postal code removed, or null when there is none.
+ *  A UK or Canadian code is two whitespace tokens ("N16 9HP"), a US ZIP is one, so
+ *  both tail lengths are tried. */
+function withoutPostcode(segment: string): string | null {
+	const tokens = segment.split(/\s+/);
+	if (tokens.length >= 3 && isPostcode(tokens.slice(-2).join(' ')))
+		return tokens.slice(0, -2).join(' ');
+	if (tokens.length >= 2 && isPostcode(tokens[tokens.length - 1]))
+		return tokens.slice(0, -1).join(' ');
+	return null;
+}
+
+/** Tidy a name written by another client before anything reads it. Geocoders emit a
+ *  feature's own name again as the next segment when the feature and its street or
+ *  area share a name ("Three Pools, Three Pools, Llanvetherine"), and they emit
+ *  empty segments and stray double spaces ("58th Bristol Scout Group,, Gadshill
+ *  Road"). Both render verbatim in the full label. Only ADJACENT repeats collapse —
+ *  a segment legitimately recurring further along is left alone. */
+function cleanName(name: string | undefined): string | undefined {
+	if (!name) return undefined;
+	const segments = name.split(',').map((s) => s.trim()).filter(Boolean);
+	const kept: string[] = [];
+	for (const segment of segments) {
+		if (kept.length && kept[kept.length - 1].toLowerCase() === segment.toLowerCase()) continue;
+		kept.push(segment);
+	}
+	return kept.join(', ') || undefined;
+}
+
 type LocationEntry = { $type?: string; [k: string]: unknown };
 
 // Trim what comes out, not just what gets tested: records hold hand-entered values
@@ -130,15 +169,25 @@ export function formatPoint(lat: string | undefined, lng: string | undefined): s
 	return `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
 }
 
-/** The address parts worth appending after `name`, in order, dropping any that
- *  something already shown states. Two sources of repetition, both live on
- *  atmo today:
- *   - the name restates a field, because a name written by another client is
- *     often a whole reverse-geocoded string ("Cafe, Paris" + locality Paris);
- *   - the fields restate each other, because in a city-state the locality and
- *     the region are the same place ("Berlin, Berlin", "Zürich, Zürich").
+/** The address parts worth appending after `name`, in order, dropping any that the
+ *  NAME already states — because a name written by another client is often a whole
+ *  reverse-geocoded string ("Cafe, Paris" alongside locality Paris).
+ *
+ *  Only against the name. The fields are never de-duplicated against EACH OTHER: a
+ *  city that shares its state's name is a conventional label, not a repetition, and
+ *  dropping half of it makes the place more ambiguous rather than less. "New York,
+ *  New York" is how that city is written, and "New York" alone could be either the
+ *  city or the state; likewise Wien, Québec, Zürich and Luzern, each a city inside a
+ *  state, province or canton of the same name. There is no case in the corpus where
+ *  locality and region repeat and the repetition is NOT this pattern.
+ *
  *  Matching is on whole comma segments, so a name that merely contains the word
- *  ("Paris Street Cafe") does not swallow the locality.
+ *  ("Paris Street Cafe") does not swallow the locality — with one exception: a
+ *  segment that is a place followed by its postal code ("Bristol BS9 2UN",
+ *  "CO 80123") states that place, and whole-segment matching alone cannot see it.
+ *  Such a segment counts twice, as itself and as its postcode-stripped form, so the
+ *  field is recognised as a repeat. The postcode is only stripped for COMPARISON —
+ *  the name still renders whole, because a calendar export wants the code.
  *
  *  Positional: the result has one slot per input, `undefined` where a part was
  *  dropped, so a caller that lays its fields out separately (the event page shows
@@ -148,20 +197,19 @@ export function dropRepeats(
 	name: string | undefined,
 	parts: ReadonlyArray<string | undefined>
 ): Array<string | undefined> {
-	const seen = new Set(
-		(name ?? '')
-			.split(',')
-			.map((segment) => segment.trim().toLowerCase())
-			.filter(Boolean)
-	);
+	const stated = new Set<string>();
+	for (const raw of (name ?? '').split(',')) {
+		const segment = raw.trim();
+		if (!segment) continue;
+		stated.add(segment.toLowerCase());
+		const bare = withoutPostcode(segment);
+		if (bare) stated.add(bare.toLowerCase());
+	}
 
 	return parts.map((part) => {
 		const value = part?.trim();
 		if (!value) return undefined;
-		const key = value.toLowerCase();
-		if (seen.has(key)) return undefined;
-		seen.add(key);
-		return value;
+		return stated.has(value.toLowerCase()) ? undefined : value;
 	});
 }
 
@@ -234,14 +282,14 @@ export function locationSummary(
 		if (value) summary[key] = value;
 	};
 	if (address) {
-		set('name', str(address, 'name'));
+		set('name', cleanName(str(address, 'name')));
 		set('street', str(address, 'street'));
 		set('locality', str(address, 'locality'));
 		set('region', str(address, 'region'));
 		set('country', str(address, 'country'));
 	}
 	if (geo) {
-		if (!summary.name) set('name', str(geo, 'name'));
+		if (!summary.name) set('name', cleanName(str(geo, 'name')));
 		set('lat', str(geo, 'latitude'));
 		set('lng', str(geo, 'longitude'));
 	}

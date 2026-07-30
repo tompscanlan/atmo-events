@@ -432,35 +432,107 @@ describe('formatPoint rejects a point it would be wrong to state', () => {
 	});
 });
 
-describe('a city-state, where locality and region are the same place', () => {
-	// Both of these are live on atmo today. The repetition predates the place-name
-	// work — the card always joined locality and region blindly — but leading with
-	// a name made it more visible, so the labels drop it now.
-	it('shows the place once when locality equals region', () => {
+describe('a city that shares its state, province or canton name', () => {
+	// Not a repetition to collapse. "New York, New York" is how that city is
+	// written, and "New York" alone could be either the city or the state, so
+	// dropping half makes the place MORE ambiguous. Every record in the corpus
+	// where locality equals region is this pattern — Wien, Québec, Zürich,
+	// Luzern, Berlin — so the fields are never de-duplicated against each other.
+	it('keeps both when locality equals region', () => {
 		expect(
-			locationShortLabel([{ $type: ADDRESS, locality: 'Zürich', region: 'Zürich', country: 'CH' }])
-		).toBe('Zürich');
+			locationShortLabel([
+				{ $type: ADDRESS, locality: 'New York', region: 'New York', country: 'US' }
+			])
+		).toBe('New York, New York');
 	});
 
-	it('does the same after a place name', () => {
+	it('keeps both after a place name', () => {
 		expect(
 			locationShortLabel([
 				{ $type: ADDRESS, name: '@c-base.org', locality: 'Berlin', region: 'Berlin', country: 'DE' }
 			])
-		).toBe('@c-base.org, Berlin');
+		).toBe('@c-base.org, Berlin, Berlin');
 	});
 
-	it('does the same in the full label', () => {
+	it('keeps both in the full label, which also carries the country', () => {
 		expect(
 			locationFullLabel([
 				{ $type: ADDRESS, name: '@c-base.org', locality: 'Berlin', region: 'Berlin', country: 'DE' }
 			])
-		).toBe('@c-base.org, Berlin, DE');
+		).toBe('@c-base.org, Berlin, Berlin, DE');
 	});
 
-	it('is case-insensitive about it', () => {
+	// The name is still de-duplicated against the fields — that repetition is real,
+	// and it is the case the shared module exists for.
+	it('still drops a field the NAME already states', () => {
 		expect(
-			locationShortLabel([{ $type: ADDRESS, locality: 'berlin', region: 'Berlin', country: 'DE' }])
-		).toBe('berlin');
+			locationShortLabel([
+				{ $type: ADDRESS, name: 'Zürich', locality: 'Zürich', region: 'Zürich', country: 'CH' }
+			])
+		).toBe('Zürich');
+	});
+});
+
+describe('a name written by another client, tidied before anything reads it', () => {
+	// Geocoders emit a feature's own name again as the next segment when the feature
+	// and its street or area share a name, and they emit empty segments and stray
+	// double spaces. Both used to render verbatim in the full label.
+	it('collapses a segment repeated immediately after itself', () => {
+		expect(
+			locationFullLabel([
+				{ $type: GEO, latitude: '51.8', longitude: '-3.0', name: 'Three Pools, Three Pools, Llanvetherine, Abergavenny, UK' }
+			])
+		).toBe('Three Pools, Llanvetherine, Abergavenny, UK');
+	});
+
+	it('drops empty segments and tidies the spacing around them', () => {
+		expect(
+			locationFullLabel([
+				{ $type: GEO, latitude: '51.5', longitude: '-2.5', name: '58th Bristol Scout Group,, Gadshill Road,  Bristol' }
+			])
+		).toBe('58th Bristol Scout Group, Gadshill Road, Bristol');
+	});
+
+	it('leaves a segment that recurs further along, which is not a geocoder artefact', () => {
+		expect(
+			locationFullLabel([
+				{ $type: GEO, latitude: '51.5', longitude: '-2.5', name: 'Bristol, Hereford Street, Bristol' }
+			])
+		).toBe('Bristol, Hereford Street, Bristol');
+	});
+});
+
+describe('a place carrying its postal code in the same segment', () => {
+	// Whole-segment matching cannot see that "CO 80123" states the region "CO", so
+	// the region was appended a second time, after the country.
+	it('recognises the region and does not append it again', () => {
+		expect(
+			locationFullLabel([
+				{ $type: ADDRESS, street: '4237 W. Grand Ave.', locality: 'Littleton', region: 'CO', country: 'US' },
+				{
+					$type: GEO,
+					latitude: '39.6300995',
+					longitude: '-105.0412264',
+					name: '4237 W. Grand Ave., Littleton, CO 80123, US'
+				}
+			])
+		).toBe('4237 W. Grand Ave., Littleton, CO 80123, US');
+	});
+
+	it('recognises a UK locality ahead of its postcode', () => {
+		expect(
+			locationFullLabel([
+				{ $type: ADDRESS, locality: 'Bristol', country: 'UK', name: 'The Chapel, Cote Lane, Bristol BS9 2UN' }
+			])
+		).toBe('The Chapel, Cote Lane, Bristol BS9 2UN, UK');
+	});
+
+	// The code itself is never removed from what is shown: a calendar app wants it.
+	it('keeps the postal code in the rendered label', () => {
+		expect(
+			locationFullLabel([
+				{ $type: ADDRESS, locality: 'London', country: 'UK', name: 'Soma, 231 Church St, London N16 9HP' }
+			])
+		).toContain('N16 9HP');
 	});
 });
