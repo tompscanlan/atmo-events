@@ -107,7 +107,7 @@ export function getLocationData(locations: FlatEventRecord['locations']): Locati
 		};
 	}
 
-	// Drop what something already shown states, exactly as locationShortLabel does —
+	// Drop what something already shown states, exactly as locationFullLabel does —
 	// this page lays the fields out separately, so it needs the positional form. Two
 	// repetitions to catch: a name that IS its own street (a named flight of steps,
 	// a plaza — the picker keeps those names on purpose), which would otherwise

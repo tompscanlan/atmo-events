@@ -9,7 +9,7 @@ import {
 	type GeocodeResponse
 } from './location';
 import { getLocationDisplayString, type EventLocation } from './types';
-import { locationShortLabel } from '../location-summary';
+import { locationFullLabel, locationShortLabel } from '../location-summary';
 
 // Fixtures are the NORMALIZED /api/geocoding response shape ({ lat, lng, label,
 // name, category, placeType, address }) — what the picker consumes — NOT the raw
@@ -252,10 +252,10 @@ describe('geocodeResponseToLocation — highway features keep their name', () =>
 		}
 	});
 
-	it('carries a pedestrian way name all the way to the card', () => {
-		// The end the user sees. locationShortLabel shows name + locality/region and
-		// NOT the street, so a dropped name leaves the card reading "Philadelphia,
-		// Pennsylvania" for an event on the Rocky Steps — the reported bug exactly.
+	it('carries a pedestrian way name all the way to the event page', () => {
+		// The end the user sees. Before this fix the name was never saved, so the
+		// event page read "Philadelphia, Pennsylvania" for an event on the Rocky
+		// Steps — the reported bug exactly.
 		const entries = buildLocationEntries(
 			geocodeResponseToLocation({
 				lat: 39.9656,
@@ -271,7 +271,11 @@ describe('geocodeResponseToLocation — highway features keep their name', () =>
 				}
 			})
 		);
-		expect(locationShortLabel(entries)).toBe('Rocky Steps, Philadelphia, Pennsylvania');
+		expect(locationFullLabel(entries)).toBe('Rocky Steps, Philadelphia, Pennsylvania, US');
+		// A CARD deliberately still shows the town — it answers "is this near me?",
+		// and it showed exactly this before the fix. The name is not lost, it is one
+		// click away. This is the line to change if that call is ever revisited.
+		expect(locationShortLabel(entries)).toBe('Philadelphia, Pennsylvania');
 	});
 
 });

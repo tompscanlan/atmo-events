@@ -92,57 +92,37 @@ export interface LocationSummary {
 	lng?: string;
 }
 
-/** Trim a place name down to something a card can show. Records authored by other
- *  clients often put a whole reverse-geocoded string in `name` rather than a place
- *  name, and a full postal address crowds everything else out of a card. Keep
- *  leading segments while they fit, always keeping at least the first; a name that
- *  already fits is returned untouched. Readers with room for the whole string (the
- *  event page, the calendar exports) should not use this. */
-export function compactPlaceName(name: string, maxLength = 40): string {
-	if (name.length <= maxLength) return name;
-
+/** The leading part of a name that identifies the place, for a reader with no room
+ *  for the rest. Records authored by other clients often put a whole
+ *  reverse-geocoded string in `name` rather than a place name ("Soundbreathe, Rear
+ *  6, Charles Road, Hoylake, Wirral, UK"), and a full postal address crowds
+ *  everything else out of a card.
+ *
+ *  The first segment, and then only as far as it must go: a reverse-geocoded string
+ *  sometimes LEADS with a unit or house number, and cutting to that alone leaves
+ *  "Plot 9" or "Unit 12" — worse than not cutting, because it reads as the place's
+ *  name rather than as a truncation. Run on until a segment names something. 93 of
+ *  the 3,977 records this path serves need that run-on; the rest stop at the first
+ *  segment.
+ *
+ *  There is deliberately no length budget. A budget has to decide which segment a
+ *  label may END on, and every rule for that misclassifies some real name; the
+ *  reader that has to fit this on one line is the one that should elide it, in CSS,
+ *  where the actual width is known. Readers with room for the whole string (the
+ *  event page, the calendar exports) should not use this at all. */
+export function leadingPlaceName(name: string): string {
 	const segments = name
 		.split(',')
 		.map((segment) => segment.trim())
 		.filter(Boolean);
 	if (segments.length === 0) return name;
 
-	let label = segments[0];
-	let taken = 1;
-	for (const segment of segments.slice(1)) {
-		const extended = `${label}, ${segment}`;
-		if (extended.length > maxLength) break;
-		label = extended;
-		taken++;
-	}
-	// A reverse-geocoded string often leads with a house number or a postcode, and
-	// trimming to those alone leaves "1234" or "12A" — worse than no trim, because it
-	// reads as the place's name rather than as a truncation. Run on to the first
-	// segment that names something, even though that overruns the budget: too long
-	// beats actively misleading. A name with nothing to run on to is left as it is.
-	//
 	// Ask this of the segments INDIVIDUALLY, never of the joined label: two codes
-	// together ("12A, 60651") clear the length bound between them and would read as
-	// a name, which is the failure this whole branch exists to prevent.
-	if (segments.slice(0, taken).some(namesAPlace)) {
-		// Something in reach names a place, so no run-on is needed — but do not END on
-		// a segment that names nothing. "Nortons Brewing Company, 125" reads as a
-		// truncation bug: the house number tells a reader nothing and takes the room
-		// the locality/region context would use. Trim back to the last naming segment.
-		let end = taken;
-		while (end > 1 && !namesAPlace(segments[end - 1])) end--;
-		return segments.slice(0, end).join(', ');
-	}
-
-	const named = segments.findIndex(namesAPlace);
-	if (named >= taken) {
-		// Re-joining puts a space after every comma, so the run-on can come out
-		// longer than what came in. Compaction that adds characters is no
-		// compaction: hand back the original instead.
-		const runOn = segments.slice(0, named + 1).join(', ');
-		return runOn.length <= name.length ? runOn : name;
-	}
-	return label;
+	// together ("12A, 60651") would read as a name once joined, which is the
+	// failure this run-on exists to prevent.
+	let end = 1;
+	while (end < segments.length && !segments.slice(0, end).some(namesAPlace)) end++;
+	return segments.slice(0, end).join(', ');
 }
 
 /** A bare point in the same form the editor and the event page show, so a record
@@ -217,30 +197,33 @@ function withoutRepeats(name: string | undefined, parts: Array<string | undefine
 	return dropRepeats(name, parts).filter((v): v is string => Boolean(v));
 }
 
-/** The location string for a space-constrained reader (cards, embeds). The place
- *  name leads — it is the point of the pick, and showing "Chicago, Illinois" for
- *  an event in Humboldt Park is the very bug this module exists to fix — with
- *  locality/region appended for context only while the whole thing still fits.
- *  A record with no name keeps exactly the locality/region label it had before. */
+/** The location string for a space-constrained reader (cards, embeds): the town it
+ *  is in, which is what a reader scanning a LIST wants — "is this near me?" — not
+ *  which venue inside that town. Locality and region, exactly the label a card
+ *  carried before this module existed.
+ *
+ *  The name is the FALLBACK, not the lead. It is reached only when the record has
+ *  no locality or region to show, which is the case a card previously rendered
+ *  BLANK: a pick the geocoder gave no ISO country code for is saved as a geo entry
+ *  alone, carrying its name and nothing else. 3,977 of 5,022 records in the corpus
+ *  are that shape. So the name earns a card its only label rather than displacing
+ *  one, and the 1,018 records that already had a label keep it unchanged.
+ *
+ *  The venue name is not lost — it is on the event page and in both calendar
+ *  exports, via `locationFullLabel`, which leads with it. */
 export function locationShortLabel(
-	locations: ReadonlyArray<LocationEntry> | undefined | null,
-	maxLength = 40
+	locations: ReadonlyArray<LocationEntry> | undefined | null
 ): string | undefined {
 	const summary = locationSummary(locations);
 	if (!summary) return undefined;
 
-	if (!summary.name) {
-		const context = withoutRepeats(undefined, [summary.locality, summary.region]).join(', ');
-		return context || formatPoint(summary.lat, summary.lng) || undefined;
-	}
+	// Never de-duplicated against each other — see `dropRepeats`. A city sharing its
+	// region's name ("New York, New York") is a conventional label, not a repetition.
+	const context = [summary.locality, summary.region].filter(Boolean).join(', ');
+	if (context) return context;
 
-	// Trim first, then de-duplicate against what will actually be shown: trimming
-	// can drop the very segment that made a context part redundant.
-	const name = compactPlaceName(summary.name, maxLength);
-	const context = withoutRepeats(name, [summary.locality, summary.region]).join(', ');
-	if (!context) return name;
-	const combined = `${name}, ${context}`;
-	return combined.length <= maxLength ? combined : name;
+	const name = summary.name ? leadingPlaceName(summary.name) : undefined;
+	return name || formatPoint(summary.lat, summary.lng) || undefined;
 }
 
 /** The location string for a reader with room for all of it (the calendar
