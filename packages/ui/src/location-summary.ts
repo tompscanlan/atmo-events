@@ -10,25 +10,6 @@ import { coordsUsableForDisplay } from './editor/location.js';
 const ADDRESS_TYPE = 'community.lexicon.location.address';
 const GEO_TYPE = 'community.lexicon.location.geo';
 
-// Whether ONE comma segment names a place, as opposed to being a house number or a
-// postcode. Two shapes of code, because a house number is not always digits alone:
-// no letter at all ("1234"), or a SHORT mix of letters and digits ("12A", "221B",
-// "SW1A 1AA", "K1A 0B1"). The length bound is what separates those from a place
-// genuinely named with a digit in it ("Studio 54", "1100 Louisiana Blvd SE"), and it
-// errs long on purpose: a segment wrongly called a code is still kept, just with the
-// following segment appended for context.
-//
-// Any-script throughout — \p{Nd} not \d, so an Arabic-Indic or Devanagari house
-// number ("۱۲A") is read as the code it is rather than as a place name.
-const HAS_LETTER = /\p{L}/u;
-const HAS_DIGIT = /\p{Nd}/u;
-const CODE_MAX_LENGTH = 8;
-
-function namesAPlace(segment: string): boolean {
-	if (!HAS_LETTER.test(segment)) return false;
-	return !(HAS_DIGIT.test(segment) && segment.length <= CODE_MAX_LENGTH);
-}
-
 // Postal-code shapes, used to recognise a code riding along inside a segment that
 // also names a place: "Bristol BS9 2UN", "London N16 9HP", "CO 80123". Three
 // families cover what the corpus actually holds; anything unrecognised is simply
@@ -90,59 +71,6 @@ export interface LocationSummary {
 	/** Geo entry coordinates, as the raw lexicon strings. */
 	lat?: string;
 	lng?: string;
-}
-
-/** Trim a place name down to something a card can show. Records authored by other
- *  clients often put a whole reverse-geocoded string in `name` rather than a place
- *  name, and a full postal address crowds everything else out of a card. Keep
- *  leading segments while they fit, always keeping at least the first; a name that
- *  already fits is returned untouched. Readers with room for the whole string (the
- *  event page, the calendar exports) should not use this. */
-export function compactPlaceName(name: string, maxLength = 40): string {
-	if (name.length <= maxLength) return name;
-
-	const segments = name
-		.split(',')
-		.map((segment) => segment.trim())
-		.filter(Boolean);
-	if (segments.length === 0) return name;
-
-	let label = segments[0];
-	let taken = 1;
-	for (const segment of segments.slice(1)) {
-		const extended = `${label}, ${segment}`;
-		if (extended.length > maxLength) break;
-		label = extended;
-		taken++;
-	}
-	// A reverse-geocoded string often leads with a house number or a postcode, and
-	// trimming to those alone leaves "1234" or "12A" — worse than no trim, because it
-	// reads as the place's name rather than as a truncation. Run on to the first
-	// segment that names something, even though that overruns the budget: too long
-	// beats actively misleading. A name with nothing to run on to is left as it is.
-	//
-	// Ask this of the segments INDIVIDUALLY, never of the joined label: two codes
-	// together ("12A, 60651") clear the length bound between them and would read as
-	// a name, which is the failure this whole branch exists to prevent.
-	if (segments.slice(0, taken).some(namesAPlace)) {
-		// Something in reach names a place, so no run-on is needed — but do not END on
-		// a segment that names nothing. "Nortons Brewing Company, 125" reads as a
-		// truncation bug: the house number tells a reader nothing and takes the room
-		// the locality/region context would use. Trim back to the last naming segment.
-		let end = taken;
-		while (end > 1 && !namesAPlace(segments[end - 1])) end--;
-		return segments.slice(0, end).join(', ');
-	}
-
-	const named = segments.findIndex(namesAPlace);
-	if (named >= taken) {
-		// Re-joining puts a space after every comma, so the run-on can come out
-		// longer than what came in. Compaction that adds characters is no
-		// compaction: hand back the original instead.
-		const runOn = segments.slice(0, named + 1).join(', ');
-		return runOn.length <= name.length ? runOn : name;
-	}
-	return label;
 }
 
 /** A bare point in the same form the editor and the event page show, so a record
@@ -217,30 +145,37 @@ function withoutRepeats(name: string | undefined, parts: Array<string | undefine
 	return dropRepeats(name, parts).filter((v): v is string => Boolean(v));
 }
 
-/** The location string for a space-constrained reader (cards, embeds). The place
- *  name leads — it is the point of the pick, and showing "Chicago, Illinois" for
- *  an event in Humboldt Park is the very bug this module exists to fix — with
- *  locality/region appended for context only while the whole thing still fits.
- *  A record with no name keeps exactly the locality/region label it had before. */
+/** The location string for a space-constrained reader (cards, embeds): the place
+ *  name, then the town. The name leads because it is the point of the pick —
+ *  showing "Chicago, Illinois" for an event in Humboldt Park is the very bug this
+ *  module exists to fix — and the town follows because a venue name alone does not
+ *  answer "is this near me?", which is what a reader scanning a LIST is asking.
+ *
+ *  Nothing here shortens the name. It is tempting to, because records authored
+ *  elsewhere put whole reverse-geocoded strings in that field, and a card would
+ *  rather show "Om Being, London" than "Om Being, Amhurst Terrace, London, UK". But
+ *  picking the town back out of one of those strings means guessing which comma
+ *  segment is a street and which is a settlement, across every locale and every
+ *  client's free text, and a rule for that is wrong often enough — and quietly
+ *  enough — that it is not worth having. Measured over the index, shortening helps
+ *  exactly 7 records that carry real address fields; everything else it does is a
+ *  guess at somebody else's string.
+ *
+ *  So the fix belongs where the data is still structured, and it is in
+ *  `buildLocationEntries`: a pick with no ISO country code now saves its town on the
+ *  geo entry alongside its name, instead of discarding it. Records saved from here
+ *  on need no guessing. The ones already in the index render whatever string they
+ *  were given — long, sometimes, but never invented, and a card elides in CSS where
+ *  the real width is known. */
 export function locationShortLabel(
-	locations: ReadonlyArray<LocationEntry> | undefined | null,
-	maxLength = 40
+	locations: ReadonlyArray<LocationEntry> | undefined | null
 ): string | undefined {
 	const summary = locationSummary(locations);
 	if (!summary) return undefined;
 
-	if (!summary.name) {
-		const context = withoutRepeats(undefined, [summary.locality, summary.region]).join(', ');
-		return context || formatPoint(summary.lat, summary.lng) || undefined;
-	}
-
-	// Trim first, then de-duplicate against what will actually be shown: trimming
-	// can drop the very segment that made a context part redundant.
-	const name = compactPlaceName(summary.name, maxLength);
-	const context = withoutRepeats(name, [summary.locality, summary.region]).join(', ');
-	if (!context) return name;
-	const combined = `${name}, ${context}`;
-	return combined.length <= maxLength ? combined : name;
+	const context = withoutRepeats(summary.name, [summary.locality, summary.region]);
+	const parts = summary.name ? [summary.name, ...context] : context;
+	return parts.join(', ') || formatPoint(summary.lat, summary.lng) || undefined;
 }
 
 /** The location string for a reader with room for all of it (the calendar

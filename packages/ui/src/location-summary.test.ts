@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-	compactPlaceName,
 	formatPoint,
 	locationFullLabel,
 	locationShortLabel,
@@ -78,150 +77,6 @@ describe('locationSummary', () => {
 	});
 });
 
-describe('compactPlaceName', () => {
-	// Names taken verbatim from records already in the index. Most of the ones
-	// carrying a place name and no address were written by other clients and hold a
-	// whole reverse-geocoded string.
-	it('leaves a name that already fits a card', () => {
-		for (const name of [
-			'Tokyo, Japan',
-			'Humboldt Park',
-			'San Francisco, California, United States',
-			'WellNest, Crucifix Lane, London, UK',
-			'Heanor Road, Ilkeston DE7 8TB, UK',
-			'Dana Cafe, Crookes, Sheffield'
-		]) {
-			expect(compactPlaceName(name)).toBe(name);
-		}
-	});
-
-	it('keeps the leading segments of a reverse-geocoded string', () => {
-		expect(
-			compactPlaceName('Peace Portal Drive, Blaine, Whatcom County, Washington, 98231, United States')
-		).toBe('Peace Portal Drive, Blaine');
-		expect(
-			compactPlaceName('Funkhaus Berlin, Oberschöneweide, Treptow-Köpenick, Berlin, 12459, Germany')
-		).toBe('Funkhaus Berlin, Oberschöneweide');
-		expect(compactPlaceName('1100 Louisiana Blvd SE, Albuquerque, NM 87108')).toBe(
-			'1100 Louisiana Blvd SE, Albuquerque'
-		);
-	});
-
-	it('keeps the first segment even when it is the only one that fits', () => {
-		// No postcode and only four commas, so a digit or comma count would miss it.
-		expect(
-			compactPlaceName(
-				'Beaverdell, Area E (Beaverdell/West Boundary), Regional District of Kootenay Boundary, British Columbia, Canada'
-			)
-		).toBe('Beaverdell');
-	});
-
-	it('returns a long single-segment name unchanged rather than cutting a word', () => {
-		const name = 'The Really Very Long Name Of One Single Place With No Commas At All';
-		expect(compactPlaceName(name)).toBe(name);
-	});
-});
-
-describe('compactPlaceName — a segment that names nothing', () => {
-	it('keeps going past a leading house number rather than returning it alone', () => {
-		// Returning "1234" reads as the place's name, not as a truncation, so this
-		// overruns the budget on purpose.
-		expect(
-			compactPlaceName('1234, Extremely Long Boulevard Name That Does Not Fit, Chicago, Illinois, US')
-		).toBe('1234, Extremely Long Boulevard Name That Does Not Fit');
-	});
-
-	it('keeps going past an alphanumeric house number or a postcode', () => {
-		// A house-number suffix ("12A", "221B") and most postcodes carry a letter, so
-		// "does it contain a letter" is not enough to tell a code from a name.
-		expect(
-			compactPlaceName('12A, Boulevard of the Very Long and Distinguished Name, Paris, France')
-		).toBe('12A, Boulevard of the Very Long and Distinguished Name');
-		expect(
-			compactPlaceName('SW1A 1AA, Extremely Long Boulevard Name That Does Not Fit, London, UK')
-		).toBe('SW1A 1AA, Extremely Long Boulevard Name That Does Not Fit');
-		expect(
-			compactPlaceName('221B, Baker Street And A Very Long Continuation Here, London, UK')
-		).toBe('221B, Baker Street And A Very Long Continuation Here');
-	});
-
-	it('keeps going past SEVERAL code-only segments', () => {
-		// The decision is per segment, never on the joined label: "12A, 60651" clears
-		// the length bound between them and would otherwise read as a place name.
-		expect(
-			compactPlaceName('12A, 60651, Extremely Long Boulevard Name That Does Not Fit, Chicago, US')
-		).toBe('12A, 60651, Extremely Long Boulevard Name That Does Not Fit');
-		expect(
-			compactPlaceName(
-				'SW1A 1AA, 221B, Extremely Long Boulevard Name That Does Not Fit, London, UK'
-			)
-		).toBe('SW1A 1AA, 221B, Extremely Long Boulevard Name That Does Not Fit');
-	});
-
-	it('reads a house number written in any script', () => {
-		// \p{Nd}, not \d — Arabic-Indic digits are digits.
-		expect(
-			compactPlaceName('۱۲A, Boulevard of the Very Long and Distinguished Name, Paris, France')
-		).toBe('۱۲A, Boulevard of the Very Long and Distinguished Name');
-	});
-
-	it('does not END on a segment that names nothing', () => {
-		// "Nortons Brewing Company, 125" reads as a truncation bug — the house number
-		// tells a reader nothing and takes the room the locality/region would use.
-		expect(
-			compactPlaceName(
-				'Nortons Brewing Company, 125, North Saint Francis Street, Wichita, Sedgwick County, Kansas, 67202, United States'
-			)
-		).toBe('Nortons Brewing Company');
-		// Trims back over as many trailing codes as it takes.
-		expect(
-			compactPlaceName('Venue Name Here, 12A, 60651, Extremely Long Boulevard That Does Not Fit')
-		).toBe('Venue Name Here');
-	});
-
-	it('leaves a code that is not at the END of the label', () => {
-		// The rule is only about what the label ENDS on. An interior postcode is noise
-		// but it does not read as the place's name, and dropping mid-label segments
-		// would be a different (larger) change to what compaction means.
-		expect(compactPlaceName('Funkhaus, Oberschöneweide, 12459, Berlin, Germany')).toBe(
-			'Funkhaus, Oberschöneweide, 12459, Berlin'
-		);
-	});
-
-	it('keeps a trailing code when nothing else in reach names a place', () => {
-		// The run-on path still wins there: dropping back to "1234" alone would read as
-		// the place's name rather than as a truncation.
-		expect(
-			compactPlaceName('1234, Extremely Long Boulevard Name That Does Not Fit, Chicago, US')
-		).toBe('1234, Extremely Long Boulevard Name That Does Not Fit');
-	});
-
-	it('does not mistake a place named with a digit for a code', () => {
-		// Long enough to read as a name, so it stands on its own and nothing runs on.
-		expect(
-			compactPlaceName('1100 Louisiana Blvd SE, A Very Long Second Segment Indeed, Albuquerque')
-		).toBe('1100 Louisiana Blvd SE');
-	});
-
-	it('never returns more characters than it was given', () => {
-		// Re-joining inserts a space after each comma, so a run-on across several
-		// short segments can outgrow its input. Compaction that adds characters is no
-		// compaction.
-		const name = '1,2,3,abcdefghijklmnopqrstuvwxyzabcdefghij';
-		expect(compactPlaceName(name).length).toBeLessThanOrEqual(name.length);
-		expect(compactPlaceName(name)).toBe(name);
-	});
-
-	it('leaves a numeric-only name alone when there is nothing to extend to', () => {
-		const name = '1234567890123456789012345678901234567890123456';
-		expect(compactPlaceName(name)).toBe(name);
-	});
-
-	it('keeps a place genuinely named after a number', () => {
-		expect(compactPlaceName('1919')).toBe('1919');
-	});
-});
-
 describe('locationSummary — whitespace', () => {
 	it('trims the values it hands back', () => {
 		// Records hold hand-entered values with trailing spaces; passing them through
@@ -261,7 +116,9 @@ describe('locationShortLabel', () => {
 		expect(locationShortLabel(HUMBOLDT)).toBe('Humboldt Park, Chicago, Illinois');
 	});
 
-	it('drops the context rather than the name when both will not fit', () => {
+	it('keeps the town even when the name is long', () => {
+		// The length budget this replaced returned the name alone here, so a card
+		// showed a venue with no indication of what city it was in.
 		expect(
 			locationShortLabel([
 				{
@@ -272,13 +129,16 @@ describe('locationShortLabel', () => {
 					country: 'US'
 				}
 			])
-		).toBe('Old Kona Airport Park Benches on the Right');
+		).toBe('Old Kona Airport Park Benches on the Right, Kailua-Kona, Hawaii');
 	});
 
-	it('trims a name that is really a whole address, then adds only what the trim lost', () => {
-		// De-duplication runs against the TRIMMED name, not the original: the trim
-		// dropped "Washington", so the region is worth appending again, while
-		// "Blaine" is already visible and is not repeated.
+	it('renders a name that is really a whole address as it stands', () => {
+		// The cost of not guessing, and it is deliberate. Picking the town back out of
+		// a string like this means deciding which comma segment is a street and which
+		// is a settlement, in every locale, across every client's free text. Measured
+		// over the index, 7 records with real address fields would read better for it;
+		// nothing else would, so the rule is not worth its failure modes. The fields
+		// the name already states are still dropped, so nothing is said twice.
 		expect(
 			locationShortLabel([
 				{
@@ -289,7 +149,7 @@ describe('locationShortLabel', () => {
 					country: 'US'
 				}
 			])
-		).toBe('Peace Portal Drive, Blaine, Washington');
+		).toBe('Peace Portal Drive, Blaine, Whatcom County, Washington, 98231, United States');
 	});
 
 	it('shows exactly the locality/region label when the pick has no name', () => {

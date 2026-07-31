@@ -193,9 +193,12 @@ describe('emitted locations[] conforms to the pulled location lexicons', () => {
 		}
 	});
 
-	it('carries the place name on the geo entry when there is no address entry', () => {
-		// `name` is optional on the geo lexicon, so this is a conforming home for the
-		// one datum that would otherwise be lost with no country code.
+	it('carries the place name AND its town on the geo entry when there is no address entry', () => {
+		// `name` is optional on the geo lexicon and constrained only to `string`, so it
+		// is a conforming home for the data that would otherwise be lost with no
+		// country code. Comma-joining a place with its town into that field is also
+		// what other clients already do — the records already in the index carry whole
+		// reverse-geocoded strings there.
 		const entries = buildLocationEntries(
 			geocodeResponseToLocation({
 				lat: 41.9027884,
@@ -211,7 +214,7 @@ describe('emitted locations[] conforms to the pulled location lexicons', () => {
 				$type: GEO_LEXICON.id,
 				latitude: '41.9027884',
 				longitude: '-87.7209107',
-				name: 'Humboldt Park'
+				name: 'Humboldt Park, Chicago'
 			}
 		]);
 		expect(lexiconErrors(entries[0])).toEqual([]);

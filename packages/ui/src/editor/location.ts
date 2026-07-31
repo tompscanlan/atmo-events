@@ -184,10 +184,21 @@ export function buildLocationEntries(location: EventLocation): Array<Record<stri
 			latitude: String(location.coords.lat),
 			longitude: String(location.coords.lng)
 		};
-		// With no address entry to hold it, the place's name would be lost. The geo
-		// lexicon has its own optional `name`, so it goes there instead — never on
-		// both entries.
-		if (entries.length === 0 && location.name) geo.name = location.name;
+		// With no address entry to hold them, the place's name AND its town would be
+		// lost — the geo lexicon has no locality or region field, so dropping the
+		// address entry drops them. Its optional `name` is the only string left, so
+		// the town goes in there with the name, comma-joined the way every reader
+		// already renders a location.
+		//
+		// This is what stops a card reading "Om Being" or, worse, "Om Being, Amhurst
+		// Terrace" — a street says nothing without the town beside it. Doing it HERE
+		// rather than guessing later is the whole point: at this moment the locality
+		// and region are structured fields the geocoder just handed us, and a reader
+		// looking at the saved string can only guess which segment was which.
+		if (entries.length === 0) {
+			const place = [location.name, location.locality, location.region].filter(Boolean).join(', ');
+			if (place) geo.name = place;
+		}
 		entries.push(geo);
 	}
 

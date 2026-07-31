@@ -409,8 +409,10 @@ describe('buildLocationEntries — emitted locations[]', () => {
 	it('emits NO address entry without a country when the geo entry can carry the place', () => {
 		// `country` is required by the address lexicon, so an entry carrying only a
 		// name/locality/region is invalid — a validating consumer can reject the whole
-		// record. The place NAME still survives, on the geo entry (the geo lexicon has
-		// its own optional `name`), so the pick keeps both its identity and its _geo.
+		// record. The place name AND its town still survive, on the geo entry (the geo
+		// lexicon has its own optional `name`), so the pick keeps its identity, the
+		// town a card needs to be useful, and its _geo. Without this the town is
+		// discarded at save time and no reader can ever get it back.
 		expect(
 			buildLocationEntries({
 				name: 'Humboldt Park',
@@ -423,7 +425,7 @@ describe('buildLocationEntries — emitted locations[]', () => {
 				$type: GEO_TYPE,
 				latitude: '41.9027884',
 				longitude: '-87.7209107',
-				name: 'Humboldt Park'
+				name: 'Humboldt Park, Chicago, Illinois'
 			}
 		]);
 	});
@@ -634,12 +636,25 @@ describe('eventLocationFromEntries — record -> EventLocation (round-trip)', ()
 			address: { suburb: 'Humboldt Park', city: 'Chicago', country: 'United States' }
 		});
 		expect(original.country).toBeUndefined();
-		// The name survives; only the locality/region, which have no lexicon-valid
-		// home without a country, are lost.
+		// The name AND the town survive. The locality/region have no lexicon-valid
+		// home without a country, so they ride along on the geo entry's `name` —
+		// which is why this reads them back as one string rather than losing them.
 		expect(eventLocationFromEntries(buildLocationEntries(original))).toEqual({
-			name: 'Humboldt Park',
+			name: 'Humboldt Park, Chicago',
 			coords: { lat: 41.9027884, lng: -87.7209107 }
 		});
+	});
+
+	it('does not compound the name when such a record is saved again', () => {
+		// The town is read back as part of the name, so a re-save must not append it a
+		// second time. It does not: there is no locality/region field left to append.
+		const original = geocodeResponseToLocation({
+			...PARK,
+			address: { suburb: 'Humboldt Park', city: 'Chicago', country: 'United States' }
+		});
+		const once = buildLocationEntries(original);
+		const twice = buildLocationEntries(eventLocationFromEntries(once));
+		expect(twice).toEqual(once);
 	});
 
 	it('ignores entry kinds this editor does not author (FSQ/H3)', () => {
