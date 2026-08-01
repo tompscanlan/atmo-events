@@ -10,6 +10,12 @@ import {
 	type MeiliSinkBackend,
 	type MeiliSinkEnv
 } from '../search/server/meili-sink';
+import {
+	createOpenMeetSink,
+	openMeetSinkBackendFromEnv,
+	type OpenMeetSinkBackend,
+	type OpenMeetSinkEnv
+} from '../openmeet/server/openmeet-sink';
 
 const spaces = getSpacesConfig();
 if (!spacesAvailable()) {
@@ -33,6 +39,13 @@ let searchSinkBackend: MeiliSinkBackend | null = null;
 // ensureInit populates — the sink no-ops on it until then.
 let geocodeCacheDb: D1Database | null = null;
 
+// The OpenMeet intake sink (fork delta — see $lib/openmeet/server/openmeet-sink)
+// arms from the same per-invocation env as the search sink, via its own holder.
+// Registered ONLY here, on the runtime Worker — deliberately absent from
+// contrail.config.ts, so the `contrail` CLI (`pnpm backfill` / `refresh`) cannot
+// replay the whole index through the frozen platform's intake API in one shot.
+let openMeetSinkBackend: OpenMeetSinkBackend | null = null;
+
 export const contrail = new Contrail({
 	...config,
 	...(spaces ? { spaces } : {}),
@@ -40,18 +53,26 @@ export const contrail = new Contrail({
 		createMeiliSink(
 			() => searchSinkBackend,
 			() => geocodeCacheDb
-		)
+		),
+		createOpenMeetSink(() => openMeetSinkBackend)
 	]
 });
 
 let initialized = false;
 let sinkConfigured = false;
 
-export async function ensureInit(db: D1Database, env?: MeiliSinkEnv) {
+export async function ensureInit(db: D1Database, env?: MeiliSinkEnv & OpenMeetSinkEnv) {
 	geocodeCacheDb = db;
 	if (!initialized) {
 		await contrail.init(db);
 		initialized = true;
+	}
+	// Arm the OpenMeet sink from the same env. No remote handshake to do (unlike
+	// Meili's settings PATCH), so this is a plain resolve-and-hold: unset
+	// OPENMEET_SINK_URL leaves the backend null and the sink inert, which is what
+	// keeps a dev or preview instance from feeding production.
+	if (env && !openMeetSinkBackend) {
+		openMeetSinkBackend = openMeetSinkBackendFromEnv(env);
 	}
 	// Configure the search sink once, on the first env-bearing call. Apply the
 	// index settings (which also auto-creates the index) BEFORE arming the sink,

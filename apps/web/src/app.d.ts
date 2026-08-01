@@ -101,6 +101,19 @@ declare global {
 				/** Default Admin API Key for the write path (set via
 				 *  `wrangler secret put`). Never the instance root key. */
 				SEARCH_SINK_API_KEY?: string;
+				/** OpenMeet intake API base url (the OpenMeet sink — a fork-only
+				 *  delta, see $lib/openmeet/server/openmeet-sink). UNSET DISABLES THE
+				 *  SINK, which is what keeps a dev or preview instance from feeding
+				 *  the production platform. */
+				OPENMEET_SINK_URL?: string;
+				/** Service API key for the intake endpoints, presented as a Bearer
+				 *  token (set via `wrangler secret put`). Must appear in the API's
+				 *  SERVICE_API_KEYS list. Dedicated to this sink rather than shared
+				 *  with the legacy processor, so writes stay attributable. */
+				OPENMEET_SINK_API_KEY?: string;
+				/** Target tenant id, sent as `x-tenant-id` (set via
+				 *  `wrangler secret put`). */
+				OPENMEET_SINK_TENANT_ID?: string;
 				/** Forward-geocoder endpoint for the address→_geo drip (the cron job
 				 *  that resolves coordinates for newly-ingested address-only events).
 				 *  Nominatim-compatible /search; LocationIQ = `https://us1.locationiq.com/v1/search`.
