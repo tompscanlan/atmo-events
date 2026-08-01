@@ -292,3 +292,78 @@ describe('createOpenMeetSink — ingest phase', () => {
 		expect(calls).toHaveLength(1);
 	});
 });
+
+describe('createOpenMeetSink — event/RSVP dispatch ordering', () => {
+	function rsvpRecord(rkey: string, eventRkey: string) {
+		return {
+			kind: 'created' as const,
+			uri: `at://${DID}/${RSVP_COLLECTION}/${rkey}`,
+			did: DID,
+			collection: RSVP_COLLECTION,
+			rkey,
+			cid: 'bafycid',
+			record: {
+				subject: { uri: `at://${DID}/${EVENT_COLLECTION}/${eventRkey}` },
+				status: 'going',
+				createdAt: '2026-08-01T12:00:00.000Z'
+			},
+			time_us: 1_700_000_000_000_000
+		};
+	}
+
+	/** Flush pending microtasks + timers so in-flight fetches can settle. */
+	const settle = () => new Promise((r) => setTimeout(r, 0));
+
+	// The RSVP intake resolves its target event by source id and returns 400
+	// "Event with source ID ... not found" when the event has not landed yet.
+	// Neither side retries, so an RSVP that overtakes its event is dropped for
+	// good. Confirmed against a real openmeet-api on 2026-08-01.
+	it('completes every event write before issuing any RSVP write', async () => {
+		const order: string[] = [];
+		let releaseEvents!: () => void;
+		const eventsGate = new Promise<void>((resolve) => {
+			releaseEvents = resolve;
+		});
+
+		const fn = vi.fn(async (input: RequestInfo | URL) => {
+			const isRsvp = String(input).includes('/api/integration/rsvps');
+			order.push(isRsvp ? 'rsvp' : 'event');
+			if (!isRsvp) await eventsGate;
+			return new Response(null, { status: 202 });
+		}) as unknown as typeof fetch;
+
+		// Interleaved, with RSVPs early enough that a single pool would start
+		// them alongside the events they depend on.
+		const batch = [
+			rsvpRecord('r1', 'e1'),
+			eventRecord('e1', VALID_EVENT),
+			rsvpRecord('r2', 'e2'),
+			eventRecord('e2', VALID_EVENT),
+			eventRecord('e3', VALID_EVENT)
+		];
+
+		const done = onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			batch
+		);
+		await settle();
+
+		// Events are still in flight, so not one RSVP may have been issued.
+		expect(order).toEqual(['event', 'event', 'event']);
+
+		releaseEvents();
+		await done;
+
+		expect(order).toEqual(['event', 'event', 'event', 'rsvp', 'rsvp']);
+	});
+
+	it('still writes RSVPs when a batch carries no events', async () => {
+		const { fn, calls } = fakeFetch();
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[rsvpRecord('r1', 'e1')]
+		);
+		expect(calls).toHaveLength(1);
+		expect(calls[0].url).toContain('/api/integration/rsvps');
+	});
+});

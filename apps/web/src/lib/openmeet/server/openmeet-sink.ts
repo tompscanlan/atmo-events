@@ -179,12 +179,20 @@ export function createOpenMeetSink(
 			//     not fed until something touches it again.
 			void ctx;
 
-			const requests: IntakeRequest[] = [];
+			// Events and RSVPs are collected SEPARATELY because they must not be
+			// dispatched together — see the two-phase drain below.
+			const eventRequests: IntakeRequest[] = [];
+			const rsvpRequests: IntakeRequest[] = [];
 			for (const e of events) {
 				let result: TransformResult;
-				if (e.collection === EVENT_COLLECTION) result = eventRequestFor(e);
-				else if (e.collection === RSVP_COLLECTION) result = rsvpRequestFor(e);
-				else continue;
+				let target: IntakeRequest[];
+				if (e.collection === EVENT_COLLECTION) {
+					result = eventRequestFor(e);
+					target = eventRequests;
+				} else if (e.collection === RSVP_COLLECTION) {
+					result = rsvpRequestFor(e);
+					target = rsvpRequests;
+				} else continue;
 
 				if (result.kind === 'skip') {
 					// Malformed records are dropped, not retried — the same call the
@@ -193,22 +201,48 @@ export function createOpenMeetSink(
 					console.warn(`[openmeet-sink] skipping ${e.uri}: ${result.reason}`);
 					continue;
 				}
-				requests.push(result.request);
+				target.push(result.request);
 			}
 
-			if (requests.length === 0) return;
+			if (eventRequests.length === 0 && rsvpRequests.length === 0) return;
 
 			const client = new OpenMeetIntakeClient(backend, fetchFn);
 			// Failures are contained PER RECORD rather than per batch. Letting one
 			// bad record throw out of onRecords would cost every record queued
 			// behind it, and contrail does not retry the batch.
-			await pooled(requests, MAX_IN_FLIGHT, async (request) => {
+			const send = async (request: IntakeRequest) => {
 				try {
 					await client.send(request);
 				} catch (err) {
 					console.error('[openmeet-sink] intake call failed:', err);
 				}
-			});
+			};
+
+			// TWO-PHASE DRAIN: every event in the batch is written before any RSVP
+			// in it. The RSVP intake resolves its target event by source id and
+			// hard-fails with 400 "Event with source ID ... not found" when the
+			// event is not there yet — it does not queue or retry, and neither do
+			// we, so a lost race silently drops the RSVP.
+			//
+			// One pool over the combined list loses that race routinely: `pooled`
+			// starts MAX_IN_FLIGHT requests at once, so an RSVP sitting within the
+			// first few entries is in flight alongside — or ahead of — the event it
+			// depends on. Verified against a real openmeet-api on 2026-08-01: an
+			// event plus its own RSVP in one batch produced 202 for the event and
+			// 400 for the RSVP, and re-feeding the identical batch afterwards
+			// succeeded precisely because the event existed by then.
+			//
+			// The legacy pipeline never hit this: RabbitMQ handed the processor one
+			// message at a time in firehose order, which serialized the dependency
+			// for free. Batching is what reintroduces it, and BACKFILL is where it
+			// bites hardest — a profile view hands the sink a back catalogue in
+			// which events and their RSVPs are interleaved.
+			//
+			// Ordering WITHIN each phase is still unconstrained, and deletes need no
+			// ordering at all: removing an event clears its attendees, and an RSVP
+			// delete for an already-gone row is a tolerated no-op either way.
+			await pooled(eventRequests, MAX_IN_FLIGHT, send);
+			await pooled(rsvpRequests, MAX_IN_FLIGHT, send);
 		}
 	};
 }
