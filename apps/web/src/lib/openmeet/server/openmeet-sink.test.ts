@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
 	createOpenMeetSink,
 	openMeetSinkBackendFromEnv,
+	IntakeThrottledError,
 	type OpenMeetSinkBackend
 } from './openmeet-sink';
 import { EVENT_COLLECTION, RSVP_COLLECTION } from './types';
@@ -365,5 +366,159 @@ describe('createOpenMeetSink — event/RSVP dispatch ordering', () => {
 		);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].url).toContain('/api/integration/rsvps');
+	});
+});
+
+// The intake API is behind a global per-IP throttle (100 req / 60s in prod)
+// that no route opts out of. Live ticks are nowhere near it; a backfill batch
+// is, and an unretried 429 would silently drop exactly the records the backfill
+// exists to deliver.
+describe('createOpenMeetSink — throttling', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	function rsvpRecord(rkey: string, eventRkey: string) {
+		return {
+			kind: 'created' as const,
+			uri: `at://${DID}/${RSVP_COLLECTION}/${rkey}`,
+			did: DID,
+			collection: RSVP_COLLECTION,
+			rkey,
+			cid: 'bafycid',
+			record: {
+				subject: { uri: `at://${DID}/${EVENT_COLLECTION}/${eventRkey}` },
+				status: 'going',
+				createdAt: '2026-08-01T12:00:00.000Z'
+			},
+			time_us: 1_700_000_000_000_000
+		};
+	}
+
+	/** A fetch double returning 429 for the first `n` calls, then 202. Optionally
+	 *  attaches a Retry-After to the throttled responses. */
+	function throttling(n: number, retryAfter?: string) {
+		let calls = 0;
+		const fn = vi.fn(async () => {
+			calls++;
+			if (calls <= n) {
+				return new Response(null, {
+					status: 429,
+					headers: retryAfter ? { 'retry-after': retryAfter } : undefined
+				});
+			}
+			return new Response(null, { status: 202 });
+		});
+		return fn as unknown as typeof fetch;
+	}
+
+	it('retries a throttled write and succeeds, rather than dropping the record', async () => {
+		vi.useFakeTimers();
+		const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const fn = throttling(1);
+
+		const done = onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[eventRecord('e1', VALID_EVENT)]
+		);
+		await vi.runAllTimersAsync();
+		await done;
+
+		expect(fn).toHaveBeenCalledTimes(2);
+		expect(errors).not.toHaveBeenCalled();
+	});
+
+	it('waits the server-advised Retry-After instead of its own backoff', async () => {
+		vi.useFakeTimers();
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const fn = throttling(1, '5'); // 5 seconds, vs a 250ms default first backoff
+
+		const done = onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[eventRecord('e1', VALID_EVENT)]
+		);
+
+		await vi.advanceTimersByTimeAsync(4000);
+		expect(fn).toHaveBeenCalledTimes(1); // still honouring the advice
+
+		await vi.advanceTimersByTimeAsync(1500);
+		expect(fn).toHaveBeenCalledTimes(2);
+		await done;
+	});
+
+	it('caps an extravagant Retry-After so one batch cannot park the invocation', async () => {
+		vi.useFakeTimers();
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const fn = throttling(1, '600'); // 10 minutes; MAX_BACKOFF_MS is 10s
+
+		const done = onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[eventRecord('e1', VALID_EVENT)]
+		);
+
+		await vi.advanceTimersByTimeAsync(9000);
+		expect(fn).toHaveBeenCalledTimes(1);
+
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(fn).toHaveBeenCalledTimes(2);
+		await done;
+	});
+
+	it('gives up after a bounded number of attempts and reports it as throttling', async () => {
+		vi.useFakeTimers();
+		const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const fn = throttling(Infinity);
+
+		const done = onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[eventRecord('e1', VALID_EVENT)]
+		);
+		await vi.runAllTimersAsync();
+		await done;
+
+		expect(fn).toHaveBeenCalledTimes(4); // initial + MAX_RETRIES
+		expect(errors).toHaveBeenCalledTimes(1);
+		expect(errors.mock.calls[0][0]).toContain('throttled');
+		expect(errors.mock.calls[0][1]).toBeInstanceOf(IntakeThrottledError);
+	});
+
+	it('abandons the rest of the batch once throttling is established', async () => {
+		vi.useFakeTimers();
+		const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const fn = throttling(Infinity);
+
+		// Eight events against a pool of four: the first four exhaust their
+		// retries concurrently, and the remaining four must never be issued.
+		const batch = Array.from({ length: 8 }, (_, i) => eventRecord(`e${i}`, VALID_EVENT));
+		const done = onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			batch
+		);
+		await vi.runAllTimersAsync();
+		await done;
+
+		expect(fn).toHaveBeenCalledTimes(16); // 4 in flight x 4 attempts, then nothing
+		expect(errors).toHaveBeenCalledTimes(1); // logged once per batch, not per record
+	});
+
+	it('skips the RSVP phase when the event phase was throttled', async () => {
+		vi.useFakeTimers();
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const urls: string[] = [];
+		const fn = vi.fn(async (input: RequestInfo | URL) => {
+			urls.push(String(input));
+			return new Response(null, { status: 429 });
+		}) as unknown as typeof fetch;
+
+		const done = onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[eventRecord('e1', VALID_EVENT), rsvpRecord('r1', 'e1')]
+		);
+		await vi.runAllTimersAsync();
+		await done;
+
+		// Their event never landed, so every one of those RSVPs would 400 anyway.
+		expect(urls).toHaveLength(4);
+		expect(urls.every((u) => u.includes('/api/integration/events'))).toBe(true);
 	});
 });

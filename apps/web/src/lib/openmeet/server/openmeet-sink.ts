@@ -42,6 +42,49 @@ type SinkContext = Parameters<Sink['onRecords']>[1];
  *  bounding the burst; it is not a rate limiter and is not meant to be one. */
 const MAX_IN_FLIGHT = 4;
 
+/** How many times a THROTTLED (429) request is re-issued before it is dropped.
+ *
+ *  The intake API sits behind a global per-IP throttle — 100 requests per 60s in
+ *  production, applied by an APP_GUARD that no route opts out of. Live ingest is
+ *  nowhere near it (a cron tick carries single-digit records), but a backfill
+ *  batch is: one profile-page view can hand this sink a whole back catalogue,
+ *  which at MAX_IN_FLIGHT would blow the window in seconds.
+ *
+ *  Without a retry a 429 is indistinguishable from any other failure — logged,
+ *  dropped, never revisited — which would silently hole exactly the backfill the
+ *  feed exists to deliver. The legacy pipeline never needed this: RabbitMQ paced
+ *  it to one message at a time, well under the limit. */
+const MAX_RETRIES = 3;
+
+/** Ceiling on a single backoff wait, in ms.
+ *
+ *  `Retry-After` from the throttler counts down the whole 60s window, and
+ *  honouring that verbatim would park a cron invocation for a minute while the
+ *  one-minute schedule keeps firing. Capping trades "this record definitely
+ *  lands" for "the invocation stays bounded" — a capped retry that still 429s is
+ *  dropped, same as before. */
+const MAX_BACKOFF_MS = 10_000;
+
+/** Raised when a request was throttled and exhausted its retries, as opposed to
+ *  failing for a reason specific to that record. The batch uses it to stop
+ *  issuing calls that are known to be doomed — see the drain in `onRecords`. */
+export class IntakeThrottledError extends Error {}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Read `Retry-After` as milliseconds. Handles both wire forms — delta-seconds
+ *  and an HTTP-date — and returns null when absent or unparseable, leaving the
+ *  caller on its own backoff schedule. */
+function retryAfterMs(res: Response): number | null {
+	const raw = res.headers.get('retry-after');
+	if (!raw) return null;
+	const seconds = Number(raw);
+	if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+	const when = Date.parse(raw);
+	if (Number.isNaN(when)) return null;
+	return Math.max(0, when - Date.now());
+}
+
 export interface OpenMeetSinkBackend {
 	/** Base URL of the OpenMeet API serving the intake endpoints. */
 	url: string;
@@ -104,16 +147,18 @@ export class OpenMeetIntakeClient {
 		this.fetch = fetchFn;
 	}
 
-	/** Issue one intake request. Resolves on success or a tolerated status;
-	 *  throws otherwise so the caller can log and move on. */
+	/** Issue one intake request, retrying while it is throttled. Resolves on
+	 *  success or a tolerated status; throws otherwise so the caller can log and
+	 *  move on.
+	 *
+	 *  429 is the ONLY retried status. A 5xx is left as a plain failure the way
+	 *  it always was: it is not obviously transient, retrying it costs the same
+	 *  backfill budget, and widening the retry set is a behaviour change that
+	 *  should be made deliberately rather than folded in here. */
 	async send(request: IntakeRequest): Promise<void> {
 		const query = request.query ? `?${new URLSearchParams(request.query)}` : '';
-		// Call fetch detached rather than as `this.fetch(...)`: on workerd the
-		// global fetch throws "Illegal invocation" when `this` is bound to a
-		// non-global object, which method-call syntax would do. Node/undici is
-		// lenient, so this only bites in the deployed Worker.
-		const doFetch = this.fetch;
-		const res = await doFetch(`${this.base}${request.path}${query}`, {
+		const url = `${this.base}${request.path}${query}`;
+		const init: RequestInit = {
 			method: request.method,
 			headers: {
 				authorization: `Bearer ${this.apiKey}`,
@@ -121,10 +166,34 @@ export class OpenMeetIntakeClient {
 				'x-tenant-id': this.tenantId
 			},
 			body: request.body === undefined ? undefined : JSON.stringify(request.body)
-		});
-		if (res.ok || request.tolerate.includes(res.status)) return;
-		// No body echoed — it can carry record content or credentials into logs.
-		throw new Error(`OpenMeet intake ${request.method} ${request.path} failed: ${res.status}`);
+		};
+		// Call fetch detached rather than as `this.fetch(...)`: on workerd the
+		// global fetch throws "Illegal invocation" when `this` is bound to a
+		// non-global object, which method-call syntax would do. Node/undici is
+		// lenient, so this only bites in the deployed Worker.
+		const doFetch = this.fetch;
+
+		for (let attempt = 0; ; attempt++) {
+			const res = await doFetch(url, init);
+			if (res.ok || request.tolerate.includes(res.status)) return;
+
+			if (res.status === 429) {
+				if (attempt >= MAX_RETRIES) {
+					throw new IntakeThrottledError(
+						`OpenMeet intake ${request.method} ${request.path} throttled after ${attempt + 1} attempts`
+					);
+				}
+				// Server's own advice wins when it gives any; otherwise back off
+				// exponentially from 250ms. Either way the cap applies.
+				const advised = retryAfterMs(res);
+				const backoff = advised ?? 2 ** attempt * 250;
+				await sleep(Math.min(backoff, MAX_BACKOFF_MS));
+				continue;
+			}
+
+			// No body echoed — it can carry record content or credentials into logs.
+			throw new Error(`OpenMeet intake ${request.method} ${request.path} failed: ${res.status}`);
+		}
 	}
 }
 
@@ -207,13 +276,32 @@ export function createOpenMeetSink(
 			if (eventRequests.length === 0 && rsvpRequests.length === 0) return;
 
 			const client = new OpenMeetIntakeClient(backend, fetchFn);
-			// Failures are contained PER RECORD rather than per batch. Letting one
-			// bad record throw out of onRecords would cost every record queued
-			// behind it, and contrail does not retry the batch.
+
+			// Once a request has burned all its retries against the throttle, the
+			// rest of this batch is abandoned rather than issued. The window is
+			// measured in whole minutes and we have already backed off across it,
+			// so the queued calls would fail too — this drops the same records
+			// while wasting neither the throttle budget nor the invocation, and it
+			// bounds the worst case at one exhausted retry chain instead of one
+			// per record. Batch-scoped deliberately: the next tick starts clean.
+			let throttled = false;
+
+			// Failures are otherwise contained PER RECORD rather than per batch.
+			// Letting one bad record throw out of onRecords would cost every record
+			// queued behind it, and contrail does not retry the batch.
 			const send = async (request: IntakeRequest) => {
+				if (throttled) return;
 				try {
 					await client.send(request);
 				} catch (err) {
+					if (err instanceof IntakeThrottledError) {
+						// Logged once per batch, not once per abandoned record.
+						if (!throttled) {
+							throttled = true;
+							console.error('[openmeet-sink] throttled by intake API, abandoning batch:', err);
+						}
+						return;
+					}
 					console.error('[openmeet-sink] intake call failed:', err);
 				}
 			};
@@ -241,6 +329,11 @@ export function createOpenMeetSink(
 			// Ordering WITHIN each phase is still unconstrained, and deletes need no
 			// ordering at all: removing an event clears its attendees, and an RSVP
 			// delete for an already-gone row is a tolerated no-op either way.
+			//
+			// If the event phase trips the throttle breaker the RSVP phase is
+			// skipped wholesale, which is the outcome we want rather than a side
+			// effect to work around: those RSVPs' events did not land, so every one
+			// of them would 400 on the missing-event path anyway.
 			await pooled(eventRequests, MAX_IN_FLIGHT, send);
 			await pooled(rsvpRequests, MAX_IN_FLIGHT, send);
 		}
