@@ -213,6 +213,32 @@ async function pooled<T>(
 	await Promise.all(runners);
 }
 
+/** One queued intake call, carried with the record it came from.
+ *
+ *  The transforms return bare `IntakeRequest` descriptors and deliberately stay
+ *  in that business, so the source record's identity is not recoverable from a
+ *  request alone: a create is a POST to a collection-level path with the at://
+ *  URI buried in the body. Pairing them here — local to the dispatch loop,
+ *  leaving the transform contract untouched — is what lets a failure name the
+ *  record it lost. Without it a failed call is unattributable and the record
+ *  cannot be re-fed by hand. */
+interface PendingCall {
+	request: IntakeRequest;
+	uri: string;
+}
+
+/** Render a caught value for a log line.
+ *
+ *  `console.error('msg:', err)` is NOT equivalent: on workerd that renders the
+ *  STACK and drops `err.message`, so a thrown Error carrying the HTTP status
+ *  logs as "intake call failed:" followed by frames and nothing else. That is
+ *  exactly how two real prod failures (2026-08-02 17:21Z and 18:45Z) became
+ *  undiagnosable — the status was in the message the whole time and never
+ *  reached the log. Interpolate the message explicitly instead. */
+function errorDetail(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
 /** Build the OpenMeet intake sink.
  *
  *  The backend is resolved lazily per batch via `getBackend` because a
@@ -250,11 +276,11 @@ export function createOpenMeetSink(
 
 			// Events and RSVPs are collected SEPARATELY because they must not be
 			// dispatched together — see the two-phase drain below.
-			const eventRequests: IntakeRequest[] = [];
-			const rsvpRequests: IntakeRequest[] = [];
+			const eventRequests: PendingCall[] = [];
+			const rsvpRequests: PendingCall[] = [];
 			for (const e of events) {
 				let result: TransformResult;
-				let target: IntakeRequest[];
+				let target: PendingCall[];
 				if (e.collection === EVENT_COLLECTION) {
 					result = eventRequestFor(e);
 					target = eventRequests;
@@ -270,7 +296,7 @@ export function createOpenMeetSink(
 					console.warn(`[openmeet-sink] skipping ${e.uri}: ${result.reason}`);
 					continue;
 				}
-				target.push(result.request);
+				target.push({ request: result.request, uri: e.uri });
 			}
 
 			if (eventRequests.length === 0 && rsvpRequests.length === 0) return;
@@ -289,7 +315,7 @@ export function createOpenMeetSink(
 			// Failures are otherwise contained PER RECORD rather than per batch.
 			// Letting one bad record throw out of onRecords would cost every record
 			// queued behind it, and contrail does not retry the batch.
-			const send = async (request: IntakeRequest) => {
+			const send = async ({ request, uri }: PendingCall) => {
 				if (throttled) return;
 				try {
 					await client.send(request);
@@ -298,11 +324,19 @@ export function createOpenMeetSink(
 						// Logged once per batch, not once per abandoned record.
 						if (!throttled) {
 							throttled = true;
-							console.error('[openmeet-sink] throttled by intake API, abandoning batch:', err);
+							console.error(
+								`[openmeet-sink] throttled by intake API, abandoning batch at ${uri}: ${errorDetail(err)}`
+							);
 						}
 						return;
 					}
-					console.error('[openmeet-sink] intake call failed:', err);
+					// Name the record AND the status. This record is now dropped for
+					// good — there is no retry outside 429 and no dead-letter path —
+					// so the log line is the only trace that it existed, and the only
+					// way to re-feed it by hand. The response BODY stays out
+					// deliberately: it can carry record content or credentials, and
+					// the status plus the URI is what makes a failure actionable.
+					console.error(`[openmeet-sink] intake call failed for ${uri}: ${errorDetail(err)}`);
 				}
 			};
 

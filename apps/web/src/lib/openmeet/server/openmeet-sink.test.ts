@@ -2,7 +2,6 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
 	createOpenMeetSink,
 	openMeetSinkBackendFromEnv,
-	IntakeThrottledError,
 	type OpenMeetSinkBackend
 } from './openmeet-sink';
 import { EVENT_COLLECTION, RSVP_COLLECTION } from './types';
@@ -254,6 +253,48 @@ describe('createOpenMeetSink — failure handling', () => {
 		expect(error).toHaveBeenCalledOnce();
 	});
 
+	// These three pin the fix for the 2026-08-02 prod incident: two real intake
+	// failures logged as "[openmeet-sink] intake call failed:" plus a stack and
+	// NOTHING else. The status was in the thrown Error's message all along, but
+	// `console.error('label:', err)` renders the stack on workerd and drops the
+	// message — so neither the cause nor the identity of the two lost records was
+	// recoverable. A dropped record has no retry and no dead-letter path, so this
+	// log line is the only trace it ever existed.
+	it('puts the HTTP status in the logged message, not just in a stack', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const { fn } = fakeFetch([500]);
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[eventRecord('a', VALID_EVENT)]
+		);
+		expect(error).toHaveBeenCalledOnce();
+		expect(String(error.mock.calls[0][0])).toContain('500');
+	});
+
+	it('names the record that was lost, so it can be re-fed by hand', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const { fn } = fakeFetch([500]);
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[eventRecord('doomed', VALID_EVENT)]
+		);
+		expect(String(error.mock.calls[0][0])).toContain(`at://${DID}/${EVENT_COLLECTION}/doomed`);
+	});
+
+	// The crux: one already-rendered string argument. Passing the Error as a
+	// second argument is what made the message vanish in the deployed Worker,
+	// and a test that only checked "console.error was called" passed throughout.
+	it('logs a single rendered string rather than handing console an Error object', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const { fn } = fakeFetch([500]);
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[eventRecord('a', VALID_EVENT)]
+		);
+		expect(error.mock.calls[0]).toHaveLength(1);
+		expect(error.mock.calls[0][0]).toBeTypeOf('string');
+	});
+
 	it('never echoes the response body or the key into the error', async () => {
 		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const { fn } = fakeFetch([500]);
@@ -479,7 +520,13 @@ describe('createOpenMeetSink — throttling', () => {
 		expect(fn).toHaveBeenCalledTimes(4); // initial + MAX_RETRIES
 		expect(errors).toHaveBeenCalledTimes(1);
 		expect(errors.mock.calls[0][0]).toContain('throttled');
-		expect(errors.mock.calls[0][1]).toBeInstanceOf(IntakeThrottledError);
+		// Was: expect(calls[0][1]).toBeInstanceOf(IntakeThrottledError) — which
+		// pinned the Error being passed as a SECOND console argument, the exact
+		// shape that renders as a bare stack on workerd and drops the message.
+		// Asserting the rendered text instead keeps the intent (throttling is
+		// reported distinctly) and additionally proves the detail survives.
+		expect(errors.mock.calls[0]).toHaveLength(1);
+		expect(errors.mock.calls[0][0]).toContain('attempts');
 	});
 
 	it('abandons the rest of the batch once throttling is established', async () => {
