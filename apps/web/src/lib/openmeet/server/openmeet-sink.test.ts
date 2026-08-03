@@ -305,6 +305,61 @@ describe('createOpenMeetSink — failure handling', () => {
 		expect(JSON.stringify(error.mock.calls)).not.toContain('service-key');
 	});
 
+	// These pin the DROP log FORMAT, which is a contract with an out-of-repo
+	// consumer: cloudflare/atmo/soak-check.py in openmeet-infrastructure counts
+	// drops by grepping these exact markers, and that count is what gates scaling
+	// the legacy pipeline to 0. There is no dead-letter table by design, so the
+	// log line IS the record of the loss. They deliberately assert the literal
+	// strings rather than importing the constants — asserting the constant would
+	// let a rename sail through green while silently blinding the sweep.
+	it('marks a dropped record with the grep marker, its uri and its cause', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const { fn } = fakeFetch([500]);
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[eventRecord('doomed', VALID_EVENT)]
+		);
+		const line = String(error.mock.calls[0][0]);
+		expect(line.startsWith('[openmeet-sink] DROP ')).toBe(true);
+		expect(line).toContain(`uri=at://${DID}/${EVENT_COLLECTION}/doomed`);
+		expect(line).toContain('cause=intake-failed');
+	});
+
+	it('distinguishes a throttled drop from a refused one by cause', async () => {
+		vi.useFakeTimers();
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const fn = vi.fn(async () => new Response(null, { status: 429 })) as unknown as typeof fetch;
+
+		const done = onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[eventRecord('doomed', VALID_EVENT)]
+		);
+		await vi.runAllTimersAsync();
+		await done;
+		vi.useRealTimers();
+
+		const line = String(error.mock.calls[0][0]);
+		expect(line.startsWith('[openmeet-sink] DROP ')).toBe(true);
+		expect(line).toContain('cause=throttled');
+		expect(line).toContain(`uri=at://${DID}/${EVENT_COLLECTION}/doomed`);
+	});
+
+	// A malformed record is a TRANSFORM gap, not OpenMeet refusing a write — it
+	// is never offered to the intake API at all. It must not carry the drop
+	// marker, or the sweep's tally conflates two unrelated failure classes and
+	// over-reports what the platform actually lost.
+	it('does not mark a malformed record as a drop', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const { fn } = fakeFetch();
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[eventRecord('bad', { name: 'No date' })]
+		);
+		expect(warn).toHaveBeenCalledOnce();
+		expect(JSON.stringify(error.mock.calls)).not.toContain('[openmeet-sink] DROP');
+	});
+
 	// One bad record must not cost the records queued behind it: contrail does
 	// not retry the batch, so anything dropped here is dropped for good.
 	it('contains a failure to its own record and still delivers the rest', async () => {
@@ -545,7 +600,15 @@ describe('createOpenMeetSink — throttling', () => {
 		await done;
 
 		expect(fn).toHaveBeenCalledTimes(16); // 4 in flight x 4 attempts, then nothing
-		expect(errors).toHaveBeenCalledTimes(1); // logged once per batch, not per record
+
+		// Two lines, not eight: one NAMES the record that tripped the breaker, and
+		// one COUNTS everything that went down with it — the three that exhausted
+		// their retries concurrently plus the four never issued. Was
+		// `toHaveBeenCalledTimes(1)`, which passed while seven of the eight lost
+		// records left no trace at all; a drop tally built on that read 1.
+		expect(errors).toHaveBeenCalledTimes(2);
+		expect(errors.mock.calls[1][0]).toContain('[openmeet-sink] DROP-BATCH');
+		expect(errors.mock.calls[1][0]).toContain('abandoned=7');
 	});
 
 	it('skips the RSVP phase when the event phase was throttled', async () => {

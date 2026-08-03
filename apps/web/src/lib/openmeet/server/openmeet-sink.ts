@@ -227,6 +227,27 @@ interface PendingCall {
 	uri: string;
 }
 
+/** Marker prefixing every line that reports a record this sink DROPPED — one
+ *  atmo held and OpenMeet would not take. One line, one lost record, always
+ *  carrying `uri=` and `cause=`.
+ *
+ *  It exists to be GREPPED, not just read. There is no dead-letter table by
+ *  design, so the log is the whole record of what was lost, and the count has to
+ *  be exact: `[openmeet-sink]` alone also matches successes-adjacent noise and
+ *  the `skipping` transform warnings, which are a different failure class
+ *  (malformed record, never offered to OpenMeet) and must not inflate a drop
+ *  tally. The `cloudflare/atmo/soak-check.py` sweep in openmeet-infrastructure
+ *  parses these two markers; treat the format as a contract with it, which is
+ *  why the tests assert the literal strings rather than these constants. */
+const DROP_LOG = '[openmeet-sink] DROP';
+
+/** Companion to DROP_LOG for records lost WITHOUT being individually named:
+ *  once the throttle breaker trips, the rest of the batch is abandoned unissued.
+ *  Emitted once per batch carrying `abandoned=<n>`, so the tally stays honest
+ *  even though those records' identities are not recoverable. A drop total is
+ *  therefore (DROP lines) + (sum of abandoned=), never the line count alone. */
+const DROP_BATCH_LOG = '[openmeet-sink] DROP-BATCH';
+
 /** Render a caught value for a log line.
  *
  *  `console.error('msg:', err)` is NOT equivalent: on workerd that renders the
@@ -312,21 +333,34 @@ export function createOpenMeetSink(
 			// per record. Batch-scoped deliberately: the next tick starts clean.
 			let throttled = false;
 
+			// Records lost to the breaker WITHOUT a line naming them: the ones that
+			// exhausted their own retries after the first (the pool runs
+			// MAX_IN_FLIGHT of them concurrently, so several can be mid-chain when
+			// the breaker trips) plus every one never issued afterwards. Counting
+			// them is what keeps a drop tally from reading as 1 when it is 8 —
+			// silently under-reporting a loss is the whole defect this sink is
+			// being hardened against.
+			let abandoned = 0;
+
 			// Failures are otherwise contained PER RECORD rather than per batch.
 			// Letting one bad record throw out of onRecords would cost every record
 			// queued behind it, and contrail does not retry the batch.
 			const send = async ({ request, uri }: PendingCall) => {
-				if (throttled) return;
+				if (throttled) {
+					abandoned++;
+					return;
+				}
 				try {
 					await client.send(request);
 				} catch (err) {
 					if (err instanceof IntakeThrottledError) {
-						// Logged once per batch, not once per abandoned record.
+						// Named once per batch, not once per abandoned record; the rest
+						// are counted instead, and reported together below.
 						if (!throttled) {
 							throttled = true;
-							console.error(
-								`[openmeet-sink] throttled by intake API, abandoning batch at ${uri}: ${errorDetail(err)}`
-							);
+							console.error(`${DROP_LOG} uri=${uri} cause=throttled ${errorDetail(err)}`);
+						} else {
+							abandoned++;
 						}
 						return;
 					}
@@ -336,7 +370,7 @@ export function createOpenMeetSink(
 					// way to re-feed it by hand. The response BODY stays out
 					// deliberately: it can carry record content or credentials, and
 					// the status plus the URI is what makes a failure actionable.
-					console.error(`[openmeet-sink] intake call failed for ${uri}: ${errorDetail(err)}`);
+					console.error(`${DROP_LOG} uri=${uri} cause=intake-failed ${errorDetail(err)}`);
 				}
 			};
 
@@ -370,6 +404,15 @@ export function createOpenMeetSink(
 			// of them would 400 on the missing-event path anyway.
 			await pooled(eventRequests, MAX_IN_FLIGHT, send);
 			await pooled(rsvpRequests, MAX_IN_FLIGHT, send);
+
+			// Report the unnamed losses once the batch is settled, so both drain
+			// phases are accounted for in a single number. Only the count survives —
+			// these records were never issued, so there is nothing to name — but a
+			// count is the difference between "one record was throttled" and "one
+			// record was throttled and 295 more went with it".
+			if (abandoned > 0) {
+				console.error(`${DROP_BATCH_LOG} abandoned=${abandoned} cause=throttled`);
+			}
 		}
 	};
 }
