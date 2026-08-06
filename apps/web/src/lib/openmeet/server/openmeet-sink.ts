@@ -11,9 +11,11 @@
 // interleaved with atmo's own concerns.
 //
 // The OpenMeet-specific knowledge all lives in ./event-transform and
-// ./rsvp-transform, which are pure and import nothing from atmo or contrail.
-// This file is the only part that knows about either — so lifting the transform
-// pair into an out-of-process consumer (a generic webhook sink pointed at a
+// ./rsvp-transform, which are pure and import nothing from atmo or contrail;
+// ./parent-record joins them under the same rule — it performs HTTP, but only
+// through an injected fetch and only against the public atproto network. This
+// file is the only part that knows about atmo or contrail at all — so lifting
+// the set into an out-of-process consumer (a generic webhook sink pointed at a
 // service that owns these files) is a move, not a rewrite.
 //
 // Constraints inherited from the contrail Sink seam:
@@ -26,6 +28,7 @@ import type { ContrailConfig } from '@atmo-dev/contrail';
 import { EVENT_COLLECTION, RSVP_COLLECTION, type IntakeRequest } from './types';
 import { eventRequestFor, type TransformResult } from './event-transform';
 import { rsvpRequestFor } from './rsvp-transform';
+import { fetchParentRecord } from './parent-record';
 
 // Same derivation the search sink uses: the umbrella re-exports ContrailConfig
 // but not Sink/RecordEvent, and contrail-base isn't a direct dependency.
@@ -69,6 +72,70 @@ const MAX_BACKOFF_MS = 10_000;
  *  failing for a reason specific to that record. The batch uses it to stop
  *  issuing calls that are known to be doomed — see the drain in `onRecords`. */
 export class IntakeThrottledError extends Error {}
+
+/** Why the intake API refused a write, reduced to a closed set.
+ *
+ *  The two that matter both arrive as a bare HTTP 400 on
+ *  `/api/integration/rsvps` and are opposites:
+ *
+ *    - `parent-missing` is a REAL LOSS. The RSVP's event is not in the platform,
+ *      so there is nothing to attach an attendance record to. Recoverable — see
+ *      the repair path in `onRecords`.
+ *    - `duplicate-key` is a SUCCESS wearing a failure's clothes. The attendance
+ *      row already exists (openmeet-api holds
+ *      `UNIQUE ("eventId","userId")` on `eventAttendees`), which is the end state
+ *      an idempotent feed wants. Counting it as a drop is what put the observed
+ *      drop rate an order of magnitude above the real one during the two-writer
+ *      soak: 11 of 12 drops in the 2026-08-05 window were this. */
+export type IntakeRefusalReason = 'parent-missing' | 'duplicate-key' | 'unclassified';
+
+/** A refusal the sink was able to attribute. Carries the reason as a FIELD
+ *  rather than in the message, so the caller can branch on it while the log line
+ *  stays a bounded token. */
+export class IntakeRefusedError extends Error {
+	readonly reason: IntakeRefusalReason;
+
+	constructor(message: string, reason: IntakeRefusalReason) {
+		super(message);
+		this.reason = reason;
+	}
+}
+
+/** How much of a refusal body is scanned. NestJS puts `message` first, so the
+ *  distinguishing text is at the front; the bound is here so a pathological
+ *  response cannot turn classification into work. */
+const MAX_CLASSIFY_CHARS = 4096;
+
+/** Reduce a refusal body to a reason code.
+ *
+ *  THE BODY IS AN INPUT AND NEVER AN OUTPUT. Its content is matched against
+ *  fixed patterns and then discarded; the only thing that escapes this function
+ *  is a member of `IntakeRefusalReason`. That is what lets the sink gain the one
+ *  bit it needs while keeping the property the DROP log was built around — a
+ *  response body can carry record content or credentials and must not reach a
+ *  log line.
+ *
+ *  The patterns match openmeet-api's own wording: the RSVP intake service throws
+ *  `Event with source ID ${uri} not found` (rsvp-integration.service.ts) which
+ *  its controller wraps into a 400, and a unique-constraint violation surfaces
+ *  as Postgres' verbatim message through the same wrapper. */
+function classifyRefusal(body: string): IntakeRefusalReason {
+	const head = body.slice(0, MAX_CLASSIFY_CHARS);
+	if (/event with source id[\s\S]*?not found/i.test(head)) return 'parent-missing';
+	if (/duplicate key value violates unique constraint/i.test(head)) return 'duplicate-key';
+	return 'unclassified';
+}
+
+/** Read a response body for classification, tolerating a body that is absent,
+ *  already consumed, or unreadable — an unclassifiable refusal is the status quo
+ *  and must never become a thrown error of its own. */
+async function bodyForClassification(res: Response): Promise<string> {
+	try {
+		return await res.text();
+	} catch {
+		return '';
+	}
+}
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -192,7 +259,21 @@ export class OpenMeetIntakeClient {
 			}
 
 			// No body echoed — it can carry record content or credentials into logs.
-			throw new Error(`OpenMeet intake ${request.method} ${request.path} failed: ${res.status}`);
+			// It IS read here, and reduced to a reason code before anything else
+			// sees it: classifying at the source is what makes a drop
+			// self-explaining. Without it, telling a real loss from a duplicate
+			// takes a session of archaeology across two databases, which is
+			// precisely what the 2026-08-05 split cost.
+			//
+			// Only a 400 is classified. Every distinguishable refusal the intake
+			// API makes is one, and reading a 5xx body would be scanning an error
+			// page for something that was never going to be in it.
+			const reason =
+				res.status === 400 ? classifyRefusal(await bodyForClassification(res)) : 'unclassified';
+			throw new IntakeRefusedError(
+				`OpenMeet intake ${request.method} ${request.path} failed: ${res.status}`,
+				reason
+			);
 		}
 	}
 }
@@ -225,6 +306,22 @@ async function pooled<T>(
 interface PendingCall {
 	request: IntakeRequest;
 	uri: string;
+	/** For an RSVP create, the at:// URI of the event it attaches to.
+	 *
+	 *  Read back off the built request rather than threaded out of the transform:
+	 *  `rsvp-transform` has already read the record's `subject` in both its wire
+	 *  shapes, rejected anything that is not a well-formed at:// URI, and put the
+	 *  survivor in the body as `eventSourceId`. Lifting it from there keeps the
+	 *  transform contract — a request descriptor, nothing more — exactly as it
+	 *  was, and keeps this knowledge local to the dispatch loop that needs it. */
+	parentUri?: string;
+}
+
+/** The event an RSVP create names as its subject, if this request is one. */
+function parentUriOf(request: IntakeRequest): string | undefined {
+	if (request.method !== 'POST') return undefined;
+	const body = request.body as { eventSourceId?: unknown } | undefined;
+	return typeof body?.eventSourceId === 'string' ? body.eventSourceId : undefined;
 }
 
 /** Marker prefixing every line that reports a record this sink DROPPED — one
@@ -247,6 +344,32 @@ const DROP_LOG = '[openmeet-sink] DROP';
  *  even though those records' identities are not recoverable. A drop total is
  *  therefore (DROP lines) + (sum of abandoned=), never the line count alone. */
 const DROP_BATCH_LOG = '[openmeet-sink] DROP-BATCH';
+
+/** A record that was refused and then LANDED after its parent event was fetched
+ *  and fed. The counterpart to DROP: same grep discipline, opposite meaning.
+ *
+ *  It deliberately does NOT contain the substring `[openmeet-sink] DROP`, which
+ *  is what the soak sweep counts losses by — a repair is the absence of a loss,
+ *  and must not show up in that tally. It lands in the sweep's "other sink
+ *  lines" bucket instead, where a rising count is the mechanism working. */
+const REPAIRED_LOG = '[openmeet-sink] REPAIRED';
+
+/** A write refused because the row it would create is already there.
+ *
+ *  Also not a DROP, and for the same reason: the end state an idempotent feed
+ *  wanted holds. Logged rather than swallowed because the count IS the
+ *  measurement of how much the two writers are colliding — it should fall to
+ *  zero once the legacy pipeline is scaled to 0, and if it does not, something
+ *  else is writing.
+ *
+ *  CAVEAT, deliberate: this trusts that a unique-violation on the RSVP path is
+ *  the attendee row's `UNIQUE ("eventId","userId")`. A violation raised further
+ *  up — two RSVPs from the same previously-unseen DID racing to create one
+ *  shadow account, which `MAX_IN_FLIGHT` makes possible within a single batch —
+ *  would be a genuine loss recorded here as a success. That is the trade this
+ *  marker exists to keep visible: the line is greppable and countable, so the
+ *  case shows up as a persistent non-zero count rather than as silence. */
+const ALREADY_PRESENT_LOG = '[openmeet-sink] ALREADY-PRESENT';
 
 /** Render a caught value for a log line.
  *
@@ -291,7 +414,8 @@ export function createOpenMeetSink(
 			//     re-send is an update rather than a duplicate. Browsing closes the
 			//     gap organically.
 			//   - The cost is burstiness, bounded by MAX_IN_FLIGHT above, and the
-			//     fact that there is no retry: a record whose POST fails is simply
+			//     fact that there is largely no retry: outside the throttle path
+			//     and the parent repair below, a record whose POST fails is simply
 			//     not fed until something touches it again.
 			void ctx;
 
@@ -317,12 +441,20 @@ export function createOpenMeetSink(
 					console.warn(`[openmeet-sink] skipping ${e.uri}: ${result.reason}`);
 					continue;
 				}
-				target.push({ request: result.request, uri: e.uri });
+				target.push({
+					request: result.request,
+					uri: e.uri,
+					parentUri: target === rsvpRequests ? parentUriOf(result.request) : undefined
+				});
 			}
 
 			if (eventRequests.length === 0 && rsvpRequests.length === 0) return;
 
 			const client = new OpenMeetIntakeClient(backend, fetchFn);
+			// The repair path talks to plc.directory and a PDS rather than to
+			// OpenMeet, so it goes around the intake client — but through the same
+			// injected fetch, which is why no new seam is needed to reach it.
+			const doFetch = fetchFn ?? globalThis.fetch;
 
 			// Once a request has burned all its retries against the throttle, the
 			// rest of this batch is abandoned rather than issued. The window is
@@ -342,35 +474,144 @@ export function createOpenMeetSink(
 			// being hardened against.
 			let abandoned = 0;
 
+			// Trip the breaker on the first exhausted retry chain and name the record
+			// that tripped it; everything after is counted, not named.
+			const noteThrottled = (uri: string, err: IntakeThrottledError) => {
+				if (!throttled) {
+					throttled = true;
+					console.error(`${DROP_LOG} uri=${uri} cause=throttled ${errorDetail(err)}`);
+					return;
+				}
+				abandoned++;
+			};
+
+			/** Repair a `parent-missing` RSVP: fetch the event it names from its
+			 *  author's PDS, feed it, and re-offer the RSVP ONCE.
+			 *
+			 *  This is what makes the sink survivable as the ONLY writer. Two
+			 *  distinct things put an RSVP here, and only this fixes both:
+			 *
+			 *    - CROSS-BATCH ordering. The parent is on its way and will land in a
+			 *      later cycle. (Within one batch it cannot happen: the two-phase
+			 *      drain below writes every event before any RSVP.) Waiting would
+			 *      eventually work; fetching works now.
+			 *    - A GAP parent. The event predates anything the sink or any backfill
+			 *      ever fed — the one confirmed real loss in the 2026-08-05 window
+			 *      named an event five months old. Waiting NEVER works. This is the
+			 *      only mechanism short of a bulk reconcile that touches it at all,
+			 *      and it drains those parents on demand as a side effect.
+			 *
+			 *  BOUNDED BY CONSTRUCTION. It issues its writes through `client.send`
+			 *  directly rather than through `send` below, so a failure here cannot
+			 *  re-enter the repair path: one attempt, then the record is dropped
+			 *  exactly as it would have been. */
+			const repairParent = async (call: PendingCall, parentUri: string, refusal: Error) => {
+				// The breaker may have tripped while this record was in flight. Two
+				// more requests would be spent on an intake that is already refusing
+				// everything, so drop it as the plain refusal it was.
+				if (throttled) {
+					console.error(
+						`${DROP_LOG} uri=${call.uri} cause=intake-failed reason=parent-missing ${errorDetail(refusal)}`
+					);
+					return;
+				}
+
+				const lookup = await fetchParentRecord(parentUri, doFetch);
+				if (lookup.kind === 'unavailable') {
+					console.error(
+						`${DROP_LOG} uri=${call.uri} cause=parent-unavailable parent=${parentUri} reason=${lookup.reason}`
+					);
+					return;
+				}
+
+				// Through the EXISTING transform, not a second mapping of the same
+				// lexicon. A record it rejects (a missing or unparseable start date is
+				// the real case) gives up here — one line, no malformed POST.
+				const transformed = eventRequestFor(lookup.event);
+				if (transformed.kind === 'skip') {
+					console.error(
+						`${DROP_LOG} uri=${call.uri} cause=parent-untransformable parent=${parentUri} reason=${transformed.reason}`
+					);
+					return;
+				}
+
+				try {
+					await client.send(transformed.request);
+				} catch (err) {
+					if (err instanceof IntakeThrottledError) {
+						noteThrottled(call.uri, err);
+						return;
+					}
+					console.error(
+						`${DROP_LOG} uri=${call.uri} cause=parent-feed-failed parent=${parentUri} ${errorDetail(err)}`
+					);
+					return;
+				}
+
+				try {
+					await client.send(call.request);
+				} catch (err) {
+					if (err instanceof IntakeThrottledError) {
+						noteThrottled(call.uri, err);
+						return;
+					}
+					console.error(
+						`${DROP_LOG} uri=${call.uri} cause=intake-failed reason=retry-still-failed parent=${parentUri} ${errorDetail(err)}`
+					);
+					return;
+				}
+
+				console.warn(`${REPAIRED_LOG} uri=${call.uri} parent=${parentUri}`);
+			};
+
+			/** Decide what a failed intake call means and record it. */
+			const onFailure = async (err: unknown, call: PendingCall) => {
+				if (err instanceof IntakeThrottledError) {
+					noteThrottled(call.uri, err);
+					return;
+				}
+
+				if (err instanceof IntakeRefusedError) {
+					// The row is already there. Not a loss, so not a DROP — but said
+					// out loud, because the count is how hard the two writers are
+					// colliding.
+					if (err.reason === 'duplicate-key') {
+						console.warn(`${ALREADY_PRESENT_LOG} uri=${call.uri} reason=duplicate-key`);
+						return;
+					}
+					if (err.reason === 'parent-missing' && call.parentUri) {
+						await repairParent(call, call.parentUri, err);
+						return;
+					}
+					console.error(
+						`${DROP_LOG} uri=${call.uri} cause=intake-failed reason=${err.reason} ${errorDetail(err)}`
+					);
+					return;
+				}
+
+				// Name the record AND the status. This record is now dropped for
+				// good — there is no retry outside 429 and no dead-letter path —
+				// so the log line is the only trace that it existed, and the only
+				// way to re-feed it by hand. The response BODY stays out
+				// deliberately: it can carry record content or credentials, and
+				// the status plus the URI is what makes a failure actionable.
+				console.error(
+					`${DROP_LOG} uri=${call.uri} cause=intake-failed reason=unclassified ${errorDetail(err)}`
+				);
+			};
+
 			// Failures are otherwise contained PER RECORD rather than per batch.
 			// Letting one bad record throw out of onRecords would cost every record
 			// queued behind it, and contrail does not retry the batch.
-			const send = async ({ request, uri }: PendingCall) => {
+			const send = async (call: PendingCall) => {
 				if (throttled) {
 					abandoned++;
 					return;
 				}
 				try {
-					await client.send(request);
+					await client.send(call.request);
 				} catch (err) {
-					if (err instanceof IntakeThrottledError) {
-						// Named once per batch, not once per abandoned record; the rest
-						// are counted instead, and reported together below.
-						if (!throttled) {
-							throttled = true;
-							console.error(`${DROP_LOG} uri=${uri} cause=throttled ${errorDetail(err)}`);
-						} else {
-							abandoned++;
-						}
-						return;
-					}
-					// Name the record AND the status. This record is now dropped for
-					// good — there is no retry outside 429 and no dead-letter path —
-					// so the log line is the only trace that it existed, and the only
-					// way to re-feed it by hand. The response BODY stays out
-					// deliberately: it can carry record content or credentials, and
-					// the status plus the URI is what makes a failure actionable.
-					console.error(`${DROP_LOG} uri=${uri} cause=intake-failed ${errorDetail(err)}`);
+					await onFailure(err, call);
 				}
 			};
 

@@ -465,6 +465,379 @@ describe('createOpenMeetSink — event/RSVP dispatch ordering', () => {
 	});
 });
 
+// An RSVP whose parent event is not in the platform is refused with a 400 and,
+// before this, dropped for good. That is the ONLY failure mode that survives
+// scaling the legacy pipeline to 0 — every other drop observed during the
+// two-writer soak was the other writer having got there first. Two things put an
+// RSVP here: a parent still on its way in a later cycle, and a parent old enough
+// that nothing has ever fed it. Fetching the parent on demand fixes both; waiting
+// only ever fixes the first.
+describe('createOpenMeetSink — parent-missing repair', () => {
+	const PARENT_RKEY = '3mh4xhgmouk2e';
+	const PARENT_URI = `at://${DID}/${EVENT_COLLECTION}/${PARENT_RKEY}`;
+	const PDS = 'https://pds.example';
+
+	function rsvpRecord(rkey: string, eventUri = PARENT_URI) {
+		return {
+			kind: 'created' as const,
+			uri: `at://${DID}/${RSVP_COLLECTION}/${rkey}`,
+			did: DID,
+			collection: RSVP_COLLECTION,
+			rkey,
+			cid: 'bafycid',
+			record: {
+				subject: { uri: eventUri },
+				status: 'going',
+				createdAt: '2026-08-06T12:00:00.000Z'
+			},
+			time_us: 1_700_000_000_000_000
+		};
+	}
+
+	/** openmeet-api's actual refusal, as its controller renders it: the service
+	 *  throws `Event with source ID ${uri} not found` and the controller wraps
+	 *  that into a 400. */
+	const parentMissing = () =>
+		new Response(
+			JSON.stringify({
+				statusCode: 400,
+				message: `Failed to process RSVP: Event with source ID ${PARENT_URI} not found`,
+				error: 'Bad Request'
+			}),
+			{ status: 400 }
+		);
+
+	/** The Postgres unique violation on `eventAttendees ("eventId","userId")`,
+	 *  surfaced through the same wrapper — the other writer got there first. */
+	const duplicateKey = () =>
+		new Response(
+			JSON.stringify({
+				statusCode: 400,
+				message:
+					'Failed to process RSVP: duplicate key value violates unique constraint "UQ_tenant_event_attendee_user_event"',
+				error: 'Bad Request'
+			}),
+			{ status: 400 }
+		);
+
+	const didDoc = () =>
+		new Response(
+			JSON.stringify({ id: DID, service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] }),
+			{ status: 200 }
+		);
+
+	const parentRecord = (record: Record<string, unknown> = VALID_EVENT) =>
+		new Response(JSON.stringify({ uri: PARENT_URI, cid: 'bafyparent', value: record }), {
+			status: 200
+		});
+
+	/** A fetch double covering all four hosts the repair touches, recording the
+	 *  order in which it was asked for them. */
+	function network(
+		overrides: {
+			rsvp?: () => Response;
+			rsvpRetry?: () => Response;
+			plc?: () => Response;
+			getRecord?: () => Response;
+			event?: () => Response;
+		} = {}
+	) {
+		const order: string[] = [];
+		let rsvpCalls = 0;
+		const fn = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.includes('/api/integration/rsvps')) {
+				order.push('rsvp');
+				rsvpCalls++;
+				if (rsvpCalls === 1) return (overrides.rsvp ?? parentMissing)();
+				return (overrides.rsvpRetry ?? (() => new Response(null, { status: 202 })))();
+			}
+			if (url.includes('/api/integration/events')) {
+				order.push('event');
+				return (overrides.event ?? (() => new Response(null, { status: 202 })))();
+			}
+			if (url.includes('plc.directory')) {
+				order.push('plc');
+				return (overrides.plc ?? didDoc)();
+			}
+			if (url.includes('getRecord')) {
+				order.push('getRecord');
+				return (overrides.getRecord ?? (() => parentRecord()))();
+			}
+			order.push('unexpected');
+			return new Response(null, { status: 404 });
+		});
+		return { fn: fn as unknown as typeof fetch, order };
+	}
+
+	it('fetches the parent, feeds it, and lands the RSVP instead of dropping it', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const { fn, order } = network();
+
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[rsvpRecord('r1')]
+		);
+
+		expect(order).toEqual(['rsvp', 'plc', 'getRecord', 'event', 'rsvp']);
+		expect(error).not.toHaveBeenCalled();
+		expect(String(warn.mock.calls[0][0])).toContain('[openmeet-sink] REPAIRED');
+	});
+
+	it('names both the rescued RSVP and the parent it pulled in', async () => {
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const { fn } = network();
+
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[rsvpRecord('r1')]
+		);
+
+		const line = String(warn.mock.calls[0][0]);
+		expect(line).toContain(`uri=at://${DID}/${RSVP_COLLECTION}/r1`);
+		expect(line).toContain(`parent=${PARENT_URI}`);
+	});
+
+	// A repair is the ABSENCE of a loss. The soak sweep counts drops by grepping
+	// "[openmeet-sink] DROP", so a repair line carrying that substring would
+	// report a rescued record as a lost one.
+	it('does not mark a repaired RSVP as a drop', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const { fn } = network();
+
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[rsvpRecord('r1')]
+		);
+
+		const lines = JSON.stringify([...error.mock.calls, ...warn.mock.calls]);
+		expect(lines).not.toContain('[openmeet-sink] DROP');
+	});
+
+	// The event is fed through the sink's existing transform, so it arrives in
+	// exactly the shape a live event would have.
+	it('feeds the fetched parent through the existing event transform', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const bodies: unknown[] = [];
+		const { fn } = network();
+		const spy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			if (String(input).includes('/api/integration/events') && init?.body) {
+				bodies.push(JSON.parse(String(init.body)));
+			}
+			return (fn as unknown as typeof fetch)(input, init);
+		}) as unknown as typeof fetch;
+
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, spy),
+			[rsvpRecord('r1')]
+		);
+
+		expect(bodies).toHaveLength(1);
+		expect(bodies[0]).toMatchObject({
+			name: 'Test Event',
+			startDate: '2026-10-20T18:00:00Z',
+			source: { id: PARENT_URI, type: 'bluesky' }
+		});
+	});
+
+	it('gives up once when the parent is absent from its own repo', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const { fn, order } = network({
+			getRecord: () => new Response(JSON.stringify({ error: 'RecordNotFound' }), { status: 400 })
+		});
+
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[rsvpRecord('r1')]
+		);
+
+		expect(order).toEqual(['rsvp', 'plc', 'getRecord']);
+		expect(error).toHaveBeenCalledOnce();
+		const line = String(error.mock.calls[0][0]);
+		expect(line.startsWith('[openmeet-sink] DROP ')).toBe(true);
+		expect(line).toContain('cause=parent-unavailable');
+		expect(line).toContain('reason=record-absent');
+		expect(line).toContain(`parent=${PARENT_URI}`);
+	});
+
+	// The real case this guards: the sink already skips events with a missing or
+	// invalid start date, so a fetched parent can be one the transform will not
+	// take. It must give up rather than POST something malformed.
+	it('gives up once when the fetched parent will not transform', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const { fn, order } = network({ getRecord: () => parentRecord({ name: 'No date' }) });
+
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[rsvpRecord('r1')]
+		);
+
+		expect(order).toEqual(['rsvp', 'plc', 'getRecord']);
+		expect(error).toHaveBeenCalledOnce();
+		expect(String(error.mock.calls[0][0])).toContain('cause=parent-untransformable');
+	});
+
+	it('gives up once when the parent itself is refused by the intake api', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const { fn, order } = network({ event: () => new Response(null, { status: 500 }) });
+
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[rsvpRecord('r1')]
+		);
+
+		expect(order).toEqual(['rsvp', 'plc', 'getRecord', 'event']);
+		expect(error).toHaveBeenCalledOnce();
+		expect(String(error.mock.calls[0][0])).toContain('cause=parent-feed-failed');
+	});
+
+	// ONE attempt. A retry that still fails must not re-enter the repair path, or
+	// a persistently-refusing intake turns one RSVP into an unbounded loop of
+	// plc resolves and event POSTs.
+	it('retries the RSVP exactly once and stops', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const { fn, order } = network({ rsvpRetry: parentMissing });
+
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[rsvpRecord('r1')]
+		);
+
+		expect(order).toEqual(['rsvp', 'plc', 'getRecord', 'event', 'rsvp']);
+		expect(error).toHaveBeenCalledOnce();
+		const line = String(error.mock.calls[0][0]);
+		expect(line.startsWith('[openmeet-sink] DROP ')).toBe(true);
+		expect(line).toContain('reason=retry-still-failed');
+	});
+
+	// ~92% of the drops measured during the two-writer soak were this: the other
+	// writer had already written the attendance row, so the end state an
+	// idempotent feed wanted holds. Counting it as a loss is what put the
+	// observed drop rate an order of magnitude above the real one.
+	it('treats a duplicate-key refusal as a success, not a drop', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const { fn, order } = network({ rsvp: duplicateKey });
+
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[rsvpRecord('r1')]
+		);
+
+		expect(order).toEqual(['rsvp']);
+		expect(error).not.toHaveBeenCalled();
+		const line = String(warn.mock.calls[0][0]);
+		expect(line).toContain('[openmeet-sink] ALREADY-PRESENT');
+		expect(line).toContain('reason=duplicate-key');
+		expect(line).not.toContain('[openmeet-sink] DROP');
+	});
+
+	// The whole point of classifying inside send(): the reason reaches the log
+	// while the body that carried it does not.
+	it('records the reason on a drop without echoing the response body', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const { fn } = network({
+			rsvp: () =>
+				new Response(
+					JSON.stringify({ statusCode: 400, message: 'Failed: nope', error: 'Bad Request' }),
+					{
+						status: 400
+					}
+				)
+		});
+
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[rsvpRecord('r1')]
+		);
+
+		const line = String(error.mock.calls[0][0]);
+		expect(line).toContain('cause=intake-failed');
+		expect(line).toContain('reason=unclassified');
+		expect(line).not.toContain('nope');
+	});
+
+	it('does not attempt a repair for an RSVP delete', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const { fn, order } = network({ rsvp: parentMissing });
+
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[
+				{
+					kind: 'deleted',
+					uri: `at://${DID}/${RSVP_COLLECTION}/r1`,
+					did: DID,
+					collection: RSVP_COLLECTION,
+					rkey: 'r1'
+				}
+			]
+		);
+
+		expect(order).toEqual(['rsvp']);
+		expect(String(error.mock.calls[0][0])).toContain('reason=parent-missing');
+	});
+
+	// The happy path must cost exactly what it did before: no lookup, no extra
+	// latency, one POST.
+	it('leaves a succeeding RSVP alone', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const { fn, order } = network({ rsvp: () => new Response(null, { status: 202 }) });
+
+		await onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[rsvpRecord('r1')]
+		);
+
+		expect(order).toEqual(['rsvp']);
+		expect(error).not.toHaveBeenCalled();
+		expect(warn).not.toHaveBeenCalled();
+	});
+
+	// A repair spends two network round trips on top of the two intake writes.
+	// Once the throttle breaker has tripped, the intake is refusing everything —
+	// spending them would buy nothing, so the record is dropped as the plain
+	// refusal it was.
+	it('does not start a repair once the batch is known to be throttled', async () => {
+		vi.useFakeTimers();
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const hosts: string[] = [];
+		let releaseR2!: () => void;
+		const r2Gate = new Promise<void>((resolve) => {
+			releaseR2 = resolve;
+		});
+
+		// Both RSVPs are in flight together (the pool runs four). r1 burns its
+		// retries against the throttle and trips the breaker; r2 is held until
+		// after that, then refused for a missing parent.
+		const fn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			hosts.push(new URL(String(input)).host);
+			const body = init?.body ? JSON.parse(String(init.body)) : {};
+			if (String(body.sourceId).endsWith('/r1')) return new Response(null, { status: 429 });
+			await r2Gate;
+			return parentMissing();
+		}) as unknown as typeof fetch;
+
+		const done = onRecords(
+			createOpenMeetSink(() => BACKEND, fn),
+			[rsvpRecord('r1'), rsvpRecord('r2')]
+		);
+		await vi.runAllTimersAsync();
+		releaseR2();
+		await done;
+		vi.useRealTimers();
+
+		expect(hosts).not.toContain('plc.directory');
+		const lines = error.mock.calls.map((c) => String(c[0])).join('\n');
+		expect(lines).toContain('cause=throttled');
+		expect(lines).toContain('cause=intake-failed reason=parent-missing');
+	});
+});
+
 // The intake API is behind a global per-IP throttle (100 req / 60s in prod)
 // that no route opts out of. Live ticks are nowhere near it; a backfill batch
 // is, and an unretried 429 would silently drop exactly the records the backfill
