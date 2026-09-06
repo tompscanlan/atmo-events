@@ -6,6 +6,7 @@
 	import type { EventLocation, EventMode } from './types';
 	import { buildThumbnailMedia, renderPresetThumbnail } from './save';
 	import { hashSeed } from '../thumbnails/designs.js';
+	import { DEFAULT_APP_ORIGIN } from './adapter';
 	import type { EditorAdapter, EditorViewer } from './adapter';
 
 	let {
@@ -145,7 +146,7 @@
 				const newRkey = TID.now();
 				const record: Record<string, unknown> = {
 					$type: 'community.lexicon.calendar.event',
-					createdWith: 'https://atmo.rsvp',
+					createdWith: adapter.appOrigin ?? DEFAULT_APP_ORIGIN,
 					name: eventName,
 					mode: `community.lexicon.calendar.event#${mode}`,
 					status: 'community.lexicon.calendar.event#scheduled',

@@ -10,7 +10,7 @@ import {
 } from '$lib/contrail';
 import { dedupeByUri } from '$lib/dedupe-by-uri';
 
-export async function GET({ params, platform }) {
+export async function GET({ params, platform, url }) {
 	if (!isActorIdentifier(params.actor)) {
 		throw error(404, 'Not found');
 	}
@@ -62,7 +62,7 @@ export async function GET({ params, platform }) {
 		const events: ICalEvent[] = allEvents.map((r) => ({
 			eventData: r,
 			uid: r.uri,
-			url: `https://atmo.rsvp/p/${r.did}/e/${r.rkey}`
+			url: `${url.origin}/p/${r.did}/e/${r.rkey}`
 		}));
 
 		const calendarName = `${params.actor}'s Calendar`;

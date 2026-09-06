@@ -12,7 +12,7 @@ import {
 	RSVP_HYDRATE_LIMIT
 } from '$lib/contrail';
 
-export async function GET({ params, platform }) {
+export async function GET({ params, platform, url }) {
 	if (!isActorIdentifier(params.actor)) {
 		throw error(404, 'Not found');
 	}
@@ -58,7 +58,7 @@ export async function GET({ params, platform }) {
 				return {
 					eventData: r,
 					uid: r.uri,
-					url: `https://atmo.rsvp/${actor}/e/${r.uri.split('/').pop()}`,
+					url: `${url.origin}/${actor}/e/${r.uri.split('/').pop()}`,
 					organizer: actor,
 					imageUrl,
 					attendees

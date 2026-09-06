@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { EventCard } from '@atmo-dev/events-ui';
 	import { Button, Modal } from '@foxui/core';
+	import { page } from '$app/state';
 	import { atProtoLoginModalState } from '$lib/components/LoginModal.svelte';
 	import { createEventModalState } from '$lib/components/CreateEventModal.svelte';
 	import { user } from '$lib/atproto/auth.svelte';
@@ -11,7 +12,7 @@
 	let copied = $state(false);
 
 	let calendarUrl = $derived(
-		user.profile?.handle ? `https://atmo.rsvp/p/${user.profile.handle}/calendar.ics` : ''
+		user.profile?.handle ? `${page.url.origin}/p/${user.profile.handle}/calendar.ics` : ''
 	);
 
 	let hasEvents = $derived(data.upcoming.length > 0 || data.past.length > 0);
