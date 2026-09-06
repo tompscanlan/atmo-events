@@ -2,6 +2,7 @@
 	import * as TID from '@atcute/tid';
 	import { Avatar, Button } from '@foxui/core';
 	import { launchConfetti } from '@foxui/visual';
+	import { DEFAULT_APP_ORIGIN } from './editor/adapter.js';
 	import type { EditorAdapter, EditorViewer } from './editor/adapter.js';
 
 	let {
@@ -45,7 +46,7 @@
 			const key = rsvpRkey ?? TID.now();
 			const record = {
 				$type: 'community.lexicon.calendar.rsvp',
-				createdWith: 'https://atmo.rsvp',
+				createdWith: adapter.appOrigin ?? DEFAULT_APP_ORIGIN,
 				status: `community.lexicon.calendar.rsvp#${status}`,
 				subject: {
 					uri: eventUri,

@@ -277,7 +277,8 @@
 				location,
 				locationChanged,
 				media,
-				resolveHandle: (handle) => adapter.resolveHandle(handle)
+				resolveHandle: (handle) => adapter.resolveHandle(handle),
+				appOrigin: adapter.appOrigin
 			});
 
 			if (isNew && prefill?.additionalData) {

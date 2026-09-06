@@ -3,7 +3,7 @@ import { getActor } from '$lib/actor';
 import { getEventRecordFromContrail } from '$lib/contrail';
 import { getServerClient } from '$lib/contrail/index';
 
-export async function GET({ params, platform }) {
+export async function GET({ params, platform, url }) {
 	const client = getServerClient(platform!.env.DB);
 	const did = await getActor(params.actor);
 
@@ -25,7 +25,7 @@ export async function GET({ params, platform }) {
 	return json(
 		{
 			...eventRecord,
-			url: `https://atmo.rsvp/p/${params.actor}/e/${params.rkey}`
+			url: `${url.origin}/p/${params.actor}/e/${params.rkey}`
 		},
 		{
 			headers: {

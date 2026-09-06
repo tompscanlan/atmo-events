@@ -22,12 +22,19 @@ export type EditorViewer = {
 	avatar?: string;
 };
 
+/** Fallback provenance origin used when an adapter does not set `appOrigin`. */
+export const DEFAULT_APP_ORIGIN = 'https://atmo.rsvp';
+
 export type EditorAdapter = {
 	features: {
 		delete: boolean;
 		recurring: boolean;
 		privateMode: boolean;
 	};
+	/** Origin of the app writing the record, stamped as `createdWith` provenance
+	 *  on events and RSVPs. Hosts other than atmo.rsvp should set their own
+	 *  origin so records point back at them. Defaults to `DEFAULT_APP_ORIGIN`. */
+	appOrigin?: string;
 	putRecord(opts: {
 		collection: string;
 		rkey: string;
