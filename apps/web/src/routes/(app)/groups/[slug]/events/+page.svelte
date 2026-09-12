@@ -3,6 +3,7 @@
 	import { EventCard, type FlatEventRecord } from '@atmo-dev/events-ui';
 	import { deleteGroupEventForm, saveGroupEventForm } from '$lib/groups/groups.remote';
 	import type { GroupEventRecord } from '$lib/groups/types';
+	import { ADDRESS_TYPE } from '$lib/groups/event-record';
 	import { groupFormError } from '$lib/groups/form-result';
 
 	let { data } = $props();
@@ -42,6 +43,18 @@
 
 	function text(value: unknown): string {
 		return typeof value === 'string' ? value : '';
+	}
+
+	/** The address the group's record carries, for the edit form to post back.
+	 *  The record is rebuilt from the form's fields on every save, so a location
+	 *  the form does not carry is a location the edit would drop. */
+	function address(event: GroupEventRecord): { name?: string; country?: string } {
+		const locations = Array.isArray(event.value.locations) ? event.value.locations : [];
+		return (
+			(locations.find((entry) => (entry as { $type?: string })?.$type === ADDRESS_TYPE) as
+				| { name?: string; country?: string }
+				| undefined) ?? {}
+		);
 	}
 </script>
 
@@ -88,9 +101,19 @@
 						<Input id="new-ends" name="endsAt" type="datetime-local" />
 					</div>
 				</div>
-				<div class="flex flex-col gap-1.5">
-					<Label for="new-location">Location</Label>
-					<Input id="new-location" name="locationName" maxlength={300} />
+				<div class="grid gap-4 sm:grid-cols-[2fr_1fr]">
+					<div class="flex flex-col gap-1.5">
+						<Label for="new-location">Location</Label>
+						<Input id="new-location" name="locationName" maxlength={300} />
+					</div>
+					<div class="flex flex-col gap-1.5">
+						<Label for="new-country">Country</Label>
+						<Input id="new-country" name="locationCountry" maxlength={10} placeholder="US" />
+						<p class="text-base-500 dark:text-base-400 text-xs">
+							Needed to publish the location — an address without a country is not a valid calendar
+							address, so it is left off the event.
+						</p>
+					</div>
 				</div>
 				<div class="flex flex-col gap-1.5">
 					<Label for="new-description">Description</Label>
@@ -181,6 +204,27 @@
 												name="endsAt"
 												type="datetime-local"
 												value={forInput(event.value.endsAt)}
+											/>
+										</div>
+									</div>
+									<div class="grid gap-4 sm:grid-cols-[2fr_1fr]">
+										<div class="flex flex-col gap-1.5">
+											<Label for="edit-location-{event.rkey}">Location</Label>
+											<Input
+												id="edit-location-{event.rkey}"
+												name="locationName"
+												maxlength={300}
+												value={address(event).name ?? ''}
+											/>
+										</div>
+										<div class="flex flex-col gap-1.5">
+											<Label for="edit-country-{event.rkey}">Country</Label>
+											<Input
+												id="edit-country-{event.rkey}"
+												name="locationCountry"
+												maxlength={10}
+												placeholder="US"
+												value={address(event).country ?? ''}
 											/>
 										</div>
 									</div>
