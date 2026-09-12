@@ -6,7 +6,9 @@
 	"scripts": {
 		"dev": "contrail dev",
 		"build": "wrangler deploy --dry-run --outdir dist",
-		"deploy": "node -e \"console.error('Deployment blocked until bounded scheduled ingestion lands'); process.exit(1)\"",
+		"deploy": "wrangler deploy",
+		"deploy:dry-run": "wrangler deploy --dry-run",
+		"e2e:spaces": "node scripts/spaces-e2e.mjs",
 		"backfill": "contrail backfill --only records",
 		"backfill:remote": "contrail backfill --only records --remote",
 		"lexicons": "contrail lexicons generate --public",
@@ -17,7 +19,8 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@atmo-dev/contrail": "0.19.0"
+		"@atmo-dev/contrail": "link:../../../wt-contrail-spaces-rebase/packages/contrail",
+		"@atmo-dev/contrail-spaces-alpha": "link:../../../wt-contrail-spaces-rebase/packages/contrail-spaces-alpha"
 	},
 	"devDependencies": {
 		"@atcute/lex-cli": "^3.2.1",

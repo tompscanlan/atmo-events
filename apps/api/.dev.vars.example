@@ -1,0 +1,10 @@
+# Copy to `.dev.vars` (git-ignored) for `wrangler dev`. Values below are examples only.
+
+# 32-byte base64 AES-256-GCM key wrapping stored Space credentials and DPoP keys.
+# Generate one with:
+#   node -e "console.log(Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'))"
+# In production this is a Worker secret: `wrangler secret put SPACES_CREDENTIAL_ENCRYPTION_KEY`.
+SPACES_CREDENTIAL_ENCRYPTION_KEY=
+
+# Origin this Worker serves. Overrides the `vars` entry in wrangler.jsonc.
+PUBLIC_SERVICE_ENDPOINT=https://api.openmeet.test
