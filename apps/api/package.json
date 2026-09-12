@@ -26,6 +26,7 @@
 		"@atcute/lex-cli": "^3.2.1",
 		"@atcute/lexicons": "^2.0.3",
 		"@cloudflare/workers-types": "^4.20260317.1",
+		"miniflare": "4.20260317.2",
 		"typescript": "^6.0.2",
 		"vitest": "^4.1.7",
 		"wrangler": "^4.77.0"
