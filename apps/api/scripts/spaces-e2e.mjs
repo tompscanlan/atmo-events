@@ -29,6 +29,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Miniflare } from 'miniflare';
 import {
 	SpacesProviderClient,
 	formatSpaceUri,
@@ -54,8 +55,14 @@ const MEMBER_HANDLE = 'spike-alice.opnmt.net';
 const NON_MEMBER_HANDLE = 'spike-mallory.opnmt.net';
 const GROUP_HANDLE = 'spike-group.opnmt.net';
 
-const PORT = Number(process.env.SPACES_E2E_PORT ?? 8788);
-const ORIGIN = `http://127.0.0.1:${PORT}`;
+/**
+ * The Worker is addressed in-process, so this host is a label on the request,
+ * not a socket anyone listens on. It must still parse as a URL.
+ */
+const ORIGIN = 'http://openmeet-atmo-api.invalid';
+/** Must match wrangler.jsonc, since the built bundle is what Miniflare runs. */
+const COMPATIBILITY_DATE = '2025-12-25';
+const QUEUE_NAME = 'openmeet-atmo-spaces';
 /** Discovery identity the Worker advertises; service-auth audiences follow it. */
 const SERVICE_ENDPOINT = process.env.SPACES_E2E_ENDPOINT ?? 'https://api.openmeet.test';
 const AUDIENCE = `did:web:${new URL(SERVICE_ENDPOINT).hostname}#spaces`;
@@ -125,62 +132,89 @@ function providerClient(session) {
 		endpoint: ORIGIN,
 		audience: AUDIENCE,
 		namespace: NAMESPACE,
-		session
+		session,
+		// Every worker-bound request goes through Miniflare's in-process
+		// dispatch, never a socket. See startWorker for why.
+		fetch: workerFetch
 	});
 }
 
+/** Set by startWorker; closed over by workerFetch and rawListSpaceRecords. */
+let miniflare;
+
+/**
+ * `fetch` against the Worker under test.
+ *
+ * `dispatchFetch` takes the URL only to populate `request.url`; ORIGIN is a
+ * placeholder host that never resolves and is never connected to.
+ */
+function workerFetch(url, init) {
+	if (!miniflare) throw new Error('worker not started');
+	return miniflare.dispatchFetch(String(url), init);
+}
+
+/**
+ * Boot the Worker in-process on workerd via Miniflare.
+ *
+ * NOT `wrangler dev`: in this dev container wrangler's dev server accepts the
+ * TCP connection and then never answers — measured against the unmodified
+ * upstream apps/api too, so it is the environment, not this Worker. Miniflare
+ * drives the same workerd runtime and the same D1/Queue emulation without the
+ * dev-server and proxy layer in front, and `dispatchFetch` needs no port.
+ *
+ * The bundle is built first by wrangler (`--dry-run --outdir`), so what runs
+ * here is the same artifact a deploy would upload.
+ */
 async function startWorker(stateDir) {
-	const key = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64');
-	const child = spawn(
-		'npx',
-		[
-			'wrangler',
-			'dev',
-			'--port',
-			String(PORT),
-			'--persist-to',
-			stateDir,
-			'--var',
-			`SPACES_CREDENTIAL_ENCRYPTION_KEY:${key}`,
-			'--var',
-			`PUBLIC_SERVICE_ENDPOINT:${SERVICE_ENDPOINT}`
-		],
-		{ cwd: API_DIR, stdio: ['ignore', 'pipe', 'pipe'], detached: true }
-	);
-	const log = [];
-	for (const stream of [child.stdout, child.stderr]) {
-		stream.setEncoding('utf8');
-		stream.on('data', (chunk) => log.push(chunk));
-	}
-	const stop = () => {
-		try {
-			process.kill(-child.pid, 'SIGTERM');
-		} catch {
-			/* already gone */
-		}
-	};
 	const started = Date.now();
-	const deadline = started + 120_000;
-	while (Date.now() < deadline) {
-		if (child.exitCode !== null) {
-			throw new Error(`wrangler dev exited early (${child.exitCode})\n${log.join('')}`);
+	const key = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64');
+	const outDir = join(stateDir, 'bundle');
+	await build(outDir);
+	miniflare = new Miniflare({
+		modules: true,
+		modulesRoot: outDir,
+		// wrangler names the bundle after the config `main`, i.e. src/worker.ts.
+		scriptPath: join(outDir, 'worker.js'),
+		compatibilityDate: COMPATIBILITY_DATE,
+		compatibilityFlags: ['nodejs_compat'],
+		d1Databases: { DB: 'openmeet-atmo-api-e2e' },
+		queueProducers: { SPACES_QUEUE: QUEUE_NAME },
+		queueConsumers: { [QUEUE_NAME]: { maxBatchSize: 10, maxBatchTimeout: 1, maxRetries: 3 } },
+		bindings: {
+			PUBLIC_SERVICE_ENDPOINT: SERVICE_ENDPOINT,
+			SPACES_CREDENTIAL_ENCRYPTION_KEY: key
+		},
+		defaultPersistRoot: stateDir
+	});
+	// Force the runtime up now so a startup failure is reported here rather
+	// than as a confusing first-request error.
+	await miniflare.ready;
+	const stop = () => {
+		const closing = miniflare?.dispose();
+		miniflare = undefined;
+		return closing;
+	};
+	return { stop, seconds: ((Date.now() - started) / 1000).toFixed(1) };
+}
+
+/** Build the deployable bundle with wrangler, so the e2e runs real output. */
+function build(outDir) {
+	return new Promise((resolve, reject) => {
+		const child = spawn('npx', ['wrangler', 'deploy', '--dry-run', '--outdir', outDir], {
+			cwd: API_DIR,
+			stdio: ['ignore', 'pipe', 'pipe']
+		});
+		const log = [];
+		for (const stream of [child.stdout, child.stderr]) {
+			stream.setEncoding('utf8');
+			stream.on('data', (chunk) => log.push(chunk));
 		}
-		try {
-			const response = await fetch(`${ORIGIN}/status`);
-			if (response.ok) {
-				return { stop, log, seconds: ((Date.now() - started) / 1000).toFixed(1) };
-			}
-			// A 500 here is a Worker startup error, not a race; surface it.
-			if (response.status >= 500) {
-				throw new Error(`worker /status returned ${response.status}: ${await response.text()}`);
-			}
-		} catch (error) {
-			if (!/fetch failed|ECONNREFUSED/.test(String(error.message))) throw error;
-		}
-		await new Promise((wake) => setTimeout(wake, 500));
-	}
-	stop();
-	throw new Error(`worker did not become ready\n${log.join('')}`);
+		child.on('error', reject);
+		child.on('close', (code) => {
+			if (code === 0) resolve();
+			else reject(new Error(`wrangler build exited ${code}\n${log.join('')}`));
+		});
+	});
 }
 
 /**
@@ -261,7 +295,7 @@ async function pollProjection(client, timeoutMs) {
 async function rawListSpaceRecords(authorization) {
 	const url = new URL(`/xrpc/${NAMESPACE}.event.listSpaceRecords`, ORIGIN);
 	url.searchParams.set('space', SPACE_URI);
-	const response = await fetch(url, {
+	const response = await workerFetch(url, {
 		headers: { accept: 'application/json', ...(authorization ? { authorization } : {}) }
 	});
 	return { status: response.status, body: await response.json().catch(() => ({})) };
@@ -283,7 +317,7 @@ async function main() {
 	let groupSession;
 	try {
 		worker = await startWorker(stateDir);
-		record(true, 'worker ready', `${worker.seconds}s on ${ORIGIN}, empty D1 at ${stateDir}`);
+		record(true, 'worker ready', `${worker.seconds}s in-process (workerd), empty D1 at ${stateDir}`);
 
 		const [member, nonMember, group] = await Promise.all([
 			pdsSession(MEMBER_HANDLE, passwords.alice),
@@ -346,7 +380,7 @@ async function main() {
 		);
 	} finally {
 		if (seededRecord && groupSession) await deleteSeededRecord(groupSession, seededRecord.rkey);
-		worker?.stop();
+		await worker?.stop();
 		await rm(stateDir, { recursive: true, force: true });
 	}
 }
