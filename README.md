@@ -85,6 +85,25 @@ Every paginated list — the home feed, a profile's hosting and past events, a t
 
 **The pieces.** `queries.ts` defines each list and mints its envelope. `cursor.ts` encodes/decodes envelopes and tags backend cursors. `events-load-more.ts` holds the resumer registry: it validates a decoded envelope's args and names which query to continue. Each route's `+page.server.ts` calls its query for page 1 and adds whatever else that page renders; `EventList.svelte` echoes the token on "load more" — keyed on the cursor, not on the page having events, since a query with a post-filter (`past-events`) can return a short or empty page while more pages remain. Adding a list means defining its query and registering it.
 
+## Live end-to-end proofs
+
+Two scripts run the two halves of the group model against the **dev fixture PDS** `https://pds.opnmt.net` (never production). Both print `PASS`/`FAIL` per check, end in `SUMMARY: N passed, M failed`, exit non-zero on failure, and delete every record they write.
+
+```bash
+node apps/web/scripts/groups-e2e.mjs    # the group: roster, roles, custodial authorship
+node apps/api/scripts/spaces-e2e.mjs    # the members-only slice: Spaces delegation and projection
+```
+
+**What the groups proof shows (9 checks).** A group bound to the existing custodial DID `did:plc:jcwgw6fcnb5vyoid7nz7sl26` gets exactly one active owner membership and the five legacy roles with their legacy bundle sizes (owner 16 / admin 14 / moderator 7 / member 7 / guest 1); a join under `require_approval` lands as a PENDING request and not on the roster; approval then promotion to admin adds `MANAGE_EVENTS`; the owner's event is persisted **authored by the group DID**; an admin who did not create that event edits it and the record is *still* the group's, with no copy in the admin's own repo — the co-editing-by-custody requirement, and the one legacy openmeet gets wrong by writing as the admin; a non-member's identical edit is refused; a member can leave and the owner cannot; and a location typed with no country is written *without* an address entry rather than refused (`community.lexicon.location.address` requires a country, so an address without one is not a valid record).
+
+Every authorship claim is re-read from the PDS with an unauthenticated `com.atproto.repo.getRecord` / `listRecords`, so it does not rest on the writer's return value.
+
+**What the Spaces proof shows (9 checks).** The group writes a record into its Space as its own custodian, a member's delegation token is exchanged for a DPoP-bound Space credential, the Space is synced and projected into the isolated tables, the member reads the record back, and both a non-member holding a valid service-auth token and an anonymous caller are refused.
+
+**How they run.** Both boot the real Worker code in-process on workerd via Miniflare and address it with `dispatchFetch` — `wrangler dev` and Miniflare's `getD1Database` magic proxy both accept the connection and never answer in the dev container, so neither script uses them. The groups script bundles `apps/web/scripts/groups-e2e.worker.ts` with Vite (a JSON door onto `$lib/groups/**`, holding no rule of its own) and runs the group layer on a scratch D1 that is deleted on exit; the Spaces script runs the bundle `wrangler deploy --dry-run` produces.
+
+**Credentials.** Fixture app passwords are read from `$HOME/.spaces-alpha-creds.env` (written by `infra/spaces-alpha/seed.sh`), never printed, and handed to the Worker as the same `GROUP_CREDENTIALS` secret production uses. A `401` from `createSession` means they are stale — re-run `infra/spaces-alpha/seed.sh --apply --reset-passwords`. Overrides: `GROUPS_E2E_PDS`, and `SPACES_E2E_PDS` / `SPACES_E2E_ENDPOINT` for the Spaces script.
+
 ## contributing
 
 open for contributions by all :)

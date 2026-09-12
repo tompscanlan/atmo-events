@@ -37,6 +37,7 @@ import {
 	deleteGroupEvent,
 	writeGroupEvent
 } from './server/event-writer';
+import { groupEventRecord } from './event-record';
 
 const slugField = v.pipe(v.string(), v.regex(GROUP_SLUG_PATTERN, 'Invalid group URL'));
 const didField = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,300}$/, 'Invalid DID'));
@@ -53,6 +54,20 @@ const checkboxField = v.pipe(
  *  the role union — a `check` leaves it `string`, and every repo call below
  *  takes a role, not a string. */
 const assignableRoleField = v.picklist(ASSIGNABLE_ROLES, 'Unknown role');
+
+/** The address lexicon's own constraint (country is 2..10 chars), so a bad code
+ *  is refused with a message the form can show rather than surfacing later as
+ *  "that is not a valid community.lexicon.calendar.event record". An EMPTY
+ *  field means "no country", which is not an error — it means no address entry
+ *  is written (see ./event-record.ts). */
+const countryField = v.pipe(
+	v.string(),
+	v.trim(),
+	v.check(
+		(value) => value === '' || (value.length >= 2 && value.length <= 10),
+		'Country must be an ISO code, 2 to 10 characters'
+	)
+);
 
 /** The three things every handler needs, plus the caller's resolved
  *  permissions. Throws 404 for an unknown slug and 401 when not signed in. */
@@ -341,6 +356,7 @@ export const saveGroupEventForm = form(
 		startsAt: v.pipe(v.string(), v.minLength(1)),
 		endsAt: v.optional(v.string()),
 		locationName: v.optional(v.pipe(v.string(), v.maxLength(300))),
+		locationCountry: v.optional(countryField),
 		createdAt: v.optional(v.string())
 	}),
 	async (data): Promise<GroupFormResult<{ uri: string; repo: string; rkey: string }>> => {
@@ -356,20 +372,15 @@ export const saveGroupEventForm = form(
 			return { ok: false, error: 'End time is not a valid date' };
 		}
 
-		const record: Record<string, unknown> = {
+		const record = groupEventRecord({
 			name: data.name,
-			createdAt: data.createdAt || new Date().toISOString(),
+			description: data.description,
 			startsAt: startsAt.toISOString(),
-			mode: 'community.lexicon.calendar.event#inperson',
-			status: 'community.lexicon.calendar.event#scheduled'
-		};
-		if (data.description) record.description = data.description;
-		if (endsAt) record.endsAt = endsAt.toISOString();
-		if (data.locationName) {
-			record.locations = [
-				{ $type: 'community.lexicon.location.address', name: data.locationName, country: '' }
-			];
-		}
+			endsAt: endsAt?.toISOString() ?? null,
+			locationName: data.locationName,
+			locationCountry: data.locationCountry,
+			createdAt: data.createdAt
+		});
 
 		try {
 			// The gate owns the permission decision; it re-resolves the caller's
