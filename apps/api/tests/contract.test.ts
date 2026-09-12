@@ -3,7 +3,10 @@ import { describePublicService } from '@atmo-dev/contrail';
 import { createSqliteDatabase } from '@atmo-dev/contrail/sqlite';
 import { createWorker } from '@atmo-dev/contrail/worker';
 import { lexicons } from '../lexicons/generated';
-import { config } from '../src/contrail.config';
+import { config, contrailConfigFor } from '../src/contrail.config';
+
+/** Stand-in deployed origin; the service identity follows the endpoint. */
+const ENDPOINT = 'https://api.openmeet.example';
 
 const EXPECTED_METHODS = [
 	'rsvp.atmo.event.getRecord',
@@ -23,7 +26,7 @@ const EXPECTED_PROTECTED_METHODS = [
 	{ id: 'rsvp.atmo.notifyOfUpdate', type: 'procedure' }
 ];
 
-describe('api.atmo.rsvp public contract', () => {
+describe('openmeet-atmo public contract', () => {
 	it('keeps profile and follow projections internal and validation disabled', () => {
 		expect(config.validation).toBeUndefined();
 		expect(config.collections.profile?.methods).toEqual([]);
@@ -61,8 +64,8 @@ describe('api.atmo.rsvp public contract', () => {
 
 	it('advertises the exact generated calendar API', async () => {
 		const service = await describePublicService(
-			config,
-			{ endpoint: 'https://api.atmo.rsvp' },
+			contrailConfigFor(ENDPOINT),
+			{ endpoint: ENDPOINT },
 			lexicons
 		);
 
@@ -71,10 +74,10 @@ describe('api.atmo.rsvp public contract', () => {
 		expect(service.manifest.methods).not.toContain('rsvp.atmo.getOverview');
 		expect(service.manifest.serviceAuth).toEqual({
 			type: 'atproto-service-auth',
-			serviceDid: 'did:web:api.atmo.rsvp',
-			audience: 'did:web:api.atmo.rsvp#contrail',
+			serviceDid: 'did:web:api.openmeet.example',
+			audience: 'did:web:api.openmeet.example#contrail',
 			scope:
-				'rpc?aud=did:web:api.atmo.rsvp%23contrail&lxm=rsvp.atmo.getFeed&lxm=rsvp.atmo.notifyOfUpdate',
+				'rpc?aud=did:web:api.openmeet.example%23contrail&lxm=rsvp.atmo.getFeed&lxm=rsvp.atmo.notifyOfUpdate',
 			methods: EXPECTED_PROTECTED_METHODS
 		});
 		expect(service.lexicons.map((document) => document.id)).toEqual(
@@ -95,33 +98,33 @@ describe('api.atmo.rsvp public contract', () => {
 
 	it('passes synchronous Worker startup validation', () => {
 		expect(() =>
-			createWorker(config, {
+			createWorker(contrailConfigFor(ENDPOINT), {
 				lexicons,
-				publicService: { endpoint: 'https://api.atmo.rsvp' }
+				publicService: { endpoint: ENDPOINT }
 			})
 		).not.toThrow();
 	});
 
 	it('publishes its service DID and permits browser auth headers', async () => {
-		const worker = createWorker(config, {
+		const worker = createWorker(contrailConfigFor(ENDPOINT), {
 			lexicons,
-			publicService: { endpoint: 'https://api.atmo.rsvp' }
+			publicService: { endpoint: ENDPOINT }
 		});
 		const env = { DB: createSqliteDatabase(':memory:') };
-		const did = await worker.fetch(new Request('https://api.atmo.rsvp/.well-known/did.json'), env);
+		const did = await worker.fetch(new Request(`${ENDPOINT}/.well-known/did.json`), env);
 		expect(did.status).toBe(200);
 		expect(await did.json()).toMatchObject({
-			id: 'did:web:api.atmo.rsvp',
+			id: 'did:web:api.openmeet.example',
 			service: [
 				{
-					id: 'did:web:api.atmo.rsvp#contrail',
-					serviceEndpoint: 'https://api.atmo.rsvp'
+					id: 'did:web:api.openmeet.example#contrail',
+					serviceEndpoint: ENDPOINT
 				}
 			]
 		});
 
 		const preflight = await worker.fetch(
-			new Request('https://api.atmo.rsvp/xrpc/rsvp.atmo.getFeed', {
+			new Request(`${ENDPOINT}/xrpc/rsvp.atmo.getFeed`, {
 				method: 'OPTIONS',
 				headers: {
 					origin: 'https://client.example',

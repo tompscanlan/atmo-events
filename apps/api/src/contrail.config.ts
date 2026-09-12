@@ -1,5 +1,10 @@
 import type { ContrailConfig } from '@atmo-dev/contrail';
 import { listAuthored, listDiscoverable, listDiscoverableByUris, listTalks } from './queries';
+import {
+	CONTRAIL_SERVICE_FRAGMENT,
+	DEFAULT_PUBLIC_SERVICE_ENDPOINT,
+	serviceAudience
+} from './service';
 
 export const config: ContrailConfig = {
 	namespace: 'rsvp.atmo',
@@ -7,11 +12,13 @@ export const config: ContrailConfig = {
 	jetstreams: ['wss://jetstream1.us-east.bsky.network'],
 	orderedSource: {
 		source: 'jetstream',
-		epoch: 'api-atmo-rsvp-primary-2026-08'
+		epoch: 'openmeet-atmo-api-primary-2026-09'
 	},
 	notify: true,
 	serviceAuth: {
-		audience: 'did:web:api.atmo.rsvp#contrail',
+		// Rebound per serving origin by contrailConfigFor; this default keeps the
+		// checked-in config self-consistent with DEFAULT_PUBLIC_SERVICE_ENDPOINT.
+		audience: serviceAudience(DEFAULT_PUBLIC_SERVICE_ENDPOINT, CONTRAIL_SERVICE_FRAGMENT),
 		methods: ['getFeed', 'notifyOfUpdate']
 	},
 	maintenance: { optimize: true },
@@ -82,3 +89,18 @@ export const config: ContrailConfig = {
 		}
 	}
 };
+
+/**
+ * The public config as served from one origin. Contrail only publishes
+ * `/.well-known/did.json` when the service audience resolves its DID document
+ * back to the serving origin, so the audience follows the endpoint.
+ */
+export function contrailConfigFor(endpoint: string): ContrailConfig {
+	return {
+		...config,
+		serviceAuth: {
+			...config.serviceAuth!,
+			audience: serviceAudience(endpoint, CONTRAIL_SERVICE_FRAGMENT)
+		}
+	};
+}

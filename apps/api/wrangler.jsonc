@@ -1,24 +1,45 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "atmo-rsvp-contrail",
+	"name": "openmeet-atmo-api",
 	"main": "src/worker.ts",
 	"compatibility_date": "2025-12-25",
+	// The Spaces runtime pulls in @atproto/* protocol code that needs Node built-ins.
+	"compatibility_flags": ["nodejs_compat"],
 	"observability": {
 		"enabled": true
 	},
-	"routes": [
-		{
-			"pattern": "api.atmo.rsvp",
-			"custom_domain": true
-		}
-	],
+	// Canonical origin of this deployment. The service DID (`did:web:<host>`), both
+	// `#contrail` and `#spaces` audiences, and the published did.json follow it, so a
+	// deployment overrides exactly this value. The default is the reserved-TLD
+	// (RFC 6761) dev origin; no production domain is claimed from a committed file.
+	"vars": {
+		"PUBLIC_SERVICE_ENDPOINT": "https://api.openmeet.test"
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",
-			"database_name": "atmo-rsvp-contrail-gNEXT",
+			"database_name": "openmeet-atmo-api",
 			"database_id": "00000000-0000-0000-0000-000000000000"
 		}
 	],
+	// Space reconcile/repo-sync jobs. The producer binding is required; without it the
+	// Spaces runtime falls back to `waitUntil`, which is only acceptable in dev.
+	"queues": {
+		"producers": [
+			{
+				"binding": "SPACES_QUEUE",
+				"queue": "openmeet-atmo-spaces"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "openmeet-atmo-spaces",
+				"max_batch_size": 10,
+				"max_batch_timeout": 1,
+				"max_retries": 3
+			}
+		]
+	},
 	"triggers": {
 		"crons": ["*/1 * * * *"]
 	}
