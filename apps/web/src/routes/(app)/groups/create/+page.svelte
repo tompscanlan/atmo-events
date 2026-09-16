@@ -121,18 +121,9 @@
 			</div>
 		</div>
 
-		<div class="flex flex-col gap-1.5">
-			<Label for="group-space-uri">Space URI (optional)</Label>
-			<Input
-				id="group-space-uri"
-				name="spaceUri"
-				placeholder="at://did:plc:…/space/net.openmeet.group/kona"
-				class="font-mono"
-			/>
-			<p class="text-base-500 dark:text-base-400 text-xs">
-				The members-only slice. Bound, never created here.
-			</p>
-		</div>
+		<!-- The Space URI field is gone: creating a group now CREATES its `about`
+		     and `members` spaces on the group's own PDS account, so
+		     there is nothing to paste. The URIs appear on the group page. -->
 
 		<label class="flex items-center gap-2 text-sm">
 			<input type="checkbox" name="requireApproval" checked class="size-4" />

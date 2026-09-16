@@ -1,5 +1,5 @@
 // The group permission MODEL: vocabulary fixed in code, bundles stored as data
-// (bead om-0f0yu, decided 2026-09-08). Roles and their permission bundles are
+// (decided 2026-09-08). Roles and their permission bundles are
 // D1 rows so an operator can retune one group without a deploy; the set of
 // permission NAMES is not data, because every name that means anything has a
 // handler behind it and a row naming a permission no handler reads is a lie.

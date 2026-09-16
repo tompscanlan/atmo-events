@@ -3,7 +3,7 @@
 // A group is a custodial PDS account. The app holds that account's credential,
 // so a group event is authored by the GROUP DID even though a human admin
 // pressed the button — that is the entire point of the write gate
-// ($lib/groups/server/event-writer.ts, bead om-3e5i).
+// ($lib/groups/server/event-writer.ts).
 //
 // Credentials come from one Worker secret, GROUP_CREDENTIALS: a JSON map of
 // group DID -> { service, identifier, password }. One secret keeps the number

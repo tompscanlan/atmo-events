@@ -10,13 +10,7 @@ import {
 	type GroupPermission,
 	type GroupRoleName
 } from '../permissions';
-import {
-	OPENMEET_SPACE_TYPE,
-	type CallerMembership,
-	type GroupRow,
-	type JoinRequestRow,
-	type MemberRow
-} from '../types';
+import type { CallerMembership, GroupRow, JoinRequestRow, MemberRow } from '../types';
 import { ensureGroupsSchema } from './schema';
 
 export interface CreateGroupInput {
@@ -34,7 +28,11 @@ export interface CreateGroupInput {
 	locationLat?: number | null;
 	locationLng?: number | null;
 	locationTimezone?: string | null;
-	spaceUri?: string | null;
+	/** No `spaceUri`: spaces are PROVISIONED at create (`./spaces.ts`), never
+	 *  supplied. The row is inserted with both URIs NULL and filled by
+	 *  `recordGroupSpaces` once the PDS has confirmed them — in that order,
+	 *  because the space key IS the slug and the INSERT is what proves the slug
+	 *  is free. */
 }
 
 export interface UpdateGroupInput {
@@ -46,7 +44,10 @@ export interface UpdateGroupInput {
 	locationName?: string | null;
 	locationAddress?: string | null;
 	locationTimezone?: string | null;
-	spaceUri?: string | null;
+	/** Deliberately absent: a group's space URIs are derived from its own DID,
+	 *  the decided space types and its slug, so there is nothing for a settings
+	 *  form to edit. Letting one be typed in allowed a group to point at a space
+	 *  it does not own. */
 }
 
 /** Thrown for a rule the SQL refused. `reason` is a stable machine tag so a
@@ -119,7 +120,8 @@ async function guard<T>(work: () => Promise<T>): Promise<T> {
 
 const GROUP_COLUMNS = `id, group_did, owner_did, name, slug, description, status, visibility,
 	require_approval, image_cid, image_mime, image_size, location_name, location_address,
-	location_lat, location_lng, location_timezone, space_uri, space_type, created_at, updated_at`;
+	location_lat, location_lng, location_timezone, about_space_uri, members_space_uri,
+	created_at, updated_at`;
 
 /** Creates the group, seeds the five legacy roles with their default bundles,
  *  and installs exactly one ACTIVE OWNER membership — as a single D1 batch,
@@ -142,8 +144,8 @@ export async function createGroup(db: D1Database, input: CreateGroupInput): Prom
 			.prepare(
 				`INSERT INTO groups (id, group_did, owner_did, name, slug, description, status,
 					visibility, require_approval, location_name, location_address, location_lat,
-					location_lng, location_timezone, space_uri, space_type, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					location_lng, location_timezone, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.bind(
 				groupId,
@@ -160,8 +162,6 @@ export async function createGroup(db: D1Database, input: CreateGroupInput): Prom
 				input.locationLat ?? null,
 				input.locationLng ?? null,
 				input.locationTimezone ?? null,
-				input.spaceUri ?? null,
-				OPENMEET_SPACE_TYPE,
 				now,
 				now
 			)
@@ -267,7 +267,6 @@ export async function updateGroup(
 	if (input.locationName !== undefined) push('location_name', input.locationName);
 	if (input.locationAddress !== undefined) push('location_address', input.locationAddress);
 	if (input.locationTimezone !== undefined) push('location_timezone', input.locationTimezone);
-	if (input.spaceUri !== undefined) push('space_uri', input.spaceUri);
 	if (sets.length === 0) return;
 	push('updated_at', Date.now());
 	values.push(groupId);
@@ -275,6 +274,30 @@ export async function updateGroup(
 		db
 			.prepare(`UPDATE groups SET ${sets.join(', ')} WHERE id = ?`)
 			.bind(...values)
+			.run()
+	);
+}
+
+/** Records the two space URIs a successful provisioning returned.
+ *
+ *  Separate from `updateGroup` on purpose: this is the only writer of these
+ *  columns, it is not user input, and keeping it out of the settings path is
+ *  what makes "a group's space URIs are not editable" true rather than merely
+ *  intended. Writes both or neither, so a group is never half-provisioned in
+ *  D1 even if it is on the PDS. */
+export async function recordGroupSpaces(
+	db: D1Database,
+	groupId: string,
+	uris: { aboutSpaceUri: string; membersSpaceUri: string }
+): Promise<void> {
+	await ensureGroupsSchema(db);
+	await guard(() =>
+		db
+			.prepare(
+				`UPDATE groups SET about_space_uri = ?, members_space_uri = ?, updated_at = ?
+				 WHERE id = ?`
+			)
+			.bind(uris.aboutSpaceUri, uris.membersSpaceUri, Date.now(), groupId)
 			.run()
 	);
 }

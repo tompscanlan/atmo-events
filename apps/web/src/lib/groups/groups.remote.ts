@@ -14,7 +14,7 @@ import { ASSIGNABLE_ROLES, can } from './permissions';
 import type { GroupFormFailure, GroupFormResult } from './form-result';
 import { GROUP_SLUG_PATTERN } from './slug';
 import { GROUP_STATUSES, GROUP_VISIBILITIES } from './types';
-import { AUTO_MINT_GROUP_DID, custodialDids } from './server/credentials';
+import { AUTO_MINT_GROUP_DID, credentialFor, custodialDids } from './server/credentials';
 import {
 	GroupRuleError,
 	addMember,
@@ -24,6 +24,7 @@ import {
 	decideJoinRequest,
 	getCallerMembership,
 	getGroupBySlug,
+	recordGroupSpaces,
 	removeMember,
 	requestJoin,
 	setMemberStatus,
@@ -37,6 +38,7 @@ import {
 	deleteGroupEvent,
 	writeGroupEvent
 } from './server/event-writer';
+import { GroupSpaceError, pdsProvisioner, provisionGroupSpaces } from './server/spaces';
 import { groupEventRecord } from './event-record';
 
 const slugField = v.pipe(v.string(), v.regex(GROUP_SLUG_PATTERN, 'Invalid group URL'));
@@ -109,7 +111,8 @@ export const createGroupForm = form(
 		visibility: v.picklist(GROUP_VISIBILITIES),
 		status: v.picklist(GROUP_STATUSES),
 		requireApproval: checkboxField,
-		spaceUri: v.optional(v.pipe(v.string(), v.maxLength(512))),
+		// No `spaceUri` field: the group's two spaces are CREATED here now, not
+		// bound to a string someone pasted in.
 		locationName: v.optional(v.pipe(v.string(), v.maxLength(200))),
 		locationAddress: v.optional(v.pipe(v.string(), v.maxLength(400))),
 		locationTimezone: v.optional(v.pipe(v.string(), v.maxLength(80)))
@@ -140,9 +143,9 @@ export const createGroupForm = form(
 			};
 		}
 
-		let slug: string;
+		let group;
 		try {
-			const group = await createGroup(platform!.env.DB, {
+			group = await createGroup(platform!.env.DB, {
 				groupDid: data.groupDid,
 				ownerDid: locals.did,
 				name: data.name,
@@ -151,16 +154,36 @@ export const createGroupForm = form(
 				status: data.status,
 				visibility: data.visibility,
 				requireApproval: data.requireApproval,
-				spaceUri: data.spaceUri || null,
 				locationName: data.locationName || null,
 				locationAddress: data.locationAddress || null,
 				locationTimezone: data.locationTimezone || null
 			});
-			slug = group.slug;
 		} catch (e) {
 			return formError(e);
 		}
-		redirect(303, `/groups/${slug}`);
+
+		// PROVISION AFTER THE INSERT, deliberately. The space key is the slug, and
+		// the INSERT is what proves the slug is free — provisioning first would
+		// create spaces for a slug that the unique constraint then rejects, and
+		// those spaces would be unreachable garbage under the group's DID.
+		const cred = credentialFor(env, data.groupDid);
+		if (!cred) throw new GroupCredentialError(data.groupDid);
+		try {
+			const uris = await provisionGroupSpaces(pdsProvisioner(cred, data.groupDid), group.slug);
+			await recordGroupSpaces(platform!.env.DB, group.id, uris);
+		} catch (e) {
+			// The group EXISTS at this point, so saying "creation failed" would be a
+			// lie. Name what is missing instead: `provisionGroupSpaces` is idempotent
+			// (SpaceAlreadyExists resolves to the deterministic URI), so re-running
+			// create for the same slug completes the group rather than duplicating it.
+			const detail = e instanceof GroupSpaceError ? e.message : String(e);
+			return {
+				ok: false,
+				error: `${data.slug} was created, but its spaces were not provisioned: ${detail}`
+			};
+		}
+
+		redirect(303, `/groups/${group.slug}`);
 	}
 );
 
@@ -171,8 +194,7 @@ export const updateGroupForm = form(
 		description: v.optional(v.pipe(v.string(), v.maxLength(4000))),
 		visibility: v.picklist(GROUP_VISIBILITIES),
 		status: v.picklist(GROUP_STATUSES),
-		requireApproval: checkboxField,
-		spaceUri: v.optional(v.pipe(v.string(), v.maxLength(512)))
+		requireApproval: checkboxField
 	}),
 	async (data): Promise<GroupFormResult> => {
 		const { db, group, membership } = await context(data.slug);
@@ -185,8 +207,7 @@ export const updateGroupForm = form(
 				description: data.description || null,
 				status: data.status,
 				visibility: data.visibility,
-				requireApproval: data.requireApproval,
-				spaceUri: data.spaceUri || null
+				requireApproval: data.requireApproval
 			});
 		} catch (e) {
 			return formError(e);

@@ -14,10 +14,30 @@ export type MembershipStatus = (typeof MEMBERSHIP_STATUSES)[number];
 export const JOIN_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'withdrawn'] as const;
 export type JoinRequestStatus = (typeof JOIN_REQUEST_STATUSES)[number];
 
-/** The space TYPE every openmeet group uses. Space types are host-side kinds,
- *  so this matches the live fixture on pds.opnmt.net; the RECORDS inside the
- *  space are the cross-app `community.lexicon.calendar.*` lexicons. */
-export const OPENMEET_SPACE_TYPE = 'net.openmeet.group';
+/** The two space TYPES an openmeet group owns.
+ *
+ *  `community.opensocial.*` was the first candidate and does not serve. The
+ *  published suite under that namespace is a community-management product's
+ *  XRPC surface and carries no space type at all; the `about` / `members` space
+ *  names live only in a design draft. The namespace also does not resolve —
+ *  there is no `_lexicon` TXT record for it, where `community.lexicon.*` has
+ *  one — and the domain belongs to someone else, with its ownership still an
+ *  open question. Writing under an authority we do not hold, for names nobody
+ *  publishes, buys nothing.
+ *
+ *  So these are ours, under a domain we hold, with an eventual proposal to the
+ *  community lexicon in mind — which is why the leaves match the draft's names.
+ *  Migrating then is a prefix change rather than a reshape.
+ *
+ *  The segment is `space`, NOT `group`, because `net.openmeet.group.*` is
+ *  already the XRPC method prefix the Spaces provider serves. Nesting space
+ *  types inside the method namespace would make one name mean two things
+ *  permanently.
+ *
+ *  Host-side kinds, not record lexicons: the RECORDS inside a space are the
+ *  cross-app `community.lexicon.*` ones. */
+export const ABOUT_SPACE_TYPE = 'net.openmeet.space.about';
+export const MEMBERS_SPACE_TYPE = 'net.openmeet.space.members';
 
 /** `groups` row, verbatim. Snake_case because it is what D1 returns — mapping
  *  it to camelCase here would only add a layer that can drift from the SQL. */
@@ -39,8 +59,11 @@ export interface GroupRow {
 	location_lat: number | null;
 	location_lng: number | null;
 	location_timezone: string | null;
-	space_uri: string | null;
-	space_type: string;
+	/** at://<group_did>/space/<type>/<slug>, or NULL before provisioning. Two
+	 *  columns and no `space_type`: a space URI already carries its type, and
+	 *  the type is now a constant per space, not per group. */
+	about_space_uri: string | null;
+	members_space_uri: string | null;
 	created_at: number;
 	updated_at: number;
 }

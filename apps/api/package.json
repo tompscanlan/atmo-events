@@ -19,8 +19,8 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@atmo-dev/contrail": "link:../../../wt-contrail-spaces-rebase/packages/contrail",
-		"@atmo-dev/contrail-spaces-alpha": "link:../../../wt-contrail-spaces-rebase/packages/contrail-spaces-alpha"
+		"@atmo-dev/contrail": "link:../../../wt-contrail-alpha0913/packages/contrail",
+		"@atmo-dev/contrail-spaces-alpha": "link:../../../wt-contrail-alpha0913/packages/contrail-spaces-alpha"
 	},
 	"devDependencies": {
 		"@atcute/lex-cli": "^3.2.1",

@@ -70,10 +70,16 @@
 			<dt class="inline">Joining:</dt>
 			<dd class="inline">{group.require_approval ? 'by approval' : 'open'}</dd>
 		</div>
-		{#if group.space_uri}
+		{#if group.about_space_uri}
 			<div class="w-full">
-				<dt class="inline">Space:</dt>
-				<dd class="inline font-mono text-xs break-all">{group.space_uri}</dd>
+				<dt class="inline">About space:</dt>
+				<dd class="inline font-mono text-xs break-all">{group.about_space_uri}</dd>
+			</div>
+		{/if}
+		{#if group.members_space_uri}
+			<div class="w-full">
+				<dt class="inline">Members space:</dt>
+				<dd class="inline font-mono text-xs break-all">{group.members_space_uri}</dd>
 			</div>
 		{/if}
 	</dl>
@@ -213,15 +219,9 @@
 							</select>
 						</div>
 					</div>
-					<div class="flex flex-col gap-1.5">
-						<Label for="settings-space">Space URI</Label>
-						<Input
-							id="settings-space"
-							name="spaceUri"
-							value={group.space_uri ?? ''}
-							class="font-mono"
-						/>
-					</div>
+					<!-- No Space URI field: both spaces are provisioned at create under the
+					     group's own DID, so there is nothing here to edit. They are shown
+					     read-only in the header above. -->
 					<label class="flex items-center gap-2 text-sm">
 						<input
 							type="checkbox"

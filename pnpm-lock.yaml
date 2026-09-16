@@ -28,11 +28,11 @@ importers:
   apps/api:
     dependencies:
       '@atmo-dev/contrail':
-        specifier: link:../../../wt-contrail-spaces-rebase/packages/contrail
-        version: link:../../../wt-contrail-spaces-rebase/packages/contrail
+        specifier: link:../../../wt-contrail-alpha0913/packages/contrail
+        version: link:../../../wt-contrail-alpha0913/packages/contrail
       '@atmo-dev/contrail-spaces-alpha':
-        specifier: link:../../../wt-contrail-spaces-rebase/packages/contrail-spaces-alpha
-        version: link:../../../wt-contrail-spaces-rebase/packages/contrail-spaces-alpha
+        specifier: link:../../../wt-contrail-alpha0913/packages/contrail-spaces-alpha
+        version: link:../../../wt-contrail-alpha0913/packages/contrail-spaces-alpha
     devDependencies:
       '@atcute/lex-cli':
         specifier: ^3.2.1

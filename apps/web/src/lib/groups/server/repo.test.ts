@@ -58,7 +58,10 @@ describe('createGroup', () => {
 		expect(members).toHaveLength(1);
 		expect(members[0]).toMatchObject({ did: OWNER, role: 'owner', status: 'active' });
 		expect(created.require_approval).toBe(1);
-		expect(created.space_type).toBe('net.openmeet.group');
+		// createGroup does not provision: the spaces are a PDS call the caller makes
+		// next, so a fresh row says "not yet" rather than claiming a space exists.
+		expect(created.about_space_uri).toBeNull();
+		expect(created.members_space_uri).toBeNull();
 	});
 
 	it('gives the owner every enforced permission and the applicant none', async () => {

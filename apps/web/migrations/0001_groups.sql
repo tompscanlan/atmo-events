@@ -1,12 +1,15 @@
 -- Groups, roles, roster and join requests for openmeet-atmo.
 --
 -- A GROUP is a custodial PDS account — `group_did` — whose signing credential
--- the app holds. Roster, roles and permissions are APPLICATION ROWS, never
--- protocol records (bead om-0f0yu, decided 2026-09-08): there is no membership
--- lexicon in v1. The group's PUBLIC event slice lives in the group DID's public
--- repo (anonymously readable, indexable by contrail); the members-only slice
--- lives in the space named by `space_uri`, because a Spaces space is never
--- anonymously readable — not even with a public policy.
+-- the app holds. Roster, roles and permissions are APPLICATION ROWS for now:
+-- there is no membership Lexicon here, and inventing one before the standard
+-- settles would be a guess we have to live with. The group's PUBLIC event slice
+-- lives in the group DID's public repo (anonymously readable, indexable by
+-- contrail); its CONTROL PLANE lives in two spaces on the same account —
+-- `about_space_uri` (public read) and `members_space_uri` (member-list read) —
+-- because a Spaces space is never anonymously readable, not even under a public
+-- policy. The records that move into those spaces — profile, rules, roles,
+-- membership, access — land in later changes.
 --
 -- Every invariant the app depends on is enforced HERE, not only in TypeScript:
 --   * exactly one owner role per group  — `groups_seed_owner_role` creates it,
@@ -54,10 +57,17 @@ CREATE TABLE IF NOT EXISTS groups (
 	location_lat REAL,
 	location_lng REAL,
 	location_timezone TEXT,
-	-- at://<group_did>/space/<space_type>/<skey>. NULL until a space is bound;
-	-- the `/space/` segment is part of the URI form, not a typo.
-	space_uri TEXT,
-	space_type TEXT NOT NULL DEFAULT 'net.openmeet.group',
+	-- at://<group_did>/space/<type>/<slug> for each of the group's two spaces,
+	-- NULL until create provisions them. The `/space/` segment is part of the URI
+	-- form, not a typo. No `space_type` column: a space URI already carries its
+	-- type, and the type is now a constant per space
+	-- (net.openmeet.space.about / .members) rather than a per-group value.
+	--
+	-- Edited in place rather than added as a second migration on purpose: this
+	-- file is the single copy of the DDL (server/schema.ts imports it `?raw`),
+	-- every statement is IF NOT EXISTS, and no deployment has this table yet.
+	about_space_uri TEXT,
+	members_space_uri TEXT,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
 )

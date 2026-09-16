@@ -219,17 +219,21 @@ describe('group row defaults and domains', () => {
 		});
 	});
 
-	it('defaults status to draft, visibility to public and the space type to the openmeet kind', () => {
+	it('defaults status to draft, visibility to public, and both space URIs to unprovisioned', () => {
 		insertGroup('g1', 'did:plc:owner');
 		expect(
 			db
-				.prepare('SELECT status, visibility, space_type, space_uri FROM groups WHERE id = ?')
+				.prepare(
+					'SELECT status, visibility, about_space_uri, members_space_uri FROM groups WHERE id = ?'
+				)
 				.get('g1')
 		).toEqual({
 			status: 'draft',
 			visibility: 'public',
-			space_type: 'net.openmeet.group',
-			space_uri: null
+			// NULL, not a default type: a group's spaces exist once the PDS has
+			// confirmed them, and the row must be able to say "not yet".
+			about_space_uri: null,
+			members_space_uri: null
 		});
 	});
 

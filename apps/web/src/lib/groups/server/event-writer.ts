@@ -1,4 +1,4 @@
-// THE WRITE GATE (bead om-3e5i).
+// THE WRITE GATE.
 //
 // Every write helper in $lib/atproto/server/repo.remote.ts hard-sets
 // `repo: locals.did`, and must keep doing so: those are the human's own repo
@@ -65,6 +65,15 @@ export interface GroupRepoWrite {
 	rkey: string;
 	record: Record<string, unknown>;
 	intent: 'create' | 'update' | 'delete';
+	/** Space-ref when this record belongs in one of the group's spaces
+	 *  (`$lib/groups/server/spaces.ts`), absent when it belongs in the group's
+	 *  PUBLIC repo.
+	 *
+	 *  Both shapes stay live on purpose. Public group EVENTS must remain plain
+	 *  repo records — that is what Jetstream sees and what contrail indexes, and
+	 *  a space is never anonymously readable. The CONTROL PLANE moves into
+	 *  spaces. So the target is per-write, not per-writer. */
+	space?: string;
 }
 
 /** The transport half of the gate: takes an already-authorised write and puts
@@ -73,12 +82,18 @@ export interface GroupRepoWrite {
  *  integration test asserts the same object the unit test does. */
 export type GroupRepoWriter = (write: GroupRepoWrite) => Promise<{ uri: string; cid: string }>;
 
-/** The real transport: a password session for the group account, then a plain
- *  repo write. `expectDid` is checked against the session the PDS returns, so a
- *  mis-keyed credential map cannot silently author a group's events elsewhere. */
+/** The real transport: a password session for the group account, then the write.
+ *  `expectDid` is checked against the session the PDS returns, so a mis-keyed
+ *  credential map cannot silently author a group's events elsewhere.
+ *
+ *  Two method families, chosen by `write.space`: `com.atproto.repo.*` for the
+ *  group's public repo, `com.atproto.space.*` for a record inside one of its
+ *  spaces. The space methods take BOTH `space` and `repo` — `repo` is the DID
+ *  whose slice inside the space is being written, which for every authority
+ *  record is the group itself. */
 export function pdsWriter(cred: GroupCredential, groupDid: string): GroupRepoWriter {
 	return async (write) => {
-		const { client } = await groupClient(cred, groupDid);
+		const { client, handle } = await groupClient(cred, groupDid);
 		const collection = write.collection as `${string}.${string}.${string}`;
 		// `repo` comes off a D1 row, so it is a plain string until it is checked.
 		// @atcute's input types want an ActorIdentifier, and the check is the one
@@ -88,28 +103,67 @@ export function pdsWriter(cred: GroupCredential, groupDid: string): GroupRepoWri
 		if (!isActorIdentifier(repo)) {
 			throw new GroupRecordError(`${write.repo} is not a usable repo identifier`);
 		}
+		const space = write.space;
+
+		// The space methods go through the raw handler because they are not in the
+		// generated lexicon set; the repo methods stay on the typed client, which
+		// validates their inputs. See `groupClient` for why this split is honest
+		// rather than a workaround.
+		const sendSpace = async (nsid: string, input: Record<string, unknown>) => {
+			const res = await handle(`/xrpc/${nsid}`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ space, repo, collection, ...input })
+			});
+			const data: unknown = await res.json().catch(() => null);
+			if (!res.ok) throw new Error(`${nsid} failed: ${res.status} ${JSON.stringify(data)}`);
+			return data;
+		};
 
 		if (write.intent === 'delete') {
-			const res = await client.post('com.atproto.repo.deleteRecord', {
-				input: { repo, collection, rkey: write.rkey }
-			});
-			if (!res.ok) throw new Error(`deleteRecord failed: ${JSON.stringify(res.data)}`);
+			if (space) {
+				await sendSpace('com.atproto.space.deleteRecord', { rkey: write.rkey });
+			} else {
+				const res = await client.post('com.atproto.repo.deleteRecord', {
+					input: { repo, collection, rkey: write.rkey }
+				});
+				if (!res.ok) throw new Error(`deleteRecord failed: ${JSON.stringify(res.data)}`);
+			}
+			// deleteRecord returns no useful body in either family, so the URI is
+			// rebuilt. A space record's URI is still authored by `repo`: the space
+			// scopes access, it does not reparent the record.
 			return { uri: `at://${write.repo}/${write.collection}/${write.rkey}`, cid: '' };
 		}
 
-		const nsid =
-			write.intent === 'create' ? 'com.atproto.repo.createRecord' : 'com.atproto.repo.putRecord';
-		const res = await client.post(nsid, {
-			input: {
-				repo,
-				collection,
-				rkey: write.rkey,
-				record: write.record
-			}
-		});
-		if (!res.ok) throw new Error(`${nsid} failed: ${JSON.stringify(res.data)}`);
-		const data = res.data as { uri: string; cid: string };
-		return { uri: data.uri, cid: data.cid };
+		const create = write.intent === 'create';
+		let body: unknown;
+		if (space) {
+			body = await sendSpace(
+				create ? 'com.atproto.space.createRecord' : 'com.atproto.space.putRecord',
+				{ rkey: write.rkey, record: write.record }
+			);
+		} else {
+			const nsid = create ? 'com.atproto.repo.createRecord' : 'com.atproto.repo.putRecord';
+			const res = await client.post(nsid, {
+				input: { repo, collection, rkey: write.rkey, record: write.record }
+			});
+			if (!res.ok) throw new Error(`${nsid} failed: ${JSON.stringify(res.data)}`);
+			body = res.data;
+		}
+
+		if (
+			!(
+				body &&
+				typeof body === 'object' &&
+				'uri' in body &&
+				typeof body.uri === 'string' &&
+				'cid' in body &&
+				typeof body.cid === 'string'
+			)
+		) {
+			throw new GroupRecordError(`the write returned no uri/cid`);
+		}
+		return { uri: body.uri, cid: body.cid };
 	};
 }
 

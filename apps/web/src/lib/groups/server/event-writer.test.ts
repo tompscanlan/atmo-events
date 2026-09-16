@@ -1,4 +1,4 @@
-// The write gate (bead om-3e5i). What these cases are really defending is one
+// The write gate. What these cases are really defending is one
 // mistake: copying `repo: locals.did` out of $lib/atproto/server/repo.remote.ts
 // into the group path. That would look fine, pass every permission check, and
 // silently author group events under whichever admin happened to click — which

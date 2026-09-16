@@ -76,20 +76,36 @@ async function errorName(res: Response): Promise<string | null> {
 	}
 }
 
-/** A Client whose every call carries the group account's access token.
+/** The authed transport for one group account: a typed `Client`, plus the raw
+ *  `handle` the Client is built on.
  *
  *  `expectDid` is the DID the caller believes it is writing as. It is checked
  *  against the session the PDS actually returns, so a mis-keyed credential map
  *  fails loudly instead of quietly authoring a group's events under some other
  *  account.
  *
- *  Retry note: a 401 is retried once with a refreshed token. The bodies this
- *  client sends are JSON strings and Blobs, both re-readable; a streaming body
- *  would not be, and nothing here sends one. */
+ *  WHY `handle` IS EXPORTED. `client.post` is typed against the registered
+ *  lexicon set (`XRPCProcedures`), which covers `com.atproto.repo.*` but NOT
+ *  `com.atproto.space.*` / `com.atproto.simplespace.*` — those live in the
+ *  permissioned-data fork and are not generated into this app. Calling them
+ *  through the typed client would require asserting a lexicon that is not there.
+ *  The raw handler is what the Spaces e2e already uses
+ *  (`apps/api/scripts/spaces-e2e.mjs`, `group.handle('/xrpc/com.atproto.space.
+ *  createRecord', …)`), so this is the house convention, not a shortcut. Once
+ *  the space Lexicons are published and generated, these calls can move onto
+ *  the typed client unchanged.
+ *
+ *  Retry note: a 401 is retried once with a refreshed token. The bodies sent
+ *  here are JSON strings and Blobs, both re-readable; a streaming body would
+ *  not be, and nothing here sends one. */
 export async function groupClient(
 	cred: GroupCredential,
 	expectDid: string
-): Promise<{ client: Client; did: string }> {
+): Promise<{
+	client: Client;
+	handle: (pathname: string, init: RequestInit) => Promise<Response>;
+	did: string;
+}> {
 	const key = `${cred.service}|${cred.identifier}`;
 	let session = sessions.get(key);
 	if (!session) {
@@ -103,31 +119,29 @@ export async function groupClient(
 		);
 	}
 
-	const client = new Client({
-		handler: async (pathname, init) => {
-			const current = sessions.get(key) ?? session!;
-			const send = (token: string) => {
-				const headers = new Headers(init.headers);
-				headers.set('authorization', `Bearer ${token}`);
-				return fetch(new URL(pathname, cred.service), { ...init, headers });
-			};
+	const handle = async (pathname: string, init: RequestInit): Promise<Response> => {
+		const current = sessions.get(key) ?? session!;
+		const send = (token: string) => {
+			const headers = new Headers(init.headers);
+			headers.set('authorization', `Bearer ${token}`);
+			return fetch(new URL(pathname, cred.service), { ...init, headers });
+		};
 
-			const first = await send(current.accessJwt);
-			if (first.status !== 401) return first;
-			const name = await errorName(first);
-			if (name && !AUTH_ERRORS[name]) return first;
+		const first = await send(current.accessJwt);
+		if (first.status !== 401) return first;
+		const name = await errorName(first);
+		if (name && !AUTH_ERRORS[name]) return first;
 
-			const renewed = await refresh(cred, current);
-			if (renewed.did !== expectDid) {
-				sessions.delete(key);
-				throw new Error(`refreshed group session authenticates ${renewed.did}, not ${expectDid}`);
-			}
-			sessions.set(key, renewed);
-			return send(renewed.accessJwt);
+		const renewed = await refresh(cred, current);
+		if (renewed.did !== expectDid) {
+			sessions.delete(key);
+			throw new Error(`refreshed group session authenticates ${renewed.did}, not ${expectDid}`);
 		}
-	});
+		sessions.set(key, renewed);
+		return send(renewed.accessJwt);
+	};
 
-	return { client, did: session.did };
+	return { client: new Client({ handler: handle }), handle, did: session.did };
 }
 
 /** Drops cached sessions. Only the tests need this; a Worker isolate's cache
