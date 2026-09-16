@@ -162,14 +162,16 @@ export const createGroupForm = form(
 			return formError(e);
 		}
 
-		// PROVISION AFTER THE INSERT, deliberately. The space key is the slug, and
-		// the INSERT is what proves the slug is free — provisioning first would
-		// create spaces for a slug that the unique constraint then rejects, and
-		// those spaces would be unreachable garbage under the group's DID.
+		// Provisioning is no longer ordered by the slug: the space key is `self`,
+		// so both URIs are a function of the group DID alone and nothing here
+		// depends on the unique constraint having been tested first. The INSERT
+		// still comes first, for a different and smaller reason — a group row is
+		// the cheapest durable artifact in the flow, so a failure after it wastes
+		// the least.
 		const cred = credentialFor(env, data.groupDid);
 		if (!cred) throw new GroupCredentialError(data.groupDid);
 		try {
-			const uris = await provisionGroupSpaces(pdsProvisioner(cred, data.groupDid), group.slug);
+			const uris = await provisionGroupSpaces(pdsProvisioner(cred, data.groupDid));
 			await recordGroupSpaces(platform!.env.DB, group.id, uris);
 		} catch (e) {
 			// The group EXISTS at this point, so saying "creation failed" would be a

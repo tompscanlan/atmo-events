@@ -30,9 +30,10 @@ export interface CreateGroupInput {
 	locationTimezone?: string | null;
 	/** No `spaceUri`: spaces are PROVISIONED at create (`./spaces.ts`), never
 	 *  supplied. The row is inserted with both URIs NULL and filled by
-	 *  `recordGroupSpaces` once the PDS has confirmed them — in that order,
-	 *  because the space key IS the slug and the INSERT is what proves the slug
-	 *  is free. */
+	 *  `recordGroupSpaces` once the PDS has confirmed them. The order is no
+	 *  longer forced — the space key is `self`, so a space URI is a function of
+	 *  the group DID alone — the INSERT simply goes first because a row is the
+	 *  cheapest durable thing to waste. */
 }
 
 export interface UpdateGroupInput {
@@ -44,10 +45,10 @@ export interface UpdateGroupInput {
 	locationName?: string | null;
 	locationAddress?: string | null;
 	locationTimezone?: string | null;
-	/** Deliberately absent: a group's space URIs are derived from its own DID,
-	 *  the decided space types and its slug, so there is nothing for a settings
-	 *  form to edit. Letting one be typed in allowed a group to point at a space
-	 *  it does not own. */
+	/** Deliberately absent: a group's space URIs are derived from its own DID
+	 *  and the decided space types, so there is nothing for a settings form to
+	 *  edit. Letting one be typed in allowed a group to point at a space it does
+	 *  not own. */
 }
 
 /** Thrown for a rule the SQL refused. `reason` is a stable machine tag so a

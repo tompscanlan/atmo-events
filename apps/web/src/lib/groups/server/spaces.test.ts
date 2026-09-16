@@ -66,10 +66,10 @@ describe('provisionGroupSpaces', () => {
 	it('creates about as public-read and members as member-list-read, both app-open, under the group DID', async () => {
 		replies['com.atproto.simplespace.createSpace'] = {
 			status: 200,
-			body: { uri: 'at://did:plc:jcwgw6fcnb5vyoid7nz7sl26/space/placeholder/kona' }
+			body: { uri: 'at://did:plc:jcwgw6fcnb5vyoid7nz7sl26/space/placeholder/self' }
 		};
 
-		await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), 'kona');
+		await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID));
 
 		const calls = writes();
 		expect(calls.map((c) => c.nsid)).toEqual([
@@ -80,7 +80,7 @@ describe('provisionGroupSpaces', () => {
 		// The about space is the group's public face.
 		expect(calls[0].body).toEqual({
 			type: ABOUT_SPACE_TYPE,
-			skey: 'kona',
+			skey: 'self',
 			readPolicy: { $type: 'com.atproto.simplespace.defs#publicPolicy' },
 			writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
 			appAccess: { $type: 'com.atproto.simplespace.defs#open' }
@@ -90,7 +90,7 @@ describe('provisionGroupSpaces', () => {
 		// the roster, which is the failure this assertion exists for.
 		expect(calls[1].body).toEqual({
 			type: MEMBERS_SPACE_TYPE,
-			skey: 'kona',
+			skey: 'self',
 			readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
 			writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
 			appAccess: { $type: 'com.atproto.simplespace.defs#open' }
@@ -111,11 +111,11 @@ describe('provisionGroupSpaces', () => {
 			return Response.json({ uri: `at://${GROUP_DID}/space/${body.type}/${body.skey}#${call}` });
 		});
 
-		const uris = await provisionGroupSpaces(provisioner, 'kona');
+		const uris = await provisionGroupSpaces(provisioner);
 
 		expect(uris).toEqual({
-			aboutSpaceUri: `at://${GROUP_DID}/space/${ABOUT_SPACE_TYPE}/kona#1`,
-			membersSpaceUri: `at://${GROUP_DID}/space/${MEMBERS_SPACE_TYPE}/kona#2`
+			aboutSpaceUri: `at://${GROUP_DID}/space/${ABOUT_SPACE_TYPE}/self#1`,
+			membersSpaceUri: `at://${GROUP_DID}/space/${MEMBERS_SPACE_TYPE}/self#2`
 		});
 	});
 
@@ -125,12 +125,13 @@ describe('provisionGroupSpaces', () => {
 			body: { error: 'SpaceAlreadyExists', message: 'already' }
 		};
 
-		const uris = await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), 'kona');
+		const uris = await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID));
 
 		// Deterministic from owner + type + skey — the host does no lookup, so this
-		// is derivation, not a guess.
-		expect(uris.aboutSpaceUri).toBe(spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'kona'));
-		expect(uris.membersSpaceUri).toBe(spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'kona'));
+		// is derivation, not a guess. With skey `self` it is a function of the DID
+		// alone: nothing the caller supplies can move a group's space URI.
+		expect(uris.aboutSpaceUri).toBe(spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self'));
+		expect(uris.membersSpaceUri).toBe(spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self'));
 	});
 
 	it('does not attempt the members space when the about space fails', async () => {
@@ -139,7 +140,7 @@ describe('provisionGroupSpaces', () => {
 			body: { error: 'UnsupportedPolicy', message: 'no' }
 		};
 
-		await expect(provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), 'kona')).rejects.toThrow(
+		await expect(provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID))).rejects.toThrow(
 			GroupSpaceError
 		);
 		expect(writes()).toHaveLength(1);

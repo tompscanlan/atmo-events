@@ -34,6 +34,20 @@ const POLICY_PUBLIC = 'com.atproto.simplespace.defs#publicPolicy';
 const POLICY_MEMBER_LIST = 'com.atproto.simplespace.defs#memberListPolicy';
 const APP_ACCESS_OPEN = 'com.atproto.simplespace.defs#open';
 
+/** THE SPACE KEY IS A CONSTANT, and it is the standard's own: the proposal's
+ *  space table gives `self` as the skey for both `about` and `members`. It
+ *  briefly held the group's slug here "so the URI is legible in a log", which
+ *  was a divergence that cost more than legibility — a space URI is already
+ *  scoped to the owner DID and the space type, a group owns exactly one of
+ *  each, so the skey can only ever take one value per group per type and
+ *  carries no disambiguating information. Keying it on the slug made the URI
+ *  depend on a mutable, user-chosen, collidable string, which forced
+ *  provisioning to run after the row INSERT that proved the slug free. With
+ *  `self` the URI is a function of the DID alone, so provisioning can run the
+ *  moment the DID exists. `self` is also the atproto convention for a
+ *  singleton (`app.bsky.actor.profile/self`). */
+const SPACE_SKEY = 'self';
+
 /** The space host refused to create the space. Distinct from a record error so
  *  a half-provisioned group is not reported as a bad record. */
 export class GroupSpaceError extends Error {
@@ -49,7 +63,8 @@ export class GroupSpaceError extends Error {
 export interface SpaceProvision {
 	/** Space type NSID — one of the two constants in ../types. */
 	type: string;
-	/** Space key. The group's slug, so the URI is legible in a log. */
+	/** Space key — always `SPACE_SKEY`. Part of the shape because `createSpace`
+	 *  takes it and the URI derivation needs it, not because it varies. */
 	skey: string;
 	/** `true` for the about space; the members space is member-list read. */
 	publicRead: boolean;
@@ -117,10 +132,17 @@ export interface GroupSpaceUris {
  *  one cached session, and the second call's only job on a failed first is to
  *  not happen. */
 export async function provisionGroupSpaces(
-	provisioner: GroupSpaceProvisioner,
-	slug: string
+	provisioner: GroupSpaceProvisioner
 ): Promise<GroupSpaceUris> {
-	const about = await provisioner({ type: ABOUT_SPACE_TYPE, skey: slug, publicRead: true });
-	const members = await provisioner({ type: MEMBERS_SPACE_TYPE, skey: slug, publicRead: false });
+	const about = await provisioner({
+		type: ABOUT_SPACE_TYPE,
+		skey: SPACE_SKEY,
+		publicRead: true
+	});
+	const members = await provisioner({
+		type: MEMBERS_SPACE_TYPE,
+		skey: SPACE_SKEY,
+		publicRead: false
+	});
 	return { aboutSpaceUri: about.uri, membersSpaceUri: members.uri };
 }

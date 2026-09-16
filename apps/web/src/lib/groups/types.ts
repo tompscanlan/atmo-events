@@ -59,7 +59,7 @@ export interface GroupRow {
 	location_lat: number | null;
 	location_lng: number | null;
 	location_timezone: string | null;
-	/** at://<group_did>/space/<type>/<slug>, or NULL before provisioning. Two
+	/** at://<group_did>/space/<type>/self, or NULL before provisioning. Two
 	 *  columns and no `space_type`: a space URI already carries its type, and
 	 *  the type is now a constant per space, not per group. */
 	about_space_uri: string | null;
