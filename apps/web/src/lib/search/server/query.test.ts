@@ -107,7 +107,7 @@ describe('runEventSearchPage', () => {
 		const page = await runEventSearchPage(backend(fetchFn), client, { q: 'fest', cursor: null });
 
 		// Page fills at SEARCH_PAGE_SIZE hits; the next offset is that count, tagged
-		// with the Meili backend so load-more can't misroute it to D1 (om-7dbs).
+		// with the Meili backend so load-more can't misroute it to D1.
 		expect(page.events).toHaveLength(SEARCH_PAGE_SIZE);
 		expect(page.cursor).toBe(`meili:${SEARCH_PAGE_SIZE}`);
 	});
