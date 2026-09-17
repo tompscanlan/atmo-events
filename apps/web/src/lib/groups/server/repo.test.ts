@@ -17,7 +17,8 @@ import {
 	removeMember,
 	requestJoin,
 	rolePermissions,
-	setMemberStatus
+	setMemberStatus,
+	updateGroup
 } from './repo';
 
 const OWNER = 'did:plc:owner';
@@ -133,6 +134,52 @@ describe('joining', () => {
 		expect(membership.pendingRequestId).toBeNull();
 		await expect(approveJoinRequest(db, created.id, pending, OWNER)).rejects.toMatchObject({
 			reason: 'not-found'
+		});
+	});
+});
+
+// om-5oxc8. Two rules, deliberately in two layers: the schema refuses the
+// open-join CONFIGURATION, `requestJoin` refuses the ACT. Either alone leaves a
+// way in — a group that predates the trigger, or a caller that skips the form.
+describe('private groups are invite-only', () => {
+	it('refuses a self-service join, and records nothing on the way out', async () => {
+		const created = await group({ visibility: 'private', slug: 'secret' });
+
+		await expect(requestJoin(db, created, ALICE, 'let me in')).rejects.toMatchObject({
+			reason: 'invite-only'
+		});
+
+		const membership = await getCallerMembership(db, created.id, ALICE);
+		expect(membership.role).toBeNull();
+		expect(membership.pendingRequestId).toBeNull();
+		expect(await countActiveMembers(db, created.id)).toBe(1);
+	});
+
+	it('still answers already-member for someone on the roster', async () => {
+		const created = await group({ visibility: 'private', slug: 'secret' });
+		await addMember(db, created.id, ALICE, 'member');
+		expect(await requestJoin(db, created, ALICE, null)).toBe('already-member');
+	});
+
+	it('cannot be created open-join', async () => {
+		await expect(
+			group({ visibility: 'private', requireApproval: false, slug: 'secret' })
+		).rejects.toMatchObject({ reason: 'private-needs-approval' });
+	});
+
+	it('cannot be edited into open-join, in either order', async () => {
+		const open = await group({ requireApproval: false, slug: 'open' });
+		await expect(updateGroup(db, open.id, { visibility: 'private' })).rejects.toMatchObject({
+			reason: 'private-needs-approval'
+		});
+
+		const closed = await group({
+			visibility: 'private',
+			slug: 'secret',
+			groupDid: 'did:plc:second'
+		});
+		await expect(updateGroup(db, closed.id, { requireApproval: false })).rejects.toMatchObject({
+			reason: 'private-needs-approval'
 		});
 	});
 });

@@ -10,6 +10,7 @@
 import { error } from '@sveltejs/kit';
 import { form, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
+import { canSeeGroup } from './access';
 import { ASSIGNABLE_ROLES, can } from './permissions';
 import type { GroupFormResult } from './form-result';
 import { formError } from './form-error';
@@ -63,7 +64,16 @@ const countryField = v.pipe(
 );
 
 /** The three things every handler needs, plus the caller's resolved
- *  permissions. Throws 404 for an unknown slug and 401 when not signed in. */
+ *  permissions. Throws 404 for an unknown slug and 401 when not signed in.
+ *
+ *  AN INVISIBLE GROUP IS A MISSING GROUP, and it is `canSeeGroup` that decides
+ *  — the same predicate the pages use (routes/(app)/groups/[slug]/**), so the
+ *  rule has one definition and a form cannot disagree with the page it was
+ *  posted from. Without this a remote `form()` was a private group's existence
+ *  oracle: a remote function is an addressable POST bound to nothing but
+ *  sign-in and the slug, so the page's own 404 never ran (om-5oxc8). The
+ *  membership lookup has to come first, because whether the caller may see the
+ *  group is a question about their roster row. */
 async function context(slug: string) {
 	const { locals, platform } = getRequestEvent();
 	if (!locals.did) error(401, 'Sign in to do that');
@@ -71,6 +81,7 @@ async function context(slug: string) {
 	const group = await getGroupBySlug(db, slug);
 	if (!group) error(404, 'Group not found');
 	const membership = await getCallerMembership(db, group.id, locals.did);
+	if (!canSeeGroup(group, membership)) error(404, 'Group not found');
 	return { db, env: platform!.env, group, membership, callerDid: locals.did };
 }
 

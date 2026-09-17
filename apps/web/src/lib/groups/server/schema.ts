@@ -13,8 +13,9 @@
 // table and only the self-heal below would notice.
 import groupsSql from '../../../../migrations/0001_groups.sql?raw';
 import credentialsSql from '../../../../migrations/0002_group_credentials.sql?raw';
+import privateInviteOnlySql from '../../../../migrations/0003_private_groups_are_invite_only.sql?raw';
 
-const MIGRATIONS: readonly string[] = [groupsSql, credentialsSql];
+const MIGRATIONS: readonly string[] = [groupsSql, credentialsSql, privateInviteOnlySql];
 
 /** Statements in apply order. Split on the `-- @statement` marker, never on
  *  `;` — the owner-protection triggers contain `;` inside BEGIN..END and a

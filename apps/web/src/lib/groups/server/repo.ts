@@ -62,6 +62,13 @@ export class GroupRuleError extends Error {
 			| 'owner-role-reserved'
 			| 'not-found'
 			| 'already-pending'
+			/** A private group was asked to admit someone who was not invited.
+			 *  Raised by `requestJoin`, not by the schema: the schema forbids the
+			 *  open-join CONFIGURATION (0003), this forbids the ACT. */
+			| 'invite-only'
+			/** The settings or create form tried to leave a private group
+			 *  open-join. The 0003 triggers refuse; this is their tag. */
+			| 'private-needs-approval'
 			| 'constraint',
 		message: string
 	) {
@@ -85,6 +92,12 @@ function constraintMessage(e: unknown): GroupRuleError | null {
 	// fire on a statement that would also trip a unique index.
 	if (/owner role is reserved/.test(text)) {
 		return new GroupRuleError('owner-role-reserved', 'The owner role is reserved for the owner');
+	}
+	if (/private group must require approval/.test(text)) {
+		return new GroupRuleError(
+			'private-needs-approval',
+			'A private group must require approval to join — invite members instead'
+		);
 	}
 	if (/owner cannot be|owner role cannot be|owner must hold|are immutable/.test(text)) {
 		return new GroupRuleError('owner-protected', 'The group owner cannot be changed');
@@ -421,7 +434,17 @@ export type JoinOutcome = 'joined' | 'pending' | 'already-member' | 'already-pen
 /** Self-service join. With `require_approval` (the default) this records a
  *  PENDING request and no roster row — one row per fact, so a pending applicant
  *  is never briefly a member. Without it, the caller lands on the roster with
- *  the `member` role immediately. */
+ *  the `member` role immediately.
+ *
+ *  A PRIVATE GROUP HAS NO SELF-SERVICE JOIN AT ALL (TS, 2026-09-17, om-5oxc8).
+ *  Knocking is not a capability a private group offers: the slug is the group's
+ *  public PDS handle label, so "knows the address" is not evidence of anything,
+ *  and answering a knock at all tells a stranger the group exists. The way in
+ *  is an invite (om-a2n4t), which will call `addMember` on its own entry point
+ *  rather than reopen this one. The refusal sits HERE, below the roster check,
+ *  rather than in the form: every future caller of `requestJoin` inherits it,
+ *  and an existing member's idempotent retry still answers `already-member`
+ *  instead of erroring. */
 export async function requestJoin(
 	db: D1Database,
 	group: GroupRow,
@@ -434,6 +457,10 @@ export async function requestJoin(
 		.bind(group.id, did)
 		.first<{ status: string }>();
 	if (existing) return 'already-member';
+
+	if (group.visibility === 'private') {
+		throw new GroupRuleError('invite-only', 'This group is invite-only');
+	}
 
 	if (group.require_approval) {
 		try {
