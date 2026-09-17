@@ -111,6 +111,34 @@ declare global {
 				 *  When unset, /groups/create offers no DIDs and a group event write
 				 *  fails with GroupCredentialError rather than writing as a human. */
 				GROUP_CREDENTIALS?: string;
+				/** PDS every new group is minted on, e.g. https://pds.opnmt.net. With
+				 *  the three vars below it forms the mint target; when any is unset
+				 *  /groups/create refuses BEFORE minting rather than stranding a
+				 *  permanent did:plc it cannot finish setting up. */
+				GROUP_PDS_SERVICE?: string;
+				/** Handle suffix for groups, e.g. group.opnmt.net. Groups get their
+				 *  OWN subdomain so a group handle can never lose a race to a member
+				 *  handle (FR-001b; om-kp7ss.5 puts members on the same PDS). */
+				GROUP_HANDLE_DOMAIN?: string;
+				/** Invite code for the group PDS, set with `wrangler secret put`.
+				 *  PDS_INVITE_REQUIRED is true on the alpha, so we hold a code rather
+				 *  than opening the gate. The 1000-use budget is SHARED with member
+				 *  accounts and a deleted account never returns its use. */
+				GROUP_PDS_INVITE_CODE?: string;
+				/** Address group accounts are created with, e.g.
+				 *  groups@openmeet.net — plus-addressed per group
+				 *  (groups+<slug>@…) because the PDS requires an email, refuses
+				 *  disposable domains, and matches it exactly for uniqueness. Ours
+				 *  rather than the owner's, so the password-reset path stays ours
+				 *  (FR-001h). */
+				GROUP_ACCOUNT_EMAIL?: string;
+				/** base64 32-byte AES-GCM key wrapping every minted group's app
+				 *  password in `group_credentials`. Set with `wrangler secret put`.
+				 *  Without it a minted credential can be neither written nor read, so
+				 *  the create flow refuses up front. Losing it costs the stored
+				 *  credentials (recoverable via PDS admin), never the groups'
+				 *  identities — the owner holds rotationKeys[0]. */
+				GROUP_CREDENTIAL_KEY?: string;
 			};
 			/** Cloudflare Worker execution context. Use `ctx.waitUntil(promise)` to
 			 *  let the worker keep a fire-and-forget task alive after the response

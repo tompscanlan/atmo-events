@@ -16,9 +16,15 @@ import type { GroupEventRecord, GroupRow } from '../types';
 import { credentialFor } from './credentials';
 import { GROUP_EVENT_COLLECTION } from './event-writer';
 
-/** The group's PDS base URL. Taken from the configured credential when there is
- *  one (no network hop, and it is the same PDS the writer authenticates
- *  against), otherwise resolved from the DID document. */
+/** The group's PDS base URL. Taken from the OPERATOR-CONFIGURED credential when
+ *  there is one (no network hop, and it is the same PDS the writer authenticates
+ *  against), otherwise resolved from the DID document.
+ *
+ *  A MINTED group takes the second path by design: its credential lives
+ *  encrypted in `group_credentials`, and this function needs only a service URL
+ *  — for which the DID document is the authority, and which needs no credential
+ *  and no decryption key. Threading the database in here to save one hop would
+ *  buy nothing a resolver call does not already give. */
 export async function groupPdsUrl(
 	env: { GROUP_CREDENTIALS?: string },
 	group: GroupRow

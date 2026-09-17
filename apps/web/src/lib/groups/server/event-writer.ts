@@ -22,7 +22,11 @@ import { isActorIdentifier } from '@atcute/lexicons/syntax';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
 import { can, type EnforcedGroupPermission } from '../permissions';
 import type { GroupRow } from '../types';
-import { credentialFor, type GroupCredential } from './credentials';
+import {
+	resolveGroupCredential,
+	type CredentialStoreEnv,
+	type GroupCredential
+} from './credentials';
 import { getCallerMembership } from './repo';
 import { groupClient } from './session';
 
@@ -169,7 +173,7 @@ export function pdsWriter(cred: GroupCredential, groupDid: string): GroupRepoWri
 
 export interface WriteGroupEventInput {
 	db: D1Database;
-	env: { GROUP_CREDENTIALS?: string };
+	env: CredentialStoreEnv;
 	group: GroupRow;
 	/** The human pressing the button. Checked, never written as. */
 	callerDid: string | null;
@@ -240,7 +244,7 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 		);
 	}
 
-	const writer = input.writer ?? resolveWriter(input.env, input.group);
+	const writer = input.writer ?? (await resolveWriter(input.env, input.db, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
@@ -260,7 +264,7 @@ export async function deleteGroupEvent(
 	input: Omit<WriteGroupEventInput, 'intent' | 'record'> & { rkey: string }
 ): Promise<{ uri: string; repo: string }> {
 	await authorise(input, 'delete');
-	const writer = input.writer ?? resolveWriter(input.env, input.group);
+	const writer = input.writer ?? (await resolveWriter(input.env, input.db, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
@@ -272,8 +276,17 @@ export async function deleteGroupEvent(
 	return { uri: result.uri, repo: input.group.group_did };
 }
 
-function resolveWriter(env: { GROUP_CREDENTIALS?: string }, group: GroupRow): GroupRepoWriter {
-	const cred = credentialFor(env, group.group_did);
+/** The transport for a group's own repo.
+ *
+ *  `resolveGroupCredential` checks the operator secret first and the minted
+ *  credential table second, so a group created through the form writes with the
+ *  app password stored at mint while an operator override still wins. */
+async function resolveWriter(
+	env: CredentialStoreEnv,
+	db: D1Database,
+	group: GroupRow
+): Promise<GroupRepoWriter> {
+	const cred = await resolveGroupCredential(env, db, group.group_did);
 	if (!cred) throw new GroupCredentialError(group.group_did);
 	return pdsWriter(cred, group.group_did);
 }

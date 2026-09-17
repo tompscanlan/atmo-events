@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { Button, Input, Label } from '@foxui/core';
 	import { createGroupForm } from '$lib/groups/groups.remote';
-	import { slugifyGroupName } from '$lib/groups/slug';
+	import { resolve } from '$app/paths';
+	import { MINTABLE_LABEL_INPUT_PATTERN, slugifyGroupName } from '$lib/groups/slug';
 	import { groupFormError } from '$lib/groups/form-result';
 
 	let { data } = $props();
@@ -13,6 +14,13 @@
 	let slugTouched = $state(false);
 	let derivedSlug = $derived(slugTouched ? slug : name ? slugifyGroupName(name) : '');
 	let createError = $derived(groupFormError(createGroupForm.result));
+	// The success branch carries the recovery key, so it is read ONCE from the
+	// form result and never refetched — there is no route that could show it
+	// again, which is the point.
+	let created = $derived.by(() => {
+		const result = createGroupForm.result;
+		return result && result.ok ? result : undefined;
+	});
 </script>
 
 <svelte:head><title>New group — atmo.rsvp</title></svelte:head>
@@ -20,19 +28,47 @@
 <div class="mx-auto max-w-2xl px-6 py-8 sm:py-12">
 	<h1 class="mb-2 text-3xl font-bold">New group</h1>
 	<p class="text-base-500 dark:text-base-400 mb-8 text-sm">
-		A group is an account on the network. You bind an existing DID whose credential this deployment
-		holds — creating a group never mints a new identity.
+		A group is an account on the network. Creating one registers a new identity — its address
+		becomes its handle, so the name has to be free, and you get a recovery key that lets you move
+		the group to another host later.
 	</p>
 
-	{#if data.custodialDids.length === 0}
+	{#if !data.mintConfigured}
 		<div
 			class="ring-base-200 dark:ring-base-800 text-base-600 dark:text-base-300 mb-8 rounded-2xl p-4 text-sm ring-1"
 		>
-			<p class="font-semibold">No custodial DIDs are configured.</p>
+			<p class="font-semibold">Group creation is not configured on this deployment.</p>
 			<p class="mt-1">
-				Set the <code class="font-mono">GROUP_CREDENTIALS</code> secret (a JSON map of group DID to
-				<code class="font-mono">{'{ service, identifier, password }'}</code>) before creating a
-				group.
+				An administrator needs to set <code class="font-mono">GROUP_PDS_SERVICE</code>,
+				<code class="font-mono">GROUP_HANDLE_DOMAIN</code>,
+				<code class="font-mono">GROUP_PDS_INVITE_CODE</code>,
+				<code class="font-mono">GROUP_ACCOUNT_EMAIL</code> and
+				<code class="font-mono">GROUP_CREDENTIAL_KEY</code> first.
+			</p>
+		</div>
+	{/if}
+
+	<!-- Shown ONCE. The private key is never stored by us and cannot be shown
+	     again; it is what lets the owner move the group off this PDS without our
+	     cooperation (FR-001g). -->
+	{#if created}
+		<div class="mb-8 rounded-2xl p-4 text-sm ring-1 ring-amber-500/40">
+			<p class="font-semibold">Save your group's recovery key now.</p>
+			<p class="mt-1">
+				This is the only time it is shown. It is not stored anywhere on this service. Keep it
+				somewhere safe — with it you can move
+				<strong>{created.groupSlug}</strong> to another host, and without it you cannot.
+			</p>
+			<textarea
+				readonly
+				rows="2"
+				class="rounded-ui bg-base-100 dark:bg-base-900 mt-3 w-full border-0 px-3 py-1.5 font-mono text-xs"
+				value={created.recoveryKey}
+			></textarea>
+			<p class="mt-3">
+				<a class="underline" href={resolve('/(app)/groups/[slug]', { slug: created.groupSlug })}
+					>Continue to {created.groupSlug}</a
+				>
 			</p>
 		</div>
 	{/if}
@@ -56,32 +92,15 @@
 						slug = e.currentTarget.value;
 					}}
 					required
-					pattern="[a-z0-9][a-z0-9-]{'{'}1,47{'}'}"
+					pattern={MINTABLE_LABEL_INPUT_PATTERN}
 					class="flex-1"
 				/>
 			</div>
 		</div>
 
-		<div class="flex flex-col gap-1.5">
-			<Label for="group-did">Group DID</Label>
-			{#if data.custodialDids.length > 0}
-				<select
-					id="group-did"
-					name="groupDid"
-					required
-					class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 font-mono text-sm ring-1 ring-inset"
-				>
-					{#each data.custodialDids as did (did)}
-						<option value={did}>{did}</option>
-					{/each}
-				</select>
-			{:else}
-				<Input id="group-did" name="groupDid" placeholder="did:plc:…" required class="font-mono" />
-			{/if}
-			<p class="text-base-500 dark:text-base-400 text-xs">
-				The account every group event is authored by.
-			</p>
-		</div>
+		<!-- The Group DID field is gone: creating a group MINTS its identity, so
+		     there is no DID to choose and no credential for an operator to
+		     pre-provision (FR-001, om-kp7ss.1). -->
 
 		<div class="flex flex-col gap-1.5">
 			<Label for="group-description">Description</Label>

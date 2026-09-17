@@ -1,20 +1,30 @@
-// Applies migrations/0001_groups.sql to D1.
+// Applies migrations/0001_groups.sql and 0002_group_credentials.sql to D1.
 //
 // One copy of the DDL, two runners: `wrangler d1 migrations apply` /
 // `wrangler d1 execute --file` for a deliberate deploy, and this module for the
 // self-heal the rest of the app already does for its own tables
 // (ensureGeocodeDripSchema, runGeocodeJob's geocode_cache, contrail's init). The
-// file is imported `?raw` rather than duplicated as a TS string array so the two
-// can never disagree.
-import migrationSql from '../../../../migrations/0001_groups.sql?raw';
+// files are imported `?raw` rather than duplicated as TS strings so the two
+// runners can never disagree.
+//
+// Adding a migration means adding it to `MIGRATIONS` in order. A new file rather
+// than an edit to 0001: `wrangler d1 migrations apply` tracks what it has run, so
+// editing an applied migration would leave a deployed database without the new
+// table and only the self-heal below would notice.
+import groupsSql from '../../../../migrations/0001_groups.sql?raw';
+import credentialsSql from '../../../../migrations/0002_group_credentials.sql?raw';
+
+const MIGRATIONS: readonly string[] = [groupsSql, credentialsSql];
 
 /** Statements in apply order. Split on the `-- @statement` marker, never on
  *  `;` — the owner-protection triggers contain `;` inside BEGIN..END and a
  *  naive split would feed D1 half a trigger. */
-export const GROUPS_SCHEMA_STATEMENTS: readonly string[] = migrationSql
-	.split(/^[ \t]*--[ \t]*@statement[ \t]*$/m)
-	.map((s) => s.trim())
-	.filter((s) => s.length > 0 && !/^(?:--[^\n]*\n?)*$/.test(s));
+export const GROUPS_SCHEMA_STATEMENTS: readonly string[] = MIGRATIONS.flatMap((sql) =>
+	sql
+		.split(/^[ \t]*--[ \t]*@statement[ \t]*$/m)
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0 && !/^(?:--[^\n]*\n?)*$/.test(s))
+);
 
 // Module-level, exactly like contrail's own `initialized` flag in
 // $lib/contrail/index.ts: one isolate, one D1 binding, one apply.

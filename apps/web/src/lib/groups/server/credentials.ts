@@ -74,23 +74,147 @@ export function credentialFor(env: CredentialEnv, groupDid: string): GroupCreden
 	return groupCredentials(env)[groupDid] ?? null;
 }
 
-/** DIDs this deployment can currently write as — the only DIDs a group may be
- *  bound to at creation. Sorted so the create form's options are stable. */
-export function custodialDids(env: CredentialEnv): string[] {
-	return Object.keys(groupCredentials(env)).sort();
+// ---------------------------------------------------------------- minted credentials
+//
+// A minted group's credential cannot live in GROUP_CREDENTIALS: a Worker cannot
+// write its own secret, and the credential comes into existence during a form
+// POST. It lives in `group_credentials` (migrations/0002), AES-GCM encrypted
+// under GROUP_CREDENTIAL_KEY, and what is stored is an APP PASSWORD — not the
+// account's master password, which the mint discards. Rationale, measured source
+// and the alternatives are in that migration's header; the short version is that
+// a D1 read must not yield write-as-every-group, and must not yield account
+// takeover even if it did decrypt.
+
+export interface CredentialStoreEnv extends CredentialEnv {
+	/** base64 32-byte AES-GCM key. Without it a minted credential can neither be
+	 *  written nor read, and the create flow refuses BEFORE minting rather than
+	 *  stranding a did:plc it cannot store a credential for. */
+	GROUP_CREDENTIAL_KEY?: string;
 }
 
-/** THE MINTING SEAM, DELIBERATELY OFF.
+const KEY_BYTES = 32;
+const IV_BYTES = 12;
+
+function toBase64(bytes: Uint8Array): string {
+	let out = '';
+	for (const byte of bytes) out += String.fromCharCode(byte);
+	return btoa(out);
+}
+
+function fromBase64(text: string): Uint8Array {
+	const raw = atob(text);
+	const bytes = new Uint8Array(raw.length);
+	for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+	return bytes;
+}
+
+/** Thrown when the deployment cannot store what it is about to mint. Named
+ *  separately from GroupCredentialError so the create flow can refuse before the
+ *  irreversible step instead of reporting a write failure afterwards. */
+export class GroupCredentialKeyError extends Error {
+	constructor(detail: string) {
+		super(`GROUP_CREDENTIAL_KEY ${detail}`);
+		this.name = 'GroupCredentialKeyError';
+	}
+}
+
+async function aesKey(env: CredentialStoreEnv): Promise<CryptoKey> {
+	const raw = env.GROUP_CREDENTIAL_KEY?.trim();
+	if (!raw) throw new GroupCredentialKeyError('is not set on this deployment');
+	let bytes: Uint8Array;
+	try {
+		bytes = fromBase64(raw);
+	} catch {
+		throw new GroupCredentialKeyError('is not valid base64');
+	}
+	if (bytes.length !== KEY_BYTES) {
+		// The length is safe to name; the key never is.
+		throw new GroupCredentialKeyError(`must decode to ${KEY_BYTES} bytes, got ${bytes.length}`);
+	}
+	return crypto.subtle.importKey('raw', bytes as BufferSource, 'AES-GCM', false, [
+		'encrypt',
+		'decrypt'
+	]);
+}
+
+/** True when this deployment can mint — i.e. can store the credential it is
+ *  about to receive exactly once. Checked before `createAccount`, never after. */
+export async function canStoreMintedCredentials(env: CredentialStoreEnv): Promise<boolean> {
+	try {
+		await aesKey(env);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** Writes (or replaces) a minted group's credential. `password` here is the app
+ *  password; the caller has already discarded the master. */
+export async function storeGroupCredential(
+	env: CredentialStoreEnv,
+	db: D1Database,
+	groupDid: string,
+	cred: GroupCredential
+): Promise<void> {
+	const key = await aesKey(env);
+	const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+	const ciphertext = await crypto.subtle.encrypt(
+		{ name: 'AES-GCM', iv: iv as BufferSource },
+		key,
+		new TextEncoder().encode(cred.password) as BufferSource
+	);
+	const now = Date.now();
+	await db
+		.prepare(
+			`INSERT INTO group_credentials (group_did, service, identifier, secret, iv, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT (group_did) DO UPDATE SET
+			   service = excluded.service,
+			   identifier = excluded.identifier,
+			   secret = excluded.secret,
+			   iv = excluded.iv,
+			   updated_at = excluded.updated_at`
+		)
+		.bind(
+			groupDid,
+			cred.service,
+			cred.identifier,
+			toBase64(new Uint8Array(ciphertext)),
+			toBase64(iv),
+			now,
+			now
+		)
+		.run();
+}
+
+/** The credential to write as `groupDid`, or null if this deployment holds none.
  *
- *  Creating a group does NOT mint a did:plc. A did:plc is a permanent public
- *  identity written to plc.directory; it cannot be recalled, and minting one is
- *  a decision a human authorises, not a side effect of a form POST. So v1 binds
- *  an EXISTING custodial DID supplied by config (`GROUP_CREDENTIALS`) or by the
- *  operator typing it into /groups/create.
- *
- *  When automatic minting is implemented it plugs in here: flip this to true,
- *  and `createGroup` will ask for a freshly minted DID instead of rejecting a
- *  request that names no known DID. There is no stub behind it on purpose —
- *  a fake mint that returned a placeholder DID would produce groups whose
- *  records can never be written, which is worse than a clear refusal. */
-export const AUTO_MINT_GROUP_DID = false;
+ *  SECRET FIRST, TABLE SECOND — so an operator entry always overrides a stored
+ *  row (rotate a credential, repoint a group at another PDS) with no migration
+ *  and no delete. */
+export async function resolveGroupCredential(
+	env: CredentialStoreEnv,
+	db: D1Database,
+	groupDid: string
+): Promise<GroupCredential | null> {
+	const configured = credentialFor(env, groupDid);
+	if (configured) return configured;
+
+	const row = await db
+		.prepare(`SELECT service, identifier, secret, iv FROM group_credentials WHERE group_did = ?`)
+		.bind(groupDid)
+		.first<{ service: string; identifier: string; secret: string; iv: string }>();
+	if (!row) return null;
+
+	const key = await aesKey(env);
+	const plaintext = await crypto.subtle.decrypt(
+		{ name: 'AES-GCM', iv: fromBase64(row.iv) as BufferSource },
+		key,
+		fromBase64(row.secret) as BufferSource
+	);
+	return {
+		service: row.service,
+		identifier: row.identifier,
+		password: new TextDecoder().decode(plaintext)
+	};
+}
