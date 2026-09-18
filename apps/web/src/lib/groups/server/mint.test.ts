@@ -98,11 +98,21 @@ describe('mintGroupAccount', () => {
 	// The PDS gives spent, nonexistent, disabled and taken-down ONE string, while
 	// a missing code has its own. Collapsing the four is deliberate (FR-001e);
 	// collapsing all five would lose the one distinction that exists.
+	//
+	// THE `InvalidRequest` ROWS ARE THE LIVE SHAPES, measured on pds.opnmt.net
+	// 2026-09-18 during T006c. The table used to assert only the
+	// `HandleNotAvailable` form, which this fork sends from
+	// `account-manager.ts:374` but NOT from the `createAccount` pre-check
+	// (`createAccount.ts:255,257`) that a create actually hits — so a duplicate
+	// name mapped to `pds-unreachable` in production while this test was green.
 	it.each([
 		['HandleNotAvailable', 'Handle already taken', 'handle-taken'],
+		['HandleNotAvailable', 'Reserved handle', 'handle-taken'],
+		['InvalidRequest', 'Handle already taken: kona.group.opnmt.net', 'handle-taken'],
 		['InvalidHandle', 'Handle too long', 'handle-invalid'],
 		['InvalidInviteCode', 'No invite code provided', 'invite-missing'],
 		['InvalidInviteCode', 'Provided invite code not available', 'invite-unavailable'],
+		['InvalidRequest', 'Email already taken: groups+kona@openmeet.net', 'email-rejected'],
 		['InvalidRequest', 'Email is required', 'email-rejected']
 	])('maps %s/%s to %s', async (error, message, failure) => {
 		stubPds({ account: Response.json({ error, message }, { status: 400 }) });

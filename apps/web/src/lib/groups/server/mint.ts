@@ -131,6 +131,18 @@ async function xrpc(
 
 /** Maps a PDS refusal onto a `MintFailure`.
  *
+ *  MEASURED LIVE 2026-09-18 on `pds.opnmt.net`, and it corrected this function:
+ *  a taken handle arrives as `{"error":"InvalidRequest","message":"Handle
+ *  already taken: <handle>"}`, NOT as `HandleNotAvailable`. The fork throws it
+ *  from two places and only one carries the custom name —
+ *  `account-manager.ts:374-376` tags `HandleNotAvailable`, while the
+ *  `createAccount` pre-check (`createAccount.ts:255,257`) throws a bare
+ *  `InvalidRequestError`, and that is the path a create actually takes. Keying
+ *  on the error name alone rendered the commonest failure in the whole flow —
+ *  "that name is taken" — as `pds-unreachable`, i.e. "a deployment problem, not
+ *  something you did". So the MESSAGE is authoritative here and the name is the
+ *  fallback.
+ *
  *  Read at source 2026-09-17: a missing code is its own message
  *  (`createAccount.ts:224-229` -> 'No invite code provided'), while spent,
  *  nonexistent, disabled and taken-down are one identical string
@@ -138,7 +150,11 @@ async function xrpc(
  *  exists as one case rather than two we would be pretending to distinguish. */
 function mintFailureFor(error: string | null, message: string | null): MintFailure {
 	if (error === 'HandleNotAvailable') return 'handle-taken';
+	if (message && /handle already taken/i.test(message)) return 'handle-taken';
 	if (error === 'InvalidHandle') return 'handle-invalid';
+	// Checked before the generic /email/i so the two "already taken" refusals,
+	// which differ by one word, cannot collapse into each other.
+	if (message && /email already taken/i.test(message)) return 'email-rejected';
 	if (error === 'InvalidInviteCode') {
 		return message?.includes('No invite code provided') ? 'invite-missing' : 'invite-unavailable';
 	}
