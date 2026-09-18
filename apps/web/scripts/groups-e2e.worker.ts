@@ -27,11 +27,22 @@ import {
 	getGroupById,
 	listJoinRequests,
 	listMembers,
+	recordGroupSpaces,
 	removeMember,
 	requestJoin,
-	rolePermissions
+	rolePermissions,
+	updateGroup
 } from '../src/lib/groups/server/repo';
 import { deleteGroupEvent, writeGroupEvent } from '../src/lib/groups/server/event-writer';
+import { splitRuleLines } from '../src/lib/groups/about-record';
+import { setGroupRules, writeGroupProfile } from '../src/lib/groups/server/about-writer';
+import {
+	groupSpaceReader,
+	readGroupAbout,
+	rebuildGroupCache
+} from '../src/lib/groups/server/about-read';
+import { resolveGroupCredential } from '../src/lib/groups/server/credentials';
+import { pdsProvisioner, provisionGroupSpaces } from '../src/lib/groups/server/spaces';
 
 interface Env {
 	DB: D1Database;
@@ -139,7 +150,81 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			group: await groupById(env, args.groupId),
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
 			rkey: String(args.rkey)
-		})
+		}),
+
+	/** The about space the fixture group needs before it has a face. The e2e
+	 *  binds an existing DID through `createGroup`, which provisions nothing —
+	 *  only `runCreateGroup` does — so the space is made here. Idempotent, like
+	 *  the create path's own call. */
+	provisionAboutSpace: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const cred = await resolveGroupCredential(env, env.DB, group.group_did);
+		if (!cred) throw new Error(`no credential for ${group.group_did}`);
+		const uris = await provisionGroupSpaces(pdsProvisioner(cred, group.group_did));
+		await recordGroupSpaces(env.DB, group.id, uris);
+		return uris;
+	},
+
+	writeGroupProfile: async (env, args) =>
+		writeGroupProfile({
+			db: env.DB,
+			env,
+			group: await groupById(env, args.groupId),
+			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			profile: {
+				name: String(args.name),
+				description: (args.description as string | null) ?? null,
+				locationName: (args.locationName as string | null) ?? null,
+				createdAt: args.createdAt as string | undefined
+			}
+		}),
+
+	/** The route's own composition: read the current rules, then reconcile. The
+	 *  reconcile rule (keep an unchanged rule's rkey) lives in about-writer.ts,
+	 *  not here — this door only supplies the same two calls the form makes. */
+	setGroupRules: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const reader = await groupSpaceReader(env, env.DB, group);
+		if (!reader) throw new Error(`no credential for ${group.group_did}`);
+		const about = await readGroupAbout(reader, group);
+		return setGroupRules({
+			db: env.DB,
+			env,
+			group,
+			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			desired: splitRuleLines(String(args.rules ?? '')),
+			existing: about.rules
+		});
+	},
+
+	/** Read back through the group's OWN session — the read half of FR-007. */
+	readGroupAbout: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const reader = await groupSpaceReader(env, env.DB, group);
+		if (!reader) throw new Error(`no credential for ${group.group_did}`);
+		return readGroupAbout(reader, group);
+	},
+
+	rebuildGroupCache: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const reader = await groupSpaceReader(env, env.DB, group);
+		if (!reader) throw new Error(`no credential for ${group.group_did}`);
+		const outcome = await rebuildGroupCache(env.DB, reader, group);
+		return { ...outcome, row: await groupById(env, args.groupId) };
+	},
+
+	/** Overwrites every column the profile record owns, so the rebuild has
+	 *  something to repair. Through the app's own updater rather than raw SQL:
+	 *  a corruption the app could not itself produce would prove nothing. */
+	corruptGroupCache: async (env, args) => {
+		await updateGroup(env.DB, String(args.groupId), {
+			name: 'CORRUPTED',
+			description: 'CORRUPTED',
+			locationName: 'CORRUPTED',
+			requireApproval: false
+		});
+		return groupById(env, args.groupId);
+	}
 };
 
 /** Refusals are the point of half these calls, so they travel as data: the

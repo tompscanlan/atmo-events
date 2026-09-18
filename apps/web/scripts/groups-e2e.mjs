@@ -32,11 +32,25 @@
  *      the address lexicon (country 2..10) refuses, so the write gate rejected
  *      EVERY group event carrying a location name. Fixed in
  *      $lib/groups/event-record.ts, which both the route and this proof build
- *      their records with.
+ *      their records with;
+ *  10. the group's public face is READ BACK out of its about space with the
+ *      group's own session — `profile` at `self` plus one `rule` record per
+ *      rule. This is the half no unit test can prove: the
+ *      `com.atproto.space.*` parameter names and the space-scoped URI form
+ *      belong to the live PDS, not to us (FR-004, FR-007);
+ *  11. THE OTHER LOAD-BEARING ONE — only the MIDDLE rule's text is changed,
+ *      and the first and third rules come back with byte-identical URIs. A
+ *      writer that deleted and re-created the list would pass check 10 and
+ *      fail this one, while invalidating every citation the group ever handed
+ *      out (FR-004c, SC-011); and
+ *  12. every column the profile owns is corrupted through the app's own
+ *      updater, rebuilt from records, and comes back — while `visibility` and
+ *      `status`, which no record owns yet, are left exactly as they were
+ *      (FR-004b, FR-009, SC-002 mode 1).
  *
- * Those nine ARE the summary: setup lines (credentials, fixture session,
+ * Those twelve ARE the summary: setup lines (credentials, fixture session,
  * bundle, runtime) print as notes and are deliberately not counted, so
- * `SUMMARY: 9 passed, 0 failed` maps one-to-one onto the story above.
+ * `SUMMARY: 12 passed, 0 failed` maps one-to-one onto the story above.
  *
  * How it runs. Group facts are D1 rows and a group event is an outbound PDS
  * write, i.e. Worker code, so the real modules run ON workerd with a real D1
@@ -311,6 +325,8 @@ async function main() {
 	let worker;
 	let group;
 	const written = [];
+	/** Set once the about space exists, so the `finally` knows to empty it. */
+	let aboutProvisioned = false;
 	try {
 		worker = await startWorker(stateDir, groupCredentials);
 		note(`worker bundled and ready in ${worker.seconds}s (workerd, empty D1 under ${stateDir})`);
@@ -522,6 +538,87 @@ async function main() {
 			`${persistedNoCountry.uri} (cid ${persistedNoCountry.cid}); locations: ` +
 				`${persistedNoCountry.value?.locations === undefined ? 'absent' : JSON.stringify(persistedNoCountry.value.locations)}`
 		);
+
+		// 10. the group's public face, as records --------------------------------
+		// The read is the point. `createGroup` provisions nothing, so the space is
+		// made here; then profile + rules are written through the same gate the
+		// events went through, and read back with the GROUP's own session. That
+		// read is what FR-007 claims and what no unit test can prove: the
+		// com.atproto.space.* parameter names and the space-scoped URI form are
+		// the live PDS's, not ours.
+		const spaces = await must('provisionAboutSpace', { groupId: group.id });
+		note(`about space ${spaces.aboutSpaceUri}`);
+		aboutProvisioned = true;
+
+		await must('writeGroupProfile', {
+			groupId: group.id,
+			callerDid: ALICE,
+			name: 'Spike groups e2e, from records',
+			description: 'Written into the about space, not a column.',
+			locationName: 'Kailua-Kona'
+		});
+		await must('setGroupRules', {
+			groupId: group.id,
+			callerDid: ALICE,
+			rules: 'Be kind\nNo spam\nStay on topic'
+		});
+		const about = await must('readGroupAbout', { groupId: group.id });
+		record(
+			about.profile?.name === 'Spike groups e2e, from records' &&
+				about.profile?.locationName === 'Kailua-Kona' &&
+				// Derived from the row (require_approval = 1, public), never the form.
+				about.profile?.joinPolicy === 'approval' &&
+				about.rules.map((rule) => rule.text).join('|') === 'Be kind|No spam|Stay on topic',
+			'profile + rules read back out of the about space with the group’s own session',
+			`joinPolicy ${about.profile?.joinPolicy}; ${about.rules.length} rule(s); ` +
+				`first rule ${about.rules[0]?.uri}`
+		);
+
+		// 11. SC-011 — a citation survives an edit --------------------------------
+		// Change only the MIDDLE rule. A writer that deleted and rewrote the list
+		// would pass step 10 and fail here, which is the whole reason this is its
+		// own check rather than an assertion inside the last one.
+		const urisBefore = about.rules.map((rule) => rule.uri);
+		const secondRules = await must('setGroupRules', {
+			groupId: group.id,
+			callerDid: ALICE,
+			rules: 'Be kind\nNo self-promotion\nStay on topic'
+		});
+		const afterEditAbout = await must('readGroupAbout', { groupId: group.id });
+		const urisAfter = afterEditAbout.rules.map((rule) => rule.uri);
+		record(
+			urisAfter[0] === urisBefore[0] &&
+				urisAfter[2] === urisBefore[2] &&
+				urisAfter[1] !== urisBefore[1] &&
+				secondRules.created.length === 1 &&
+				secondRules.deleted.length === 1 &&
+				afterEditAbout.rules.map((rule) => rule.text).join('|') ===
+					'Be kind|No self-promotion|Stay on topic',
+			'editing one rule leaves the other two rules’ URIs byte-identical (SC-011)',
+			`kept ${secondRules.kept.length}, created ${secondRules.created.length}, ` +
+				`deleted ${secondRules.deleted.length}; rule 1 ${urisBefore[0] === urisAfter[0] ? 'unchanged' : 'MOVED'}`
+		);
+
+		// 12. the cache is a cache ------------------------------------------------
+		// Corrupt every column the profile owns, rebuild from records, and check
+		// the row came back — while `visibility` and `status`, which no record
+		// owns, are left exactly as they were. (SC-002 mode 1, FR-004b.)
+		await must('corruptGroupCache', { groupId: group.id });
+		const rebuilt = await must('rebuildGroupCache', { groupId: group.id });
+		record(
+			rebuilt.outcome === 'repaired' &&
+				rebuilt.row.name === 'Spike groups e2e, from records' &&
+				rebuilt.row.description === 'Written into the about space, not a column.' &&
+				rebuilt.row.location_name === 'Kailua-Kona' &&
+				rebuilt.row.require_approval === 1 &&
+				// Untouched: no record owns these yet, so a rebuild must not guess.
+				rebuilt.row.visibility === group.visibility &&
+				rebuilt.row.status === group.status,
+			'a corrupted cache rebuilds from records, and leaves what no record owns alone',
+			`name "${rebuilt.row.name}"; visibility ${rebuilt.row.visibility} (was ${group.visibility}); ` +
+				`status ${rebuilt.row.status}; ${rebuilt.rules} rule record(s)`
+		);
+
 	} finally {
 		if (written.length > 0) console.log('');
 		for (const rkey of written) {
@@ -543,6 +640,23 @@ async function main() {
 				console.log(`WARN  could not clean up ${uri}: ${refusal ?? 'still readable'}`);
 			} else {
 				note(`cleaned up ${uri} (${after.error ?? after.status})`);
+			}
+		}
+		// The about-space records, cleaned up the same way the events are: by
+		// emptying the rules list and asserting the space really is empty again.
+		// Before the worker stops, because this goes through it.
+		if (aboutProvisioned) {
+			try {
+				await call('setGroupRules', { groupId: group.id, callerDid: ALICE, rules: '' });
+				const leftover = await call('readGroupAbout', { groupId: group.id });
+				const remaining = leftover.ok ? leftover.value.rules.length : -1;
+				if (remaining === 0) {
+					note('cleaned up the about space rule records (profile left at self)');
+				} else {
+					console.log(`WARN  ${remaining} rule record(s) left in the about space`);
+				}
+			} catch (error) {
+				console.log(`WARN  could not clean up the about space: ${error.message}`);
 			}
 		}
 		await worker?.stop();

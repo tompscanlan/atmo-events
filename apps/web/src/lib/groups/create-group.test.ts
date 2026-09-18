@@ -44,6 +44,13 @@ function data(overrides: Partial<CreateGroupData> = {}): CreateGroupData {
  *  second, still fails here. */
 function stubPds(overrides: { account?: () => Response } = {}) {
 	const calls: string[] = [];
+	/** Every record written into a space, in order — the create path's records. */
+	const spaceWrites: {
+		space: string;
+		collection: string;
+		rkey: string;
+		record: Record<string, unknown>;
+	}[] = [];
 	let recoveryKey: string | undefined;
 	vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
 		const url = String(input);
@@ -84,9 +91,27 @@ function stubPds(overrides: { account?: () => Response } = {}) {
 			const body = JSON.parse(String(init?.body)) as { type: string; skey: string };
 			return Response.json({ uri: `at://${MINTED_DID}/space/${body.type}/${body.skey}` });
 		}
+		// The group's public face, written through the gate right after
+		// provisioning: `profile` at `self`, plus one record per rule.
+		if (
+			nsid.startsWith('com.atproto.space.putRecord') ||
+			nsid.startsWith('com.atproto.space.createRecord')
+		) {
+			const body = JSON.parse(String(init?.body)) as {
+				space: string;
+				collection: string;
+				rkey: string;
+				record: Record<string, unknown>;
+			};
+			spaceWrites.push(body);
+			return Response.json({
+				uri: `${body.space}/${MINTED_DID}/${body.collection}/${body.rkey}`,
+				cid: 'bafycreate'
+			});
+		}
 		throw new Error(`unexpected call to ${url}`);
 	});
-	return calls;
+	return { calls, spaceWrites };
 }
 
 async function rows(table: 'groups' | 'group_credentials') {
@@ -116,7 +141,7 @@ describe('a name the PDS refuses', () => {
 	// The handle registration IS the reservation, so this is the whole collision
 	// path: it must cost nothing that cannot be taken back. (Spec: SC-008.)
 	it('leaves no DID, no group row, no credential and no space', async () => {
-		const calls = stubPds({
+		const { calls } = stubPds({
 			account: () =>
 				Response.json(
 					{ error: 'HandleNotAvailable', message: 'Handle already taken' },
@@ -139,7 +164,7 @@ describe('refusing before the irreversible step', () => {
 	// A deployment that cannot keep the credential must not mint: the app
 	// password is shown exactly once, so minting first strands the account.
 	it('makes no PDS call at all when GROUP_CREDENTIAL_KEY is missing', async () => {
-		const calls = stubPds();
+		const { calls } = stubPds();
 		delete env.GROUP_CREDENTIAL_KEY;
 
 		const result = await runCreateGroup(env, OWNER, data());
@@ -153,7 +178,7 @@ describe('refusing before the irreversible step', () => {
 	// would reject has to fail on the field the user can edit — before a mint,
 	// not as a PDS error after one.
 	it('makes no PDS call for a slug the PDS would reject', async () => {
-		const calls = stubPds();
+		const { calls } = stubPds();
 
 		const result = await runCreateGroup(env, OWNER, data({ slug: 'kona-trail-runners-club' }));
 
@@ -168,8 +193,8 @@ describe('a successful create', () => {
 	// owner's key did not land at index 0 the group is portable in name only, so
 	// that has to be found out before anyone is told the group exists.
 	// (Spec: FR-001g.)
-	it('mints, verifies the rotation key, then stores, inserts and provisions', async () => {
-		const calls = stubPds();
+	it('mints, verifies the rotation key, then stores, inserts, provisions and writes its face', async () => {
+		const { calls } = stubPds();
 
 		const result = await runCreateGroup(env, OWNER, data());
 
@@ -180,8 +205,48 @@ describe('a successful create', () => {
 			'plc.directory/data',
 			'com.atproto.server.createSession',
 			'com.atproto.simplespace.createSpace',
-			'com.atproto.simplespace.createSpace'
+			'com.atproto.simplespace.createSpace',
+			// The profile lands LAST, after both spaces exist — there is nowhere
+			// to put it before that. (Spec: FR-004.)
+			'com.atproto.space.putRecord'
 		]);
+	});
+
+	// A group whose about space is empty can be read by its DID and nothing
+	// else, which is the portability bug this iteration exists to close.
+	it('writes the profile into the about space, as the group, at self', async () => {
+		const { spaceWrites } = stubPds();
+
+		await runCreateGroup(env, OWNER, data({ locationName: 'Kailua-Kona' }));
+
+		expect(spaceWrites).toHaveLength(1);
+		expect(spaceWrites[0]).toMatchObject({
+			space: `at://${MINTED_DID}/space/net.openmeet.space.about/self`,
+			collection: 'net.openmeet.group.profile',
+			rkey: 'self'
+		});
+		expect(spaceWrites[0].record).toMatchObject({
+			$type: 'net.openmeet.group.profile',
+			displayName: 'Kona Trail Runners',
+			// Derived from the row, not taken from the form. (Spec: FR-004b.)
+			joinPolicy: 'approval',
+			// The declared location extension, name only. (Spec: FR-004a.)
+			location: { name: 'Kailua-Kona' }
+		});
+	});
+
+	// Rules have no column at all, so these records are the only copy — and one
+	// record per rule is what makes a rule citable. (Spec: FR-004c.)
+	it('writes one rule record per non-empty line', async () => {
+		const { spaceWrites } = stubPds();
+
+		await runCreateGroup(env, OWNER, data({ rules: 'Be kind\n\n  No spam  \n' }));
+
+		const rules = spaceWrites.filter((write) => write.collection === 'net.openmeet.group.rule');
+		expect(rules.map((write) => write.record.text)).toEqual(['Be kind', 'No spam']);
+		expect(rules.map((write) => write.record.order)).toEqual([0, 1]);
+		// Distinct TIDs, so each rule has its own address.
+		expect(new Set(rules.map((write) => write.rkey)).size).toBe(2);
 	});
 
 	// The slug is the minted handle's leaf, never the submitted field, because the

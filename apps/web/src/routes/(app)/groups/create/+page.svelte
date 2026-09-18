@@ -134,6 +134,22 @@
 			></textarea>
 		</div>
 
+		<div class="flex flex-col gap-1.5">
+			<Label for="group-rules">Rules</Label>
+			<textarea
+				id="group-rules"
+				name="rules"
+				rows="4"
+				maxlength="8000"
+				placeholder="One rule per line"
+				class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
+			></textarea>
+			<p class="text-base-500 dark:text-base-400 text-xs">
+				Optional, and editable later. Each line becomes its own record in the group’s about
+				space, so a rule keeps one stable address even as the list changes.
+			</p>
+		</div>
+
 		<div class="grid gap-5 sm:grid-cols-2">
 			<div class="flex flex-col gap-1.5">
 				<Label for="group-visibility">Visibility</Label>

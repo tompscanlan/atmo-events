@@ -316,6 +316,49 @@ export async function recordGroupSpaces(
 	);
 }
 
+/** Overwrites the columns a `profile` record OWNS, from that record.
+ *
+ *  Separate from `updateGroup` for the same reason `recordGroupSpaces` is: this
+ *  is not user input. It is the cache-repair half of the rebuild
+ *  (`data-model.md` mode 1), so it writes exactly the Tier-1 columns and
+ *  nothing else — in particular it never touches `visibility`, `status` or
+ *  `owner_did`, which no record owns and which a rebuild must not guess
+ *  (Spec: FR-004b, FR-009).
+ *
+ *  `require_approval` goes through the same schema that refuses `private` with
+ *  `require_approval = 0` (migrations/0003), so a profile claiming `open` on a
+ *  private group is REFUSED here rather than quietly widening the group. That
+ *  surfaces as `GroupRuleError('private-needs-approval')` via `guard`. */
+export async function applyGroupCache(
+	db: D1Database,
+	groupId: string,
+	cache: {
+		name: string;
+		description: string | null;
+		require_approval: number;
+		location_name: string | null;
+	}
+): Promise<void> {
+	await ensureGroupsSchema(db);
+	await guard(() =>
+		db
+			.prepare(
+				`UPDATE groups SET name = ?, description = ?, require_approval = ?,
+				        location_name = ?, updated_at = ?
+				 WHERE id = ?`
+			)
+			.bind(
+				cache.name,
+				cache.description,
+				cache.require_approval,
+				cache.location_name,
+				Date.now(),
+				groupId
+			)
+			.run()
+	);
+}
+
 /** The roster, owner first then by join time. Roles come back as names, not
  *  ids: a page never needs the id, and the name is what the role vocabulary is
  *  keyed by. */

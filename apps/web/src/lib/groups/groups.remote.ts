@@ -30,7 +30,10 @@ import {
 	updateGroup,
 	type JoinOutcome
 } from './server/repo';
-import { deleteGroupEvent, writeGroupEvent } from './server/event-writer';
+import { deleteGroupEvent, groupWriter, writeGroupEvent } from './server/event-writer';
+import { splitRuleLines } from './about-record';
+import { groupSpaceReader, readGroupAbout } from './server/about-read';
+import { setGroupRules, writeGroupProfile } from './server/about-writer';
 import { groupEventRecord } from './event-record';
 
 const slugField = v.pipe(v.string(), v.regex(GROUP_SLUG_PATTERN, 'Invalid group URL'));
@@ -97,7 +100,9 @@ export const createGroupForm = form(
 		// bound to a string someone pasted in.
 		locationName: v.optional(v.pipe(v.string(), v.maxLength(200))),
 		locationAddress: v.optional(v.pipe(v.string(), v.maxLength(400))),
-		locationTimezone: v.optional(v.pipe(v.string(), v.maxLength(80)))
+		locationTimezone: v.optional(v.pipe(v.string(), v.maxLength(80))),
+		/** No column behind this one: the rule RECORDS are the only copy. */
+		rules: v.optional(v.pipe(v.string(), v.maxLength(8000)))
 	}),
 	async (data): Promise<GroupFormResult<{ groupSlug: string; recoveryKey: string }>> => {
 		const { locals, platform } = getRequestEvent();
@@ -118,10 +123,11 @@ export const updateGroupForm = form(
 		description: v.optional(v.pipe(v.string(), v.maxLength(4000))),
 		visibility: v.picklist(GROUP_VISIBILITIES),
 		status: v.picklist(GROUP_STATUSES),
-		requireApproval: checkboxField
+		requireApproval: checkboxField,
+		rules: v.optional(v.pipe(v.string(), v.maxLength(8000)))
 	}),
 	async (data): Promise<GroupFormResult> => {
-		const { db, group, membership } = await context(data.slug);
+		const { db, env, group, membership, callerDid } = await context(data.slug);
 		if (!can(membership.permissions, 'MANAGE_GROUP')) {
 			return { ok: false, error: 'Not allowed: MANAGE_GROUP required' };
 		}
@@ -135,6 +141,58 @@ export const updateGroupForm = form(
 			});
 		} catch (e) {
 			return formError(e);
+		}
+
+		// THEN the records, which are the source of truth for the fields above.
+		// The cache is written first only because the schema is what adjudicates
+		// the forbidden private/open-join pair (migrations/0003) — writing a
+		// record for a configuration the database would refuse would leave the
+		// space describing a group that cannot exist. (Spec: FR-004, FR-016a.)
+		try {
+			// The row we just updated, without re-reading it: the profile must
+			// describe the group as it now IS, and `joinPolicy` is derived from
+			// these two columns (FR-004b).
+			const fresh = {
+				...group,
+				name: data.name,
+				description: data.description || null,
+				visibility: data.visibility,
+				require_approval: data.requireApproval ? 1 : 0
+			};
+			const reader = await groupSpaceReader(env, db, group);
+			const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };
+			const writer = await groupWriter(env, db, fresh);
+			await writeGroupProfile({
+				db,
+				env,
+				group: fresh,
+				callerDid,
+				writer,
+				profile: {
+					name: data.name,
+					description: data.description || null,
+					// Not on the settings form, so it is carried rather than cleared.
+					locationName: group.location_name,
+					// Preserved, so editing a group does not restamp its creation date.
+					createdAt: about.profile?.createdAt ?? undefined
+				}
+			});
+			await setGroupRules({
+				db,
+				env,
+				group: fresh,
+				callerDid,
+				writer,
+				desired: splitRuleLines(data.rules),
+				existing: about.rules
+			});
+		} catch (e) {
+			return {
+				ok: false,
+				error: `Settings were saved, but ${group.slug}'s records were not updated: ${
+					e instanceof Error ? e.message : String(e)
+				}`
+			};
 		}
 		return { ok: true };
 	}

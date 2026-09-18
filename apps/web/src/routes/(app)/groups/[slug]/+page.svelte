@@ -12,6 +12,9 @@
 	let { data } = $props();
 
 	let group = $derived(data.group);
+	// Name/description/location/rules come from the about-space records, with
+	// the cache as fallback; `data.about.source` says which. (Spec: FR-004.)
+	let about = $derived(data.about);
 	let membership = $derived(data.membership);
 	let isOwner = $derived(membership.role === 'owner');
 	let isMember = $derived(membership.role !== null);
@@ -26,8 +29,8 @@
 </script>
 
 <svelte:head>
-	<title>{group.name} — atmo.rsvp</title>
-	<meta name="description" content={group.description ?? `${group.name} on atmo.rsvp`} />
+	<title>{about.name} — atmo.rsvp</title>
+	<meta name="description" content={about.description ?? `${about.name} on atmo.rsvp`} />
 </svelte:head>
 
 <div class="mx-auto max-w-3xl px-6 py-8 sm:py-12">
@@ -39,7 +42,7 @@
 
 	<div class="flex flex-wrap items-start justify-between gap-4">
 		<div class="min-w-0">
-			<h1 class="text-3xl font-bold sm:text-4xl">{group.name}</h1>
+			<h1 class="text-3xl font-bold sm:text-4xl">{about.name}</h1>
 			<p class="text-base-400 dark:text-base-500 mt-2 font-mono text-xs break-all">
 				{group.group_did}
 			</p>
@@ -51,8 +54,8 @@
 		</div>
 	</div>
 
-	{#if group.description}
-		<p class="text-base-700 dark:text-base-200 mt-4 whitespace-pre-line">{group.description}</p>
+	{#if about.description}
+		<p class="text-base-700 dark:text-base-200 mt-4 whitespace-pre-line">{about.description}</p>
 	{/if}
 
 	<dl class="text-base-500 dark:text-base-400 mt-6 flex flex-wrap gap-x-6 gap-y-1 text-sm">
@@ -60,10 +63,10 @@
 			<dt class="inline">Members:</dt>
 			<dd class="inline">{data.memberCount}</dd>
 		</div>
-		{#if group.location_name}
+		{#if about.locationName}
 			<div>
 				<dt class="inline">Where:</dt>
-				<dd class="inline">{group.location_name}</dd>
+				<dd class="inline">{about.locationName}</dd>
 			</div>
 		{/if}
 		<div>
@@ -83,6 +86,28 @@
 			</div>
 		{/if}
 	</dl>
+
+	{#if about.rules.length > 0}
+		<section class="mt-6">
+			<h2 class="text-lg font-semibold">Group rules</h2>
+			<!-- One record per rule, so each carries the URI a moderation action
+			     would cite. Rendered in the records' own `order`. (Spec: FR-004c.) -->
+			<ol class="text-base-700 dark:text-base-200 mt-2 list-decimal space-y-1 pl-6 text-sm">
+				{#each about.rules as rule (rule.uri)}
+					<li>{rule.text}</li>
+				{/each}
+			</ol>
+		</section>
+	{/if}
+
+	<!-- The provenance marker SC-002 is observed through: a page reading records
+	     says so, and one falling back to the cache says that instead. A group
+	     created before the profile writer existed is the second case. -->
+	<p class="text-base-400 dark:text-base-500 mt-4 text-xs">
+		{about.source === 'records'
+			? 'Name, description and rules read from this group’s about space.'
+			: 'Reading from cache — this group has no profile record yet.'}
+	</p>
 
 	<div class="mt-6 flex flex-wrap items-center gap-3">
 		<Button href="/groups/{group.slug}/events" variant="secondary">Events</Button>
@@ -181,7 +206,7 @@
 					<input type="hidden" name="slug" value={group.slug} />
 					<div class="flex flex-col gap-1.5">
 						<Label for="settings-name">Name</Label>
-						<Input id="settings-name" name="name" value={group.name} required />
+						<Input id="settings-name" name="name" value={about.name} required />
 					</div>
 					<div class="flex flex-col gap-1.5">
 						<Label for="settings-description">Description</Label>
@@ -190,8 +215,23 @@
 							name="description"
 							rows="3"
 							class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
-							>{group.description ?? ''}</textarea
+							>{about.description ?? ''}</textarea
 						>
+					</div>
+					<div class="flex flex-col gap-1.5">
+						<Label for="settings-rules">Rules</Label>
+						<textarea
+							id="settings-rules"
+							name="rules"
+							rows="4"
+							placeholder="One rule per line"
+							class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
+							>{about.rules.map((rule) => rule.text).join('\n')}</textarea
+						>
+						<p class="text-base-500 dark:text-base-400 text-xs">
+							One rule per line. Each line is its own record, so editing one rule leaves the
+							others’ addresses untouched.
+						</p>
 					</div>
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1.5">

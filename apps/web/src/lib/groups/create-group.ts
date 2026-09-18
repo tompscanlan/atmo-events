@@ -26,6 +26,9 @@ import {
 import { GroupMintError, mintGroupAccount, type MintConfig, type MintFailure } from './server/mint';
 import { createGroup, recordGroupSpaces } from './server/repo';
 import { GroupSpaceError, pdsProvisioner, provisionGroupSpaces } from './server/spaces';
+import { setGroupRules, writeGroupProfile } from './server/about-writer';
+import { pdsWriter } from './server/event-writer';
+import { splitRuleLines } from './about-record';
 import { slugMintRefusal, slugMintRefusalMessage } from './slug';
 import { formError } from './form-error';
 import type { GroupFormResult } from './form-result';
@@ -55,6 +58,9 @@ export interface CreateGroupData {
 	locationName?: string;
 	locationAddress?: string;
 	locationTimezone?: string;
+	/** One rule per non-empty line. Rules have no column — the records in the
+	 *  about space are the only copy. (Spec: FR-004c.) */
+	rules?: string;
 }
 
 export type CreateGroupOutcome = GroupFormResult<{ groupSlug: string; recoveryKey: string }>;
@@ -182,9 +188,11 @@ export async function runCreateGroup(
 
 	// Provisioning is not ordered by the slug: the space key is `self`, so both
 	// URIs are a function of the group DID alone.
+	let aboutUri: string;
 	try {
 		const uris = await provisionGroupSpaces(pdsProvisioner(minted.credential, minted.did));
 		await recordGroupSpaces(env.DB, group.id, uris);
+		aboutUri = uris.aboutSpaceUri;
 	} catch (e) {
 		// The group EXISTS at this point, so saying "creation failed" would be a
 		// lie. Name what is missing instead: `provisionGroupSpaces` is idempotent
@@ -193,6 +201,53 @@ export async function runCreateGroup(
 		return {
 			ok: false,
 			error: `${group.slug} was created, but its spaces were not provisioned: ${detail}`
+		};
+	}
+
+	// THE GROUP'S PUBLIC FACE, as records. Last, because it is the only step
+	// whose failure leaves nothing broken: the group exists, its columns hold
+	// everything the page needs, and the records can be written again by saving
+	// the settings form. Ordering it before the INSERT is impossible anyway —
+	// `requireGroupPermission` reads the owner's membership, which the INSERT
+	// creates. (Spec: FR-004.)
+	try {
+		const withSpace = { ...group, about_space_uri: aboutUri };
+		// The credential we already hold, NOT `groupWriter` — that would decrypt
+		// the row we wrote three statements ago to obtain the value still in
+		// scope. Same transport either way; this one has fewer moving parts.
+		const writer = pdsWriter(minted.credential, minted.did);
+		await writeGroupProfile({
+			db: env.DB,
+			env,
+			group: withSpace,
+			callerDid,
+			writer,
+			profile: {
+				name: data.name,
+				description: data.description || null,
+				locationName: data.locationName || null
+			}
+		});
+		const rules = splitRuleLines(data.rules);
+		if (rules.length > 0) {
+			await setGroupRules({
+				db: env.DB,
+				env,
+				group: withSpace,
+				callerDid,
+				writer,
+				desired: rules,
+				// A group one statement old has no rule records, so the reconcile
+				// starts from empty rather than paying a read to learn that.
+				existing: []
+			});
+		}
+	} catch (e) {
+		return {
+			ok: false,
+			error: `${group.slug} was created, but its profile records were not written: ${
+				e instanceof Error ? e.message : String(e)
+			}. Saving the group's settings will write them.`
 		};
 	}
 

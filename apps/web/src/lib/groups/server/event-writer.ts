@@ -208,18 +208,33 @@ function requiredPermission(intent: 'create' | 'update' | 'delete'): EnforcedGro
 	return intent === 'create' ? 'CREATE_EVENT' : 'MANAGE_EVENTS';
 }
 
+/** The gate's permission half, on its own so a second record class does not
+ *  have to re-derive it. Events reach it through `authorise` below; the control
+ *  plane reaches it directly (`./about-writer.ts`), because its permission is
+ *  fixed rather than chosen by intent.
+ *
+ *  Refuses an anonymous caller before touching D1, and a suspended member by
+ *  construction: `getCallerMembership` populates `permissions` only from an
+ *  ACTIVE membership, so a suspended one resolves to the empty union. */
+export async function requireGroupPermission(
+	db: D1Database,
+	group: GroupRow,
+	callerDid: string | null,
+	permission: EnforcedGroupPermission
+): Promise<void> {
+	if (!callerDid) throw new GroupPermissionError(permission, group.slug);
+	const membership = await getCallerMembership(db, group.id, callerDid);
+	if (!can(membership.permissions, permission)) {
+		throw new GroupPermissionError(permission, group.slug);
+	}
+}
+
 async function authorise(
 	input: Pick<WriteGroupEventInput, 'db' | 'group' | 'callerDid'>,
 	intent: 'create' | 'update' | 'delete'
 ): Promise<EnforcedGroupPermission> {
 	const permission = requiredPermission(intent);
-	if (!input.callerDid) throw new GroupPermissionError(permission, input.group.slug);
-	const membership = await getCallerMembership(input.db, input.group.id, input.callerDid);
-	// `permissions` is populated only from an ACTIVE membership, so a suspended
-	// member resolves to the empty union and is refused here.
-	if (!can(membership.permissions, permission)) {
-		throw new GroupPermissionError(permission, input.group.slug);
-	}
+	await requireGroupPermission(input.db, input.group, input.callerDid, permission);
 	return permission;
 }
 
@@ -244,7 +259,7 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 		);
 	}
 
-	const writer = input.writer ?? (await resolveWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
@@ -264,7 +279,7 @@ export async function deleteGroupEvent(
 	input: Omit<WriteGroupEventInput, 'intent' | 'record'> & { rkey: string }
 ): Promise<{ uri: string; repo: string }> {
 	await authorise(input, 'delete');
-	const writer = input.writer ?? (await resolveWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
@@ -276,12 +291,13 @@ export async function deleteGroupEvent(
 	return { uri: result.uri, repo: input.group.group_did };
 }
 
-/** The transport for a group's own repo.
+/** The transport for a group's own repo, and for its spaces — one credential
+ *  serves both, because a space write is authored by the same account.
  *
  *  `resolveGroupCredential` checks the operator secret first and the minted
  *  credential table second, so a group created through the form writes with the
  *  app password stored at mint while an operator override still wins. */
-async function resolveWriter(
+export async function groupWriter(
 	env: CredentialStoreEnv,
 	db: D1Database,
 	group: GroupRow
