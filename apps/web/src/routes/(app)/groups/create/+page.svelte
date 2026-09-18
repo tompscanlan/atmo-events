@@ -27,10 +27,20 @@
 
 <div class="mx-auto max-w-2xl px-6 py-8 sm:py-12">
 	<h1 class="mb-2 text-3xl font-bold">New group</h1>
-	<p class="text-base-500 dark:text-base-400 mb-8 text-sm">
+	<p class="text-base-500 dark:text-base-400 mb-4 text-sm">
 		A group is an account on the network. Creating one registers a new identity — its address
-		becomes its handle, so the name has to be free, and you get a recovery key that lets you move
-		the group to another host later.
+		becomes its handle, so the name has to be free.
+	</p>
+	<!-- FR-001i: one custody path this iteration, and the page says which. The old
+	     copy named only what the owner gets (the recovery key) and never what we
+	     keep (the writing credential, and the account's email address), which
+	     reads as ownership to anyone who does not already know atproto. -->
+	<p class="text-base-500 dark:text-base-400 mb-8 text-sm">
+		<strong>OpenMeet hosts this group for you.</strong> We hold the credential the group posts
+		with, and its account email is ours, so we can keep it working and help when it breaks — you do
+		not need to know anything about atproto to run a group here. What you get at the end is its
+		<strong>recovery key</strong>: with it you can move the group to a host of your own later, and
+		nobody — including us — can stop you. Owning the group's account outright is not offered yet.
 	</p>
 
 	{#if !data.mintConfigured}
@@ -58,6 +68,13 @@
 				This is the only time it is shown. It is not stored anywhere on this service. Keep it
 				somewhere safe — with it you can move
 				<strong>{created.groupSlug}</strong> to another host, and without it you cannot.
+			</p>
+			<!-- FR-001i: the key is portability, not ownership. Saying only what it
+			     unlocks invites the reading that it is the group's password. -->
+			<p class="mt-1">
+				It is <em>not</em> the group's password: it will not sign you in, and it is not needed to
+				post, edit or invite. Lose it and the group keeps working — you lose only the ability to
+				take it elsewhere without us.
 			</p>
 			<textarea
 				readonly
