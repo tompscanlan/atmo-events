@@ -1,10 +1,11 @@
 -- Writing credentials for groups this deployment MINTED, as opposed to groups an
 -- operator configured.
 --
--- WHY A TABLE AT ALL: FR-001 makes group creation self-service, so the app mints
--- a did:plc during a form POST — and a Worker cannot write its own secret. The
+-- WHY A TABLE AT ALL: group creation is self-service, so the app mints a did:plc
+-- during a form POST — and a Worker cannot write its own secret. The
 -- GROUP_CREDENTIALS secret therefore cannot hold a credential that comes into
 -- existence at runtime, and the PDS shows an app password exactly once.
+-- (Spec: FR-001, FR-001f.)
 --
 -- WHAT IS STORED IS NOT THE ACCOUNT PASSWORD. The mint uses a random master
 -- password, creates ONE app password with it (com.atproto.server.createAppPassword,
@@ -35,8 +36,8 @@
 -- (createAppPassword is ACCESS_FULL), so re-issuing runs through
 -- com.atproto.admin.updateAccountPassword. The exit from the whole arrangement is
 -- group-host OAuth (om-jc4lh); the owner's portability does NOT depend on any of
--- this, because the owner holds rotationKeys[0] from the genesis operation
--- (FR-001g) and can move the DID without us.
+-- this, because the owner holds the first PLC rotation key from the genesis
+-- operation and can move the DID without us. (Spec: FR-001g.)
 --
 -- NOT AN AUDIT LOG. One row per group DID, replaced on rotation. The DID is the
 -- identity; `identifier` is the handle a session opens with and is a mutable

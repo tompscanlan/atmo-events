@@ -7,11 +7,12 @@
 -- roster outright — `requestJoin` fell straight through to `addMember`.
 --
 -- WHY THE SLUG IS NOT A SECRET, which is what makes that a hole rather than an
--- edge case: since FR-001a the slug IS the group's PDS handle label
+-- edge case: the slug IS the group's PDS handle label
 -- (`<slug>.group.opnmt.net`), and a did:plc's genesis operation — handle
 -- included — is published in plc.directory's public audit log. A private
 -- group's address is therefore enumerable by design. Access control can never
--- rest on nobody knowing it.
+-- rest on nobody knowing it. (Spec: FR-001a for the handle-as-name rule,
+-- FR-016 for invite-only private groups.)
 --
 -- WHY A TRIGGER RATHER THAN A CHECK. A cross-column CHECK cannot be added to an
 -- existing SQLite table without rebuilding it, and a rebuild of `groups` would

@@ -103,9 +103,10 @@ export const createGroupForm = form(
 		const { locals, platform } = getRequestEvent();
 		if (!locals.did) error(401, 'Sign in to create a group');
 		// NO REDIRECT on success. The owner's rotation key comes back in the
-		// result and is shown exactly once (FR-001g); a 303 here would destroy
-		// it. The page renders it, then links onward. The ordered flow — and
-		// every way it can fail — is ./create-group.ts.
+		// result, is shown exactly once and is stored nowhere on our side, so a
+		// 303 here would destroy it. The page renders it, then links onward. The
+		// ordered flow — and every way it can fail — is ./create-group.ts.
+		// (Spec: FR-001g.)
 		return runCreateGroup(platform!.env, locals.did, data);
 	}
 );

@@ -1,5 +1,5 @@
-// THE ORDERING OF GROUP CREATION (SC-008), against a stub PDS and the real
-// schema.
+// THE ORDERING OF GROUP CREATION, against a stub PDS and the real schema: a
+// create that fails must leave no durable artifact behind. (Spec: SC-008.)
 //
 // `mint.test.ts` already covers how a PDS refusal maps onto a `MintFailure`,
 // and `credentials.test.ts` covers the encrypted round-trip. What neither can
@@ -62,7 +62,8 @@ function stubPds(overrides: { account?: () => Response } = {}) {
 				Response.json({
 					did: MINTED_DID,
 					// Deliberately NOT the submitted slug: the PDS is what adjudicates
-					// the name, so the row must be written from THIS value (FR-001a).
+					// the name, so the row must be written from THIS value — the leaf
+					// label of the handle actually registered. (Spec: FR-001a.)
 					handle: 'konatrail.group.stub.test',
 					accessJwt: 'master-jwt'
 				})
@@ -112,8 +113,8 @@ afterEach(() => {
 });
 
 describe('a name the PDS refuses', () => {
-	// SC-008. The handle registration IS the reservation, so this is the whole
-	// collision path: it must cost nothing that cannot be taken back.
+	// The handle registration IS the reservation, so this is the whole collision
+	// path: it must cost nothing that cannot be taken back. (Spec: SC-008.)
 	it('leaves no DID, no group row, no credential and no space', async () => {
 		const calls = stubPds({
 			account: () =>
@@ -164,8 +165,9 @@ describe('refusing before the irreversible step', () => {
 
 describe('a successful create', () => {
 	// The PLC read sits between the mint and the first durable write: if the
-	// owner's key did not land at index 0 the group is portable in name only, and
-	// FR-001g says find that out before telling anyone the group exists.
+	// owner's key did not land at index 0 the group is portable in name only, so
+	// that has to be found out before anyone is told the group exists.
+	// (Spec: FR-001g.)
 	it('mints, verifies the rotation key, then stores, inserts and provisions', async () => {
 		const calls = stubPds();
 
@@ -182,8 +184,8 @@ describe('a successful create', () => {
 		]);
 	});
 
-	// FR-001a: the slug is the minted handle's leaf, never the submitted field,
-	// because the PDS's handle registry is what adjudicated the name.
+	// The slug is the minted handle's leaf, never the submitted field, because the
+	// PDS's handle registry is what adjudicated the name. (Spec: FR-001a.)
 	it('writes the group from the minted handle and keys the credential on the minted DID', async () => {
 		stubPds();
 

@@ -1,18 +1,18 @@
 // Minting a group: a did:plc, a handle, a writing credential, and a rotation key
 // the OWNER holds.
 //
-// Why this exists at all (FR-001): before it, group creation bound a
-// pre-provisioned DID out of GROUP_CREDENTIALS, so nobody but an operator could
-// create a group. The public alpha requires self-service.
+// Why this exists at all: before it, group creation bound a pre-provisioned DID
+// out of GROUP_CREDENTIALS, so nobody but an operator could create a group. The
+// public alpha requires self-service. (Spec: FR-001.)
 //
-// THE HANDLE REGISTRATION IS THE NAME RESERVATION (FR-001a). The PDS's handle
-// registry adjudicates the collision, so a duplicate name fails HERE — before a
+// THE HANDLE REGISTRATION IS THE NAME RESERVATION. The PDS's handle registry
+// adjudicates the collision, so a duplicate name fails HERE — before a
 // did:plc exists, before a row, before a space. That is the whole reason the
 // order is mint-then-INSERT and not the other way around: a did:plc is permanent
 // and unrecallable, so it must be the last thing risked, and the first thing a
-// clash stops.
+// clash stops. (Spec: FR-001a.)
 //
-// WHAT THE OWNER GETS, AND WHAT WE KEEP (FR-001f/FR-001g):
+// WHAT THE OWNER GETS, AND WHAT WE KEEP (Spec: FR-001f, FR-001g):
 //   * the owner gets rotationKeys[0] of the genesis operation, so they can move
 //     the DID off our PDS without our cooperation. The private key is returned to
 //     the caller for a ONE-TIME reveal and is never stored or logged here.
@@ -30,13 +30,18 @@ export interface MintConfig {
 	service: string;
 	/** Handle suffix for groups, e.g. group.opnmt.net (`GROUP_HANDLE_DOMAIN`).
 	 *  Groups get their OWN subdomain so a group handle can never lose a race to
-	 *  a member handle — FR-001b, and `om-kp7ss.5` puts members on the same PDS. */
+	 *  a member handle: members get accounts on this same PDS (`om-kp7ss.5`), and
+	 *  one flat registry would let a person's name decide whether a group can be
+	 *  created. (Spec: FR-001b.) */
 	handleDomain: string;
 	/** The deployment's invite code (`GROUP_PDS_INVITE_CODE`). PDS_INVITE_REQUIRED
 	 *  is true on the alpha; we hold a code rather than opening the gate. */
 	inviteCode: string;
 	/** Address group accounts are created with, e.g. groups@openmeet.net
-	 *  (`GROUP_ACCOUNT_EMAIL`). Plus-addressed per group — FR-001h. */
+	 *  (`GROUP_ACCOUNT_EMAIL`). Plus-addressed per group, because the PDS matches
+	 *  account emails exactly and refuses a mint with none. The address is ours
+	 *  rather than the owner's, so the password-reset path stays ours.
+	 *  (Spec: FR-001h.) */
 	accountEmail: string;
 }
 
@@ -52,8 +57,10 @@ export type MintFailure =
 	/** No invite code configured on this deployment. */
 	| 'invite-missing'
 	/** Exhausted, nonexistent, disabled or taken-down — the PDS gives all four the
-	 *  same string, and FR-001e forbids using admin credentials to tell them
-	 *  apart from the request path. An operator page, never a user-facing blame. */
+	 *  same string, and the create path may not use admin credentials to tell them
+	 *  apart, because a public Worker holding an admin password could take down
+	 *  any account on the host. An operator page, never a user-facing blame.
+	 *  (Spec: FR-001e.) */
 	| 'invite-unavailable'
 	/** The account address was refused (invalid, disposable, or already used). */
 	| 'email-rejected'
@@ -187,7 +194,9 @@ async function refusal(res: Response): Promise<GroupMintError> {
  *  this asks plc.directory rather than resolving the DID. `rotationKeys[0]` is
  *  the whole claim: PLC resolves conflicting operations by key precedence, so
  *  index 0 is what lets the owner move the DID against our wishes. Anything else
- *  means we minted an identity only we can move (FR-001g, `om-bhj4y`). */
+ *  means we minted an identity only we can move, which is the custody we set out
+ *  not to take. (Spec: FR-001g; the same promise `om-bhj4y` owes existing
+ *  custodial accounts.) */
 export async function assertOwnerHoldsRotationKey(
 	did: string,
 	ownerRotationKey: string,
@@ -282,7 +291,8 @@ export async function mintGroupAccount(
 	}
 
 	// Before the caller is told this group exists: if the owner's key did not land
-	// first, we minted an identity only we can move. Surface it (FR-001g).
+	// first, we minted an identity only we can move, so the group is portable in
+	// name only. Surface it rather than hand it back. (Spec: FR-001g.)
 	await verifyRotationKey(session.did, ownerRotationKey);
 
 	return {

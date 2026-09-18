@@ -7,7 +7,7 @@
 // supplies `locals.did` and `platform.env`; everything that can go wrong lives
 // here, where it is assertable.
 //
-// THE ORDER IS THE POINT (FR-001a, SC-008). A did:plc is permanent and
+// THE ORDER IS THE POINT. A did:plc is permanent and
 // unrecallable, so the sequence is:
 //
 //   refuse -> refuse -> mint -> store -> INSERT -> provision
@@ -16,6 +16,7 @@
 // deployment that could not keep the credential the mint hands back exactly
 // once. The handle registration is itself the name reservation, so a duplicate
 // name fails at the mint and leaves nothing behind — no DID, no row, no space.
+// (Spec: FR-001a for the reservation, SC-008 for the zero-artifact outcome.)
 import type { CredentialStoreEnv } from './server/credentials';
 import {
 	GroupCredentialKeyError,
@@ -73,10 +74,12 @@ export function mintConfig(env: CreateGroupEnv): MintConfig | null {
 /** What a failed mint says to whoever is reading the form.
  *
  *  The user's cases name the field they can change. The operator's cases say
- *  "not you, and not your fault" WITHOUT guessing a cause: FR-001e forbids the
- *  create path from calling `com.atproto.admin.getInviteCodes`, so an unavailable
- *  code is genuinely ambiguous between exhausted and misconfigured, and claiming
- *  either would be a fabrication. `om-pl5pw` owns the detection. */
+ *  "not you, and not your fault" WITHOUT guessing a cause: the create path is
+ *  not allowed to call `com.atproto.admin.getInviteCodes` — a public Worker
+ *  holding an admin password could take down any account on the host — and the
+ *  PDS gives exhausted, wrong and rotated codes one identical error, so an
+ *  unavailable code is genuinely ambiguous and claiming either cause would be a
+ *  fabrication. Out-of-band detection is `om-pl5pw`. (Spec: FR-001e.) */
 export function mintErrorMessage(
 	e: { failure: MintFailure; message: string },
 	slug: string
@@ -89,7 +92,8 @@ export function mintErrorMessage(
 			return `The group PDS refused “${slug}” as an address. Choose another URL name.`;
 		case 'rotation-key-unverified':
 			// Deliberately not swallowed: the group would exist without the owner
-			// holding rotationKeys[0], i.e. portable in name only (FR-001g).
+			// holding the first PLC rotation key, i.e. portable in name only, and
+			// nothing should be presented as theirs on that footing. (Spec: FR-001g.)
 			return `“${slug}” was registered, but we could not confirm that you hold its recovery key, so it has not been set up as your group. Tell an administrator before creating it again. (${e.message})`;
 		case 'invite-missing':
 		case 'invite-unavailable':
@@ -107,9 +111,9 @@ export async function runCreateGroup(
 	// REFUSE BEFORE MINTING, in two ways, because a did:plc cannot be recalled.
 	//
 	// 1. The label must be one the PDS will accept as a handle. Our slug rules
-	//    are wider than its handle rules (3-18, no dot, not reserved), and the
-	//    handle registration IS the name reservation (FR-001a), so a label we
-	//    could not mint must fail on the field the user can edit.
+	//    are wider than its handle rules (3-18 characters, no dot, not reserved),
+	//    and the handle registration is itself the name reservation, so a label we
+	//    could not mint must fail on the field the user can edit. (Spec: FR-001a.)
 	const refusal = slugMintRefusal(data.slug);
 	if (refusal) return { ok: false, error: slugMintRefusalMessage(refusal, data.slug) };
 
@@ -192,8 +196,8 @@ export async function runCreateGroup(
 		};
 	}
 
-	// The owner's rotation key is shown exactly once and is the only thing that
-	// lets them move this group off our PDS (FR-001g), so the caller must not
-	// redirect: a 303 would destroy it.
+	// The owner's rotation key is shown exactly once, is stored nowhere on our
+	// side, and is the only thing that lets them move this group off our PDS — so
+	// the caller must not redirect: a 303 would destroy it. (Spec: FR-001g.)
 	return { ok: true, groupSlug: group.slug, recoveryKey: minted.ownerRotationSecret };
 }

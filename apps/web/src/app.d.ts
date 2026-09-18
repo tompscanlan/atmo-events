@@ -118,7 +118,9 @@ declare global {
 				GROUP_PDS_SERVICE?: string;
 				/** Handle suffix for groups, e.g. group.opnmt.net. Groups get their
 				 *  OWN subdomain so a group handle can never lose a race to a member
-				 *  handle (FR-001b; om-kp7ss.5 puts members on the same PDS). */
+				 *  handle: members get accounts on the same PDS (om-kp7ss.5), and one
+				 *  flat registry would let a person's name decide whether a group can
+				 *  be created. (Spec: FR-001b.) */
 				GROUP_HANDLE_DOMAIN?: string;
 				/** Invite code for the group PDS, set with `wrangler secret put`.
 				 *  PDS_INVITE_REQUIRED is true on the alpha, so we hold a code rather
@@ -129,8 +131,8 @@ declare global {
 				 *  groups@openmeet.net — plus-addressed per group
 				 *  (groups+<slug>@…) because the PDS requires an email, refuses
 				 *  disposable domains, and matches it exactly for uniqueness. Ours
-				 *  rather than the owner's, so the password-reset path stays ours
-				 *  (FR-001h). */
+				 *  rather than the owner's, so the password-reset path stays ours.
+				 *  (Spec: FR-001h.) */
 				GROUP_ACCOUNT_EMAIL?: string;
 				/** base64 32-byte AES-GCM key wrapping every minted group's app
 				 *  password in `group_credentials`. Set with `wrangler secret put`.

@@ -59,8 +59,9 @@ describe('mintGroupAccount', () => {
 		expect(minted.did).toBe(DID);
 	});
 
-	// FR-001g: the owner's key must be IN the genesis operation, so it has to be
-	// on the createAccount call itself — adding it afterwards is not possible.
+	// The owner's key must be IN the genesis operation, so it has to ride on the
+	// createAccount call itself — a PLC operation cannot be amended afterwards
+	// without a key we do not have. (Spec: FR-001g.)
 	it('sends the owner rotation key as recoveryKey at mint', async () => {
 		const calls = stubPds();
 		const minted = await mintGroupAccount(CFG, 'kona', async () => {});
@@ -73,8 +74,9 @@ describe('mintGroupAccount', () => {
 		expect(minted.ownerRotationSecret).not.toBe(minted.ownerRotationKey);
 	});
 
-	// FR-001f: what we keep must be the app password, not the account's master —
-	// the master is what could change the password or delete the account.
+	// What we keep must be the app password, not the account's master — the master
+	// is what could change the password or delete the account, and a D1 read or
+	// backup must never yield account takeover. (Spec: FR-001f.)
 	it('keeps the app password and never returns the master', async () => {
 		const calls = stubPds();
 		const minted = await mintGroupAccount(CFG, 'kona', async () => {});
@@ -96,8 +98,9 @@ describe('mintGroupAccount', () => {
 	});
 
 	// The PDS gives spent, nonexistent, disabled and taken-down ONE string, while
-	// a missing code has its own. Collapsing the four is deliberate (FR-001e);
-	// collapsing all five would lose the one distinction that exists.
+	// a missing code has its own. Collapsing the four is deliberate, because the
+	// create path may not use admin credentials to tell them apart; collapsing all
+	// five would lose the one distinction that exists. (Spec: FR-001e.)
 	//
 	// THE `InvalidRequest` ROWS ARE THE LIVE SHAPES, measured on pds.opnmt.net
 	// 2026-09-18 during T006c. The table used to assert only the

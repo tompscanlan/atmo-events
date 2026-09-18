@@ -2,11 +2,11 @@
  *  empty, because a slug is a handle for humans typing a URL, not a faithful
  *  encoding of the name (which lives in `groups.name`).
  *
- *  It does NOT truncate and it does NOT invent a fallback. Since FR-001a the
- *  slug's label is also the group's PDS handle, and the handle registration is
- *  the name reservation — so a mangled or invented label mints a permanent
- *  `did:plc` under a name nobody chose. An empty return means "ask the user",
- *  which is what the create form does. */
+ *  It does NOT truncate and it does NOT invent a fallback. The slug's label is
+ *  also the group's PDS handle, and registering that handle is what reserves the
+ *  name — so a mangled or invented label mints a permanent `did:plc` under a name
+ *  nobody chose. An empty return means "ask the user", which is what the create
+ *  form does. (Spec: FR-001a.) */
 export function slugifyGroupName(name: string): string {
 	return name
 		.toLowerCase()

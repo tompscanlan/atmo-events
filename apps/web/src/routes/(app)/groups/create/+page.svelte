@@ -31,10 +31,12 @@
 		A group is an account on the network. Creating one registers a new identity — its address
 		becomes its handle, so the name has to be free.
 	</p>
-	<!-- FR-001i: one custody path this iteration, and the page says which. The old
+	<!-- Groups are hosted one way for now — OpenMeet holds the account — so the
+	     page says which way rather than leaving it to be inferred. The earlier
 	     copy named only what the owner gets (the recovery key) and never what we
 	     keep (the writing credential, and the account's email address), which
-	     reads as ownership to anyone who does not already know atproto. -->
+	     reads as ownership to anyone who does not already know atproto.
+	     (Spec: FR-001i.) -->
 	<p class="text-base-500 dark:text-base-400 mb-8 text-sm">
 		<strong>OpenMeet hosts this group for you.</strong> We hold the credential the group posts
 		with, and its account email is ours, so we can keep it working and help when it breaks — you do
@@ -60,7 +62,8 @@
 
 	<!-- Shown ONCE. The private key is never stored by us and cannot be shown
 	     again; it is what lets the owner move the group off this PDS without our
-	     cooperation (FR-001g). -->
+	     cooperation, because it is the first PLC rotation key on the account.
+	     (Spec: FR-001g.) -->
 	{#if created}
 		<div class="mb-8 rounded-2xl p-4 text-sm ring-1 ring-amber-500/40">
 			<p class="font-semibold">Save your group's recovery key now.</p>
@@ -69,8 +72,9 @@
 				somewhere safe — with it you can move
 				<strong>{created.groupSlug}</strong> to another host, and without it you cannot.
 			</p>
-			<!-- FR-001i: the key is portability, not ownership. Saying only what it
-			     unlocks invites the reading that it is the group's password. -->
+			<!-- The key is portability, not ownership: it moves the group, it does
+			     not operate it. Saying only what it unlocks invites the reading
+			     that it is the group's password. (Spec: FR-001i.) -->
 			<p class="mt-1">
 				It is <em>not</em> the group's password: it will not sign you in, and it is not needed to
 				post, edit or invite. Lose it and the group keeps working — you lose only the ability to
@@ -117,7 +121,7 @@
 
 		<!-- The Group DID field is gone: creating a group MINTS its identity, so
 		     there is no DID to choose and no credential for an operator to
-		     pre-provision (FR-001, om-kp7ss.1). -->
+		     pre-provision. (Spec: FR-001; bead om-kp7ss.1.) -->
 
 		<div class="flex flex-col gap-1.5">
 			<Label for="group-description">Description</Label>
