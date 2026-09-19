@@ -243,8 +243,8 @@ export const approveJoinRequestForm = form(
 	}),
 	async (data): Promise<GroupFormResult> => {
 		const { db, group, membership, callerDid } = await context(data.slug);
-		if (!can(membership.permissions, 'MANAGE_MEMBERS')) {
-			return { ok: false, error: 'Not allowed: MANAGE_MEMBERS required' };
+		if (!can(membership.permissions, 'ADMIT_MEMBERS')) {
+			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
 		}
 		try {
 			await approveJoinRequest(db, group.id, data.requestId, callerDid, data.role ?? 'member');
@@ -259,8 +259,8 @@ export const rejectJoinRequestForm = form(
 	v.object({ slug: slugField, requestId: idField }),
 	async (data): Promise<GroupFormResult> => {
 		const { db, group, membership, callerDid } = await context(data.slug);
-		if (!can(membership.permissions, 'MANAGE_MEMBERS')) {
-			return { ok: false, error: 'Not allowed: MANAGE_MEMBERS required' };
+		if (!can(membership.permissions, 'ADMIT_MEMBERS')) {
+			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
 		}
 		try {
 			await decideJoinRequest(db, group.id, data.requestId, callerDid, 'rejected');
@@ -272,13 +272,13 @@ export const rejectJoinRequestForm = form(
 );
 
 /** Direct add, for an admin putting a known DID straight on the roster without
- *  a request. Same gate as approval. */
+ *  a request. Same gate as approval: a reviewer who may admit may admit. */
 export const addMemberForm = form(
 	v.object({ slug: slugField, did: didField, role: v.optional(assignableRoleField) }),
 	async (data): Promise<GroupFormResult> => {
 		const { db, group, membership } = await context(data.slug);
-		if (!can(membership.permissions, 'MANAGE_MEMBERS')) {
-			return { ok: false, error: 'Not allowed: MANAGE_MEMBERS required' };
+		if (!can(membership.permissions, 'ADMIT_MEMBERS')) {
+			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
 		}
 		try {
 			await addMember(db, group.id, data.did, data.role ?? 'member');
@@ -293,8 +293,8 @@ export const removeMemberForm = form(
 	v.object({ slug: slugField, did: didField }),
 	async (data): Promise<GroupFormResult> => {
 		const { db, group, membership } = await context(data.slug);
-		if (!can(membership.permissions, 'MANAGE_MEMBERS')) {
-			return { ok: false, error: 'Not allowed: MANAGE_MEMBERS required' };
+		if (!can(membership.permissions, 'EJECT_MEMBERS')) {
+			return { ok: false, error: 'Not allowed: EJECT_MEMBERS required' };
 		}
 		try {
 			await removeMember(db, group.id, data.did);
@@ -309,8 +309,8 @@ export const changeMemberRoleForm = form(
 	v.object({ slug: slugField, did: didField, role: assignableRoleField }),
 	async (data): Promise<GroupFormResult> => {
 		const { db, group, membership } = await context(data.slug);
-		if (!can(membership.permissions, 'MANAGE_MEMBERS')) {
-			return { ok: false, error: 'Not allowed: MANAGE_MEMBERS required' };
+		if (!can(membership.permissions, 'ASSIGN_ROLES')) {
+			return { ok: false, error: 'Not allowed: ASSIGN_ROLES required' };
 		}
 		try {
 			await changeMemberRole(db, group.id, data.did, data.role);
@@ -325,8 +325,10 @@ export const setMemberStatusForm = form(
 	v.object({ slug: slugField, did: didField, status: v.picklist(['active', 'suspended']) }),
 	async (data): Promise<GroupFormResult> => {
 		const { db, group, membership } = await context(data.slug);
-		if (!can(membership.permissions, 'MANAGE_MEMBERS')) {
-			return { ok: false, error: 'Not allowed: MANAGE_MEMBERS required' };
+		// Suspension is a partial removal, so it is the eject grant rather than a
+		// third name: a greeter who may admit must not be able to lock a member out.
+		if (!can(membership.permissions, 'EJECT_MEMBERS')) {
+			return { ok: false, error: 'Not allowed: EJECT_MEMBERS required' };
 		}
 		try {
 			await setMemberStatus(db, group.id, data.did, data.status);

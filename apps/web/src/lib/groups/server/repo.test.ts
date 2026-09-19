@@ -46,11 +46,11 @@ function group(overrides: Partial<Parameters<typeof createGroup>[1]> = {}) {
 }
 
 describe('createGroup', () => {
-	it('seeds the five roles with the legacy bundles and exactly one active owner', async () => {
+	it('seeds the three roles with their bundles and exactly one active owner', async () => {
 		const created = await group();
 
 		const bundles = await rolePermissions(db, created.id);
-		expect(Object.keys(bundles).sort()).toEqual(['admin', 'guest', 'member', 'moderator', 'owner']);
+		expect(Object.keys(bundles).sort()).toEqual(['admin', 'member', 'owner']);
 		for (const [role, expected] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
 			expect(bundles[role].slice().sort(), role).toEqual([...expected].sort());
 		}
@@ -88,7 +88,7 @@ describe('createGroup', () => {
 		);
 		const rows = harness.raw.prepare('SELECT COUNT(*) AS n FROM groups').get();
 		expect(rows).toEqual({ n: 1 });
-		expect(harness.raw.prepare('SELECT COUNT(*) AS n FROM roles').get()).toEqual({ n: 5 });
+		expect(harness.raw.prepare('SELECT COUNT(*) AS n FROM roles').get()).toEqual({ n: 3 });
 	});
 
 	it('reports a duplicate DID distinctly from a duplicate slug', async () => {

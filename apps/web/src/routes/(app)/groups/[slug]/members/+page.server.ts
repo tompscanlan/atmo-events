@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { canSeeGroup, canSeeMembers } from '$lib/groups/access';
-import { ASSIGNABLE_ROLES, V1_INERT_PERMISSIONS, can } from '$lib/groups/permissions';
+import { ASSIGNABLE_ROLES, can } from '$lib/groups/permissions';
 import {
 	getCallerMembership,
 	getGroupBySlug,
@@ -10,8 +10,9 @@ import {
 } from '$lib/groups/server/repo';
 import type { PageServerLoad } from './$types';
 
-/** The roster is APP data — no protocol record carries it — so SEE_MEMBERS is a
- *  real gate here, and an anonymous visitor never passes it. */
+/** The roster is APP data — no protocol record carries it — and it is
+ *  members-only at every visibility (FR-016b). The gate is membership, not a
+ *  permission: read access is not something a group grants (FR-005d). */
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
 	const group = await getGroupBySlug(db, params.slug);
@@ -20,21 +21,25 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const membership = await getCallerMembership(db, group.id, locals.did);
 	if (!canSeeGroup(group, membership)) error(404, 'Group not found');
 	if (!canSeeMembers(membership)) {
-		error(403, locals.did ? 'SEE_MEMBERS is required in this group' : 'Sign in to see members');
+		error(403, locals.did ? 'Only members can see this roster' : 'Sign in to see members');
 	}
 
-	const canManageMembers = can(membership.permissions, 'MANAGE_MEMBERS');
+	// Three grants, three controls: a greeter who may admit cannot eject or
+	// promote, which is the whole point of splitting MANAGE_MEMBERS (FR-005b).
+	const canAdmitMembers = can(membership.permissions, 'ADMIT_MEMBERS');
 
 	return {
 		group,
 		membership,
 		members: await listMembers(db, group.id),
-		pendingRequests: canManageMembers ? await listJoinRequests(db, group.id, 'pending') : [],
-		// The stored bundle per role, shown so an admin can see what a role grants
-		// before assigning it — including the names v1 does not act on.
+		pendingRequests: canAdmitMembers ? await listJoinRequests(db, group.id, 'pending') : [],
+		// The stored bundle per role, shown so an admin can see what a role
+		// grants before assigning it. Every name in it is enforced now — the ten
+		// stored-but-inert ones are gone (FR-005a).
 		rolePermissions: await rolePermissions(db, group.id),
-		inertPermissions: V1_INERT_PERMISSIONS,
 		assignableRoles: ASSIGNABLE_ROLES,
-		canManageMembers
+		canAdmitMembers,
+		canEjectMembers: can(membership.permissions, 'EJECT_MEMBERS'),
+		canAssignRoles: can(membership.permissions, 'ASSIGN_ROLES')
 	};
 };

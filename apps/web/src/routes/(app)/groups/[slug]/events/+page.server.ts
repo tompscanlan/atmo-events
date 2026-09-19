@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { canSeeGroup, canSeeGroupEvents } from '$lib/groups/access';
+import { canSeeGroup } from '$lib/groups/access';
 import { can } from '$lib/groups/permissions';
 import { listGroupEvents } from '$lib/groups/server/events-read';
 import { getCallerMembership, getGroupBySlug } from '$lib/groups/server/repo';
@@ -15,8 +15,9 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	if (!group) error(404, 'Group not found');
 
 	const membership = await getCallerMembership(db, group.id, locals.did);
+	// One gate, not two: a private group 404s for anyone off its roster, and
+	// after FR-005d the events question had become the same membership test.
 	if (!canSeeGroup(group, membership)) error(404, 'Group not found');
-	if (!canSeeGroupEvents(group, membership)) error(403, 'SEE_EVENTS is required in this group');
 
 	const events = await listGroupEvents(platform!.env, group).catch((e) => {
 		console.error(`[groups] listGroupEvents failed for ${group.slug}:`, e);

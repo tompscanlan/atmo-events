@@ -156,7 +156,7 @@
 		<p class="mt-3 text-sm text-red-600 dark:text-red-400">{leaveError}</p>
 	{/if}
 
-	{#if data.canManageMembers && data.pendingRequests.length > 0}
+	{#if data.canAdmitMembers && data.pendingRequests.length > 0}
 		<section class="mt-10">
 			<h2 class="mb-3 text-xl font-semibold">
 				Join requests ({data.pendingRequests.length})

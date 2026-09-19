@@ -19,7 +19,9 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	// A private group does not reveal that its slug exists.
 	if (!canSeeGroup(group, membership)) error(404, 'Group not found');
 
-	const canManageMembers = can(membership.permissions, 'MANAGE_MEMBERS');
+	// The queue is the admit decision, so it is the admit grant — not a general
+	// "manages members" flag that would also cover ejecting and role changes.
+	const canAdmitMembers = can(membership.permissions, 'ADMIT_MEMBERS');
 
 	// THE GROUP'S PUBLIC FACE COMES FROM RECORDS, with the row as fallback.
 	//
@@ -45,10 +47,10 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 			rules: about.rules.map((rule) => ({ text: rule.text, uri: rule.uri }))
 		},
 		memberCount: await countActiveMembers(db, group.id),
-		// Only a MANAGE_MEMBERS holder is shown the queue; everyone else gets [].
-		pendingRequests: canManageMembers ? await listJoinRequests(db, group.id, 'pending') : [],
+		// Only an ADMIT_MEMBERS holder is shown the queue; everyone else gets [].
+		pendingRequests: canAdmitMembers ? await listJoinRequests(db, group.id, 'pending') : [],
 		canManageGroup: can(membership.permissions, 'MANAGE_GROUP'),
-		canManageMembers,
+		canAdmitMembers,
 		canSeeMembers: canSeeMembers(membership),
 		canCreateEvent: can(membership.permissions, 'CREATE_EVENT')
 	};

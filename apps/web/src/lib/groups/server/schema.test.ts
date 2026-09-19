@@ -4,7 +4,7 @@
 // bypassed by the one code path that forgot.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
-import { GROUPS_SCHEMA_STATEMENTS } from './schema';
+import { GROUPS_MIGRATION_STATEMENTS, GROUPS_SCHEMA_STATEMENTS } from './schema';
 
 let db: DatabaseSync;
 
@@ -73,6 +73,112 @@ describe('the migration itself', () => {
 
 	it('re-applies cleanly (every object is IF NOT EXISTS)', () => {
 		expect(() => apply(db)).not.toThrow();
+	});
+});
+
+// 0004 is a DATA migration, and the only database it can be wrong about is one
+// that already holds five roles — which every group created before 2026-09-19
+// does, including the live one on the alpha. Applying it to an empty database
+// (what every other case here does) exercises none of it.
+describe('migration 0004: reconciling a five-role group', () => {
+	const LEGACY = GROUPS_MIGRATION_STATEMENTS.slice(0, 3).flat();
+	const RECONCILE = GROUPS_MIGRATION_STATEMENTS[3];
+	// What the 09-08 seeder actually wrote for a manager role.
+	const LEGACY_ADMIN_BUNDLE = [
+		'MANAGE_GROUP',
+		'MANAGE_MEMBERS',
+		'MANAGE_EVENTS',
+		'CREATE_EVENT',
+		'MANAGE_BILLING',
+		'SEE_GROUP',
+		'SEE_EVENTS',
+		'SEE_MEMBERS'
+	];
+
+	function grant(groupId: string, role: string, permissions: readonly string[]) {
+		for (const permission of permissions) {
+			db.prepare('INSERT INTO role_permissions (role_id, permission) VALUES (?, ?)').run(
+				roleId(groupId, role),
+				permission
+			);
+		}
+	}
+
+	function names(groupId: string, role: string): string[] {
+		return db
+			.prepare(
+				`SELECT rp.permission FROM role_permissions rp JOIN roles r ON r.id = rp.role_id
+				 WHERE r.group_id = ? AND r.name = ? ORDER BY rp.permission`
+			)
+			.all(groupId, role)
+			.map((row) => (row as { permission: string }).permission);
+	}
+
+	function reconcile() {
+		for (const statement of RECONCILE) db.exec(statement);
+	}
+
+	beforeEach(() => {
+		db.close();
+		db = new DatabaseSync(':memory:');
+		db.exec('PRAGMA foreign_keys = ON');
+		for (const statement of LEGACY) db.exec(statement);
+
+		insertGroup('g1', 'did:plc:owner');
+		for (const role of ['admin', 'moderator', 'member', 'guest']) seedRole('g1', role);
+		grant('g1', 'owner', [...LEGACY_ADMIN_BUNDLE, 'DELETE_GROUP']);
+		grant('g1', 'admin', LEGACY_ADMIN_BUNDLE);
+		grant('g1', 'moderator', ['MANAGE_DISCUSSIONS', 'SEE_MEMBERS']);
+		grant('g1', 'guest', ['CONTACT_ADMINS']);
+		addMembership('g1', 'did:plc:mod', 'moderator');
+		addMembership('g1', 'did:plc:applicant', 'guest');
+		addMembership('g1', 'did:plc:member', 'member');
+	});
+
+	it('keeps a manager managing: MANAGE_MEMBERS becomes the three grants that replaced it', () => {
+		// The failure this exists to catch is silent: delete the legacy name
+		// without writing the replacements and every deployed group keeps its
+		// admins and loses their ability to admit, eject or promote anyone.
+		reconcile();
+		expect(names('g1', 'admin')).toEqual([
+			'ADMIT_MEMBERS',
+			'ASSIGN_ROLES',
+			'CREATE_EVENT',
+			'EJECT_MEMBERS',
+			'MANAGE_EVENTS',
+			'MANAGE_GROUP'
+		]);
+		// And nothing outside the pared vocabulary survives anywhere.
+		expect(names('g1', 'owner')).toEqual(names('g1', 'admin'));
+		expect(names('g1', 'member')).toEqual([]);
+	});
+
+	it('maps a moderator to member and a guest off the roster entirely', () => {
+		reconcile();
+		const roster = db
+			.prepare(
+				`SELECT m.did, r.name AS role FROM memberships m JOIN roles r ON r.id = m.role_id
+				 WHERE m.group_id = ? ORDER BY m.did`
+			)
+			.all('g1');
+		expect(roster).toEqual([
+			{ did: 'did:plc:member', role: 'member' },
+			{ did: 'did:plc:mod', role: 'member' }
+		]);
+		expect(db.prepare('SELECT name FROM roles WHERE group_id = ? ORDER BY name').all('g1')).toEqual(
+			[{ name: 'admin' }, { name: 'member' }, { name: 'owner' }]
+		);
+	});
+
+	it('refuses a dropped role name afterwards, and re-applies cleanly', () => {
+		reconcile();
+		expect(() => seedRole('g1', 'moderator')).toThrow(/owner, admin or member/);
+		expect(() =>
+			db.prepare("UPDATE roles SET name = 'guest' WHERE group_id = ? AND name = 'member'").run('g1')
+		).toThrow(/owner, admin or member/);
+		// The runner replays every statement on each cold isolate.
+		expect(() => reconcile()).not.toThrow();
+		expect(names('g1', 'admin')).toHaveLength(6);
 	});
 });
 

@@ -462,7 +462,7 @@ export async function rolePermissions(
 }
 
 /** Roster size, for a page that may show the count without being allowed the
- *  names (SEE_MEMBERS gates the list, not the fact that a group has members). */
+ *  names (membership gates the list, not the fact that a group has members). */
 export async function countActiveMembers(db: D1Database, groupId: string): Promise<number> {
 	await ensureGroupsSchema(db);
 	const row = await db

@@ -13,7 +13,10 @@
 	let { data } = $props();
 
 	let group = $derived(data.group);
-	let inert = $derived(new Set<string>(data.inertPermissions));
+	// Any of the three shows the controls column; each control asks its own.
+	let canManageAnyMember = $derived(
+		data.canAdmitMembers || data.canEjectMembers || data.canAssignRoles
+	);
 	let formError = $derived(
 		groupFormError(changeMemberRoleForm.result) ??
 			groupFormError(removeMemberForm.result) ??
@@ -55,40 +58,45 @@
 						</div>
 					</div>
 
-					{#if data.canManageMembers && member.role !== 'owner'}
+					{#if canManageAnyMember && member.role !== 'owner'}
 						<div class="flex shrink-0 flex-wrap items-center gap-2">
-							<form {...changeMemberRoleForm} class="flex items-center gap-1">
-								<input type="hidden" name="slug" value={group.slug} />
-								<input type="hidden" name="did" value={member.did} />
-								<select
-									name="role"
-									class="ring-base-200 dark:ring-base-800 bg-base-100/50 dark:bg-base-900/50 rounded-ui border-0 px-2 py-1 text-xs ring-1 ring-inset"
-								>
-									{#each data.assignableRoles as role (role)}
-										<option value={role} selected={member.role === role}>{role}</option>
-									{/each}
-								</select>
-								<Button type="submit" size="sm" variant="secondary">Set role</Button>
-							</form>
-							<form {...setMemberStatusForm}>
-								<input type="hidden" name="slug" value={group.slug} />
-								<input type="hidden" name="did" value={member.did} />
-								<input
-									type="hidden"
-									name="status"
-									value={member.status === 'active' ? 'suspended' : 'active'}
-								/>
-								<Button type="submit" size="sm" variant="ghost">
-									{member.status === 'active' ? 'Suspend' : 'Reinstate'}
-								</Button>
-							</form>
-							<form {...removeMemberForm}>
-								<input type="hidden" name="slug" value={group.slug} />
-								<input type="hidden" name="did" value={member.did} />
-								<button type="submit" class="text-xs text-red-600 hover:underline dark:text-red-400"
-									>Remove</button
-								>
-							</form>
+							{#if data.canAssignRoles}
+								<form {...changeMemberRoleForm} class="flex items-center gap-1">
+									<input type="hidden" name="slug" value={group.slug} />
+									<input type="hidden" name="did" value={member.did} />
+									<select
+										name="role"
+										class="ring-base-200 dark:ring-base-800 bg-base-100/50 dark:bg-base-900/50 rounded-ui border-0 px-2 py-1 text-xs ring-1 ring-inset"
+									>
+										{#each data.assignableRoles as role (role)}
+											<option value={role} selected={member.role === role}>{role}</option>
+										{/each}
+									</select>
+									<Button type="submit" size="sm" variant="secondary">Set role</Button>
+								</form>
+							{/if}
+							{#if data.canEjectMembers}
+								<form {...setMemberStatusForm}>
+									<input type="hidden" name="slug" value={group.slug} />
+									<input type="hidden" name="did" value={member.did} />
+									<input
+										type="hidden"
+										name="status"
+										value={member.status === 'active' ? 'suspended' : 'active'}
+									/>
+									<Button type="submit" size="sm" variant="ghost">
+										{member.status === 'active' ? 'Suspend' : 'Reinstate'}
+									</Button>
+								</form>
+								<form {...removeMemberForm}>
+									<input type="hidden" name="slug" value={group.slug} />
+									<input type="hidden" name="did" value={member.did} />
+									<button
+										type="submit"
+										class="text-xs text-red-600 hover:underline dark:text-red-400">Remove</button
+									>
+								</form>
+							{/if}
 						</div>
 					{:else if member.role === 'owner'}
 						<span class="text-base-400 dark:text-base-500 shrink-0 text-xs"
@@ -100,7 +108,7 @@
 		{/each}
 	</ul>
 
-	{#if data.canManageMembers}
+	{#if data.canAdmitMembers}
 		<section class="mt-10">
 			<h2 class="mb-3 text-xl font-semibold">Pending requests</h2>
 			{#if data.pendingRequests.length === 0}
@@ -164,12 +172,13 @@
 				<Button type="submit">Add</Button>
 			</form>
 		</section>
+	{/if}
 
+	{#if canManageAnyMember}
 		<section class="mt-10">
 			<h2 class="mb-3 text-xl font-semibold">What each role grants</h2>
 			<p class="text-base-500 dark:text-base-400 mb-3 text-sm">
-				Permissions are stored per group. Names shown in grey are stored but have no handler in this
-				version — nothing grants on them.
+				Permissions are stored per group, and every name here is enforced.
 			</p>
 			<div class="flex flex-col gap-3">
 				{#each Object.entries(data.rolePermissions) as [role, permissions] (role)}
@@ -178,12 +187,14 @@
 						<div class="flex flex-wrap gap-1.5">
 							{#each permissions as permission (permission)}
 								<span
-									class="rounded-full px-2 py-0.5 font-mono text-xs {inert.has(permission)
-										? 'bg-base-100 text-base-400 dark:bg-base-900 dark:text-base-500'
-										: 'bg-accent-400/10 text-accent-700 dark:text-accent-400'}"
+									class="bg-accent-400/10 text-accent-700 dark:text-accent-400 rounded-full px-2 py-0.5 font-mono text-xs"
 								>
 									{permission}
 								</span>
+							{:else}
+								<span class="text-base-500 dark:text-base-400 text-xs"
+									>nothing — membership itself is what this role holds</span
+								>
 							{/each}
 						</div>
 					</div>

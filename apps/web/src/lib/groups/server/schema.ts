@@ -1,4 +1,4 @@
-// Applies migrations/0001_groups.sql and 0002_group_credentials.sql to D1.
+// Applies every file in migrations/ to D1, in order.
 //
 // One copy of the DDL, two runners: `wrangler d1 migrations apply` /
 // `wrangler d1 execute --file` for a deliberate deploy, and this module for the
@@ -14,18 +14,31 @@
 import groupsSql from '../../../../migrations/0001_groups.sql?raw';
 import credentialsSql from '../../../../migrations/0002_group_credentials.sql?raw';
 import privateInviteOnlySql from '../../../../migrations/0003_private_groups_are_invite_only.sql?raw';
+import threeRoleSeedSql from '../../../../migrations/0004_three_role_seed.sql?raw';
 
-const MIGRATIONS: readonly string[] = [groupsSql, credentialsSql, privateInviteOnlySql];
+const MIGRATIONS: readonly string[] = [
+	groupsSql,
+	credentialsSql,
+	privateInviteOnlySql,
+	threeRoleSeedSql
+];
 
-/** Statements in apply order. Split on the `-- @statement` marker, never on
- *  `;` — the owner-protection triggers contain `;` inside BEGIN..END and a
- *  naive split would feed D1 half a trigger. */
-export const GROUPS_SCHEMA_STATEMENTS: readonly string[] = MIGRATIONS.flatMap((sql) =>
+/** Statements per migration, in apply order. Split on the `-- @statement`
+ *  marker, never on `;` — the owner-protection triggers contain `;` inside
+ *  BEGIN..END and a naive split would feed D1 half a trigger.
+ *
+ *  The boundary is kept rather than flattened away because a data migration
+ *  can only be tested against the database it migrates: 0004's reconcile needs
+ *  a five-role database to reconcile, which is the state the first three
+ *  migrations produce and the fourth then forbids. */
+export const GROUPS_MIGRATION_STATEMENTS: readonly (readonly string[])[] = MIGRATIONS.map((sql) =>
 	sql
 		.split(/^[ \t]*--[ \t]*@statement[ \t]*$/m)
 		.map((s) => s.trim())
 		.filter((s) => s.length > 0 && !/^(?:--[^\n]*\n?)*$/.test(s))
 );
+
+export const GROUPS_SCHEMA_STATEMENTS: readonly string[] = GROUPS_MIGRATION_STATEMENTS.flat();
 
 // Module-level, exactly like contrail's own `initialized` flag in
 // $lib/contrail/index.ts: one isolate, one D1 binding, one apply.

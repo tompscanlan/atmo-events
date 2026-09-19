@@ -3,18 +3,26 @@
 // (`context()` in ../groups.remote.ts turns an invisible group into a 404). A
 // regression here reopens a private group's existence oracle, which is why
 // these are asserted directly rather than only through a route.
+//
+// Since FR-005d they are MEMBERSHIP tests, not permission tests: read access
+// is not something a group grants. The fixtures therefore carry a roster row
+// and a status, and no permissions at all.
 import { describe, it, expect } from 'vitest';
-import { canSeeGroup, canSeeGroupEvents, canSeeMembers } from './access';
-import { DEFAULT_ROLE_PERMISSIONS, type GroupPermission, type GroupRoleName } from './permissions';
+import { canSeeGroup, canSeeMembers } from './access';
+import type { GroupRoleName } from './permissions';
 import type { CallerMembership, GroupRow } from './types';
 
-function membership(role: GroupRoleName | null, overrides: GroupPermission[] = []): CallerMembership {
+function membership(
+	role: GroupRoleName | null,
+	status: CallerMembership['status'] = 'active'
+): CallerMembership {
 	return {
 		did: role ? 'did:plc:alice' : null,
 		role,
-		status: role ? 'active' : null,
+		status: role ? status : null,
 		pendingRequestId: null,
-		permissions: new Set(role ? [...DEFAULT_ROLE_PERMISSIONS[role], ...overrides] : overrides)
+		// Deliberately empty: a read gate that consulted these would be the bug.
+		permissions: new Set()
 	};
 }
 
@@ -33,32 +41,24 @@ describe('canSeeGroup', () => {
 		expect(canSeeGroup(group('private'), STRANGER)).toBe(false);
 	});
 
-	it('opens a private group to a member, on the permission and not the roster row', () => {
+	it('opens a private group to anyone on the roster, whatever the role', () => {
 		expect(canSeeGroup(group('private'), membership('member'))).toBe(true);
-		// A `guest` holds CONTACT_ADMINS alone, so a roster row is NOT the rule —
-		// this is where the predicate is deliberately stricter than the browse
-		// query, which admits any active membership regardless of role.
-		expect(canSeeGroup(group('private'), membership('guest'))).toBe(false);
+		expect(canSeeGroup(group('private'), membership('admin'))).toBe(true);
 	});
-});
 
-describe('canSeeGroupEvents', () => {
-	it('follows the page rule for public and unlisted, and SEE_EVENTS for private', () => {
-		expect(canSeeGroupEvents(group('unlisted'), STRANGER)).toBe(true);
-		expect(canSeeGroupEvents(group('private'), STRANGER)).toBe(false);
-		expect(canSeeGroupEvents(group('private'), membership('member'))).toBe(true);
-		expect(canSeeGroupEvents(group('private'), membership('guest'))).toBe(false);
+	it('closes a private group to a suspended member', () => {
+		// Suspension keeps the row and removes the access; a predicate that only
+		// checked `role` would silently let a suspended member back in.
+		expect(canSeeGroup(group('private'), membership('member', 'suspended'))).toBe(false);
 	});
 });
 
 describe('canSeeMembers', () => {
 	it('gates the roster regardless of visibility, including a public group', () => {
-		// The one SEE_* name that does work outside a private group: there is no
-		// visibility branch here at all, so a public group's roster is members-only
-		// too. Recorded 2026-09-17; it is why SEE_MEMBERS cannot be pared with the
-		// other two (om-ci0ol).
+		// There is no visibility branch here at all, which is what makes a PUBLIC
+		// group's roster members-only (FR-016b).
 		expect(canSeeMembers(STRANGER)).toBe(false);
 		expect(canSeeMembers(membership('member'))).toBe(true);
-		expect(canSeeMembers(membership('guest'))).toBe(false);
+		expect(canSeeMembers(membership('member', 'suspended'))).toBe(false);
 	});
 });
