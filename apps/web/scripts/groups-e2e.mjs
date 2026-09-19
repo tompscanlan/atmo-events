@@ -8,9 +8,9 @@
  *
  * What it proves, in order, one PASS line each:
  *   1. a group bound to an EXISTING custodial DID is created with exactly one
- *      active owner membership and the five legacy roles, each seeded with the
- *      legacy default bundle (owner 16 / admin 14 / moderator 7 / member 7 /
- *      guest 1);
+ *      active owner membership and the three seeded roles, each with its pared
+ *      bundle (owner 6 / admin 6 / member 0 — a member holds nothing, because
+ *      membership itself is what a member holds);
  *   2. a join under `require_approval` lands as a PENDING join_request and NOT
  *      on the roster;
  *   3. the owner approves, then promotes to admin, and the promoted member's
@@ -103,11 +103,11 @@ const MALLORY = 'did:plc:ib2wrjcp4ulwqu35a7rtlckv';
 const EVENT_COLLECTION = 'community.lexicon.calendar.event';
 const GROUP_SLUG = 'spike-groups-e2e';
 
-/** Legacy seeder parity, as literals: the numbers this model promises to carry
- *  over (openmeet-api group-role.service.ts). Comparing the STORED rows against
- *  the legacy counts is the assertion; comparing them against the constant they
- *  were seeded from would only prove the seeder ran. */
-const LEGACY_BUNDLE_SIZES = { owner: 16, admin: 14, moderator: 7, member: 7, guest: 1 };
+/** The pared seed, as literals (FR-005a/FR-005c): owner and admin hold the six
+ *  enforced names, a member holds none. Written out rather than imported,
+ *  because comparing the STORED rows against the constant they were seeded
+ *  from would only prove the seeder ran. */
+const SEEDED_BUNDLE_SIZES = { owner: 6, admin: 6, member: 0 };
 
 /** Label on the dispatched request, not a socket: see `call`. */
 const ORIGIN = 'http://openmeet-atmo-groups-e2e.invalid';
@@ -346,16 +346,16 @@ async function main() {
 		const bundles = await must('rolePermissions', { groupId: group.id });
 		const sizes = Object.fromEntries(Object.entries(bundles).map(([r, p]) => [r, p.length]));
 		const owners = members.filter((m) => m.role === 'owner' && m.status === 'active');
-		const legacyBundles =
-			Object.keys(sizes).length === Object.keys(LEGACY_BUNDLE_SIZES).length &&
-			Object.entries(LEGACY_BUNDLE_SIZES).every(([role, n]) => sizes[role] === n);
+		const seededBundles =
+			Object.keys(sizes).length === Object.keys(SEEDED_BUNDLE_SIZES).length &&
+			Object.entries(SEEDED_BUNDLE_SIZES).every(([role, n]) => sizes[role] === n);
 		record(
 			group.group_did === GROUP_DID &&
 				members.length === 1 &&
 				owners.length === 1 &&
 				owners[0].did === ALICE &&
-				legacyBundles,
-			'group bound to the custodial DID, one active owner, five legacy role bundles',
+				seededBundles,
+			'group bound to the custodial DID, one active owner, three pared role bundles',
 			`${group.slug} on ${group.group_did}, roster ${members.length} (${owners.length} active owner: ${owners[0]?.did}), ` +
 				Object.entries(sizes)
 					.map(([role, n]) => `${role} ${n}`)
@@ -367,7 +367,7 @@ async function main() {
 		const pendingBob = await must('membership', {
 			groupId: group.id,
 			did: BOB,
-			probe: ['SEE_EVENTS', 'MANAGE_EVENTS']
+			probe: ['CREATE_EVENT', 'MANAGE_EVENTS']
 		});
 		const requests = await must('listJoinRequests', { groupId: group.id });
 		record(
@@ -618,7 +618,6 @@ async function main() {
 			`name "${rebuilt.row.name}"; visibility ${rebuilt.row.visibility} (was ${group.visibility}); ` +
 				`status ${rebuilt.row.status}; ${rebuilt.rules} rule record(s)`
 		);
-
 	} finally {
 		if (written.length > 0) console.log('');
 		for (const rkey of written) {
