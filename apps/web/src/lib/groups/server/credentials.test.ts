@@ -78,7 +78,7 @@ describe('minted credential storage', () => {
 		});
 	});
 
-	// Until 2026-09-19 a GROUP_CREDENTIALS secret was read FIRST and could
+	// Until 2026-09-19 an operator-set Worker secret was read FIRST and could
 	// override this row. The row is now the only source (FR-001f, om-dnwi7), so
 	// what a rotation has to move is the row itself.
 	it('serves the newest row after a rotation, with nothing able to override it', async () => {

@@ -6,19 +6,15 @@
 // ($lib/groups/server/event-writer.ts).
 //
 // ONE SOURCE: the `group_credentials` table (migrations/0002), written at mint.
-// There was a second until 2026-09-19 — a `GROUP_CREDENTIALS` Worker secret
-// holding a JSON map of group DID -> credential, read FIRST so an operator
-// entry overrode a stored row. It predated the mint, and once create began
-// minting its own accounts the secret's only remaining job was an operator
-// override that a single D1 row does the same way. TS, on reading SC-007:
-// *"if we don't need that var, drop it. it's confusing."* Deleted with nothing
-// depending on it — the live worker never had the secret set, and the one
-// minted group has never read it (`om-dnwi7`, FR-001f).
+// There was a second until 2026-09-19 — an operator-set Worker secret, read
+// FIRST so an entry in it overrode a stored row. It predated the mint, nothing
+// ever resolved through it, and its header records why it went (`om-dnwi7`,
+// FR-001f).
 //
 // ROTATION, since the override is gone: replace the `group_credentials` row
 // and reset the account's app password out of band with
 // `com.atproto.admin.updateAccountPassword`. That was always an admin action,
-// so nothing regressed with the secret's removal.
+// so nothing regressed with the removal.
 
 export interface GroupCredential {
 	/** PDS base URL, e.g. https://pds.opnmt.net */
