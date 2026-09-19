@@ -78,30 +78,27 @@ describe('minted credential storage', () => {
 		});
 	});
 
-	// Precedence exists so an operator can rotate a credential or repoint a group
-	// at another PDS without a migration or a delete.
-	it('lets a configured secret override a stored row', async () => {
-		await storeGroupCredential({ GROUP_CREDENTIAL_KEY: KEY }, harness.db, DID, {
+	// Until 2026-09-19 a GROUP_CREDENTIALS secret was read FIRST and could
+	// override this row. The row is now the only source (FR-001f, om-dnwi7), so
+	// what a rotation has to move is the row itself.
+	it('serves the newest row after a rotation, with nothing able to override it', async () => {
+		const env = { GROUP_CREDENTIAL_KEY: KEY };
+		await storeGroupCredential(env, harness.db, DID, {
 			service: 'https://pds.example.net',
 			identifier: 'kona.group.example.net',
 			password: APP_PASSWORD
 		});
+		await storeGroupCredential(env, harness.db, DID, {
+			service: 'https://moved.example.net',
+			identifier: 'kona.group.example.net',
+			password: 'rotated-app-pass'
+		});
 
-		const resolved = await resolveGroupCredential(
-			{
-				GROUP_CREDENTIAL_KEY: KEY,
-				GROUP_CREDENTIALS: JSON.stringify({
-					[DID]: {
-						service: 'https://override.example.net',
-						identifier: 'override',
-						password: 'operator-set'
-					}
-				})
-			},
-			harness.db,
-			DID
-		);
-		expect(resolved).toMatchObject({ service: 'https://override.example.net' });
+		await expect(resolveGroupCredential(env, harness.db, DID)).resolves.toEqual({
+			service: 'https://moved.example.net',
+			identifier: 'kona.group.example.net',
+			password: 'rotated-app-pass'
+		});
 	});
 
 	it('resolves to null for a group this deployment holds nothing for', async () => {

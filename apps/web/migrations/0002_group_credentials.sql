@@ -1,11 +1,10 @@
--- Writing credentials for groups this deployment MINTED, as opposed to groups an
--- operator configured.
+-- Writing credentials for groups this deployment MINTED — which, since
+-- 2026-09-19, is every group. This table is the ONLY source.
 --
 -- WHY A TABLE AT ALL: group creation is self-service, so the app mints a did:plc
--- during a form POST — and a Worker cannot write its own secret. The
--- GROUP_CREDENTIALS secret therefore cannot hold a credential that comes into
--- existence at runtime, and the PDS shows an app password exactly once.
--- (Spec: FR-001, FR-001f.)
+-- during a form POST — and a Worker cannot write its own secret. A secret
+-- therefore cannot hold a credential that comes into existence at runtime, and
+-- the PDS shows an app password exactly once. (Spec: FR-001, FR-001f.)
 --
 -- WHAT IS STORED IS NOT THE ACCOUNT PASSWORD. The mint uses a random master
 -- password, creates ONE app password with it (com.atproto.server.createAppPassword,
@@ -26,10 +25,12 @@
 -- password (a read is account takeover), and HMAC-derived passwords (nothing at
 -- rest, but a slug rename or key rotation breaks every group).
 --
--- PRECEDENCE, deliberately: the SECRET WINS. `resolveGroupCredential` reads
--- GROUP_CREDENTIALS first and this table only as a fallback, so an operator can
--- always override a stored row — rotate a credential, repoint a group at another
--- PDS — with no migration and no delete.
+-- NO SECRET OVERRIDE ANY MORE (TS, 2026-09-19, `om-dnwi7`): *"if we don't need
+-- that var, drop it. it's confusing."* `resolveGroupCredential` used to read a
+-- GROUP_CREDENTIALS Worker secret FIRST and this table second, so an operator
+-- could override a stored row. The secret predated the mint, was never set on
+-- the deployed worker, and no live group ever read it. Repointing a group at
+-- another PDS is now a row write.
 --
 -- ROTATION COSTS AN ADMIN ACTION, and that is accepted rather than hidden: an
 -- app-password session can revoke app passwords but cannot mint a replacement

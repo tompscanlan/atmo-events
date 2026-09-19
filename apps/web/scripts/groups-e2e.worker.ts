@@ -41,13 +41,16 @@ import {
 	readGroupAbout,
 	rebuildGroupCache
 } from '../src/lib/groups/server/about-read';
-import { resolveGroupCredential } from '../src/lib/groups/server/credentials';
+import { resolveGroupCredential, storeGroupCredential } from '../src/lib/groups/server/credentials';
+import { ensureGroupsSchema } from '../src/lib/groups/server/schema';
 import { pdsProvisioner, provisionGroupSpaces } from '../src/lib/groups/server/spaces';
 
 interface Env {
 	DB: D1Database;
-	/** The group's custodial credential, in the shape the app's own secret has. */
-	GROUP_CREDENTIALS?: string;
+	/** AES-GCM key wrapping the group's app password in D1 — the same binding
+	 *  production uses, because since `om-dnwi7` the encrypted row is the only
+	 *  credential source there is. */
+	GROUP_CREDENTIAL_KEY?: string;
 }
 
 type AssignableRole = Exclude<GroupRoleName, 'owner'>;
@@ -63,6 +66,20 @@ async function groupById(env: Env, groupId: unknown): Promise<GroupRow> {
 
 const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	createGroup: (env, args) => createGroup(env.DB, args as never),
+
+	/** Seeds the fixture group's credential the way a mint would, so this run
+	 *  authenticates through the same encrypted row production reads. The mint
+	 *  runs after `createGroup` has built the schema; this runs first, so it
+	 *  builds it itself. */
+	storeCredential: async (env, args) => {
+		await ensureGroupsSchema(env.DB);
+		await storeGroupCredential(env, env.DB, String(args.groupDid), {
+			service: String(args.service),
+			identifier: String(args.identifier),
+			password: String(args.password)
+		});
+		return { stored: args.groupDid };
+	},
 
 	/** Stored bundles, as rows — the seeded data, not the constant it came from. */
 	rolePermissions: (env, args) => rolePermissions(env.DB, String(args.groupId)),

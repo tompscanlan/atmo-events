@@ -70,15 +70,17 @@
  *
  * Credentials: the group account's app password is read from
  * $HOME/.spaces-alpha-creds.env (written by infra/spaces-alpha/seed.sh) and
- * handed to the Worker as GROUP_CREDENTIALS, the same secret shape production
- * uses. It is never printed. A 401 from createSession means the fixture
- * passwords are stale: re-run
+ * seeded into the scratch D1 as an ENCRYPTED `group_credentials` row through
+ * the app's own `storeGroupCredential` — the same and only path production
+ * uses since `om-dnwi7` deleted the operator secret. It is never printed. A
+ * 401 from createSession means the fixture passwords are stale: re-run
  * `infra/spaces-alpha/seed.sh --apply --reset-passwords`.
  *
  * Cleanup: every record written here is deleted from the group's repo in the
  * `finally`, verified gone by a fresh read, and anything left behind is
  * reported as WARN. The group itself lives only in the scratch D1.
  */
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
@@ -219,7 +221,7 @@ async function must(op, args = {}) {
  * the `?raw` migration import in $lib/groups/server/schema.ts resolves the way
  * it does in the app.
  */
-async function startWorker(stateDir, credentials) {
+async function startWorker(stateDir, credentialKey) {
 	const started = Date.now();
 	const outDir = join(stateDir, 'bundle');
 	await build({
@@ -249,7 +251,7 @@ async function startWorker(stateDir, credentials) {
 		compatibilityDate: COMPATIBILITY_DATE,
 		compatibilityFlags: ['nodejs_compat'],
 		d1Databases: { DB: 'openmeet-atmo-groups-e2e' },
-		bindings: { GROUP_CREDENTIALS: credentials },
+		bindings: { GROUP_CREDENTIAL_KEY: credentialKey },
 		defaultPersistRoot: stateDir
 	});
 	// Force the runtime up now, so a startup failure is reported here instead of
@@ -317,9 +319,10 @@ async function main() {
 	note(`fixture credentials loaded from ${path}`);
 	await checkGroupAccount(password);
 	note(`${GROUP_HANDLE} authenticates as ${GROUP_DID}`);
-	const groupCredentials = JSON.stringify({
-		[GROUP_DID]: { service: PDS, identifier: GROUP_HANDLE, password }
-	});
+	// The wrapping key is per-run and lives only in this process: the scratch D1
+	// is thrown away with stateDir, so nothing outlives the run that could
+	// decrypt the row it writes.
+	const credentialKey = Buffer.from(randomBytes(32)).toString('base64');
 
 	const stateDir = await mkdtemp(join(tmpdir(), 'openmeet-atmo-groups-e2e-'));
 	let worker;
@@ -328,10 +331,16 @@ async function main() {
 	/** Set once the about space exists, so the `finally` knows to empty it. */
 	let aboutProvisioned = false;
 	try {
-		worker = await startWorker(stateDir, groupCredentials);
+		worker = await startWorker(stateDir, credentialKey);
 		note(`worker bundled and ready in ${worker.seconds}s (workerd, empty D1 under ${stateDir})`);
 		console.log('');
 
+		await must('storeCredential', {
+			groupDid: GROUP_DID,
+			service: PDS,
+			identifier: GROUP_HANDLE,
+			password
+		});
 		// 1. create ------------------------------------------------------------
 		group = await must('createGroup', {
 			groupDid: GROUP_DID,

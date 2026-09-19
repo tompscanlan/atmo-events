@@ -28,7 +28,9 @@ let group: GroupRow;
 let writes: GroupRepoWrite[];
 let writer: GroupRepoWriter;
 
-const env = { GROUP_CREDENTIALS: undefined as string | undefined };
+// The writer takes an env only for GROUP_CREDENTIAL_KEY, and these cases
+// inject their own writer, so it is never consulted.
+const env = {};
 
 /** A rule as the reader would have returned it. */
 function existing(rkey: string, text: string, order: number): GroupRuleRecord {

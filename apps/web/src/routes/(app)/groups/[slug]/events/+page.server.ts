@@ -19,7 +19,7 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	// after FR-005d the events question had become the same membership test.
 	if (!canSeeGroup(group, membership)) error(404, 'Group not found');
 
-	const events = await listGroupEvents(platform!.env, group).catch((e) => {
+	const events = await listGroupEvents(group).catch((e) => {
 		console.error(`[groups] listGroupEvents failed for ${group.slug}:`, e);
 		return [];
 	});

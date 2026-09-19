@@ -2,8 +2,9 @@
 // the OWNER holds.
 //
 // Why this exists at all: before it, group creation bound a pre-provisioned DID
-// out of GROUP_CREDENTIALS, so nobody but an operator could create a group. The
-// public alpha requires self-service. (Spec: FR-001.)
+// out of an operator-set Worker secret, so nobody but an operator could create a
+// group. The public alpha requires self-service, and that secret is now gone
+// entirely (om-dnwi7). (Spec: FR-001, FR-001f.)
 //
 // THE HANDLE REGISTRATION IS THE NAME RESERVATION. The PDS's handle registry
 // adjudicates the collision, so a duplicate name fails HERE — before a

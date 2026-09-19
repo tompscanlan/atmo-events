@@ -13,24 +13,14 @@ import { Client, simpleFetchHandler } from '@atcute/client';
 import type { Did } from '@atcute/lexicons';
 import { getPDS } from '$lib/atproto/methods';
 import type { GroupEventRecord, GroupRow } from '../types';
-import { credentialFor } from './credentials';
 import { GROUP_EVENT_COLLECTION } from './event-writer';
 
-/** The group's PDS base URL. Taken from the OPERATOR-CONFIGURED credential when
- *  there is one (no network hop, and it is the same PDS the writer authenticates
- *  against), otherwise resolved from the DID document.
- *
- *  A MINTED group takes the second path by design: its credential lives
- *  encrypted in `group_credentials`, and this function needs only a service URL
- *  — for which the DID document is the authority, and which needs no credential
- *  and no decryption key. Threading the database in here to save one hop would
- *  buy nothing a resolver call does not already give. */
-export async function groupPdsUrl(
-	env: { GROUP_CREDENTIALS?: string },
-	group: GroupRow
-): Promise<string | null> {
-	const cred = credentialFor(env, group.group_did);
-	if (cred) return cred.service;
+/** The group's PDS base URL, resolved from the DID document — the authority for
+ *  it, and the only source now that the operator-credential override is gone
+ *  (`om-dnwi7`). A minted group always took this path anyway: its credential is
+ *  encrypted in `group_credentials`, and this function needs a service URL, not
+ *  a password. */
+export async function groupPdsUrl(group: GroupRow): Promise<string | null> {
 	try {
 		return (await getPDS(group.group_did as Did)) ?? null;
 	} catch {
@@ -38,12 +28,8 @@ export async function groupPdsUrl(
 	}
 }
 
-export async function listGroupEvents(
-	env: { GROUP_CREDENTIALS?: string },
-	group: GroupRow,
-	limit = 50
-): Promise<GroupEventRecord[]> {
-	const service = await groupPdsUrl(env, group);
+export async function listGroupEvents(group: GroupRow, limit = 50): Promise<GroupEventRecord[]> {
+	const service = await groupPdsUrl(group);
 	if (!service) return [];
 
 	const client = new Client({ handler: simpleFetchHandler({ service }) });
@@ -65,11 +51,10 @@ export async function listGroupEvents(
 }
 
 export async function getGroupEvent(
-	env: { GROUP_CREDENTIALS?: string },
 	group: GroupRow,
 	rkey: string
 ): Promise<GroupEventRecord | null> {
-	const service = await groupPdsUrl(env, group);
+	const service = await groupPdsUrl(group);
 	if (!service) return null;
 
 	const client = new Client({ handler: simpleFetchHandler({ service }) });

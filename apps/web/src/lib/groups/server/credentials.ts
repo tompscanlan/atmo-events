@@ -5,18 +5,20 @@
 // pressed the button — that is the entire point of the write gate
 // ($lib/groups/server/event-writer.ts).
 //
-// Credentials come from one Worker secret, GROUP_CREDENTIALS: a JSON map of
-// group DID -> { service, identifier, password }. One secret keeps the number
-// of moving parts fixed as groups are added, and the map form is what a
-// multi-group deployment needs anyway.
+// ONE SOURCE: the `group_credentials` table (migrations/0002), written at mint.
+// There was a second until 2026-09-19 — a `GROUP_CREDENTIALS` Worker secret
+// holding a JSON map of group DID -> credential, read FIRST so an operator
+// entry overrode a stored row. It predated the mint, and once create began
+// minting its own accounts the secret's only remaining job was an operator
+// override that a single D1 row does the same way. TS, on reading SC-007:
+// *"if we don't need that var, drop it. it's confusing."* Deleted with nothing
+// depending on it — the live worker never had the secret set, and the one
+// minted group has never read it (`om-dnwi7`, FR-001f).
 //
-//   wrangler secret put GROUP_CREDENTIALS
-//   {"did:plc:jcwgw6fcnb5vyoid7nz7sl26":{"service":"https://pds.opnmt.net",
-//     "identifier":"spike-group.opnmt.net","password":"…"}}
-//
-// Local dev reads the same name out of apps/web/.dev.vars. The value is a
-// secret and must never be logged: `credentialFor` returns it, and nothing in
-// this tree prints it.
+// ROTATION, since the override is gone: replace the `group_credentials` row
+// and reset the account's app password out of band with
+// `com.atproto.admin.updateAccountPassword`. That was always an admin action,
+// so nothing regressed with the secret's removal.
 
 export interface GroupCredential {
 	/** PDS base URL, e.g. https://pds.opnmt.net */
@@ -26,66 +28,18 @@ export interface GroupCredential {
 	password: string;
 }
 
-type CredentialEnv = { GROUP_CREDENTIALS?: string };
-
-interface ParsedCredentials {
-	source: string;
-	byDid: Record<string, GroupCredential>;
-}
-
-let parsed: ParsedCredentials | null = null;
-
-function parse(raw: string): Record<string, GroupCredential> {
-	const decoded: unknown = JSON.parse(raw);
-	if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
-		throw new Error('GROUP_CREDENTIALS must be a JSON object keyed by group DID');
-	}
-	const byDid: Record<string, GroupCredential> = {};
-	for (const [did, value] of Object.entries(decoded as Record<string, unknown>)) {
-		if (!did.startsWith('did:')) {
-			throw new Error(`GROUP_CREDENTIALS key ${JSON.stringify(did)} is not a DID`);
-		}
-		const cred = value as Partial<GroupCredential> | null;
-		if (
-			!cred ||
-			typeof cred.service !== 'string' ||
-			typeof cred.identifier !== 'string' ||
-			typeof cred.password !== 'string'
-		) {
-			// The DID is safe to name; the value never is.
-			throw new Error(`GROUP_CREDENTIALS[${did}] needs service, identifier and password`);
-		}
-		byDid[did] = { service: cred.service, identifier: cred.identifier, password: cred.password };
-	}
-	return byDid;
-}
-
-/** Parsed once per isolate, re-parsed if the secret's text changes (it does in
- *  dev, where .dev.vars is reloaded). A malformed secret throws HERE rather
- *  than at write time, so it surfaces on the first group request. */
-export function groupCredentials(env: CredentialEnv): Record<string, GroupCredential> {
-	const raw = env.GROUP_CREDENTIALS?.trim();
-	if (!raw) return {};
-	if (parsed?.source !== raw) parsed = { source: raw, byDid: parse(raw) };
-	return parsed.byDid;
-}
-
-export function credentialFor(env: CredentialEnv, groupDid: string): GroupCredential | null {
-	return groupCredentials(env)[groupDid] ?? null;
-}
-
 // ---------------------------------------------------------------- minted credentials
 //
-// A minted group's credential cannot live in GROUP_CREDENTIALS: a Worker cannot
-// write its own secret, and the credential comes into existence during a form
-// POST. It lives in `group_credentials` (migrations/0002), AES-GCM encrypted
-// under GROUP_CREDENTIAL_KEY, and what is stored is an APP PASSWORD — not the
+// The credential comes into existence during a form POST, so it could never
+// have lived in a Worker secret: a Worker cannot write its own. It lives in
+// `group_credentials` (migrations/0002), AES-GCM encrypted under
+// GROUP_CREDENTIAL_KEY, and what is stored is an APP PASSWORD — not the
 // account's master password, which the mint discards. Rationale, measured source
 // and the alternatives are in that migration's header; the short version is that
 // a D1 read must not yield write-as-every-group, and must not yield account
 // takeover even if it did decrypt.
 
-export interface CredentialStoreEnv extends CredentialEnv {
+export interface CredentialStoreEnv {
 	/** base64 32-byte AES-GCM key. Without it a minted credential can neither be
 	 *  written nor read, and the create flow refuses BEFORE minting rather than
 	 *  stranding a did:plc it cannot store a credential for. */
@@ -187,19 +141,13 @@ export async function storeGroupCredential(
 		.run();
 }
 
-/** The credential to write as `groupDid`, or null if this deployment holds none.
- *
- *  SECRET FIRST, TABLE SECOND — so an operator entry always overrides a stored
- *  row (rotate a credential, repoint a group at another PDS) with no migration
- *  and no delete. */
+/** The credential to write as `groupDid`, or null if this deployment holds
+ *  none. The stored row is the only source (FR-001f). */
 export async function resolveGroupCredential(
 	env: CredentialStoreEnv,
 	db: D1Database,
 	groupDid: string
 ): Promise<GroupCredential | null> {
-	const configured = credentialFor(env, groupDid);
-	if (configured) return configured;
-
 	const row = await db
 		.prepare(`SELECT service, identifier, secret, iv FROM group_credentials WHERE group_did = ?`)
 		.bind(groupDid)

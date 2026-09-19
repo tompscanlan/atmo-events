@@ -105,12 +105,6 @@ declare global {
 				/** Min ms between geocoder calls in the drip — the rate limiter. Set to
 				 *  the ceiling the geocoder tier allows; defaults to DEFAULT_GEOCODE_SLEEP_MS. */
 				GEOCODE_SLEEP_MS?: string;
-				/** JSON map of group DID -> { service, identifier, password } for the
-				 *  custodial PDS accounts this deployment may author group events as
-				 *  ($lib/groups/server/credentials.ts). Set with `wrangler secret put`.
-				 *  When unset, /groups/create offers no DIDs and a group event write
-				 *  fails with GroupCredentialError rather than writing as a human. */
-				GROUP_CREDENTIALS?: string;
 				/** PDS every new group is minted on, e.g. https://pds.opnmt.net. With
 				 *  the three vars below it forms the mint target; when any is unset
 				 *  /groups/create refuses BEFORE minting rather than stranding a
