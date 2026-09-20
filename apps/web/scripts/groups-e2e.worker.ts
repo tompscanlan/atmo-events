@@ -35,6 +35,7 @@ import {
 } from '../src/lib/groups/server/repo';
 import { deleteGroupEvent, writeGroupEvent } from '../src/lib/groups/server/event-writer';
 import { splitRuleLines } from '../src/lib/groups/about-record';
+import { reconcileGroupDeclaration } from '../src/lib/groups/server/declaration-writer';
 import { setGroupRules, writeGroupProfile } from '../src/lib/groups/server/about-writer';
 import {
 	groupSpaceReader,
@@ -298,6 +299,27 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			group: await groupById(env, args.groupId),
 			callerDid: args.callerDid == null ? null : String(args.callerDid)
 		}),
+
+	/** THE ONE RECORD A STRANGER CAN READ, and the only door here that changes
+	 *  what the anonymous web sees. Visibility is flipped through the app's own
+	 *  `updateGroup` first — the same call the settings form makes — so the
+	 *  branch this exercises is taken from the ROW, exactly as production takes
+	 *  it, rather than from an argument the harness invented. (T007, FR-003.) */
+	reconcileDeclaration: async (env, args) => {
+		if (args.visibility !== undefined) {
+			await updateGroup(env.DB, String(args.groupId), {
+				visibility: args.visibility as GroupRow['visibility']
+			});
+		}
+		const result = await reconcileGroupDeclaration({
+			db: env.DB,
+			env,
+			group: await groupById(env, args.groupId),
+			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			createdAt: args.createdAt as string | undefined
+		});
+		return { uri: result?.uri ?? null };
+	},
 
 	/** The authz config: one `role` record per seeded role and the two binding
 	 *  records. Same reason as the access record — create writes it, and this

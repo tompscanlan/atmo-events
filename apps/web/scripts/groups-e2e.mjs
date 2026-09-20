@@ -60,13 +60,22 @@
  *  16. the roster survives dropping its D1 rows: the records render it and the
  *      rebuild restores them (SC-002 for the roster);
  *  17. a suspension REVOKES the membership record and a reinstatement writes
- *      it back with the original join date; and
+ *      it back with the original join date;
  *  18. a DID with no membership record has no access, whether it was ejected
- *      or never a member.
+ *      or never a member;
+ *  19. THE ONLY CHECK THAT NEEDS NO CREDENTIAL — the group is DECLARED in its
+ *      public repo, and an anonymous `getRecord` returns a pointer at its
+ *      about space and nothing else. Everything above proves a record the app
+ *      can read; this proves the one record a stranger can, which is the whole
+ *      of cross-app discovery (FR-003, SC-001); and
+ *  20. turning the group private DELETES that declaration and turning it back
+ *      re-declares it. Absence is the only signal a non-discoverable group
+ *      emits, so a stale pointer would keep announcing a group that asked not
+ *      to be (FR-003, conditioned by `om-mrimm` D2).
  *
- * Those eighteen ARE the summary: setup lines (credentials, fixture session,
+ * Those twenty ARE the summary: setup lines (credentials, fixture session,
  * bundle, runtime) print as notes and are deliberately not counted, so
- * `SUMMARY: 18 passed, 0 failed` maps one-to-one onto the story above.
+ * `SUMMARY: 20 passed, 0 failed` maps one-to-one onto the story above.
  *
  * How it runs. Group facts are D1 rows and a group event is an outbound PDS
  * write, i.e. Worker code, so the real modules run ON workerd with a real D1
@@ -119,6 +128,11 @@ const BOB = 'did:plc:6cz6dldz42itymdbte47ewcv';
 const MALLORY = 'did:plc:ib2wrjcp4ulwqu35a7rtlckv';
 
 const EVENT_COLLECTION = 'community.lexicon.calendar.event';
+/** The group's one PUBLIC-repo control-plane record. Spelled here rather than
+ *  imported for the same reason the seeded bundles are: this file asserts what
+ *  a stranger receives, and importing our own constant would make the check
+ *  agree with the code by construction. */
+const DECLARATION_COLLECTION = 'net.openmeet.group.declaration';
 const GROUP_SLUG = 'spike-groups-e2e';
 
 /** The pared seed, as literals (FR-005a/FR-005c): owner and admin hold the six
@@ -288,10 +302,10 @@ async function startWorker(stateDir, credentialKey) {
 }
 
 /** Unauthenticated read straight off the live PDS. */
-async function getRecord(repo, rkey) {
+async function getRecord(repo, rkey, collection = EVENT_COLLECTION) {
 	const url = new URL('/xrpc/com.atproto.repo.getRecord', PDS);
 	url.searchParams.set('repo', repo);
-	url.searchParams.set('collection', EVENT_COLLECTION);
+	url.searchParams.set('collection', collection);
 	url.searchParams.set('rkey', rkey);
 	const response = await fetch(url);
 	const body = await response.json().catch(() => ({}));
@@ -378,6 +392,11 @@ async function main() {
 	/** Set once the spaces exist, so the `finally` knows to empty them. */
 	let spacesProvisioned = false;
 	let membersSpaceUri;
+	let aboutSpaceUri;
+	/** Set once the group has been declared, so the `finally` withdraws it: the
+	 *  declaration is the only record this run writes that a STRANGER can see,
+	 *  so leaving one behind advertises a fixture group to the network. */
+	let declared = false;
 	try {
 		worker = await startWorker(stateDir, credentialKey);
 		note(`worker bundled and ready in ${worker.seconds}s (workerd, empty D1 under ${stateDir})`);
@@ -607,6 +626,7 @@ async function main() {
 		note(`about space   ${spaces.aboutSpaceUri}`);
 		note(`members space ${spaces.membersSpaceUri}`);
 		membersSpaceUri = spaces.membersSpaceUri;
+		aboutSpaceUri = spaces.aboutSpaceUri;
 		spacesProvisioned = true;
 
 		await must('writeGroupProfile', {
@@ -868,6 +888,58 @@ async function main() {
 				`${afterEject.hasAccess}; never-a-member ${MALLORY}: access ${strangerCheck.hasAccess}; ` +
 				`roster ${afterEject.roster.length}`
 		);
+
+		// 19. the declaration — the one record a stranger can read -----------------
+		// Everything above this line needed a credential to verify. This one must
+		// NOT: the group is announced to the network by a record in its PUBLIC
+		// repo, and the assertion is an unauthenticated fetch of exactly the bytes
+		// a peer app would get. Asserted on the raw JSON rather than through our
+		// own parser, which would only prove we agree with ourselves. (FR-003,
+		// SC-001.)
+		await must('reconcileDeclaration', {
+			groupId: group.id,
+			callerDid: ALICE,
+			visibility: 'public'
+		});
+		declared = true;
+		const declaration = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
+		record(
+			declaration.status === 200 &&
+				declaration.value?.aboutSpace === aboutSpaceUri &&
+				typeof declaration.value?.createdAt === 'string' &&
+				// "Discovery only": nothing here may let a stranger render the
+				// group's name, because the about space refuses them anyway.
+				Object.keys(declaration.value ?? {})
+					.sort()
+					.join(',') === '$type,aboutSpace,createdAt',
+			'a public group is DECLARED in its public repo, readable with no credential',
+			`anonymous getRecord ${declaration.status}; points at ${declaration.value?.aboutSpace}; ` +
+				`fields ${Object.keys(declaration.value ?? {}).join(', ')}`
+		);
+
+		// 20. and turning private WITHDRAWS it --------------------------------------
+		// The half that is easy to skip and is the whole point of conditioning the
+		// record: a group that stops being discoverable must stop being announced,
+		// so the declaration is DELETED rather than left behind pointing at a space
+		// nobody may read. Flipped through the app's own updater, so the branch
+		// comes from the row.
+		await must('reconcileDeclaration', {
+			groupId: group.id,
+			callerDid: ALICE,
+			visibility: 'private'
+		});
+		const withdrawn = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
+		await must('reconcileDeclaration', {
+			groupId: group.id,
+			callerDid: ALICE,
+			visibility: 'public'
+		});
+		const redeclared = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
+		record(
+			withdrawn.status !== 200 && redeclared.status === 200,
+			'turning a group private DELETES its declaration; turning it back re-declares it',
+			`private: ${withdrawn.error ?? withdrawn.status}; public again: ${redeclared.status}`
+		);
 	} finally {
 		if (written.length > 0) console.log('');
 		for (const rkey of written) {
@@ -889,6 +961,29 @@ async function main() {
 				console.log(`WARN  could not clean up ${uri}: ${refusal ?? 'still readable'}`);
 			} else {
 				note(`cleaned up ${uri} (${after.error ?? after.status})`);
+			}
+		}
+		// THE DECLARATION, and it matters more than the rest: it is the only
+		// record this run writes that a stranger can see, so a fixture group left
+		// announced to the network is a different kind of litter from an event
+		// nobody can find. Withdrawn
+		// by the app's own path — flip to private — and then confirmed gone by an
+		// anonymous read, never by the delete's return value.
+		if (declared) {
+			try {
+				await call('reconcileDeclaration', {
+					groupId: group.id,
+					callerDid: ALICE,
+					visibility: 'private'
+				});
+				const after = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
+				if (after.status === 200) {
+					console.log(`WARN  ${GROUP_DID} is still declared to the network`);
+				} else {
+					note(`withdrew the declaration (${after.error ?? after.status})`);
+				}
+			} catch (error) {
+				console.log(`WARN  could not withdraw the declaration: ${error.message}`);
 			}
 		}
 		// The SPACE records, cleaned up the same way the events are: emptied

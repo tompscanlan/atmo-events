@@ -28,6 +28,7 @@ import { deleteGroupEvent, groupWriter, writeGroupEvent } from './server/event-w
 import { splitRuleLines } from './about-record';
 import { groupSpaceReader, readGroupAbout } from './server/about-read';
 import { setGroupRules, writeGroupProfile } from './server/about-writer';
+import { reconcileGroupDeclaration } from './server/declaration-writer';
 // Every roster act is a row move PLUS a record write, composed once in
 // ./server/roster.ts so the app and the e2e harness drive the same sequence.
 import {
@@ -203,6 +204,24 @@ export const updateGroupForm = form(
 				writer,
 				desired: splitRuleLines(data.rules),
 				existing: about.rules
+			});
+			// AND THE NETWORK'S VIEW OF WHETHER THIS GROUP EXISTS. Visibility is
+			// on this form, so this is the edit that can turn a discoverable
+			// group into a hidden one: a group switched to private has its
+			// declaration DELETED, not merely left unwritten, because the record
+			// is the only thing an anonymous peer can see and a stale one keeps
+			// announcing a group that asked not to be announced. Switching back
+			// re-declares it, dated from the group's own creation date rather
+			// than the moment of the flip — the declaration says when the group
+			// came into existence, not when someone last toggled a checkbox, and
+			// taking it from the profile costs no extra read. (Spec: FR-003.)
+			await reconcileGroupDeclaration({
+				db,
+				env,
+				group: fresh,
+				callerDid,
+				writer,
+				createdAt: about.profile?.createdAt ?? undefined
 			});
 		} catch (e) {
 			return {

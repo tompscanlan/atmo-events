@@ -27,6 +27,7 @@ import { GroupMintError, mintGroupAccount, type MintConfig, type MintFailure } f
 import { createGroup, recordGroupSpaces } from './server/repo';
 import { GroupSpaceError, pdsProvisioner, provisionGroupSpaces } from './server/spaces';
 import { setGroupRules, writeGroupProfile } from './server/about-writer';
+import { reconcileGroupDeclaration } from './server/declaration-writer';
 import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './server/members-writer';
 import { pdsWriter } from './server/event-writer';
 import { splitRuleLines } from './about-record';
@@ -246,6 +247,23 @@ export async function runCreateGroup(
 				existing: []
 			});
 		}
+
+		// AND THE ONE RECORD THE ANONYMOUS WEB CAN READ. Last of the public
+		// face, because it is a POINTER at the about space: declaring a group
+		// whose profile write just failed would announce a group to the network
+		// and then hand the peer a space with nothing in it.
+		//
+		// A private group is not declared at all, and `assumeAbsent` says why
+		// the withdrawal half is skipped here: a repo minted four statements ago
+		// cannot be holding a declaration to withdraw. (Spec: FR-003.)
+		await reconcileGroupDeclaration({
+			db: env.DB,
+			env,
+			group: withSpaces,
+			callerDid,
+			writer,
+			assumeAbsent: true
+		});
 	} catch (e) {
 		return {
 			ok: false,

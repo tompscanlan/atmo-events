@@ -51,6 +51,16 @@ function stubPds(overrides: { account?: () => Response } = {}) {
 		rkey: string;
 		record: Record<string, unknown>;
 	}[] = [];
+	/** Every record written into the group's PUBLIC repo — the declaration, and
+	 *  nothing else this path writes. Kept apart from `spaceWrites` because the
+	 *  container is the difference that matters: a declaration written into a
+	 *  space would be invisible to the anonymous web it exists for. */
+	const repoWrites: {
+		repo: string;
+		collection: string;
+		rkey: string;
+		record: Record<string, unknown>;
+	}[] = [];
 	let recoveryKey: string | undefined;
 	vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
 		const url = String(input);
@@ -109,9 +119,27 @@ function stubPds(overrides: { account?: () => Response } = {}) {
 				cid: 'bafycreate'
 			});
 		}
+		// The one record that does NOT go into a space: the declaration, which an
+		// anonymous peer reads straight off the group's repo. (Spec: FR-003.)
+		if (
+			nsid.startsWith('com.atproto.repo.putRecord') ||
+			nsid.startsWith('com.atproto.repo.createRecord')
+		) {
+			const body = JSON.parse(String(init?.body)) as {
+				repo: string;
+				collection: string;
+				rkey: string;
+				record: Record<string, unknown>;
+			};
+			repoWrites.push(body);
+			return Response.json({
+				uri: `at://${body.repo}/${body.collection}/${body.rkey}`,
+				cid: 'bafycreate'
+			});
+		}
 		throw new Error(`unexpected call to ${url}`);
 	});
-	return { calls, spaceWrites };
+	return { calls, spaceWrites, repoWrites };
 }
 
 async function rows(table: 'groups' | 'group_credentials') {
@@ -208,11 +236,14 @@ describe('a successful create', () => {
 			'com.atproto.simplespace.createSpace',
 			// The records land LAST, after both spaces exist — there is nowhere to
 			// put them before that. Profile first (the about space), then the
+			// DECLARATION into the public repo, which is a pointer AT the about
+			// space and so cannot honestly precede what it points at; then the
 			// members space: its access record, the authz config (three roles and
 			// the two binding records), and last the owner's membership, because a
 			// membership grants a role nothing has declared until the config is
-			// there. (Spec: FR-004, FR-005, FR-006.)
+			// there. (Spec: FR-003, FR-004, FR-005, FR-006.)
 			'com.atproto.space.putRecord',
+			'com.atproto.repo.putRecord',
 			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord',
@@ -221,6 +252,46 @@ describe('a successful create', () => {
 			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord'
 		]);
+	});
+
+	// The only record a stranger can read, and the only one in the public repo.
+	it('declares a public group in its PUBLIC repo, pointing at the about space', async () => {
+		const { repoWrites } = stubPds();
+
+		await runCreateGroup(env, OWNER, data());
+
+		expect(repoWrites).toHaveLength(1);
+		expect(repoWrites[0]).toMatchObject({
+			repo: MINTED_DID,
+			collection: 'net.openmeet.group.declaration',
+			rkey: 'self'
+		});
+		expect(repoWrites[0].record).toMatchObject({
+			$type: 'net.openmeet.group.declaration',
+			aboutSpace: `at://${MINTED_DID}/space/net.openmeet.space.about/self`
+		});
+		// "Discovery only" — no name, no avatar, nothing a stranger could
+		// render without the credential the about space demands.
+		expect(Object.keys(repoWrites[0].record).sort()).toEqual([
+			'$type',
+			'aboutSpace',
+			'createdAt'
+		]);
+	});
+
+	// The conditioning is the point of the clause: a private group emits no
+	// anonymous artifact at all, and a create that wrote one "just in case"
+	// would announce a group that asked not to be announced.
+	it('writes NO declaration for a private group, and no delete either', async () => {
+		const { calls, repoWrites } = stubPds();
+
+		const result = await runCreateGroup(env, OWNER, data({ visibility: 'private' }));
+
+		expect(result.ok).toBe(true);
+		expect(repoWrites).toEqual([]);
+		// Not even a withdrawal: a repo minted four statements ago cannot be
+		// holding a declaration to withdraw.
+		expect(calls.filter((call) => call.startsWith('com.atproto.repo.'))).toEqual([]);
 	});
 
 	// A group whose about space is empty can be read by its DID and nothing
