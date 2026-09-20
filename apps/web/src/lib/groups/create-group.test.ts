@@ -193,7 +193,7 @@ describe('a successful create', () => {
 	// owner's key did not land at index 0 the group is portable in name only, so
 	// that has to be found out before anyone is told the group exists.
 	// (Spec: FR-001g.)
-	it('mints, verifies the rotation key, then stores, inserts, provisions and writes its face', async () => {
+	it('mints, verifies the rotation key, then stores, inserts, provisions and writes its records', async () => {
 		const { calls } = stubPds();
 
 		const result = await runCreateGroup(env, OWNER, data());
@@ -206,8 +206,12 @@ describe('a successful create', () => {
 			'com.atproto.server.createSession',
 			'com.atproto.simplespace.createSpace',
 			'com.atproto.simplespace.createSpace',
-			// The profile lands LAST, after both spaces exist — there is nowhere
-			// to put it before that. (Spec: FR-004.)
+			// The records land LAST, after both spaces exist — there is nowhere to
+			// put them before that. Profile first (the about space), then the
+			// members space's access record and the owner's membership.
+			// (Spec: FR-004, FR-006.)
+			'com.atproto.space.putRecord',
+			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord'
 		]);
 	});
@@ -219,19 +223,50 @@ describe('a successful create', () => {
 
 		await runCreateGroup(env, OWNER, data({ locationName: 'Kailua-Kona' }));
 
-		expect(spaceWrites).toHaveLength(1);
-		expect(spaceWrites[0]).toMatchObject({
+		const profile = spaceWrites.filter(
+			(write) => write.collection === 'net.openmeet.group.profile'
+		);
+		expect(profile).toHaveLength(1);
+		expect(profile[0]).toMatchObject({
 			space: `at://${MINTED_DID}/space/net.openmeet.space.about/self`,
 			collection: 'net.openmeet.group.profile',
 			rkey: 'self'
 		});
-		expect(spaceWrites[0].record).toMatchObject({
+		expect(profile[0].record).toMatchObject({
 			$type: 'net.openmeet.group.profile',
 			displayName: 'Kona Trail Runners',
 			// Derived from the row, not taken from the form. (Spec: FR-004b.)
 			joinPolicy: 'approval',
 			// The declared location extension, name only. (Spec: FR-004a.)
 			location: { name: 'Kailua-Kona' }
+		});
+	});
+
+	// THE ROSTER IS RECORDS FROM THE FIRST MEMBER ONWARDS. A group whose members
+	// space holds no membership record has a roster only this deployment's
+	// database knows about, which is the other half of the portability bug —
+	// and the owner is the one membership every new group has. (Spec: FR-006.)
+	it('writes the access record and the owner’s membership into the members space', async () => {
+		const { spaceWrites } = stubPds();
+
+		await runCreateGroup(env, OWNER, data());
+
+		const members = `at://${MINTED_DID}/space/net.openmeet.space.members/self`;
+		const access = spaceWrites.find((w) => w.collection === 'net.openmeet.group.access');
+		const membership = spaceWrites.find((w) => w.collection === 'net.openmeet.group.membership');
+
+		expect(access).toMatchObject({ space: members, rkey: 'self' });
+		expect(access?.record).toMatchObject({
+			$type: 'net.openmeet.group.access',
+			roles: ['owner', 'admin', 'member']
+		});
+		// Keyed by the member DID, which is what makes "is this DID a member" a
+		// single getRecord for any app that can read the space.
+		expect(membership).toMatchObject({ space: members, rkey: OWNER });
+		expect(membership?.record).toMatchObject({
+			$type: 'net.openmeet.group.membership',
+			subject: OWNER,
+			roles: ['owner']
 		});
 	});
 

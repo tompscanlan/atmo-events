@@ -155,9 +155,14 @@ async function loadGroupPassword() {
 
 /**
  * Fail fast and legibly if the fixture password is stale, and confirm the
- * handle really is the DID this group will be bound to. The session token is
- * not used for anything else: the group write goes through the app's own
- * credential path inside the Worker.
+ * handle really is the DID this group will be bound to.
+ *
+ * Returns the session token, which the space checks below use to read the
+ * group's own spaces DIRECTLY — not through the app. That independence is the
+ * point: a roster record the app claims to have written is only proven by
+ * reading it back with something that is not the app's reader, and the members
+ * space refuses anonymous reads, so the read needs this session. The group's
+ * own WRITES still go through the app's credential path inside the Worker.
  */
 async function checkGroupAccount(password) {
 	const response = await fetch(`${PDS}/xrpc/com.atproto.server.createSession`, {
@@ -178,6 +183,7 @@ async function checkGroupAccount(password) {
 	if (body.did !== GROUP_DID) {
 		throw new Error(`${GROUP_HANDLE} resolves to ${body.did}, not the fixture group ${GROUP_DID}`);
 	}
+	return body.accessJwt;
 }
 
 /** Set by startWorker; closed over by `call`. */
@@ -286,6 +292,31 @@ async function listRecords(repo) {
 	return { status: response.status, records: body.records ?? [] };
 }
 
+/** A record inside one of the group's spaces, read with the GROUP's own
+ *  session and NOT through the app's reader — so a record the app says it
+ *  wrote is confirmed by something that shares no code with the writer. */
+async function spaceRecord(token, space, collection, rkey) {
+	const url = new URL('/xrpc/com.atproto.space.getRecord', PDS);
+	url.searchParams.set('space', space);
+	url.searchParams.set('repo', GROUP_DID);
+	url.searchParams.set('collection', collection);
+	url.searchParams.set('rkey', rkey);
+	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+	const body = await response.json().catch(() => ({}));
+	return { status: response.status, ...body };
+}
+
+/** THE SPACE'S OWN MEMBER LIST — the PDS's access-control list for the space,
+ *  which is a different thing from our `membership` records and must stay
+ *  EMPTY (FR-006a). `listMembers` is owner-only, and the group is the owner. */
+async function spaceMemberList(token, space) {
+	const url = new URL('/xrpc/com.atproto.simplespace.listMembers', PDS);
+	url.searchParams.set('space', space);
+	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+	const body = await response.json().catch(() => ({}));
+	return { status: response.status, members: body.members ?? [], error: body.error };
+}
+
 /** The `at://<authority>/...` a record actually landed under. */
 function authorityOf(uri) {
 	return String(uri).slice('at://'.length).split('/')[0];
@@ -317,7 +348,7 @@ async function main() {
 
 	const { path, password } = await loadGroupPassword();
 	note(`fixture credentials loaded from ${path}`);
-	await checkGroupAccount(password);
+	const groupToken = await checkGroupAccount(password);
 	note(`${GROUP_HANDLE} authenticates as ${GROUP_DID}`);
 	// The wrapping key is per-run and lives only in this process: the scratch D1
 	// is thrown away with stateDir, so nothing outlives the run that could
@@ -328,8 +359,9 @@ async function main() {
 	let worker;
 	let group;
 	const written = [];
-	/** Set once the about space exists, so the `finally` knows to empty it. */
-	let aboutProvisioned = false;
+	/** Set once the spaces exist, so the `finally` knows to empty them. */
+	let spacesProvisioned = false;
+	let membersSpaceUri;
 	try {
 		worker = await startWorker(stateDir, credentialKey);
 		note(`worker bundled and ready in ${worker.seconds}s (workerd, empty D1 under ${stateDir})`);
@@ -549,15 +581,17 @@ async function main() {
 		);
 
 		// 10. the group's public face, as records --------------------------------
-		// The read is the point. `createGroup` provisions nothing, so the space is
-		// made here; then profile + rules are written through the same gate the
-		// events went through, and read back with the GROUP's own session. That
-		// read is what FR-007 claims and what no unit test can prove: the
+		// The read is the point. `createGroup` provisions nothing, so both spaces
+		// are made here; then profile + rules are written through the same gate
+		// the events went through, and read back with the GROUP's own session.
+		// That read is what FR-007 claims and what no unit test can prove: the
 		// com.atproto.space.* parameter names and the space-scoped URI form are
 		// the live PDS's, not ours.
-		const spaces = await must('provisionAboutSpace', { groupId: group.id });
-		note(`about space ${spaces.aboutSpaceUri}`);
-		aboutProvisioned = true;
+		const spaces = await must('provisionSpaces', { groupId: group.id });
+		note(`about space   ${spaces.aboutSpaceUri}`);
+		note(`members space ${spaces.membersSpaceUri}`);
+		membersSpaceUri = spaces.membersSpaceUri;
+		spacesProvisioned = true;
 
 		await must('writeGroupProfile', {
 			groupId: group.id,
@@ -627,6 +661,144 @@ async function main() {
 			`name "${rebuilt.row.name}"; visibility ${rebuilt.row.visibility} (was ${group.visibility}); ` +
 				`status ${rebuilt.row.status}; ${rebuilt.rules} rule record(s)`
 		);
+
+		// 13. the roster is RECORDS ----------------------------------------------
+		// The owner's membership and the access record are written the way the
+		// create path writes them; BOB is admitted and promoted through the roster
+		// acts the app's own handlers call. Then all of it is read back — first
+		// through the app's reader, then straight off the PDS with the group's own
+		// session, which is what proves the records are really there and that a
+		// DID is a usable record key. (FR-006.)
+		await must('writeGroupAccess', { groupId: group.id, callerDid: ALICE });
+		await must('putMembership', { groupId: group.id, callerDid: ALICE, did: ALICE, roles: ['owner'] });
+		await must('admitMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'member' });
+		await must('promoteMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'admin' });
+
+		const recorded = await must('recordedRoster', { groupId: group.id, did: BOB });
+		const bobsRecord = await spaceRecord(
+			groupToken,
+			membersSpaceUri,
+			'net.openmeet.group.membership',
+			BOB
+		);
+		const accessRecord = await spaceRecord(
+			groupToken,
+			membersSpaceUri,
+			'net.openmeet.group.access',
+			'self'
+		);
+		record(
+			recorded.source === 'records' &&
+				recorded.roster.map((entry) => `${entry.did}/${entry.role}`).join(' ') ===
+					`${ALICE}/owner ${BOB}/admin` &&
+				recorded.hasAccess === true &&
+				// Keyed by the member DID, and the app's reader agrees with the PDS.
+				bobsRecord.status === 200 &&
+				bobsRecord.value?.subject === BOB &&
+				JSON.stringify(bobsRecord.value?.roles) === JSON.stringify(['admin']) &&
+				accessRecord.status === 200 &&
+				JSON.stringify(accessRecord.value?.roles) ===
+					JSON.stringify(['owner', 'admin', 'member']),
+			'the roster is membership records in the members space, keyed by member DID',
+			`source ${recorded.source}; ${recorded.roster.length} member(s) ` +
+				`(${recorded.roster.map((e) => e.role).join(', ')}); ` +
+				`${BOB} read straight off the PDS at rkey=${BOB} as ${JSON.stringify(bobsRecord.value?.roles)}; ` +
+				`access record roles ${JSON.stringify(accessRecord.value?.roles)}`
+		);
+
+		// 14. FR-006a — the space's own member list stays EMPTY --------------------
+		// A DID on that list could read the WHOLE members space straight from the
+		// PDS with its own credential: every membership, every role, every bundle,
+		// bypassing the app's roster gate. Writing a membership record must never
+		// add one, and this is the assertion that keeps it true.
+		const memberList = await spaceMemberList(groupToken, membersSpaceUri);
+		record(
+			memberList.status === 200 && memberList.members.length === 0,
+			'writing membership records leaves the members space’s own member list EMPTY (FR-006a)',
+			`listMembers ${memberList.status}: ${memberList.members.length} entr(ies)` +
+				`${memberList.error ? ` (${memberList.error})` : ''}; ` +
+				`the app stays the space's only reader`
+		);
+
+		// 15. drop the cache, rebuild from records ---------------------------------
+		// SC-002 for the roster. The owner's row is exempt by construction —
+		// `memberships_owner_undeletable` refuses to delete it while the group
+		// exists — so this drops every OTHER row and rebuilds them from records.
+		const dropped = await must('dropMembershipRows', { groupId: group.id });
+		const rosterWhileDropped = await must('recordedRoster', { groupId: group.id, did: BOB });
+		const rebuiltMembers = await must('rebuildGroupMembers', { groupId: group.id });
+		record(
+			dropped.dropped === 1 &&
+				// The page still renders the full roster with the rows gone, because
+				// the records are the source.
+				rosterWhileDropped.roster.length === 2 &&
+				rebuiltMembers.restored.join(',') === BOB &&
+				rebuiltMembers.orphans.length === 0 &&
+				rebuiltMembers.skipped.length === 0 &&
+				rebuiltMembers.roster.map((entry) => `${entry.did}/${entry.role}`).join(' ') ===
+					`${ALICE}/owner ${BOB}/admin`,
+			'the roster survives dropping its D1 rows: records render it, and rebuild restores them',
+			`dropped ${dropped.dropped} row(s); roster from records while dropped ` +
+				`${rosterWhileDropped.roster.length}; rebuilt ${rebuiltMembers.restored.length} ` +
+				`(unchanged ${rebuiltMembers.unchanged.length}, orphans ${rebuiltMembers.orphans.length})`
+		);
+
+		// 16. suspension revokes the record, reinstatement writes it again ---------
+		// A suspended member has no access, so leaving a membership record in
+		// place would publish a grant the app refuses — and a second app reading
+		// the space would honour it. The join date has to survive the round trip,
+		// which is the part a careless reinstate would quietly restamp.
+		const joinedAt = recorded.memberships.find((m) => m.subject === BOB)?.createdAt;
+		await must('setMemberAccess', { groupId: group.id, callerDid: ALICE, did: BOB, status: 'suspended' });
+		const whileSuspended = await must('recordedRoster', { groupId: group.id, did: BOB });
+		const suspendedRecord = await spaceRecord(
+			groupToken,
+			membersSpaceUri,
+			'net.openmeet.group.membership',
+			BOB
+		);
+		const orphanCheck = await must('rebuildGroupMembers', { groupId: group.id });
+		await must('setMemberAccess', { groupId: group.id, callerDid: ALICE, did: BOB, status: 'active' });
+		const afterReinstate = await must('recordedRoster', { groupId: group.id, did: BOB });
+		record(
+			suspendedRecord.status !== 200 &&
+				whileSuspended.hasAccess === false &&
+				whileSuspended.roster.every((entry) => entry.did !== BOB) &&
+				// The row survives the suspension, and the rebuild reports it rather
+				// than ejecting it to make the numbers agree.
+				orphanCheck.orphans.join(',') === BOB &&
+				afterReinstate.hasAccess === true &&
+				afterReinstate.memberships.find((m) => m.subject === BOB)?.createdAt === joinedAt,
+			'suspension revokes the membership record; reinstatement restores it with its join date',
+			`suspended: PDS says ${suspendedRecord.error ?? suspendedRecord.status}, ` +
+				`roster ${whileSuspended.roster.length}, rebuild orphans [${orphanCheck.orphans.join(', ')}]; ` +
+				`reinstated: joined ${afterReinstate.memberships.find((m) => m.subject === BOB)?.createdAt} ` +
+				`(was ${joinedAt})`
+		);
+
+		// 17. no record, no access --------------------------------------------------
+		// The AC's own sentence. An eject deletes the record, and a DID that never
+		// had one answers the same way — which is what makes the record set, not
+		// the rows, the thing that decides access.
+		await must('ejectMember', { groupId: group.id, callerDid: ALICE, did: BOB });
+		const afterEject = await must('recordedRoster', { groupId: group.id, did: BOB });
+		const strangerCheck = await must('recordedRoster', { groupId: group.id, did: MALLORY });
+		const ejectedRecord = await spaceRecord(
+			groupToken,
+			membersSpaceUri,
+			'net.openmeet.group.membership',
+			BOB
+		);
+		record(
+			ejectedRecord.status !== 200 &&
+				afterEject.hasAccess === false &&
+				strangerCheck.hasAccess === false &&
+				afterEject.roster.map((entry) => entry.did).join(',') === ALICE,
+			'a DID with no membership record has no access, whether ejected or never a member',
+			`${BOB} after eject: record ${ejectedRecord.error ?? ejectedRecord.status}, access ` +
+				`${afterEject.hasAccess}; never-a-member ${MALLORY}: access ${strangerCheck.hasAccess}; ` +
+				`roster ${afterEject.roster.length}`
+		);
 	} finally {
 		if (written.length > 0) console.log('');
 		for (const rkey of written) {
@@ -650,10 +822,10 @@ async function main() {
 				note(`cleaned up ${uri} (${after.error ?? after.status})`);
 			}
 		}
-		// The about-space records, cleaned up the same way the events are: by
-		// emptying the rules list and asserting the space really is empty again.
+		// The SPACE records, cleaned up the same way the events are: emptied
+		// through the app, then re-read to check the space really is empty again.
 		// Before the worker stops, because this goes through it.
-		if (aboutProvisioned) {
+		if (spacesProvisioned) {
 			try {
 				await call('setGroupRules', { groupId: group.id, callerDid: ALICE, rules: '' });
 				const leftover = await call('readGroupAbout', { groupId: group.id });
@@ -665,6 +837,21 @@ async function main() {
 				}
 			} catch (error) {
 				console.log(`WARN  could not clean up the about space: ${error.message}`);
+			}
+			try {
+				// The owner's membership is the one record no roster act removes —
+				// the owner cannot be ejected — so it is dropped directly, the same
+				// way it was written.
+				await call('dropMembership', { groupId: group.id, callerDid: ALICE, did: ALICE });
+				const leftover = await call('recordedRoster', { groupId: group.id });
+				const remaining = leftover.ok ? leftover.value.memberships.length : -1;
+				if (remaining === 0) {
+					note('cleaned up the members space membership records (access left at self)');
+				} else {
+					console.log(`WARN  ${remaining} membership record(s) left in the members space`);
+				}
+			} catch (error) {
+				console.log(`WARN  could not clean up the members space: ${error.message}`);
 			}
 		}
 		await worker?.stop();

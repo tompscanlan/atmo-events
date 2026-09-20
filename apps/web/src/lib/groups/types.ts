@@ -76,6 +76,23 @@ export interface MemberRow {
 	created_at: number;
 }
 
+/** ONE ROSTER ROW AS A PAGE RENDERS IT, from either source — a `membership`
+ *  record or the `memberships` cache (`server/members-read.ts`). No
+ *  `membership_id`: that is a D1 surrogate with no record counterpart, and the
+ *  identity a roster row actually has is the member DID, which is unique per
+ *  group in both places (`UNIQUE (group_id, did)`; the record is keyed by it).
+ *  `created_at` stays epoch ms in both, so the two orders are the same order.
+ *
+ *  `status` is always `active` when the source is records: a suspension deletes
+ *  the membership record, so a suspended member is only ever visible in the
+ *  cache. */
+export interface RosterEntry {
+	did: string;
+	role: GroupRoleName;
+	status: MembershipStatus;
+	created_at: number;
+}
+
 export interface JoinRequestRow {
 	id: string;
 	did: string;

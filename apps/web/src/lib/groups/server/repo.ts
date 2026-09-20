@@ -376,6 +376,27 @@ export async function listMembers(db: D1Database, groupId: string): Promise<Memb
 	return results ?? [];
 }
 
+/** One roster row, or null. Exists because the row is what remembers WHEN a
+ *  member joined once their membership record is gone — which is every
+ *  suspended member, since a suspension revokes the record
+ *  (`server/roster.ts`). Loading the whole roster to answer that would grow
+ *  with the group. */
+export async function getMemberRow(
+	db: D1Database,
+	groupId: string,
+	did: string
+): Promise<MemberRow | null> {
+	await ensureGroupsSchema(db);
+	return db
+		.prepare(
+			`SELECT m.id AS membership_id, m.did, r.name AS role, m.status, m.created_at
+			 FROM memberships m JOIN roles r ON r.id = m.role_id
+			 WHERE m.group_id = ? AND m.did = ?`
+		)
+		.bind(groupId, did)
+		.first<MemberRow>();
+}
+
 export async function listJoinRequests(
 	db: D1Database,
 	groupId: string,
@@ -551,14 +572,20 @@ export async function addMember(
 }
 
 /** Approve: roster insert and request close in one batch, so an approved
- *  request always has a member behind it. */
+ *  request always has a member behind it.
+ *
+ *  Returns the DID it admitted, because the caller needs it and this is the
+ *  only place that knows it: the applicant is named by the REQUEST, not by the
+ *  form, and the membership record the caller then writes is keyed by that DID
+ *  (`server/members-writer.ts`). Re-reading the request afterwards would be a
+ *  second query for a value this function already had in hand. */
 export async function approveJoinRequest(
 	db: D1Database,
 	groupId: string,
 	requestId: string,
 	deciderDid: string,
 	role: Exclude<GroupRoleName, 'owner'> = 'member'
-): Promise<void> {
+): Promise<{ did: string }> {
 	await ensureGroupsSchema(db);
 	const request = await db
 		.prepare(`SELECT did FROM join_requests WHERE id = ? AND group_id = ? AND status = 'pending'`)
@@ -585,6 +612,7 @@ export async function approveJoinRequest(
 				.bind(deciderDid, now, now, requestId)
 		])
 	);
+	return { did: request.did };
 }
 
 export async function decideJoinRequest(

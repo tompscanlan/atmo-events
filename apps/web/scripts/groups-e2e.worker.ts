@@ -44,6 +44,22 @@ import {
 import { resolveGroupCredential, storeGroupCredential } from '../src/lib/groups/server/credentials';
 import { ensureGroupsSchema } from '../src/lib/groups/server/schema';
 import { pdsProvisioner, provisionGroupSpaces } from '../src/lib/groups/server/spaces';
+import {
+	hasMemberRecords,
+	hasRecordedAccess,
+	readGroupMembers,
+	rebuildGroupMembers,
+	rosterFromRecords,
+	rosterFromRows
+} from '../src/lib/groups/server/members-read';
+import { dropGroupMembership, putGroupMembership, writeGroupAccess } from '../src/lib/groups/server/members-writer';
+import {
+	admitMember,
+	ejectMember,
+	promoteMember,
+	setMemberAccess,
+	type RosterContext
+} from '../src/lib/groups/server/roster';
 
 interface Env {
 	DB: D1Database;
@@ -62,6 +78,26 @@ async function groupById(env: Env, groupId: unknown): Promise<GroupRow> {
 	const row = await getGroupById(env.DB, String(groupId));
 	if (!row) throw new Error(`no group ${String(groupId)} in D1`);
 	return row;
+}
+
+/** The context a roster act takes. The driver names the caller on every call,
+ *  because WHO is asking is half of what these ops prove. */
+async function rosterCtx(env: Env, args: Args): Promise<RosterContext> {
+	return {
+		db: env.DB,
+		env,
+		group: await groupById(env, args.groupId),
+		callerDid: String(args.callerDid)
+	};
+}
+
+/** The group's own space reader, or a loud failure. Every roster read below
+ *  goes through it, which is the point: these records are only readable with
+ *  the group's own session (FR-007). */
+async function spaceReader(env: Env, group: GroupRow) {
+	const reader = await groupSpaceReader(env, env.DB, group);
+	if (!reader) throw new Error(`no credential for ${group.group_did}`);
+	return reader;
 }
 
 const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
@@ -169,11 +205,11 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			rkey: String(args.rkey)
 		}),
 
-	/** The about space the fixture group needs before it has a face. The e2e
-	 *  binds an existing DID through `createGroup`, which provisions nothing —
-	 *  only `runCreateGroup` does — so the space is made here. Idempotent, like
-	 *  the create path's own call. */
-	provisionAboutSpace: async (env, args) => {
+	/** BOTH spaces the fixture group needs — the about space for its face, the
+	 *  members space for its roster. The e2e binds an existing DID through
+	 *  `createGroup`, which provisions nothing — only `runCreateGroup` does — so
+	 *  they are made here. Idempotent, like the create path's own call. */
+	provisionSpaces: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		const cred = await resolveGroupCredential(env, env.DB, group.group_did);
 		if (!cred) throw new Error(`no credential for ${group.group_did}`);
@@ -241,6 +277,117 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			requireApproval: false
 		});
 		return groupById(env, args.groupId);
+	},
+
+	// ---- the roster, as records (T014 / om-ypwkc) --------------------------
+
+	/** The members space's `access` record: who may read the space. Written at
+	 *  create by `runCreateGroup`, which this fixture does not run — it binds an
+	 *  existing DID — so the driver writes it the same way create does. */
+	writeGroupAccess: async (env, args) =>
+		writeGroupAccess({
+			db: env.DB,
+			env,
+			group: await groupById(env, args.groupId),
+			callerDid: args.callerDid == null ? null : String(args.callerDid)
+		}),
+
+	/** The owner's membership record, for the same reason: the only writer of it
+	 *  is the create path. Every OTHER membership below goes through a roster act
+	 *  (`server/roster.ts`), which is what the app's own handlers call. */
+	putMembership: async (env, args) =>
+		putGroupMembership({
+			db: env.DB,
+			env,
+			group: await groupById(env, args.groupId),
+			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			subject: String(args.did),
+			roles: args.roles as GroupRoleName[],
+			intent: 'admit'
+		}),
+
+	/** Its counterpart, for cleanup: the owner's own record. `leave` is the
+	 *  intent because the caller IS the subject — the owner cannot be ejected,
+	 *  and no grant is involved in removing your own membership. */
+	dropMembership: async (env, args) =>
+		dropGroupMembership({
+			db: env.DB,
+			env,
+			group: await groupById(env, args.groupId),
+			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			subject: String(args.did),
+			intent: 'leave'
+		}),
+
+	/** ROW PLUS RECORD, in the app's own order — these four are exactly what the
+	 *  remote handlers call, so what the e2e proves is the composition the app
+	 *  ships and not a re-implementation of it. */
+	admitMember: async (env, args) => {
+		await admitMember(await rosterCtx(env, args), String(args.did), args.role as AssignableRole);
+		return { admitted: args.did };
+	},
+
+	promoteMember: async (env, args) => {
+		await promoteMember(await rosterCtx(env, args), String(args.did), args.role as AssignableRole);
+		return { promoted: args.did, role: args.role };
+	},
+
+	ejectMember: async (env, args) => {
+		await ejectMember(await rosterCtx(env, args), String(args.did));
+		return { ejected: args.did };
+	},
+
+	setMemberAccess: async (env, args) => {
+		await setMemberAccess(
+			await rosterCtx(env, args),
+			String(args.did),
+			args.status as 'active' | 'suspended'
+		);
+		return { did: args.did, status: args.status };
+	},
+
+	/** The roster as the members page builds it: records when the space holds
+	 *  any, the cache otherwise — and the access answer for one DID, which is
+	 *  FR-006's rule in one boolean. */
+	recordedRoster: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const members = await readGroupMembers(await spaceReader(env, group), group);
+		const fromRecords = hasMemberRecords(members);
+		return {
+			source: fromRecords ? 'records' : 'cache',
+			roster: fromRecords
+				? rosterFromRecords(members)
+				: rosterFromRows(await listMembers(env.DB, group.id)),
+			access: members.access,
+			hasAccess: hasRecordedAccess(members, args.did == null ? null : String(args.did)),
+			memberships: members.memberships.map((record) => ({
+				rkey: record.rkey,
+				subject: record.subject,
+				roles: record.roles,
+				createdAt: record.createdAt,
+				uri: record.uri
+			}))
+		};
+	},
+
+	/** DROPS THE CACHE. Raw SQL, unlike `corruptGroupCache`, because no app path
+	 *  deletes roster rows wholesale — and the owner's row is exempt whatever we
+	 *  do: `memberships_owner_undeletable` refuses to delete it while the group
+	 *  exists, which is why the rebuild this sets up is proven on the non-owner
+	 *  rows. (A group with NO rows at all is the cold rebuild, `om-z5ady`.) */
+	dropMembershipRows: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const before = await listMembers(env.DB, group.id);
+		await env.DB.prepare(`DELETE FROM memberships WHERE group_id = ? AND did <> ?`)
+			.bind(group.id, group.owner_did)
+			.run();
+		return { dropped: before.length - (await listMembers(env.DB, group.id)).length };
+	},
+
+	rebuildGroupMembers: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const outcome = await rebuildGroupMembers(env.DB, await spaceReader(env, group), group);
+		return { ...outcome, roster: rosterFromRows(await listMembers(env.DB, group.id)) };
 	}
 };
 

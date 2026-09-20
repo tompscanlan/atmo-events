@@ -27,6 +27,7 @@ import { GroupMintError, mintGroupAccount, type MintConfig, type MintFailure } f
 import { createGroup, recordGroupSpaces } from './server/repo';
 import { GroupSpaceError, pdsProvisioner, provisionGroupSpaces } from './server/spaces';
 import { setGroupRules, writeGroupProfile } from './server/about-writer';
+import { putGroupMembership, writeGroupAccess } from './server/members-writer';
 import { pdsWriter } from './server/event-writer';
 import { splitRuleLines } from './about-record';
 import { slugMintRefusal, slugMintRefusalMessage } from './slug';
@@ -189,10 +190,12 @@ export async function runCreateGroup(
 	// Provisioning is not ordered by the slug: the space key is `self`, so both
 	// URIs are a function of the group DID alone.
 	let aboutUri: string;
+	let membersUri: string;
 	try {
 		const uris = await provisionGroupSpaces(pdsProvisioner(minted.credential, minted.did));
 		await recordGroupSpaces(env.DB, group.id, uris);
 		aboutUri = uris.aboutSpaceUri;
+		membersUri = uris.membersSpaceUri;
 	} catch (e) {
 		// The group EXISTS at this point, so saying "creation failed" would be a
 		// lie. Name what is missing instead: `provisionGroupSpaces` is idempotent
@@ -210,16 +213,17 @@ export async function runCreateGroup(
 	// the settings form. Ordering it before the INSERT is impossible anyway —
 	// `requireGroupPermission` reads the owner's membership, which the INSERT
 	// creates. (Spec: FR-004.)
+	//
+	// The credential we already hold, NOT `groupWriter` — that would decrypt the
+	// row we wrote three statements ago to obtain the value still in scope. Same
+	// transport either way; this one has fewer moving parts.
+	const withSpaces = { ...group, about_space_uri: aboutUri, members_space_uri: membersUri };
+	const writer = pdsWriter(minted.credential, minted.did);
 	try {
-		const withSpace = { ...group, about_space_uri: aboutUri };
-		// The credential we already hold, NOT `groupWriter` — that would decrypt
-		// the row we wrote three statements ago to obtain the value still in
-		// scope. Same transport either way; this one has fewer moving parts.
-		const writer = pdsWriter(minted.credential, minted.did);
 		await writeGroupProfile({
 			db: env.DB,
 			env,
-			group: withSpace,
+			group: withSpaces,
 			callerDid,
 			writer,
 			profile: {
@@ -233,7 +237,7 @@ export async function runCreateGroup(
 			await setGroupRules({
 				db: env.DB,
 				env,
-				group: withSpace,
+				group: withSpaces,
 				callerDid,
 				writer,
 				desired: rules,
@@ -248,6 +252,39 @@ export async function runCreateGroup(
 			error: `${group.slug} was created, but its profile records were not written: ${
 				e instanceof Error ? e.message : String(e)
 			}. Saving the group's settings will write them.`
+		};
+	}
+
+	// THE ROSTER, as records: the members space's `access` record and the ONE
+	// membership a new group has — the owner's. After this the roster is records
+	// with a D1 projection rather than rows with a record copy, which is what
+	// lets `rebuildGroupMembers` restore the roster from the space. (Spec:
+	// FR-006; `data-model.md`.)
+	//
+	// Its own step, and its failure is reported separately, because the repair
+	// path is NOT the settings form: saving settings rewrites the profile and
+	// the rules, nothing roster-shaped. A group left here works — every reader
+	// falls back to the cache while the members space holds no membership record
+	// (`server/members-read.ts`) — so the honest report is what is missing, not
+	// an instruction that would not fix it.
+	try {
+		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer });
+		await putGroupMembership({
+			db: env.DB,
+			env,
+			group: withSpaces,
+			callerDid,
+			writer,
+			subject: callerDid,
+			roles: ['owner'],
+			intent: 'admit'
+		});
+	} catch (e) {
+		return {
+			ok: false,
+			error: `${group.slug} was created, but its roster records were not written: ${
+				e instanceof Error ? e.message : String(e)
+			}. The group works and its roster reads from the database; the members space stays empty until a member's role changes.`
 		};
 	}
 

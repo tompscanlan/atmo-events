@@ -43,7 +43,7 @@
 	{/if}
 
 	<ul class="flex flex-col gap-2">
-		{#each data.members as member (member.membership_id)}
+		{#each data.members as member (member.did)}
 			<li class="ring-base-200 dark:ring-base-800 rounded-xl p-3 ring-1">
 				<div class="flex flex-wrap items-center justify-between gap-3">
 					<div class="min-w-0">

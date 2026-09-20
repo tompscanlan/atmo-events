@@ -12,21 +12,15 @@ import { form, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
 import { canSeeGroup } from './access';
 import { ASSIGNABLE_ROLES, can } from './permissions';
-import type { GroupFormResult } from './form-result';
+import type { GroupFormFailure, GroupFormResult } from './form-result';
 import { formError } from './form-error';
 import { runCreateGroup } from './create-group';
 import { GROUP_SLUG_PATTERN } from './slug';
-import { GROUP_STATUSES, GROUP_VISIBILITIES } from './types';
+import { GROUP_STATUSES, GROUP_VISIBILITIES, type CallerMembership, type GroupRow } from './types';
 import {
-	addMember,
-	approveJoinRequest,
-	changeMemberRole,
 	decideJoinRequest,
 	getCallerMembership,
 	getGroupBySlug,
-	removeMember,
-	requestJoin,
-	setMemberStatus,
 	updateGroup,
 	type JoinOutcome
 } from './server/repo';
@@ -34,6 +28,18 @@ import { deleteGroupEvent, groupWriter, writeGroupEvent } from './server/event-w
 import { splitRuleLines } from './about-record';
 import { groupSpaceReader, readGroupAbout } from './server/about-read';
 import { setGroupRules, writeGroupProfile } from './server/about-writer';
+// Every roster act is a row move PLUS a record write, composed once in
+// ./server/roster.ts so the app and the e2e harness drive the same sequence.
+import {
+	RosterRecordError,
+	admitFromRequest,
+	admitMember,
+	ejectMember,
+	joinGroup,
+	leaveGroup,
+	promoteMember,
+	setMemberAccess
+} from './server/roster';
 import { groupEventRecord } from './event-record';
 
 const slugField = v.pipe(v.string(), v.regex(GROUP_SLUG_PATTERN, 'Invalid group URL'));
@@ -66,6 +72,18 @@ const countryField = v.pipe(
 	)
 );
 
+/** What every handler resolves before it acts: the bindings, the group, and the
+ *  caller's standing in it. Named rather than inferred so the two helpers below
+ *  can take it as a parameter. */
+interface GroupRequestContext {
+	db: D1Database;
+	env: App.Platform['env'];
+	group: GroupRow;
+	membership: CallerMembership;
+	/** Never null: `context` throws 401 before returning. */
+	callerDid: string;
+}
+
 /** The three things every handler needs, plus the caller's resolved
  *  permissions. Throws 404 for an unknown slug and 401 when not signed in.
  *
@@ -77,7 +95,7 @@ const countryField = v.pipe(
  *  sign-in and the slug, so the page's own 404 never ran (om-5oxc8). The
  *  membership lookup has to come first, because whether the caller may see the
  *  group is a question about their roster row. */
-async function context(slug: string) {
+async function context(slug: string): Promise<GroupRequestContext> {
 	const { locals, platform } = getRequestEvent();
 	if (!locals.did) error(401, 'Sign in to do that');
 	const db = platform!.env.DB;
@@ -198,18 +216,39 @@ export const updateGroupForm = form(
 	}
 );
 
+/** A roster act whose ROW moved and whose RECORD did not.
+ *
+ *  Not a failed mutation, because the mutation happened: the roster the app
+ *  renders falls back to the rows (`server/members-read.ts`), so the caller is
+ *  told what is out of step rather than being told to retry something that
+ *  already took effect. Every other failure — an owner who cannot be demoted, a
+ *  private group with no self-service join, a DID that is not on the roster —
+ *  comes from the SCHEMA, which is why the two are one `catch` with two
+ *  reports: the D1 half always runs first (`server/roster.ts`).
+ *
+ *  Returns the FAILURE member rather than `GroupFormResult`, so it composes in
+ *  a handler whose success carries a payload. */
+function rosterFailure(slug: string, e: unknown): GroupFormFailure {
+	if (e instanceof RosterRecordError) {
+		return {
+			ok: false,
+			error: `The roster was updated, but ${slug}'s membership record for ${e.subject} was not: ${e.message}`
+		};
+	}
+	return formError(e);
+}
+
 export const joinGroupForm = form(
 	v.object({
 		slug: slugField,
 		message: v.optional(v.pipe(v.string(), v.maxLength(1000)))
 	}),
 	async (data): Promise<GroupFormResult<{ outcome: JoinOutcome }>> => {
-		const { db, group, callerDid } = await context(data.slug);
+		const ctx = await context(data.slug);
 		try {
-			const outcome = await requestJoin(db, group, callerDid, data.message || null);
-			return { ok: true, outcome };
+			return { ok: true, outcome: await joinGroup(ctx, data.message || null) };
 		} catch (e) {
-			return formError(e);
+			return rosterFailure(ctx.group.slug, e);
 		}
 	}
 );
@@ -221,16 +260,24 @@ export const joinGroupForm = form(
 export const leaveGroupForm = form(
 	v.object({ slug: slugField }),
 	async (data): Promise<GroupFormResult<{ outcome: 'withdrawn' | 'left' }>> => {
-		const { db, group, membership, callerDid } = await context(data.slug);
+		const ctx = await context(data.slug);
 		try {
-			if (membership.pendingRequestId) {
-				await decideJoinRequest(db, group.id, membership.pendingRequestId, callerDid, 'withdrawn');
+			// A pending applicant was never on the roster, so there is no record to
+			// revoke — withdrawing touches `join_requests` and nothing else.
+			if (ctx.membership.pendingRequestId) {
+				await decideJoinRequest(
+					ctx.db,
+					ctx.group.id,
+					ctx.membership.pendingRequestId,
+					ctx.callerDid,
+					'withdrawn'
+				);
 				return { ok: true, outcome: 'withdrawn' };
 			}
-			await removeMember(db, group.id, callerDid);
+			await leaveGroup(ctx);
 			return { ok: true, outcome: 'left' };
 		} catch (e) {
-			return formError(e);
+			return rosterFailure(ctx.group.slug, e);
 		}
 	}
 );
@@ -242,15 +289,15 @@ export const approveJoinRequestForm = form(
 		role: v.optional(assignableRoleField)
 	}),
 	async (data): Promise<GroupFormResult> => {
-		const { db, group, membership, callerDid } = await context(data.slug);
-		if (!can(membership.permissions, 'ADMIT_MEMBERS')) {
+		const ctx = await context(data.slug);
+		if (!can(ctx.membership.permissions, 'ADMIT_MEMBERS')) {
 			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
 		}
 		try {
-			await approveJoinRequest(db, group.id, data.requestId, callerDid, data.role ?? 'member');
+			await admitFromRequest(ctx, data.requestId, data.role ?? 'member');
 			return { ok: true };
 		} catch (e) {
-			return formError(e);
+			return rosterFailure(ctx.group.slug, e);
 		}
 	}
 );
@@ -263,6 +310,8 @@ export const rejectJoinRequestForm = form(
 			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
 		}
 		try {
+			// No record either way: a rejected request never granted anything, so
+			// there is nothing published to withdraw.
 			await decideJoinRequest(db, group.id, data.requestId, callerDid, 'rejected');
 			return { ok: true };
 		} catch (e) {
@@ -276,15 +325,15 @@ export const rejectJoinRequestForm = form(
 export const addMemberForm = form(
 	v.object({ slug: slugField, did: didField, role: v.optional(assignableRoleField) }),
 	async (data): Promise<GroupFormResult> => {
-		const { db, group, membership } = await context(data.slug);
-		if (!can(membership.permissions, 'ADMIT_MEMBERS')) {
+		const ctx = await context(data.slug);
+		if (!can(ctx.membership.permissions, 'ADMIT_MEMBERS')) {
 			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
 		}
 		try {
-			await addMember(db, group.id, data.did, data.role ?? 'member');
+			await admitMember(ctx, data.did, data.role ?? 'member');
 			return { ok: true };
 		} catch (e) {
-			return formError(e);
+			return rosterFailure(ctx.group.slug, e);
 		}
 	}
 );
@@ -292,15 +341,15 @@ export const addMemberForm = form(
 export const removeMemberForm = form(
 	v.object({ slug: slugField, did: didField }),
 	async (data): Promise<GroupFormResult> => {
-		const { db, group, membership } = await context(data.slug);
-		if (!can(membership.permissions, 'EJECT_MEMBERS')) {
+		const ctx = await context(data.slug);
+		if (!can(ctx.membership.permissions, 'EJECT_MEMBERS')) {
 			return { ok: false, error: 'Not allowed: EJECT_MEMBERS required' };
 		}
 		try {
-			await removeMember(db, group.id, data.did);
+			await ejectMember(ctx, data.did);
 			return { ok: true };
 		} catch (e) {
-			return formError(e);
+			return rosterFailure(ctx.group.slug, e);
 		}
 	}
 );
@@ -308,15 +357,15 @@ export const removeMemberForm = form(
 export const changeMemberRoleForm = form(
 	v.object({ slug: slugField, did: didField, role: assignableRoleField }),
 	async (data): Promise<GroupFormResult> => {
-		const { db, group, membership } = await context(data.slug);
-		if (!can(membership.permissions, 'ASSIGN_ROLES')) {
+		const ctx = await context(data.slug);
+		if (!can(ctx.membership.permissions, 'ASSIGN_ROLES')) {
 			return { ok: false, error: 'Not allowed: ASSIGN_ROLES required' };
 		}
 		try {
-			await changeMemberRole(db, group.id, data.did, data.role);
+			await promoteMember(ctx, data.did, data.role);
 			return { ok: true };
 		} catch (e) {
-			return formError(e);
+			return rosterFailure(ctx.group.slug, e);
 		}
 	}
 );
@@ -324,17 +373,17 @@ export const changeMemberRoleForm = form(
 export const setMemberStatusForm = form(
 	v.object({ slug: slugField, did: didField, status: v.picklist(['active', 'suspended']) }),
 	async (data): Promise<GroupFormResult> => {
-		const { db, group, membership } = await context(data.slug);
+		const ctx = await context(data.slug);
 		// Suspension is a partial removal, so it is the eject grant rather than a
 		// third name: a greeter who may admit must not be able to lock a member out.
-		if (!can(membership.permissions, 'EJECT_MEMBERS')) {
+		if (!can(ctx.membership.permissions, 'EJECT_MEMBERS')) {
 			return { ok: false, error: 'Not allowed: EJECT_MEMBERS required' };
 		}
 		try {
-			await setMemberStatus(db, group.id, data.did, data.status);
+			await setMemberAccess(ctx, data.did, data.status);
 			return { ok: true };
 		} catch (e) {
-			return formError(e);
+			return rosterFailure(ctx.group.slug, e);
 		}
 	}
 );
