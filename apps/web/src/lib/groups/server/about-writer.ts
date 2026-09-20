@@ -158,9 +158,10 @@ export async function setGroupRules(
 		if (match) {
 			claimed.add(match.rkey);
 			// Order is ours and may have moved even when the text did not, so the
-			// record is rewritten in place — SAME rkey, same URI. That is what
-			// SC-011 asserts, and it is why order lives on the record rather than
-			// being implied by the rkey.
+			// record is rewritten in place — SAME rkey, same URI — and a rule that
+			// only moved keeps every citation anyone has handed out. That is why
+			// order lives on the record rather than being implied by the rkey.
+			// (Spec: SC-011.)
 			if (match.order !== index) {
 				await writer({
 					repo: input.group.group_did,

@@ -347,8 +347,9 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	},
 
 	/** The roster as the members page builds it: records when the space holds
-	 *  any, the cache otherwise — and the access answer for one DID, which is
-	 *  FR-006's rule in one boolean. */
+	 *  any, the cache otherwise — plus the access answer for one DID, which is
+	 *  "a member with no membership record has no access" in one boolean.
+	 *  (Spec: FR-006.) */
 	recordedRoster: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		const members = await readGroupMembers(await spaceReader(env, group), group);

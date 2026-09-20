@@ -77,7 +77,10 @@ describe('groupProfileRecord', () => {
 		).not.toHaveProperty('description');
 	});
 
-	// FR-004d: the omission is a decision, so it is asserted rather than assumed.
+	// The draft's profile HAS an avatar and ours deliberately does not: moving a
+	// blob between repos is its own problem, and no group UI uploads one yet. An
+	// omission that is a decision gets asserted, or the next writer "fixes" it.
+	// (Spec: FR-004d.)
 	it('writes no avatar this iteration', () => {
 		expect(groupProfileRecord({ name: 'Kona', joinPolicy: 'open' })).not.toHaveProperty('avatar');
 	});

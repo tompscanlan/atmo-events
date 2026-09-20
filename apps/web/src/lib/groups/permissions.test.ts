@@ -16,9 +16,9 @@ import {
 } from './permissions';
 
 describe('the pared vocabulary', () => {
-	// FR-005a: the vocabulary IS the enforced set. A name nothing enforces is a
-	// grant that does nothing, and once om-ecgc6 publishes the lexicon it is a
-	// name a peer app reads and honours.
+	// The vocabulary IS the enforced set. A name nothing enforces is a grant that
+	// does nothing, and once the lexicon is published (`om-ecgc6`) it is a name a
+	// peer app reads and honours. (Spec: FR-005a.)
 	it('enforces every name it defines, leaving nothing inert', () => {
 		expect([...GROUP_PERMISSIONS]).toEqual([...V1_ENFORCED_PERMISSIONS]);
 		expect(V1_INERT_PERMISSIONS).toEqual([]);
@@ -28,13 +28,13 @@ describe('the pared vocabulary', () => {
 		expect([...COMMUNITY_PERMISSIONS, ...MODALITY_PERMISSIONS]).toEqual([...GROUP_PERMISSIONS]);
 		expect(COMMUNITY_PERMISSIONS).toHaveLength(4);
 		expect(MODALITY_PERMISSIONS).toHaveLength(2);
-		// FR-005d: read access is the access record plus the space read policy,
-		// never a permission a group can withhold.
+		// Read access is the access record plus the space read policy the host
+		// enforces, never a permission a group can withhold. (Spec: FR-005d.)
 		expect(GROUP_PERMISSIONS.filter((p) => p.startsWith('SEE_'))).toEqual([]);
 	});
 
-	// FR-005b: one combined grant made admitting a member and promoting one the
-	// same privilege, and a promotion reaches `admin`.
+	// One combined grant made admitting a member and promoting one the same
+	// privilege, and a promotion reaches `admin`. (Spec: FR-005b.)
 	it('grants admitting, ejecting and role assignment independently', () => {
 		expect(isGroupPermission('MANAGE_MEMBERS')).toBe(false);
 		for (const name of ['ADMIT_MEMBERS', 'EJECT_MEMBERS', 'ASSIGN_ROLES']) {
@@ -44,9 +44,9 @@ describe('the pared vocabulary', () => {
 });
 
 describe('the published bridge', () => {
-	// FR-005a: the record is the interop surface and the enum is not, so every
-	// name must have exactly one published form and the community four must be
-	// the standard's own identifiers rather than our spellings.
+	// The record is the interop surface and the enum is not, so every name must
+	// have exactly one published form, and the community four must carry the
+	// standard's own identifiers rather than our spellings. (Spec: FR-005a.)
 	it('publishes the standard identifier for every community action', () => {
 		expect(Object.fromEntries(COMMUNITY_PERMISSIONS.map((p) => [p, PUBLISHED_ACTION[p]]))).toEqual({
 			MANAGE_GROUP: 'community.configure',

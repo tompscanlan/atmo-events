@@ -152,8 +152,9 @@ describe('readGroupAbout', () => {
 		expect(about.rules.map((rule) => rule.text)).toEqual(['First', 'Second', 'Third']);
 	});
 
-	// FR-010: a group provisioned before the writer existed has an empty about
-	// space, and its page must render rather than 500.
+	// A group provisioned before this writer existed has an EMPTY about space,
+	// and its page still has to render from the cache. So an empty space is the
+	// absent case, not an error case — reading it must not throw. (Spec: FR-010.)
 	it('reports an empty about space as absent rather than throwing', async () => {
 		expect(await readGroupAbout(readerOver([]), group)).toEqual({ profile: null, rules: [] });
 	});
