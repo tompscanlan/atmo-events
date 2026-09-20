@@ -27,6 +27,9 @@ import {
 } from './repo';
 import type { GroupSpaceReader } from './about-read';
 import {
+	NO_MEMBER_RECORDS,
+	effectivePermissions,
+	hasAuthzRecords,
 	hasMemberRecords,
 	hasRecordedAccess,
 	ownerDidFromRecords,
@@ -39,10 +42,21 @@ import {
 import {
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
+	GROUP_EVENT_PERMISSIONS_COLLECTION,
 	GROUP_MEMBERSHIP_COLLECTION,
+	GROUP_PERMISSIONS_COLLECTION,
+	GROUP_PERMISSIONS_RKEY,
+	GROUP_ROLE_COLLECTION,
 	groupAccessRecord,
-	groupMembershipRecord
+	groupBindingsRecord,
+	groupMembershipRecord,
+	groupRoleRecord
 } from '../members-record';
+import {
+	DEFAULT_ROLE_PERMISSIONS,
+	type GroupPermission,
+	type GroupRoleName
+} from '../permissions';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import { spaceUri } from './spaces';
 
@@ -108,6 +122,37 @@ const accessRecord: SpaceFixture = {
 	}
 };
 
+/** The authz config a create writes: one `role` record per seeded role, and
+ *  the two binding records over the seeded bundles. */
+function roleRecord(role: GroupRoleName): SpaceFixture {
+	return {
+		collection: GROUP_ROLE_COLLECTION,
+		rkey: role,
+		value: { ...groupRoleRecord({ id: role }), $type: GROUP_ROLE_COLLECTION }
+	};
+}
+
+function bindingsRecord(
+	altitude: 'community' | 'modality',
+	bundles: Partial<Record<GroupRoleName, readonly GroupPermission[]>> = DEFAULT_ROLE_PERMISSIONS
+): SpaceFixture {
+	const collection =
+		altitude === 'community' ? GROUP_PERMISSIONS_COLLECTION : GROUP_EVENT_PERMISSIONS_COLLECTION;
+	return {
+		collection,
+		rkey: GROUP_PERMISSIONS_RKEY,
+		value: { ...groupBindingsRecord({ altitude, bundles }), $type: collection }
+	};
+}
+
+const AUTHZ: SpaceFixture[] = [
+	roleRecord('owner'),
+	roleRecord('admin'),
+	roleRecord('member'),
+	bindingsRecord('community'),
+	bindingsRecord('modality')
+];
+
 beforeEach(async () => {
 	harness = sqliteD1();
 	db = harness.db;
@@ -146,8 +191,11 @@ describe('readGroupMembers', () => {
 
 	it('is empty rather than an error for a group whose space holds nothing', async () => {
 		const members = await readGroupMembers(readerOver([]), group);
-		expect(members).toEqual({ memberships: [], access: null });
+		expect(members).toEqual(NO_MEMBER_RECORDS);
 		expect(hasMemberRecords(members)).toBe(false);
+		// An absent authz config is not a group that grants nothing: the gate has
+		// to be able to tell "not written yet" from "bound to nothing".
+		expect(hasAuthzRecords(members)).toBe(false);
 	});
 
 	it('reads nothing when the group has no members space yet', async () => {
@@ -156,6 +204,80 @@ describe('readGroupMembers', () => {
 			members_space_uri: null
 		});
 		expect(members.access).toBeNull();
+	});
+});
+
+describe('the authz config as records', () => {
+	it('reads the roles and both binding records back in our own vocabulary', async () => {
+		const members = await readGroupMembers(readerOver(AUTHZ), group);
+
+		expect(members.roles.map((role) => role.id)).toEqual(['owner', 'admin', 'member']);
+		expect(hasAuthzRecords(members)).toBe(true);
+		// The record publishes the standard's identifiers; the app never sees
+		// them, because the bridge is crossed at the record edge.
+		expect(members.permissions?.bindings.find((b) => b.role === 'admin')?.permissions).toEqual([
+			'MANAGE_GROUP',
+			'ADMIT_MEMBERS',
+			'EJECT_MEMBERS',
+			'ASSIGN_ROLES'
+		]);
+		expect(
+			members.eventPermissions?.bindings.find((b) => b.role === 'admin')?.permissions
+		).toEqual(['MANAGE_EVENTS', 'CREATE_EVENT']);
+	});
+
+	it('unions the two records into one effective grant', async () => {
+		const members = await readGroupMembers(readerOver(AUTHZ), group);
+
+		// THE CASE THE SPLIT CAN FAIL QUIETLY: reading only `permissions` leaves
+		// an admin who may configure the group but may not create its events.
+		expect([...effectivePermissions(members, ['admin'])].sort()).toEqual([
+			'ADMIT_MEMBERS',
+			'ASSIGN_ROLES',
+			'CREATE_EVENT',
+			'EJECT_MEMBERS',
+			'MANAGE_EVENTS',
+			'MANAGE_GROUP'
+		]);
+		// A member is bound at both altitudes and holds nothing at either, which
+		// is the seeded model rather than a missing record.
+		expect([...effectivePermissions(members, ['member'])]).toEqual([]);
+		expect(members.permissions?.bindings.map((b) => b.role)).toEqual([
+			'owner',
+			'admin',
+			'member'
+		]);
+	});
+
+	it('grants nothing for a role the caller does not hold, and nothing with no records', async () => {
+		const members = await readGroupMembers(readerOver(AUTHZ), group);
+		expect([...effectivePermissions(members, [])]).toEqual([]);
+		expect([...effectivePermissions(NO_MEMBER_RECORDS, ['owner'])]).toEqual([]);
+	});
+
+	it('drops an action published at the wrong altitude', async () => {
+		// A `permissions` record naming the modality action is not a grant that
+		// wandered: FR-005a closes the community set at four, so it resolves to
+		// nothing rather than to CREATE_EVENT.
+		const members = await readGroupMembers(
+			readerOver([
+				{
+					collection: GROUP_PERMISSIONS_COLLECTION,
+					rkey: GROUP_PERMISSIONS_RKEY,
+					value: {
+						$type: GROUP_PERMISSIONS_COLLECTION,
+						bindings: [{ role: 'member', actions: ['createEvent', 'takedown', 'admit'] }],
+						createdAt: '2026-09-20T10:00:00.000Z'
+					}
+				}
+			]),
+			group
+		);
+
+		expect(members.permissions?.bindings).toEqual([
+			{ role: 'member', permissions: ['ADMIT_MEMBERS'] }
+		]);
+		expect([...effectivePermissions(members, ['member'])]).toEqual(['ADMIT_MEMBERS']);
 	});
 });
 

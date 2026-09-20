@@ -1,11 +1,15 @@
-// Reading a group's ROSTER back out of its members space, and repairing the D1
-// projection from it.
+// Reading a group's ROSTER and AUTHZ CONFIG back out of its members space, and
+// repairing the D1 projection from it.
 //
 // This is the half that makes the write worth anything: after T014 the roster
-// is not app data with a record copy, it is RECORDS with a D1 cache. The
-// direction of truth is what changed — `memberships` rows are now a projection
-// that can be dropped and rebuilt (`data-model.md`), and a DID with no
-// `membership` record has no access even if a stale row says otherwise.
+// is not app data with a record copy, it is RECORDS with a D1 cache, and after
+// T013 so is the authz config — which roles a group has, and what each one may
+// do. The direction of truth is what changed: `memberships` rows are now a
+// projection that can be dropped and rebuilt (`data-model.md`), a DID with no
+// `membership` record has no access even if a stale row says otherwise, and a
+// role's effective grant is the union of the two binding records rather than a
+// `role_permissions` SELECT (`effectivePermissions` — the gate itself moves
+// across in T016).
 //
 // The transport is the one `about-read.ts` already proved (FR-007): the group's
 // OWN app-password session, own-repo reads inside the space, no DPoP credential
@@ -21,13 +25,25 @@
 import {
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
+	GROUP_EVENT_PERMISSIONS_COLLECTION,
 	GROUP_MEMBERSHIP_COLLECTION,
+	GROUP_PERMISSIONS_COLLECTION,
+	GROUP_PERMISSIONS_RKEY,
+	GROUP_ROLE_COLLECTION,
 	isMembershipKey,
 	parseGroupAccess,
+	parseGroupBindings,
 	parseGroupMembership,
-	type GroupAccessFields
+	parseGroupRole,
+	type GroupAccessFields,
+	type GroupBindingsFields
 } from '../members-record';
-import { GROUP_ROLES, type GroupRoleName } from '../permissions';
+import {
+	GROUP_ROLES,
+	resolvePermissions,
+	type GroupPermission,
+	type GroupRoleName
+} from '../permissions';
 import type { GroupRow, MemberRow, RosterEntry } from '../types';
 import type { GroupSpaceReader } from './about-read';
 import { ensureGroupsSchema } from './schema';
@@ -42,20 +58,45 @@ export interface GroupMembershipRecord {
 	createdAt: string | null;
 }
 
+export interface GroupRoleRecord {
+	/** The role id, which is also the record key. */
+	id: GroupRoleName;
+	uri: string;
+	createdAt: string | null;
+}
+
 export interface GroupMembers {
 	memberships: GroupMembershipRecord[];
+	/** The roles this group declares. Iteration 1 seeds three; a group with
+	 *  none has no authz config in its space yet. */
+	roles: GroupRoleRecord[];
+	/** The four community actions, bound to roles. `null` when the space holds
+	 *  no such record — which a group created before T013 will not. */
+	permissions: GroupBindingsFields | null;
+	/** The two modality actions, same shape, separate record (FR-005a). */
+	eventPermissions: GroupBindingsFields | null;
 	/** The members space's own read policy, as a record. `null` when the space
 	 *  holds none — which a group created before T014 will not. */
 	access: GroupAccessFields | null;
 }
 
-export const NO_MEMBER_RECORDS: GroupMembers = { memberships: [], access: null };
+export const NO_MEMBER_RECORDS: GroupMembers = {
+	memberships: [],
+	roles: [],
+	permissions: null,
+	eventPermissions: null,
+	access: null
+};
 
 /** Records first, then the cache — a page says which one it rendered. */
 export type RosterSource = 'records' | 'cache';
 
-/** A group's roster as records. Both halves degrade to absent rather than
- *  throwing (see the header). */
+/** A group's roster and authz config as records. Every half degrades to
+ *  absent rather than throwing (see the header).
+ *
+ *  The five reads go out TOGETHER: they are independent, they share one
+ *  cached session, and issuing them in sequence would put five PDS round
+ *  trips in front of a page that used to pay two. */
 export async function readGroupMembers(
 	reader: GroupSpaceReader,
 	group: GroupRow
@@ -64,19 +105,27 @@ export async function readGroupMembers(
 	if (!space) return NO_MEMBER_RECORDS;
 	const repo = group.group_did;
 
-	const accessRecord = await reader.get({
-		space,
-		repo,
-		collection: GROUP_ACCESS_COLLECTION,
-		rkey: GROUP_ACCESS_RKEY
-	});
+	const [accessRecord, permissionsRecord, eventPermissionsRecord, membershipRecords, roleRecords] =
+		await Promise.all([
+			reader.get({ space, repo, collection: GROUP_ACCESS_COLLECTION, rkey: GROUP_ACCESS_RKEY }),
+			reader.get({
+				space,
+				repo,
+				collection: GROUP_PERMISSIONS_COLLECTION,
+				rkey: GROUP_PERMISSIONS_RKEY
+			}),
+			reader.get({
+				space,
+				repo,
+				collection: GROUP_EVENT_PERMISSIONS_COLLECTION,
+				rkey: GROUP_PERMISSIONS_RKEY
+			}),
+			reader.list({ space, repo, collection: GROUP_MEMBERSHIP_COLLECTION }),
+			reader.list({ space, repo, collection: GROUP_ROLE_COLLECTION })
+		]);
 
 	const memberships: GroupMembershipRecord[] = [];
-	for (const record of await reader.list({
-		space,
-		repo,
-		collection: GROUP_MEMBERSHIP_COLLECTION
-	})) {
+	for (const record of membershipRecords) {
 		// The collection filter is re-applied client-side for the reason
 		// `readGroupAbout` re-applies it: the parameter is measured to work, and a
 		// host that ignored it must not turn into memberships that are not
@@ -93,10 +142,62 @@ export async function readGroupMembers(
 		});
 	}
 
+	const roles: GroupRoleRecord[] = [];
+	for (const record of roleRecords) {
+		if (record.collection !== GROUP_ROLE_COLLECTION) continue;
+		const parsed = parseGroupRole(record.value, record.rkey);
+		// A role outside this build's vocabulary is dropped rather than carried:
+		// nothing could resolve its grant, so declaring it would be a role the
+		// gate cannot answer for (FR-005c).
+		if (!parsed) continue;
+		roles.push({ id: parsed.id, uri: record.uri, createdAt: parsed.createdAt });
+	}
+	roles.sort((a, b) => GROUP_ROLES.indexOf(a.id) - GROUP_ROLES.indexOf(b.id));
+
 	return {
 		memberships,
+		roles,
+		permissions: permissionsRecord
+			? parseGroupBindings('community', permissionsRecord.value)
+			: null,
+		eventPermissions: eventPermissionsRecord
+			? parseGroupBindings('modality', eventPermissionsRecord.value)
+			: null,
 		access: accessRecord ? parseGroupAccess(accessRecord.value) : null
 	};
+}
+
+/**
+ * THE EFFECTIVE GRANT: the union of what every role the caller holds is bound
+ * to, ACROSS BOTH binding records.
+ *
+ * Reading only `permissions` would silently drop every event grant, which is
+ * the one way the two-record split can go wrong quietly — an admin who may
+ * configure the group but may not create its events. No deny rules, no
+ * precedence, no hierarchy: a permission is held if any binding names it
+ * (FR-005). A role with no binding contributes nothing, which is also what an
+ * absent record does, so a group whose authz records were never written
+ * resolves to the empty set rather than to a default.
+ */
+export function effectivePermissions(
+	members: GroupMembers,
+	roles: Iterable<GroupRoleName>
+): Set<GroupPermission> {
+	const held = new Set(roles);
+	const grants: GroupPermission[][] = [];
+	for (const record of [members.permissions, members.eventPermissions]) {
+		for (const binding of record?.bindings ?? []) {
+			if (held.has(binding.role)) grants.push(binding.permissions);
+		}
+	}
+	return resolvePermissions(grants);
+}
+
+/** Whether the space holds an authz config at all. An absent one is not "a
+ *  group that grants nothing" — it is a group whose config predates T013 — so
+ *  a caller must be able to tell the two apart before failing anyone closed. */
+export function hasAuthzRecords(members: GroupMembers): boolean {
+	return members.roles.length > 0 && members.permissions !== null;
 }
 
 /** The roles a DID holds according to the records. Empty for an unknown DID,

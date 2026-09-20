@@ -1,4 +1,9 @@
-// Writing a group's ROSTER into its members space.
+// Writing a group's ROSTER and its AUTHZ CONFIG into its members space.
+//
+// The roster half is per-member and per-intent; the authz half (`role`,
+// `permissions`, `eventPermissions` — `writeGroupAuthz` at the bottom) is
+// per-group and is MANAGE_GROUP throughout, like every other configuration
+// write.
 //
 // Same gate, same credential, same transport as the event and about writers —
 // `groupWriter` + `requireGroupPermission` from ./event-writer.ts. What is
@@ -32,13 +37,24 @@
 import {
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
+	GROUP_EVENT_PERMISSIONS_COLLECTION,
 	GROUP_MEMBERSHIP_COLLECTION,
+	GROUP_PERMISSIONS_COLLECTION,
+	GROUP_PERMISSIONS_RKEY,
+	GROUP_ROLE_COLLECTION,
 	MEMBERS_SPACE_READER_ROLES,
 	groupAccessRecord,
+	groupBindingsRecord,
 	groupMembershipRecord,
+	groupRoleRecord,
 	membershipRkey
 } from '../members-record';
-import type { GroupRoleName } from '../permissions';
+import {
+	DEFAULT_ROLE_PERMISSIONS,
+	GROUP_ROLES,
+	type GroupPermission,
+	type GroupRoleName
+} from '../permissions';
 import type { GroupRow } from '../types';
 import type { CredentialStoreEnv } from './credentials';
 import {
@@ -241,4 +257,79 @@ export async function writeGroupAccess(
 		space: membersSpace(input.group)
 	});
 	return { uri: result.uri, cid: result.cid };
+}
+
+/** What one authz write landed as, so a caller reporting a partial failure can
+ *  say which records exist. */
+export interface AuthzWriteResult {
+	roles: { role: GroupRoleName; uri: string; cid: string }[];
+	permissions: { uri: string; cid: string };
+	eventPermissions: { uri: string; cid: string };
+}
+
+/**
+ * Writes the group's AUTHZ CONFIG into its members space: one `role` record
+ * per role, then the two binding records.
+ *
+ * ONE FUNCTION FOR ALL THREE, deliberately. A role's effective grant is the
+ * union across `permissions` and `eventPermissions` (FR-005a), so a caller
+ * that wrote one and not the other would publish a role holding half its
+ * bundle — and a `role` record with no binding, or a binding naming a role no
+ * record declares, is a config a peer app cannot resolve. They are one
+ * decision; the split is a transport constraint, not a seam for callers.
+ *
+ * MANAGE_GROUP, like the profile, the rules and the access record: this is the
+ * group's configuration rather than any member's standing. Note what that
+ * means at create — `requireGroupPermission` reads the owner's membership ROW,
+ * so this must run after the INSERT, exactly as the profile write does.
+ *
+ * Idempotent: every key is fixed (`self`, or the role id) and every write is a
+ * put, so re-running it rewrites rather than duplicates.
+ */
+export async function writeGroupAuthz(
+	input: WriteGroupMembersInput & {
+		/** Defaults to the seeded bundles — the same constant `createGroup`
+		 *  seeds `role_permissions` from, so the records and the cache say the
+		 *  same thing on day one. A caller with edited bundles passes them. */
+		bundles?: Readonly<Partial<Record<GroupRoleName, readonly GroupPermission[]>>>;
+		createdAt?: string;
+	}
+): Promise<AuthzWriteResult> {
+	await requireGroupPermission(input.db, input.group, input.callerDid, 'MANAGE_GROUP');
+
+	const bundles = input.bundles ?? DEFAULT_ROLE_PERMISSIONS;
+	const space = membersSpace(input.group);
+	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const put = (collection: string, rkey: string, record: Record<string, unknown>) =>
+		writer({
+			repo: input.group.group_did,
+			collection,
+			rkey,
+			record: { ...record, $type: collection },
+			intent: 'update',
+			space
+		});
+
+	const roles: AuthzWriteResult['roles'] = [];
+	// Vocabulary order, and only roles the bundles actually name: writing a
+	// `role` record the bindings do not mention would declare a role whose
+	// grant no reader can answer.
+	for (const role of GROUP_ROLES) {
+		if (bundles[role] === undefined) continue;
+		const result = await put(GROUP_ROLE_COLLECTION, role, groupRoleRecord({ id: role, createdAt: input.createdAt }));
+		roles.push({ role, uri: result.uri, cid: result.cid });
+	}
+
+	const permissions = await put(
+		GROUP_PERMISSIONS_COLLECTION,
+		GROUP_PERMISSIONS_RKEY,
+		groupBindingsRecord({ altitude: 'community', bundles, createdAt: input.createdAt })
+	);
+	const eventPermissions = await put(
+		GROUP_EVENT_PERMISSIONS_COLLECTION,
+		GROUP_PERMISSIONS_RKEY,
+		groupBindingsRecord({ altitude: 'modality', bundles, createdAt: input.createdAt })
+	);
+
+	return { roles, permissions, eventPermissions };
 }

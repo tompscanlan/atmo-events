@@ -45,6 +45,8 @@ import { resolveGroupCredential, storeGroupCredential } from '../src/lib/groups/
 import { ensureGroupsSchema } from '../src/lib/groups/server/schema';
 import { pdsProvisioner, provisionGroupSpaces } from '../src/lib/groups/server/spaces';
 import {
+	effectivePermissions,
+	hasAuthzRecords,
 	hasMemberRecords,
 	hasRecordedAccess,
 	readGroupMembers,
@@ -52,7 +54,12 @@ import {
 	rosterFromRecords,
 	rosterFromRows
 } from '../src/lib/groups/server/members-read';
-import { dropGroupMembership, putGroupMembership, writeGroupAccess } from '../src/lib/groups/server/members-writer';
+import {
+	dropGroupMembership,
+	putGroupMembership,
+	writeGroupAccess,
+	writeGroupAuthz
+} from '../src/lib/groups/server/members-writer';
 import {
 	admitMember,
 	ejectMember,
@@ -291,6 +298,34 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			group: await groupById(env, args.groupId),
 			callerDid: args.callerDid == null ? null : String(args.callerDid)
 		}),
+
+	/** The authz config: one `role` record per seeded role and the two binding
+	 *  records. Same reason as the access record — create writes it, and this
+	 *  fixture binds an existing DID instead of running create. (T013.) */
+	writeGroupAuthz: async (env, args) =>
+		writeGroupAuthz({
+			db: env.DB,
+			env,
+			group: await groupById(env, args.groupId),
+			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			bundles: args.bundles as Record<GroupRoleName, GroupPermission[]> | undefined
+		}),
+
+	/** The authz config as the RECORDS say it is, plus the effective grant for
+	 *  one role — which is the union across both binding records, the thing a
+	 *  reader of only `permissions` would get wrong. */
+	recordedAuthz: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const members = await readGroupMembers(await spaceReader(env, group), group);
+		const role = (args.role as GroupRoleName) ?? 'admin';
+		return {
+			hasAuthz: hasAuthzRecords(members),
+			roles: members.roles.map((record) => record.id),
+			community: members.permissions?.bindings ?? null,
+			modality: members.eventPermissions?.bindings ?? null,
+			effective: { role, permissions: [...effectivePermissions(members, [role])].sort() }
+		};
+	},
 
 	/** The owner's membership record, for the same reason: the only writer of it
 	 *  is the create path. Every OTHER membership below goes through a roster act

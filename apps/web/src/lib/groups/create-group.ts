@@ -27,7 +27,7 @@ import { GroupMintError, mintGroupAccount, type MintConfig, type MintFailure } f
 import { createGroup, recordGroupSpaces } from './server/repo';
 import { GroupSpaceError, pdsProvisioner, provisionGroupSpaces } from './server/spaces';
 import { setGroupRules, writeGroupProfile } from './server/about-writer';
-import { putGroupMembership, writeGroupAccess } from './server/members-writer';
+import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './server/members-writer';
 import { pdsWriter } from './server/event-writer';
 import { splitRuleLines } from './about-record';
 import { slugMintRefusal, slugMintRefusalMessage } from './slug';
@@ -255,20 +255,30 @@ export async function runCreateGroup(
 		};
 	}
 
-	// THE ROSTER, as records: the members space's `access` record and the ONE
-	// membership a new group has — the owner's. After this the roster is records
-	// with a D1 projection rather than rows with a record copy, which is what
-	// lets `rebuildGroupMembers` restore the roster from the space. (Spec:
-	// FR-006; `data-model.md`.)
+	// THE CONTROL PLANE, as records: the members space's `access` record, the
+	// group's authz config — one `role` per seeded role plus the two binding
+	// records — and the ONE membership a new group has, the owner's. After this
+	// the roster and the authz config are records with a D1 projection rather
+	// than rows with a record copy, which is what lets `rebuildGroupMembers`
+	// restore the roster from the space and lets a peer app read the group's
+	// permissions without our database. (Spec: FR-005, FR-005a, FR-006;
+	// `data-model.md`.)
+	//
+	// AUTHZ BEFORE THE MEMBERSHIP, because that is the order they resolve in: a
+	// membership grants a role, a role means nothing until a `role` record
+	// declares it and a binding says what it may do. A reader catching the
+	// space mid-write then sees a config with no members rather than a member
+	// holding a role nothing defines.
 	//
 	// Its own step, and its failure is reported separately, because the repair
 	// path is NOT the settings form: saving settings rewrites the profile and
-	// the rules, nothing roster-shaped. A group left here works — every reader
-	// falls back to the cache while the members space holds no membership record
-	// (`server/members-read.ts`) — so the honest report is what is missing, not
-	// an instruction that would not fix it.
+	// the rules, nothing roster- or authz-shaped. A group left here works —
+	// every reader falls back to the cache while the members space holds no
+	// membership record (`server/members-read.ts`) — so the honest report is
+	// what is missing, not an instruction that would not fix it.
 	try {
 		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer });
+		await writeGroupAuthz({ db: env.DB, env, group: withSpaces, callerDid, writer });
 		await putGroupMembership({
 			db: env.DB,
 			env,
@@ -282,7 +292,7 @@ export async function runCreateGroup(
 	} catch (e) {
 		return {
 			ok: false,
-			error: `${group.slug} was created, but its roster records were not written: ${
+			error: `${group.slug} was created, but its members-space records were not written: ${
 				e instanceof Error ? e.message : String(e)
 			}. The group works and its roster reads from the database; the members space stays empty until a member's role changes.`
 		};

@@ -53,6 +53,62 @@ export const PUBLISHED_ACTION: Readonly<Record<GroupPermission, string>> = {
 	CREATE_EVENT: 'createEvent'
 };
 
+/** Which record an action travels in. The two altitudes are two records
+ *  (FR-005a), so translating in either direction is only meaningful with one
+ *  named: `createEvent` in a `permissions` record is not a modality grant that
+ *  wandered, it is a name that record may not carry. */
+export type PermissionAltitude = 'community' | 'modality';
+
+const ALTITUDE: Readonly<Record<PermissionAltitude, readonly GroupPermission[]>> = {
+	community: COMMUNITY_PERMISSIONS,
+	modality: MODALITY_PERMISSIONS
+};
+
+/** Published action -> ours, per altitude, derived from the one mapping above
+ *  so the two directions cannot disagree. */
+const PERMISSION_BY_ACTION: Readonly<Record<PermissionAltitude, Record<string, GroupPermission>>> =
+	{
+		community: Object.fromEntries(
+			COMMUNITY_PERMISSIONS.map((p) => [PUBLISHED_ACTION[p], p])
+		) as Record<string, GroupPermission>,
+		modality: Object.fromEntries(MODALITY_PERMISSIONS.map((p) => [PUBLISHED_ACTION[p], p])) as Record<
+			string,
+			GroupPermission
+		>
+	};
+
+/** Ours -> what the record publishes, for one altitude. A name belonging to
+ *  the OTHER altitude is dropped rather than translated: the record is a closed
+ *  set, so a bundle holding all six yields four actions in `permissions` and
+ *  two in `eventPermissions` with no caller having to split it first. */
+export function publishedActions(
+	altitude: PermissionAltitude,
+	permissions: Iterable<string>
+): string[] {
+	const held = new Set(permissions);
+	// Vocabulary order, not the caller's: two groups with the same bundle must
+	// publish the same record rather than one that differs by iteration order.
+	return ALTITUDE[altitude].filter((p) => held.has(p)).map((p) => PUBLISHED_ACTION[p]);
+}
+
+/** What the record publishes -> ours, for one altitude. An action this
+ *  altitude does not define is dropped, which is FR-005a's closed set applied
+ *  at the read edge: a `permissions` record naming `createEvent` grants
+ *  nothing, and neither does one naming `takedown`. */
+export function permissionsFromActions(
+	altitude: PermissionAltitude,
+	actions: Iterable<unknown>
+): GroupPermission[] {
+	const table = PERMISSION_BY_ACTION[altitude];
+	const held: GroupPermission[] = [];
+	for (const action of actions) {
+		if (typeof action !== 'string') continue;
+		const permission = table[action];
+		if (permission && !held.includes(permission)) held.push(permission);
+	}
+	return held;
+}
+
 // Static membership tables, not runtime sets: the vocabulary and the enforced
 // subset are both fixed at build time.
 const IN_VOCABULARY: Record<string, true> = Object.fromEntries(

@@ -17,7 +17,8 @@ import { addMember, createGroup, recordGroupSpaces } from './repo';
 import {
 	dropGroupMembership,
 	putGroupMembership,
-	writeGroupAccess
+	writeGroupAccess,
+	writeGroupAuthz
 } from './members-writer';
 import {
 	GroupPermissionError,
@@ -29,7 +30,10 @@ import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import {
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
-	GROUP_MEMBERSHIP_COLLECTION
+	GROUP_EVENT_PERMISSIONS_COLLECTION,
+	GROUP_MEMBERSHIP_COLLECTION,
+	GROUP_PERMISSIONS_COLLECTION,
+	GROUP_ROLE_COLLECTION
 } from '../members-record';
 import { spaceUri } from './spaces';
 
@@ -311,5 +315,56 @@ describe('writeGroupAccess', () => {
 		await expect(
 			writeGroupAccess({ db, env, group, callerDid: MEMBER, writer })
 		).rejects.toThrow(GroupPermissionError);
+	});
+});
+
+describe('writeGroupAuthz', () => {
+	it('writes a role record per role, then both binding records, all into the members space', async () => {
+		await writeGroupAuthz({ db, env, group, callerDid: OWNER, writer });
+
+		expect(writes.map((write) => `${write.collection}/${write.rkey}`)).toEqual([
+			`${GROUP_ROLE_COLLECTION}/owner`,
+			`${GROUP_ROLE_COLLECTION}/admin`,
+			`${GROUP_ROLE_COLLECTION}/member`,
+			`${GROUP_PERMISSIONS_COLLECTION}/self`,
+			`${GROUP_EVENT_PERMISSIONS_COLLECTION}/self`
+		]);
+		expect(writes.every((write) => write.space === MEMBERS && write.repo === GROUP_DID)).toBe(true);
+		// Puts, not creates: the keys are fixed, so re-running repairs rather
+		// than duplicating.
+		expect(writes.every((write) => write.intent === 'update')).toBe(true);
+	});
+
+	// THE ESCALATION THIS GATE EXISTS FOR. The permissions record IS the authz
+	// config: a member who could write it could bind their own role to
+	// ASSIGN_ROLES and own the group. It is configuration, so it is
+	// MANAGE_GROUP — the same answer the profile, the rules and the access
+	// record give.
+	it('needs MANAGE_GROUP, so a plain member cannot rewrite the group’s own grants', async () => {
+		await expect(
+			writeGroupAuthz({ db, env, group, callerDid: MEMBER, writer })
+		).rejects.toThrow(GroupPermissionError);
+		await expect(
+			writeGroupAuthz({ db, env, group, callerDid: STRANGER, writer })
+		).rejects.toThrow(GroupPermissionError);
+		expect(writes).toEqual([]);
+	});
+
+	it('publishes the standard’s identifiers for the community four and ours for the event two', async () => {
+		await writeGroupAuthz({
+			db,
+			env,
+			group,
+			callerDid: OWNER,
+			writer,
+			// A group-defined bundle: the point of roles-as-data is that this
+			// needs no deploy. A greeter who may admit and create events holds
+			// one action in each record.
+			bundles: { member: ['ADMIT_MEMBERS', 'CREATE_EVENT'] }
+		});
+
+		expect(writes.map((write) => write.rkey)).toEqual(['member', 'self', 'self']);
+		expect(writes[1].record.bindings).toEqual([{ role: 'member', actions: ['admit'] }]);
+		expect(writes[2].record.bindings).toEqual([{ role: 'member', actions: ['createEvent'] }]);
 	});
 });

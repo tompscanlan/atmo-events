@@ -42,15 +42,31 @@
  *      and the first and third rules come back with byte-identical URIs. A
  *      writer that deleted and re-created the list would pass check 10 and
  *      fail this one, while invalidating every citation the group ever handed
- *      out (FR-004c, SC-011); and
+ *      out (FR-004c, SC-011);
  *  12. every column the profile owns is corrupted through the app's own
  *      updater, rebuilt from records, and comes back — while `visibility` and
  *      `status`, which no record owns yet, are left exactly as they were
- *      (FR-004b, FR-009, SC-002 mode 1).
+ *      (FR-004b, FR-009, SC-002 mode 1);
+ *  13. the ROSTER is records: the owner's membership keyed by the member DID,
+ *      the members space's `access` record, and the app's reader agreeing with
+ *      what the PDS hands back (FR-006);
+ *  14. writing those membership records leaves the space's OWN member list
+ *      empty, so the app stays the space's only reader (FR-006a);
+ *  15. the AUTHZ CONFIG is records too — a `role` record per role and two
+ *      binding records, the community four published under the standard's
+ *      identifiers and the event two under ours — and a role's effective grant
+ *      is the UNION of both, which is what a reader of only `permissions`
+ *      gets wrong (FR-005, FR-005a);
+ *  16. the roster survives dropping its D1 rows: the records render it and the
+ *      rebuild restores them (SC-002 for the roster);
+ *  17. a suspension REVOKES the membership record and a reinstatement writes
+ *      it back with the original join date; and
+ *  18. a DID with no membership record has no access, whether it was ejected
+ *      or never a member.
  *
- * Those twelve ARE the summary: setup lines (credentials, fixture session,
+ * Those eighteen ARE the summary: setup lines (credentials, fixture session,
  * bundle, runtime) print as notes and are deliberately not counted, so
- * `SUMMARY: 12 passed, 0 failed` maps one-to-one onto the story above.
+ * `SUMMARY: 18 passed, 0 failed` maps one-to-one onto the story above.
  *
  * How it runs. Group facts are D1 rows and a group event is an outbound PDS
  * write, i.e. Worker code, so the real modules run ON workerd with a real D1
@@ -720,7 +736,60 @@ async function main() {
 				`the app stays the space's only reader`
 		);
 
-		// 15. drop the cache, rebuild from records ---------------------------------
+		// 15. THE AUTHZ CONFIG IS RECORDS (T013) ---------------------------------
+		// One `role` record per seeded role, plus the two binding records — the
+		// community four under the STANDARD's identifiers, the event two under
+		// ours. Read back twice: through the app's reader, which translates them
+		// into our enum, and straight off the PDS, which is what proves the wire
+		// form is the published one and not our spellings. The effective grant
+		// is the UNION of the two records, which is the assertion a reader of
+		// only `permissions` fails. (FR-005, FR-005a.)
+		await must('writeGroupAuthz', { groupId: group.id, callerDid: ALICE });
+		const authz = await must('recordedAuthz', { groupId: group.id, role: 'admin' });
+		const permissionsRecord = await spaceRecord(
+			groupToken,
+			membersSpaceUri,
+			'net.openmeet.group.permissions',
+			'self'
+		);
+		const eventPermissionsRecord = await spaceRecord(
+			groupToken,
+			membersSpaceUri,
+			'net.openmeet.group.eventPermissions',
+			'self'
+		);
+		const adminRoleRecord = await spaceRecord(
+			groupToken,
+			membersSpaceUri,
+			'net.openmeet.group.role',
+			'admin'
+		);
+		const communityActions = (permissionsRecord.value?.bindings ?? []).find(
+			(binding) => binding.role === 'admin'
+		)?.actions;
+		const modalityActions = (eventPermissionsRecord.value?.bindings ?? []).find(
+			(binding) => binding.role === 'admin'
+		)?.actions;
+		record(
+			authz.hasAuthz === true &&
+				authz.roles.join(',') === 'owner,admin,member' &&
+				adminRoleRecord.status === 200 &&
+				adminRoleRecord.value?.id === 'admin' &&
+				// The wire carries the standard's identifiers, not MANAGE_GROUP.
+				JSON.stringify(communityActions) ===
+					JSON.stringify(['community.configure', 'admit', 'eject', 'role.assign']) &&
+				JSON.stringify(modalityActions) === JSON.stringify(['manageEvents', 'createEvent']) &&
+				// And the union spans both records: an admin who may configure the
+				// group but may not create its events is the failure mode.
+				authz.effective.permissions.join(',') ===
+					'ADMIT_MEMBERS,ASSIGN_ROLES,CREATE_EVENT,EJECT_MEMBERS,MANAGE_EVENTS,MANAGE_GROUP',
+			'roles and both binding records are in the members space, and a grant is their union',
+			`roles [${authz.roles.join(', ')}]; permissions ${JSON.stringify(communityActions)}; ` +
+				`eventPermissions ${JSON.stringify(modalityActions)}; ` +
+				`admin resolves to ${authz.effective.permissions.length} permission(s)`
+		);
+
+		// 16. drop the cache, rebuild from records ---------------------------------
 		// SC-002 for the roster. The owner's row is exempt by construction —
 		// `memberships_owner_undeletable` refuses to delete it while the group
 		// exists — so this drops every OTHER row and rebuilds them from records.
@@ -743,7 +812,7 @@ async function main() {
 				`(unchanged ${rebuiltMembers.unchanged.length}, orphans ${rebuiltMembers.orphans.length})`
 		);
 
-		// 16. suspension revokes the record, reinstatement writes it again ---------
+		// 17. suspension revokes the record, reinstatement writes it again ---------
 		// A suspended member has no access, so leaving a membership record in
 		// place would publish a grant the app refuses — and a second app reading
 		// the space would honour it. The join date has to survive the round trip,
@@ -776,7 +845,7 @@ async function main() {
 				`(was ${joinedAt})`
 		);
 
-		// 17. no record, no access --------------------------------------------------
+		// 18. no record, no access --------------------------------------------------
 		// The AC's own sentence. An eject deletes the record, and a DID that never
 		// had one answers the same way — which is what makes the record set, not
 		// the rows, the thing that decides access.
@@ -846,7 +915,10 @@ async function main() {
 				const leftover = await call('recordedRoster', { groupId: group.id });
 				const remaining = leftover.ok ? leftover.value.memberships.length : -1;
 				if (remaining === 0) {
-					note('cleaned up the members space membership records (access left at self)');
+					note(
+						'cleaned up the members space membership records (access, role and binding ' +
+							'records left at their fixed keys, which a re-run overwrites)'
+					);
 				} else {
 					console.log(`WARN  ${remaining} membership record(s) left in the members space`);
 				}

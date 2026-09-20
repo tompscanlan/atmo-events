@@ -208,8 +208,15 @@ describe('a successful create', () => {
 			'com.atproto.simplespace.createSpace',
 			// The records land LAST, after both spaces exist — there is nowhere to
 			// put them before that. Profile first (the about space), then the
-			// members space's access record and the owner's membership.
-			// (Spec: FR-004, FR-006.)
+			// members space: its access record, the authz config (three roles and
+			// the two binding records), and last the owner's membership, because a
+			// membership grants a role nothing has declared until the config is
+			// there. (Spec: FR-004, FR-005, FR-006.)
+			'com.atproto.space.putRecord',
+			'com.atproto.space.putRecord',
+			'com.atproto.space.putRecord',
+			'com.atproto.space.putRecord',
+			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord'
@@ -268,6 +275,59 @@ describe('a successful create', () => {
 			subject: OWNER,
 			roles: ['owner']
 		});
+	});
+
+	// THE AUTHZ CONFIG IS RECORDS TOO, and this is the whole point of T013: a
+	// peer app reading the members space can answer "what may an admin do here"
+	// without our database. The community record publishes the STANDARD's
+	// identifiers — a peer app can only check what it can name — while the
+	// modality record publishes ours, the standard defining none.
+	// (Spec: FR-005, FR-005a.)
+	it('writes one role record per seeded role and both binding records', async () => {
+		const { spaceWrites } = stubPds();
+
+		await runCreateGroup(env, OWNER, data());
+
+		const members = `at://${MINTED_DID}/space/net.openmeet.space.members/self`;
+		const roles = spaceWrites.filter((w) => w.collection === 'net.openmeet.group.role');
+		expect(roles.map((w) => w.rkey)).toEqual(['owner', 'admin', 'member']);
+		expect(roles.every((w) => w.space === members)).toBe(true);
+		// Keyed by the role id, and the record repeats it: a role lifted out of
+		// its key is otherwise anonymous.
+		expect(roles[1].record).toMatchObject({ $type: 'net.openmeet.group.role', id: 'admin' });
+
+		const permissions = spaceWrites.find(
+			(w) => w.collection === 'net.openmeet.group.permissions'
+		);
+		expect(permissions).toMatchObject({ space: members, rkey: 'self' });
+		expect(permissions?.record).toMatchObject({
+			$type: 'net.openmeet.group.permissions',
+			bindings: [
+				{ role: 'owner', actions: ['community.configure', 'admit', 'eject', 'role.assign'] },
+				{ role: 'admin', actions: ['community.configure', 'admit', 'eject', 'role.assign'] },
+				// Bound to nothing is a different statement from not bound, and the
+				// seeded member holds nothing at either altitude.
+				{ role: 'member', actions: [] }
+			]
+		});
+
+		const eventPermissions = spaceWrites.find(
+			(w) => w.collection === 'net.openmeet.group.eventPermissions'
+		);
+		expect(eventPermissions).toMatchObject({ space: members, rkey: 'self' });
+		expect(eventPermissions?.record).toMatchObject({
+			$type: 'net.openmeet.group.eventPermissions',
+			bindings: [
+				{ role: 'owner', actions: ['manageEvents', 'createEvent'] },
+				{ role: 'admin', actions: ['manageEvents', 'createEvent'] },
+				{ role: 'member', actions: [] }
+			]
+		});
+		// No community action rides in the modality record and no modality action
+		// rides in the community one — that is the two-altitude split, and it is
+		// what a single flattened record would lose.
+		expect(JSON.stringify(permissions?.record)).not.toContain('createEvent');
+		expect(JSON.stringify(eventPermissions?.record)).not.toContain('admit');
 	});
 
 	// Rules have no column at all, so these records are the only copy — and one
