@@ -23,6 +23,7 @@ import {
 	groupDeclarationRecord
 } from '../declaration-record';
 import type { GroupRow } from '../types';
+import type { GroupSpaceReader } from './about-read';
 import type { CredentialStoreEnv } from './credentials';
 import {
 	GroupRecordError,
@@ -42,6 +43,8 @@ export interface WriteGroupDeclarationInput {
 	createdAt?: string | null;
 	/** Overrides the PDS transport. Tests and the live probe pass this. */
 	writer?: GroupRepoWriter;
+	/** Overrides the members-space reader the gate resolves from. */
+	reader?: GroupSpaceReader | null;
 }
 
 export interface DeclarationWriteResult {
@@ -71,7 +74,7 @@ function aboutSpace(group: GroupRow): string {
 export async function writeGroupDeclaration(
 	input: WriteGroupDeclarationInput
 ): Promise<DeclarationWriteResult> {
-	await requireGroupPermission(input.db, input.group, input.callerDid, 'MANAGE_GROUP');
+	await requireGroupPermission(input, 'MANAGE_GROUP');
 
 	const record = {
 		...groupDeclarationRecord({
@@ -99,7 +102,7 @@ export async function writeGroupDeclaration(
  *  record as a no-op rather than an error, so this needs no read first and no
  *  "did it exist" branch that could disagree with the repo. */
 export async function removeGroupDeclaration(input: WriteGroupDeclarationInput): Promise<void> {
-	await requireGroupPermission(input.db, input.group, input.callerDid, 'MANAGE_GROUP');
+	await requireGroupPermission(input, 'MANAGE_GROUP');
 
 	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
 	await writer({

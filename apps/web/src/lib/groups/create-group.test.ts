@@ -120,6 +120,37 @@ function stubPds(overrides: { account?: () => Response } = {}) {
 				cid: 'bafycreate'
 			});
 		}
+		// READS ANSWER FROM THE WRITES. The write gate resolves from the members
+		// space's records (T016), so a stub that could not read back what the
+		// create just wrote would test a gate no deployment runs. A missing
+		// record is the PDS's 400, which the reader maps to "absent".
+		if (nsid.startsWith('com.atproto.space.getRecord')) {
+			const q = new URL(url).searchParams;
+			const hit = spaceWrites.findLast(
+				(w) =>
+					w.space === q.get('space') &&
+					w.collection === q.get('collection') &&
+					w.rkey === q.get('rkey')
+			);
+			if (!hit) return Response.json({ error: 'RecordNotFound' }, { status: 400 });
+			return Response.json({
+				uri: `${hit.space}/${MINTED_DID}/${hit.collection}/${hit.rkey}`,
+				cid: 'bafycreate',
+				value: hit.record
+			});
+		}
+		if (nsid.startsWith('com.atproto.space.listRecords')) {
+			const q = new URL(url).searchParams;
+			const collection = q.get('collection');
+			const records = spaceWrites
+				.filter((w) => w.space === q.get('space') && (!collection || w.collection === collection))
+				.map((w) => ({
+					uri: `${w.space}/${MINTED_DID}/${w.collection}/${w.rkey}`,
+					cid: 'bafycreate',
+					value: w.record
+				}));
+			return Response.json({ records });
+		}
 		// The one record that does NOT go into a space: the declaration, which an
 		// anonymous peer reads straight off the group's repo. (Spec: FR-003.)
 		if (
@@ -231,7 +262,10 @@ describe('a successful create', () => {
 		const result = await runCreateGroup(env, OWNER, data());
 
 		expect(result.ok).toBe(true);
-		expect(calls).toEqual([
+		// Writes only: the gate's own reads of the members space interleave with
+		// them now (T016) and are asserted where the gate is tested.
+		const writes = calls.filter((c) => !c.includes('.getRecord') && !c.includes('.listRecords'));
+		expect(writes).toEqual([
 			'com.atproto.server.createAccount',
 			'com.atproto.server.createAppPassword',
 			'plc.directory/data',
@@ -242,10 +276,12 @@ describe('a successful create', () => {
 			// put them before that. Profile first (the about space), then the
 			// DECLARATION into the public repo, which is a pointer AT the about
 			// space and so cannot honestly precede what it points at; then the
-			// members space: its access record, the authz config (three roles and
-			// the two binding records), and last the owner's membership, because a
-			// membership grants a role nothing has declared until the config is
-			// there. (Spec: FR-003, FR-004, FR-005, FR-006.)
+			// members space: its access record, the owner's membership, and last
+			// the authz config (three roles and the two binding records) — the
+			// membership first because once a config exists the gate resolves from
+			// it, and an owner with no membership record could not admit
+			// themselves (T016). The order is asserted on `spaceWrites` below.
+			// (Spec: FR-003, FR-004, FR-005, FR-006.)
 			'com.atproto.space.putRecord',
 			'com.atproto.repo.putRecord',
 			'com.atproto.space.putRecord',
@@ -276,11 +312,7 @@ describe('a successful create', () => {
 		});
 		// "Discovery only" — no name, no avatar, nothing a stranger could
 		// render without the credential the about space demands.
-		expect(Object.keys(repoWrites[0].record).sort()).toEqual([
-			'$type',
-			'aboutSpace',
-			'createdAt'
-		]);
+		expect(Object.keys(repoWrites[0].record).sort()).toEqual(['$type', 'aboutSpace', 'createdAt']);
 	});
 
 	// The conditioning is the point of the clause: a private group emits no
@@ -350,6 +382,13 @@ describe('a successful create', () => {
 			subject: OWNER,
 			roles: ['owner']
 		});
+		// BEFORE any authz record. The gate resolves from records once a config
+		// exists (T016), so authz-first left the owner unable to admit themselves
+		// and every create reported its members space unwritten — which this
+		// stub, reading back its own writes, reproduced.
+		const firstAuthz = spaceWrites.findIndex((w) => w.collection === 'net.openmeet.group.role');
+		expect(firstAuthz).toBeGreaterThan(-1);
+		expect(spaceWrites.indexOf(membership!)).toBeLessThan(firstAuthz);
 	});
 
 	// THE AUTHZ CONFIG IS RECORDS TOO, and this is the whole point of T013: a
@@ -371,9 +410,7 @@ describe('a successful create', () => {
 		// its key is otherwise anonymous.
 		expect(roles[1].record).toMatchObject({ $type: 'net.openmeet.group.role', id: 'admin' });
 
-		const permissions = spaceWrites.find(
-			(w) => w.collection === 'net.openmeet.group.permissions'
-		);
+		const permissions = spaceWrites.find((w) => w.collection === 'net.openmeet.group.permissions');
 		expect(permissions).toMatchObject({ space: members, rkey: 'self' });
 		expect(permissions?.record).toMatchObject({
 			$type: 'net.openmeet.group.permissions',

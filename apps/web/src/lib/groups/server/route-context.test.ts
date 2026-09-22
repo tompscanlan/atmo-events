@@ -23,6 +23,9 @@ const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const HANDLE = 'kona.group.stub.test';
+/** No credential key: these groups have no members space, so the gate resolves
+ *  from the rows and never builds a reader. */
+const NO_ENV = {};
 
 const resolver = vi.mocked(actorToDid);
 
@@ -47,7 +50,7 @@ afterEach(() => harness.close());
  *  status and the body, and BOTH halves are what a caller can compare. */
 async function refusal(actor: string, callerDid: string | null) {
 	try {
-		await groupRouteContext(db, actor, callerDid);
+		await groupRouteContext(NO_ENV, db, actor, callerDid);
 	} catch (e) {
 		const http = e as { status: number; body: { message: string } };
 		return { status: http.status, message: http.body.message };
@@ -59,8 +62,8 @@ describe('one group, two spellings', () => {
 	it('answers the same group for a DID and for its handle', async () => {
 		resolver.mockResolvedValue(GROUP_DID);
 
-		const byDid = await groupRouteContext(db, GROUP_DID, OWNER);
-		const byHandle = await groupRouteContext(db, HANDLE, OWNER);
+		const byDid = await groupRouteContext(NO_ENV, db, GROUP_DID, OWNER);
+		const byHandle = await groupRouteContext(NO_ENV, db, HANDLE, OWNER);
 
 		expect(byDid.group.id).toBe(group.id);
 		expect(byHandle.group).toEqual(byDid.group);
@@ -75,7 +78,7 @@ describe('one group, two spellings', () => {
 	// that can be down. Every URL the app publishes carries the DID, so this is
 	// the path that actually gets walked.
 	it('never consults the handle resolver for a did: actor', async () => {
-		await groupRouteContext(db, GROUP_DID, null);
+		await groupRouteContext(NO_ENV, db, GROUP_DID, null);
 		expect(await groupActorToDid(GROUP_DID)).toBe(GROUP_DID);
 
 		expect(resolver).not.toHaveBeenCalled();
@@ -119,7 +122,7 @@ describe('every refusal is the same refusal', () => {
 		});
 		await addMember(db, secret.id, MEMBER, 'member');
 
-		const ctx = await groupRouteContext(db, secret.group_did, MEMBER);
+		const ctx = await groupRouteContext(NO_ENV, db, secret.group_did, MEMBER);
 		expect(ctx.group.id).toBe(secret.id);
 		expect(ctx.membership.role).toBe('member');
 	});

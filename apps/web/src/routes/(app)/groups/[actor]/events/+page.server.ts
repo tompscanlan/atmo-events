@@ -19,7 +19,12 @@ import type { PageServerLoad } from './$types';
  *  read fails the page. */
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
-	const { group, membership } = await groupRouteContext(db, params.actor, locals.did);
+	const { group, membership } = await groupRouteContext(
+		platform!.env,
+		db,
+		params.actor,
+		locals.did
+	);
 
 	const reader = await groupSpaceReader(platform!.env, db, group);
 	const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };

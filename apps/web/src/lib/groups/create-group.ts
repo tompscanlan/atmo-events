@@ -309,11 +309,15 @@ export async function runCreateGroup(
 	// permissions without our database. (Spec: FR-005, FR-005a, FR-006;
 	// `data-model.md`.)
 	//
-	// AUTHZ BEFORE THE MEMBERSHIP, because that is the order they resolve in: a
-	// membership grants a role, a role means nothing until a `role` record
-	// declares it and a binding says what it may do. A reader catching the
-	// space mid-write then sees a config with no members rather than a member
-	// holding a role nothing defines.
+	// THE OWNER'S MEMBERSHIP BEFORE THE AUTHZ, because the gate resolves from
+	// these records (T016). Once a config exists, a DID with no membership record
+	// holds nothing — so authz-first locked the owner out of admitting
+	// themselves, and every create reported its members space unwritten. While
+	// no config exists the gate falls back to the rows, where the owner holds
+	// every grant, so this order passes both gates with no bypass. The cost: a
+	// reader catching the space mid-write sees a member whose role no record
+	// declares yet, which resolves to the rows too. (TS 2026-09-22, om-i92w3;
+	// reverses T013's authz-first order.)
 	//
 	// Its own step, and its failure is reported separately, because the repair
 	// path is NOT the settings form: saving settings rewrites the profile and
@@ -323,7 +327,6 @@ export async function runCreateGroup(
 	// what is missing, not an instruction that would not fix it.
 	try {
 		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer });
-		await writeGroupAuthz({ db: env.DB, env, group: withSpaces, callerDid, writer });
 		await putGroupMembership({
 			db: env.DB,
 			env,
@@ -334,6 +337,7 @@ export async function runCreateGroup(
 			roles: ['owner'],
 			intent: 'admit'
 		});
+		await writeGroupAuthz({ db: env.DB, env, group: withSpaces, callerDid, writer });
 	} catch (e) {
 		return {
 			ok: false,

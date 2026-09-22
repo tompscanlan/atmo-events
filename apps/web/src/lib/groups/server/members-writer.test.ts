@@ -35,6 +35,7 @@ import {
 	GROUP_PERMISSIONS_COLLECTION,
 	GROUP_ROLE_COLLECTION
 } from '../members-record';
+import type { GroupSpaceReader } from './about-read';
 import { spaceUri } from './spaces';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -51,6 +52,10 @@ let db: D1Database;
 let group: GroupRow;
 let writes: GroupRepoWrite[];
 let writer: GroupRepoWriter;
+/** Reads back what `writer` wrote, so the gate resolves from the same members
+ *  space the test is writing into (T016). It starts empty — no authz config —
+ *  so the gate falls back to the roster rows `addMember` seeded. */
+let reader: GroupSpaceReader;
 
 // The writers take an env only to resolve a credential, and every case here
 // injects its own transport, so it is never consulted.
@@ -77,6 +82,31 @@ beforeEach(async () => {
 			cid: 'bafytest'
 		};
 	};
+	// The latest write per (space, collection, rkey) wins, and a delete removes.
+	const live = (space: string, collection?: string) => {
+		const current = new Map<string, GroupRepoWrite>();
+		for (const w of writes) {
+			if (w.space !== space || (collection && w.collection !== collection)) continue;
+			current.set(`${w.collection}/${w.rkey}`, w);
+		}
+		return [...current.values()]
+			.filter((w) => w.intent !== 'delete')
+			.map((w) => ({
+				uri: `${w.space}/${w.repo}/${w.collection}/${w.rkey}`,
+				cid: 'bafytest',
+				collection: w.collection,
+				rkey: w.rkey,
+				value: w.record
+			}));
+	};
+	reader = {
+		async get(q) {
+			return live(q.space, q.collection).find((r) => r.rkey === q.rkey) ?? null;
+		},
+		async list(q) {
+			return live(q.space, q.collection);
+		}
+	};
 });
 
 afterEach(() => harness.close());
@@ -89,6 +119,7 @@ describe('putGroupMembership', () => {
 			group,
 			callerDid: OWNER,
 			writer,
+			reader,
 			subject: STRANGER,
 			roles: ['member'],
 			intent: 'admit'
@@ -113,6 +144,7 @@ describe('putGroupMembership', () => {
 				group,
 				callerDid: MEMBER,
 				writer,
+				reader,
 				subject: STRANGER,
 				roles: ['member'],
 				intent: 'admit'
@@ -129,6 +161,7 @@ describe('putGroupMembership', () => {
 				group,
 				callerDid: MEMBER,
 				writer,
+				reader,
 				subject: MEMBER,
 				roles: ['admin'],
 				intent: 'assign'
@@ -145,6 +178,7 @@ describe('putGroupMembership', () => {
 				group,
 				callerDid: OWNER,
 				writer,
+				reader,
 				subject: STRANGER,
 				roles: [],
 				intent: 'admit'
@@ -160,6 +194,7 @@ describe('putGroupMembership', () => {
 				group: { ...group, members_space_uri: null },
 				callerDid: OWNER,
 				writer,
+				reader,
 				subject: STRANGER,
 				roles: ['member'],
 				intent: 'admit'
@@ -177,6 +212,7 @@ describe('the self-service intents', () => {
 			group,
 			callerDid: MEMBER,
 			writer,
+			reader,
 			subject: MEMBER,
 			roles: ['member'],
 			intent: 'join'
@@ -192,6 +228,7 @@ describe('the self-service intents', () => {
 				group,
 				callerDid: MEMBER,
 				writer,
+				reader,
 				subject: STRANGER,
 				roles: ['member'],
 				intent: 'join'
@@ -207,6 +244,7 @@ describe('the self-service intents', () => {
 			group,
 			callerDid: MEMBER,
 			writer,
+			reader,
 			subject: MEMBER,
 			intent: 'leave'
 		});
@@ -222,6 +260,7 @@ describe('the self-service intents', () => {
 				group,
 				callerDid: MEMBER,
 				writer,
+				reader,
 				subject: ADMIN,
 				intent: 'leave'
 			})
@@ -237,6 +276,7 @@ describe('the self-service intents', () => {
 				group,
 				callerDid: null,
 				writer,
+				reader,
 				subject: MEMBER,
 				intent: 'leave'
 			})
@@ -252,6 +292,7 @@ describe('dropGroupMembership', () => {
 			group,
 			callerDid: ADMIN,
 			writer,
+			reader,
 			subject: MEMBER,
 			intent: 'eject'
 		});
@@ -271,6 +312,7 @@ describe('dropGroupMembership', () => {
 			group,
 			callerDid: ADMIN,
 			writer,
+			reader,
 			subject: MEMBER,
 			intent: 'suspend'
 		});
@@ -285,6 +327,7 @@ describe('dropGroupMembership', () => {
 				group,
 				callerDid: MEMBER,
 				writer,
+				reader,
 				subject: ADMIN,
 				intent: 'eject'
 			})
@@ -295,7 +338,7 @@ describe('dropGroupMembership', () => {
 
 describe('writeGroupAccess', () => {
 	it('writes the members space read policy as a self-keyed record', async () => {
-		await writeGroupAccess({ db, env, group, callerDid: OWNER, writer });
+		await writeGroupAccess({ db, env, group, callerDid: OWNER, writer, reader });
 		expect(writes[0]).toMatchObject({
 			space: MEMBERS,
 			repo: GROUP_DID,
@@ -308,17 +351,17 @@ describe('writeGroupAccess', () => {
 
 	it('needs MANAGE_GROUP: the space policy is configuration, not a roster act', async () => {
 		await expect(
-			writeGroupAccess({ db, env, group, callerDid: ADMIN, writer })
+			writeGroupAccess({ db, env, group, callerDid: ADMIN, writer, reader })
 		).resolves.toBeDefined();
 		await expect(
-			writeGroupAccess({ db, env, group, callerDid: MEMBER, writer })
+			writeGroupAccess({ db, env, group, callerDid: MEMBER, writer, reader })
 		).rejects.toThrow(GroupPermissionError);
 	});
 });
 
 describe('writeGroupAuthz', () => {
 	it('writes a role record per role, then both binding records, all into the members space', async () => {
-		await writeGroupAuthz({ db, env, group, callerDid: OWNER, writer });
+		await writeGroupAuthz({ db, env, group, callerDid: OWNER, writer, reader });
 
 		expect(writes.map((write) => `${write.collection}/${write.rkey}`)).toEqual([
 			`${GROUP_ROLE_COLLECTION}/owner`,
@@ -340,10 +383,10 @@ describe('writeGroupAuthz', () => {
 	// record give.
 	it('needs MANAGE_GROUP, so a plain member cannot rewrite the group’s own grants', async () => {
 		await expect(
-			writeGroupAuthz({ db, env, group, callerDid: MEMBER, writer })
+			writeGroupAuthz({ db, env, group, callerDid: MEMBER, writer, reader })
 		).rejects.toThrow(GroupPermissionError);
 		await expect(
-			writeGroupAuthz({ db, env, group, callerDid: STRANGER, writer })
+			writeGroupAuthz({ db, env, group, callerDid: STRANGER, writer, reader })
 		).rejects.toThrow(GroupPermissionError);
 		expect(writes).toEqual([]);
 	});
@@ -355,6 +398,7 @@ describe('writeGroupAuthz', () => {
 			group,
 			callerDid: OWNER,
 			writer,
+			reader,
 			// A group-defined bundle: the point of roles-as-data is that this
 			// needs no deploy. A greeter who may admit and create events holds
 			// one action in each record.

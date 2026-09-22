@@ -56,6 +56,7 @@ import {
 	type GroupRoleName
 } from '../permissions';
 import type { GroupRow } from '../types';
+import type { GroupSpaceReader } from './about-read';
 import type { CredentialStoreEnv } from './credentials';
 import {
 	GroupPermissionError,
@@ -73,6 +74,8 @@ export interface WriteGroupMembersInput {
 	callerDid: string | null;
 	/** Overrides the PDS transport. Tests and the live probe pass this. */
 	writer?: GroupRepoWriter;
+	/** Overrides the members-space reader the gate resolves from. */
+	reader?: GroupSpaceReader | null;
 }
 
 /** A membership record appears (`put`) or disappears (`drop`). Both directions
@@ -140,9 +143,7 @@ async function authoriseMembership(
 		return;
 	}
 	await requireGroupPermission(
-		input.db,
-		input.group,
-		input.callerDid,
+		input,
 		PERMISSION_FOR[input.intent as Exclude<MembershipIntent, 'join' | 'leave'>]
 	);
 }
@@ -237,7 +238,7 @@ export async function dropGroupMembership(
 export async function writeGroupAccess(
 	input: WriteGroupMembersInput & { roles?: readonly GroupRoleName[]; createdAt?: string }
 ): Promise<{ uri: string; cid: string }> {
-	await requireGroupPermission(input.db, input.group, input.callerDid, 'MANAGE_GROUP');
+	await requireGroupPermission(input, 'MANAGE_GROUP');
 
 	const record = {
 		...groupAccessRecord({
@@ -295,7 +296,7 @@ export async function writeGroupAuthz(
 		createdAt?: string;
 	}
 ): Promise<AuthzWriteResult> {
-	await requireGroupPermission(input.db, input.group, input.callerDid, 'MANAGE_GROUP');
+	await requireGroupPermission(input, 'MANAGE_GROUP');
 
 	const bundles = input.bundles ?? DEFAULT_ROLE_PERMISSIONS;
 	const space = membersSpace(input.group);
@@ -316,7 +317,11 @@ export async function writeGroupAuthz(
 	// grant no reader can answer.
 	for (const role of GROUP_ROLES) {
 		if (bundles[role] === undefined) continue;
-		const result = await put(GROUP_ROLE_COLLECTION, role, groupRoleRecord({ id: role, createdAt: input.createdAt }));
+		const result = await put(
+			GROUP_ROLE_COLLECTION,
+			role,
+			groupRoleRecord({ id: role, createdAt: input.createdAt })
+		);
 		roles.push({ role, uri: result.uri, cid: result.cid });
 	}
 

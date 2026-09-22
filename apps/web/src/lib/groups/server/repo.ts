@@ -11,6 +11,13 @@ import {
 	type GroupRoleName
 } from '../permissions';
 import type { CallerMembership, GroupRow, JoinRequestRow, MemberRow } from '../types';
+import type { GroupSpaceReader } from './about-read';
+import {
+	NO_MEMBER_RECORDS,
+	hasAuthzRecords,
+	readCallerAuthz,
+	resolveActorPermissions
+} from './members-read';
 import { ensureGroupsSchema } from './schema';
 
 export interface CreateGroupInput {
@@ -425,49 +432,95 @@ export async function listJoinRequests(
 	return results ?? [];
 }
 
-/** What `did` is to `groupId`: roster row, pending request, and the union of
- *  the permissions its role grants. Anonymous callers get an empty union, so a
- *  caller-less page asks `can()` the same way a signed-in one does. */
+/** What `did` is to `group`: roster row, pending request, and what it may do.
+ *  Anonymous callers get an empty set, so a caller-less page asks `can()` the
+ *  same way a signed-in one does.
+ *
+ *  THE PERMISSION SET IS THE RECORDS' (T016). This is the LOADER around the
+ *  pure resolver (`resolveActorPermissions`): it owns the read, and the policy
+ *  TS set 2026-09-22 (om-i92w3) for when the records cannot answer —
+ *
+ *    * NO CACHE. Every call reads the caller's membership and both binding
+ *      records, so editing a record changes the NEXT decision with no D1 write
+ *      and no deploy.
+ *    * AN UNREADABLE SPACE FAILS CLOSED. A reader error propagates; no
+ *      credential for a group that has a members space grants nothing. Neither
+ *      falls back to the rows: "unreachable" read as "no config" is a leak.
+ *    * NO CONFIG YET FALLS BACK. A space that is readable but holds no authz
+ *      records — a group created before T013, or one with no members space at
+ *      all — resolves from `role_permissions`, which is what those groups were
+ *      created with. `hasAuthzRecords` is what tells the two apart.
+ *
+ *  A SUSPENDED ROW DENIES even while a membership record survives. Suspension
+ *  moves the row first and deletes the record second (`roster.ts`), so a
+ *  failed delete leaves exactly that pair — and the rows gate this replaced
+ *  refused it. Deny-only: a row can take a record's grant away, never add one. */
 export async function getCallerMembership(
 	db: D1Database,
-	groupId: string,
-	did: string | null
+	group: GroupRow,
+	did: string | null,
+	reader: GroupSpaceReader | null
 ): Promise<CallerMembership> {
 	await ensureGroupsSchema(db);
 	if (!did) {
 		return { did: null, role: null, status: null, pendingRequestId: null, permissions: new Set() };
 	}
 
-	const [membership, pending, grants] = await Promise.all([
+	// `null` is a members space this deployment cannot read; no space at all is
+	// a group with no config, which is the fallback case rather than this one.
+	const records = !group.members_space_uri
+		? NO_MEMBER_RECORDS
+		: reader
+			? readCallerAuthz(reader, group, did)
+			: null;
+	const [membership, pending, members] = await Promise.all([
 		db
 			.prepare(
 				`SELECT r.name AS role, m.status FROM memberships m JOIN roles r ON r.id = m.role_id
 				 WHERE m.group_id = ? AND m.did = ?`
 			)
-			.bind(groupId, did)
+			.bind(group.id, did)
 			.first<{ role: GroupRoleName; status: MemberRow['status'] }>(),
 		db
 			.prepare(`SELECT id FROM join_requests WHERE group_id = ? AND did = ? AND status = 'pending'`)
-			.bind(groupId, did)
+			.bind(group.id, did)
 			.first<{ id: string }>(),
-		db
-			.prepare(
-				`SELECT rp.permission FROM role_permissions rp
-				 JOIN roles r ON r.id = rp.role_id
-				 JOIN memberships m ON m.role_id = r.id AND m.group_id = r.group_id
-				 WHERE m.group_id = ? AND m.did = ? AND m.status = 'active'`
-			)
-			.bind(groupId, did)
-			.all<{ permission: string }>()
+		records
 	]);
+
+	let permissions: ReadonlySet<GroupPermission>;
+	if (!members) permissions = new Set();
+	else if (!hasAuthzRecords(members)) permissions = await rowPermissions(db, group.id, did);
+	else if (membership?.status === 'suspended') permissions = new Set();
+	else permissions = resolveActorPermissions(members, did);
 
 	return {
 		did,
 		role: membership?.role ?? null,
 		status: membership?.status ?? null,
 		pendingRequestId: pending?.id ?? null,
-		permissions: resolvePermissions([(grants.results ?? []).map((r) => r.permission)])
+		permissions
 	};
+}
+
+/** The pre-T013 path: the union of the `role_permissions` rows an ACTIVE
+ *  membership row reaches. Only `getCallerMembership` calls it, and only for a
+ *  group whose space holds no authz config. */
+async function rowPermissions(
+	db: D1Database,
+	groupId: string,
+	did: string
+): Promise<Set<GroupPermission>> {
+	const grants = await db
+		.prepare(
+			`SELECT rp.permission FROM role_permissions rp
+			 JOIN roles r ON r.id = rp.role_id
+			 JOIN memberships m ON m.role_id = r.id AND m.group_id = r.group_id
+			 WHERE m.group_id = ? AND m.did = ? AND m.status = 'active'`
+		)
+		.bind(groupId, did)
+		.all<{ permission: string }>();
+	return resolvePermissions([(grants.results ?? []).map((r) => r.permission)]);
 }
 
 /** Permissions a role grants, for the members page's role picker. */

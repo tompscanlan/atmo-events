@@ -98,7 +98,7 @@ async function context(actor: string): Promise<GroupRequestContext> {
 	const { locals, platform } = getRequestEvent();
 	if (!locals.did) error(401, 'Sign in to do that');
 	const db = platform!.env.DB;
-	const { group, membership } = await groupRouteContext(db, actor, locals.did);
+	const { group, membership } = await groupRouteContext(platform!.env, db, actor, locals.did);
 	return { db, env: platform!.env, group, membership, callerDid: locals.did };
 }
 

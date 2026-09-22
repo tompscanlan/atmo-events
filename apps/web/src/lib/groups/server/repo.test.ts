@@ -67,15 +67,15 @@ describe('createGroup', () => {
 
 	it('gives the owner every enforced permission and the applicant none', async () => {
 		const created = await group();
-		const owner = await getCallerMembership(db, created.id, OWNER);
+		const owner = await getCallerMembership(db, created, OWNER, null);
 		expect(owner.role).toBe('owner');
 		expect(owner.permissions.has('MANAGE_EVENTS')).toBe(true);
 
-		const stranger = await getCallerMembership(db, created.id, ALICE);
+		const stranger = await getCallerMembership(db, created, ALICE, null);
 		expect(stranger.role).toBeNull();
 		expect(stranger.permissions.size).toBe(0);
 
-		const anonymous = await getCallerMembership(db, created.id, null);
+		const anonymous = await getCallerMembership(db, created, null, null);
 		expect(anonymous.permissions.size).toBe(0);
 	});
 
@@ -124,7 +124,7 @@ describe('joining', () => {
 		const created = await group();
 		expect(await requestJoin(db, created, ALICE, 'hello')).toBe('pending');
 
-		const membership = await getCallerMembership(db, created.id, ALICE);
+		const membership = await getCallerMembership(db, created, ALICE, null);
 		expect(membership.role).toBeNull();
 		expect(membership.pendingRequestId).not.toBeNull();
 		expect(await countActiveMembers(db, created.id)).toBe(1);
@@ -137,18 +137,18 @@ describe('joining', () => {
 	it('puts the caller straight on the roster when approval is off', async () => {
 		const created = await group({ requireApproval: false });
 		expect(await requestJoin(db, created, ALICE, null)).toBe('joined');
-		expect((await getCallerMembership(db, created.id, ALICE)).role).toBe('member');
+		expect((await getCallerMembership(db, created, ALICE, null)).role).toBe('member');
 		expect(await requestJoin(db, created, ALICE, null)).toBe('already-member');
 	});
 
 	it('approves into the chosen role and closes the request in one step', async () => {
 		const created = await group();
 		await requestJoin(db, created, ALICE, null);
-		const pending = (await getCallerMembership(db, created.id, ALICE)).pendingRequestId!;
+		const pending = (await getCallerMembership(db, created, ALICE, null)).pendingRequestId!;
 
 		await approveJoinRequest(db, created.id, pending, OWNER, 'admin');
 
-		const membership = await getCallerMembership(db, created.id, ALICE);
+		const membership = await getCallerMembership(db, created, ALICE, null);
 		expect(membership.role).toBe('admin');
 		expect(membership.pendingRequestId).toBeNull();
 		await expect(approveJoinRequest(db, created.id, pending, OWNER)).rejects.toMatchObject({
@@ -168,7 +168,7 @@ describe('private groups are invite-only', () => {
 			reason: 'invite-only'
 		});
 
-		const membership = await getCallerMembership(db, created.id, ALICE);
+		const membership = await getCallerMembership(db, created, ALICE, null);
 		expect(membership.role).toBeNull();
 		expect(membership.pendingRequestId).toBeNull();
 		expect(await countActiveMembers(db, created.id)).toBe(1);
@@ -205,7 +205,7 @@ describe('roster changes', () => {
 		await addMember(db, created.id, ALICE, 'member');
 
 		await removeMember(db, created.id, ALICE);
-		expect((await getCallerMembership(db, created.id, ALICE)).role).toBeNull();
+		expect((await getCallerMembership(db, created, ALICE, null)).role).toBeNull();
 
 		// The trigger refuses; the repo must surface that as a rule, not a 500.
 		await expect(removeMember(db, created.id, OWNER)).rejects.toMatchObject({
@@ -218,7 +218,7 @@ describe('roster changes', () => {
 		await addMember(db, created.id, ALICE, 'member');
 		await changeMemberRole(db, created.id, ALICE, 'admin');
 
-		const membership = await getCallerMembership(db, created.id, ALICE);
+		const membership = await getCallerMembership(db, created, ALICE, null);
 		expect(membership.role).toBe('admin');
 		expect(membership.permissions.has('MANAGE_EVENTS')).toBe(true);
 
@@ -235,10 +235,12 @@ describe('roster changes', () => {
 	it('strips a suspended member of every permission', async () => {
 		const created = await group();
 		await addMember(db, created.id, ALICE, 'admin');
-		expect((await getCallerMembership(db, created.id, ALICE)).permissions.size).toBeGreaterThan(0);
+		expect((await getCallerMembership(db, created, ALICE, null)).permissions.size).toBeGreaterThan(
+			0
+		);
 
 		await setMemberStatus(db, created.id, ALICE, 'suspended');
-		const suspended = await getCallerMembership(db, created.id, ALICE);
+		const suspended = await getCallerMembership(db, created, ALICE, null);
 		expect(suspended.role).toBe('admin');
 		expect(suspended.status).toBe('suspended');
 		expect(suspended.permissions.size).toBe(0);

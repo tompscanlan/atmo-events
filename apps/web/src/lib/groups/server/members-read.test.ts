@@ -21,6 +21,7 @@ import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import {
 	addMember,
 	createGroup,
+	getCallerMembership,
 	listMembers,
 	recordGroupSpaces,
 	setMemberStatus
@@ -33,8 +34,10 @@ import {
 	hasMemberRecords,
 	hasRecordedAccess,
 	ownerDidFromRecords,
+	readCallerAuthz,
 	readGroupMembers,
 	rebuildGroupMembers,
+	resolveActorPermissions,
 	rolesForDid,
 	rosterFromRecords,
 	rosterFromRows
@@ -52,11 +55,7 @@ import {
 	groupMembershipRecord,
 	groupRoleRecord
 } from '../members-record';
-import {
-	DEFAULT_ROLE_PERMISSIONS,
-	type GroupPermission,
-	type GroupRoleName
-} from '../permissions';
+import { DEFAULT_ROLE_PERMISSIONS, type GroupPermission, type GroupRoleName } from '../permissions';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import { spaceUri } from './spaces';
 
@@ -92,9 +91,7 @@ function readerOver(records: SpaceFixture[]): GroupSpaceReader {
 	}));
 	return {
 		async get(query) {
-			return (
-				all.find((r) => r.collection === query.collection && r.rkey === query.rkey) ?? null
-			);
+			return all.find((r) => r.collection === query.collection && r.rkey === query.rkey) ?? null;
 		},
 		async list(query) {
 			return all.filter((r) => !query.collection || r.collection === query.collection);
@@ -219,9 +216,9 @@ describe('the authz config as records', () => {
 			'EJECT_MEMBERS',
 			'ASSIGN_ROLES'
 		]);
-		expect(
-			members.eventPermissions?.bindings.find((b) => b.role === 'admin')?.permissions
-		).toEqual(['MANAGE_EVENTS', 'CREATE_EVENT']);
+		expect(members.eventPermissions?.bindings.find((b) => b.role === 'admin')?.permissions).toEqual(
+			['MANAGE_EVENTS', 'CREATE_EVENT']
+		);
 	});
 
 	it('unions the two records into one effective grant', async () => {
@@ -240,11 +237,7 @@ describe('the authz config as records', () => {
 		// A member is bound at both altitudes and holds nothing at either, which
 		// is the seeded model rather than a missing record.
 		expect([...effectivePermissions(members, ['member'])]).toEqual([]);
-		expect(members.permissions?.bindings.map((b) => b.role)).toEqual([
-			'owner',
-			'admin',
-			'member'
-		]);
+		expect(members.permissions?.bindings.map((b) => b.role)).toEqual(['owner', 'admin', 'member']);
 	});
 
 	it('grants nothing for a role the caller does not hold, and nothing with no records', async () => {
@@ -401,16 +394,17 @@ describe('rebuildGroupMembers', () => {
 	});
 
 	it('restores the roster after every non-owner row is dropped', async () => {
-		await db.prepare(`DELETE FROM memberships WHERE group_id = ? AND did <> ?`).bind(group.id, OWNER).run();
+		await db
+			.prepare(`DELETE FROM memberships WHERE group_id = ? AND did <> ?`)
+			.bind(group.id, OWNER)
+			.run();
 		expect(await listMembers(db, group.id)).toHaveLength(1);
 
 		await rebuildGroupMembers(db, fullSpace(), group);
 
-		expect(rosterFromRows(await listMembers(db, group.id)).map((e) => `${e.did}/${e.role}`)).toEqual([
-			`${OWNER}/owner`,
-			`${ADMIN}/admin`,
-			`${MEMBER}/member`
-		]);
+		expect(
+			rosterFromRows(await listMembers(db, group.id)).map((e) => `${e.did}/${e.role}`)
+		).toEqual([`${OWNER}/owner`, `${ADMIN}/admin`, `${MEMBER}/member`]);
 	});
 
 	it('corrects a row whose role drifted from its record', async () => {
@@ -457,7 +451,10 @@ describe('rebuildGroupMembers', () => {
 			.prepare(`DELETE FROM memberships WHERE group_id = ? AND did = ?`)
 			.bind(group.id, ADMIN)
 			.run();
-		await db.prepare(`DELETE FROM roles WHERE group_id = ? AND name = 'admin'`).bind(group.id).run();
+		await db
+			.prepare(`DELETE FROM roles WHERE group_id = ? AND name = 'admin'`)
+			.bind(group.id)
+			.run();
 
 		const result = await rebuildGroupMembers(db, fullSpace(), group);
 
@@ -479,5 +476,129 @@ describe('rebuildGroupMembers', () => {
 			{ did: OWNER, reason: 'owner_did cannot hold the admin role' }
 		]);
 		expect((await listMembers(db, group.id)).find((row) => row.did === OWNER)?.role).toBe('owner');
+	});
+});
+
+// T016: THE GATE RESOLVES FROM RECORDS. `resolveActorPermissions` is the pure
+// half — records in, a set out — and `getCallerMembership` is the loader that
+// reads them and owns the policy TS set 2026-09-22 (om-i92w3): no cache, an
+// unreadable space fails closed, and only a READABLE space with no config falls
+// back to the rows. Every case below runs against a D1 whose rows disagree with
+// the records on purpose, so which one the gate believed is visible.
+describe('the gate, from records', () => {
+	const sorted = (set: ReadonlySet<string>) => [...set].sort();
+	const ALL = [...DEFAULT_ROLE_PERMISSIONS.owner].sort();
+
+	it('is a pure function of the records: the union across both binding records', async () => {
+		const members = await readGroupMembers(
+			readerOver([...AUTHZ, membership(ADMIN, ['admin'], '2026-09-02T10:00:00.000Z')]),
+			group
+		);
+		expect(sorted(resolveActorPermissions(members, ADMIN))).toEqual(ALL);
+		expect(resolveActorPermissions(members, STRANGER).size).toBe(0);
+		expect(resolveActorPermissions(members, null).size).toBe(0);
+	});
+
+	it('reads one membership by key, not the roster', async () => {
+		const members = await readCallerAuthz(
+			readerOver([
+				...AUTHZ,
+				membership(OWNER, ['owner'], '2026-09-01T10:00:00.000Z'),
+				membership(ADMIN, ['admin'], '2026-09-02T10:00:00.000Z')
+			]),
+			group,
+			ADMIN
+		);
+		expect(members.memberships.map((m) => m.subject)).toEqual([ADMIN]);
+		expect(hasAuthzRecords(members)).toBe(true);
+	});
+
+	it('changes the NEXT decision when a binding record is edited, with no D1 write', async () => {
+		const record = membership(MEMBER, ['member'], '2026-09-03T10:00:00.000Z');
+		const before = await getCallerMembership(db, group, MEMBER, readerOver([...AUTHZ, record]));
+		expect(before.permissions.size).toBe(0);
+
+		// Only the eventPermissions record changes: members may now post events.
+		const edited = [
+			...AUTHZ.filter((r) => r.collection !== GROUP_EVENT_PERMISSIONS_COLLECTION),
+			bindingsRecord('modality', { ...DEFAULT_ROLE_PERMISSIONS, member: ['CREATE_EVENT'] }),
+			record
+		];
+		const after = await getCallerMembership(db, group, MEMBER, readerOver(edited));
+		expect(sorted(after.permissions)).toEqual(['CREATE_EVENT']);
+		// The row still says what it said: the records decided.
+		expect(after.role).toBe('member');
+	});
+
+	it('grants nothing to a role bound to nothing', async () => {
+		const unbound = [
+			roleRecord('owner'),
+			roleRecord('admin'),
+			roleRecord('member'),
+			bindingsRecord('community', { owner: [], admin: [], member: [] }),
+			bindingsRecord('modality', { owner: [], admin: [], member: [] }),
+			membership(ADMIN, ['admin'], '2026-09-02T10:00:00.000Z')
+		];
+		const admin = await getCallerMembership(db, group, ADMIN, readerOver(unbound));
+		// The ROW still binds admin to everything; the records win.
+		expect(admin.permissions.size).toBe(0);
+	});
+
+	it('grants nothing to a DID whose row says admin but who has no membership record', async () => {
+		const admin = await getCallerMembership(db, group, ADMIN, readerOver(AUTHZ));
+		expect(admin.role).toBe('admin');
+		expect(admin.permissions.size).toBe(0);
+	});
+
+	it('falls back to the rows only when the space is readable and holds no config', async () => {
+		const admin = await getCallerMembership(db, group, ADMIN, readerOver([]));
+		expect(sorted(admin.permissions)).toEqual(ALL);
+		// …and a group with no members space at all is the same case.
+		const noSpace = await getCallerMembership(
+			db,
+			{ ...group, members_space_uri: null },
+			ADMIN,
+			null
+		);
+		expect(sorted(noSpace.permissions)).toEqual(ALL);
+	});
+
+	it('fails closed when the space cannot be read', async () => {
+		const down: GroupSpaceReader = {
+			async get() {
+				throw new Error('com.atproto.space.getRecord failed: 502');
+			},
+			async list() {
+				throw new Error('com.atproto.space.listRecords failed: 502');
+			}
+		};
+		await expect(getCallerMembership(db, group, ADMIN, down)).rejects.toThrow(/502/);
+		// No credential for a group that HAS a members space: nothing, not rows.
+		const noReader = await getCallerMembership(db, group, ADMIN, null);
+		expect(noReader.permissions.size).toBe(0);
+	});
+
+	it('denies a suspended row even while its membership record survives', async () => {
+		await setMemberStatus(db, group.id, ADMIN, 'suspended');
+		const admin = await getCallerMembership(
+			db,
+			group,
+			ADMIN,
+			readerOver([...AUTHZ, membership(ADMIN, ['admin'], '2026-09-02T10:00:00.000Z')])
+		);
+		expect(admin.permissions.size).toBe(0);
+	});
+
+	it('reads nothing for an anonymous caller', async () => {
+		const reader: GroupSpaceReader = {
+			async get() {
+				throw new Error('an anonymous caller must not reach the PDS');
+			},
+			async list() {
+				throw new Error('an anonymous caller must not reach the PDS');
+			}
+		};
+		const anonymous = await getCallerMembership(db, group, null, reader);
+		expect(anonymous.permissions.size).toBe(0);
 	});
 });

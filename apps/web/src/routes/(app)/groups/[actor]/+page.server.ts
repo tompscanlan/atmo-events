@@ -10,7 +10,12 @@ import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
 	// DID or full handle in, one 404 out — and the same one a form answers.
-	const { group, membership } = await groupRouteContext(db, params.actor, locals.did);
+	const { group, membership } = await groupRouteContext(
+		platform!.env,
+		db,
+		params.actor,
+		locals.did
+	);
 
 	// The queue is the admit decision, so it is the admit grant — not a general
 	// "manages members" flag that would also cover ejecting and role changes.

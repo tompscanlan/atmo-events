@@ -8,8 +8,9 @@
 // projection that can be dropped and rebuilt (`data-model.md`), a DID with no
 // `membership` record has no access even if a stale row says otherwise, and a
 // role's effective grant is the union of the two binding records rather than a
-// `role_permissions` SELECT (`effectivePermissions` — the gate itself moves
-// across in T016).
+// `role_permissions` SELECT (`effectivePermissions`), and since T016 that is
+// what the write gate believes (`resolveActorPermissions`, loaded by
+// `getCallerMembership`).
 //
 // The transport is the one `about-read.ts` already proved (FR-007): the group's
 // OWN app-password session, own-repo reads inside the space, no DPoP credential
@@ -200,6 +201,98 @@ export function hasAuthzRecords(members: GroupMembers): boolean {
 	return members.roles.length > 0 && members.permissions !== null;
 }
 
+/**
+ * THE RESOLVER: what `actorDid` may do in the group whose records these are.
+ *
+ * A pure function of the records — no D1, no session, no request — because
+ * that is the shape FR-005's Resolver clause fixes: `(group DID, actor DID) →
+ * permission set`, which is `checkDelegate`'s signature and the part a peer app
+ * could lift out as a library. The group is named by the records it is handed;
+ * reading them, deciding what an unreadable space means, and falling back for
+ * a group with no config are the LOADER's (`getCallerMembership`), never this.
+ */
+export function resolveActorPermissions(
+	members: GroupMembers,
+	actorDid: string | null
+): Set<GroupPermission> {
+	return effectivePermissions(members, rolesForDid(members, actorDid));
+}
+
+/** The records the resolver needs for ONE caller: their own membership (the
+ *  rkey IS the member DID, so it is a `getRecord`, not a roster listing), both
+ *  binding records, and the role list `hasAuthzRecords` checks. Four reads,
+ *  together.
+ *
+ *  UNLIKE `readGroupMembers` THIS DOES NOT DEGRADE: a reader error propagates.
+ *  It feeds the gate, and a gate that read "unreachable" as "no records" would
+ *  either fall back to the rows or grant nothing silently — the first is the
+ *  privilege leak `hasAuthzRecords` exists to prevent. Failing is failing
+ *  closed (TS 2026-09-22, om-i92w3). */
+export async function readCallerAuthz(
+	reader: GroupSpaceReader,
+	group: GroupRow,
+	did: string
+): Promise<GroupMembers> {
+	const space = group.members_space_uri;
+	if (!space) return NO_MEMBER_RECORDS;
+	const repo = group.group_did;
+
+	const [membershipRecord, permissionsRecord, eventPermissionsRecord, roleRecords] =
+		await Promise.all([
+			// A DID that cannot be a record key cannot have a membership record.
+			isMembershipKey(did)
+				? reader.get({ space, repo, collection: GROUP_MEMBERSHIP_COLLECTION, rkey: did })
+				: null,
+			reader.get({
+				space,
+				repo,
+				collection: GROUP_PERMISSIONS_COLLECTION,
+				rkey: GROUP_PERMISSIONS_RKEY
+			}),
+			reader.get({
+				space,
+				repo,
+				collection: GROUP_EVENT_PERMISSIONS_COLLECTION,
+				rkey: GROUP_PERMISSIONS_RKEY
+			}),
+			reader.list({ space, repo, collection: GROUP_ROLE_COLLECTION })
+		]);
+
+	const memberships: GroupMembershipRecord[] = [];
+	const parsed =
+		membershipRecord && membershipRecord.collection === GROUP_MEMBERSHIP_COLLECTION
+			? parseGroupMembership(membershipRecord.value, membershipRecord.rkey)
+			: null;
+	if (membershipRecord && parsed) {
+		memberships.push({
+			uri: membershipRecord.uri,
+			rkey: membershipRecord.rkey,
+			subject: parsed.subject,
+			roles: parsed.roles,
+			createdAt: parsed.createdAt
+		});
+	}
+
+	const roles: GroupRoleRecord[] = [];
+	for (const record of roleRecords) {
+		if (record.collection !== GROUP_ROLE_COLLECTION) continue;
+		const role = parseGroupRole(record.value, record.rkey);
+		if (role) roles.push({ id: role.id, uri: record.uri, createdAt: role.createdAt });
+	}
+
+	return {
+		memberships,
+		roles,
+		permissions: permissionsRecord
+			? parseGroupBindings('community', permissionsRecord.value)
+			: null,
+		eventPermissions: eventPermissionsRecord
+			? parseGroupBindings('modality', eventPermissionsRecord.value)
+			: null,
+		access: null
+	};
+}
+
 /** The roles a DID holds according to the records. Empty for an unknown DID,
  *  for an anonymous caller, and for a record that grants nothing — the three
  *  cases that must all mean "no access" rather than "some default". */
@@ -346,7 +439,8 @@ export async function rebuildGroupMembers(
 		.bind(group.id)
 		.all<{ did: string; role_id: string; status: string; role: GroupRoleName }>();
 	const rows = new Map<string, { role: GroupRoleName; status: string }>();
-	for (const row of existing.results ?? []) rows.set(row.did, { role: row.role, status: row.status });
+	for (const row of existing.results ?? [])
+		rows.set(row.did, { role: row.role, status: row.status });
 
 	const now = Date.now();
 	const recorded = new Set<string>();
@@ -407,14 +501,7 @@ export async function rebuildGroupMembers(
 				 ON CONFLICT (group_id, did) DO UPDATE SET
 					role_id = excluded.role_id, status = 'active', updated_at = excluded.updated_at`
 			)
-			.bind(
-				crypto.randomUUID(),
-				group.id,
-				did,
-				target,
-				createdAtMs(record.createdAt) || now,
-				now
-			)
+			.bind(crypto.randomUUID(), group.id, did, target, createdAtMs(record.createdAt) || now, now)
 			.run();
 		result.restored.push(did);
 	}

@@ -34,7 +34,12 @@ import type { PageServerLoad } from './$types';
  *  its own gate. */
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
-	const { group, membership } = await groupRouteContext(db, params.actor, locals.did);
+	const { group, membership } = await groupRouteContext(
+		platform!.env,
+		db,
+		params.actor,
+		locals.did
+	);
 
 	const reader = await groupSpaceReader(platform!.env, db, group);
 	// One reader, two reads: the roster this page is for, and the group's name

@@ -19,6 +19,8 @@ import { error } from '@sveltejs/kit';
 import { actorToDid } from '$lib/atproto/methods';
 import { canSeeGroup } from '../access';
 import type { CallerMembership, GroupRow } from '../types';
+import { groupSpaceReader } from './about-read';
+import type { CredentialStoreEnv } from './credentials';
 import { getCallerMembership, getGroupByDid } from './repo';
 
 /** Every refusal says this, byte for byte. An unknown DID, a handle that does
@@ -56,6 +58,7 @@ export async function groupActorToDid(actor: string): Promise<string | null> {
 /** Resolve → look up → gate. Throws the 404 above at each step; returns the
  *  group and the caller's standing in it, which every caller needs next. */
 export async function groupRouteContext(
+	env: CredentialStoreEnv,
 	db: D1Database,
 	actor: string,
 	callerDid: string | null
@@ -67,8 +70,10 @@ export async function groupRouteContext(
 	if (!group) error(404, GROUP_NOT_FOUND);
 
 	// The membership lookup comes first because whether the caller may SEE the
-	// group is a question about their roster row.
-	const membership = await getCallerMembership(db, group.id, callerDid);
+	// group is a question about their roster row. An anonymous caller has no
+	// permissions to resolve, so no credential is unsealed for them.
+	const reader = callerDid ? await groupSpaceReader(env, db, group) : null;
+	const membership = await getCallerMembership(db, group, callerDid, reader);
 	if (!canSeeGroup(group, membership)) error(404, GROUP_NOT_FOUND);
 
 	return { group, membership };

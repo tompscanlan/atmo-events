@@ -40,7 +40,7 @@ import {
 	requireGroupPermission,
 	type GroupRepoWriter
 } from './event-writer';
-import type { GroupRuleRecord } from './about-read';
+import type { GroupRuleRecord, GroupSpaceReader } from './about-read';
 
 export interface WriteGroupAboutInput {
 	db: D1Database;
@@ -50,6 +50,8 @@ export interface WriteGroupAboutInput {
 	callerDid: string | null;
 	/** Overrides the PDS transport. Tests and the live probe pass this. */
 	writer?: GroupRepoWriter;
+	/** Overrides the members-space reader the gate resolves from. */
+	reader?: GroupSpaceReader | null;
 }
 
 export interface ProfileWriteResult {
@@ -79,10 +81,12 @@ function aboutSpace(group: GroupRow): string {
  *  because only the caller knows whether it already read the record. */
 export async function writeGroupProfile(
 	input: WriteGroupAboutInput & {
-		profile: Omit<GroupProfileInput, 'joinPolicy'> & { joinPolicy?: GroupProfileInput['joinPolicy'] };
+		profile: Omit<GroupProfileInput, 'joinPolicy'> & {
+			joinPolicy?: GroupProfileInput['joinPolicy'];
+		};
 	}
 ): Promise<ProfileWriteResult> {
-	await requireGroupPermission(input.db, input.group, input.callerDid, 'MANAGE_GROUP');
+	await requireGroupPermission(input, 'MANAGE_GROUP');
 
 	const record = {
 		...groupProfileRecord({
@@ -130,7 +134,7 @@ export interface RulesWriteResult {
 export async function setGroupRules(
 	input: WriteGroupAboutInput & { desired: string[]; existing: GroupRuleRecord[] }
 ): Promise<RulesWriteResult> {
-	await requireGroupPermission(input.db, input.group, input.callerDid, 'MANAGE_GROUP');
+	await requireGroupPermission(input, 'MANAGE_GROUP');
 	const space = aboutSpace(input.group);
 	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
 

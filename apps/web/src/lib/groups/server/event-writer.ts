@@ -27,6 +27,7 @@ import {
 	type CredentialStoreEnv,
 	type GroupCredential
 } from './credentials';
+import { groupSpaceReader, type GroupSpaceReader } from './about-read';
 import { getCallerMembership } from './repo';
 import { groupClient } from './session';
 import { contrailNotifier, type GroupEventNotifier } from './events-index';
@@ -185,6 +186,8 @@ export interface WriteGroupEventInput {
 	record: Record<string, unknown>;
 	/** Overrides the PDS transport. Tests and the live probe pass this. */
 	writer?: GroupRepoWriter;
+	/** Overrides the members-space reader the gate resolves from. */
+	reader?: GroupSpaceReader | null;
 	/** Overrides the index notification. Tests pass this; nothing else should,
 	 *  because a caller that supplies its own is a caller that can forget. */
 	notify?: GroupEventNotifier;
@@ -212,33 +215,45 @@ function requiredPermission(intent: 'create' | 'update' | 'delete'): EnforcedGro
 	return intent === 'create' ? 'CREATE_EVENT' : 'MANAGE_EVENTS';
 }
 
+/** What the gate needs, which every writer's input already carries. `reader`
+ *  is the override tests pass; absent, the gate builds the group's own. */
+export interface GroupGateInput {
+	db: D1Database;
+	env: CredentialStoreEnv;
+	group: GroupRow;
+	callerDid: string | null;
+	reader?: GroupSpaceReader | null;
+}
+
 /** The gate's permission half, on its own so a second record class does not
  *  have to re-derive it. Events reach it through `authorise` below; the control
  *  plane reaches it directly (`./about-writer.ts`), because its permission is
  *  fixed rather than chosen by intent.
  *
- *  Refuses an anonymous caller before touching D1, and a suspended member by
- *  construction: `getCallerMembership` populates `permissions` only from an
- *  ACTIVE membership, so a suspended one resolves to the empty union. */
+ *  Refuses an anonymous caller before touching D1 or the PDS. What the caller
+ *  may do is the RECORDS' answer (T016), with the fallback and fail-closed
+ *  policy `getCallerMembership` documents; a suspended member resolves to the
+ *  empty set on either path. */
 export async function requireGroupPermission(
-	db: D1Database,
-	group: GroupRow,
-	callerDid: string | null,
+	input: GroupGateInput,
 	permission: EnforcedGroupPermission
 ): Promise<void> {
+	const { db, group, callerDid } = input;
 	if (!callerDid) throw new GroupPermissionError(permission, group.group_did);
-	const membership = await getCallerMembership(db, group.id, callerDid);
+	const reader =
+		input.reader !== undefined ? input.reader : await groupSpaceReader(input.env, db, group);
+	const membership = await getCallerMembership(db, group, callerDid, reader);
 	if (!can(membership.permissions, permission)) {
 		throw new GroupPermissionError(permission, group.group_did);
 	}
 }
 
 async function authorise(
-	input: Pick<WriteGroupEventInput, 'db' | 'group' | 'callerDid'>,
+	input: GroupGateInput,
 	intent: 'create' | 'update' | 'delete'
 ): Promise<EnforcedGroupPermission> {
 	const permission = requiredPermission(intent);
-	await requireGroupPermission(input.db, input.group, input.callerDid, permission);
+	await requireGroupPermission(input, permission);
 	return permission;
 }
 
