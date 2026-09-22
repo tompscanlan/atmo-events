@@ -641,6 +641,12 @@ async function main() {
 		membersSpaceUri = spaces.membersSpaceUri;
 		aboutSpaceUri = spaces.aboutSpaceUri;
 		spacesProvisioned = true;
+		// The fixture DID is reused and its spaces are idempotent, so a previous
+		// run can leave an authz config behind. Start from "no config yet" or the
+		// gate reads that config and the owner, whose record the last teardown
+		// dropped, holds nothing (T016).
+		const stale = await must('dropAuthz', { groupId: group.id });
+		if (stale.dropped.length) note(`reset a leftover authz config (${stale.dropped.join(', ')})`);
 
 		await must('writeGroupProfile', {
 			groupId: group.id,
@@ -820,6 +826,50 @@ async function main() {
 			`roles [${authz.roles.join(', ')}]; permissions ${JSON.stringify(communityActions)}; ` +
 				`eventPermissions ${JSON.stringify(modalityActions)}; ` +
 				`admin resolves to ${authz.effective.permissions.length} permission(s)`
+		);
+
+		// 15b. THE GATE BELIEVES THE RECORDS (T016) ------------------------------
+		// Edit ONE binding record on the live PDS — admin loses CREATE_EVENT in
+		// `eventPermissions` — and ask the gate again. BOB's D1 row still says
+		// admin and `role_permissions` still grants admin CREATE_EVENT, so a gate
+		// reading rows would not move. No D1 write, no deploy: the acceptance.
+		// Then restore the seeded bundles and watch it move back.
+		const probe = ['CREATE_EVENT', 'MANAGE_EVENTS'];
+		const bobBefore = await must('membership', { groupId: group.id, did: BOB, probe });
+		await must('writeGroupAuthz', {
+			groupId: group.id,
+			callerDid: ALICE,
+			bundles: {
+				owner: ['MANAGE_GROUP', 'ADMIT_MEMBERS', 'EJECT_MEMBERS', 'ASSIGN_ROLES', 'MANAGE_EVENTS', 'CREATE_EVENT'],
+				admin: ['MANAGE_GROUP', 'ADMIT_MEMBERS', 'EJECT_MEMBERS', 'ASSIGN_ROLES', 'MANAGE_EVENTS'],
+				member: []
+			}
+		});
+		const bobEdited = await must('membership', { groupId: group.id, did: BOB, probe });
+		const editedRecord = await spaceRecord(
+			groupToken,
+			membersSpaceUri,
+			'net.openmeet.group.eventPermissions',
+			'self'
+		);
+		await must('writeGroupAuthz', { groupId: group.id, callerDid: ALICE });
+		const bobRestored = await must('membership', { groupId: group.id, did: BOB, probe });
+		const bobRowRole = (await must('listMembers', { groupId: group.id })).find(
+			(m) => m.did === BOB
+		)?.role;
+		record(
+			bobBefore.can.CREATE_EVENT === true &&
+				bobEdited.can.CREATE_EVENT === false &&
+				bobEdited.can.MANAGE_EVENTS === true &&
+				bobRowRole === 'admin' &&
+				JSON.stringify(
+					(editedRecord.value?.bindings ?? []).find((b) => b.role === 'admin')?.actions
+				) === JSON.stringify(['manageEvents']) &&
+				bobRestored.can.CREATE_EVENT === true,
+			'editing a binding record changes the NEXT gate decision, with no D1 write (T016)',
+			`CREATE_EVENT for ${BOB}: before ${bobBefore.can.CREATE_EVENT}, after the live edit ` +
+				`${bobEdited.can.CREATE_EVENT} (MANAGE_EVENTS ${bobEdited.can.MANAGE_EVENTS}), after restore ` +
+				`${bobRestored.can.CREATE_EVENT}; his D1 row stayed ${bobRowRole}`
 		);
 
 		// 16. drop the cache, rebuild from records ---------------------------------
@@ -1067,6 +1117,12 @@ async function main() {
 				console.log(`WARN  could not clean up the about space: ${error.message}`);
 			}
 			try {
+				// The authz config FIRST: dropping the owner's membership while a
+				// config remains leaves a space in which the owner holds nothing,
+				// and the next run's first gated write is refused (T016).
+				const authz = await call('dropAuthz', { groupId: group.id });
+				if (authz.ok) note(`dropped the authz config (${authz.value.dropped.length} record(s))`);
+				else console.log(`WARN  could not drop the authz config: ${authz.error.message}`);
 				// The owner's membership is the one record no roster act removes —
 				// the owner cannot be ejected — so it is dropped directly, the same
 				// way it was written.

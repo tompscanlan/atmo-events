@@ -33,7 +33,17 @@ import {
 	rolePermissions,
 	updateGroup
 } from '../src/lib/groups/server/repo';
-import { deleteGroupEvent, writeGroupEvent } from '../src/lib/groups/server/event-writer';
+import {
+	deleteGroupEvent,
+	groupWriter,
+	writeGroupEvent
+} from '../src/lib/groups/server/event-writer';
+import {
+	GROUP_EVENT_PERMISSIONS_COLLECTION,
+	GROUP_PERMISSIONS_COLLECTION,
+	GROUP_PERMISSIONS_RKEY,
+	GROUP_ROLE_COLLECTION
+} from '../src/lib/groups/members-record';
 import { listGroupEvents, registerGroupIdentity } from '../src/lib/groups/server/events-index';
 import { splitRuleLines } from '../src/lib/groups/about-record';
 import { reconcileGroupDeclaration } from '../src/lib/groups/server/declaration-writer';
@@ -137,10 +147,14 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	/** The permission resolver's answer, plus `can()` for each probed name so the
 	 *  gate the app actually asks is the thing asserted. */
 	membership: async (env, args) => {
+		// The app's own loader, reader and all: once the members space holds an
+		// authz config this answer is the RECORDS', not the rows' (T016).
+		const group = await groupById(env, args.groupId);
 		const membership = await getCallerMembership(
 			env.DB,
-			String(args.groupId),
-			args.did == null ? null : String(args.did)
+			group,
+			args.did == null ? null : String(args.did),
+			await groupSpaceReader(env, env.DB, group)
 		);
 		const probe = (args.probe as GroupPermission[]) ?? [];
 		return {
@@ -391,6 +405,47 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			subject: String(args.did),
 			intent: 'leave'
 		}),
+
+	/** FIXTURE TEARDOWN for the authz config: every `role` record and both
+	 *  binding records, deleted straight through the group's writer. No app path
+	 *  removes a config — a group has one for life — but this fixture reuses one
+	 *  DID across runs, and since T016 a config left behind with the owner's
+	 *  membership gone is a space in which the owner holds nothing. Emptying it
+	 *  returns the space to "no config yet", where the gate reads the rows. A
+	 *  record that is already absent is not an error. */
+	dropAuthz: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		if (!group.members_space_uri) return { dropped: [] };
+		const reader = await spaceReader(env, group);
+		const writer = await groupWriter(env, env.DB, group);
+		const targets = [
+			...(await reader.list({
+				space: group.members_space_uri,
+				repo: group.group_did,
+				collection: GROUP_ROLE_COLLECTION
+			})).map((r) => ({ collection: GROUP_ROLE_COLLECTION, rkey: r.rkey })),
+			{ collection: GROUP_PERMISSIONS_COLLECTION, rkey: GROUP_PERMISSIONS_RKEY },
+			{ collection: GROUP_EVENT_PERMISSIONS_COLLECTION, rkey: GROUP_PERMISSIONS_RKEY }
+		];
+		const dropped: string[] = [];
+		for (const target of targets) {
+			const present = await reader.get({
+				space: group.members_space_uri,
+				repo: group.group_did,
+				...target
+			});
+			if (!present) continue;
+			await writer({
+				repo: group.group_did,
+				...target,
+				record: {},
+				intent: 'delete',
+				space: group.members_space_uri
+			});
+			dropped.push(`${target.collection}/${target.rkey}`);
+		}
+		return { dropped };
+	},
 
 	/** ROW PLUS RECORD, in the app's own order — these four are exactly what the
 	 *  remote handlers call, so what the e2e proves is the composition the app
