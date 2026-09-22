@@ -181,12 +181,19 @@
 								<input type="hidden" name="rkey" value={event.rkey} />
 								<input type="hidden" name="createdAt" value={text(event.value.createdAt)} />
 								<div class="flex flex-col gap-4">
+									<!-- `defaultValue`, not `value`: a successful remote-form
+									     submission resets the form, and a reset restores the
+									     DEFAULT. Written as `value=`, every field here came back
+									     empty after a save — including the required `startsAt` —
+									     so a second save from the same open form wrote an empty
+									     description. Same defect as the settings form on the
+									     group page (2026-09-22, om-6kci0). -->
 									<div class="flex flex-col gap-1.5">
 										<Label for="edit-name-{event.rkey}">Name</Label>
 										<Input
 											id="edit-name-{event.rkey}"
 											name="name"
-											value={text(event.value.name)}
+											defaultValue={text(event.value.name)}
 											required
 										/>
 									</div>
@@ -197,7 +204,7 @@
 												id="edit-starts-{event.rkey}"
 												name="startsAt"
 												type="datetime-local"
-												value={forInput(event.value.startsAt)}
+												defaultValue={forInput(event.value.startsAt)}
 												required
 											/>
 										</div>
@@ -207,7 +214,7 @@
 												id="edit-ends-{event.rkey}"
 												name="endsAt"
 												type="datetime-local"
-												value={forInput(event.value.endsAt)}
+												defaultValue={forInput(event.value.endsAt)}
 											/>
 										</div>
 									</div>
@@ -218,7 +225,7 @@
 												id="edit-location-{event.rkey}"
 												name="locationName"
 												maxlength={300}
-												value={address(event).name ?? ''}
+												defaultValue={address(event).name ?? ''}
 											/>
 										</div>
 										<div class="flex flex-col gap-1.5">
@@ -228,7 +235,7 @@
 												name="locationCountry"
 												maxlength={10}
 												placeholder="US"
-												value={address(event).country ?? ''}
+												defaultValue={address(event).country ?? ''}
 											/>
 										</div>
 									</div>
@@ -238,9 +245,9 @@
 											id="edit-description-{event.rkey}"
 											name="description"
 											rows="3"
+											defaultValue={text(event.value.description)}
 											class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
-											>{text(event.value.description)}</textarea
-										>
+										></textarea>
 									</div>
 									<div><Button type="submit">Save as the group</Button></div>
 								</div>

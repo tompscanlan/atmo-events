@@ -241,9 +241,18 @@
 			{#if showSettings}
 				<form {...updateGroupForm} class="mt-4 flex flex-col gap-4">
 					<input type="hidden" name="groupDid" value={group.group_did} />
+					<!-- DEFAULT VALUES, NOT VALUES. A successful remote-form submission
+					     resets the form, and a reset restores each control's DEFAULT —
+					     `defaultValue` / `defaultChecked`, never the `value` property
+					     Svelte assigns. Written as `value=` here, `description` and
+					     `rules` came back EMPTY after every save, so the next save wrote
+					     an empty description and deleted every rule record. Observed
+					     destroying both on the testnet during the T023 walk
+					     (2026-09-22, om-6kci0). `<select>` is already correct: its
+					     `selected` attribute IS the option's default. -->
 					<div class="flex flex-col gap-1.5">
 						<Label for="settings-name">Name</Label>
-						<Input id="settings-name" name="name" value={about.name} required />
+						<Input id="settings-name" name="name" defaultValue={about.name} required />
 					</div>
 					<div class="flex flex-col gap-1.5">
 						<Label for="settings-description">Description</Label>
@@ -251,9 +260,9 @@
 							id="settings-description"
 							name="description"
 							rows="3"
+							defaultValue={about.description ?? ''}
 							class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
-							>{about.description ?? ''}</textarea
-						>
+						></textarea>
 					</div>
 					<div class="flex flex-col gap-1.5">
 						<Label for="settings-rules">Rules</Label>
@@ -262,9 +271,9 @@
 							name="rules"
 							rows="4"
 							placeholder="One rule per line"
+							defaultValue={about.rules.map((rule) => rule.text).join('\n')}
 							class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
-							>{about.rules.map((rule) => rule.text).join('\n')}</textarea
-						>
+						></textarea>
 						<p class="text-base-500 dark:text-base-400 text-xs">
 							One rule per line. Each line is its own record, so editing one rule leaves the others’
 							addresses untouched.
@@ -289,7 +298,7 @@
 						<input
 							type="checkbox"
 							name="requireApproval"
-							checked={!!group.require_approval}
+							defaultChecked={!!group.require_approval}
 							class="size-4"
 						/>
 						Require approval to join
