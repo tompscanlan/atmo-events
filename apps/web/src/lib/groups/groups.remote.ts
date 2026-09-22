@@ -12,6 +12,9 @@ import * as v from 'valibot';
 import { ASSIGNABLE_ROLES, can } from './permissions';
 import type { GroupFormFailure, GroupFormResult } from './form-result';
 import { formError } from './form-error';
+// Not declared here: the Vite plugin rejects non-remote exports from a
+// `*.remote.ts`, so a field a test has to reach lives in ./form-fields.ts.
+import { checkboxField } from './form-fields';
 import { runCreateGroup } from './create-group';
 import { GROUP_LABEL_PATTERN } from './handle-label';
 import { GROUP_VISIBILITIES, type CallerMembership, type GroupRow } from './types';
@@ -47,12 +50,6 @@ const didField = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,300}
  *  held to, and it reports on the field the user can edit (FR-001d). */
 const labelField = v.pipe(v.string(), v.regex(GROUP_LABEL_PATTERN, 'Invalid group handle label'));
 const idField = v.pipe(v.string(), v.minLength(1), v.maxLength(64));
-/** An HTML checkbox sends `on` when ticked and nothing at all when not, so
- *  presence is the value. */
-const checkboxField = v.pipe(
-	v.optional(v.string()),
-	v.transform((value) => value !== undefined && value !== '')
-);
 /** `owner` is deliberately absent: it is pinned to `groups.owner_did` by SQL
  *  trigger, so accepting it here would only produce a constraint error. A
  *  picklist rather than a `v.check` predicate because the picklist's OUTPUT is
