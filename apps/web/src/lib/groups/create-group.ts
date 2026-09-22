@@ -30,6 +30,7 @@ import { setGroupRules, writeGroupProfile } from './server/about-writer';
 import { reconcileGroupDeclaration } from './server/declaration-writer';
 import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './server/members-writer';
 import { pdsWriter } from './server/event-writer';
+import { registerGroupIdentity } from './server/events-index';
 import { splitRuleLines } from './about-record';
 import { labelMintRefusal, labelMintRefusalMessage } from './handle-label';
 import { formError } from './form-error';
@@ -197,6 +198,22 @@ export async function runCreateGroup(
 	} catch (e) {
 		return formError(e);
 	}
+
+	// TELL THE INDEXER THIS ACCOUNT EXISTS, before anything is written to it.
+	// Contrail resolves a repo's PDS out of its `identities` table first, and
+	// that resolution is what both the write-time notification and the
+	// on-demand backfill need in order to fetch the group's events at all. The
+	// facts come from the mint two statements ago rather than a read-back, so
+	// this is one statement and no round trip.
+	//
+	// Deliberately NOT guarded: the helper reports failure instead of throwing,
+	// because a group whose index row did not land is a group whose events
+	// arrive late, not a group that failed to be created.
+	await registerGroupIdentity(env.DB, {
+		did: minted.did,
+		handle: minted.handle,
+		pds: mint.service
+	});
 
 	// Provisioning is not ordered by any name: the space key is `self`, so both
 	// URIs are a function of the group DID alone.

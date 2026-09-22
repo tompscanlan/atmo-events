@@ -29,6 +29,7 @@ import {
 } from './credentials';
 import { getCallerMembership } from './repo';
 import { groupClient } from './session';
+import { contrailNotifier, type GroupEventNotifier } from './events-index';
 
 export const GROUP_EVENT_COLLECTION = 'community.lexicon.calendar.event';
 
@@ -184,6 +185,9 @@ export interface WriteGroupEventInput {
 	record: Record<string, unknown>;
 	/** Overrides the PDS transport. Tests and the live probe pass this. */
 	writer?: GroupRepoWriter;
+	/** Overrides the index notification. Tests pass this; nothing else should,
+	 *  because a caller that supplies its own is a caller that can forget. */
+	notify?: GroupEventNotifier;
 }
 
 export interface GroupEventWriteResult {
@@ -238,6 +242,24 @@ async function authorise(
 	return permission;
 }
 
+/** Tells the index about a record that is ALREADY in the group's repo.
+ *
+ *  Swallowing the failure is the point, and it belongs here rather than in any
+ *  one notifier: by the time this runs the PDS has accepted the record, so a
+ *  dead index means the events tab is briefly stale — and reporting that as a
+ *  failed write would both be untrue and invite the caller to retry a write
+ *  that landed. The next actor-scoped read backfills what was missed. */
+async function notifyIndex(
+	input: Pick<WriteGroupEventInput, 'db' | 'notify'>,
+	uri: string
+): Promise<void> {
+	try {
+		await (input.notify ?? contrailNotifier(input.db))(uri);
+	} catch (e) {
+		console.error(`[groups] could not tell the index about ${uri}:`, e);
+	}
+}
+
 /** Authorises the caller, then writes a `community.lexicon.calendar.event`
  *  record into the GROUP DID's public repo. */
 export async function writeGroupEvent(input: WriteGroupEventInput): Promise<GroupEventWriteResult> {
@@ -272,6 +294,13 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 	// the record did not land where the model says it must, and a caller must
 	// not be told the write succeeded.
 	assertAuthoredByGroup(result.uri, input.group.group_did);
+
+	// The events tab reads the app's own index, not the group's PDS, so the
+	// index has to be told. It happens here rather than at each route because
+	// this is the one function that can produce a record under a group DID —
+	// a second write path that forgot this call would ship a tab that silently
+	// stops updating.
+	await notifyIndex(input, result.uri);
 	return { uri: result.uri, cid: result.cid, rkey, repo: input.group.group_did };
 }
 
@@ -288,6 +317,12 @@ export async function deleteGroupEvent(
 		intent: 'delete'
 	});
 	assertAuthoredByGroup(result.uri, input.group.group_did);
+
+	// Same call as a create or an edit, and the index works out which it was:
+	// it re-fetches the URI, finds nothing there, and drops the row. A delete
+	// that did not notify would leave the event on the tab until a backfill
+	// that has already completed ran again, i.e. never.
+	await notifyIndex(input, result.uri);
 	return { uri: result.uri, repo: input.group.group_did };
 }
 

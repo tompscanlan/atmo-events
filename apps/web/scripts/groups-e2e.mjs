@@ -71,11 +71,20 @@
  *  20. turning the group private DELETES that declaration and turning it back
  *      re-declares it. Absence is the only signal a non-discoverable group
  *      emits, so a stale pointer would keep announcing a group that asked not
- *      to be (FR-003, conditioned by `om-mrimm` D2).
+ *      to be (FR-003, conditioned by `om-mrimm` D2);
+ *  21. the events tab's list comes from the app's own INDEX rather than from
+ *      the group's PDS — the same read every other actor's events get — and it
+ *      carries the admin's edit from check 5; and
+ *  22. THE LOAD-BEARING ONE for that index — an event written AFTER the index
+ *      had already backfilled this repo appears in that list immediately, and
+ *      deleting it drops it, with no cron tick and no waiting. An actor-scoped
+ *      query backfills a repo once and then records that it is done, so check
+ *      21 would pass on the backfill alone; only the write gate telling the
+ *      index about each write explains this one.
  *
- * Those twenty ARE the summary: setup lines (credentials, fixture session,
+ * Those twenty-two ARE the summary: setup lines (credentials, fixture session,
  * bundle, runtime) print as notes and are deliberately not counted, so
- * `SUMMARY: 20 passed, 0 failed` maps one-to-one onto the story above.
+ * `SUMMARY: 22 passed, 0 failed` maps one-to-one onto the story above.
  *
  * How it runs. Group facts are D1 rows and a group event is an outbound PDS
  * write, i.e. Worker code, so the real modules run ON workerd with a real D1
@@ -160,8 +169,8 @@ function record(ok, label, detail) {
 	return ok;
 }
 
-/** Setup progress. Not a check: the eight checks are the story, so they are the
- *  whole summary. */
+/** Setup progress. Not a check: the numbered checks are the story, so they are
+ *  the whole summary. */
 function note(text) {
 	console.log(`      ${text}`);
 }
@@ -225,7 +234,7 @@ let miniflare;
  *
  * `dispatchFetch` takes a URL only to populate `request.url`; ORIGIN is a host
  * that never resolves and is never connected to. Refusals come back as
- * `{ ok: false, error }` — they are the expected outcome of three of the eight
+ * `{ ok: false, error }` — a refusal is the expected outcome of several of the
  * checks, so they travel as data rather than as a thrown string.
  */
 async function call(op, args = {}) {
@@ -409,6 +418,11 @@ async function main() {
 			identifier: GROUP_HANDLE,
 			password
 		});
+		// What a mint records and this run cannot: where the group's repo lives.
+		// The indexer resolves a DID's PDS out of that row, so without it the
+		// index would go looking for the alpha PDS over the public network.
+		await must('registerIdentity', { groupDid: GROUP_DID, handle: GROUP_HANDLE, pds: PDS });
+		note(`${GROUP_DID} registered with the index as a repo on ${PDS}`);
 		// 1. create ------------------------------------------------------------
 		group = await must('createGroup', {
 			groupDid: GROUP_DID,
@@ -938,6 +952,57 @@ async function main() {
 			withdrawn.status !== 200 && redeclared.status === 200,
 			'turning a group private DELETES its declaration; turning it back re-declares it',
 			`private: ${withdrawn.error ?? withdrawn.status}; public again: ${redeclared.status}`
+		);
+
+		// 21. the events tab's list is the INDEX's, not the PDS's -----------------
+		// The tab no longer reads the group's repo over HTTP on every view; it
+		// reads the app's own index, the way every other actor's events are read.
+		// This is that read, through the app's own function, and what it must
+		// contain is both events written above WITH the admin's edit applied —
+		// which is the whole of the tab's data source in one assertion.
+		const indexed = await must('listGroupEvents', { groupId: group.id });
+		const indexedNames = indexed.map((e) => e.value?.name);
+		record(
+			indexed.length === 2 &&
+				indexed.every((e) => authorityOf(e.uri) === GROUP_DID) &&
+				indexedNames.includes(editedName) &&
+				indexedNames.includes('Kona paddle, location typed without a country') &&
+				!indexedNames.includes('Kona sunrise paddle'),
+			"the events tab reads the group's events from the index, edits included",
+			`${indexed.length} indexed record(s), all authored by ${GROUP_DID}: ${indexedNames.join(' | ')}`
+		);
+
+		// 22. and a write AFTER that read still shows up ---------------------------
+		// THE LOAD-BEARING ONE for the index path. An actor-scoped query
+		// backfills a repo once and then records that it is done, so check 21
+		// would pass on the backfill alone and every later write would be
+		// invisible. This writes a third event after that backfill has completed,
+		// re-reads with no cron tick and no waiting, and then deletes it and
+		// re-reads again: only the gate telling the index about each write can
+		// explain either result.
+		const afterBackfill = await must('writeGroupEvent', {
+			groupId: group.id,
+			callerDid: ALICE,
+			intent: 'create',
+			form: eventForm('Kona paddle, written after the index had caught up')
+		});
+		written.push(afterBackfill.rkey);
+		const withThird = await must('listGroupEvents', { groupId: group.id });
+		await must('deleteGroupEvent', {
+			groupId: group.id,
+			callerDid: ALICE,
+			rkey: afterBackfill.rkey
+		});
+		const afterDelete = await must('listGroupEvents', { groupId: group.id });
+		record(
+			withThird.some((e) => e.rkey === afterBackfill.rkey) &&
+				withThird.length === 3 &&
+				afterDelete.every((e) => e.rkey !== afterBackfill.rkey) &&
+				afterDelete.length === 2,
+			'an event written after the backfill is indexed at once, and a deletion drops it',
+			`after the write ${withThird.length} indexed (${afterBackfill.rkey} present: ` +
+				`${withThird.some((e) => e.rkey === afterBackfill.rkey)}); ` +
+				`after the delete ${afterDelete.length}, with no cron tick between them`
 		);
 	} finally {
 		if (written.length > 0) console.log('');

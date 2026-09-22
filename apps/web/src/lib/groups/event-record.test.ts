@@ -58,7 +58,18 @@ beforeEach(async () => {
 afterEach(() => harness.close());
 
 async function write(record: Record<string, unknown>) {
-	return writeGroupEvent({ db, env, group, callerDid: OWNER, intent: 'create', record, writer });
+	return writeGroupEvent({
+		db,
+		env,
+		group,
+		callerDid: OWNER,
+		intent: 'create',
+		record,
+		writer,
+		// These cases are about record SHAPE; the index is the write gate's own
+		// test's subject, and the real notifier would stand up an appview.
+		notify: async () => {}
+	});
 }
 
 describe('group event locations', () => {

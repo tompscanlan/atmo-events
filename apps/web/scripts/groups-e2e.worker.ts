@@ -34,6 +34,7 @@ import {
 	updateGroup
 } from '../src/lib/groups/server/repo';
 import { deleteGroupEvent, writeGroupEvent } from '../src/lib/groups/server/event-writer';
+import { listGroupEvents, registerGroupIdentity } from '../src/lib/groups/server/events-index';
 import { splitRuleLines } from '../src/lib/groups/about-record';
 import { reconcileGroupDeclaration } from '../src/lib/groups/server/declaration-writer';
 import { setGroupRules, writeGroupProfile } from '../src/lib/groups/server/about-writer';
@@ -212,6 +213,21 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
 			rkey: String(args.rkey)
 		}),
+
+	/** The index row a mint writes. This run binds an EXISTING DID through
+	 *  `createGroup`, which mints nothing, so the fact `runCreateGroup` records
+	 *  at mint — where this group's repo lives — has to be recorded here
+	 *  instead, through the same function. */
+	registerIdentity: async (env, args) =>
+		registerGroupIdentity(env.DB, {
+			did: String(args.groupDid),
+			handle: args.handle == null ? null : String(args.handle),
+			pds: String(args.pds)
+		}),
+
+	/** What the events tab renders: the group's public events as the app's own
+	 *  index holds them, not as the PDS hands them back. */
+	listGroupEvents: async (env, args) => listGroupEvents(env.DB, await groupById(env, args.groupId)),
 
 	/** BOTH spaces the fixture group needs — the about space for its face, the
 	 *  members space for its roster. The e2e binds an existing DID through

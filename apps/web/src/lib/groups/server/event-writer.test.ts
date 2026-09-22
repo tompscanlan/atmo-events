@@ -16,6 +16,7 @@ import {
 	type GroupRepoWrite,
 	type GroupRepoWriter
 } from './event-writer';
+import type { GroupEventNotifier } from './events-index';
 import type { GroupRow } from '../types';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -31,6 +32,11 @@ let db: D1Database;
 let group: GroupRow;
 let writes: GroupRepoWrite[];
 let writer: GroupRepoWriter;
+/** URIs the gate handed to the index, in order. Stubbed on every call that
+ *  gets as far as a write: the real notifier stands up an appview, which is
+ *  the live probe's job and not a unit test's. */
+let notified: string[];
+let notify: GroupEventNotifier;
 
 // The writer takes an env only for GROUP_CREDENTIAL_KEY, and these cases
 // inject their own writer, so it is never consulted.
@@ -62,6 +68,11 @@ beforeEach(async () => {
 		writes.push(write);
 		return { uri: `at://${write.repo}/${write.collection}/${write.rkey}`, cid: 'bafytest' };
 	};
+
+	notified = [];
+	notify = async (uri) => {
+		notified.push(uri);
+	};
 });
 
 afterEach(() => harness.close());
@@ -77,7 +88,8 @@ describe('authorship', () => {
 			callerDid: OWNER,
 			intent: 'create',
 			record: validRecord(),
-			writer
+			writer,
+			notify
 		});
 		expect(created.repo).toBe(GROUP_DID);
 
@@ -92,7 +104,8 @@ describe('authorship', () => {
 				...validRecord('Kona weekly ride — new time'),
 				startsAt: '2026-09-21T18:00:00.000Z'
 			},
-			writer
+			writer,
+			notify
 		});
 
 		expect(edited.rkey).toBe(created.rkey);
@@ -114,7 +127,8 @@ describe('authorship', () => {
 			callerDid: ADMIN,
 			intent: 'create',
 			record: validRecord(),
-			writer
+			writer,
+			notify
 		});
 		expect(created.rkey).toMatch(/^[a-z2-7]{13}$/);
 		expect(writes[0].intent).toBe('create');
@@ -127,13 +141,16 @@ describe('authorship', () => {
 				callerDid: ADMIN,
 				intent: 'update',
 				record: validRecord(),
-				writer
+				writer,
+				notify
 			})
 		).rejects.toBeInstanceOf(GroupRecordError);
 	});
 
 	// If the transport reports a URI under some other authority, the model has
 	// been violated and the caller must not be told the write succeeded.
+	// A record that landed under the wrong authority is not this group's, so it
+	// must not be pushed into the index either — the refusal has to reach both.
 	it('refuses a result whose URI is not in the group repo', async () => {
 		await expect(
 			writeGroupEvent({
@@ -143,9 +160,11 @@ describe('authorship', () => {
 				callerDid: ADMIN,
 				intent: 'create',
 				record: validRecord(),
-				writer: async () => ({ uri: `at://${ADMIN}/${GROUP_EVENT_COLLECTION}/abc`, cid: 'x' })
+				writer: async () => ({ uri: `at://${ADMIN}/${GROUP_EVENT_COLLECTION}/abc`, cid: 'x' }),
+				notify
 			})
 		).rejects.toThrow(/is not did:plc:jcwgw6fcnb5vyoid7nz7sl26's repo/);
+		expect(notified).toEqual([]);
 	});
 });
 
@@ -159,7 +178,8 @@ describe('the permission gate', () => {
 				callerDid: MEMBER,
 				intent: 'create',
 				record: validRecord(),
-				writer
+				writer,
+				notify
 			})
 		).rejects.toMatchObject({ permission: 'CREATE_EVENT' });
 		await expect(
@@ -171,7 +191,8 @@ describe('the permission gate', () => {
 				intent: 'update',
 				rkey: '3abc',
 				record: validRecord(),
-				writer
+				writer,
+				notify
 			})
 		).rejects.toMatchObject({ permission: 'MANAGE_EVENTS' });
 		expect(writes).toEqual([]);
@@ -187,7 +208,8 @@ describe('the permission gate', () => {
 					callerDid,
 					intent: 'create',
 					record: validRecord(),
-					writer
+					writer,
+					notify
 				})
 			).rejects.toBeInstanceOf(GroupPermissionError);
 		}
@@ -205,7 +227,8 @@ describe('the permission gate', () => {
 				callerDid: ADMIN,
 				intent: 'create',
 				record: validRecord(),
-				writer
+				writer,
+				notify
 			})
 		).rejects.toBeInstanceOf(GroupPermissionError);
 		expect(writes).toEqual([]);
@@ -213,7 +236,7 @@ describe('the permission gate', () => {
 
 	it('gates deletion on MANAGE_EVENTS and deletes from the group repo', async () => {
 		await expect(
-			deleteGroupEvent({ db, env, group, callerDid: MEMBER, rkey: '3abc', writer })
+			deleteGroupEvent({ db, env, group, callerDid: MEMBER, rkey: '3abc', writer, notify })
 		).rejects.toMatchObject({ permission: 'MANAGE_EVENTS' });
 
 		const deleted = await deleteGroupEvent({
@@ -222,7 +245,8 @@ describe('the permission gate', () => {
 			group,
 			callerDid: ADMIN,
 			rkey: '3abc',
-			writer
+			writer,
+			notify
 		});
 		expect(deleted.repo).toBe(GROUP_DID);
 		expect(writes).toEqual([
@@ -248,7 +272,8 @@ describe('record validation', () => {
 				intent: 'create',
 				// No `name`, which the lexicon requires.
 				record: { createdAt: '2026-09-01T12:00:00.000Z' },
-				writer
+				writer,
+				notify
 			})
 		).rejects.toBeInstanceOf(GroupRecordError);
 		expect(writes).toEqual([]);
@@ -262,7 +287,8 @@ describe('record validation', () => {
 			callerDid: ADMIN,
 			intent: 'create',
 			record: { ...validRecord(), $type: 'app.bsky.feed.post' },
-			writer
+			writer,
+			notify
 		});
 		expect(writes[0].record.$type).toBe(GROUP_EVENT_COLLECTION);
 		expect(writes[0].collection).toBe(GROUP_EVENT_COLLECTION);
@@ -291,5 +317,67 @@ describe('credentials', () => {
 				record: validRecord()
 			})
 		).rejects.toBeInstanceOf(GroupPermissionError);
+	});
+});
+
+// The events tab is served from the app's index rather than from the group's
+// PDS, so a write that does not reach the index is a write nobody can see.
+// Discovery is not a substitute: an actor-scoped read backfills a repo once and
+// then records that it is done, so everything written after that first read is
+// invisible until someone says so.
+describe('telling the index', () => {
+	it('hands over the URI that landed, on create, on edit and on delete', async () => {
+		const created = await writeGroupEvent({
+			db,
+			env,
+			group,
+			callerDid: OWNER,
+			intent: 'create',
+			record: validRecord(),
+			writer,
+			notify
+		});
+		await writeGroupEvent({
+			db,
+			env,
+			group,
+			callerDid: ADMIN,
+			intent: 'update',
+			rkey: created.rkey,
+			record: validRecord('Kona weekly ride — new time'),
+			writer,
+			notify
+		});
+		await deleteGroupEvent({
+			db,
+			env,
+			group,
+			callerDid: ADMIN,
+			rkey: created.rkey,
+			writer,
+			notify
+		});
+
+		const uri = `at://${GROUP_DID}/${GROUP_EVENT_COLLECTION}/${created.rkey}`;
+		expect(notified).toEqual([uri, uri, uri]);
+	});
+
+	// The PDS has already accepted the record by this point. Failing the write
+	// would be untrue, and would invite a retry of a write that landed.
+	it('reports success when the index is unreachable', async () => {
+		const result = await writeGroupEvent({
+			db,
+			env,
+			group,
+			callerDid: OWNER,
+			intent: 'create',
+			record: validRecord(),
+			writer,
+			notify: async () => {
+				throw new Error('D1_ERROR: Network connection lost');
+			}
+		});
+		expect(result.repo).toBe(GROUP_DID);
+		expect(writes).toHaveLength(1);
 	});
 });
