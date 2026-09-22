@@ -42,10 +42,17 @@ CREATE TABLE IF NOT EXISTS groups (
 	group_did TEXT NOT NULL UNIQUE,
 	owner_did TEXT NOT NULL,
 	name TEXT NOT NULL,
-	slug TEXT NOT NULL UNIQUE,
+	-- No `slug`: the group's name in a URL is its DID, and the human name it
+	-- shows is its PDS HANDLE, read through the identity resolver and cached in
+	-- contrail's `identities` — neither is a column here. The handle
+	-- registration at mint is also the name reservation, so there is no second
+	-- uniqueness adjudicator to keep. (Spec: FR-001a, FR-010a.)
+	--
+	-- No `status` either: a group that exists is published (FR-016c). And
+	-- visibility is two values, not three — `unlisted` needed a flag an indexer
+	-- honors and no record carries one (FR-016d).
 	description TEXT,
-	status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'pending', 'published')),
-	visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'unlisted', 'private')),
+	visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private')),
 	require_approval INTEGER NOT NULL DEFAULT 1 CHECK (require_approval IN (0, 1)),
 	-- Group avatar as an atproto blob ref in the GROUP's repo: the three fields a
 	-- `{$type:'blob'}` needs to be reconstructed without a second fetch.
@@ -57,7 +64,7 @@ CREATE TABLE IF NOT EXISTS groups (
 	location_lat REAL,
 	location_lng REAL,
 	location_timezone TEXT,
-	-- at://<group_did>/space/<type>/<slug> for each of the group's two spaces,
+	-- at://<group_did>/space/<type>/self for each of the group's two spaces,
 	-- NULL until create provisions them. The `/space/` segment is part of the URI
 	-- form, not a typo. No `space_type` column: a space URI already carries its
 	-- type, and the type is now a constant per space
@@ -72,7 +79,7 @@ CREATE TABLE IF NOT EXISTS groups (
 	updated_at INTEGER NOT NULL
 )
 -- @statement
-CREATE INDEX IF NOT EXISTS groups_browse ON groups (status, visibility, created_at DESC)
+CREATE INDEX IF NOT EXISTS groups_browse ON groups (visibility, created_at DESC)
 -- @statement
 -- `group_did` is the write gate's target and `owner_did` is the anchor of every
 -- owner-protection trigger below; letting either be rewritten would turn a

@@ -8,6 +8,7 @@
 		updateGroupForm
 	} from '$lib/groups/groups.remote';
 	import { groupFormError } from '$lib/groups/form-result';
+	import { resolve } from '$app/paths';
 
 	let { data } = $props();
 
@@ -19,6 +20,29 @@
 	let isOwner = $derived(membership.role === 'owner');
 	let isMember = $derived(membership.role !== null);
 	let isPending = $derived(membership.pendingRequestId !== null);
+	// WHAT THE GROUP PUBLISHED, not what our columns imply. `joinPolicy` is the
+	// profile record's own field; the loader only falls back to deriving it from
+	// `visibility`/`require_approval` when there is no record to read (FR-004b).
+	// Reading the columns here would let the page contradict the record a
+	// stranger fetches from the group's PDS.
+	let joinPolicy = $derived(about.joinPolicy);
+	let joiningLabel = $derived(
+		joinPolicy === 'open'
+			? 'open to anyone'
+			: joinPolicy === 'approval'
+				? 'by approval'
+				: 'invite only'
+	);
+	// The server still adjudicates: a private group refuses a self-service join
+	// outright, and the refusal comes back as the form error below. The label
+	// only has to describe what pressing the button asks for.
+	let joinLabel = $derived(
+		joinPolicy === 'open'
+			? 'Join'
+			: joinPolicy === 'approval'
+				? 'Request to join'
+				: 'Ask to be invited'
+	);
 	let joinError = $derived(groupFormError(joinGroupForm.result));
 	let joinPending = $derived(
 		joinGroupForm.result?.ok === true && joinGroupForm.result.outcome === 'pending'
@@ -43,12 +67,17 @@
 	<div class="flex flex-wrap items-start justify-between gap-4">
 		<div class="min-w-0">
 			<h1 class="text-3xl font-bold sm:text-4xl">{about.name}</h1>
+			<!-- THE GROUP'S ADDRESS, shown as the handle when its PDS confirms one.
+			     A handle is the half a person can read, say and type, so it is what
+			     belongs on the page; it is NOT what the app links with, because a
+			     handle can lapse and be re-registered by another account while the
+			     DID never moves. Text and URL therefore disagree on purpose: the
+			     readable name here, the permanent key in every href. (FR-010a.) -->
 			<p class="text-base-400 dark:text-base-500 mt-2 font-mono text-xs break-all">
-				{group.group_did}
+				{data.handle ?? group.group_did}
 			</p>
 		</div>
 		<div class="flex shrink-0 flex-wrap gap-2">
-			{#if group.status !== 'published'}<Badge variant="secondary">{group.status}</Badge>{/if}
 			<Badge variant="secondary">{group.visibility}</Badge>
 			{#if membership.role}<Badge>{membership.role}</Badge>{/if}
 		</div>
@@ -71,7 +100,7 @@
 		{/if}
 		<div>
 			<dt class="inline">Joining:</dt>
-			<dd class="inline">{group.require_approval ? 'by approval' : 'open'}</dd>
+			<dd class="inline">{joiningLabel}</dd>
 		</div>
 		{#if group.about_space_uri}
 			<div class="w-full">
@@ -110,9 +139,17 @@
 	</p>
 
 	<div class="mt-6 flex flex-wrap items-center gap-3">
-		<Button href="/groups/{group.slug}/events" variant="secondary">Events</Button>
+		<!-- Both children key on the same DID this page was reached by, so a group
+		     reached through a handle URL still hands out DID links. -->
+		<Button
+			href={resolve('/(app)/groups/[actor]/events', { actor: group.group_did })}
+			variant="secondary">Events</Button
+		>
 		{#if data.canSeeMembers}
-			<Button href="/groups/{group.slug}/members" variant="secondary">Members</Button>
+			<Button
+				href={resolve('/(app)/groups/[actor]/members', { actor: group.group_did })}
+				variant="secondary">Members</Button
+			>
 		{/if}
 
 		{#if !data.membership.did}
@@ -121,7 +158,7 @@
 			>
 		{:else if isPending}
 			<form {...leaveGroupForm}>
-				<input type="hidden" name="slug" value={group.slug} />
+				<input type="hidden" name="groupDid" value={group.group_did} />
 				<Button type="submit" variant="ghost">Withdraw request</Button>
 			</form>
 			<span class="text-base-500 dark:text-base-400 text-sm">Request pending approval</span>
@@ -132,15 +169,15 @@
 				>
 			{:else}
 				<form {...leaveGroupForm}>
-					<input type="hidden" name="slug" value={group.slug} />
+					<input type="hidden" name="groupDid" value={group.group_did} />
 					<Button type="submit" variant="ghost">Leave group</Button>
 				</form>
 			{/if}
 		{:else}
 			<form {...joinGroupForm} class="flex items-center gap-2">
-				<input type="hidden" name="slug" value={group.slug} />
+				<input type="hidden" name="groupDid" value={group.group_did} />
 				<Input name="message" placeholder="Say hello (optional)" class="w-56" />
-				<Button type="submit">{group.require_approval ? 'Request to join' : 'Join'}</Button>
+				<Button type="submit">{joinLabel}</Button>
 			</form>
 		{/if}
 	</div>
@@ -174,13 +211,13 @@
 						</div>
 						<div class="flex shrink-0 gap-2">
 							<form {...approveJoinRequestForm}>
-								<input type="hidden" name="slug" value={group.slug} />
+								<input type="hidden" name="groupDid" value={group.group_did} />
 								<input type="hidden" name="requestId" value={request.id} />
 								<input type="hidden" name="role" value="member" />
 								<Button type="submit" size="sm">Approve</Button>
 							</form>
 							<form {...rejectJoinRequestForm}>
-								<input type="hidden" name="slug" value={group.slug} />
+								<input type="hidden" name="groupDid" value={group.group_did} />
 								<input type="hidden" name="requestId" value={request.id} />
 								<Button type="submit" size="sm" variant="ghost">Reject</Button>
 							</form>
@@ -203,7 +240,7 @@
 
 			{#if showSettings}
 				<form {...updateGroupForm} class="mt-4 flex flex-col gap-4">
-					<input type="hidden" name="slug" value={group.slug} />
+					<input type="hidden" name="groupDid" value={group.group_did} />
 					<div class="flex flex-col gap-1.5">
 						<Label for="settings-name">Name</Label>
 						<Input id="settings-name" name="name" value={about.name} required />
@@ -229,35 +266,21 @@
 							>{about.rules.map((rule) => rule.text).join('\n')}</textarea
 						>
 						<p class="text-base-500 dark:text-base-400 text-xs">
-							One rule per line. Each line is its own record, so editing one rule leaves the
-							others’ addresses untouched.
+							One rule per line. Each line is its own record, so editing one rule leaves the others’
+							addresses untouched.
 						</p>
 					</div>
-					<div class="grid gap-4 sm:grid-cols-2">
-						<div class="flex flex-col gap-1.5">
-							<Label for="settings-visibility">Visibility</Label>
-							<select
-								id="settings-visibility"
-								name="visibility"
-								class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
-							>
-								{#each ['public', 'unlisted', 'private'] as value (value)}
-									<option {value} selected={group.visibility === value}>{value}</option>
-								{/each}
-							</select>
-						</div>
-						<div class="flex flex-col gap-1.5">
-							<Label for="settings-status">Status</Label>
-							<select
-								id="settings-status"
-								name="status"
-								class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
-							>
-								{#each ['draft', 'pending', 'published'] as value (value)}
-									<option {value} selected={group.status === value}>{value}</option>
-								{/each}
-							</select>
-						</div>
+					<div class="flex flex-col gap-1.5">
+						<Label for="settings-visibility">Visibility</Label>
+						<select
+							id="settings-visibility"
+							name="visibility"
+							class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
+						>
+							{#each ['public', 'private'] as value (value)}
+								<option {value} selected={group.visibility === value}>{value}</option>
+							{/each}
+						</select>
 					</div>
 					<!-- No Space URI field: both spaces are provisioned at create under the
 					     group's own DID, so there is nothing here to edit. They are shown

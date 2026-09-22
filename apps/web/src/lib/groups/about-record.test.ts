@@ -1,8 +1,8 @@
 // The profile/rule record SHAPE. Two things here are load-bearing rather than
 // plumbing, and both would pass a "does it round-trip" test while being wrong:
 //
-//   1. the join-policy mapping is deliberately NOT a bijection (FR-004b), so
-//      the inverse must not be written as if it were;
+//   1. the join-policy mapping is one-way (FR-004b) — it became total when the
+//      third visibility went, and must still not be inverted;
 //   2. an unrecognised join policy must fail CLOSED, because this value comes
 //      off a PDS and decides whether strangers can walk into a group.
 import { describe, it, expect } from 'vitest';
@@ -25,29 +25,23 @@ describe('joinPolicyFor', () => {
 		expect(joinPolicyFor({ visibility: 'private', require_approval: 0 })).toBe('invite');
 	});
 
-	it('distinguishes approval from open for the visible visibilities', () => {
+	it('distinguishes approval from open for a public group', () => {
 		expect(joinPolicyFor({ visibility: 'public', require_approval: 1 })).toBe('approval');
 		expect(joinPolicyFor({ visibility: 'public', require_approval: 0 })).toBe('open');
-		expect(joinPolicyFor({ visibility: 'unlisted', require_approval: 1 })).toBe('approval');
-		expect(joinPolicyFor({ visibility: 'unlisted', require_approval: 0 })).toBe('open');
 	});
 });
 
 describe('requireApprovalFor', () => {
+	// THE INVERSE IS PARTIAL ON PURPOSE, and it stayed partial when it stopped
+	// being ambiguous: only `private` maps to `invite` now, so the mapping looks
+	// invertible — and a rebuild that took that path would forbid a PUBLIC group
+	// from ever being invite-only. What comes back is the approval flag and
+	// nothing else; the stored visibility is what `about-read.ts` keeps.
+	// (FR-004b.)
 	it('restores require_approval and nothing else', () => {
 		expect(requireApprovalFor('open')).toBe(0);
 		expect(requireApprovalFor('approval')).toBe(1);
 		expect(requireApprovalFor('invite')).toBe(1);
-	});
-
-	// THE ASYMMETRY, asserted so nobody later "completes" the inverse: both
-	// public and unlisted produce the same policy, so a policy cannot name a
-	// visibility. A rebuild that guessed one would silently widen or narrow who
-	// can see a group. (FR-004b.)
-	it('cannot recover visibility, because two visibilities share each policy', () => {
-		const fromPublic = joinPolicyFor({ visibility: 'public', require_approval: 0 });
-		const fromUnlisted = joinPolicyFor({ visibility: 'unlisted', require_approval: 0 });
-		expect(fromPublic).toBe(fromUnlisted);
 	});
 });
 

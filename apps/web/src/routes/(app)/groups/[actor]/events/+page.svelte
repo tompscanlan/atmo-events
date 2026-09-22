@@ -5,10 +5,14 @@
 	import type { GroupEventRecord } from '$lib/groups/types';
 	import { ADDRESS_TYPE } from '$lib/groups/event-record';
 	import { groupFormError } from '$lib/groups/form-result';
+	import { resolve } from '$app/paths';
 
 	let { data } = $props();
 
 	let group = $derived(data.group);
+	// The group's name is a RECORD, not a column: the loader reads it from the
+	// about space so this tab cannot show a name the group page contradicts.
+	let groupName = $derived(data.groupName);
 	/** Which event's edit form is open, by rkey. Co-editing is the point of this
 	 *  page: any MANAGE_EVENTS holder edits any of them, because they are all the
 	 *  GROUP's records, not each admin's. */
@@ -58,13 +62,13 @@
 	}
 </script>
 
-<svelte:head><title>{group.name} events — atmo.rsvp</title></svelte:head>
+<svelte:head><title>{groupName} events — atmo.rsvp</title></svelte:head>
 
 <div class="mx-auto max-w-3xl px-6 py-8 sm:py-12">
 	<a
-		href="/groups/{group.slug}"
+		href={resolve('/(app)/groups/[actor]', { actor: group.group_did })}
 		class="text-base-500 dark:text-base-400 mb-4 inline-block text-sm hover:underline"
-		>← {group.name}</a
+		>← {groupName}</a
 	>
 
 	<div class="mb-2 flex flex-wrap items-center justify-between gap-4">
@@ -85,7 +89,7 @@
 			{...saveGroupEventForm}
 			class="ring-base-200 dark:ring-base-800 mb-8 rounded-2xl p-4 ring-1"
 		>
-			<input type="hidden" name="slug" value={group.slug} />
+			<input type="hidden" name="groupDid" value={group.group_did} />
 			<div class="flex flex-col gap-4">
 				<div class="flex flex-col gap-1.5">
 					<Label for="new-name">Name</Label>
@@ -159,7 +163,7 @@
 								{editing === event.rkey ? 'Cancel' : 'Edit'}
 							</button>
 							<form {...deleteGroupEventForm}>
-								<input type="hidden" name="slug" value={group.slug} />
+								<input type="hidden" name="groupDid" value={group.group_did} />
 								<input type="hidden" name="rkey" value={event.rkey} />
 								<button type="submit" class="text-sm text-red-600 hover:underline dark:text-red-400"
 									>Delete</button
@@ -173,7 +177,7 @@
 								{...saveGroupEventForm}
 								class="ring-base-200 dark:ring-base-800 mt-3 rounded-2xl p-4 ring-1"
 							>
-								<input type="hidden" name="slug" value={group.slug} />
+								<input type="hidden" name="groupDid" value={group.group_did} />
 								<input type="hidden" name="rkey" value={event.rkey} />
 								<input type="hidden" name="createdAt" value={text(event.value.createdAt)} />
 								<div class="flex flex-col gap-4">

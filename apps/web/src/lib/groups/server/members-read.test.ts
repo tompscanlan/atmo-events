@@ -159,9 +159,7 @@ beforeEach(async () => {
 	group = await createGroup(db, {
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
-		name: 'Kona',
-		slug: 'kona',
-		status: 'published'
+		name: 'Kona'
 	});
 	await addMember(db, group.id, ADMIN, 'admin');
 	await addMember(db, group.id, MEMBER, 'member');

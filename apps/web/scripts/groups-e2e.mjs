@@ -44,8 +44,8 @@
  *      fail this one, while invalidating every citation the group ever handed
  *      out (FR-004c, SC-011);
  *  12. every column the profile owns is corrupted through the app's own
- *      updater, rebuilt from records, and comes back — while `visibility` and
- *      `status`, which no record owns yet, are left exactly as they were
+ *      updater, rebuilt from records, and comes back — while `visibility`,
+ *      which no record owns yet, is left exactly as it was
  *      (FR-004b, FR-009, SC-002 mode 1);
  *  13. the ROSTER is records: the owner's membership keyed by the member DID,
  *      the members space's `access` record, and the app's reader agreeing with
@@ -118,8 +118,10 @@ const WORKER_ENTRY = join(WEB_DIR, 'scripts/groups-e2e.worker.ts');
 
 const PDS = process.env.GROUPS_E2E_PDS ?? 'https://pds.opnmt.net';
 
-/** The dev fixture's custodial group account. NEVER minted here — v1 binds an
- *  existing DID (see $lib/groups/server/credentials.ts, AUTO_MINT_GROUP_DID). */
+/** The dev fixture's custodial group account. NEVER minted here: this run binds
+ *  an existing DID through `createGroup` so that the story below is about the
+ *  roster and the records, not about `runCreateGroup`'s mint — which would put
+ *  a new, unrecallable did:plc on the live fixture PDS on every run. */
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const GROUP_HANDLE = 'spike-group.opnmt.net';
 /** Owner, promoted admin, and a non-member. Humans, never write targets. */
@@ -133,7 +135,6 @@ const EVENT_COLLECTION = 'community.lexicon.calendar.event';
  *  a stranger receives, and importing our own constant would make the check
  *  agree with the code by construction. */
 const DECLARATION_COLLECTION = 'net.openmeet.group.declaration';
-const GROUP_SLUG = 'spike-groups-e2e';
 
 /** The pared seed, as literals (FR-005a/FR-005c): owner and admin hold the six
  *  enforced names, a member holds none. Written out rather than imported,
@@ -413,9 +414,7 @@ async function main() {
 			groupDid: GROUP_DID,
 			ownerDid: ALICE,
 			name: 'Spike groups e2e',
-			slug: GROUP_SLUG,
 			description: 'Fixture group for apps/web/scripts/groups-e2e.mjs.',
-			status: 'published',
 			visibility: 'public'
 		});
 		const members = await must('listMembers', { groupId: group.id });
@@ -432,7 +431,7 @@ async function main() {
 				owners[0].did === ALICE &&
 				seededBundles,
 			'group bound to the custodial DID, one active owner, three pared role bundles',
-			`${group.slug} on ${group.group_did}, roster ${members.length} (${owners.length} active owner: ${owners[0]?.did}), ` +
+			`${group.name} on ${group.group_did}, roster ${members.length} (${owners.length} active owner: ${owners[0]?.did}), ` +
 				Object.entries(sizes)
 					.map(([role, n]) => `${role} ${n}`)
 					.join(' / ')
@@ -680,8 +679,8 @@ async function main() {
 
 		// 12. the cache is a cache ------------------------------------------------
 		// Corrupt every column the profile owns, rebuild from records, and check
-		// the row came back — while `visibility` and `status`, which no record
-		// owns, are left exactly as they were. (SC-002 mode 1, FR-004b.)
+		// the row came back — while `visibility`, which no record owns, is left
+		// exactly as it was. (SC-002 mode 1, FR-004b.)
 		await must('corruptGroupCache', { groupId: group.id });
 		const rebuilt = await must('rebuildGroupCache', { groupId: group.id });
 		record(
@@ -690,12 +689,12 @@ async function main() {
 				rebuilt.row.description === 'Written into the about space, not a column.' &&
 				rebuilt.row.location_name === 'Kailua-Kona' &&
 				rebuilt.row.require_approval === 1 &&
-				// Untouched: no record owns these yet, so a rebuild must not guess.
-				rebuilt.row.visibility === group.visibility &&
-				rebuilt.row.status === group.status,
+				// Untouched: no record owns visibility yet, so a rebuild must not
+				// guess one from the join policy it CAN read (FR-004b).
+				rebuilt.row.visibility === group.visibility,
 			'a corrupted cache rebuilds from records, and leaves what no record owns alone',
 			`name "${rebuilt.row.name}"; visibility ${rebuilt.row.visibility} (was ${group.visibility}); ` +
-				`status ${rebuilt.row.status}; ${rebuilt.rules} rule record(s)`
+				`${rebuilt.rules} rule record(s)`
 		);
 
 		// 13. the roster is RECORDS ----------------------------------------------

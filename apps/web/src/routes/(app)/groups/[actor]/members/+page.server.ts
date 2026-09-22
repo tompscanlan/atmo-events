@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
-import { canSeeGroup, canSeeMembers } from '$lib/groups/access';
+import { canSeeMembers } from '$lib/groups/access';
 import { ASSIGNABLE_ROLES, can } from '$lib/groups/permissions';
-import { groupSpaceReader } from '$lib/groups/server/about-read';
+import { groupSpaceReader, readGroupAbout } from '$lib/groups/server/about-read';
 import {
 	NO_MEMBER_RECORDS,
 	hasMemberRecords,
@@ -10,19 +10,14 @@ import {
 	rosterFromRecords,
 	rosterFromRows
 } from '$lib/groups/server/members-read';
-import {
-	getCallerMembership,
-	getGroupBySlug,
-	listJoinRequests,
-	listMembers,
-	rolePermissions
-} from '$lib/groups/server/repo';
+import { groupRouteContext } from '$lib/groups/server/route-context';
+import { listJoinRequests, listMembers, rolePermissions } from '$lib/groups/server/repo';
 import type { PageServerLoad } from './$types';
 
 /** The roster is RECORDS with a D1 cache behind it, which is the direction T014
  *  reversed: a `membership` record in the group's members space is what grants a
  *  member their roles, and the `memberships` rows are a projection of it. So
- *  this page reads the records through the group's own session (FR-007) and
+ *  this page reads the records through the group's own session (FR-007a) and
  *  falls back to the rows only when the space holds none — a group provisioned
  *  before those records existed, or a deployment holding no credential for it.
  *
@@ -32,20 +27,20 @@ import type { PageServerLoad } from './$types';
  *  permission — read access is not something a group grants (FR-005d) — and it
  *  is members-only at every visibility (FR-016b).
  *
- *  `canSeeGroup` still asks the D1 membership, because what it gates on is
- *  `groups.visibility`, which is app-local cache no record owns (`data-model.md`
- *  Tier 3). Moving the caller's ROLE AND PERMISSION resolution onto records is
- *  T016 (`om-i92w3`); this page moves the roster and its own gate. */
+ *  `groupRouteContext` still asks the D1 membership for the PAGE gate, because
+ *  what it gates on is `groups.visibility`, which is app-local cache no record
+ *  owns (`data-model.md` Tier 3). Moving the caller's ROLE AND PERMISSION
+ *  resolution onto records is T016 (`om-i92w3`); this page moves the roster and
+ *  its own gate. */
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
-	const group = await getGroupBySlug(db, params.slug);
-	if (!group) error(404, 'Group not found');
-
-	const membership = await getCallerMembership(db, group.id, locals.did);
-	if (!canSeeGroup(group, membership)) error(404, 'Group not found');
+	const { group, membership } = await groupRouteContext(db, params.actor, locals.did);
 
 	const reader = await groupSpaceReader(platform!.env, db, group);
+	// One reader, two reads: the roster this page is for, and the group's name
+	// for its back-link — which is a record like every other name (FR-010).
 	const members = reader ? await readGroupMembers(reader, group) : NO_MEMBER_RECORDS;
+	const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };
 	const fromRecords = hasMemberRecords(members);
 
 	if (fromRecords ? !hasRecordedAccess(members, locals.did) : !canSeeMembers(membership)) {
@@ -59,6 +54,7 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	return {
 		group,
 		membership,
+		groupName: about.profile?.name ?? group.name,
 		members: fromRecords
 			? rosterFromRecords(members)
 			: rosterFromRows(await listMembers(db, group.id)),

@@ -42,9 +42,7 @@ beforeEach(async () => {
 	group = await createGroup(db, {
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
-		name: 'Kona',
-		slug: 'kona',
-		status: 'published'
+		name: 'Kona'
 	});
 	await addMember(db, group.id, MEMBER, 'member');
 	await recordGroupSpaces(db, group.id, {
@@ -135,19 +133,6 @@ describe('writeGroupDeclaration', () => {
 describe('reconcileGroupDeclaration', () => {
 	it('declares a public group', async () => {
 		await reconcileGroupDeclaration({ db, env, group, callerDid: OWNER, writer });
-
-		expect(writes).toHaveLength(1);
-		expect(writes[0].intent).toBe('update');
-	});
-
-	it('declares an unlisted group — unlisted hides it from OUR index, not from the network', async () => {
-		await reconcileGroupDeclaration({
-			db,
-			env,
-			group: { ...group, visibility: 'unlisted' },
-			callerDid: OWNER,
-			writer
-		});
 
 		expect(writes).toHaveLength(1);
 		expect(writes[0].intent).toBe('update');

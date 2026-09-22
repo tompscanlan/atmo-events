@@ -71,8 +71,6 @@ beforeEach(async () => {
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
 		name: 'Stale name',
-		slug: 'kona',
-		status: 'published',
 		description: 'Stale description',
 		locationName: 'Stale location'
 	});
@@ -204,10 +202,12 @@ describe('rebuildGroupCache — mode 1, cache repair', () => {
 		});
 	});
 
-	// The columns no record owns must survive a rebuild untouched — a rebuild
-	// that reset them would silently republish or hide a group. (FR-004b.)
-	it('leaves visibility, status and owner_did alone', async () => {
-		await updateGroup(db, group.id, { visibility: 'unlisted', status: 'pending' });
+	// The columns no record owns must survive a rebuild untouched. `visibility` is
+	// the one that matters: an `approval` join policy is what a PUBLIC
+	// approval-gated group's profile carries too, so a rebuild that inverted the
+	// policy back into a visibility would publish this private group. (FR-004b.)
+	it('leaves visibility and owner_did alone', async () => {
+		await updateGroup(db, group.id, { visibility: 'private' });
 		const reader = readerOver([
 			{
 				collection: GROUP_PROFILE_COLLECTION,
@@ -218,11 +218,7 @@ describe('rebuildGroupCache — mode 1, cache repair', () => {
 
 		await rebuildGroupCache(db, reader, group);
 		const repaired = await getGroupById(db, group.id);
-		expect(repaired).toMatchObject({
-			visibility: 'unlisted',
-			status: 'pending',
-			owner_did: OWNER
-		});
+		expect(repaired).toMatchObject({ visibility: 'private', owner_did: OWNER });
 	});
 
 	// THE SAFETY CASE. migrations/0003 forbids private + open join, so a profile

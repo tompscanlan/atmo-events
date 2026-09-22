@@ -27,9 +27,10 @@ let env: CreateGroupEnv;
 function data(overrides: Partial<CreateGroupData> = {}): CreateGroupData {
 	return {
 		name: 'Kona Trail Runners',
-		slug: 'kona',
+		// The handle LABEL to mint, which is not stored anywhere: the PDS's handle
+		// registration is the group's only name reservation (FR-001a).
+		label: 'kona',
 		visibility: 'public',
-		status: 'published',
 		requireApproval: true,
 		...overrides
 	};
@@ -78,9 +79,9 @@ function stubPds(overrides: { account?: () => Response } = {}) {
 				overrides.account?.() ??
 				Response.json({
 					did: MINTED_DID,
-					// Deliberately NOT the submitted slug: the PDS is what adjudicates
-					// the name, so the row must be written from THIS value — the leaf
-					// label of the handle actually registered. (Spec: FR-001a.)
+					// Deliberately NOT the submitted label: the PDS adjudicates the
+					// name, so the handle a caller is told about must come from THIS
+					// value and never from the field they typed. (Spec: FR-001a.)
 					handle: 'konatrail.group.stub.test',
 					accessJwt: 'master-jwt'
 				})
@@ -179,7 +180,10 @@ describe('a name the PDS refuses', () => {
 
 		const result = await runCreateGroup(env, OWNER, data());
 
-		expect(result).toEqual({ ok: false, error: '“kona” is already taken. Choose another URL name.' });
+		expect(result.ok).toBe(false);
+		// The refusal names the label the caller typed, because that is the field
+		// they can change — a collision is not a deployment fault. (FR-001e.)
+		expect(!result.ok && result.error).toContain('kona');
 		expect(await rows('groups')).toEqual([]);
 		expect(await rows('group_credentials')).toEqual([]);
 		// Nothing past the mint ran: no session, and above all no space, which
@@ -202,13 +206,13 @@ describe('refusing before the irreversible step', () => {
 		expect(await rows('groups')).toEqual([]);
 	});
 
-	// Our slug rules are wider than the PDS's handle rules. A label the PDS
-	// would reject has to fail on the field the user can edit — before a mint,
-	// not as a PDS error after one.
-	it('makes no PDS call for a slug the PDS would reject', async () => {
+	// The label field accepts more than the PDS's handle rules do. A label the
+	// PDS would reject has to fail on the field the user can edit — before a
+	// mint, not as a PDS error after one.
+	it('makes no PDS call for a label the PDS would reject', async () => {
 		const { calls } = stubPds();
 
-		const result = await runCreateGroup(env, OWNER, data({ slug: 'kona-trail-runners-club' }));
+		const result = await runCreateGroup(env, OWNER, data({ label: 'kona-trail-runners-club' }));
 
 		expect(result.ok).toBe(false);
 		expect(calls).toEqual([]);
@@ -415,16 +419,22 @@ describe('a successful create', () => {
 		expect(new Set(rules.map((write) => write.rkey)).size).toBe(2);
 	});
 
-	// The slug is the minted handle's leaf, never the submitted field, because the
-	// PDS's handle registry is what adjudicated the name. (Spec: FR-001a.)
-	it('writes the group from the minted handle and keys the credential on the minted DID', async () => {
+	// EVERYTHING IS KEYED ON THE MINTED DID, and the only name that comes back is
+	// the handle the PDS registered — never the submitted label, because the
+	// handle registry is what adjudicated the name. There is no third name: no
+	// column reserves one, so a caller that wants to address this group has the
+	// DID and a handle it must resolve. (Spec: FR-001a, FR-010a.)
+	it('returns the minted DID and the registered handle, and keys every row on the DID', async () => {
 		stubPds();
 
-		const result = await runCreateGroup(env, OWNER, data({ slug: 'kona' }));
+		const result = await runCreateGroup(env, OWNER, data({ label: 'kona' }));
 
-		expect(result).toMatchObject({ ok: true, groupSlug: 'konatrail' });
-		const [group] = (await rows('groups')) as { slug: string; group_did: string }[];
-		expect(group.slug).toBe('konatrail');
+		expect(result).toMatchObject({
+			ok: true,
+			groupDid: MINTED_DID,
+			handle: 'konatrail.group.stub.test'
+		});
+		const [group] = (await rows('groups')) as { group_did: string }[];
 		expect(group.group_did).toBe(MINTED_DID);
 		const [cred] = (await rows('group_credentials')) as { group_did: string; secret: string }[];
 		expect(cred.group_did).toBe(MINTED_DID);

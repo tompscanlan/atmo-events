@@ -2,17 +2,17 @@
 	import { Button, Input, Label } from '@foxui/core';
 	import { createGroupForm } from '$lib/groups/groups.remote';
 	import { resolve } from '$app/paths';
-	import { MINTABLE_LABEL_INPUT_PATTERN, slugifyGroupName } from '$lib/groups/slug';
+	import { MINTABLE_LABEL_INPUT_PATTERN, labelFromGroupName } from '$lib/groups/handle-label';
 	import { groupFormError } from '$lib/groups/form-result';
 
 	let { data } = $props();
 
 	let name = $state('');
-	let slug = $state('');
-	// The slug follows the name until the operator edits it, then stops — typing a
-	// URL by hand and watching it be overwritten is the worse failure.
-	let slugTouched = $state(false);
-	let derivedSlug = $derived(slugTouched ? slug : name ? slugifyGroupName(name) : '');
+	let label = $state('');
+	// The label follows the name until the operator edits it, then stops — typing
+	// a handle by hand and watching it be overwritten is the worse failure.
+	let labelTouched = $state(false);
+	let derivedLabel = $derived(labelTouched ? label : name ? labelFromGroupName(name) : '');
 	let createError = $derived(groupFormError(createGroupForm.result));
 	// The success branch carries the recovery key, so it is read ONCE from the
 	// form result and never refetched — there is no route that could show it
@@ -70,7 +70,7 @@
 			<p class="mt-1">
 				This is the only time it is shown. It is not stored anywhere on this service. Keep it
 				somewhere safe — with it you can move
-				<strong>{created.groupSlug}</strong> to another host, and without it you cannot.
+				<strong>{created.handle}</strong> to another host, and without it you cannot.
 			</p>
 			<!-- The key is portability, not ownership: it moves the group, it does
 			     not operate it. Saying only what it unlocks invites the reading
@@ -86,9 +86,13 @@
 				class="rounded-ui bg-base-100 dark:bg-base-900 mt-3 w-full border-0 px-3 py-1.5 font-mono text-xs"
 				value={created.recoveryKey}
 			></textarea>
+			<!-- The handle is what the owner just chose and will recognise, so it is
+			     what the link SAYS; the href carries the DID, because that is the
+			     group's permanent address and the handle is only a lease on a name.
+			     (Spec: FR-010a.) -->
 			<p class="mt-3">
-				<a class="underline" href={resolve('/(app)/groups/[slug]', { slug: created.groupSlug })}
-					>Continue to {created.groupSlug}</a
+				<a class="underline" href={resolve('/(app)/groups/[actor]', { actor: created.groupDid })}
+					>Continue to {created.handle}</a
 				>
 			</p>
 		</div>
@@ -100,23 +104,29 @@
 			<Input id="group-name" name="name" bind:value={name} required maxlength={120} />
 		</div>
 
+		<!-- NOT A URL FIELD. The site's own links carry the group's DID, so nothing
+		     here decides an address on atmo.rsvp; what this string decides is the
+		     HANDLE the mint registers, which is the group's name reservation on the
+		     network and is made once. (Spec: FR-001a, FR-010a.) -->
 		<div class="flex flex-col gap-1.5">
-			<Label for="group-slug">URL</Label>
-			<div class="flex items-center gap-2">
-				<span class="text-base-500 dark:text-base-400 shrink-0 text-sm">/groups/</span>
-				<Input
-					id="group-slug"
-					name="slug"
-					value={derivedSlug}
-					oninput={(e) => {
-						slugTouched = true;
-						slug = e.currentTarget.value;
-					}}
-					required
-					pattern={MINTABLE_LABEL_INPUT_PATTERN}
-					class="flex-1"
-				/>
-			</div>
+			<Label for="group-label">Handle</Label>
+			<Input
+				id="group-label"
+				name="label"
+				value={derivedLabel}
+				oninput={(e) => {
+					labelTouched = true;
+					label = e.currentTarget.value;
+				}}
+				required
+				pattern={MINTABLE_LABEL_INPUT_PATTERN}
+			/>
+			<p class="text-base-500 dark:text-base-400 text-xs">
+				The leaf of the group’s handle under this deployment’s group domain — so
+				<span class="font-mono">{derivedLabel || 'name'}.group.opnmt.net</span>. Creating the group
+				registers that handle, and it is the address the group is known by from then on: pick it as
+				carefully as a username, because it is not changeable here afterwards.
+			</p>
 		</div>
 
 		<!-- The Group DID field is gone: creating a group MINTS its identity, so
@@ -150,31 +160,16 @@
 			</p>
 		</div>
 
-		<div class="grid gap-5 sm:grid-cols-2">
-			<div class="flex flex-col gap-1.5">
-				<Label for="group-visibility">Visibility</Label>
-				<select
-					id="group-visibility"
-					name="visibility"
-					class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
-				>
-					<option value="public">public — listed and browsable</option>
-					<option value="unlisted">unlisted — reachable by link</option>
-					<option value="private">private — members only</option>
-				</select>
-			</div>
-			<div class="flex flex-col gap-1.5">
-				<Label for="group-status">Status</Label>
-				<select
-					id="group-status"
-					name="status"
-					class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
-				>
-					<option value="draft">draft</option>
-					<option value="pending">pending</option>
-					<option value="published">published</option>
-				</select>
-			</div>
+		<div class="flex flex-col gap-1.5">
+			<Label for="group-visibility">Visibility</Label>
+			<select
+				id="group-visibility"
+				name="visibility"
+				class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
+			>
+				<option value="public">public — listed and browsable</option>
+				<option value="private">private — members only</option>
+			</select>
 		</div>
 
 		<!-- The Space URI field is gone: creating a group now CREATES its `about`

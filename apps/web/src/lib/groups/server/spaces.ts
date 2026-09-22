@@ -36,16 +36,17 @@ const APP_ACCESS_OPEN = 'com.atproto.simplespace.defs#open';
 
 /** THE SPACE KEY IS A CONSTANT, and it is the standard's own: the proposal's
  *  space table gives `self` as the skey for both `about` and `members`. It
- *  briefly held the group's slug here "so the URI is legible in a log", which
- *  was a divergence that cost more than legibility — a space URI is already
- *  scoped to the owner DID and the space type, a group owns exactly one of
- *  each, so the skey can only ever take one value per group per type and
- *  carries no disambiguating information. Keying it on the slug made the URI
- *  depend on a mutable, user-chosen, collidable string, which forced
- *  provisioning to run after the row INSERT that proved the slug free. With
+ *  briefly held a user-supplied name for the group here "so the URI is legible
+ *  in a log", which was a divergence that cost more than legibility — a space
+ *  URI is already scoped to the owner DID and the space type, a group owns
+ *  exactly one of each, so the skey can only ever take one value per group per
+ *  type and carries no disambiguating information. Keying it on anything the
+ *  user picked made the URI depend on a mutable, collidable string, which
+ *  forced provisioning to run after whatever step proved that string free. With
  *  `self` the URI is a function of the DID alone, so provisioning can run the
- *  moment the DID exists. `self` is also the atproto convention for a
- *  singleton (`app.bsky.actor.profile/self`). */
+ *  moment the DID exists — and NOTHING may re-couple it to a user-supplied
+ *  string, whatever that string is called next. `self` is also the atproto
+ *  convention for a singleton (`app.bsky.actor.profile/self`). */
 const SPACE_SKEY = 'self';
 
 /** The space host refused to create the space. Distinct from a record error so

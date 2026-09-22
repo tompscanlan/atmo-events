@@ -2,28 +2,21 @@
 // for writes in this app ($lib/atproto/server/repo.remote.ts,
 // $lib/contrail/events.remote.ts). Reads stay in the routes' `+page.server.ts`
 // loads.
-//
-// Shape of every handler: resolve the group by slug, resolve the CALLER's
+// Shape of every handler: resolve the group by DID, resolve the CALLER's
 // membership, ask `can()`, then act. `locals.did` is only ever the subject of
 // that check — group events are authored by the group's own DID (see
 // ./server/event-writer.ts).
 import { error } from '@sveltejs/kit';
 import { form, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
-import { canSeeGroup } from './access';
 import { ASSIGNABLE_ROLES, can } from './permissions';
 import type { GroupFormFailure, GroupFormResult } from './form-result';
 import { formError } from './form-error';
 import { runCreateGroup } from './create-group';
-import { GROUP_SLUG_PATTERN } from './slug';
-import { GROUP_STATUSES, GROUP_VISIBILITIES, type CallerMembership, type GroupRow } from './types';
-import {
-	decideJoinRequest,
-	getCallerMembership,
-	getGroupBySlug,
-	updateGroup,
-	type JoinOutcome
-} from './server/repo';
+import { GROUP_LABEL_PATTERN } from './handle-label';
+import { GROUP_VISIBILITIES, type CallerMembership, type GroupRow } from './types';
+import { decideJoinRequest, updateGroup, type JoinOutcome } from './server/repo';
+import { groupRouteContext } from './server/route-context';
 import { deleteGroupEvent, groupWriter, writeGroupEvent } from './server/event-writer';
 import { splitRuleLines } from './about-record';
 import { groupSpaceReader, readGroupAbout } from './server/about-read';
@@ -43,8 +36,16 @@ import {
 } from './server/roster';
 import { groupEventRecord } from './event-record';
 
-const slugField = v.pipe(v.string(), v.regex(GROUP_SLUG_PATTERN, 'Invalid group URL'));
+/** THE GROUP KEY every form posts. A group is addressed by its DID: there is no
+ *  slug to post and no name to be unique (FR-010a). `context` accepts a full
+ *  handle too, because the resolver the pages use is the same one — but the app
+ *  never renders a form carrying anything but the DID. Doubles as the SUBJECT
+ *  field on the roster forms, which have always taken a DID. */
 const didField = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,300}$/, 'Invalid DID'));
+/** The create form's handle label — the one string a group reserves anywhere.
+ *  Shape only; `labelMintRefusal` inside `runCreateGroup` is what a NEW label is
+ *  held to, and it reports on the field the user can edit (FR-001d). */
+const labelField = v.pipe(v.string(), v.regex(GROUP_LABEL_PATTERN, 'Invalid group handle label'));
 const idField = v.pipe(v.string(), v.minLength(1), v.maxLength(64));
 /** An HTML checkbox sends `on` when ticked and nothing at all when not, so
  *  presence is the value. */
@@ -86,34 +87,33 @@ interface GroupRequestContext {
 }
 
 /** The three things every handler needs, plus the caller's resolved
- *  permissions. Throws 404 for an unknown slug and 401 when not signed in.
+ *  permissions. Throws 401 when not signed in, and the ROUTE's own 404 for
+ *  every other refusal.
  *
- *  AN INVISIBLE GROUP IS A MISSING GROUP, and it is `canSeeGroup` that decides
- *  — the same predicate the pages use (routes/(app)/groups/[slug]/**), so the
- *  rule has one definition and a form cannot disagree with the page it was
- *  posted from. Without this a remote `form()` was a private group's existence
- *  oracle: a remote function is an addressable POST bound to nothing but
- *  sign-in and the slug, so the page's own 404 never ran (om-5oxc8). The
- *  membership lookup has to come first, because whether the caller may see the
- *  group is a question about their roster row. */
-async function context(slug: string): Promise<GroupRequestContext> {
+ *  IT IS THE SAME FUNCTION THE PAGES USE — `server/route-context.ts` — so a
+ *  form cannot disagree with the page it was posted from. That matters more
+ *  here than anywhere else: a remote `form()` is an addressable POST bound to
+ *  nothing but sign-in and the group key, so a handler with its own lookup was
+ *  a private group's existence oracle (om-5oxc8). It takes a DID or a full
+ *  handle for the same reason the pages do, though every form the app renders
+ *  posts the DID. */
+async function context(actor: string): Promise<GroupRequestContext> {
 	const { locals, platform } = getRequestEvent();
 	if (!locals.did) error(401, 'Sign in to do that');
 	const db = platform!.env.DB;
-	const group = await getGroupBySlug(db, slug);
-	if (!group) error(404, 'Group not found');
-	const membership = await getCallerMembership(db, group.id, locals.did);
-	if (!canSeeGroup(group, membership)) error(404, 'Group not found');
+	const { group, membership } = await groupRouteContext(db, actor, locals.did);
 	return { db, env: platform!.env, group, membership, callerDid: locals.did };
 }
 
 export const createGroupForm = form(
 	v.object({
 		name: v.pipe(v.string(), v.trim(), v.minLength(2), v.maxLength(120)),
-		slug: slugField,
+		/** The HANDLE LABEL, not a stored name: it is the leaf the mint registers
+		 *  under `GROUP_HANDLE_DOMAIN`, and the PDS's handle registry is what
+		 *  adjudicates it. Nothing keeps a copy (FR-001a). */
+		label: labelField,
 		description: v.optional(v.pipe(v.string(), v.maxLength(4000))),
 		visibility: v.picklist(GROUP_VISIBILITIES),
-		status: v.picklist(GROUP_STATUSES),
 		requireApproval: checkboxField,
 		// No `spaceUri` field: the group's two spaces are CREATED here now, not
 		// bound to a string someone pasted in.
@@ -123,7 +123,9 @@ export const createGroupForm = form(
 		/** No column behind this one: the rule RECORDS are the only copy. */
 		rules: v.optional(v.pipe(v.string(), v.maxLength(8000)))
 	}),
-	async (data): Promise<GroupFormResult<{ groupSlug: string; recoveryKey: string }>> => {
+	async (
+		data
+	): Promise<GroupFormResult<{ groupDid: string; handle: string; recoveryKey: string }>> => {
 		const { locals, platform } = getRequestEvent();
 		if (!locals.did) error(401, 'Sign in to create a group');
 		// NO REDIRECT on success. The owner's rotation key comes back in the
@@ -137,16 +139,15 @@ export const createGroupForm = form(
 
 export const updateGroupForm = form(
 	v.object({
-		slug: slugField,
+		groupDid: didField,
 		name: v.pipe(v.string(), v.trim(), v.minLength(2), v.maxLength(120)),
 		description: v.optional(v.pipe(v.string(), v.maxLength(4000))),
 		visibility: v.picklist(GROUP_VISIBILITIES),
-		status: v.picklist(GROUP_STATUSES),
 		requireApproval: checkboxField,
 		rules: v.optional(v.pipe(v.string(), v.maxLength(8000)))
 	}),
 	async (data): Promise<GroupFormResult> => {
-		const { db, env, group, membership, callerDid } = await context(data.slug);
+		const { db, env, group, membership, callerDid } = await context(data.groupDid);
 		if (!can(membership.permissions, 'MANAGE_GROUP')) {
 			return { ok: false, error: 'Not allowed: MANAGE_GROUP required' };
 		}
@@ -154,7 +155,6 @@ export const updateGroupForm = form(
 			await updateGroup(db, group.id, {
 				name: data.name,
 				description: data.description || null,
-				status: data.status,
 				visibility: data.visibility,
 				requireApproval: data.requireApproval
 			});
@@ -226,7 +226,7 @@ export const updateGroupForm = form(
 		} catch (e) {
 			return {
 				ok: false,
-				error: `Settings were saved, but ${group.slug}'s records were not updated: ${
+				error: `Settings were saved, but this group's records were not updated: ${
 					e instanceof Error ? e.message : String(e)
 				}`
 			};
@@ -247,11 +247,11 @@ export const updateGroupForm = form(
  *
  *  Returns the FAILURE member rather than `GroupFormResult`, so it composes in
  *  a handler whose success carries a payload. */
-function rosterFailure(slug: string, e: unknown): GroupFormFailure {
+function rosterFailure(e: unknown): GroupFormFailure {
 	if (e instanceof RosterRecordError) {
 		return {
 			ok: false,
-			error: `The roster was updated, but ${slug}'s membership record for ${e.subject} was not: ${e.message}`
+			error: `The roster was updated, but the membership record for ${e.subject} was not: ${e.message}`
 		};
 	}
 	return formError(e);
@@ -259,15 +259,15 @@ function rosterFailure(slug: string, e: unknown): GroupFormFailure {
 
 export const joinGroupForm = form(
 	v.object({
-		slug: slugField,
+		groupDid: didField,
 		message: v.optional(v.pipe(v.string(), v.maxLength(1000)))
 	}),
 	async (data): Promise<GroupFormResult<{ outcome: JoinOutcome }>> => {
-		const ctx = await context(data.slug);
+		const ctx = await context(data.groupDid);
 		try {
 			return { ok: true, outcome: await joinGroup(ctx, data.message || null) };
 		} catch (e) {
-			return rosterFailure(ctx.group.slug, e);
+			return rosterFailure(e);
 		}
 	}
 );
@@ -277,9 +277,9 @@ export const joinGroupForm = form(
  *  neither: `memberships_owner_undeletable` refuses, and that refusal surfaces
  *  as a GroupRuleError rather than a 500. */
 export const leaveGroupForm = form(
-	v.object({ slug: slugField }),
+	v.object({ groupDid: didField }),
 	async (data): Promise<GroupFormResult<{ outcome: 'withdrawn' | 'left' }>> => {
-		const ctx = await context(data.slug);
+		const ctx = await context(data.groupDid);
 		try {
 			// A pending applicant was never on the roster, so there is no record to
 			// revoke — withdrawing touches `join_requests` and nothing else.
@@ -296,19 +296,19 @@ export const leaveGroupForm = form(
 			await leaveGroup(ctx);
 			return { ok: true, outcome: 'left' };
 		} catch (e) {
-			return rosterFailure(ctx.group.slug, e);
+			return rosterFailure(e);
 		}
 	}
 );
 
 export const approveJoinRequestForm = form(
 	v.object({
-		slug: slugField,
+		groupDid: didField,
 		requestId: idField,
 		role: v.optional(assignableRoleField)
 	}),
 	async (data): Promise<GroupFormResult> => {
-		const ctx = await context(data.slug);
+		const ctx = await context(data.groupDid);
 		if (!can(ctx.membership.permissions, 'ADMIT_MEMBERS')) {
 			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
 		}
@@ -316,15 +316,15 @@ export const approveJoinRequestForm = form(
 			await admitFromRequest(ctx, data.requestId, data.role ?? 'member');
 			return { ok: true };
 		} catch (e) {
-			return rosterFailure(ctx.group.slug, e);
+			return rosterFailure(e);
 		}
 	}
 );
 
 export const rejectJoinRequestForm = form(
-	v.object({ slug: slugField, requestId: idField }),
+	v.object({ groupDid: didField, requestId: idField }),
 	async (data): Promise<GroupFormResult> => {
-		const { db, group, membership, callerDid } = await context(data.slug);
+		const { db, group, membership, callerDid } = await context(data.groupDid);
 		if (!can(membership.permissions, 'ADMIT_MEMBERS')) {
 			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
 		}
@@ -342,9 +342,9 @@ export const rejectJoinRequestForm = form(
 /** Direct add, for an admin putting a known DID straight on the roster without
  *  a request. Same gate as approval: a reviewer who may admit may admit. */
 export const addMemberForm = form(
-	v.object({ slug: slugField, did: didField, role: v.optional(assignableRoleField) }),
+	v.object({ groupDid: didField, did: didField, role: v.optional(assignableRoleField) }),
 	async (data): Promise<GroupFormResult> => {
-		const ctx = await context(data.slug);
+		const ctx = await context(data.groupDid);
 		if (!can(ctx.membership.permissions, 'ADMIT_MEMBERS')) {
 			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
 		}
@@ -352,15 +352,15 @@ export const addMemberForm = form(
 			await admitMember(ctx, data.did, data.role ?? 'member');
 			return { ok: true };
 		} catch (e) {
-			return rosterFailure(ctx.group.slug, e);
+			return rosterFailure(e);
 		}
 	}
 );
 
 export const removeMemberForm = form(
-	v.object({ slug: slugField, did: didField }),
+	v.object({ groupDid: didField, did: didField }),
 	async (data): Promise<GroupFormResult> => {
-		const ctx = await context(data.slug);
+		const ctx = await context(data.groupDid);
 		if (!can(ctx.membership.permissions, 'EJECT_MEMBERS')) {
 			return { ok: false, error: 'Not allowed: EJECT_MEMBERS required' };
 		}
@@ -368,15 +368,15 @@ export const removeMemberForm = form(
 			await ejectMember(ctx, data.did);
 			return { ok: true };
 		} catch (e) {
-			return rosterFailure(ctx.group.slug, e);
+			return rosterFailure(e);
 		}
 	}
 );
 
 export const changeMemberRoleForm = form(
-	v.object({ slug: slugField, did: didField, role: assignableRoleField }),
+	v.object({ groupDid: didField, did: didField, role: assignableRoleField }),
 	async (data): Promise<GroupFormResult> => {
-		const ctx = await context(data.slug);
+		const ctx = await context(data.groupDid);
 		if (!can(ctx.membership.permissions, 'ASSIGN_ROLES')) {
 			return { ok: false, error: 'Not allowed: ASSIGN_ROLES required' };
 		}
@@ -384,15 +384,15 @@ export const changeMemberRoleForm = form(
 			await promoteMember(ctx, data.did, data.role);
 			return { ok: true };
 		} catch (e) {
-			return rosterFailure(ctx.group.slug, e);
+			return rosterFailure(e);
 		}
 	}
 );
 
 export const setMemberStatusForm = form(
-	v.object({ slug: slugField, did: didField, status: v.picklist(['active', 'suspended']) }),
+	v.object({ groupDid: didField, did: didField, status: v.picklist(['active', 'suspended']) }),
 	async (data): Promise<GroupFormResult> => {
-		const ctx = await context(data.slug);
+		const ctx = await context(data.groupDid);
 		// Suspension is a partial removal, so it is the eject grant rather than a
 		// third name: a greeter who may admit must not be able to lock a member out.
 		if (!can(ctx.membership.permissions, 'EJECT_MEMBERS')) {
@@ -402,7 +402,7 @@ export const setMemberStatusForm = form(
 			await setMemberAccess(ctx, data.did, data.status);
 			return { ok: true };
 		} catch (e) {
-			return rosterFailure(ctx.group.slug, e);
+			return rosterFailure(e);
 		}
 	}
 );
@@ -422,7 +422,7 @@ function zonelessAsUtc(value: string): Date {
  *  they did not create. */
 export const saveGroupEventForm = form(
 	v.object({
-		slug: slugField,
+		groupDid: didField,
 		rkey: v.optional(v.pipe(v.string(), v.regex(/^[a-zA-Z0-9._:~-]{1,512}$/))),
 		name: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(300)),
 		description: v.optional(v.pipe(v.string(), v.maxLength(10000))),
@@ -433,7 +433,7 @@ export const saveGroupEventForm = form(
 		createdAt: v.optional(v.string())
 	}),
 	async (data): Promise<GroupFormResult<{ uri: string; repo: string; rkey: string }>> => {
-		const { db, env, group, callerDid } = await context(data.slug);
+		const { db, env, group, callerDid } = await context(data.groupDid);
 		const intent = data.rkey ? 'update' : 'create';
 
 		const startsAt = zonelessAsUtc(data.startsAt);
@@ -475,9 +475,9 @@ export const saveGroupEventForm = form(
 );
 
 export const deleteGroupEventForm = form(
-	v.object({ slug: slugField, rkey: v.pipe(v.string(), v.minLength(1), v.maxLength(512)) }),
+	v.object({ groupDid: didField, rkey: v.pipe(v.string(), v.minLength(1), v.maxLength(512)) }),
 	async (data): Promise<GroupFormResult<{ uri: string }>> => {
-		const { db, env, group, callerDid } = await context(data.slug);
+		const { db, env, group, callerDid } = await context(data.groupDid);
 		try {
 			const result = await deleteGroupEvent({ db, env, group, callerDid, rkey: data.rkey });
 			return { ok: true, uri: result.uri };

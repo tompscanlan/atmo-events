@@ -46,9 +46,7 @@ beforeEach(async () => {
 	group = await createGroup(db, {
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
-		name: 'Kona',
-		slug: 'kona',
-		status: 'published'
+		name: 'Kona'
 	});
 	writes = [];
 	writer = async (write) => {

@@ -9,10 +9,14 @@
 		setMemberStatusForm
 	} from '$lib/groups/groups.remote';
 	import { groupFormError } from '$lib/groups/form-result';
+	import { resolve } from '$app/paths';
 
 	let { data } = $props();
 
 	let group = $derived(data.group);
+	// The record's name, same as the group page and the events tab — the cache
+	// column is only what the loader falls back to when there is no profile.
+	let groupName = $derived(data.groupName);
 	// Any of the three shows the controls column; each control asks its own.
 	let canManageAnyMember = $derived(
 		data.canAdmitMembers || data.canEjectMembers || data.canAssignRoles
@@ -27,13 +31,15 @@
 	);
 </script>
 
-<svelte:head><title>{group.name} members — atmo.rsvp</title></svelte:head>
+<svelte:head><title>{groupName} members — atmo.rsvp</title></svelte:head>
 
 <div class="mx-auto max-w-3xl px-6 py-8 sm:py-12">
+	<!-- Back to the group by DID: every link this app publishes keys on the DID,
+	     because a handle is a name someone else can end up holding. (FR-010a.) -->
 	<a
-		href="/groups/{group.slug}"
+		href={resolve('/(app)/groups/[actor]', { actor: group.group_did })}
 		class="text-base-500 dark:text-base-400 mb-4 inline-block text-sm hover:underline"
-		>← {group.name}</a
+		>← {groupName}</a
 	>
 
 	<h1 class="mb-6 text-3xl font-bold">Members</h1>
@@ -62,7 +68,7 @@
 						<div class="flex shrink-0 flex-wrap items-center gap-2">
 							{#if data.canAssignRoles}
 								<form {...changeMemberRoleForm} class="flex items-center gap-1">
-									<input type="hidden" name="slug" value={group.slug} />
+									<input type="hidden" name="groupDid" value={group.group_did} />
 									<input type="hidden" name="did" value={member.did} />
 									<select
 										name="role"
@@ -77,7 +83,7 @@
 							{/if}
 							{#if data.canEjectMembers}
 								<form {...setMemberStatusForm}>
-									<input type="hidden" name="slug" value={group.slug} />
+									<input type="hidden" name="groupDid" value={group.group_did} />
 									<input type="hidden" name="did" value={member.did} />
 									<input
 										type="hidden"
@@ -89,7 +95,7 @@
 									</Button>
 								</form>
 								<form {...removeMemberForm}>
-									<input type="hidden" name="slug" value={group.slug} />
+									<input type="hidden" name="groupDid" value={group.group_did} />
 									<input type="hidden" name="did" value={member.did} />
 									<button
 										type="submit"
@@ -127,7 +133,7 @@
 							</div>
 							<div class="flex shrink-0 items-center gap-2">
 								<form {...approveJoinRequestForm} class="flex items-center gap-1">
-									<input type="hidden" name="slug" value={group.slug} />
+									<input type="hidden" name="groupDid" value={group.group_did} />
 									<input type="hidden" name="requestId" value={request.id} />
 									<select
 										name="role"
@@ -140,7 +146,7 @@
 									<Button type="submit" size="sm">Approve</Button>
 								</form>
 								<form {...rejectJoinRequestForm}>
-									<input type="hidden" name="slug" value={group.slug} />
+									<input type="hidden" name="groupDid" value={group.group_did} />
 									<input type="hidden" name="requestId" value={request.id} />
 									<Button type="submit" size="sm" variant="ghost">Reject</Button>
 								</form>
@@ -152,7 +158,7 @@
 
 			<h2 class="mt-8 mb-3 text-xl font-semibold">Add a member directly</h2>
 			<form {...addMemberForm} class="flex flex-wrap items-end gap-2">
-				<input type="hidden" name="slug" value={group.slug} />
+				<input type="hidden" name="groupDid" value={group.group_did} />
 				<div class="flex flex-col gap-1.5">
 					<Label for="add-did">DID</Label>
 					<Input id="add-did" name="did" placeholder="did:plc:…" required class="w-72 font-mono" />

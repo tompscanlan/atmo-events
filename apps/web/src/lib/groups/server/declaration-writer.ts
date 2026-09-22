@@ -57,7 +57,7 @@ export interface DeclarationWriteResult {
 function aboutSpace(group: GroupRow): string {
 	if (!group.about_space_uri) {
 		throw new GroupRecordError(
-			`${group.slug} has no about space yet, so it cannot be declared to the network`
+			`${group.group_did} has no about space yet, so it cannot be declared to the network`
 		);
 	}
 	return group.about_space_uri;
@@ -113,7 +113,7 @@ export async function removeGroupDeclaration(input: WriteGroupDeclarationInput):
 
 /**
  * Brings the network's view of this group into line with its visibility: a
- * public or unlisted group is declared, a private one is not.
+ * public group is declared, a private one is not.
  *
  * ONE function decides, rather than a visibility check at each call site,
  * because "does this group get a declaration" is the clause most likely to

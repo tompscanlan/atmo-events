@@ -65,7 +65,7 @@ export interface ProfileWriteResult {
 function aboutSpace(group: GroupRow): string {
 	if (!group.about_space_uri) {
 		throw new GroupRecordError(
-			`${group.slug} has no about space yet, so its profile cannot be written`
+			`${group.group_did} has no about space yet, so its profile cannot be written`
 		);
 	}
 	return group.about_space_uri;

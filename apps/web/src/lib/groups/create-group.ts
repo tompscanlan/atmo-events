@@ -31,10 +31,10 @@ import { reconcileGroupDeclaration } from './server/declaration-writer';
 import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './server/members-writer';
 import { pdsWriter } from './server/event-writer';
 import { splitRuleLines } from './about-record';
-import { slugMintRefusal, slugMintRefusalMessage } from './slug';
+import { labelMintRefusal, labelMintRefusalMessage } from './handle-label';
 import { formError } from './form-error';
 import type { GroupFormResult } from './form-result';
-import type { GroupStatus, GroupVisibility } from './types';
+import type { GroupVisibility } from './types';
 
 /** The five settings a mint needs, plus the group tables. Structural rather
  *  than `App.Platform['env']` so a test can supply exactly this much. */
@@ -50,10 +50,14 @@ export interface CreateGroupEnv extends CredentialStoreEnv {
  *  against this shape at the callsite, so the two cannot drift silently. */
 export interface CreateGroupData {
 	name: string;
-	slug: string;
+	/** The HANDLE LABEL to mint under `GROUP_HANDLE_DOMAIN`. Not stored: the
+	 *  handle the mint returns is the group's name reservation, and it is read
+	 *  back through the identity resolver rather than copied into a column
+	 *  (FR-001a, FR-010a). */
+	label: string;
 	description?: string;
 	visibility: GroupVisibility;
-	status: GroupStatus;
+	// No `status`: a group that exists is published (FR-016c).
 	/** Optional because an unticked HTML checkbox sends nothing at all; `repo.ts`
 	 *  reads a missing value as `true` (`require_approval` defaults to 1). */
 	requireApproval?: boolean;
@@ -65,7 +69,13 @@ export interface CreateGroupData {
 	rules?: string;
 }
 
-export type CreateGroupOutcome = GroupFormResult<{ groupSlug: string; recoveryKey: string }>;
+/** What a successful create hands back: the DID every URL will carry, the
+ *  handle the PDS registered, and the rotation key shown exactly once. */
+export type CreateGroupOutcome = GroupFormResult<{
+	groupDid: string;
+	handle: string;
+	recoveryKey: string;
+}>;
 
 /** The mint target, or null when this deployment is not configured to mint. All
  *  four values are required: a partial configuration is an operator error, and
@@ -90,19 +100,19 @@ export function mintConfig(env: CreateGroupEnv): MintConfig | null {
  *  fabrication. Out-of-band detection is `om-pl5pw`. (Spec: FR-001e.) */
 export function mintErrorMessage(
 	e: { failure: MintFailure; message: string },
-	slug: string
+	label: string
 ): string {
 	const operatorAlert = `Group creation is temporarily unavailable. This is a deployment problem, not something you did — please try again later or tell an administrator. (${e.failure})`;
 	switch (e.failure) {
 		case 'handle-taken':
-			return `“${slug}” is already taken. Choose another URL name.`;
+			return `“${label}” is already taken. Choose another address for the group.`;
 		case 'handle-invalid':
-			return `The group PDS refused “${slug}” as an address. Choose another URL name.`;
+			return `The group PDS refused “${label}” as an address. Choose another one.`;
 		case 'rotation-key-unverified':
 			// Deliberately not swallowed: the group would exist without the owner
 			// holding the first PLC rotation key, i.e. portable in name only, and
 			// nothing should be presented as theirs on that footing. (Spec: FR-001g.)
-			return `“${slug}” was registered, but we could not confirm that you hold its recovery key, so it has not been set up as your group. Tell an administrator before creating it again. (${e.message})`;
+			return `“${label}” was registered, but we could not confirm that you hold its recovery key, so it has not been set up as your group. Tell an administrator before creating it again. (${e.message})`;
 		case 'invite-missing':
 		case 'invite-unavailable':
 		case 'email-rejected':
@@ -118,12 +128,13 @@ export async function runCreateGroup(
 ): Promise<CreateGroupOutcome> {
 	// REFUSE BEFORE MINTING, in two ways, because a did:plc cannot be recalled.
 	//
-	// 1. The label must be one the PDS will accept as a handle. Our slug rules
-	//    are wider than its handle rules (3-18 characters, no dot, not reserved),
-	//    and the handle registration is itself the name reservation, so a label we
-	//    could not mint must fail on the field the user can edit. (Spec: FR-001a.)
-	const refusal = slugMintRefusal(data.slug);
-	if (refusal) return { ok: false, error: slugMintRefusalMessage(refusal, data.slug) };
+	// 1. The label must be one the PDS will accept as a handle. What this app
+	//    accepts in a form is wider than the PDS's handle rules (3-18
+	//    characters, no dot, not reserved), and the handle registration is
+	//    itself the name reservation, so a label we could not mint must fail on
+	//    the field the user can edit. (Spec: FR-001a.)
+	const refusal = labelMintRefusal(data.label);
+	if (refusal) return { ok: false, error: labelMintRefusalMessage(refusal, data.label) };
 
 	// 2. The deployment must be able to KEEP what the mint hands back once.
 	//    Checking after the mint would strand an account whose only credential
@@ -146,9 +157,9 @@ export async function runCreateGroup(
 
 	let minted;
 	try {
-		minted = await mintGroupAccount(mint, data.slug);
+		minted = await mintGroupAccount(mint, data.label);
 	} catch (e) {
-		if (e instanceof GroupMintError) return { ok: false, error: mintErrorMessage(e, data.slug) };
+		if (e instanceof GroupMintError) return { ok: false, error: mintErrorMessage(e, data.label) };
 		throw e;
 	}
 
@@ -173,11 +184,10 @@ export async function runCreateGroup(
 			groupDid: minted.did,
 			ownerDid: callerDid,
 			name: data.name,
-			// From the MINTED handle's leaf, never from the submitted field — the
-			// PDS is what adjudicated the name, so its answer is the slug.
-			slug: minted.handle.split('.')[0],
+			// No name beside the handle: the PDS adjudicated it, and the group
+			// row keeps the DID. Reading it back is the identity resolver's job
+			// (FR-001a, FR-010a).
 			description: data.description || null,
-			status: data.status,
 			visibility: data.visibility,
 			requireApproval: data.requireApproval,
 			locationName: data.locationName || null,
@@ -188,7 +198,7 @@ export async function runCreateGroup(
 		return formError(e);
 	}
 
-	// Provisioning is not ordered by the slug: the space key is `self`, so both
+	// Provisioning is not ordered by any name: the space key is `self`, so both
 	// URIs are a function of the group DID alone.
 	let aboutUri: string;
 	let membersUri: string;
@@ -204,7 +214,7 @@ export async function runCreateGroup(
 		const detail = e instanceof GroupSpaceError ? e.message : String(e);
 		return {
 			ok: false,
-			error: `${group.slug} was created, but its spaces were not provisioned: ${detail}`
+			error: `${minted.handle} was created, but its spaces were not provisioned: ${detail}`
 		};
 	}
 
@@ -267,7 +277,7 @@ export async function runCreateGroup(
 	} catch (e) {
 		return {
 			ok: false,
-			error: `${group.slug} was created, but its profile records were not written: ${
+			error: `${minted.handle} was created, but its profile records were not written: ${
 				e instanceof Error ? e.message : String(e)
 			}. Saving the group's settings will write them.`
 		};
@@ -310,7 +320,7 @@ export async function runCreateGroup(
 	} catch (e) {
 		return {
 			ok: false,
-			error: `${group.slug} was created, but its members-space records were not written: ${
+			error: `${minted.handle} was created, but its members-space records were not written: ${
 				e instanceof Error ? e.message : String(e)
 			}. The group works and its roster reads from the database; the members space stays empty until a member's role changes.`
 		};
@@ -319,5 +329,10 @@ export async function runCreateGroup(
 	// The owner's rotation key is shown exactly once, is stored nowhere on our
 	// side, and is the only thing that lets them move this group off our PDS — so
 	// the caller must not redirect: a 303 would destroy it. (Spec: FR-001g.)
-	return { ok: true, groupSlug: group.slug, recoveryKey: minted.ownerRotationSecret };
+	return {
+		ok: true,
+		groupDid: group.group_did,
+		handle: minted.handle,
+		recoveryKey: minted.ownerRotationSecret
+	};
 }

@@ -36,9 +36,9 @@ export const GROUP_EVENT_COLLECTION = 'community.lexicon.calendar.event';
 export class GroupPermissionError extends Error {
 	constructor(
 		readonly permission: EnforcedGroupPermission,
-		readonly groupSlug: string
+		readonly groupDid: string
 	) {
-		super(`${permission} is required to do that in ${groupSlug}`);
+		super(`${permission} is required to do that in this group (${groupDid})`);
 		this.name = 'GroupPermissionError';
 	}
 }
@@ -222,10 +222,10 @@ export async function requireGroupPermission(
 	callerDid: string | null,
 	permission: EnforcedGroupPermission
 ): Promise<void> {
-	if (!callerDid) throw new GroupPermissionError(permission, group.slug);
+	if (!callerDid) throw new GroupPermissionError(permission, group.group_did);
 	const membership = await getCallerMembership(db, group.id, callerDid);
 	if (!can(membership.permissions, permission)) {
-		throw new GroupPermissionError(permission, group.slug);
+		throw new GroupPermissionError(permission, group.group_did);
 	}
 }
 

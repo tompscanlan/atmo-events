@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Badge, Button } from '@foxui/core';
+	import { resolve } from '$app/paths';
 
 	let { data } = $props();
 </script>
@@ -35,28 +36,34 @@
 		</div>
 	{:else}
 		<ul class="flex flex-col gap-3">
-			{#each data.groups as group (group.id)}
+			{#each data.groups as group (group.group_did)}
 				<li
 					class="ring-base-200 dark:ring-base-800 hover:ring-base-300 dark:hover:ring-base-700 rounded-2xl p-4 ring-1 transition-colors"
 				>
 					<div class="flex items-start justify-between gap-4">
 						<div class="min-w-0">
-							<a href="/groups/{group.slug}" class="text-lg font-semibold hover:underline"
-								>{group.name}</a
+							<!-- THE LINK CARRIES THE DID, never the handle. A handle is a
+							     lease on a name: let it lapse and another account can
+							     register it, at which point every link we published would
+							     point at a stranger. The DID cannot be re-issued and cannot
+							     move, so it is the only safe thing to publish. (FR-010a.) -->
+							<a
+								href={resolve('/(app)/groups/[actor]', { actor: group.group_did })}
+								class="text-lg font-semibold hover:underline">{group.name}</a
 							>
 							{#if group.description}
 								<p class="text-base-500 dark:text-base-400 mt-1 line-clamp-2 text-sm">
 									{group.description}
 								</p>
 							{/if}
+							<!-- The group's address, readable half first. The handle is what
+							     someone would type or say; the DID is shown when contrail has
+							     never resolved one, so the row is never addressless. -->
 							<p class="text-base-400 dark:text-base-500 mt-2 truncate font-mono text-xs">
-								{group.group_did}
+								{group.handle ?? group.group_did}
 							</p>
 						</div>
 						<div class="flex shrink-0 gap-2">
-							{#if group.status !== 'published'}
-								<Badge variant="secondary">{group.status}</Badge>
-							{/if}
 							{#if group.visibility !== 'public'}
 								<Badge variant="secondary">{group.visibility}</Badge>
 							{/if}

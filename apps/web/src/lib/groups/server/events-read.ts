@@ -3,7 +3,7 @@
 // Straight off the group DID's PDS with no credential: a repo's records are
 // anonymously readable, which is exactly why the public slice lives there
 // rather than in the group's space (a space refuses anonymous HTTP even under a
-// public policy — measured, 401 AuthMissing). So /groups/<slug>/events renders
+// public policy — measured, 401 AuthMissing). So /groups/<did>/events renders
 // for a visitor who has never logged in.
 //
 // Not routed through contrail: contrail only indexes DIDs in its identities

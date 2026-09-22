@@ -29,10 +29,14 @@ function isActiveMember(membership: CallerMembership): boolean {
 	return membership.role !== null && membership.status === 'active';
 }
 
-/** A private group is invisible to anyone off its roster — including the
- *  existence of the slug. Unlisted is reachable by URL but never listed. This
- *  is now exactly the rule `listGroups` applies (`server/repo.ts:242`), so the
- *  browse query and the page predicate no longer diverge. */
+/** A private group is invisible to anyone off its roster; a public one is
+ *  visible to everyone. There is no third value and no secret address to trade
+ *  on: the group's DID and its handle are published to plc.directory's audit
+ *  log at genesis, so both are enumerable by anyone willing to read that log,
+ *  which is exactly why the gate has to be membership and cannot rest on
+ *  nobody knowing where the group lives. This is the same rule `listGroups`
+ *  applies (`server/repo.ts:251`), so the browse query and the page predicate
+ *  cannot diverge. */
 export function canSeeGroup(group: GroupRow, membership: CallerMembership): boolean {
 	if (group.visibility !== 'private') return true;
 	return isActiveMember(membership);

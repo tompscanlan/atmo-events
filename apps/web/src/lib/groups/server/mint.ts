@@ -50,9 +50,9 @@ export interface MintConfig {
  *  as something a user or an operator can act on — never a raw PDS error. */
 export type MintFailure =
 	/** The label is taken, or the PDS reserves it (~1000 names we deliberately do
-	 *  not mirror; `slugMintRefusal` catches only the protocol's own list). */
+	 *  not mirror; `labelMintRefusal` catches only the protocol's own list). */
 	| 'handle-taken'
-	/** The PDS rejected the label's shape. `slugMintRefusal` should have caught
+	/** The PDS rejected the label's shape. `labelMintRefusal` should have caught
 	 *  this first, so reaching it means our rules and the PDS's have drifted. */
 	| 'handle-invalid'
 	/** No invite code configured on this deployment. */
@@ -102,12 +102,13 @@ function randomPassword(): string {
 	return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/** `groups@openmeet.net` + `kona` -> `groups+kona@openmeet.net`.
+/** `groups@openmeet.net` + `kona` -> `groups+kona@openmeet.net`, where `kona`
+ *  is the handle label the minted account will answer to.
  *
  *  Per-group uniqueness is required, not cosmetic: `getAccountByEmail` is
  *  exact-match, so a shared address makes the second mint fail with
  *  `Email already taken`. */
-function accountEmailFor(template: string, slug: string): string {
+function accountEmailFor(template: string, label: string): string {
 	const at = template.lastIndexOf('@');
 	if (at <= 0) {
 		throw new GroupMintError(
@@ -115,7 +116,7 @@ function accountEmailFor(template: string, slug: string): string {
 			`GROUP_ACCOUNT_EMAIL ${JSON.stringify(template)} is not an address`
 		);
 	}
-	return `${template.slice(0, at)}+${slug}@${template.slice(at + 1)}`;
+	return `${template.slice(0, at)}+${label}@${template.slice(at + 1)}`;
 }
 
 async function xrpc(
@@ -230,21 +231,25 @@ export async function assertOwnerHoldsRotationKey(
 	}
 }
 
-/** Mints the account for `slug` and returns everything the caller must persist or
- *  reveal. Does NOT touch D1 and does NOT provision spaces — the caller orders
- *  those, because only it knows what a failure would strand.
+/** Mints the account for the handle label `label` — the leftmost segment of
+ *  `<label>.<handleDomain>`, which is the only place it survives: nothing here
+ *  or downstream stores it, because the handle it produces is the group's name
+ *  reservation and the DID is what we key on afterwards (FR-001a, FR-010a).
+ *  Returns everything the caller must persist or reveal. Does NOT touch D1 and
+ *  does NOT provision spaces — the caller orders those, because only it knows
+ *  what a failure would strand.
  *
  *  `verifyRotationKey` is the seam tests replace; the live path always checks. */
 export async function mintGroupAccount(
 	cfg: MintConfig,
-	slug: string,
+	label: string,
 	verifyRotationKey: (did: string, key: string) => Promise<void> = assertOwnerHoldsRotationKey
 ): Promise<MintedGroup> {
 	if (!cfg.inviteCode) {
 		throw new GroupMintError('invite-missing', 'this deployment has no GROUP_PDS_INVITE_CODE');
 	}
-	const handle = `${slug}.${cfg.handleDomain}`;
-	const email = accountEmailFor(cfg.accountEmail, slug);
+	const handle = `${label}.${cfg.handleDomain}`;
+	const email = accountEmailFor(cfg.accountEmail, label);
 
 	// The owner's key is generated FIRST: it has to be in the genesis operation,
 	// and generating it costs nothing that a later failure would strand.

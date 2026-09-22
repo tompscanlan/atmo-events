@@ -2,10 +2,22 @@
 // `server/` so the pages can type their props without pulling a D1 import.
 import type { GroupPermission, GroupRoleName } from './permissions';
 
-export const GROUP_STATUSES = ['draft', 'pending', 'published'] as const;
-export type GroupStatus = (typeof GROUP_STATUSES)[number];
-
-export const GROUP_VISIBILITIES = ['public', 'unlisted', 'private'] as const;
+/** A group has no publication lifecycle: it exists, and a group that exists is
+ *  published. `draft` used to be the column DEFAULT, so every group was created
+ *  invisible to browse, and the only other value — `pending` — was an operator
+ *  approval queue nothing implemented. Index-side moderation, if it is ever
+ *  wanted, is a property of OUR DIRECTORY and belongs in a table about
+ *  listings, not in the group's own row. (Spec: FR-016c.)
+ *
+ *  Visibility is two values for a related reason. `unlisted` promised
+ *  "reachable by link but not listed", which needs a flag an indexer honors —
+ *  and the only anonymously readable per-group artifact is the `declaration`,
+ *  which carries a space pointer and no listing hint. So an unlisted group that
+ *  published one could be listed by any peer regardless, i.e. it was only ever
+ *  unlisted in our own browse. If the affordance comes back it comes back as a
+ *  record field, the way upstream does it for events
+ *  (`packages/ui/src/editor/types.ts` `showInDiscovery`). (Spec: FR-016d.) */
+export const GROUP_VISIBILITIES = ['public', 'private'] as const;
 export type GroupVisibility = (typeof GROUP_VISIBILITIES)[number];
 
 export const MEMBERSHIP_STATUSES = ['active', 'suspended'] as const;
@@ -46,9 +58,7 @@ export interface GroupRow {
 	group_did: string;
 	owner_did: string;
 	name: string;
-	slug: string;
 	description: string | null;
-	status: GroupStatus;
 	visibility: GroupVisibility;
 	require_approval: number;
 	image_cid: string | null;

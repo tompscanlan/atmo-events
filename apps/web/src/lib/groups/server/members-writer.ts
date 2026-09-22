@@ -117,7 +117,7 @@ const PERMISSION_FOR: Readonly<
 function membersSpace(group: GroupRow): string {
 	if (!group.members_space_uri) {
 		throw new GroupRecordError(
-			`${group.slug} has no members space yet, so its roster records cannot be written`
+			`${group.group_did} has no members space yet, so its roster records cannot be written`
 		);
 	}
 	return group.members_space_uri;
@@ -134,7 +134,7 @@ async function authoriseMembership(
 		if (!input.callerDid || input.callerDid !== input.subject) {
 			throw new GroupPermissionError(
 				input.intent === 'join' ? 'ADMIT_MEMBERS' : 'EJECT_MEMBERS',
-				input.group.slug
+				input.group.group_did
 			);
 		}
 		return;

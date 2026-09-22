@@ -201,8 +201,10 @@ export interface GroupAccessFields {
  *
  * It does NOT carry `groups.visibility`. Visibility is a browse-and-page
  * narrowing with no upstream analogue (FR-005d), and it does not invert from a
- * role list either — `public` and `unlisted` name the same set of readers of
- * the same records. It stays app-local cache, which `data-model.md` prices.
+ * role list either — `public` and `private` name the same set of readers of the
+ * same records, since the roles that may read the space do not change when the
+ * group stops being listed. It stays app-local cache, which `data-model.md`
+ * prices.
  */
 export function groupAccessRecord(input: {
 	roles: readonly GroupRoleName[];

@@ -16,9 +16,9 @@
 // NOT WRITTEN FOR A PRIVATE GROUP. Since a members-only group narrows at the
 // protocol layer, this record is the only cross-app artifact that distinguishes
 // a group anyone may discover from one nobody may, so its presence or absence
-// IS that switch. What it does not buy: the group's handle is published to the
-// PLC audit log at genesis, so a private group's existence and slug remain
-// enumerable by anyone willing to read that log.
+// IS that switch. What it does not buy: the group's DID and handle are both
+// published to the PLC audit log at genesis, so a private group's existence and
+// address remain enumerable by anyone willing to read that log.
 //
 // Pure, like ./about-record.ts and ./event-record.ts: shape only, no D1 and no
 // PDS, so the builder and the predicate can be asserted without a request.
@@ -70,11 +70,11 @@ export function groupDeclarationRecord(input: GroupDeclarationInput): Record<str
 /**
  * Whether this group publishes a declaration at all.
  *
- * A private group does not: with a members-only group narrowing at the protocol
- * layer, the declaration is the only artifact an anonymous peer can read about
- * a group, so withholding it is what "not discoverable" means. `unlisted` DOES
- * get one — unlisted is an app-local browse narrowing, and hiding a group from
- * our own index is a different statement from hiding it from the network.
+ * A private group does not; a public group does. With a members-only group
+ * narrowing at the protocol layer, the declaration is the only artifact an
+ * anonymous peer can read about a group, so withholding it is what "not
+ * discoverable" means — and publishing it is the whole of what makes a public
+ * group discoverable off our own index.
  *
  * One predicate rather than a visibility check at each call site, because this
  * is the clause most likely to change: whether `private` survives as a

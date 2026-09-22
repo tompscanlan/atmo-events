@@ -18,7 +18,6 @@ function insertGroup(id: string, ownerDid: string, extra: Record<string, unknown
 		group_did: `did:plc:group-${id}`,
 		owner_did: ownerDid,
 		name: `Group ${id}`,
-		slug: id,
 		created_at: 1,
 		updated_at: 1,
 		...extra
@@ -325,16 +324,13 @@ describe('group row defaults and domains', () => {
 		});
 	});
 
-	it('defaults status to draft, visibility to public, and both space URIs to unprovisioned', () => {
+	it('defaults visibility to public and both space URIs to unprovisioned', () => {
 		insertGroup('g1', 'did:plc:owner');
 		expect(
 			db
-				.prepare(
-					'SELECT status, visibility, about_space_uri, members_space_uri FROM groups WHERE id = ?'
-				)
+				.prepare('SELECT visibility, about_space_uri, members_space_uri FROM groups WHERE id = ?')
 				.get('g1')
 		).toEqual({
-			status: 'draft',
 			visibility: 'public',
 			// NULL, not a default type: a group's spaces exist once the PDS has
 			// confirmed them, and the row must be able to say "not yet".
@@ -343,15 +339,16 @@ describe('group row defaults and domains', () => {
 		});
 	});
 
-	it('refuses an unknown status or visibility', () => {
-		expect(() => insertGroup('g1', 'did:plc:owner', { status: 'archived' })).toThrow();
-		expect(() => insertGroup('g2', 'did:plc:owner', { visibility: 'secret' })).toThrow();
+	it('refuses an unknown visibility', () => {
+		expect(() => insertGroup('g1', 'did:plc:owner', { visibility: 'secret' })).toThrow();
 	});
 
-	it('keeps slug and group_did unique', () => {
+	// The group's ONLY uniqueness. There is no second name to reserve: the handle
+	// registered at mint is the reservation, and it lives on a PDS rather than in
+	// this table. (FR-001a, FR-010a.)
+	it('keeps group_did unique', () => {
 		insertGroup('g1', 'did:plc:owner');
-		expect(() => insertGroup('g2', 'did:plc:owner', { slug: 'g1' })).toThrow(/UNIQUE/);
-		expect(() => insertGroup('g3', 'did:plc:owner', { group_did: 'did:plc:group-g1' })).toThrow(
+		expect(() => insertGroup('g2', 'did:plc:owner', { group_did: 'did:plc:group-g1' })).toThrow(
 			/UNIQUE/
 		);
 	});

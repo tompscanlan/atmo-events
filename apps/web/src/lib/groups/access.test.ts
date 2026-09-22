@@ -34,10 +34,9 @@ const STRANGER = membership(null);
 
 describe('canSeeGroup', () => {
 	it('hides only private groups from a stranger', () => {
+		// Two visibilities, so this predicate is the whole of the read rule: a
+		// group is either open to a stranger or it is not (FR-016d).
 		expect(canSeeGroup(group('public'), STRANGER)).toBe(true);
-		// Unlisted is reachable by URL on purpose — it is absent from the browse
-		// list, not gated (see listGroups).
-		expect(canSeeGroup(group('unlisted'), STRANGER)).toBe(true);
 		expect(canSeeGroup(group('private'), STRANGER)).toBe(false);
 	});
 

@@ -67,14 +67,19 @@ export function joinPolicyFor(group: {
 	return group.require_approval ? 'approval' : 'open';
 }
 
-/** The inverse, for the rebuild path — and it is deliberately PARTIAL.
+/** The inverse, for the rebuild path — and it is deliberately PARTIAL even
+ *  though it no longer has to be.
  *
- *  `require_approval` round-trips; `visibility` does not, because three
- *  visibilities collapse into three join policies with no bijection: `open` and
- *  `approval` are each reachable from both `public` and `unlisted`. Read access
- *  is the `access` record's business and that record is a separate bead, so a
- *  rebuild must NOT guess a visibility from a profile. `about-read.ts` keeps the
- *  stored one and fails closed to `private` when there is no row at all. */
+ *  `require_approval` round-trips. `visibility` is now encodable in principle:
+ *  with two values the forward map is total, so `invite` could only have come
+ *  from `private` and everything else from `public`. We still do NOT invert it,
+ *  because reading `private` back out of `invite` would weld the two together
+ *  permanently and forbid a public group from ever being invite-only — a
+ *  restriction the join policy is meant to express, not the visibility
+ *  (FR-004b). Read access is the `access` record's business and that record is
+ *  a separate bead, so a rebuild must NOT guess a visibility from a profile.
+ *  `about-read.ts` keeps the stored one and fails closed to `private` when
+ *  there is no row at all. */
 export function requireApprovalFor(policy: GroupJoinPolicy): number {
 	return policy === 'open' ? 0 : 1;
 }

@@ -12,6 +12,7 @@ import {
 	countActiveMembers,
 	createGroup,
 	getCallerMembership,
+	getGroupByDid,
 	listGroups,
 	listMembers,
 	removeMember,
@@ -40,7 +41,6 @@ function group(overrides: Partial<Parameters<typeof createGroup>[1]> = {}) {
 		groupDid: 'did:plc:jcwgw6fcnb5vyoid7nz7sl26',
 		ownerDid: OWNER,
 		name: 'Kona',
-		slug: 'kona',
 		...overrides
 	});
 }
@@ -79,24 +79,43 @@ describe('createGroup', () => {
 		expect(anonymous.permissions.size).toBe(0);
 	});
 
-	// D1 runs a batch as one transaction. A slug collision must therefore leave
-	// nothing behind — not an orphan group with no roles, and not a half roster.
+	// D1 runs a batch as one transaction. The group DID is the only uniqueness a
+	// create can trip now — the handle registry adjudicates the name, so there is
+	// no second reservation — and tripping it must leave nothing behind: not an
+	// orphan group with no roles, and not a half-written roster.
 	it('rolls the whole creation back when a unique constraint fails', async () => {
 		await group();
-		await expect(group({ groupDid: 'did:plc:other', slug: 'kona' })).rejects.toThrow(
-			GroupRuleError
-		);
+		await expect(group()).rejects.toThrow(GroupRuleError);
 		const rows = harness.raw.prepare('SELECT COUNT(*) AS n FROM groups').get();
 		expect(rows).toEqual({ n: 1 });
 		expect(harness.raw.prepare('SELECT COUNT(*) AS n FROM roles').get()).toEqual({ n: 3 });
+		expect(harness.raw.prepare('SELECT COUNT(*) AS n FROM memberships').get()).toEqual({ n: 1 });
 	});
 
-	it('reports a duplicate DID distinctly from a duplicate slug', async () => {
+	// The only uniqueness tag a create can answer with, which is why it is worth
+	// pinning: a caller mapping it back to a form field has exactly one field to
+	// point at. A different name over the same DID changes nothing. (FR-001a.)
+	it('reports a duplicate DID as did-taken', async () => {
 		await group();
-		await expect(group({ slug: 'kona-2' })).rejects.toMatchObject({ reason: 'did-taken' });
-		await expect(group({ groupDid: 'did:plc:other' })).rejects.toMatchObject({
-			reason: 'slug-taken'
+		await expect(group({ name: 'Kona, again' })).rejects.toMatchObject({ reason: 'did-taken' });
+	});
+});
+
+// THE ROUTE LOOKUP. Every group URL carries the DID, so this is the one query
+// standing between a request and a page; a handle URL is resolved to a DID
+// before it gets here (see ./route-context.ts).
+describe('getGroupByDid', () => {
+	it('finds the group a DID names, and answers null for a DID it holds none for', async () => {
+		const created = await group();
+
+		expect(await getGroupByDid(db, created.group_did)).toMatchObject({
+			id: created.id,
+			group_did: created.group_did,
+			name: 'Kona'
 		});
+		// Null rather than a throw: "no group here" is the caller's 404 to decide,
+		// and it is the same answer a private group gives (route-context.ts).
+		expect(await getGroupByDid(db, 'did:plc:nosuchgroup')).toBeNull();
 	});
 });
 
@@ -116,7 +135,7 @@ describe('joining', () => {
 	});
 
 	it('puts the caller straight on the roster when approval is off', async () => {
-		const created = await group({ requireApproval: false, slug: 'open' });
+		const created = await group({ requireApproval: false });
 		expect(await requestJoin(db, created, ALICE, null)).toBe('joined');
 		expect((await getCallerMembership(db, created.id, ALICE)).role).toBe('member');
 		expect(await requestJoin(db, created, ALICE, null)).toBe('already-member');
@@ -143,7 +162,7 @@ describe('joining', () => {
 // way in — a group that predates the trigger, or a caller that skips the form.
 describe('private groups are invite-only', () => {
 	it('refuses a self-service join, and records nothing on the way out', async () => {
-		const created = await group({ visibility: 'private', slug: 'secret' });
+		const created = await group({ visibility: 'private' });
 
 		await expect(requestJoin(db, created, ALICE, 'let me in')).rejects.toMatchObject({
 			reason: 'invite-only'
@@ -156,28 +175,24 @@ describe('private groups are invite-only', () => {
 	});
 
 	it('still answers already-member for someone on the roster', async () => {
-		const created = await group({ visibility: 'private', slug: 'secret' });
+		const created = await group({ visibility: 'private' });
 		await addMember(db, created.id, ALICE, 'member');
 		expect(await requestJoin(db, created, ALICE, null)).toBe('already-member');
 	});
 
 	it('cannot be created open-join', async () => {
-		await expect(
-			group({ visibility: 'private', requireApproval: false, slug: 'secret' })
-		).rejects.toMatchObject({ reason: 'private-needs-approval' });
+		await expect(group({ visibility: 'private', requireApproval: false })).rejects.toMatchObject({
+			reason: 'private-needs-approval'
+		});
 	});
 
 	it('cannot be edited into open-join, in either order', async () => {
-		const open = await group({ requireApproval: false, slug: 'open' });
+		const open = await group({ requireApproval: false });
 		await expect(updateGroup(db, open.id, { visibility: 'private' })).rejects.toMatchObject({
 			reason: 'private-needs-approval'
 		});
 
-		const closed = await group({
-			visibility: 'private',
-			slug: 'secret',
-			groupDid: 'did:plc:second'
-		});
+		const closed = await group({ visibility: 'private', groupDid: 'did:plc:second' });
 		await expect(updateGroup(db, closed.id, { requireApproval: false })).rejects.toMatchObject({
 			reason: 'private-needs-approval'
 		});
@@ -235,37 +250,26 @@ describe('roster changes', () => {
 });
 
 describe('browse visibility', () => {
-	it('shows anonymous callers only published public groups', async () => {
-		await group({ slug: 'pub', groupDid: 'did:plc:a', status: 'published' });
-		await group({ slug: 'draft', groupDid: 'did:plc:b' });
-		await group({
-			slug: 'hidden',
-			groupDid: 'did:plc:c',
-			status: 'published',
-			visibility: 'unlisted'
-		});
-		await group({
-			slug: 'secret',
-			groupDid: 'did:plc:d',
-			status: 'published',
-			visibility: 'private'
-		});
+	// THE WHOLE BROWSE RULE is now `visibility = 'public'`. It used to be one half
+	// of a two-axis test, and the other axis no longer exists — so a group is
+	// either listed or it is private, with nothing in between to get wrong.
+	it('shows anonymous callers public groups and never a private one', async () => {
+		await group({ name: 'Open', groupDid: 'did:plc:a' });
+		await group({ name: 'Secret', groupDid: 'did:plc:d', visibility: 'private' });
 
 		const anonymous = await listGroups(db, { callerDid: null });
-		expect(anonymous.map((g) => g.slug)).toEqual(['pub']);
+		expect(anonymous.map((g) => g.name)).toEqual(['Open']);
 	});
 
-	it('adds the caller own and joined groups at any status or visibility', async () => {
-		const secret = await group({
-			slug: 'secret',
-			groupDid: 'did:plc:d',
-			status: 'published',
-			visibility: 'private'
-		});
+	// The bounded exception to the rule above: a caller sees their own and their
+	// joined groups whatever their visibility, because a private group that is
+	// invisible to its own members has nowhere to be reached from.
+	it('adds the caller own and joined groups even when private', async () => {
+		const secret = await group({ name: 'Secret', groupDid: 'did:plc:d', visibility: 'private' });
 		await addMember(db, secret.id, ALICE, 'member');
 
-		expect((await listGroups(db, { callerDid: OWNER })).map((g) => g.slug)).toEqual(['secret']);
-		expect((await listGroups(db, { callerDid: ALICE })).map((g) => g.slug)).toEqual(['secret']);
-		expect((await listGroups(db, { callerDid: BOB })).map((g) => g.slug)).toEqual([]);
+		expect((await listGroups(db, { callerDid: OWNER })).map((g) => g.name)).toEqual(['Secret']);
+		expect((await listGroups(db, { callerDid: ALICE })).map((g) => g.name)).toEqual(['Secret']);
+		expect((await listGroups(db, { callerDid: BOB })).map((g) => g.name)).toEqual([]);
 	});
 });

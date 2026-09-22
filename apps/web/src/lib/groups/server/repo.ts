@@ -14,13 +14,17 @@ import type { CallerMembership, GroupRow, JoinRequestRow, MemberRow } from '../t
 import { ensureGroupsSchema } from './schema';
 
 export interface CreateGroupInput {
-	/** An EXISTING custodial DID. v1 never mints one — see AUTO_MINT_GROUP_DID. */
+	/** The group's custodial DID. `runCreateGroup` mints it before this INSERT —
+	 *  the mint is what reserves the name (FR-001a) — so by the time it gets
+	 *  here it always already exists, and it is immutable afterwards
+	 *  (`groups_identity_immutable`). */
 	groupDid: string;
 	ownerDid: string;
 	name: string;
-	slug: string;
+	/** No local name key: the mint's handle is the name reservation and the DID
+	 *  is the URL key, so there is nothing local to reserve (FR-001a, FR-010a).
+	 *  No `status` either: a group that exists is published (FR-016c). */
 	description?: string | null;
-	status?: GroupRow['status'];
 	visibility?: GroupRow['visibility'];
 	requireApproval?: boolean;
 	locationName?: string | null;
@@ -39,7 +43,7 @@ export interface CreateGroupInput {
 export interface UpdateGroupInput {
 	name?: string;
 	description?: string | null;
-	status?: GroupRow['status'];
+	/** No `status`: see `CreateGroupInput`. */
 	visibility?: GroupRow['visibility'];
 	requireApproval?: boolean;
 	locationName?: string | null;
@@ -55,8 +59,10 @@ export interface UpdateGroupInput {
  *  route can map it to a status code without string matching. */
 export class GroupRuleError extends Error {
 	constructor(
-		readonly reason:
-			| 'slug-taken'
+		readonly reason: /** The group DID is already bound. The ONLY uniqueness failure a
+			 *  create can now hit: the handle registration at mint adjudicates
+			 *  the name, so there is no local reservation to collide with
+			 *  (FR-001a). */
 			| 'did-taken'
 			| 'owner-protected'
 			| 'owner-role-reserved'
@@ -84,7 +90,7 @@ export class GroupRuleError extends Error {
  *  SQLite names the COLUMNS of a violated unique index, never the index — so
  *  the pending-request index shows up as `join_requests.group_id,
  *  join_requests.did`. D1 wraps the same text ("D1_ERROR: UNIQUE constraint
- *  failed: groups.slug: SQLITE_CONSTRAINT"), which is why matching is on the
+ *  failed: groups.group_did: SQLITE_CONSTRAINT"), which is why matching is on the
  *  column names and on the triggers' own RAISE messages. */
 function constraintMessage(e: unknown): GroupRuleError | null {
 	const text = e instanceof Error ? e.message : String(e);
@@ -103,9 +109,6 @@ function constraintMessage(e: unknown): GroupRuleError | null {
 		return new GroupRuleError('owner-protected', 'The group owner cannot be changed');
 	}
 	if (/UNIQUE constraint failed/.test(text)) {
-		if (/groups\.slug/.test(text)) {
-			return new GroupRuleError('slug-taken', 'That group URL is already taken');
-		}
 		if (/groups\.group_did/.test(text)) {
 			return new GroupRuleError('did-taken', 'That DID is already bound to another group');
 		}
@@ -132,7 +135,7 @@ async function guard<T>(work: () => Promise<T>): Promise<T> {
 	}
 }
 
-const GROUP_COLUMNS = `id, group_did, owner_did, name, slug, description, status, visibility,
+const GROUP_COLUMNS = `id, group_did, owner_did, name, description, visibility,
 	require_approval, image_cid, image_mime, image_size, location_name, location_address,
 	location_lat, location_lng, location_timezone, about_space_uri, members_space_uri,
 	created_at, updated_at`;
@@ -156,19 +159,17 @@ export async function createGroup(db: D1Database, input: CreateGroupInput): Prom
 	const statements: D1PreparedStatement[] = [
 		db
 			.prepare(
-				`INSERT INTO groups (id, group_did, owner_did, name, slug, description, status,
+				`INSERT INTO groups (id, group_did, owner_did, name, description,
 					visibility, require_approval, location_name, location_address, location_lat,
 					location_lng, location_timezone, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.bind(
 				groupId,
 				input.groupDid,
 				input.ownerDid,
 				input.name,
-				input.slug,
 				input.description ?? null,
-				input.status ?? 'draft',
 				input.visibility ?? 'public',
 				input.requireApproval === false ? 0 : 1,
 				input.locationName ?? null,
@@ -226,19 +227,30 @@ export async function getGroupById(db: D1Database, id: string): Promise<GroupRow
 	return db.prepare(`SELECT ${GROUP_COLUMNS} FROM groups WHERE id = ?`).bind(id).first<GroupRow>();
 }
 
-export async function getGroupBySlug(db: D1Database, slug: string): Promise<GroupRow | null> {
+/** The group a DID names. THE route lookup: every group URL carries the DID,
+ *  and a handle URL is resolved to one before it gets here (FR-010a). There is
+ *  no by-name lookup to pair with it — `groups` holds no name key at all, and a
+ *  handle is the identity resolver's answer rather than a column we could
+ *  query. */
+export async function getGroupByDid(db: D1Database, groupDid: string): Promise<GroupRow | null> {
 	await ensureGroupsSchema(db);
 	return db
-		.prepare(`SELECT ${GROUP_COLUMNS} FROM groups WHERE slug = ?`)
-		.bind(slug)
+		.prepare(`SELECT ${GROUP_COLUMNS} FROM groups WHERE group_did = ?`)
+		.bind(groupDid)
 		.first<GroupRow>();
 }
 
-/** Browse listing. Anonymous callers see only PUBLISHED + PUBLIC groups;
- *  `unlisted` is reachable by slug but never listed, and `private` is invisible
- *  unless the caller is on the roster. A signed-in caller additionally sees
- *  every group they own or are an active member of, at any status — that is how
- *  a draft group stays findable by the person who created it. */
+/** Browse listing. Anonymous callers see PUBLIC groups only; `private` is
+ *  invisible unless the caller is on the roster. A signed-in caller
+ *  additionally sees every group they own or are an active member of — which is
+ *  the whole of what "their groups" means now that there is no publication
+ *  state to hide a group from its own creator (FR-016c).
+ *
+ *  This is the one place a page may render `name`/`description` from the row
+ *  rather than from records, and the reason is structural rather than a
+ *  concession: the about space is never anonymously readable, so no indexer can
+ *  read a group's name for us, and a records-first list would be N sessions × N
+ *  space reads. (Spec: FR-010, the one bounded exception.) */
 export async function listGroups(
 	db: D1Database,
 	opts: { callerDid?: string | null; limit?: number } = {}
@@ -249,7 +261,7 @@ export async function listGroups(
 	const { results } = await db
 		.prepare(
 			`SELECT ${GROUP_COLUMNS} FROM groups
-			 WHERE (status = 'published' AND visibility = 'public')
+			 WHERE visibility = 'public'
 			    OR (? IS NOT NULL AND owner_did = ?)
 			    OR (? IS NOT NULL AND id IN (
 			          SELECT group_id FROM memberships WHERE did = ? AND status = 'active'))
@@ -275,7 +287,6 @@ export async function updateGroup(
 	};
 	if (input.name !== undefined) push('name', input.name);
 	if (input.description !== undefined) push('description', input.description);
-	if (input.status !== undefined) push('status', input.status);
 	if (input.visibility !== undefined) push('visibility', input.visibility);
 	if (input.requireApproval !== undefined) push('require_approval', input.requireApproval ? 1 : 0);
 	if (input.locationName !== undefined) push('location_name', input.locationName);
@@ -501,10 +512,11 @@ export type JoinOutcome = 'joined' | 'pending' | 'already-member' | 'already-pen
  *  the `member` role immediately.
  *
  *  A PRIVATE GROUP HAS NO SELF-SERVICE JOIN AT ALL (TS, 2026-09-17, om-5oxc8).
- *  Knocking is not a capability a private group offers: the slug is the group's
- *  public PDS handle label, so "knows the address" is not evidence of anything,
- *  and answering a knock at all tells a stranger the group exists. The way in
- *  is an invite (om-a2n4t), which will call `addMember` on its own entry point
+ *  Knocking is not a capability a private group offers: the address IS the
+ *  group's DID, and the handle beside it is published to the PLC audit log at
+ *  genesis, so "knows the address" is not evidence of anything, and answering a
+ *  knock at all tells a stranger the group exists. The way in is an invite
+ *  (om-a2n4t), which will call `addMember` on its own entry point
  *  rather than reopen this one. The refusal sits HERE, below the roster check,
  *  rather than in the form: every future caller of `requestJoin` inherits it,
  *  and an existing member's idempotent retry still answers `already-member`

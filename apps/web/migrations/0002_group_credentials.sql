@@ -23,7 +23,7 @@
 -- decrypt it either. Decided 2026-09-17 (TS) over three alternatives: plaintext
 -- in D1 (a read is write-as-every-group), the master password instead of an app
 -- password (a read is account takeover), and HMAC-derived passwords (nothing at
--- rest, but a slug rename or key rotation breaks every group).
+-- rest, but a handle change or key rotation breaks every group).
 --
 -- NO SECRET OVERRIDE ANY MORE (TS, 2026-09-19, `om-dnwi7`): *"if we don't need
 -- that var, drop it. it's confusing."* `resolveGroupCredential` used to read a
@@ -41,8 +41,9 @@
 -- operation and can move the DID without us. (Spec: FR-001g.)
 --
 -- NOT AN AUDIT LOG. One row per group DID, replaced on rotation. The DID is the
--- identity; `identifier` is the handle a session opens with and is a mutable
--- alias, exactly as `groups.slug` is.
+-- identity; `identifier` is the handle a session opens with, and a handle is a
+-- mutable alias that no column of ours owns (the group row has none — see
+-- `0001_groups.sql`).
 CREATE TABLE IF NOT EXISTS group_credentials (
 	group_did TEXT PRIMARY KEY,
 	-- PDS base URL, e.g. https://pds.opnmt.net. Stored per row rather than read
