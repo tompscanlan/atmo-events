@@ -478,10 +478,10 @@ export async function listMembers(db: D1Database, groupId: string): Promise<Memb
 	return results ?? [];
 }
 
-/** One roster row, or null. Exists because the row is what remembers WHEN a
- *  member joined once their membership record is gone — which is every
- *  suspended member, since a suspension revokes the record
- *  (`server/roster.ts`). Loading the whole roster to answer that would grow
+/** One roster row, or null. The roster acts read it twice over: for the
+ *  pre-check in front of a revocation or a role change, and for WHEN a member
+ *  joined while their membership record does not exist yet
+ *  (`server/roster.ts`). Loading the whole roster to answer either would grow
  *  with the group. */
 export async function getMemberRow(
 	db: D1Database,
@@ -535,10 +535,10 @@ export async function listJoinRequests(
  *      all — resolves from `role_permissions`, which is what those groups were
  *      created with. `hasAuthzRecords` is what tells the two apart.
  *
- *  A SUSPENDED ROW DENIES even while a membership record survives. Suspension
- *  moves the row first and deletes the record second (`roster.ts`), so a
- *  failed delete leaves exactly that pair — and the rows gate this replaced
- *  refused it. Deny-only: a row can take a record's grant away, never add one. */
+ *  NO ROW OVERRIDES A RECORD. A revocation deletes the record before the row
+ *  (`roster.ts`), so a partial failure leaves a row with no record, which
+ *  resolves to nothing — the pair errs toward less access by construction,
+ *  with no deny rule here to keep in step. */
 export async function getCallerMembership(
 	db: D1Database,
 	group: GroupRow,
@@ -575,7 +575,6 @@ export async function getCallerMembership(
 	let permissions: ReadonlySet<GroupPermission>;
 	if (!members) permissions = new Set();
 	else if (!hasAuthzRecords(members)) permissions = await rowPermissions(db, group.id, did);
-	else if (membership?.status === 'suspended') permissions = new Set();
 	else permissions = resolveActorPermissions(members, did);
 
 	return {
@@ -814,24 +813,6 @@ export async function changeMemberRole(
 				 WHERE group_id = ? AND did = ?`
 			)
 			.bind(groupId, role, Date.now(), groupId, did)
-			.run()
-	);
-	if ((res.meta?.changes ?? 0) === 0) {
-		throw new GroupRuleError('not-found', 'That DID is not on the roster');
-	}
-}
-
-export async function setMemberStatus(
-	db: D1Database,
-	groupId: string,
-	did: string,
-	status: 'active' | 'suspended'
-): Promise<void> {
-	await ensureGroupsSchema(db);
-	const res = await guard(() =>
-		db
-			.prepare(`UPDATE memberships SET status = ?, updated_at = ? WHERE group_id = ? AND did = ?`)
-			.bind(status, Date.now(), groupId, did)
 			.run()
 	);
 	if ((res.meta?.changes ?? 0) === 0) {

@@ -232,8 +232,7 @@ export interface GroupGateInput {
  *
  *  Refuses an anonymous caller before touching D1 or the PDS. What the caller
  *  may do is the RECORDS' answer (T016), with the fallback and fail-closed
- *  policy `getCallerMembership` documents; a suspended member resolves to the
- *  empty set on either path. */
+ *  policy `getCallerMembership` documents. */
 export async function requireGroupPermission(
 	input: GroupGateInput,
 	permission: EnforcedGroupPermission

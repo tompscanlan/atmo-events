@@ -59,8 +59,9 @@
  *      gets wrong (FR-005, FR-005a);
  *  16. the roster survives dropping its D1 rows: the records render it and the
  *      rebuild restores them (SC-002 for the roster);
- *  17. a suspension REVOKES the membership record and a reinstatement writes
- *      it back with the original join date;
+ *  17. a DEMOTION is a revocation: the membership record the PDS hands back
+ *      names the smaller role, the gate follows it, the join date survives,
+ *      and promoting back — a grant — restores the admin (FR-006);
  *  18. a DID with no membership record has no access, whether it was ejected
  *      or never a member;
  *  19. THE ONLY CHECK THAT NEEDS NO CREDENTIAL — the group is DECLARED in its
@@ -895,37 +896,46 @@ async function main() {
 				`(unchanged ${rebuiltMembers.unchanged.length}, orphans ${rebuiltMembers.orphans.length})`
 		);
 
-		// 17. suspension revokes the record, reinstatement writes it again ---------
-		// A suspended member has no access, so leaving a membership record in
-		// place would publish a grant the app refuses — and a second app reading
-		// the space would honour it. The join date has to survive the round trip,
-		// which is the part a careless reinstate would quietly restamp.
+		// 17. a demotion is a revocation, and the record says so ------------------
+		// Taking a role away writes the reduced record BEFORE the row, so a
+		// failure between the two leaves the record granting less (FR-006, TS
+		// 2026-09-23). The ORDER is unit-proven with a failing writer
+		// (`roster.test.ts`); what only a live run shows is that the record the
+		// PDS hands back is the reduced one, that the gate — reading records —
+		// follows it, and that the join date rides through. Promoting back is the
+		// grant direction, and leaves check 18 the admin it ejects.
 		const joinedAt = recorded.memberships.find((m) => m.subject === BOB)?.createdAt;
-		await must('setMemberAccess', { groupId: group.id, callerDid: ALICE, did: BOB, status: 'suspended' });
-		const whileSuspended = await must('recordedRoster', { groupId: group.id, did: BOB });
-		const suspendedRecord = await spaceRecord(
+		const rosterProbe = ['EJECT_MEMBERS', 'CREATE_EVENT'];
+		await must('promoteMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'member' });
+		const demotedRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
 			'net.openmeet.group.membership',
 			BOB
 		);
-		const orphanCheck = await must('rebuildGroupMembers', { groupId: group.id });
-		await must('setMemberAccess', { groupId: group.id, callerDid: ALICE, did: BOB, status: 'active' });
-		const afterReinstate = await must('recordedRoster', { groupId: group.id, did: BOB });
+		const demoted = await must('membership', { groupId: group.id, did: BOB, probe: rosterProbe });
+		await must('promoteMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'admin' });
+		const repromoted = await must('membership', {
+			groupId: group.id,
+			did: BOB,
+			probe: rosterProbe
+		});
 		record(
-			suspendedRecord.status !== 200 &&
-				whileSuspended.hasAccess === false &&
-				whileSuspended.roster.every((entry) => entry.did !== BOB) &&
-				// The row survives the suspension, and the rebuild reports it rather
-				// than ejecting it to make the numbers agree.
-				orphanCheck.orphans.join(',') === BOB &&
-				afterReinstate.hasAccess === true &&
-				afterReinstate.memberships.find((m) => m.subject === BOB)?.createdAt === joinedAt,
-			'suspension revokes the membership record; reinstatement restores it with its join date',
-			`suspended: PDS says ${suspendedRecord.error ?? suspendedRecord.status}, ` +
-				`roster ${whileSuspended.roster.length}, rebuild orphans [${orphanCheck.orphans.join(', ')}]; ` +
-				`reinstated: joined ${afterReinstate.memberships.find((m) => m.subject === BOB)?.createdAt} ` +
-				`(was ${joinedAt})`
+			demotedRecord.status === 200 &&
+				JSON.stringify(demotedRecord.value?.roles) === JSON.stringify(['member']) &&
+				demotedRecord.value?.createdAt === joinedAt &&
+				demoted.role === 'member' &&
+				// `member`'s seeded bundle is empty: membership is what it holds.
+				demoted.permissions.length === 0 &&
+				demoted.can.EJECT_MEMBERS === false &&
+				demoted.can.CREATE_EVENT === false &&
+				repromoted.role === 'admin' &&
+				repromoted.can.EJECT_MEMBERS === true,
+			'a demotion rewrites the membership record to the smaller role and the gate follows it; promoting back restores it',
+			`demoted: record roles ${JSON.stringify(demotedRecord.value?.roles)} ` +
+				`(${demotedRecord.error ?? demotedRecord.status}), joined ${demotedRecord.value?.createdAt} ` +
+				`(was ${joinedAt}), grants [${demoted.permissions.join(', ')}]; re-promoted: ${repromoted.role}, ` +
+				`EJECT ${repromoted.can.EJECT_MEMBERS}`
 		);
 
 		// 18. no record, no access --------------------------------------------------

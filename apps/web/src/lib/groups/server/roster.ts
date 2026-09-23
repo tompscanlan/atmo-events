@@ -7,35 +7,49 @@
 // handler, and a second copy of it in the e2e harness, which is how a "small"
 // difference between what the app does and what the test proves gets in.
 //
-// THE ORDER IS D1 FIRST, ALWAYS. The schema is the thing that refuses an
-// impossible roster: the owner cannot be demoted, removed or suspended, a
-// private group has no self-service join, a DID that is not on the roster
-// cannot be promoted. Writing the record first would publish a grant the
-// database then refused, and a record is visible to other apps the moment it
-// lands.
+// THE ORDER FOLLOWS THE DIRECTION OF THE CHANGE (FR-006, TS 2026-09-23). The
+// gate resolves from the RECORD (`getCallerMembership`), so whichever half runs
+// second is the one a partial failure leaves behind — and it must always leave
+// less access than intended, never more:
 //
-// A FAILED RECORD WRITE IS NOT A FAILED MUTATION. The row moved; the roster the
-// app renders falls back to the rows (`./members-read.ts`). So the record half
-// throws `RosterRecordError`, which the caller reports as what it is — out of
-// step — rather than as "that did not work".
-import type { GroupRoleName } from '../permissions';
-import type { GroupRow } from '../types';
+//   * A GRANT — join, admit, promotion — moves the ROW FIRST. The schema is the
+//     thing that refuses an impossible roster (a private group has no
+//     self-service join, a DID off the roster cannot be promoted), and writing
+//     the record first would publish a grant the database then refused. If the
+//     record write fails, the record still grants the old, smaller set, and
+//     `RosterRecordError` reports the pair as out of step.
+//   * A REVOCATION — leave, eject, demotion — runs a READ-ONLY PRE-CHECK, then
+//     the RECORD, then the row. Row-first, a failed record delete left the
+//     ejected member's record granting everything it granted before. If the
+//     record write fails now, nothing has changed and it is a plain failure; if
+//     the row write fails after it, the gate already denies, and
+//     `RosterRowError` reports the roster as out of step.
+//
+// The pre-check refuses what the owner-protection triggers would refuse, BEFORE
+// the record is gone: by the time a trigger fires on the row, the owner's
+// record would already be deleted. The triggers stay as the backstop.
+//
+// There is no suspension (TS 2026-09-23): it is in neither the
+// opensocial.community draft nor permissioned data. A moderator ejects.
+import { GROUP_ROLES, type GroupRoleName } from '../permissions';
+import type { GroupRow, MemberRow } from '../types';
 import type { CredentialStoreEnv } from './credentials';
 import {
+	GroupRuleError,
 	addMember,
 	approveJoinRequest,
 	changeMemberRole,
 	getMemberRow,
 	removeMember,
 	requestJoin,
-	setMemberStatus,
 	type JoinOutcome
 } from './repo';
-import { groupSpaceReader } from './about-read';
+import { groupSpaceReader, type GroupSpaceReader } from './about-read';
+import type { GroupRepoWriter } from './event-writer';
 import { readGroupMembers } from './members-read';
 import { dropGroupMembership, putGroupMembership } from './members-writer';
 
-/** The D1 half succeeded and the record half did not. Carries the subject so
+/** A GRANT whose row moved and whose record did not. Carries the subject so
  *  the caller can say WHOSE membership is out of step. */
 export class RosterRecordError extends Error {
 	constructor(
@@ -47,6 +61,19 @@ export class RosterRecordError extends Error {
 	}
 }
 
+/** A REVOCATION whose record went and whose row did not. The gate already
+ *  denies — no record, no grant — so what is out of step is the roster the app
+ *  renders from rows, until a retry or `rebuildGroupMembers` reports it. */
+export class RosterRowError extends Error {
+	constructor(
+		readonly subject: string,
+		readonly cause: unknown
+	) {
+		super(cause instanceof Error ? cause.message : String(cause));
+		this.name = 'RosterRowError';
+	}
+}
+
 /** What a roster act needs: the bindings, the group, and who is asking. A
  *  handler's own context satisfies it structurally. */
 export interface RosterContext {
@@ -54,17 +81,50 @@ export interface RosterContext {
 	env: CredentialStoreEnv;
 	group: GroupRow;
 	callerDid: string;
+	/** Override the PDS transport and the gate's reader. Tests pass these. */
+	writer?: GroupRepoWriter;
+	reader?: GroupSpaceReader | null;
 }
 
 type AssignableRole = Exclude<GroupRoleName, 'owner'>;
 
-/** Runs the record half and re-labels its failure. */
+/** A grant's record half, second: re-labels its failure as out of step. */
 async function published<T>(subject: string, write: () => Promise<T>): Promise<T> {
 	try {
 		return await write();
 	} catch (e) {
 		throw new RosterRecordError(subject, e);
 	}
+}
+
+/** A revocation's row half, second: re-labels its failure as out of step. */
+async function unlisted(subject: string, write: () => Promise<void>): Promise<void> {
+	try {
+		await write();
+	} catch (e) {
+		throw new RosterRowError(subject, e);
+	}
+}
+
+/** The read-only pre-check in front of a revocation or a role change: the DID
+ *  is on the roster and is not the owner. Same refusals, same errors as the
+ *  schema's — it runs first only because a revocation deletes the record before
+ *  the row, and a trigger firing on the row would be too late to save the
+ *  owner's record. */
+async function changeableRow(ctx: RosterContext, did: string): Promise<MemberRow> {
+	const row = await getMemberRow(ctx.db, ctx.group.id, did);
+	if (!row) throw new GroupRuleError('not-found', 'That DID is not on the roster');
+	if (row.role === 'owner') {
+		throw new GroupRuleError('owner-protected', 'The group owner cannot be changed');
+	}
+	return row;
+}
+
+/** Moving to `to` takes access away from a member holding `from`. GROUP_ROLES
+ *  lists the roles most privileged first and each seeded bundle contains the
+ *  next one's (`DEFAULT_ROLE_PERMISSIONS`), so position is rank. */
+function removesAccess(from: GroupRoleName, to: GroupRoleName): boolean {
+	return GROUP_ROLES.indexOf(to) > GROUP_ROLES.indexOf(from);
 }
 
 /**
@@ -75,15 +135,14 @@ async function published<T>(subject: string, write: () => Promise<T>): Promise<T
  *
  *   * the RECORD is authoritative while it exists, so a promotion republishes
  *     the date the group already published rather than today's;
- *   * the ROW is what remains when it does not. A suspension DELETES the
- *     record, so by the time a member is reinstated the only copy of their
- *     join date is `memberships.created_at` — which is exactly the job the
- *     projection is kept for. Reading the record first and stopping there
- *     restamped every reinstated member to the moment they came back (caught
- *     by the live e2e, 2026-09-19).
+ *   * the ROW is what remains when it does not — a member admitted a moment
+ *     ago, whose record this act is about to write, or one whose record
+ *     predates T014. Reading only the record restamped members to the moment
+ *     of the write (caught by the live e2e, 2026-09-19).
  *
  * `undefined` means neither source has one, and the record builder stamps now.
- * Always called BEFORE the row moves, so a promotion reads the pre-change row.
+ * Always called BEFORE the role changes, so a role change reads the pre-change
+ * row.
  */
 export async function joinedAt(ctx: RosterContext, subject: string): Promise<string | undefined> {
 	const reader = await groupSpaceReader(ctx.env, ctx.db, ctx.group);
@@ -121,13 +180,12 @@ export async function joinGroup(
 	return outcome;
 }
 
-/** Self-service leave. The owner cannot: `memberships_owner_undeletable`
- *  refuses the DELETE, so the record is never touched. */
+/** Self-service leave — a revocation, so record first. The owner cannot leave,
+ *  and the pre-check says so before the owner's record is touched. */
 export async function leaveGroup(ctx: RosterContext): Promise<void> {
-	await removeMember(ctx.db, ctx.group.id, ctx.callerDid);
-	await published(ctx.callerDid, () =>
-		dropGroupMembership({ ...ctx, subject: ctx.callerDid, intent: 'leave' })
-	);
+	await changeableRow(ctx, ctx.callerDid);
+	await dropGroupMembership({ ...ctx, subject: ctx.callerDid, intent: 'leave' });
+	await unlisted(ctx.callerDid, () => removeMember(ctx.db, ctx.group.id, ctx.callerDid));
 }
 
 /** Approve a pending request. The applicant is named by the REQUEST, which is
@@ -164,59 +222,31 @@ export async function admitMember(
 	);
 }
 
+/** Eject — a revocation, so record first, behind the same pre-check as leave. */
 export async function ejectMember(ctx: RosterContext, did: string): Promise<void> {
-	await removeMember(ctx.db, ctx.group.id, did);
-	await published(did, () => dropGroupMembership({ ...ctx, subject: did, intent: 'eject' }));
+	await changeableRow(ctx, did);
+	await dropGroupMembership({ ...ctx, subject: did, intent: 'eject' });
+	await unlisted(did, () => removeMember(ctx.db, ctx.group.id, did));
 }
 
+/** Assign a role — a promotion is a grant, a demotion a revocation, and each
+ *  takes its own order (TS 2026-09-23). The owner is refused before either. */
 export async function promoteMember(
 	ctx: RosterContext,
 	did: string,
 	role: AssignableRole
 ): Promise<void> {
+	const current = await changeableRow(ctx, did);
 	const createdAt = await joinedAt(ctx, did);
-	await changeMemberRole(ctx.db, ctx.group.id, did, role);
-	await published(did, () =>
-		putGroupMembership({ ...ctx, subject: did, roles: [role], createdAt, intent: 'assign' })
-	);
-}
+	const writeRecord = () =>
+		putGroupMembership({ ...ctx, subject: did, roles: [role], createdAt, intent: 'assign' });
+	const moveRow = () => changeMemberRole(ctx.db, ctx.group.id, did, role);
 
-/**
- * Suspend or reinstate.
- *
- * SUSPENSION REVOKES THE RECORD; reinstatement writes it again. A suspended
- * member has no access, and access is what a membership record grants, so
- * leaving one in place would publish a grant this app refuses — and any second
- * app reading the space would honour it. What the member returns TO — their
- * role and their join date — survives in the row, which is the whole reason
- * the projection is kept.
- */
-export async function setMemberAccess(
-	ctx: RosterContext,
-	did: string,
-	status: 'active' | 'suspended'
-): Promise<void> {
-	await setMemberStatus(ctx.db, ctx.group.id, did, status);
-
-	if (status === 'suspended') {
-		await published(did, () => dropGroupMembership({ ...ctx, subject: did, intent: 'suspend' }));
+	if (removesAccess(current.role, role)) {
+		await writeRecord();
+		await unlisted(did, moveRow);
 		return;
 	}
-
-	// Both values come off the row this call just reactivated: the record was
-	// deleted by the suspension, so the row is the only thing that remembers
-	// either of them.
-	const restored = await getMemberRow(ctx.db, ctx.group.id, did);
-	if (!restored) {
-		throw new RosterRecordError(did, new Error('the reinstated row names no role'));
-	}
-	await published(did, () =>
-		putGroupMembership({
-			...ctx,
-			subject: did,
-			roles: [restored.role],
-			createdAt: new Date(restored.created_at).toISOString(),
-			intent: 'reinstate'
-		})
-	);
+	await moveRow();
+	await published(did, writeRecord);
 }

@@ -19,7 +19,6 @@ import {
 	removeMember,
 	requestJoin,
 	rolePermissions,
-	setMemberStatus,
 	updateGroup
 } from './repo';
 
@@ -261,26 +260,6 @@ describe('roster changes', () => {
 			changeMemberRole(db, created.id, ALICE, 'owner' as 'admin')
 		).rejects.toBeInstanceOf(Error);
 		await expect(changeMemberRole(db, created.id, OWNER, 'admin')).rejects.toMatchObject({
-			reason: 'owner-protected'
-		});
-	});
-
-	// A suspended member keeps their row and their role, but resolves to no
-	// permissions — which is what makes suspension mean anything.
-	it('strips a suspended member of every permission', async () => {
-		const created = await group();
-		await addMember(db, created.id, ALICE, 'admin');
-		expect((await getCallerMembership(db, created, ALICE, null)).permissions.size).toBeGreaterThan(
-			0
-		);
-
-		await setMemberStatus(db, created.id, ALICE, 'suspended');
-		const suspended = await getCallerMembership(db, created, ALICE, null);
-		expect(suspended.role).toBe('admin');
-		expect(suspended.status).toBe('suspended');
-		expect(suspended.permissions.size).toBe(0);
-
-		await expect(setMemberStatus(db, created.id, OWNER, 'suspended')).rejects.toMatchObject({
 			reason: 'owner-protected'
 		});
 	});

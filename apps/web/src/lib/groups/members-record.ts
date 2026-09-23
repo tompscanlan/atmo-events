@@ -22,16 +22,14 @@
 // `did:plc:…` passes and a percent-encoded `did:web:…` does not. The refusal is
 // `MembershipKeyError` rather than a PDS 400 three layers down.
 //
-// SUSPENSION IS THE ABSENCE OF A RECORD, not a field on one. A suspended member
-// has no access, so their grant is revoked — and a grant is revoked by deleting
-// the record that made it, exactly as an eject is. What survives suspension is
-// the D1 row, which is the app-local memo that lets one click restore the role;
-// the records say only what is true at the protocol layer, which is that this
-// DID is not currently a member. This is why no `status` field appears below:
-// publishing one would mean a second app had to know our lifecycle to avoid
-// granting a suspended member access, and the whole point of the record being
-// the source of truth is that reading it is enough. (`data-model.md` prices
-// what a rebuild can therefore restore.)
+// NO `status` FIELD, AND NO SUSPENSION. A grant is revoked by deleting the
+// record that made it — an eject or a leave — and that is the whole lifecycle.
+// Suspension was removed 2026-09-23: it is in neither the opensocial.community
+// draft nor permissioned data, and publishing a status would mean a second app
+// had to know our lifecycle to avoid granting access, when the point of the
+// record being the source of truth is that reading it is enough. If "listed
+// but without access" is ever needed, the protocol-native shape is
+// `simplespace.putMember`'s read/write booleans, not a field here.
 //
 // Pure, like ./about-record.ts and ./event-record.ts: shape only, no D1 and no
 // PDS. The gate, the credential and the transport are ./server/members-writer.ts;

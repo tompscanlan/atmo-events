@@ -246,7 +246,7 @@ describe("a membership's role belongs to the same group", () => {
 	});
 });
 
-describe('the owner cannot be demoted, suspended, removed or leave', () => {
+describe('the owner cannot be demoted, removed or leave', () => {
 	beforeEach(() => {
 		insertGroup('g1', 'did:plc:owner');
 		seedRole('g1', 'admin');
@@ -260,12 +260,6 @@ describe('the owner cannot be demoted, suspended, removed or leave', () => {
 				.prepare('UPDATE memberships SET role_id = ? WHERE did = ?')
 				.run(roleId('g1', 'admin'), 'did:plc:owner')
 		).toThrow(/owner cannot be demoted/);
-	});
-
-	it('refuses to suspend the owner', () => {
-		expect(() =>
-			db.prepare("UPDATE memberships SET status = 'suspended' WHERE did = ?").run('did:plc:owner')
-		).toThrow(/owner cannot be demoted|owner cannot be/);
 	});
 
 	it('refuses to remove the owner, which is also how leaving is refused', () => {
@@ -284,15 +278,12 @@ describe('the owner cannot be demoted, suspended, removed or leave', () => {
 		).toThrow(/owner role is reserved/);
 	});
 
-	it('refuses an owner membership that is not active or not the owner role', () => {
+	it('refuses an owner membership that is not the owner role', () => {
 		db.prepare('DELETE FROM groups WHERE id = ?').run('g1');
 		insertGroup('g2', 'did:plc:owner');
 		seedRole('g2', 'member');
 		expect(() => addMembership('g2', 'did:plc:owner', 'member')).toThrow(
 			/owner must hold an active owner membership|owner role is reserved/
-		);
-		expect(() => addMembership('g2', 'did:plc:owner', 'owner', 'suspended')).toThrow(
-			/owner must hold an active owner membership/
 		);
 	});
 
@@ -313,6 +304,55 @@ describe('the owner cannot be demoted, suspended, removed or leave', () => {
 		expect(() => db.prepare("DELETE FROM groups WHERE id = 'g1'").run()).not.toThrow();
 		expect(db.prepare('SELECT COUNT(*) AS n FROM roles').get()).toEqual({ n: 0 });
 		expect(db.prepare('SELECT COUNT(*) AS n FROM memberships').get()).toEqual({ n: 0 });
+	});
+});
+
+// 0005 removes suspension. Like 0004 it is a DATA migration, so it is tested
+// against the database it migrates: one that can still hold a suspended row.
+describe('migration 0005: there is no suspension', () => {
+	const BEFORE = GROUPS_MIGRATION_STATEMENTS.slice(0, 4).flat();
+	const NO_SUSPENSION = GROUPS_MIGRATION_STATEMENTS[4];
+
+	beforeEach(() => {
+		db.close();
+		db = new DatabaseSync(':memory:');
+		db.exec('PRAGMA foreign_keys = ON');
+		for (const statement of BEFORE) db.exec(statement);
+		insertGroup('g1', 'did:plc:owner');
+		seedRole('g1', 'member');
+		addMembership('g1', 'did:plc:owner', 'owner');
+		addMembership('g1', 'did:plc:member', 'member');
+		addMembership('g1', 'did:plc:suspended', 'member', 'suspended');
+	});
+
+	function roster(): string[] {
+		return db
+			.prepare('SELECT did FROM memberships ORDER BY did')
+			.all()
+			.map((row) => (row as { did: string }).did);
+	}
+
+	it('treats a suspended member as ejected: the row goes, everyone else stays', () => {
+		for (const statement of NO_SUSPENSION) db.exec(statement);
+		expect(roster()).toEqual(['did:plc:member', 'did:plc:owner']);
+	});
+
+	it('replays cleanly, twice, the way every cold isolate runs it', () => {
+		expect(() => {
+			apply(db);
+			apply(db);
+		}).not.toThrow();
+		expect(roster()).toEqual(['did:plc:member', 'did:plc:owner']);
+	});
+
+	it('refuses a suspended status afterwards, on insert and on update', () => {
+		apply(db);
+		expect(() => addMembership('g1', 'did:plc:new', 'member', 'suspended')).toThrow(
+			/there is no suspension/
+		);
+		expect(() =>
+			db.prepare("UPDATE memberships SET status = 'suspended' WHERE did = ?").run('did:plc:member')
+		).toThrow(/there is no suspension/);
 	});
 });
 

@@ -6,20 +6,17 @@
 //
 // Since FR-005d they are MEMBERSHIP tests, not permission tests: read access
 // is not something a group grants. The fixtures therefore carry a roster row
-// and a status, and no permissions at all.
+// and no permissions at all.
 import { describe, it, expect } from 'vitest';
 import { canSeeGroup, canSeeMembers } from './access';
 import type { GroupRoleName } from './permissions';
 import type { CallerMembership, GroupRow } from './types';
 
-function membership(
-	role: GroupRoleName | null,
-	status: CallerMembership['status'] = 'active'
-): CallerMembership {
+function membership(role: GroupRoleName | null): CallerMembership {
 	return {
 		did: role ? 'did:plc:alice' : null,
 		role,
-		status: role ? status : null,
+		status: role ? 'active' : null,
 		pendingRequestId: null,
 		// Deliberately empty: a read gate that consulted these would be the bug.
 		permissions: new Set()
@@ -44,12 +41,6 @@ describe('canSeeGroup', () => {
 		expect(canSeeGroup(group('private'), membership('member'))).toBe(true);
 		expect(canSeeGroup(group('private'), membership('admin'))).toBe(true);
 	});
-
-	it('closes a private group to a suspended member', () => {
-		// Suspension keeps the row and removes the access; a predicate that only
-		// checked `role` would silently let a suspended member back in.
-		expect(canSeeGroup(group('private'), membership('member', 'suspended'))).toBe(false);
-	});
 });
 
 describe('canSeeMembers', () => {
@@ -58,6 +49,5 @@ describe('canSeeMembers', () => {
 		// group's roster members-only (FR-016b).
 		expect(canSeeMembers(STRANGER)).toBe(false);
 		expect(canSeeMembers(membership('member'))).toBe(true);
-		expect(canSeeMembers(membership('member', 'suspended'))).toBe(false);
 	});
 });

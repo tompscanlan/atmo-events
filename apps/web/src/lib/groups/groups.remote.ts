@@ -29,13 +29,13 @@ import { reconcileGroupDeclaration } from './server/declaration-writer';
 // ./server/roster.ts so the app and the e2e harness drive the same sequence.
 import {
 	RosterRecordError,
+	RosterRowError,
 	admitFromRequest,
 	admitMember,
 	ejectMember,
 	joinGroup,
 	leaveGroup,
-	promoteMember,
-	setMemberAccess
+	promoteMember
 } from './server/roster';
 import { groupEventRecord } from './event-record';
 
@@ -232,15 +232,16 @@ export const updateGroupForm = form(
 	}
 );
 
-/** A roster act whose ROW moved and whose RECORD did not.
+/** A roster act whose SECOND half failed after its first took effect.
  *
- *  Not a failed mutation, because the mutation happened: the roster the app
- *  renders falls back to the rows (`server/members-read.ts`), so the caller is
- *  told what is out of step rather than being told to retry something that
- *  already took effect. Every other failure — an owner who cannot be demoted, a
- *  private group with no self-service join, a DID that is not on the roster —
- *  comes from the SCHEMA, which is why the two are one `catch` with two
- *  reports: the D1 half always runs first (`server/roster.ts`).
+ *  Not a failed mutation, because part of it happened, so the caller is told
+ *  what is out of step rather than being told to retry something that already
+ *  took effect. Which half runs second depends on the direction of the change
+ *  (`server/roster.ts`): a grant moves the row and then writes the record
+ *  (`RosterRecordError`), a revocation deletes the record and then the row
+ *  (`RosterRowError`). Every other failure — an owner who cannot be demoted, a
+ *  private group with no self-service join, a DID that is not on the roster, or
+ *  a revocation's record write that changed nothing — is a plain one.
  *
  *  Returns the FAILURE member rather than `GroupFormResult`, so it composes in
  *  a handler whose success carries a payload. */
@@ -249,6 +250,12 @@ function rosterFailure(e: unknown): GroupFormFailure {
 		return {
 			ok: false,
 			error: `The roster was updated, but the membership record for ${e.subject} was not: ${e.message}`
+		};
+	}
+	if (e instanceof RosterRowError) {
+		return {
+			ok: false,
+			error: `Access was revoked for ${e.subject}, but the roster still lists them: ${e.message}`
 		};
 	}
 	return formError(e);
@@ -271,8 +278,8 @@ export const joinGroupForm = form(
 
 /** Self-service leave, and withdrawal of a pending request — the same button,
  *  because from the applicant's side they are the same intent. The owner can do
- *  neither: `memberships_owner_undeletable` refuses, and that refusal surfaces
- *  as a GroupRuleError rather than a 500. */
+ *  neither: the roster pre-check refuses before any write, and that refusal
+ *  surfaces as a GroupRuleError rather than a 500. */
 export const leaveGroupForm = form(
 	v.object({ groupDid: didField }),
 	async (data): Promise<GroupFormResult<{ outcome: 'withdrawn' | 'left' }>> => {
@@ -379,24 +386,6 @@ export const changeMemberRoleForm = form(
 		}
 		try {
 			await promoteMember(ctx, data.did, data.role);
-			return { ok: true };
-		} catch (e) {
-			return rosterFailure(e);
-		}
-	}
-);
-
-export const setMemberStatusForm = form(
-	v.object({ groupDid: didField, did: didField, status: v.picklist(['active', 'suspended']) }),
-	async (data): Promise<GroupFormResult> => {
-		const ctx = await context(data.groupDid);
-		// Suspension is a partial removal, so it is the eject grant rather than a
-		// third name: a greeter who may admit must not be able to lock a member out.
-		if (!can(ctx.membership.permissions, 'EJECT_MEMBERS')) {
-			return { ok: false, error: 'Not allowed: EJECT_MEMBERS required' };
-		}
-		try {
-			await setMemberAccess(ctx, data.did, data.status);
 			return { ok: true };
 		} catch (e) {
 			return rosterFailure(e);

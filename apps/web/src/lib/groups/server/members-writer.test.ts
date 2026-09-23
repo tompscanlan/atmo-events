@@ -10,7 +10,7 @@
 // into a permission check that happens to pass for admins.
 //
 // The rest asserts where the records LAND (the members space, authored by the
-// group) and that suspension revokes rather than annotates.
+// group).
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { addMember, createGroup, recordGroupSpaces } from './repo';
@@ -303,20 +303,6 @@ describe('dropGroupMembership', () => {
 			rkey: MEMBER,
 			intent: 'delete'
 		});
-	});
-
-	it('deletes it for a suspension too: a suspended member holds no grant', async () => {
-		await dropGroupMembership({
-			db,
-			env,
-			group,
-			callerDid: ADMIN,
-			writer,
-			reader,
-			subject: MEMBER,
-			intent: 'suspend'
-		});
-		expect(writes[0].intent).toBe('delete');
 	});
 
 	it('refuses an eject by a member who holds no EJECT_MEMBERS', async () => {

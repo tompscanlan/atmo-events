@@ -388,10 +388,11 @@ export interface MembersRebuildResult {
 	restored: string[];
 	/** Rows that already agreed with their record. */
 	unchanged: string[];
-	/** Roster rows with NO membership record. Reported, never deleted: a
-	 *  suspended member is exactly this shape by design, and so is a row whose
-	 *  record write failed — deleting both to make the numbers agree would eject
-	 *  people to tidy up a cache. */
+	/** Roster rows with NO membership record. Reported, never deleted: a grant
+	 *  whose record write failed leaves exactly this shape, and so does a
+	 *  revocation whose row delete failed after its record went — and the gate
+	 *  already denies both, so deleting them to make the numbers agree would
+	 *  only tidy a cache by guessing which case each one is. */
 	orphans: string[];
 	/** A record naming a role this group has no row for, so nothing could be
 	 *  projected. Names the role so the fix is obvious rather than mysterious. */

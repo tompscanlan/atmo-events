@@ -5,7 +5,7 @@
 // is precisely the model this whole feature exists to avoid.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { addMember, createGroup, setMemberStatus } from './repo';
+import { addMember, createGroup } from './repo';
 import {
 	GROUP_EVENT_COLLECTION,
 	GroupCredentialError,
@@ -213,24 +213,6 @@ describe('the permission gate', () => {
 				})
 			).rejects.toBeInstanceOf(GroupPermissionError);
 		}
-		expect(writes).toEqual([]);
-	});
-
-	// Suspension has to bite here, not just on the members page.
-	it('refuses a suspended admin', async () => {
-		await setMemberStatus(db, group.id, ADMIN, 'suspended');
-		await expect(
-			writeGroupEvent({
-				db,
-				env,
-				group,
-				callerDid: ADMIN,
-				intent: 'create',
-				record: validRecord(),
-				writer,
-				notify
-			})
-		).rejects.toBeInstanceOf(GroupPermissionError);
 		expect(writes).toEqual([]);
 	});
 

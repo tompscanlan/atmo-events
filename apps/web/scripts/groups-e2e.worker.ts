@@ -76,7 +76,6 @@ import {
 	admitMember,
 	ejectMember,
 	promoteMember,
-	setMemberAccess,
 	type RosterContext
 } from '../src/lib/groups/server/roster';
 
@@ -463,15 +462,6 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	ejectMember: async (env, args) => {
 		await ejectMember(await rosterCtx(env, args), String(args.did));
 		return { ejected: args.did };
-	},
-
-	setMemberAccess: async (env, args) => {
-		await setMemberAccess(
-			await rosterCtx(env, args),
-			String(args.did),
-			args.status as 'active' | 'suspended'
-		);
-		return { did: args.did, status: args.status };
 	},
 
 	/** The roster as the members page builds it: records when the space holds

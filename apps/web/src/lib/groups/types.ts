@@ -20,7 +20,10 @@ import type { GroupPermission, GroupRoleName } from './permissions';
 export const GROUP_VISIBILITIES = ['public', 'private'] as const;
 export type GroupVisibility = (typeof GROUP_VISIBILITIES)[number];
 
-export const MEMBERSHIP_STATUSES = ['active', 'suspended'] as const;
+/** One value. There is no suspension (TS 2026-09-23): the column survives only
+ *  because dropping it is a table rebuild, and migration 0005 pins it to
+ *  `active` with a trigger. */
+export const MEMBERSHIP_STATUSES = ['active'] as const;
 export type MembershipStatus = (typeof MEMBERSHIP_STATUSES)[number];
 
 export const JOIN_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'withdrawn'] as const;
@@ -93,9 +96,7 @@ export interface MemberRow {
  *  group in both places (`UNIQUE (group_id, did)`; the record is keyed by it).
  *  `created_at` stays epoch ms in both, so the two orders are the same order.
  *
- *  `status` is always `active` when the source is records: a suspension deletes
- *  the membership record, so a suspended member is only ever visible in the
- *  cache. */
+ *  `status` is always `active`, from either source: there is no suspension. */
 export interface RosterEntry {
 	did: string;
 	role: GroupRoleName;

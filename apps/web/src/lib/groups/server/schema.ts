@@ -15,12 +15,14 @@ import groupsSql from '../../../../migrations/0001_groups.sql?raw';
 import credentialsSql from '../../../../migrations/0002_group_credentials.sql?raw';
 import privateInviteOnlySql from '../../../../migrations/0003_private_groups_are_invite_only.sql?raw';
 import threeRoleSeedSql from '../../../../migrations/0004_three_role_seed.sql?raw';
+import noSuspensionSql from '../../../../migrations/0005_no_suspension.sql?raw';
 
 const MIGRATIONS: readonly string[] = [
 	groupsSql,
 	credentialsSql,
 	privateInviteOnlySql,
-	threeRoleSeedSql
+	threeRoleSeedSql,
+	noSuspensionSql
 ];
 
 /** Statements per migration, in apply order. Split on the `-- @statement`

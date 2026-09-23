@@ -23,10 +23,9 @@
 //   groups v1 model.
 import type { CallerMembership, GroupRow } from './types';
 
-/** On the roster and not suspended. Suspension keeps the row and removes the
- *  access, which is the whole of what suspending a member means. */
+/** On the roster. There is no suspension, so a roster row is membership. */
 function isActiveMember(membership: CallerMembership): boolean {
-	return membership.role !== null && membership.status === 'active';
+	return membership.role !== null;
 }
 
 /** A private group is invisible to anyone off its roster; a public one is

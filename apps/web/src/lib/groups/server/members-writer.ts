@@ -10,17 +10,14 @@
 // different about this record class is the permission, and it is different per
 // intent rather than fixed:
 //
-//   admit / reinstate   a member gains access      ADMIT_MEMBERS / EJECT_MEMBERS
+//   admit               a member gains access      ADMIT_MEMBERS
 //   assign              a member's roles change    ASSIGN_ROLES
-//   eject / suspend     a member loses access      EJECT_MEMBERS
+//   eject               a member loses access      EJECT_MEMBERS
 //   leave               the SUBJECT removes self   no grant at all
 //
 // The three names are the split `MANAGE_MEMBERS` became (FR-005b), so a greeter
-// who may admit still cannot eject or promote. `reinstate` and `suspend` are
-// both the EJECT grant deliberately: suspension is a partial removal in both
-// directions, which is the rule the roster form already applies, and a second
-// name for "undo the thing you were allowed to do" would be a grant nobody
-// holds.
+// who may admit still cannot eject or promote. There is no suspend/reinstate
+// pair: suspension was removed 2026-09-23, and a moderator ejects.
 //
 // `leave` IS AUTHORISED BY IDENTITY, NOT BY A GRANT. A plain member holds none
 // of the three and may still leave, so gating self-removal on EJECT_MEMBERS
@@ -81,8 +78,8 @@ export interface WriteGroupMembersInput {
 /** A membership record appears (`put`) or disappears (`drop`). Both directions
  *  are enumerated rather than inferred from a boolean, because the permission
  *  each one needs is not the same. */
-export type MembershipPut = 'admit' | 'assign' | 'reinstate' | 'join';
-export type MembershipDrop = 'eject' | 'suspend' | 'leave';
+export type MembershipPut = 'admit' | 'assign' | 'join';
+export type MembershipDrop = 'eject' | 'leave';
 export type MembershipIntent = MembershipPut | MembershipDrop;
 
 /** THE TWO SELF-SERVICE INTENTS, authorised by identity rather than by a grant:
@@ -108,9 +105,7 @@ const PERMISSION_FOR: Readonly<
 > = {
 	admit: 'ADMIT_MEMBERS',
 	assign: 'ASSIGN_ROLES',
-	reinstate: 'EJECT_MEMBERS',
-	eject: 'EJECT_MEMBERS',
-	suspend: 'EJECT_MEMBERS'
+	eject: 'EJECT_MEMBERS'
 };
 
 /** `at://<group did>/space/<members type>/self` — the space every roster record
@@ -202,7 +197,7 @@ export async function putGroupMembership(
 }
 
 /** Deletes the `membership` record, which is how access is revoked — by an
- *  eject, by a suspension, or by the member leaving.
+ *  eject or by the member leaving.
  *
  *  Idempotent, because the host is: `com.atproto.space.deleteRecord` returns
  *  `{}` for a record that is not there (verified in the reference PDS, which

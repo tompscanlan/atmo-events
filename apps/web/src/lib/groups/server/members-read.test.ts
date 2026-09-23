@@ -10,10 +10,10 @@
 //   2. The records-derived roster must come out in the SAME order the SQL gives
 //      (`is_owner DESC, created_at ASC`), or switching source visibly reshuffles
 //      a page.
-//   3. The rebuild is ADDITIVE. A roster row with no record is a suspended
-//      member by construction (suspension revokes the record), so a rebuild
-//      that deleted unmatched rows would eject suspended members to make the
-//      numbers agree.
+//   3. The rebuild is ADDITIVE. A roster row with no record is the trace of a
+//      roster act whose second half failed (`roster.ts`), and the gate already
+//      denies it, so a rebuild that deleted unmatched rows would be guessing
+//      which failure each one is to make the numbers agree.
 //   4. The owner's row is immutable in SQL, so the rebuild has to INSERT a
 //      missing one and refuse to fight a disagreeing one.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -23,8 +23,7 @@ import {
 	createGroup,
 	getCallerMembership,
 	listMembers,
-	recordGroupSpaces,
-	setMemberStatus
+	recordGroupSpaces
 } from './repo';
 import type { GroupSpaceReader } from './about-read';
 import {
@@ -429,9 +428,9 @@ describe('rebuildGroupMembers', () => {
 		expect(result.orphans).toEqual([]);
 	});
 
-	it('reports a suspended member as an orphan and leaves the row suspended', async () => {
-		await setMemberStatus(db, group.id, MEMBER, 'suspended');
-		// Suspension revoked the record, so the space no longer names them.
+	it('reports a row with no record as an orphan and leaves the row', async () => {
+		// A revocation whose row delete failed after its record went: the space
+		// no longer names them, the row still does.
 		const reader = readerOver([
 			accessRecord,
 			membership(OWNER, ['owner'], '2026-09-01T10:00:00.000Z'),
@@ -441,9 +440,7 @@ describe('rebuildGroupMembers', () => {
 		const result = await rebuildGroupMembers(db, reader, group);
 
 		expect(result.orphans).toEqual([MEMBER]);
-		expect((await listMembers(db, group.id)).find((row) => row.did === MEMBER)?.status).toBe(
-			'suspended'
-		);
+		expect((await listMembers(db, group.id)).some((row) => row.did === MEMBER)).toBe(true);
 	});
 
 	it('skips a record naming a role this group has no row for', async () => {
@@ -576,17 +573,6 @@ describe('the gate, from records', () => {
 		// No credential for a group that HAS a members space: nothing, not rows.
 		const noReader = await getCallerMembership(db, group, ADMIN, null);
 		expect(noReader.permissions.size).toBe(0);
-	});
-
-	it('denies a suspended row even while its membership record survives', async () => {
-		await setMemberStatus(db, group.id, ADMIN, 'suspended');
-		const admin = await getCallerMembership(
-			db,
-			group,
-			ADMIN,
-			readerOver([...AUTHZ, membership(ADMIN, ['admin'], '2026-09-02T10:00:00.000Z')])
-		);
-		expect(admin.permissions.size).toBe(0);
 	});
 
 	it('reads nothing for an anonymous caller', async () => {

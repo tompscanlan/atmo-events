@@ -5,8 +5,7 @@
 		approveJoinRequestForm,
 		changeMemberRoleForm,
 		rejectJoinRequestForm,
-		removeMemberForm,
-		setMemberStatusForm
+		removeMemberForm
 	} from '$lib/groups/groups.remote';
 	import { groupFormError } from '$lib/groups/form-result';
 	import { resolve } from '$app/paths';
@@ -24,7 +23,6 @@
 	let formError = $derived(
 		groupFormError(changeMemberRoleForm.result) ??
 			groupFormError(removeMemberForm.result) ??
-			groupFormError(setMemberStatusForm.result) ??
 			groupFormError(addMemberForm.result) ??
 			groupFormError(approveJoinRequestForm.result) ??
 			groupFormError(rejectJoinRequestForm.result)
@@ -58,9 +56,6 @@
 							<Badge variant={member.role === 'owner' ? 'primary' : 'secondary'}>
 								{member.role}
 							</Badge>
-							{#if member.status !== 'active'}
-								<Badge variant="secondary">{member.status}</Badge>
-							{/if}
 						</div>
 					</div>
 
@@ -82,18 +77,6 @@
 								</form>
 							{/if}
 							{#if data.canEjectMembers}
-								<form {...setMemberStatusForm}>
-									<input type="hidden" name="groupDid" value={group.group_did} />
-									<input type="hidden" name="did" value={member.did} />
-									<input
-										type="hidden"
-										name="status"
-										value={member.status === 'active' ? 'suspended' : 'active'}
-									/>
-									<Button type="submit" size="sm" variant="ghost">
-										{member.status === 'active' ? 'Suspend' : 'Reinstate'}
-									</Button>
-								</form>
 								<form {...removeMemberForm}>
 									<input type="hidden" name="groupDid" value={group.group_did} />
 									<input type="hidden" name="did" value={member.did} />
