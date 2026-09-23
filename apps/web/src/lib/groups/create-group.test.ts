@@ -3,7 +3,7 @@
 //
 // `mint.test.ts` already covers how a PDS refusal maps onto a `MintFailure`,
 // and `credentials.test.ts` covers the encrypted round-trip. What neither can
-// see is the SEQUENCE — mint -> store -> INSERT -> provision — because a
+// see is the SEQUENCE — rehearse -> mint -> store -> INSERT -> provision — because a
 // `did:plc` is permanent, so the only acceptable outcome of a name collision is
 // that nothing durable exists afterwards. These cases assert the artifacts, not
 // the call: no group row, no credential row, no space.
@@ -12,6 +12,7 @@
 // order, so "did not happen" is assertable rather than assumed.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
+import { ensureGroupsSchema } from './server/schema';
 import { clearGroupSessions } from './server/session';
 import { runCreateGroup, type CreateGroupData, type CreateGroupEnv } from './create-group';
 
@@ -246,6 +247,67 @@ describe('refusing before the irreversible step', () => {
 		const result = await runCreateGroup(env, OWNER, data({ label: 'kona-trail-runners-club' }));
 
 		expect(result.ok).toBe(false);
+		expect(calls).toEqual([]);
+		expect(await rows('groups')).toEqual([]);
+	});
+
+	// THE ROUTE THAT STRANDED A DID FROM PLAIN FORM INPUT. The 0003 trigger
+	// refuses this pair, but only at the INSERT, which used to run after the
+	// mint: the user was shown the rule and left a did:plc, a spent invite use
+	// and an orphan credential row. The rehearsal puts the same refusal in front
+	// of the mint. (Spec: SC-009.)
+	it('mints nothing for a private group that does not require approval', async () => {
+		const { calls } = stubPds();
+
+		const result = await runCreateGroup(
+			env,
+			OWNER,
+			data({ visibility: 'private', requireApproval: false })
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: 'A private group must require approval to join — invite members instead'
+		});
+		expect(calls).toEqual([]);
+		expect(await rows('groups')).toEqual([]);
+		expect(await rows('group_credentials')).toEqual([]);
+	});
+
+	// The 2026-09-22 failure, rebuilt: a column the INSERT does not know about
+	// that refuses NULL, which is what a leftover `slug NOT NULL` was. The schema
+	// self-heal cannot repair this, so the create has to refuse it before a
+	// did:plc exists, and say it is not the user's doing.
+	it('mints nothing when the groups table has drifted to refuse the row', async () => {
+		const { calls } = stubPds();
+		harness.raw.exec('ALTER TABLE groups ADD COLUMN slug TEXT CHECK (slug IS NOT NULL)');
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		expect(result.ok).toBe(false);
+		expect(!result.ok && result.error).toContain(
+			'Group creation is unavailable on this deployment'
+		);
+		expect(!result.ok && result.error).toContain('slug');
+		expect(calls).toEqual([]);
+		expect(await rows('groups')).toEqual([]);
+		expect(await rows('group_credentials')).toEqual([]);
+	});
+
+	// Drift that raises NOTHING. Without the trigger that seeds the owner role,
+	// the owner's membership INSERT…SELECT matches no role and writes zero rows,
+	// so the create would succeed and produce a group nobody owns. Only a
+	// rehearsal that checks what landed, rather than what did not fail, sees it.
+	it('mints nothing when the row would land without its owner', async () => {
+		const { calls } = stubPds();
+		// Apply first, so a first-in-isolate self-heal cannot put the trigger back.
+		await ensureGroupsSchema(harness.db);
+		harness.raw.exec('DROP TRIGGER groups_seed_owner_role');
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		expect(result.ok).toBe(false);
+		expect(!result.ok && result.error).toContain('owner membership');
 		expect(calls).toEqual([]);
 		expect(await rows('groups')).toEqual([]);
 	});

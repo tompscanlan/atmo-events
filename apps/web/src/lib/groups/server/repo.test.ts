@@ -15,6 +15,7 @@ import {
 	getGroupByDid,
 	listGroups,
 	listMembers,
+	rehearseCreateGroup,
 	removeMember,
 	requestJoin,
 	rolePermissions,
@@ -98,6 +99,40 @@ describe('createGroup', () => {
 	it('reports a duplicate DID as did-taken', async () => {
 		await group();
 		await expect(group({ name: 'Kona, again' })).rejects.toMatchObject({ reason: 'did-taken' });
+	});
+});
+
+// The create path runs this before the mint, so it must cost nothing: a
+// rehearsal that left a row behind would be a worse bug than the one it
+// prevents.
+describe('rehearseCreateGroup', () => {
+	function counts() {
+		return ['groups', 'roles', 'role_permissions', 'memberships'].map(
+			(table) => harness.raw.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()?.n
+		);
+	}
+
+	it('proves the row would land and leaves every table as it found it', async () => {
+		await group();
+		const before = counts();
+
+		await expect(rehearseCreateGroup(db, { ownerDid: ALICE, name: 'Rehearsed' })).resolves.toBe(
+			undefined
+		);
+
+		expect(counts()).toEqual(before);
+	});
+
+	it('meets the refusal the real create would meet', async () => {
+		await expect(
+			rehearseCreateGroup(db, {
+				ownerDid: OWNER,
+				name: 'Kona',
+				visibility: 'private',
+				requireApproval: false
+			})
+		).rejects.toMatchObject({ reason: 'private-needs-approval' });
+		expect(counts()).toEqual([0, 0, 0, 0]);
 	});
 });
 

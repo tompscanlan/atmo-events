@@ -10,11 +10,14 @@
 // THE ORDER IS THE POINT. A did:plc is permanent and
 // unrecallable, so the sequence is:
 //
-//   refuse -> refuse -> mint -> store -> INSERT -> provision
+//   refuse -> refuse -> rehearse -> mint -> store -> INSERT -> provision
 //
-// Both refusals come BEFORE the mint: a label the PDS would reject, and a
+// Every refusal comes BEFORE the mint: a label the PDS would reject, a
 // deployment that could not keep the credential the mint hands back exactly
-// once. The handle registration is itself the name reservation, so a duplicate
+// once, and a row the groups tables would refuse — the INSERT is rehearsed and
+// rolled back, so an INSERT that fails after the mint means the database
+// changed or failed in between.
+// The handle registration is itself the name reservation, so a duplicate
 // name fails at the mint and leaves nothing behind — no DID, no row, no space.
 // (Spec: FR-001a for the reservation, SC-008 for the zero-artifact outcome.)
 import type { CredentialStoreEnv } from './server/credentials';
@@ -24,7 +27,13 @@ import {
 	storeGroupCredential
 } from './server/credentials';
 import { GroupMintError, mintGroupAccount, type MintConfig, type MintFailure } from './server/mint';
-import { createGroup, recordGroupSpaces } from './server/repo';
+import {
+	GroupRuleError,
+	createGroup,
+	recordGroupSpaces,
+	rehearseCreateGroup,
+	type CreateGroupInput
+} from './server/repo';
 import { GroupSpaceError, pdsProvisioner, provisionGroupSpaces } from './server/spaces';
 import { setGroupRules, writeGroupProfile } from './server/about-writer';
 import { reconcileGroupDeclaration } from './server/declaration-writer';
@@ -127,7 +136,7 @@ export async function runCreateGroup(
 	callerDid: string,
 	data: CreateGroupData
 ): Promise<CreateGroupOutcome> {
-	// REFUSE BEFORE MINTING, in two ways, because a did:plc cannot be recalled.
+	// REFUSE BEFORE MINTING, in three ways, because a did:plc cannot be recalled.
 	//
 	// 1. The label must be one the PDS will accept as a handle. What this app
 	//    accepts in a form is wider than the PDS's handle rules (3-18
@@ -156,6 +165,41 @@ export async function runCreateGroup(
 		};
 	}
 
+	// No name beside the handle: the PDS adjudicated it, and the group row keeps
+	// the DID. Reading it back is the identity resolver's job (FR-001a, FR-010a).
+	// One value for both the rehearsal and the INSERT, so they cannot disagree.
+	const row: Omit<CreateGroupInput, 'groupDid'> = {
+		ownerDid: callerDid,
+		name: data.name,
+		description: data.description || null,
+		visibility: data.visibility,
+		requireApproval: data.requireApproval,
+		locationName: data.locationName || null,
+		locationAddress: data.locationAddress || null,
+		locationTimezone: data.locationTimezone || null
+	};
+
+	// 3. The groups tables must accept the row. The INSERT used to be the first
+	//    thing to find out, after the mint, and it refused twice: schema drift on
+	//    2026-09-22, and the 0003 trigger that refuses a private group with
+	//    approval off, which the create form can send. Rehearsing it asks the
+	//    schema itself, so the rule keeps one home. (Spec: SC-008, SC-009.)
+	try {
+		await rehearseCreateGroup(env.DB, row);
+	} catch (e) {
+		if (e instanceof GroupRuleError && e.reason === 'private-needs-approval') {
+			return { ok: false, error: e.message };
+		}
+		// Nothing else the form sends can trip the schema, so the rest is the
+		// deployment's: drift, or a database that did not answer.
+		return {
+			ok: false,
+			error: `Group creation is unavailable on this deployment: the database would not accept the new group (${
+				e instanceof Error ? e.message : String(e)
+			}), so nothing was registered. Please tell an administrator.`
+		};
+	}
+
 	let minted;
 	try {
 		minted = await mintGroupAccount(mint, data.label);
@@ -181,20 +225,7 @@ export async function runCreateGroup(
 
 	let group;
 	try {
-		group = await createGroup(env.DB, {
-			groupDid: minted.did,
-			ownerDid: callerDid,
-			name: data.name,
-			// No name beside the handle: the PDS adjudicated it, and the group
-			// row keeps the DID. Reading it back is the identity resolver's job
-			// (FR-001a, FR-010a).
-			description: data.description || null,
-			visibility: data.visibility,
-			requireApproval: data.requireApproval,
-			locationName: data.locationName || null,
-			locationAddress: data.locationAddress || null,
-			locationTimezone: data.locationTimezone || null
-		});
+		group = await createGroup(env.DB, { ...row, groupDid: minted.did });
 	} catch (e) {
 		return formError(e);
 	}

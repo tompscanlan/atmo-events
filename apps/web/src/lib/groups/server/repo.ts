@@ -160,9 +160,97 @@ const GROUP_COLUMNS = `id, group_did, owner_did, name, description, visibility,
  *  needs to read back a generated id mid-transaction. */
 export async function createGroup(db: D1Database, input: CreateGroupInput): Promise<GroupRow> {
 	await ensureGroupsSchema(db);
-	const now = Date.now();
 	const groupId = crypto.randomUUID();
 
+	await guard(() => db.batch(createGroupStatements(db, input, groupId, Date.now())));
+
+	const row = await getGroupById(db, groupId);
+	if (!row) throw new GroupRuleError('not-found', 'Group vanished immediately after creation');
+	return row;
+}
+
+/** The DID a rehearsal inserts under. `.invalid` is reserved (RFC 2606), so no
+ *  minted DID can collide with it, and the row never commits anyway. */
+const REHEARSAL_DID = 'did:web:create-rehearsal.invalid';
+/** The rehearsal's two verdicts. They travel inside an error message because
+ *  an error is the only thing that makes D1 roll a batch back. */
+const REHEARSAL_LANDED = 'rehearsal-landed';
+const REHEARSAL_NO_OWNER = 'rehearsal-no-owner';
+
+/** RUNS `createGroup`'s batch and forces it to roll back, so a create can find
+ *  out the tables would refuse its row BEFORE a did:plc exists.
+ *
+ *  WHY A REHEARSAL AND NOT A CHECK. Two things have refused a create's INSERT
+ *  after the mint, and neither can be seen by a check written here: schema
+ *  drift (`ensureGroupsSchema` is IF NOT EXISTS throughout, so a changed table
+ *  keeps its old shape — a leftover `slug NOT NULL` refused every create on
+ *  2026-09-22), and the 0003 trigger that refuses a private open-join group.
+ *  Re-checking the second in TypeScript would break this module's rule that the
+ *  schema is the authority. The first cannot be enumerated at all. Running the
+ *  real statements asks the one thing that knows.
+ *
+ *  HOW IT ROLLS BACK. D1 has no BEGIN/ROLLBACK. A batch is a transaction that
+ *  commits unless a statement fails, so the batch ends in a statement that
+ *  ALWAYS fails, and its error carries the verdict. `json_extract` with an
+ *  invalid path raises an error that quotes the path, and the path says whether
+ *  the owner membership (the last row the batch writes) landed. "Landed" is
+ *  positive evidence: no error at all proves nothing. A statement earlier in
+ *  the batch that fails raises its own error first, and that is the refusal
+ *  the real create would have met.
+ *
+ *  Resolves when the row would land. Throws the mapped `GroupRuleError` for a
+ *  named rule the schema enforces, and anything else as it came. */
+export async function rehearseCreateGroup(
+	db: D1Database,
+	input: Omit<CreateGroupInput, 'groupDid'>
+): Promise<void> {
+	await ensureGroupsSchema(db);
+	const groupId = crypto.randomUUID();
+	const statements = createGroupStatements(
+		db,
+		{ ...input, groupDid: REHEARSAL_DID },
+		groupId,
+		Date.now()
+	);
+	statements.push(
+		db
+			.prepare(
+				`SELECT json_extract('{}', CASE WHEN EXISTS (
+					SELECT 1 FROM memberships m JOIN roles r ON r.id = m.role_id
+					WHERE m.group_id = ? AND m.did = ? AND r.is_owner = 1 AND m.status = 'active'
+				) THEN '${REHEARSAL_LANDED}' ELSE '${REHEARSAL_NO_OWNER}' END)`
+			)
+			.bind(groupId, input.ownerDid)
+	);
+
+	try {
+		await db.batch(statements);
+	} catch (e) {
+		const text = e instanceof Error ? e.message : String(e);
+		if (text.includes(REHEARSAL_LANDED)) return;
+		if (text.includes(REHEARSAL_NO_OWNER)) {
+			throw new Error('the group row was accepted but its owner membership was not', {
+				cause: e
+			});
+		}
+		// A named rule is mapped as `guard` would. A bare `constraint` is not: it
+		// names no rule the app knows, and the raw text names the column.
+		const mapped = constraintMessage(e);
+		throw mapped && mapped.reason !== 'constraint' ? mapped : e;
+	}
+	// Unreachable while the last statement always raises; if it ever does not,
+	// the probe rows just committed and nobody should be told the table is fine.
+	throw new Error('the create rehearsal committed instead of rolling back');
+}
+
+/** `createGroup`'s one batch, shared with `rehearseCreateGroup` so the
+ *  rehearsal can never test a different write from the one it vouches for. */
+function createGroupStatements(
+	db: D1Database,
+	input: CreateGroupInput,
+	groupId: string,
+	now: number
+): D1PreparedStatement[] {
 	const statements: D1PreparedStatement[] = [
 		db
 			.prepare(
@@ -222,11 +310,7 @@ export async function createGroup(db: D1Database, input: CreateGroupInput): Prom
 			.bind(crypto.randomUUID(), groupId, input.ownerDid, now, now, groupId)
 	);
 
-	await guard(() => db.batch(statements));
-
-	const row = await getGroupById(db, groupId);
-	if (!row) throw new GroupRuleError('not-found', 'Group vanished immediately after creation');
-	return row;
+	return statements;
 }
 
 export async function getGroupById(db: D1Database, id: string): Promise<GroupRow | null> {
