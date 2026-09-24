@@ -3,8 +3,8 @@
  *
  * A group is a custodial PDS account. Its PUBLIC repo carries ordinary
  * `community.lexicon.calendar.*` records that anyone (and Contrail's public
- * index) can read; its `net.openmeet.group` Space carries the members-only
- * records. Spaces are never anonymously readable — not even under a `public`
+ * index) can read; its `net.openmeet.space.events` Space carries the
+ * members-only records. Spaces are never anonymously readable — not even under a `public`
  * policy — so this runtime is the only read path for that slice.
  *
  * Reads are earned, not assumed: a signed-in user hands the Worker a one-time
@@ -25,17 +25,26 @@ import {
 	SPACES_SERVICE_FRAGMENT
 } from './service';
 
-/** Host-side Space kind. Matches the live fixture; not a record Lexicon. */
-export const GROUP_SPACE_TYPE = 'net.openmeet.group';
+/** Host-side Space kind of the group's members-only EVENTS container: events
+ *  and RSVPs under the member-list read policy. The web app owns the group's
+ *  other two types (`net.openmeet.space.about`, `.members`); all three sit
+ *  under the `space` segment so that no space type is also an XRPC prefix.
+ *  Not a record Lexicon. */
+export const EVENTS_SPACE_TYPE = 'net.openmeet.space.events';
+/** Every group space is keyed `self`, so its URI follows from the group DID
+ *  and the type alone. */
+export const EVENTS_SPACE_SKEY = 'self';
 export const GROUP_EVENT_COLLECTION = 'community.lexicon.calendar.event';
 export const GROUP_RSVP_COLLECTION = 'community.lexicon.calendar.rsvp';
 
 /**
- * XRPC namespace of the Space provider methods. Deliberately distinct from the
+ * XRPC namespace of the Space provider methods: verbs, where the group's record
+ * collections are nouns under the same prefix. Deliberately distinct from the
  * public Contrail namespace (`rsvp.atmo`) so one prefix maps to exactly one
- * runtime and the dispatcher never has to guess.
+ * runtime and the dispatcher never has to guess, and distinct from every space
+ * type so one NSID never does two jobs.
  */
-export const SPACES_NAMESPACE = GROUP_SPACE_TYPE;
+export const SPACES_NAMESPACE = 'net.openmeet.group';
 
 export interface OpenmeetApiEnv {
 	[key: string]: unknown;
@@ -120,9 +129,8 @@ export function createGroupSpaces(endpoint: string): SpacesWorkerHandler<Openmee
 			audience: serviceAudience(endpoint, SPACES_SERVICE_FRAGMENT)
 		},
 		spaceTypes: {
-			[GROUP_SPACE_TYPE]: {
-				// No `skey`: a group owns one Space per group account, keyed by the
-				// group's own slug (the live fixture uses `kona`), not a literal.
+			[EVENTS_SPACE_TYPE]: {
+				skey: EVENTS_SPACE_SKEY,
 				collections: [GROUP_EVENT_COLLECTION, GROUP_RSVP_COLLECTION],
 				policy: 'member-list'
 			}

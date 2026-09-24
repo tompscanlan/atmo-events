@@ -40,8 +40,12 @@ const API_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const PDS = process.env.SPACES_E2E_PDS ?? 'https://pds.opnmt.net';
 const AUTHORITY_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
-const SPACE_TYPE = 'net.openmeet.group';
-const SPACE_SKEY = 'kona';
+// The group's events space. The alpha has no space of this type until group
+// create provisions one; the old `net.openmeet.group`/`kona` fixture predates
+// the split of space types from the XRPC prefix, and this worker no longer
+// accepts that type.
+const SPACE_TYPE = 'net.openmeet.space.events';
+const SPACE_SKEY = 'self';
 const SPACE_URI = formatSpaceUri({
 	authorityDid: AUTHORITY_DID,
 	type: SPACE_TYPE,
