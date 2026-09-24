@@ -72,8 +72,6 @@ export interface CreateGroupData {
 	 *  reads a missing value as `true` (`require_approval` defaults to 1). */
 	requireApproval?: boolean;
 	locationName?: string;
-	locationAddress?: string;
-	locationTimezone?: string;
 	/** One rule per non-empty line. Rules have no column — the records in the
 	 *  about space are the only copy. (Spec: FR-004c.) */
 	rules?: string;
@@ -174,9 +172,7 @@ export async function runCreateGroup(
 		description: data.description || null,
 		visibility: data.visibility,
 		requireApproval: data.requireApproval,
-		locationName: data.locationName || null,
-		locationAddress: data.locationAddress || null,
-		locationTimezone: data.locationTimezone || null
+		locationName: data.locationName || null
 	};
 
 	// 3. The groups tables must accept the row. The INSERT used to be the first

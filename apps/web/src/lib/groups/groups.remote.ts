@@ -115,8 +115,6 @@ export const createGroupForm = form(
 		// No `spaceUri` field: the group's two spaces are CREATED here now, not
 		// bound to a string someone pasted in.
 		locationName: v.optional(v.pipe(v.string(), v.maxLength(200))),
-		locationAddress: v.optional(v.pipe(v.string(), v.maxLength(400))),
-		locationTimezone: v.optional(v.pipe(v.string(), v.maxLength(80))),
 		/** No column behind this one: the rule RECORDS are the only copy. */
 		rules: v.optional(v.pipe(v.string(), v.maxLength(8000)))
 	}),

@@ -2,14 +2,21 @@
 // Every case here is a rule the app relies on and would otherwise have to
 // re-check in TypeScript at every call site — the kind of rule that gets
 // bypassed by the one code path that forgot.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
-import { GROUPS_MIGRATION_STATEMENTS, GROUPS_SCHEMA_STATEMENTS } from './schema';
+import {
+	alreadyApplied,
+	applyGroupsSchemaSync,
+	droppedColumn,
+	GROUPS_MIGRATION_STATEMENTS,
+	GROUPS_SCHEMA_STATEMENTS
+} from './schema';
+import { sqliteD1 } from './__fixtures__/d1-sqlite';
 
 let db: DatabaseSync;
 
 function apply(target: DatabaseSync) {
-	for (const statement of GROUPS_SCHEMA_STATEMENTS) target.exec(statement);
+	applyGroupsSchemaSync(target);
 }
 
 function insertGroup(id: string, ownerDid: string, extra: Record<string, unknown> = {}) {
@@ -70,7 +77,7 @@ describe('the migration itself', () => {
 		}
 	});
 
-	it('re-applies cleanly (every object is IF NOT EXISTS)', () => {
+	it('re-applies cleanly (IF NOT EXISTS throughout, and a gone column is not dropped again)', () => {
 		expect(() => apply(db)).not.toThrow();
 	});
 });
@@ -353,6 +360,79 @@ describe('migration 0005: there is no suspension', () => {
 		expect(() =>
 			db.prepare("UPDATE memberships SET status = 'suspended' WHERE did = ?").run('did:plc:member')
 		).toThrow(/there is no suspension/);
+	});
+});
+
+// 0006 is the first migration a replay cannot re-run as written: SQLite has no
+// `DROP COLUMN IF EXISTS`. The runner skips a drop whose column is gone, and
+// these cases pin both halves of that: it does skip on a replay, and it does
+// NOT skip on a fresh database, where 0001 has only just created the column.
+describe('migration 0006: the four unrendered location columns are gone', () => {
+	const BEFORE = GROUPS_MIGRATION_STATEMENTS.slice(0, 5).flat();
+	const DROPS = GROUPS_MIGRATION_STATEMENTS[5];
+	const GONE = ['location_address', 'location_lat', 'location_lng', 'location_timezone'];
+
+	function columns(target: DatabaseSync): string[] {
+		return target
+			.prepare('SELECT name FROM pragma_table_info(?)')
+			.all('groups')
+			.map((row) => (row as { name: string }).name);
+	}
+
+	it('drops all four and keeps location_name, the one a page renders', () => {
+		expect(columns(db).filter((column) => GONE.includes(column))).toEqual([]);
+		expect(columns(db)).toContain('location_name');
+	});
+
+	it('recognises every statement in the file as a drop, the commented first one included', () => {
+		expect(DROPS.map((statement) => droppedColumn(statement)?.column)).toEqual(GONE);
+	});
+
+	it('drops them from a database that already holds a group, and keeps the row', () => {
+		db.close();
+		db = new DatabaseSync(':memory:');
+		db.exec('PRAGMA foreign_keys = ON');
+		for (const statement of BEFORE) db.exec(statement);
+		insertGroup('g1', 'did:plc:owner', {
+			location_name: 'Louisville',
+			location_address: '1 Main St',
+			location_lat: 38.25,
+			location_lng: -85.76,
+			location_timezone: 'America/Kentucky/Louisville'
+		});
+
+		apply(db);
+		apply(db);
+
+		expect(columns(db).filter((column) => GONE.includes(column))).toEqual([]);
+		expect(db.prepare('SELECT name, location_name FROM groups WHERE id = ?').get('g1')).toEqual({
+			name: 'Group g1',
+			location_name: 'Louisville'
+		});
+	});
+
+	it('replays through ensureGroupsSchema twice on one D1, as two cold isolates would', async () => {
+		const harness = sqliteD1(false);
+		try {
+			for (let isolate = 0; isolate < 2; isolate++) {
+				// A fresh module is a fresh isolate: `ensureGroupsSchema` memoises
+				// per module, so a second call on the same one would prove nothing.
+				vi.resetModules();
+				const { ensureGroupsSchema } = await import('./schema');
+				await expect(ensureGroupsSchema(harness.db)).resolves.toBeUndefined();
+			}
+			expect(columns(harness.raw).filter((column) => GONE.includes(column))).toEqual([]);
+		} finally {
+			harness.close();
+		}
+	});
+
+	it('skips a drop only when the table exists without the column', () => {
+		const [drop] = DROPS;
+		expect(alreadyApplied(drop, () => [])).toBe(false);
+		expect(alreadyApplied(drop, () => ['id', 'location_address'])).toBe(false);
+		expect(alreadyApplied(drop, () => ['id', 'location_name'])).toBe(true);
+		expect(alreadyApplied(GROUPS_SCHEMA_STATEMENTS[0], () => ['id'])).toBe(false);
 	});
 });
 

@@ -6,7 +6,7 @@
 // Test harness only; it implements exactly the D1 surface $lib/groups/server
 // uses (prepare/bind/all/first/run and batch-as-transaction).
 import { DatabaseSync } from 'node:sqlite';
-import { GROUPS_SCHEMA_STATEMENTS } from '../schema';
+import { applyGroupsSchemaSync } from '../schema';
 
 type Row = Record<string, unknown>;
 
@@ -94,7 +94,7 @@ export function sqliteD1(applySchema = true): SqliteD1 {
 	// pass anything.
 	sqlite.exec('PRAGMA foreign_keys = ON');
 	if (applySchema) {
-		for (const statement of GROUPS_SCHEMA_STATEMENTS) sqlite.exec(statement);
+		applyGroupsSchemaSync(sqlite);
 	}
 
 	const api = {

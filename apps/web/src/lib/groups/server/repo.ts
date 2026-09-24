@@ -35,10 +35,6 @@ export interface CreateGroupInput {
 	visibility?: GroupRow['visibility'];
 	requireApproval?: boolean;
 	locationName?: string | null;
-	locationAddress?: string | null;
-	locationLat?: number | null;
-	locationLng?: number | null;
-	locationTimezone?: string | null;
 	/** No `spaceUri`: spaces are PROVISIONED at create (`./spaces.ts`), never
 	 *  supplied. The row is inserted with both URIs NULL and filled by
 	 *  `recordGroupSpaces` once the PDS has confirmed them. The order is no
@@ -54,8 +50,6 @@ export interface UpdateGroupInput {
 	visibility?: GroupRow['visibility'];
 	requireApproval?: boolean;
 	locationName?: string | null;
-	locationAddress?: string | null;
-	locationTimezone?: string | null;
 	/** Deliberately absent: a group's space URIs are derived from its own DID
 	 *  and the decided space types, so there is nothing for a settings form to
 	 *  edit. Letting one be typed in allowed a group to point at a space it does
@@ -143,9 +137,8 @@ async function guard<T>(work: () => Promise<T>): Promise<T> {
 }
 
 const GROUP_COLUMNS = `id, group_did, owner_did, name, description, visibility,
-	require_approval, image_cid, image_mime, image_size, location_name, location_address,
-	location_lat, location_lng, location_timezone, about_space_uri, members_space_uri,
-	created_at, updated_at`;
+	require_approval, image_cid, image_mime, image_size, location_name, about_space_uri,
+	members_space_uri, created_at, updated_at`;
 
 /** Creates the group, seeds the five legacy roles with their default bundles,
  *  and installs exactly one ACTIVE OWNER membership — as a single D1 batch,
@@ -255,9 +248,8 @@ function createGroupStatements(
 		db
 			.prepare(
 				`INSERT INTO groups (id, group_did, owner_did, name, description,
-					visibility, require_approval, location_name, location_address, location_lat,
-					location_lng, location_timezone, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					visibility, require_approval, location_name, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.bind(
 				groupId,
@@ -268,10 +260,6 @@ function createGroupStatements(
 				input.visibility ?? 'public',
 				input.requireApproval === false ? 0 : 1,
 				input.locationName ?? null,
-				input.locationAddress ?? null,
-				input.locationLat ?? null,
-				input.locationLng ?? null,
-				input.locationTimezone ?? null,
 				now,
 				now
 			)
@@ -381,8 +369,6 @@ export async function updateGroup(
 	if (input.visibility !== undefined) push('visibility', input.visibility);
 	if (input.requireApproval !== undefined) push('require_approval', input.requireApproval ? 1 : 0);
 	if (input.locationName !== undefined) push('location_name', input.locationName);
-	if (input.locationAddress !== undefined) push('location_address', input.locationAddress);
-	if (input.locationTimezone !== undefined) push('location_timezone', input.locationTimezone);
 	if (sets.length === 0) return;
 	push('updated_at', Date.now());
 	values.push(groupId);
