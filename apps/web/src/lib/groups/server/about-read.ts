@@ -208,7 +208,7 @@ export interface GroupAbout {
  *  an empty about".) */
 export async function readGroupAbout(
 	reader: GroupSpaceReader,
-	group: GroupRow
+	group: Pick<GroupRow, 'group_did' | 'about_space_uri'>
 ): Promise<GroupAbout> {
 	const space = group.about_space_uri;
 	if (!space) return { profile: null, rules: [] };
@@ -261,7 +261,7 @@ export function cacheFromProfile(profile: GroupProfileFields): {
 	};
 }
 
-/** REBUILD, mode 1: cache repair (`data-model.md`).
+/** REBUILD over a surviving row: cache repair (`data-model.md`).
  *
  *  The row exists; every column the `profile` record owns is overwritten from
  *  that record. Returns what it did so a command can report it, and returns
@@ -270,10 +270,8 @@ export function cacheFromProfile(profile: GroupProfileFields): {
  *  cache to match an absent record would destroy data the records cannot yet
  *  replace.
  *
- *  Mode 2 (cold rebuild, no row at all) is deliberately NOT here: it needs
- *  `owner_did` from a `membership` record (T014) and must refuse without one,
- *  because `groups_identity_immutable` makes a guessed owner permanent.
- *  (Spec: FR-009, SC-002, SC-005.) */
+ *  A group with no row at all is `./rebuild.ts`'s, which also owns the one
+ *  entry point that picks between the two. (Spec: FR-009, SC-002.) */
 export async function rebuildGroupCache(
 	db: D1Database,
 	reader: GroupSpaceReader,

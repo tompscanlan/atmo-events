@@ -78,8 +78,8 @@ export function joinPolicyFor(group: {
  *  restriction the join policy is meant to express, not the visibility
  *  (FR-004b). Read access is the `access` record's business and that record is
  *  a separate bead, so a rebuild must NOT guess a visibility from a profile.
- *  `about-read.ts` keeps the stored one and fails closed to `private` when
- *  there is no row at all. */
+ *  A repair keeps the stored one; a group with no row at all takes it from
+ *  placement — whether its public repo declares it (`server/rebuild.ts`). */
 export function requireApprovalFor(policy: GroupJoinPolicy): number {
 	return policy === 'open' ? 0 : 1;
 }

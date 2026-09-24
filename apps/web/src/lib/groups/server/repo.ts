@@ -237,6 +237,28 @@ export async function rehearseCreateGroup(
 	throw new Error('the create rehearsal committed instead of rolling back');
 }
 
+/** Everything one batch needs to bring a group into existence: the row, its
+ *  roles with their bundles, and the owner's membership. Create fills it from
+ *  the form and the seeded constants; a cold rebuild fills it from records. */
+interface GroupSeed {
+	groupId: string;
+	groupDid: string;
+	ownerDid: string;
+	name: string;
+	description: string | null;
+	visibility: GroupRow['visibility'];
+	requireApproval: boolean;
+	locationName: string | null;
+	aboutSpaceUri: string | null;
+	membersSpaceUri: string | null;
+	createdAt: number;
+	updatedAt: number;
+	/** The owner role is created by the `groups_seed_owner_role` trigger, so an
+	 *  `owner` entry here contributes only its bundle. */
+	roles: readonly { name: GroupRoleName; permissions: readonly GroupPermission[] }[];
+	ownerJoinedAt: number;
+}
+
 /** `createGroup`'s one batch, shared with `rehearseCreateGroup` so the
  *  rehearsal can never test a different write from the one it vouches for. */
 function createGroupStatements(
@@ -245,36 +267,62 @@ function createGroupStatements(
 	groupId: string,
 	now: number
 ): D1PreparedStatement[] {
+	return seedGroupStatements(db, {
+		groupId,
+		groupDid: input.groupDid,
+		ownerDid: input.ownerDid,
+		name: input.name,
+		description: input.description ?? null,
+		visibility: input.visibility ?? 'public',
+		requireApproval: input.requireApproval !== false,
+		locationName: input.locationName ?? null,
+		aboutSpaceUri: null,
+		membersSpaceUri: null,
+		createdAt: now,
+		updatedAt: now,
+		roles: GROUP_ROLES.map((name) => ({ name, permissions: DEFAULT_ROLE_PERMISSIONS[name] })),
+		ownerJoinedAt: now
+	});
+}
+
+/** The statements behind both a create and a cold rebuild, so the two can
+ *  never write a group in different shapes. Every dependent insert resolves
+ *  its role by (group_id, name) in SQL, so nothing reads back a generated id
+ *  mid-transaction. */
+function seedGroupStatements(db: D1Database, seed: GroupSeed): D1PreparedStatement[] {
 	const statements: D1PreparedStatement[] = [
 		db
 			.prepare(
 				`INSERT INTO groups (id, group_did, owner_did, name, description,
-					visibility, require_approval, location_name, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					visibility, require_approval, location_name, about_space_uri,
+					members_space_uri, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.bind(
-				groupId,
-				input.groupDid,
-				input.ownerDid,
-				input.name,
-				input.description ?? null,
-				input.visibility ?? 'public',
-				input.requireApproval === false ? 0 : 1,
-				input.locationName ?? null,
-				now,
-				now
+				seed.groupId,
+				seed.groupDid,
+				seed.ownerDid,
+				seed.name,
+				seed.description,
+				seed.visibility,
+				seed.requireApproval ? 1 : 0,
+				seed.locationName,
+				seed.aboutSpaceUri,
+				seed.membersSpaceUri,
+				seed.createdAt,
+				seed.updatedAt
 			)
 	];
 
-	for (const role of GROUP_ROLES) {
-		if (role !== 'owner') {
+	for (const role of seed.roles) {
+		if (role.name !== 'owner') {
 			statements.push(
 				db
 					.prepare(
 						`INSERT INTO roles (id, group_id, name, is_owner) VALUES (?, ?, ?, 0)
 						 ON CONFLICT (group_id, name) DO NOTHING`
 					)
-					.bind(crypto.randomUUID(), groupId, role)
+					.bind(crypto.randomUUID(), seed.groupId, role.name)
 			);
 		}
 		statements.push(
@@ -285,7 +333,7 @@ function createGroupStatements(
 					 WHERE r.group_id = ? AND r.name = ?
 					 ON CONFLICT DO NOTHING`
 				)
-				.bind(JSON.stringify(DEFAULT_ROLE_PERMISSIONS[role]), groupId, role)
+				.bind(JSON.stringify(role.permissions), seed.groupId, role.name)
 		);
 	}
 
@@ -296,10 +344,36 @@ function createGroupStatements(
 				 SELECT ?, ?, ?, r.id, 'active', ?, ? FROM roles r
 				 WHERE r.group_id = ? AND r.is_owner = 1`
 			)
-			.bind(crypto.randomUUID(), groupId, input.ownerDid, now, now, groupId)
+			.bind(
+				crypto.randomUUID(),
+				seed.groupId,
+				seed.ownerDid,
+				seed.ownerJoinedAt,
+				seed.updatedAt,
+				seed.groupId
+			)
 	);
 
 	return statements;
+}
+
+/** What a cold rebuild restores, all of it read from records or computed from
+ *  the DID — `server/rebuild.ts` decides it, this only writes it. */
+export type RestoreGroupInput = Omit<GroupSeed, 'groupId' | 'updatedAt'>;
+
+/** Inserts a group whose row was lost, in the same single batch a create uses,
+ *  so the restored group can never exist without its roles or its owner.
+ *  A rule the schema refuses (a private group that is open to join, say) comes
+ *  back as the same `GroupRuleError` a create would get. */
+export async function restoreGroup(db: D1Database, input: RestoreGroupInput): Promise<GroupRow> {
+	await ensureGroupsSchema(db);
+	const groupId = crypto.randomUUID();
+	await guard(() =>
+		db.batch(seedGroupStatements(db, { ...input, groupId, updatedAt: Date.now() }))
+	);
+	const row = await getGroupById(db, groupId);
+	if (!row) throw new GroupRuleError('not-found', 'Group vanished immediately after its rebuild');
+	return row;
 }
 
 export async function getGroupById(db: D1Database, id: string): Promise<GroupRow | null> {

@@ -100,7 +100,7 @@ export type RosterSource = 'records' | 'cache';
  *  trips in front of a page that used to pay two. */
 export async function readGroupMembers(
 	reader: GroupSpaceReader,
-	group: GroupRow
+	group: Pick<GroupRow, 'group_did' | 'members_space_uri'>
 ): Promise<GroupMembers> {
 	const space = group.members_space_uri;
 	if (!space) return NO_MEMBER_RECORDS;
@@ -318,11 +318,11 @@ export function hasMemberRecords(members: GroupMembers): boolean {
 
 /** The owner DID, derived from the record that grants the owner role.
  *
- *  This is the value the COLD rebuild is missing (`om-z5ady` / T017a): a group
- *  with no row cannot be reconstructed without an owner, and
- *  `groups_identity_immutable` makes a guessed one permanent. It lives here
- *  rather than there so the derivation and the records it reads stay in one
- *  file; `null` means refuse, never guess. */
+ *  This is what a group with no row is rebuilt around (`./rebuild.ts`): it
+ *  cannot be reconstructed without an owner, and `groups_identity_immutable`
+ *  makes a guessed one permanent. It lives here rather than there so the
+ *  derivation and the records it reads stay in one file; `null` means refuse,
+ *  never guess. */
 export function ownerDidFromRecords(members: GroupMembers): string | null {
 	const owner = members.memberships.find((record) => record.roles.includes('owner'));
 	return owner ? owner.subject : null;
@@ -400,8 +400,9 @@ export interface MembersRebuildResult {
 }
 
 /**
- * REBUILD the `memberships` projection from the records (`data-model.md` mode 1
- * for the roster).
+ * REBUILD the `memberships` projection from the records (`data-model.md`, the
+ * roster's Tier-1 row). Used both over a surviving row and, once `./rebuild.ts`
+ * has restored the row and its roles, for a group that had none.
  *
  * Additive on purpose — it writes what the records say and touches nothing
  * else, which is the same contract `rebuildGroupCache` has for the profile
@@ -420,8 +421,17 @@ export async function rebuildGroupMembers(
 	reader: GroupSpaceReader,
 	group: GroupRow
 ): Promise<MembersRebuildResult> {
+	return projectGroupMembers(db, await readGroupMembers(reader, group), group);
+}
+
+/** `rebuildGroupMembers` over records already read, so a cold rebuild that
+ *  needed them to find the owner does not read the members space twice. */
+export async function projectGroupMembers(
+	db: D1Database,
+	members: GroupMembers,
+	group: GroupRow
+): Promise<MembersRebuildResult> {
 	await ensureGroupsSchema(db);
-	const members = await readGroupMembers(reader, group);
 	const result: MembersRebuildResult = { restored: [], unchanged: [], orphans: [], skipped: [] };
 
 	const roleRows = await db

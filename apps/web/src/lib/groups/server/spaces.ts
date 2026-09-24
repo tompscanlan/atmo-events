@@ -129,6 +129,16 @@ export interface GroupSpaceUris {
 	membersSpaceUri: string;
 }
 
+/** Both of a group's space URIs, computed from its DID alone — what a rebuild
+ *  restores in place of the two columns, since `self` keys every space and the
+ *  types are constants (Tier 2 in `data-model.md`). */
+export function groupSpaceUris(groupDid: string): GroupSpaceUris {
+	return {
+		aboutSpaceUri: spaceUri(groupDid, ABOUT_SPACE_TYPE, SPACE_SKEY),
+		membersSpaceUri: spaceUri(groupDid, MEMBERS_SPACE_TYPE, SPACE_SKEY)
+	};
+}
+
 /** Creates both spaces for a group. Sequential, not `Promise.all`: they share
  *  one cached session, and the second call's only job on a failed first is to
  *  not happen. */
