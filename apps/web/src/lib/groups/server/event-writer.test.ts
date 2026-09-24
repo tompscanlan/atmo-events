@@ -3,8 +3,9 @@
 // into the group path. That would look fine, pass every permission check, and
 // silently author group events under whichever admin happened to click — which
 // is precisely the model this whole feature exists to avoid.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
+import { storeGroupCredential } from './credentials';
 import { addMember, createGroup } from './repo';
 import {
 	GROUP_EVENT_COLLECTION,
@@ -240,6 +241,80 @@ describe('the permission gate', () => {
 				intent: 'delete'
 			}
 		]);
+	});
+});
+
+// SC-004 is about the TRANSPORT. Every case above injects `writer`, so all they
+// prove is that the seam was not called. These go through the real one: the
+// group has a stored credential, so `groupWriter` would build a PDS client if
+// it were reached, and `fetch` records every request that leaves.
+describe('refusal before transport', () => {
+	const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+	const credentialEnv = { GROUP_CREDENTIAL_KEY: KEY };
+	let requests: string[];
+
+	beforeEach(async () => {
+		await storeGroupCredential(credentialEnv, db, GROUP_DID, {
+			service: 'https://pds.test',
+			identifier: GROUP_DID,
+			password: 'app-password'
+		});
+		requests = [];
+		vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+			requests.push(input instanceof Request ? input.url : String(input));
+			throw new Error('the PDS was contacted');
+		});
+	});
+
+	afterEach(() => vi.unstubAllGlobals());
+
+	// `reader: null` because this group has no members space, so the rows
+	// answer, as they do for every group created before the records existed.
+	// What the gate reads is not what this case is about; what it sends is.
+	it("refuses a signed-in non-member's edit and delete without one request to the PDS", async () => {
+		await expect(
+			writeGroupEvent({
+				db,
+				env: credentialEnv,
+				group,
+				callerDid: STRANGER,
+				intent: 'update',
+				rkey: '3abc',
+				record: validRecord(),
+				reader: null,
+				notify
+			})
+		).rejects.toBeInstanceOf(GroupPermissionError);
+		await expect(
+			deleteGroupEvent({
+				db,
+				env: credentialEnv,
+				group,
+				callerDid: STRANGER,
+				rkey: '3abc',
+				reader: null,
+				notify
+			})
+		).rejects.toBeInstanceOf(GroupPermissionError);
+		expect(requests).toEqual([]);
+		expect(notified).toEqual([]);
+	});
+
+	it('does reach the PDS for an admin with the same setup, so the silence above is the gate', async () => {
+		await expect(
+			writeGroupEvent({
+				db,
+				env: credentialEnv,
+				group,
+				callerDid: ADMIN,
+				intent: 'update',
+				rkey: '3abc',
+				record: validRecord(),
+				reader: null,
+				notify
+			})
+		).rejects.toThrow();
+		expect(requests.length).toBeGreaterThan(0);
 	});
 });
 
