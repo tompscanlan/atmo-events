@@ -25,8 +25,8 @@
 //      tab; and
 //   2. every write through the gate notifies the index with the URI it just
 //      wrote, so the second and every later event does not wait for the
-//      backfill that already completed — nor for a jetstream that never carries
-//      the alpha PDS, nor for a cron.
+//      backfill that already completed, nor for the next cron tick to pull it
+//      off Jetstream (which does carry the alpha PDS, measured 2026-09-24).
 //
 // Without (2) the first read would look right and every edit after it would be
 // invisible, which is the failure this module is shaped to prevent.

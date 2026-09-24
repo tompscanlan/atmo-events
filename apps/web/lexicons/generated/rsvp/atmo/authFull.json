@@ -12,6 +12,8 @@
           "resource": "rpc",
           "aud": "*",
           "lxm": [
+            "rsvp.atmo.declaration.getRecord",
+            "rsvp.atmo.declaration.listRecords",
             "rsvp.atmo.event.getRecord",
             "rsvp.atmo.event.listRecords",
             "rsvp.atmo.getCursor",

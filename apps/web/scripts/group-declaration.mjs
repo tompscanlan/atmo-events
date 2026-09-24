@@ -35,6 +35,14 @@
  * AuthMissing for a real space and a made-up one alike (measured 2026-09-24).
  * That is the protocol's choice, not a gap in this script.
  *
+ * AND THE ORIGIN'S OWN INDEX MUST AGREE. The origin indexes every declaration
+ * off Jetstream (rsvp.atmo.declaration.listRecords), which is what a browse list
+ * built from declarations would read. A public group must be listed there and a
+ * private one must not. The list is read UNSCOPED on purpose: an `actor`
+ * parameter makes contrail backfill that repo on demand, which would pass
+ * without Jetstream ever carrying the record. The index trails the repo by up to
+ * one cron tick, so a failure within a minute of a flip means re-run, not broken.
+ *
  * Anonymous and read-only: no login, no PDS write. Safe against any deployment.
  */
 const args = process.argv.slice(2);
@@ -83,7 +91,24 @@ async function pdsOf(did) {
 	return { pds: pds.serviceEndpoint.replace(/\/$/, ''), handle: body.alsoKnownAs?.[0] };
 }
 
-async function checkGroup(group) {
+/** Every DID the origin's index holds a declaration for, or null when the
+ *  origin does not index declarations at all. */
+async function indexedDids() {
+	const dids = new Set();
+	let cursor;
+	do {
+		const url = new URL('/xrpc/rsvp.atmo.declaration.listRecords', origin);
+		url.searchParams.set('limit', '200');
+		if (cursor) url.searchParams.set('cursor', cursor);
+		const { status, body } = await json(url);
+		if (status !== 200) return null;
+		for (const r of body.records ?? []) dids.add(r.did);
+		cursor = body.cursor;
+	} while (cursor);
+	return dids;
+}
+
+async function checkGroup(group, index) {
 	let did, pds, handle;
 	try {
 		did = await resolveDid(group);
@@ -107,6 +132,12 @@ async function checkGroup(group) {
 
 	if (!isPublic) {
 		if (body.error === 'RecordNotFound') {
+			if (index?.has(did)) {
+				return fail(
+					`${label}: withdrawn from its repo, but still in this origin's index`,
+					'rsvp.atmo.declaration.listRecords lists it; the delete never reached the index'
+				);
+			}
 			return pass(`${label}: not public on this origin, and not declared`);
 		}
 		return fail(
@@ -149,7 +180,14 @@ async function checkGroup(group) {
 			`describeSpace ${described.status} ${described.body.error ?? ''}`
 		);
 	}
-	pass(`${label}: public, declared, points at its own about space (${value.createdAt})`);
+	if (index && !index.has(did)) {
+		return fail(
+			`${label}: declared, but not in this origin's index`,
+			'rsvp.atmo.declaration.listRecords does not list it; Jetstream ingest never indexed it'
+		);
+	}
+	const indexed = index ? ', indexed' : '';
+	pass(`${label}: public, declared${indexed}, points at its own about space (${value.createdAt})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +208,13 @@ if (groups.length === 0) {
 		note(`${groups.length} group(s) discovered from ${origin}/groups`);
 	}
 }
-for (const group of groups) await checkGroup(group);
+const index = await indexedDids();
+if (index === null) {
+	fail('index', `${origin} does not serve rsvp.atmo.declaration.listRecords`);
+} else {
+	note(`${index.size} declaration(s) in ${origin}'s index`);
+}
+for (const group of groups) await checkGroup(group, index);
 
 console.log(`\nSUMMARY: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
