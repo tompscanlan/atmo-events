@@ -24,6 +24,7 @@ import {
 	changeMemberRole,
 	createGroup,
 	getCallerMembership,
+	getGroupByDid,
 	getGroupById,
 	listJoinRequests,
 	listMembers,
@@ -56,6 +57,7 @@ import {
 import { resolveGroupCredential, storeGroupCredential } from '../src/lib/groups/server/credentials';
 import { ensureGroupsSchema } from '../src/lib/groups/server/schema';
 import { pdsProvisioner, provisionGroupSpaces } from '../src/lib/groups/server/spaces';
+import { groupRebuildSources, rebuildGroup } from '../src/lib/groups/server/rebuild';
 import {
 	effectivePermissions,
 	hasAuthzRecords,
@@ -510,6 +512,44 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		const group = await groupById(env, args.groupId);
 		const outcome = await rebuildGroupMembers(env.DB, await spaceReader(env, group), group);
 		return { ...outcome, roster: rosterFromRows(await listMembers(env.DB, group.id)) };
+	},
+
+	/** Everything SC-002 says must come back, keyed by DID so it can be read
+	 *  before and after the row's id changes: the row, the roster with roles, and
+	 *  each role's bundle. */
+	groupSnapshot: async (env, args) => {
+		const row = await getGroupByDid(env.DB, String(args.groupDid));
+		if (!row) return null;
+		const roster = await env.DB.prepare(
+			`SELECT m.did, r.name AS role, m.status, m.created_at FROM memberships m
+			 JOIN roles r ON r.id = m.role_id WHERE m.group_id = ? ORDER BY m.did`
+		)
+			.bind(row.id)
+			.all();
+		const grants = await env.DB.prepare(
+			`SELECT r.name AS role, rp.permission FROM roles r
+			 LEFT JOIN role_permissions rp ON rp.role_id = r.id
+			 WHERE r.group_id = ? ORDER BY r.name, rp.permission`
+		)
+			.bind(row.id)
+			.all();
+		return { row, roster: roster.results, grants: grants.results };
+	},
+
+	/** SC-002's deletion: the group row, and with it (ON DELETE CASCADE) its
+	 *  roles, bundles, roster and join requests. `group_credentials` is keyed by
+	 *  DID and survives, which is the one row the criterion keeps. */
+	dropGroupRows: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		await env.DB.prepare(`DELETE FROM groups WHERE id = ?`).bind(group.id).run();
+		return { left: await getGroupByDid(env.DB, group.group_did) };
+	},
+
+	rebuildGroup: async (env, args) => {
+		const groupDid = String(args.groupDid);
+		const sources = await groupRebuildSources(env, env.DB, groupDid);
+		if (!sources) throw new Error(`no credential for ${groupDid}`);
+		return rebuildGroup(env.DB, sources, groupDid);
 	}
 };
 

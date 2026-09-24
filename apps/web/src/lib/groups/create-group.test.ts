@@ -541,6 +541,30 @@ describe('a successful create', () => {
 		expect(cred.secret).not.toContain('app-pass-1234');
 	});
 
+	// A rebuild restores the group's creation date from its profile and the
+	// owner's join date from their membership, so every record a create writes
+	// must carry the row's own instant — not each writer's own, later "now".
+	it('stamps every record it writes with the row’s creation time', async () => {
+		const { spaceWrites, repoWrites } = stubPds();
+
+		await runCreateGroup(env, OWNER, data());
+
+		const [group] = (await rows('groups')) as { created_at: number }[];
+		const stamped = [...spaceWrites, ...repoWrites].filter((w) => 'createdAt' in w.record);
+		expect(stamped.map((w) => w.collection)).toEqual(
+			expect.arrayContaining([
+				'net.openmeet.group.profile',
+				'net.openmeet.group.declaration',
+				'net.openmeet.group.membership',
+				'net.openmeet.group.access',
+				'net.openmeet.group.role'
+			])
+		);
+		expect(new Set(stamped.map((w) => w.record.createdAt))).toEqual(
+			new Set([new Date(group.created_at).toISOString()])
+		);
+	});
+
 	// The rotation key is the owner's only way to move the group off our PDS,
 	// and it is returned exactly once — which is why the route cannot redirect.
 	it('returns the owner rotation key and records both space URIs', async () => {

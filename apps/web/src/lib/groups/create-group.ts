@@ -273,6 +273,11 @@ export async function runCreateGroup(
 	// row we wrote three statements ago to obtain the value still in scope. Same
 	// transport either way; this one has fewer moving parts.
 	const withSpaces = { ...group, about_space_uri: aboutUri, members_space_uri: membersUri };
+	// ONE instant for every record a create writes: the row's own. Left to
+	// themselves the profile, the declaration and the owner's membership each
+	// stamp a later "now", and a rebuild that restores the row from them moves
+	// the group's creation date by however long the create took.
+	const createdAt = new Date(group.created_at).toISOString();
 	const writer = pdsWriter(minted.credential, minted.did);
 	try {
 		await writeGroupProfile({
@@ -284,7 +289,8 @@ export async function runCreateGroup(
 			profile: {
 				name: data.name,
 				description: data.description || null,
-				locationName: data.locationName || null
+				locationName: data.locationName || null,
+				createdAt
 			}
 		});
 		const rules = splitRuleLines(data.rules);
@@ -316,6 +322,7 @@ export async function runCreateGroup(
 			group: withSpaces,
 			callerDid,
 			writer,
+			createdAt,
 			assumeAbsent: true
 		});
 	} catch (e) {
@@ -353,7 +360,7 @@ export async function runCreateGroup(
 	// membership record (`server/members-read.ts`) — so the honest report is
 	// what is missing, not an instruction that would not fix it.
 	try {
-		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer });
+		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer, createdAt });
 		await putGroupMembership({
 			db: env.DB,
 			env,
@@ -362,9 +369,10 @@ export async function runCreateGroup(
 			writer,
 			subject: callerDid,
 			roles: ['owner'],
-			intent: 'admit'
+			intent: 'admit',
+			createdAt
 		});
-		await writeGroupAuthz({ db: env.DB, env, group: withSpaces, callerDid, writer });
+		await writeGroupAuthz({ db: env.DB, env, group: withSpaces, callerDid, writer, createdAt });
 	} catch (e) {
 		return {
 			ok: false,

@@ -57,6 +57,9 @@
  *      identifiers and the event two under ours — and a role's effective grant
  *      is the UNION of both, which is what a reader of only `permissions`
  *      gets wrong (FR-005, FR-005a);
+ * 15b. the GATE believes those records: editing a binding record changes the
+ *      next permission decision with no D1 write, and restoring it moves the
+ *      decision back (FR-005);
  *  16. the roster survives dropping its D1 rows: the records render it and the
  *      rebuild restores them (SC-002 for the roster);
  *  17. a DEMOTION is a revocation: the membership record the PDS hands back
@@ -75,17 +78,22 @@
  *      to be (FR-003, conditioned by `om-mrimm` D2);
  *  21. the events tab's list comes from the app's own INDEX rather than from
  *      the group's PDS — the same read every other actor's events get — and it
- *      carries the admin's edit from check 5; and
+ *      carries the admin's edit from check 5;
  *  22. THE LOAD-BEARING ONE for that index — an event written AFTER the index
  *      had already backfilled this repo appears in that list immediately, and
  *      deleting it drops it, with no cron tick and no waiting. An actor-scoped
  *      query backfills a repo once and then records that it is done, so check
  *      21 would pass on the backfill alone; only the write gate telling the
- *      index about each write explains this one.
+ *      index about each write explains this one; and
+ *  23. SC-002 whole: every row the group has but its credential is deleted,
+ *      and a rebuild keyed by the DID alone brings back the row, the roles and
+ *      their bundles, and the roster — with visibility read from placement,
+ *      since the group is declared, and the creation date from its profile
+ *      (FR-009, SC-002).
  *
- * Those twenty-two ARE the summary: setup lines (credentials, fixture session,
- * bundle, runtime) print as notes and are deliberately not counted, so
- * `SUMMARY: 22 passed, 0 failed` maps one-to-one onto the story above.
+ * Those twenty-four (1-23 and 15b) ARE the summary: setup lines (credentials,
+ * fixture session, bundle, runtime) print as notes and are deliberately not
+ * counted, so `SUMMARY: 24 passed, 0 failed` maps one-to-one onto the story above.
  *
  * How it runs. Group facts are D1 rows and a group event is an outbound PDS
  * write, i.e. Worker code, so the real modules run ON workerd with a real D1
@@ -138,6 +146,15 @@ const GROUP_HANDLE = 'spike-group.opnmt.net';
 const ALICE = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const BOB = 'did:plc:6cz6dldz42itymdbte47ewcv';
 const MALLORY = 'did:plc:ib2wrjcp4ulwqu35a7rtlckv';
+/** Check 1's create. Kept in one place because check 23 re-creates the row
+ *  from it if its rebuild fails, so the cleanup still has a row to act through. */
+const CREATE_ARGS = {
+	groupDid: GROUP_DID,
+	ownerDid: ALICE,
+	name: 'Spike groups e2e',
+	description: 'Fixture group for apps/web/scripts/groups-e2e.mjs.',
+	visibility: 'public'
+};
 
 const EVENT_COLLECTION = 'community.lexicon.calendar.event';
 /** The group's one PUBLIC-repo control-plane record. Spelled here rather than
@@ -425,13 +442,7 @@ async function main() {
 		await must('registerIdentity', { groupDid: GROUP_DID, handle: GROUP_HANDLE, pds: PDS });
 		note(`${GROUP_DID} registered with the index as a repo on ${PDS}`);
 		// 1. create ------------------------------------------------------------
-		group = await must('createGroup', {
-			groupDid: GROUP_DID,
-			ownerDid: ALICE,
-			name: 'Spike groups e2e',
-			description: 'Fixture group for apps/web/scripts/groups-e2e.mjs.',
-			visibility: 'public'
-		});
+		group = await must('createGroup', CREATE_ARGS);
 		const members = await must('listMembers', { groupId: group.id });
 		const bundles = await must('rolePermissions', { groupId: group.id });
 		const sizes = Object.fromEntries(Object.entries(bundles).map(([r, p]) => [r, p.length]));
@@ -1063,6 +1074,59 @@ async function main() {
 			`after the write ${withThird.length} indexed (${afterBackfill.rkey} present: ` +
 				`${withThird.some((e) => e.rkey === afterBackfill.rkey)}); ` +
 				`after the delete ${afterDelete.length}, with no cron tick between them`
+		);
+
+		// 23. the whole group, rebuilt from NO row ---------------------------------
+		// SC-002's one criterion: delete every row the group has but its
+		// credential, rebuild keyed by the DID, and it comes back. Last, because
+		// it replaces the row the checks above act through. What the unit tests
+		// cannot show is the live half: the real space reader's records restoring
+		// the row, and the declaration probe, through the group's own session,
+		// reading this group as declared and so public.
+		const profileNow = await must('readGroupAbout', { groupId: group.id });
+		const rosterNow = await must('recordedRoster', { groupId: group.id });
+		const beforeDrop = await must('groupSnapshot', { groupDid: GROUP_DID });
+		const wiped = await must('dropGroupRows', { groupId: group.id });
+		let restored;
+		try {
+			restored = await must('rebuildGroup', { groupDid: GROUP_DID });
+		} finally {
+			// The cleanup below acts through a row, so it gets the restored one, or
+			// failing that a fresh one bound to the same DID and spaces.
+			if (restored) group = restored.group;
+			else {
+				group = await must('createGroup', CREATE_ARGS);
+				await must('provisionSpaces', { groupId: group.id });
+			}
+		}
+		const afterRebuild = await must('groupSnapshot', { groupDid: GROUP_DID });
+		// The row's surrogate id and cache timestamp are regenerated, and its
+		// creation date is the PROFILE's (Tier 1), which this fixture wrote after
+		// the row; every other column must match exactly.
+		const columnsOf = (snap) => {
+			const rest = { ...snap.row };
+			for (const key of ['id', 'created_at', 'updated_at']) delete rest[key];
+			return JSON.stringify(rest);
+		};
+		const rosterOf = (snap) => snap.roster.map((m) => `${m.did}/${m.role}/${m.status}`).join(' ');
+		const recordJoinedAt = Object.fromEntries(
+			rosterNow.roster.map((entry) => [entry.did, entry.created_at])
+		);
+		const sameColumns = columnsOf(afterRebuild) === columnsOf(beforeDrop);
+		const sameGrants = JSON.stringify(afterRebuild.grants) === JSON.stringify(beforeDrop.grants);
+		record(
+			wiped.left === null &&
+				restored?.path === 'restored' &&
+				afterRebuild.row.visibility === 'public' &&
+				sameColumns &&
+				afterRebuild.row.created_at === Date.parse(profileNow.profile.createdAt) &&
+				rosterOf(afterRebuild) === rosterOf(beforeDrop) &&
+				afterRebuild.roster.every((m) => m.created_at === recordJoinedAt[m.did]) &&
+				sameGrants,
+			'the group, deleted down to its credential, is rebuilt from its DID alone',
+			`path ${restored?.path}; visibility ${afterRebuild.row.visibility} (declared); ` +
+				`columns ${sameColumns ? 'identical' : 'DIFFER'}; roster ${rosterOf(afterRebuild)}; ` +
+				`${afterRebuild.grants.length} role grant row(s) ${sameGrants ? 'identical' : 'DIFFER'}`
 		);
 	} finally {
 		if (written.length > 0) console.log('');
