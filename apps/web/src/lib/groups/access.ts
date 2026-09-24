@@ -23,9 +23,13 @@
 //   groups v1 model.
 import type { CallerMembership, GroupRow } from './types';
 
-/** On the roster. There is no suspension, so a roster row is membership. */
+/** On the roster, as the loader decided it: the caller's membership RECORD
+ *  when the group's records can answer, the row only when they cannot
+ *  (`getCallerMembership`, FR-005d). Asking `role` here instead would let a
+ *  revocation whose row delete failed keep a private group open to the DID it
+ *  removed. */
 function isActiveMember(membership: CallerMembership): boolean {
-	return membership.role !== null;
+	return membership.onRoster;
 }
 
 /** A private group is invisible to anyone off its roster; a public one is

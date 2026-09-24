@@ -118,6 +118,11 @@ export interface CallerMembership {
 	status: MembershipStatus | null;
 	pendingRequestId: string | null;
 	permissions: ReadonlySet<GroupPermission>;
+	/** On the roster: the read gate's whole question (FR-005d). The caller's
+	 *  `membership` record when the members space reads clean and holds authz
+	 *  records, whatever the row says; the row when the group has no records yet
+	 *  or its space cannot be read. `role` above is always the row's. */
+	onRoster: boolean;
 }
 
 /** An event record the group authored, as read back out of the group DID's

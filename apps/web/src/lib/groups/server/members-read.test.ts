@@ -547,6 +547,32 @@ describe('the gate, from records', () => {
 		expect(admin.permissions.size).toBe(0);
 	});
 
+	// FR-005d, TS 2026-09-23: the READ gate asks the same records. The state
+	// below is a revocation whose record delete landed and whose row delete did
+	// not; if `onRoster` read the row, that DID could still open a private group.
+	it('puts a DID with a row but no membership record OFF the roster', async () => {
+		const admin = await getCallerMembership(db, group, ADMIN, readerOver(AUTHZ));
+		expect(admin.onRoster).toBe(false);
+	});
+
+	it('puts a DID with a membership record ON the roster, whatever the row says', async () => {
+		const record = membership(STRANGER, ['member'], '2026-09-04T10:00:00.000Z');
+		const joined = await getCallerMembership(db, group, STRANGER, readerOver([...AUTHZ, record]));
+		expect(joined.role).toBeNull();
+		expect(joined.onRoster).toBe(true);
+	});
+
+	it('takes the roster from the row in both fallback cases, and nobody else is on it', async () => {
+		// Readable, no config yet: the rows are what the group was created with.
+		expect((await getCallerMembership(db, group, ADMIN, readerOver([]))).onRoster).toBe(true);
+		// A members space this deployment cannot read: the row answers the read,
+		// while the permission half still grants nothing.
+		const unreadable = await getCallerMembership(db, group, ADMIN, null);
+		expect(unreadable.onRoster).toBe(true);
+		expect(unreadable.permissions.size).toBe(0);
+		expect((await getCallerMembership(db, group, STRANGER, null)).onRoster).toBe(false);
+	});
+
 	it('falls back to the rows only when the space is readable and holds no config', async () => {
 		const admin = await getCallerMembership(db, group, ADMIN, readerOver([]));
 		expect(sorted(admin.permissions)).toEqual(ALL);

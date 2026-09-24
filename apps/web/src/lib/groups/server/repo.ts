@@ -15,6 +15,7 @@ import type { GroupSpaceReader } from './about-read';
 import {
 	NO_MEMBER_RECORDS,
 	hasAuthzRecords,
+	hasRecordedAccess,
 	readCallerAuthz,
 	resolveActorPermissions
 } from './members-read';
@@ -524,7 +525,13 @@ export async function listJoinRequests(
  *  NO ROW OVERRIDES A RECORD. A revocation deletes the record before the row
  *  (`roster.ts`), so a partial failure leaves a row with no record, which
  *  resolves to nothing — the pair errs toward less access by construction,
- *  with no deny rule here to keep in step. */
+ *  with no deny rule here to keep in step.
+ *
+ *  `onRoster` follows the same sources for the READ gate (FR-005d, TS
+ *  2026-09-23): the record when the space reads clean with config, so that
+ *  half-failed revocation cannot open a private group either, and the row in
+ *  both fallback cases. The softer read-side handling of a space that errors is
+ *  `readStanding`'s (`route-context.ts`), not this function's. */
 export async function getCallerMembership(
 	db: D1Database,
 	group: GroupRow,
@@ -533,7 +540,14 @@ export async function getCallerMembership(
 ): Promise<CallerMembership> {
 	await ensureGroupsSchema(db);
 	if (!did) {
-		return { did: null, role: null, status: null, pendingRequestId: null, permissions: new Set() };
+		return {
+			did: null,
+			role: null,
+			status: null,
+			pendingRequestId: null,
+			permissions: new Set(),
+			onRoster: false
+		};
 	}
 
 	// `null` is a members space this deployment cannot read; no space at all is
@@ -559,16 +573,25 @@ export async function getCallerMembership(
 	]);
 
 	let permissions: ReadonlySet<GroupPermission>;
-	if (!members) permissions = new Set();
-	else if (!hasAuthzRecords(members)) permissions = await rowPermissions(db, group.id, did);
-	else permissions = resolveActorPermissions(members, did);
+	let onRoster: boolean;
+	if (!members) {
+		permissions = new Set();
+		onRoster = membership !== null;
+	} else if (!hasAuthzRecords(members)) {
+		permissions = await rowPermissions(db, group.id, did);
+		onRoster = membership !== null;
+	} else {
+		permissions = resolveActorPermissions(members, did);
+		onRoster = hasRecordedAccess(members, did);
+	}
 
 	return {
 		did,
 		role: membership?.role ?? null,
 		status: membership?.status ?? null,
 		pendingRequestId: pending?.id ?? null,
-		permissions
+		permissions,
+		onRoster
 	};
 }
 

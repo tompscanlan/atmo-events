@@ -19,7 +19,7 @@ import { error } from '@sveltejs/kit';
 import { actorToDid } from '$lib/atproto/methods';
 import { canSeeGroup } from '../access';
 import type { CallerMembership, GroupRow } from '../types';
-import { groupSpaceReader } from './about-read';
+import { groupSpaceReader, type GroupSpaceReader } from './about-read';
 import type { CredentialStoreEnv } from './credentials';
 import { getCallerMembership, getGroupByDid } from './repo';
 
@@ -70,13 +70,37 @@ export async function groupRouteContext(
 	if (!group) error(404, GROUP_NOT_FOUND);
 
 	// The membership lookup comes first because whether the caller may SEE the
-	// group is a question about their roster row. An anonymous caller has no
-	// permissions to resolve, so no credential is unsealed for them.
+	// group is a question about their membership record. An anonymous caller has
+	// no standing to resolve, so no credential is unsealed for them.
 	const reader = callerDid ? await groupSpaceReader(env, db, group) : null;
-	const membership = await getCallerMembership(db, group, callerDid, reader);
+	const membership = await readStanding(db, group, callerDid, reader);
 	if (!canSeeGroup(group, membership)) error(404, GROUP_NOT_FOUND);
 
 	return { group, membership };
+}
+
+/** The caller's standing for a READ. A members space that errors answers from
+ *  the roster row here instead of failing the page (FR-005d, TS 2026-09-23).
+ *  That is softer than the write gate on purpose, so that a PDS blip does not
+ *  404 a member out of their own private group. The fallback grants no
+ *  permission: without the records the loader returns none, so no management
+ *  control renders on it. */
+export async function readStanding(
+	db: D1Database,
+	group: GroupRow,
+	callerDid: string | null,
+	reader: GroupSpaceReader | null
+): Promise<CallerMembership> {
+	try {
+		return await getCallerMembership(db, group, callerDid, reader);
+	} catch (e) {
+		if (!reader) throw e;
+		console.error(
+			`[groups] ${group.group_did}: members space unreadable; the roster row answers this read:`,
+			e
+		);
+		return getCallerMembership(db, group, callerDid, null);
+	}
 }
 
 /** The canonical path for a group: the DID, always. Used by every link and

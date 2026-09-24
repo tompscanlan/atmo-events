@@ -19,7 +19,8 @@ function membership(role: GroupRoleName | null): CallerMembership {
 		status: role ? 'active' : null,
 		pendingRequestId: null,
 		// Deliberately empty: a read gate that consulted these would be the bug.
-		permissions: new Set()
+		permissions: new Set(),
+		onRoster: role !== null
 	};
 }
 
@@ -40,6 +41,24 @@ describe('canSeeGroup', () => {
 	it('opens a private group to anyone on the roster, whatever the role', () => {
 		expect(canSeeGroup(group('private'), membership('member'))).toBe(true);
 		expect(canSeeGroup(group('private'), membership('admin'))).toBe(true);
+	});
+});
+
+// FR-005d, TS 2026-09-23: the predicates ask `onRoster`, which the loader
+// takes from the membership RECORD whenever the records can answer, and never
+// `role`, which is always the row's. The two disagree after a revocation whose
+// row delete failed, and that is exactly when reading `role` would leak.
+describe('the roster is what the loader says, not the row', () => {
+	it('closes a private group to a DID whose row survived its revoked record', () => {
+		const revoked = { ...membership('admin'), onRoster: false };
+		expect(canSeeGroup(group('private'), revoked)).toBe(false);
+		expect(canSeeMembers(revoked)).toBe(false);
+	});
+
+	it('opens it to a DID the records put on the roster before any row exists', () => {
+		const recorded = { ...membership(null), did: 'did:plc:alice', onRoster: true };
+		expect(canSeeGroup(group('private'), recorded)).toBe(true);
+		expect(canSeeMembers(recorded)).toBe(true);
 	});
 });
 

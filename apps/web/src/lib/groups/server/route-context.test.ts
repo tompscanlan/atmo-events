@@ -15,7 +15,14 @@ vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 import { actorToDid } from '$lib/atproto/methods';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { addMember, createGroup } from './repo';
-import { GROUP_NOT_FOUND, groupActorToDid, groupPath, groupRouteContext } from './route-context';
+import {
+	GROUP_NOT_FOUND,
+	groupActorToDid,
+	groupPath,
+	groupRouteContext,
+	readStanding
+} from './route-context';
+import type { GroupSpaceReader } from './about-read';
 import type { GroupRow } from '../types';
 
 const OWNER = 'did:plc:owner';
@@ -134,5 +141,38 @@ describe('groupPath', () => {
 	it('addresses a group by DID, with and without a subpage', () => {
 		expect(groupPath(group)).toBe(`/groups/${GROUP_DID}`);
 		expect(groupPath(group, 'members')).toBe(`/groups/${GROUP_DID}/members`);
+	});
+});
+
+// FR-005d, TS 2026-09-23: a members space that ERRORS answers a read from the
+// roster row, where the write gate fails closed. A PDS blip must not 404 a
+// member out of their own private group, and must not grant anything either.
+describe('readStanding', () => {
+	const down: GroupSpaceReader = {
+		async get() {
+			throw new Error('com.atproto.space.getRecord failed: 502');
+		},
+		async list() {
+			throw new Error('com.atproto.space.listRecords failed: 502');
+		}
+	};
+	let withSpace: GroupRow;
+
+	beforeEach(async () => {
+		await addMember(db, group.id, MEMBER, 'member');
+		withSpace = {
+			...group,
+			members_space_uri: `at://${GROUP_DID}/space/net.openmeet.space.members/self`
+		};
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+	});
+
+	afterEach(() => vi.restoreAllMocks());
+
+	it('answers from the row when the members space errors, and grants nothing', async () => {
+		const member = await readStanding(db, withSpace, MEMBER, down);
+		expect(member.onRoster).toBe(true);
+		expect(member.permissions.size).toBe(0);
+		expect((await readStanding(db, withSpace, STRANGER, down)).onRoster).toBe(false);
 	});
 });

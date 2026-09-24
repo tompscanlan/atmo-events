@@ -162,6 +162,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			status: membership.status,
 			pendingRequestId: membership.pendingRequestId,
 			permissions: [...membership.permissions].sort(),
+			onRoster: membership.onRoster,
 			can: Object.fromEntries(probe.map((p) => [p, can(membership.permissions, p)]))
 		};
 	},
@@ -418,11 +419,13 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		const reader = await spaceReader(env, group);
 		const writer = await groupWriter(env, env.DB, group);
 		const targets = [
-			...(await reader.list({
-				space: group.members_space_uri,
-				repo: group.group_did,
-				collection: GROUP_ROLE_COLLECTION
-			})).map((r) => ({ collection: GROUP_ROLE_COLLECTION, rkey: r.rkey })),
+			...(
+				await reader.list({
+					space: group.members_space_uri,
+					repo: group.group_did,
+					collection: GROUP_ROLE_COLLECTION
+				})
+			).map((r) => ({ collection: GROUP_ROLE_COLLECTION, rkey: r.rkey })),
 			{ collection: GROUP_PERMISSIONS_COLLECTION, rkey: GROUP_PERMISSIONS_RKEY },
 			{ collection: GROUP_EVENT_PERMISSIONS_COLLECTION, rkey: GROUP_PERMISSIONS_RKEY }
 		];

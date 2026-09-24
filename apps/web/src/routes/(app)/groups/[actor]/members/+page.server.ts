@@ -27,11 +27,9 @@ import type { PageServerLoad } from './$types';
  *  permission — read access is not something a group grants (FR-005d) — and it
  *  is members-only at every visibility (FR-016b).
  *
- *  `groupRouteContext` still asks the D1 membership for the PAGE gate, because
- *  what it gates on is `groups.visibility`, which is app-local cache no record
- *  owns (`data-model.md` Tier 3). Moving the caller's ROLE AND PERMISSION
- *  resolution onto records is T016 (`om-i92w3`); this page moves the roster and
- *  its own gate. */
+ *  `groupRouteContext` gates the PAGE on `groups.visibility`, app-local cache
+ *  no record owns, plus the loader's `onRoster`, which is the membership
+ *  record whenever the records can answer (FR-005d). */
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
 	const { group, membership } = await groupRouteContext(
