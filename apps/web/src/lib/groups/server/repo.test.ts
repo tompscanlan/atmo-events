@@ -266,15 +266,62 @@ describe('roster changes', () => {
 });
 
 describe('browse visibility', () => {
-	// THE WHOLE BROWSE RULE is now `visibility = 'public'`. It used to be one half
-	// of a two-axis test, and the other axis no longer exists — so a group is
-	// either listed or it is private, with nothing in between to get wrong.
-	it('shows anonymous callers public groups and never a private one', async () => {
-		await group({ name: 'Open', groupDid: 'did:plc:a' });
-		await group({ name: 'Secret', groupDid: 'did:plc:d', visibility: 'private' });
+	const declared = (did: string, createdAt: string) => ({ did, createdAt });
+	const names = (entries: Awaited<ReturnType<typeof listGroups>>) =>
+		entries.map((e) => e.row?.name ?? e.group_did);
 
-		const anonymous = await listGroups(db, { callerDid: null });
-		expect(anonymous.map((g) => g.name)).toEqual(['Open']);
+	// THE WHOLE BROWSE RULE is now "declared means listed". The declaration index
+	// is the enumeration; the row only names what the index already listed. So a
+	// row the index does not hold is not listed, whatever its column says.
+	it('lists what the declaration index holds, not what the table says', async () => {
+		await group({ name: 'Declared', groupDid: 'did:plc:a' });
+		await group({ name: 'Undeclared', groupDid: 'did:plc:b' });
+
+		const anonymous = await listGroups(db, {
+			callerDid: null,
+			declared: [declared('did:plc:a', '2026-09-20T00:00:00.000Z')]
+		});
+		expect(names(anonymous)).toEqual(['Declared']);
+	});
+
+	// A declaration from a group this deployment holds no row for is still a
+	// group on the network (TS, 2026-09-24): it is listed, with no row, which
+	// the page renders by handle or DID and does not link (FR-010, FR-010a).
+	it('lists a declared group it holds no row for, with no row', async () => {
+		await group({ name: 'Ours', groupDid: 'did:plc:a' });
+
+		const anonymous = await listGroups(db, {
+			callerDid: null,
+			declared: [
+				declared('did:plc:foreign', '2026-09-22T00:00:00.000Z'),
+				declared('did:plc:a', '2026-09-20T00:00:00.000Z')
+			]
+		});
+		expect(anonymous).toEqual([
+			{ group_did: 'did:plc:foreign', row: null },
+			expect.objectContaining({
+				group_did: 'did:plc:a',
+				row: expect.objectContaining({ name: 'Ours' })
+			})
+		]);
+	});
+
+	// The window between a private flip and the tick that drops its declaration.
+	// The index still lists the group; the row already says private. A stranger
+	// gets what a stranger gets of any group we hold no page for them on: the
+	// address, never the name.
+	it('withholds a private row from a caller not on its roster while the index catches up', async () => {
+		const secret = await group({ name: 'Secret', groupDid: 'did:plc:d', visibility: 'private' });
+		await addMember(db, secret.id, ALICE, 'member');
+		const stale = [declared('did:plc:d', '2026-09-20T00:00:00.000Z')];
+
+		expect(await listGroups(db, { callerDid: null, declared: stale })).toEqual([
+			{ group_did: 'did:plc:d', row: null }
+		]);
+		expect(await listGroups(db, { callerDid: BOB, declared: stale })).toEqual([
+			{ group_did: 'did:plc:d', row: null }
+		]);
+		expect(names(await listGroups(db, { callerDid: ALICE, declared: stale }))).toEqual(['Secret']);
 	});
 
 	// The bounded exception to the rule above: a caller sees their own and their
@@ -284,8 +331,32 @@ describe('browse visibility', () => {
 		const secret = await group({ name: 'Secret', groupDid: 'did:plc:d', visibility: 'private' });
 		await addMember(db, secret.id, ALICE, 'member');
 
-		expect((await listGroups(db, { callerDid: OWNER })).map((g) => g.name)).toEqual(['Secret']);
-		expect((await listGroups(db, { callerDid: ALICE })).map((g) => g.name)).toEqual(['Secret']);
-		expect((await listGroups(db, { callerDid: BOB })).map((g) => g.name)).toEqual([]);
+		const own = (callerDid: string) => listGroups(db, { callerDid, declared: [] });
+		expect(names(await own(OWNER))).toEqual(['Secret']);
+		expect(names(await own(ALICE))).toEqual(['Secret']);
+		expect(names(await own(BOB))).toEqual([]);
+	});
+
+	it('lists a group once when it is both declared and the caller own', async () => {
+		await group({ name: 'Open', groupDid: 'did:plc:a' });
+
+		const entries = await listGroups(db, {
+			callerDid: OWNER,
+			declared: [declared('did:plc:a', '2026-09-20T00:00:00.000Z')]
+		});
+		expect(names(entries)).toEqual(['Open']);
+	});
+
+	it('orders newest first by declaration time, and caps at the limit', async () => {
+		const entries = await listGroups(db, {
+			callerDid: null,
+			limit: 2,
+			declared: [
+				declared('did:plc:old', '2026-09-01T00:00:00.000Z'),
+				declared('did:plc:new', '2026-09-23T00:00:00.000Z'),
+				declared('did:plc:mid', '2026-09-10T00:00:00.000Z')
+			]
+		});
+		expect(names(entries)).toEqual(['did:plc:new', 'did:plc:mid']);
 	});
 });

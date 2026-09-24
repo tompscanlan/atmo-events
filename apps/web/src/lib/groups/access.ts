@@ -38,8 +38,8 @@ function isActiveMember(membership: CallerMembership): boolean {
  *  log at genesis, so both are enumerable by anyone willing to read that log,
  *  which is exactly why the gate has to be membership and cannot rest on
  *  nobody knowing where the group lives. This is the same rule `listGroups`
- *  applies (`server/repo.ts:251`), so the browse query and the page predicate
- *  cannot diverge. */
+ *  applies when it hydrates a declared row, so browse cannot name a group its
+ *  page would refuse. */
 export function canSeeGroup(group: GroupRow, membership: CallerMembership): boolean {
 	if (group.visibility !== 'private') return true;
 	return isActiveMember(membership);

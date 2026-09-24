@@ -394,37 +394,97 @@ export async function getGroupByDid(db: D1Database, groupDid: string): Promise<G
 		.first<GroupRow>();
 }
 
-/** Browse listing. Anonymous callers see PUBLIC groups only; `private` is
- *  invisible unless the caller is on the roster. A signed-in caller
- *  additionally sees every group they own or are an active member of — which is
- *  the whole of what "their groups" means now that there is no publication
- *  state to hide a group from its own creator (FR-016c).
+/** One group the declaration index lists: its DID and the declaration's own
+ *  `createdAt`, which is what browse orders by. */
+export interface DeclaredGroup {
+	did: string;
+	createdAt: string | null;
+}
+
+/** One row of the browse list. `row` is NULL for a group this deployment holds
+ *  no row for, and for one the caller may not see — the two render alike, by
+ *  address and without a link, because FR-010a answers both with the same 404. */
+export interface BrowseEntry {
+	group_did: string;
+	row: GroupRow | null;
+}
+
+/** Browse listing: ENUMERATE, then HYDRATE.
  *
- *  This is the one place a page may render `name`/`description` from the row
- *  rather than from records, and the reason is structural rather than a
+ *  Enumeration is the declaration index plus the caller's own groups, and
+ *  nothing else. Declared means listed — a public group publishes its
+ *  declaration and a private one withdraws it, so the index needs no visibility
+ *  filter, and neither does this. That includes groups this deployment holds no
+ *  row for: another app's declaration is still a group on the network (TS,
+ *  2026-09-24). A signed-in caller also gets every group they own or are an
+ *  active member of, declared or not, because a private group that is invisible
+ *  to its own members has nowhere to be reached from.
+ *
+ *  Hydration is the one place a page may render `name`/`description` from the
+ *  row rather than from records, and the reason is structural rather than a
  *  concession: the about space is never anonymously readable, so no indexer can
  *  read a group's name for us, and a records-first list would be N sessions × N
- *  space reads. (Spec: FR-010, the one bounded exception.) */
+ *  space reads. A private row is not hydrated for a caller off its roster. The
+ *  index lags a private flip by up to one cron tick, and in that window the
+ *  entry stays but the name does not. (Spec: FR-010, the one bounded exception.)
+ *
+ *  `declared` is passed in rather than read here so this stays a D1 function:
+ *  the index read is `./declaration-index.ts`. */
 export async function listGroups(
 	db: D1Database,
-	opts: { callerDid?: string | null; limit?: number } = {}
-): Promise<GroupRow[]> {
+	opts: { callerDid?: string | null; declared: DeclaredGroup[]; limit?: number }
+): Promise<BrowseEntry[]> {
 	await ensureGroupsSchema(db);
 	const caller = opts.callerDid ?? null;
 	const limit = Math.min(Math.max(opts.limit ?? 50, 1), 100);
-	const { results } = await db
-		.prepare(
-			`SELECT ${GROUP_COLUMNS} FROM groups
-			 WHERE visibility = 'public'
-			    OR (? IS NOT NULL AND owner_did = ?)
-			    OR (? IS NOT NULL AND id IN (
-			          SELECT group_id FROM memberships WHERE did = ? AND status = 'active'))
-			 ORDER BY created_at DESC
-			 LIMIT ?`
-		)
-		.bind(caller, caller, caller, caller, limit)
-		.all<GroupRow>();
-	return results ?? [];
+
+	const own = caller
+		? ((
+				await db
+					.prepare(
+						`SELECT ${GROUP_COLUMNS} FROM groups
+						 WHERE owner_did = ?
+						    OR id IN (SELECT group_id FROM memberships WHERE did = ? AND status = 'active')`
+					)
+					.bind(caller, caller)
+					.all<GroupRow>()
+			).results ?? [])
+		: [];
+	const ownIds = new Set(own.map((row) => row.id));
+
+	const byDid = new Map<string, GroupRow>();
+	const dids = opts.declared.map((d) => d.did);
+	if (dids.length > 0) {
+		const { results } = await db
+			.prepare(
+				`SELECT ${GROUP_COLUMNS} FROM groups WHERE group_did IN (${dids.map(() => '?').join(', ')})`
+			)
+			.bind(...dids)
+			.all<GroupRow>();
+		for (const row of results ?? []) byDid.set(row.group_did, row);
+	}
+
+	const entries = new Map<string, BrowseEntry & { at: number }>();
+	for (const d of opts.declared) {
+		if (entries.has(d.did)) continue;
+		const row = byDid.get(d.did) ?? null;
+		const visible = row && (row.visibility !== 'private' || ownIds.has(row.id));
+		entries.set(d.did, {
+			group_did: d.did,
+			row: visible ? row : null,
+			at: Date.parse(d.createdAt ?? '') || row?.created_at || 0
+		});
+	}
+	for (const row of own) {
+		if (!entries.has(row.group_did)) {
+			entries.set(row.group_did, { group_did: row.group_did, row, at: row.created_at });
+		}
+	}
+
+	return [...entries.values()]
+		.sort((a, b) => b.at - a.at)
+		.slice(0, limit)
+		.map(({ group_did, row }) => ({ group_did, row }));
 }
 
 export async function updateGroup(

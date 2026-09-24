@@ -42,29 +42,42 @@
 				>
 					<div class="flex items-start justify-between gap-4">
 						<div class="min-w-0">
-							<!-- THE LINK CARRIES THE DID, never the handle. A handle is a
-							     lease on a name: let it lapse and another account can
-							     register it, at which point every link we published would
-							     point at a stranger. The DID cannot be re-issued and cannot
-							     move, so it is the only safe thing to publish. (FR-010a.) -->
-							<a
-								href={resolve('/(app)/groups/[actor]', { actor: group.group_did })}
-								class="text-lg font-semibold hover:underline">{group.name}</a
-							>
-							{#if group.description}
-								<p class="text-base-500 dark:text-base-400 mt-1 line-clamp-2 text-sm">
-									{group.description}
+							{#if group.hosted}
+								<!-- THE LINK CARRIES THE DID, never the handle. A handle is a
+								     lease on a name: let it lapse and another account can
+								     register it, at which point every link we published would
+								     point at a stranger. The DID cannot be re-issued and cannot
+								     move, so it is the only safe thing to publish. (FR-010a.) -->
+								<a
+									href={resolve('/(app)/groups/[actor]', { actor: group.group_did })}
+									class="text-lg font-semibold hover:underline">{group.name}</a
+								>
+								{#if group.description}
+									<p class="text-base-500 dark:text-base-400 mt-1 line-clamp-2 text-sm">
+										{group.description}
+									</p>
+								{/if}
+								<!-- The group's address, readable half first. The handle is what
+								     someone would type or say; the DID is shown when contrail has
+								     never resolved one, so the row is never addressless. -->
+								<p class="text-base-400 dark:text-base-500 mt-2 truncate font-mono text-xs">
+									{group.handle ?? group.group_did}
+								</p>
+							{:else}
+								<!-- Declared on the network, with no page here: a group another
+								     app hosts, or one the caller may not see. Its name lives in
+								     an about space no anonymous reader may open, so the address
+								     is all there is, and a link would only reach a 404. -->
+								<p class="truncate font-mono text-lg font-semibold">
+									{group.handle ?? group.group_did}
+								</p>
+								<p class="text-base-500 dark:text-base-400 mt-1 text-sm">
+									Declared on the network. This site has no page for it.
 								</p>
 							{/if}
-							<!-- The group's address, readable half first. The handle is what
-							     someone would type or say; the DID is shown when contrail has
-							     never resolved one, so the row is never addressless. -->
-							<p class="text-base-400 dark:text-base-500 mt-2 truncate font-mono text-xs">
-								{group.handle ?? group.group_did}
-							</p>
 						</div>
 						<div class="flex shrink-0 gap-2">
-							{#if group.visibility !== 'public'}
+							{#if group.visibility && group.visibility !== 'public'}
 								<Badge variant="secondary">{group.visibility}</Badge>
 							{/if}
 						</div>
