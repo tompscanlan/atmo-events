@@ -177,8 +177,8 @@ async function startWorker(stateDir) {
 	miniflare = new Miniflare({
 		modules: true,
 		modulesRoot: outDir,
-		// wrangler names the bundle after the config `main`, i.e. src/worker.ts.
-		scriptPath: join(outDir, 'worker.js'),
+		// wrangler names the bundle after the config `main`, i.e. src/openmeet-worker.ts.
+		scriptPath: join(outDir, 'openmeet-worker.js'),
 		compatibilityDate: COMPATIBILITY_DATE,
 		compatibilityFlags: ['nodejs_compat'],
 		d1Databases: { DB: 'openmeet-atmo-api-e2e' },

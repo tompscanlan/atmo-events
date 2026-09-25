@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createSqliteDatabase } from '@atmo-dev/contrail/sqlite';
-import worker, { routeFor } from '../src/worker';
+import worker, { routeFor } from '../src/openmeet-worker';
 import type { OpenmeetApiEnv } from '../src/spaces';
 
 const ENDPOINT = 'https://api.openmeet.example';
