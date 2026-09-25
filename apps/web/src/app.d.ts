@@ -105,6 +105,34 @@ declare global {
 				/** Min ms between geocoder calls in the drip — the rate limiter. Set to
 				 *  the ceiling the geocoder tier allows; defaults to DEFAULT_GEOCODE_SLEEP_MS. */
 				GEOCODE_SLEEP_MS?: string;
+				/** PDS every new group is minted on, e.g. https://pds.example.com.
+				 *  With the three vars below it forms the mint target. When any of
+				 *  them is unset, /groups/create refuses before minting, so it never
+				 *  leaves a did:plc it cannot finish setting up. */
+				GROUP_PDS_SERVICE?: string;
+				/** Handle suffix for groups, e.g. groups.example.com. Groups get
+				 *  their own subdomain so a group handle never competes with a
+				 *  person's handle when people also have accounts on the same PDS. */
+				GROUP_HANDLE_DOMAIN?: string;
+				/** Invite code for the group PDS, set with `wrangler secret put`.
+				 *  Needed when the PDS sets PDS_INVITE_REQUIRED. If other accounts
+				 *  use the same code, they share its use count, and deleting an
+				 *  account does not give a use back. */
+				GROUP_PDS_INVITE_CODE?: string;
+				/** Address group accounts are created with, e.g. groups@example.com.
+				 *  Each group gets a plus address (groups+<label>@example.com)
+				 *  because the PDS requires an email, refuses disposable domains
+				 *  and matches emails exactly for uniqueness. It is the deployment's
+				 *  address, not the owner's, so password reset stays with the
+				 *  deployment. */
+				GROUP_ACCOUNT_EMAIL?: string;
+				/** base64 32-byte AES-GCM key that encrypts each minted group's app
+				 *  password in `group_credentials`. Set with `wrangler secret put`.
+				 *  Without it a minted credential can be neither written nor read,
+				 *  so the create flow refuses up front. Losing it loses the stored
+				 *  credentials (a PDS admin can issue new ones), never the groups'
+				 *  identities, because the owner holds rotationKeys[0]. */
+				GROUP_CREDENTIAL_KEY?: string;
 			};
 			/** Cloudflare Worker execution context. Use `ctx.waitUntil(promise)` to
 			 *  let the worker keep a fire-and-forget task alive after the response

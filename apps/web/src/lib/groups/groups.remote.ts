@@ -1,0 +1,499 @@
+// Every group mutation, as SvelteKit remote `form` functions. This is how the
+// app does writes elsewhere too ($lib/atproto/server/repo.remote.ts,
+// $lib/contrail/events.remote.ts). Reads stay in the routes' `+page.server.ts`
+// loads.
+//
+// Every handler has the same shape: resolve the group by DID, resolve the
+// caller's membership, ask `can()`, then act. `locals.did` is only the subject
+// of that check. Group events are authored by the group's own DID (see
+// ./server/event-writer.ts).
+import { error } from '@sveltejs/kit';
+import { form, getRequestEvent } from '$app/server';
+import * as v from 'valibot';
+import { ASSIGNABLE_ROLES, can } from './permissions';
+import type { GroupFormFailure, GroupFormResult } from './form-result';
+import { formError } from './form-error';
+// Not declared here: the Vite plugin rejects non-remote exports from a
+// `*.remote.ts`, so a field that a test needs lives in ./form-fields.ts.
+import { checkboxField } from './form-fields';
+import { runCreateGroup } from './create-group';
+import { GROUP_LABEL_PATTERN } from './handle-label';
+import { GROUP_VISIBILITIES, type CallerMembership, type GroupRow } from './types';
+import { decideJoinRequest, updateGroup, type JoinOutcome } from './server/repo';
+import { groupRouteContext } from './server/route-context';
+import { deleteGroupEvent, groupWriter, writeGroupEvent } from './server/event-writer';
+import { groupFace, splitRuleLines } from './about-record';
+import { groupSpaceReader, readGroupAbout } from './server/about-read';
+import { setGroupRules, writeGroupProfile } from './server/about-writer';
+import { reconcileGroupDeclaration } from './server/declaration-writer';
+import { describeRepair, repairGroup } from './server/repair';
+// Every roster act is a row move plus a record write, composed once in
+// ./server/roster.ts so the app and the e2e harness run the same sequence.
+import {
+	RosterRecordError,
+	RosterRowError,
+	admitFromRequest,
+	admitMember,
+	ejectMember,
+	joinGroup,
+	leaveGroup,
+	promoteMember
+} from './server/roster';
+import { groupEventRecord } from './event-record';
+
+/** The group key every form posts. A group is addressed by its DID, so there
+ *  is no slug to post and no name that must be unique. `context` also accepts a
+ *  full handle, because it uses the same resolver as the pages, but every form
+ *  the app renders posts the DID. Also used for the subject DID on the roster
+ *  forms. */
+const didField = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,300}$/, 'Invalid DID'));
+/** The create form's handle label, the only name a group reserves. This checks
+ *  shape only. `runCreateGroup` applies the stricter rules for a new label
+ *  (`labelMintRefusal`) and reports them on the field the user can edit. */
+const labelField = v.pipe(v.string(), v.regex(GROUP_LABEL_PATTERN, 'Invalid group handle label'));
+const idField = v.pipe(v.string(), v.minLength(1), v.maxLength(64));
+/** `owner` is not in the list: a SQL trigger pins it to `groups.owner_did`, so
+ *  accepting it here would only produce a constraint error. A picklist rather
+ *  than a `v.check`, because a picklist's output type is the role union (a
+ *  `check` leaves it `string`), and the repo calls below take a role. */
+const assignableRoleField = v.picklist(ASSIGNABLE_ROLES, 'Unknown role');
+
+/** The address lexicon's own constraint (country is 2 to 10 chars). Checking
+ *  it here gives the form a message it can show, instead of a later "not a
+ *  valid community.lexicon.calendar.event record" error. An empty field means
+ *  "no country", which is not an error: no address entry is written (see
+ *  ./event-record.ts). */
+const countryField = v.pipe(
+	v.string(),
+	v.trim(),
+	v.check(
+		(value) => value === '' || (value.length >= 2 && value.length <= 10),
+		'Country must be an ISO code, 2 to 10 characters'
+	)
+);
+
+/** What every handler resolves before it acts: the bindings, the group, and the
+ *  caller's standing in it. */
+interface GroupRequestContext {
+	db: D1Database;
+	env: App.Platform['env'];
+	group: GroupRow;
+	membership: CallerMembership;
+	/** Never null: `context` throws 401 before returning. */
+	callerDid: string;
+}
+
+/** The group, the bindings and the caller's resolved permissions. Throws 401
+ *  when not signed in, and the route's own 404 for every other refusal.
+ *
+ *  It uses the same lookup as the pages (`server/route-context.ts`), so a form
+ *  cannot disagree with the page it was posted from. This matters here: a
+ *  remote `form()` is a POST that anyone signed in can send with any group key,
+ *  so a handler with its own lookup could reveal that a private group exists.
+ *  Like the pages, it takes a DID or a full handle, though every form the app
+ *  renders posts the DID. */
+async function context(actor: string): Promise<GroupRequestContext> {
+	const { locals, platform } = getRequestEvent();
+	if (!locals.did) error(401, 'Sign in to do that');
+	const db = platform!.env.DB;
+	const { group, membership } = await groupRouteContext(platform!.env, db, actor, locals.did);
+	return { db, env: platform!.env, group, membership, callerDid: locals.did };
+}
+
+export const createGroupForm = form(
+	v.object({
+		name: v.pipe(v.string(), v.trim(), v.minLength(2), v.maxLength(120)),
+		/** The handle label, not a stored name: the first part of the handle the
+		 *  mint registers under `GROUP_HANDLE_DOMAIN`. The PDS's handle registry
+		 *  decides whether it is free. The app keeps no copy. */
+		label: labelField,
+		description: v.optional(v.pipe(v.string(), v.maxLength(4000))),
+		visibility: v.picklist(GROUP_VISIBILITIES),
+		requireApproval: checkboxField,
+		// No `spaceUri` field: creating the group also creates its two spaces.
+		locationName: v.optional(v.pipe(v.string(), v.maxLength(200))),
+		/** No column behind this one: the rule records are the only copy. */
+		rules: v.optional(v.pipe(v.string(), v.maxLength(8000)))
+	}),
+	async (
+		data
+	): Promise<GroupFormResult<{ groupDid: string; handle: string; recoveryKey: string }>> => {
+		const { locals, platform } = getRequestEvent();
+		if (!locals.did) error(401, 'Sign in to create a group');
+		// No redirect on success. The owner's rotation key comes back in the
+		// result, is shown exactly once and is stored nowhere on our side, so a
+		// 303 here would lose it. The page shows it, then links onward. The
+		// ordered flow, and every way it can fail, is in ./create-group.ts.
+		return runCreateGroup(platform!.env, locals.did, data);
+	}
+);
+
+export const updateGroupForm = form(
+	v.object({
+		groupDid: didField,
+		name: v.pipe(v.string(), v.trim(), v.minLength(2), v.maxLength(120)),
+		description: v.optional(v.pipe(v.string(), v.maxLength(4000))),
+		visibility: v.picklist(GROUP_VISIBILITIES),
+		requireApproval: checkboxField,
+		rules: v.optional(v.pipe(v.string(), v.maxLength(8000)))
+	}),
+	async (data): Promise<GroupFormResult> => {
+		const { db, env, group, membership, callerDid } = await context(data.groupDid);
+		if (!can(membership.permissions, 'MANAGE_GROUP')) {
+			return { ok: false, error: 'Not allowed: MANAGE_GROUP required' };
+		}
+		try {
+			await updateGroup(db, group.id, {
+				name: data.name,
+				description: data.description || null,
+				visibility: data.visibility,
+				requireApproval: data.requireApproval
+			});
+		} catch (e) {
+			return formError(e);
+		}
+
+		// Then the records, which are the source of truth for the fields above.
+		// The row is written first only because the schema refuses a private group
+		// that does not require approval (a trigger in migrations/0001_groups.sql).
+		// A record written for a configuration the database then refused would
+		// describe a group that cannot exist.
+		try {
+			// The row we just updated, without re-reading it. The profile must
+			// describe the group as it is now, and `joinPolicy` is derived from
+			// the visibility and approval columns.
+			const fresh = {
+				...group,
+				name: data.name,
+				description: data.description || null,
+				visibility: data.visibility,
+				require_approval: data.requireApproval ? 1 : 0
+			};
+			const reader = await groupSpaceReader(env, db, group);
+			const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };
+			const writer = await groupWriter(env, db, fresh);
+			await writeGroupProfile({
+				db,
+				env,
+				group: fresh,
+				callerDid,
+				writer,
+				profile: {
+					name: data.name,
+					description: data.description || null,
+					// Not on the settings form, so it is kept rather than cleared. It
+					// comes from the record when there is one, so a stale row cannot be
+					// written back into it.
+					locationName: groupFace(about.profile, group).locationName,
+					// Preserved, so editing a group does not restamp its creation date.
+					createdAt: about.profile?.createdAt ?? undefined
+				}
+			});
+			await setGroupRules({
+				db,
+				env,
+				group: fresh,
+				callerDid,
+				writer,
+				desired: splitRuleLines(data.rules),
+				existing: about.rules
+			});
+			// The public declaration. Visibility is on this form, so this edit
+			// can hide a group. A group switched to private has its declaration
+			// deleted, not just left alone: the declaration is the only record an
+			// anonymous peer can see, and a stale one keeps announcing a group
+			// that asked not to be announced. Switching back declares it again,
+			// dated from the group's creation date (taken from the profile, so no
+			// extra read), because the declaration says when the group was
+			// created, not when its visibility last changed.
+			await reconcileGroupDeclaration({
+				db,
+				env,
+				group: fresh,
+				callerDid,
+				writer,
+				createdAt: about.profile?.createdAt ?? undefined
+			});
+		} catch (e) {
+			return {
+				ok: false,
+				error: `Settings were saved, but this group's records were not updated: ${
+					e instanceof Error ? e.message : String(e)
+				}`
+			};
+		}
+		return { ok: true };
+	}
+);
+
+/** Repairs a group whose records and this site's copy no longer agree. It
+ *  writes the missing members-space records that the row is certain of, then
+ *  rebuilds the copy from the records (`./server/repair.ts` says what it will
+ *  and will not write, and why). Needs MANAGE_GROUP, like the other settings. */
+export const repairGroupForm = form(
+	v.object({ groupDid: didField }),
+	async (data): Promise<GroupFormResult<{ summary: string }>> => {
+		const { db, env, group, membership, callerDid } = await context(data.groupDid);
+		if (!can(membership.permissions, 'MANAGE_GROUP')) {
+			return { ok: false, error: 'Not allowed: MANAGE_GROUP required' };
+		}
+		try {
+			const result = await repairGroup({ db, env, group, callerDid });
+			return { ok: true, summary: describeRepair(result) };
+		} catch (e) {
+			try {
+				return formError(e);
+			} catch {
+				// Anything else is the PDS or the database failing partway. Every
+				// write the repair makes is keyed and checked first, so what landed
+				// stays and a second run continues from there.
+				return {
+					ok: false,
+					error: `The repair stopped partway: ${
+						e instanceof Error ? e.message : String(e)
+					}. Anything it wrote is kept, and running it again continues from there.`
+				};
+			}
+		}
+	}
+);
+
+/** Maps a roster failure to a form result. The two roster errors mean the
+ *  second half of the act failed after the first half took effect, so the
+ *  caller is told what is out of step instead of being told to retry. Which
+ *  half runs second depends on the direction of the change
+ *  (`server/roster.ts`): a grant moves the row and then writes the record
+ *  (`RosterRecordError`), a revocation deletes the record and then the row
+ *  (`RosterRowError`). Every other failure (an owner who cannot be demoted, a
+ *  private group with no self-service join, a DID that is not on the roster, or
+ *  a revocation whose record write changed nothing) is a plain one.
+ *
+ *  Returns the failure member rather than `GroupFormResult`, so it also works
+ *  in a handler whose success carries a payload. */
+function rosterFailure(e: unknown): GroupFormFailure {
+	if (e instanceof RosterRecordError) {
+		return {
+			ok: false,
+			error: `The roster was updated, but the membership record for ${e.subject} was not: ${e.message}`
+		};
+	}
+	if (e instanceof RosterRowError) {
+		return {
+			ok: false,
+			error: `Access was revoked for ${e.subject}, but the roster still lists them: ${e.message}`
+		};
+	}
+	return formError(e);
+}
+
+export const joinGroupForm = form(
+	v.object({
+		groupDid: didField,
+		message: v.optional(v.pipe(v.string(), v.maxLength(1000)))
+	}),
+	async (data): Promise<GroupFormResult<{ outcome: JoinOutcome }>> => {
+		const ctx = await context(data.groupDid);
+		try {
+			return { ok: true, outcome: await joinGroup(ctx, data.message || null) };
+		} catch (e) {
+			return rosterFailure(e);
+		}
+	}
+);
+
+/** Self-service leave, and withdrawal of a pending request. They share one
+ *  button, because for the applicant they are the same intent. The owner cannot
+ *  leave: the roster pre-check refuses before any write, and the refusal comes
+ *  back as a GroupRuleError rather than a 500. */
+export const leaveGroupForm = form(
+	v.object({ groupDid: didField }),
+	async (data): Promise<GroupFormResult<{ outcome: 'withdrawn' | 'left' }>> => {
+		const ctx = await context(data.groupDid);
+		try {
+			// A pending applicant was never on the roster, so there is no record to
+			// revoke. Withdrawing touches `join_requests` and nothing else.
+			if (ctx.membership.pendingRequestId) {
+				await decideJoinRequest(
+					ctx.db,
+					ctx.group.id,
+					ctx.membership.pendingRequestId,
+					ctx.callerDid,
+					'withdrawn'
+				);
+				return { ok: true, outcome: 'withdrawn' };
+			}
+			await leaveGroup(ctx);
+			return { ok: true, outcome: 'left' };
+		} catch (e) {
+			return rosterFailure(e);
+		}
+	}
+);
+
+export const approveJoinRequestForm = form(
+	v.object({
+		groupDid: didField,
+		requestId: idField,
+		role: v.optional(assignableRoleField)
+	}),
+	async (data): Promise<GroupFormResult> => {
+		const ctx = await context(data.groupDid);
+		if (!can(ctx.membership.permissions, 'ADMIT_MEMBERS')) {
+			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
+		}
+		try {
+			await admitFromRequest(ctx, data.requestId, data.role ?? 'member');
+			return { ok: true };
+		} catch (e) {
+			return rosterFailure(e);
+		}
+	}
+);
+
+export const rejectJoinRequestForm = form(
+	v.object({ groupDid: didField, requestId: idField }),
+	async (data): Promise<GroupFormResult> => {
+		const { db, group, membership, callerDid } = await context(data.groupDid);
+		if (!can(membership.permissions, 'ADMIT_MEMBERS')) {
+			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
+		}
+		try {
+			// No record either way: a rejected request never granted anything, so
+			// there is nothing published to withdraw.
+			await decideJoinRequest(db, group.id, data.requestId, callerDid, 'rejected');
+			return { ok: true };
+		} catch (e) {
+			return formError(e);
+		}
+	}
+);
+
+/** Direct add: an admin puts a known DID on the roster without a request. Same
+ *  gate as approving a request (ADMIT_MEMBERS). */
+export const addMemberForm = form(
+	v.object({ groupDid: didField, did: didField, role: v.optional(assignableRoleField) }),
+	async (data): Promise<GroupFormResult> => {
+		const ctx = await context(data.groupDid);
+		if (!can(ctx.membership.permissions, 'ADMIT_MEMBERS')) {
+			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
+		}
+		try {
+			await admitMember(ctx, data.did, data.role ?? 'member');
+			return { ok: true };
+		} catch (e) {
+			return rosterFailure(e);
+		}
+	}
+);
+
+export const removeMemberForm = form(
+	v.object({ groupDid: didField, did: didField }),
+	async (data): Promise<GroupFormResult> => {
+		const ctx = await context(data.groupDid);
+		if (!can(ctx.membership.permissions, 'EJECT_MEMBERS')) {
+			return { ok: false, error: 'Not allowed: EJECT_MEMBERS required' };
+		}
+		try {
+			await ejectMember(ctx, data.did);
+			return { ok: true };
+		} catch (e) {
+			return rosterFailure(e);
+		}
+	}
+);
+
+export const changeMemberRoleForm = form(
+	v.object({ groupDid: didField, did: didField, role: assignableRoleField }),
+	async (data): Promise<GroupFormResult> => {
+		const ctx = await context(data.groupDid);
+		if (!can(ctx.membership.permissions, 'ASSIGN_ROLES')) {
+			return { ok: false, error: 'Not allowed: ASSIGN_ROLES required' };
+		}
+		try {
+			await promoteMember(ctx, data.did, data.role);
+			return { ok: true };
+		} catch (e) {
+			return rosterFailure(e);
+		}
+	}
+);
+
+/** `<input type="datetime-local">` sends `YYYY-MM-DDTHH:mm` with no zone, and
+ *  `new Date()` would read it in the server's zone: UTC in a deployed Worker,
+ *  the local zone in dev. The group event form labels its time fields UTC, so
+ *  this reads a zoneless value as UTC. A value that has a zone (or Z) is left
+ *  alone. There is no per-group timezone picker. */
+function zonelessAsUtc(value: string): Date {
+	return new Date(/([zZ]|[+-]\d\d:?\d\d)$/.test(value) ? value : `${value}Z`);
+}
+
+/** Create or edit a group event. The record is authored by the group DID; the
+ *  signed-in admin only authorizes it. An `rkey` in the payload means edit,
+ *  which needs MANAGE_EVENTS. That is how an admin edits an event someone else
+ *  created. */
+export const saveGroupEventForm = form(
+	v.object({
+		groupDid: didField,
+		rkey: v.optional(v.pipe(v.string(), v.regex(/^[a-zA-Z0-9._:~-]{1,512}$/))),
+		name: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(300)),
+		description: v.optional(v.pipe(v.string(), v.maxLength(10000))),
+		startsAt: v.pipe(v.string(), v.minLength(1)),
+		endsAt: v.optional(v.string()),
+		locationName: v.optional(v.pipe(v.string(), v.maxLength(300))),
+		locationCountry: v.optional(countryField),
+		createdAt: v.optional(v.string())
+	}),
+	async (data): Promise<GroupFormResult<{ uri: string; repo: string; rkey: string }>> => {
+		const { db, env, group, callerDid } = await context(data.groupDid);
+		const intent = data.rkey ? 'update' : 'create';
+
+		const startsAt = zonelessAsUtc(data.startsAt);
+		if (Number.isNaN(startsAt.getTime())) {
+			return { ok: false, error: 'Start time is not a valid date' };
+		}
+		const endsAt = data.endsAt ? zonelessAsUtc(data.endsAt) : null;
+		if (endsAt && Number.isNaN(endsAt.getTime())) {
+			return { ok: false, error: 'End time is not a valid date' };
+		}
+
+		const record = groupEventRecord({
+			name: data.name,
+			description: data.description,
+			startsAt: startsAt.toISOString(),
+			endsAt: endsAt?.toISOString() ?? null,
+			locationName: data.locationName,
+			locationCountry: data.locationCountry,
+			createdAt: data.createdAt
+		});
+
+		try {
+			// The writer makes the permission decision. It resolves the caller's
+			// membership again itself rather than trusting a value passed in.
+			const result = await writeGroupEvent({
+				db,
+				env,
+				group,
+				callerDid,
+				intent,
+				rkey: data.rkey,
+				record
+			});
+			return { ok: true, uri: result.uri, repo: result.repo, rkey: result.rkey };
+		} catch (e) {
+			return formError(e);
+		}
+	}
+);
+
+export const deleteGroupEventForm = form(
+	v.object({ groupDid: didField, rkey: v.pipe(v.string(), v.minLength(1), v.maxLength(512)) }),
+	async (data): Promise<GroupFormResult<{ uri: string }>> => {
+		const { db, env, group, callerDid } = await context(data.groupDid);
+		try {
+			const result = await deleteGroupEvent({ db, env, group, callerDid, rkey: data.rkey });
+			return { ok: true, uri: result.uri };
+		} catch (e) {
+			return formError(e);
+		}
+	}
+);
