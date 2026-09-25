@@ -11,8 +11,9 @@
 // An account credential can read its own repo inside a space, and that is where
 // every record the group authors lives. So reading a group needs no DPoP
 // credential, no space scope, no peer credential and no sync engine. Over
-// Bearer, an own-repo getRecord returns 200 and another repo's slice returns
-// 400 RecordNotFound.
+// Bearer, an own-repo getRecord returns 200, a missing record returns 400
+// RecordNotFound, and another repo's slice returns 400 RepoNotFound (measured on
+// the alpha PDS, 2026-09-25).
 //
 // A space record's URI is space-scoped,
 // at://<owner>/space/<type>/<skey>/<repo>/<collection>/<rkey>, not
@@ -202,9 +203,10 @@ export interface GroupAbout {
 	rules: GroupRuleRecord[];
 }
 
-/** A group's public face as records. Both halves degrade to "absent" rather
- *  than throwing: a group with an empty about space must still render its page
- *  from the cache, not fail with a 500. */
+/** A group's public face as records. An absent record reads as absent, so a
+ *  group with an empty about space still renders its page from the cache. A
+ *  read that fails throws: the page fails rather than show the cache in place
+ *  of records the PDS refused. */
 export async function readGroupAbout(
 	reader: GroupSpaceReader,
 	group: Pick<GroupRow, 'group_did' | 'about_space_uri'>

@@ -14,8 +14,10 @@
 // engine. Every record read here is written by the group account itself.
 // Reading a record a member wrote would need a space credential.
 //
-// Reads degrade rather than throw, like `readGroupAbout`: a group with an empty
-// members space must still render its roster from the cache instead of a 500.
+// Absent records read as absent, like `readGroupAbout`: a group with an empty
+// members space still renders its roster from the cache instead of a 500. A read
+// that fails throws, because "failed" read as "empty" would hand the roster and
+// the gate to the rows.
 // `rosterSource` tells a caller which of the two it got, so "the records are
 // empty" is never rendered as "the group has no members".
 import {
@@ -87,8 +89,8 @@ export const NO_MEMBER_RECORDS: GroupMembers = {
 /** Records first, then the cache. A page says which one it rendered. */
 export type RosterSource = 'records' | 'cache';
 
-/** A group's roster and authz config as records. Every half degrades to
- *  absent rather than throwing (see the header).
+/** A group's roster and authz config as records. Every half reads an absent
+ *  record as absent, and throws when a read fails (see the header).
  *
  *  The five reads go out together: they are independent, they share one
  *  cached session, and in sequence they would put five PDS round trips in
