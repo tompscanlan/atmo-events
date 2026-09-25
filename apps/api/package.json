@@ -17,12 +17,14 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@atmo-dev/contrail": "0.19.0"
+		"@atmo-dev/contrail": "link:../../../link/contrail",
+		"@atmo-dev/contrail-spaces-alpha": "link:../../../link/contrail-spaces-alpha"
 	},
 	"devDependencies": {
 		"@atcute/lex-cli": "^3.2.1",
 		"@atcute/lexicons": "^2.0.3",
 		"@cloudflare/workers-types": "^4.20260317.1",
+		"miniflare": "4.20260317.2",
 		"typescript": "^6.0.2",
 		"vitest": "^4.1.7",
 		"wrangler": "^4.77.0"

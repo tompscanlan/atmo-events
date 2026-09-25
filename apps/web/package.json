@@ -30,6 +30,7 @@
 		"@atcute/atproto": "^4.0.4",
 		"@atcute/bluesky": "^4.0.19",
 		"@atcute/client": "^5.1.1",
+		"@atcute/crypto": "^2.4.4",
 		"@atcute/identity-resolver": "^2.0.1",
 		"@atcute/lex-cli": "^2.5.3",
 		"@atcute/lexicons": "^2.1.0",
