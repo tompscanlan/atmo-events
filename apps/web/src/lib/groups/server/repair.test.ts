@@ -94,6 +94,9 @@ describe('repairGroup', () => {
 		expect(result.wrote).toEqual({ access: true, ownerMembership: true, authz: true });
 		expect(result.unrecordedMembers).toEqual([]);
 		expect(result.authzHeldBack).toBeNull();
+		expect(describeRepair(result)).toMatch(
+			/^Wrote the missing owner's membership record, access record and permission config\. /
+		);
 		// The config goes last: once it exists the gate reads records, so the
 		// owner's record must already be there.
 		const order = writes.map((w) => w.collection);

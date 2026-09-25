@@ -179,9 +179,9 @@ async function bundlesFromRows(
 export function describeRepair(result: GroupRepairResult): string {
 	const { wrote } = result;
 	const written = [
-		wrote.ownerMembership && "the owner's membership record",
-		wrote.access && 'the access record',
-		wrote.authz && 'the permission config'
+		wrote.ownerMembership && "owner's membership record",
+		wrote.access && 'access record',
+		wrote.authz && 'permission config'
 	].filter((part): part is string => typeof part === 'string');
 	const sentences = [
 		written.length > 0
