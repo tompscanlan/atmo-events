@@ -70,7 +70,8 @@ const QUEUE_NAME = 'openmeet-atmo-spaces';
 /** Discovery identity the Worker advertises; service-auth audiences follow it. */
 const SERVICE_ENDPOINT = process.env.SPACES_E2E_ENDPOINT ?? 'https://api.openmeet.test';
 const AUDIENCE = `did:web:${new URL(SERVICE_ENDPOINT).hostname}#spaces`;
-const NAMESPACE = SPACE_TYPE;
+/** The Worker's XRPC namespace, deliberately not the Space type (see SPACES_NAMESPACE). */
+const NAMESPACE = 'net.openmeet.group';
 
 const CREDENTIAL_PATHS = [
 	join(homedir(), '.spaces-alpha-creds.env'),
