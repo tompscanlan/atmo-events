@@ -41,10 +41,10 @@ wrapping stored Space credentials and DPoP private keys
 ## Request routing
 
 Both runtimes answer `/.well-known/did.json` and `/lexicons`, so
-`src/openmeet-worker.ts` dispatches explicitly rather than falling through — a
-fallthrough would silently publish one service entry and hide the other. It is
-the Worker's `main` in `wrangler.jsonc`; `src/worker.ts` stays upstream's
-single-runtime entry, unedited, so it never conflicts on an upstream pull.
+`src/dispatcher.ts` routes them explicitly. Falling through from one runtime to
+the other would publish one service entry and hide the other. The dispatcher is
+the Worker's `main` in `wrangler.jsonc`. `src/worker.ts` is the upstream
+single-runtime entry, left unedited.
 
 | path | handler |
 | --- | --- |

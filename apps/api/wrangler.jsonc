@@ -1,7 +1,7 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "openmeet-atmo-api",
-	"main": "src/openmeet-worker.ts",
+	"main": "src/dispatcher.ts",
 	"compatibility_date": "2025-12-25",
 	// The Spaces runtime pulls in @atproto/* protocol code that needs Node built-ins.
 	"compatibility_flags": ["nodejs_compat"],
