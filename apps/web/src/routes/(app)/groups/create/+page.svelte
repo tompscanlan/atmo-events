@@ -12,6 +12,10 @@
 	// The label follows the name until the operator edits it, then stops — typing
 	// a handle by hand and watching it be overwritten is the worse failure.
 	let labelTouched = $state(false);
+	// A private group is invite-only, and the groups table refuses one that does
+	// not require approval, so the form shows approval as fixed-on rather than
+	// letting the combination be picked and then refused on submit.
+	let visibility = $state('public');
 	let derivedLabel = $derived(labelTouched ? label : name ? labelFromGroupName(name) : '');
 	let createError = $derived(groupFormError(createGroupForm.result));
 	// The success branch carries the recovery key, so it is read ONCE from the
@@ -38,9 +42,9 @@
 	     reads as ownership to anyone who does not already know atproto.
 	     (Spec: FR-001i.) -->
 	<p class="text-base-500 dark:text-base-400 mb-8 text-sm">
-		<strong>OpenMeet hosts this group for you.</strong> We hold the credential the group posts
-		with, and its account email is ours, so we can keep it working and help when it breaks — you do
-		not need to know anything about atproto to run a group here. What you get at the end is its
+		<strong>OpenMeet hosts this group for you.</strong> We hold the credential the group posts with,
+		and its account email is ours, so we can keep it working and help when it breaks — you do not
+		need to know anything about atproto to run a group here. What you get at the end is its
 		<strong>recovery key</strong>: with it you can move the group to a host of your own later, and
 		nobody — including us — can stop you. Owning the group's account outright is not offered yet.
 	</p>
@@ -76,9 +80,9 @@
 			     not operate it. Saying only what it unlocks invites the reading
 			     that it is the group's password. (Spec: FR-001i.) -->
 			<p class="mt-1">
-				It is <em>not</em> the group's password: it will not sign you in, and it is not needed to
-				post, edit or invite. Lose it and the group keeps working — you lose only the ability to
-				take it elsewhere without us.
+				It is <em>not</em> the group's password: it will not sign you in, and it is not needed to post,
+				edit or invite. Lose it and the group keeps working — you lose only the ability to take it elsewhere
+				without us.
 			</p>
 			<textarea
 				readonly
@@ -155,8 +159,8 @@
 				class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
 			></textarea>
 			<p class="text-base-500 dark:text-base-400 text-xs">
-				Optional, and editable later. Each line becomes its own record in the group’s about
-				space, so a rule keeps one stable address even as the list changes.
+				Optional, and editable later. Each line becomes its own record in the group’s about space,
+				so a rule keeps one stable address even as the list changes.
 			</p>
 		</div>
 
@@ -165,6 +169,7 @@
 			<select
 				id="group-visibility"
 				name="visibility"
+				bind:value={visibility}
 				class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
 			>
 				<option value="public">public — listed and browsable</option>
@@ -176,10 +181,23 @@
 		     and `members` spaces on the group's own PDS account, so
 		     there is nothing to paste. The URIs appear on the group page. -->
 
-		<label class="flex items-center gap-2 text-sm">
-			<input type="checkbox" name="requireApproval" checked class="size-4" />
-			Require approval to join
-		</label>
+		<!-- A DISABLED checkbox is never submitted, and an absent checkbox parses as
+		     "off", so the fixed-on case sends its value through a hidden input. -->
+		{#if visibility === 'private'}
+			<input type="hidden" name="requireApproval" value="on" />
+			<label class="flex items-center gap-2 text-sm">
+				<input type="checkbox" checked disabled class="size-4" />
+				Require approval to join
+			</label>
+			<p class="text-base-500 dark:text-base-400 -mt-3 text-xs">
+				A private group is invite-only, so approval is always on.
+			</p>
+		{:else}
+			<label class="flex items-center gap-2 text-sm">
+				<input type="checkbox" name="requireApproval" checked class="size-4" />
+				Require approval to join
+			</label>
+		{/if}
 
 		{#if createError}
 			<p class="text-sm text-red-600 dark:text-red-400">{createError}</p>

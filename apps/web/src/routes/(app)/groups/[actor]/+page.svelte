@@ -50,6 +50,12 @@
 	let leaveError = $derived(groupFormError(leaveGroupForm.result));
 	let settingsError = $derived(groupFormError(updateGroupForm.result));
 	let showSettings = $state(false);
+	// The visibility the settings form currently has SELECTED, or null for "not
+	// changed yet", in which case the stored one applies. A private group is
+	// invite-only and the groups table refuses one that does not require
+	// approval, so the form shows approval as fixed-on while private is picked.
+	let pickedVisibility = $state<string | null>(null);
+	let settingsPrivate = $derived((pickedVisibility ?? group.visibility) === 'private');
 </script>
 
 <svelte:head>
@@ -233,7 +239,10 @@
 			<button
 				type="button"
 				class="text-base-500 dark:text-base-400 text-sm hover:underline"
-				onclick={() => (showSettings = !showSettings)}
+				onclick={() => {
+					showSettings = !showSettings;
+					pickedVisibility = null;
+				}}
 			>
 				{showSettings ? 'Hide' : 'Show'} group settings
 			</button>
@@ -284,6 +293,7 @@
 						<select
 							id="settings-visibility"
 							name="visibility"
+							onchange={(e) => (pickedVisibility = e.currentTarget.value)}
 							class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
 						>
 							{#each ['public', 'private'] as value (value)}
@@ -294,15 +304,29 @@
 					<!-- No Space URI field: both spaces are provisioned at create under the
 					     group's own DID, so there is nothing here to edit. They are shown
 					     read-only in the header above. -->
-					<label class="flex items-center gap-2 text-sm">
-						<input
-							type="checkbox"
-							name="requireApproval"
-							defaultChecked={!!group.require_approval}
-							class="size-4"
-						/>
-						Require approval to join
-					</label>
+					<!-- A DISABLED checkbox is never submitted, and an absent checkbox
+					     parses as "off", so the fixed-on case sends its value through a
+					     hidden input. -->
+					{#if settingsPrivate}
+						<input type="hidden" name="requireApproval" value="on" />
+						<label class="flex items-center gap-2 text-sm">
+							<input type="checkbox" checked disabled class="size-4" />
+							Require approval to join
+						</label>
+						<p class="text-base-500 dark:text-base-400 -mt-2 text-xs">
+							A private group is invite-only, so approval is always on.
+						</p>
+					{:else}
+						<label class="flex items-center gap-2 text-sm">
+							<input
+								type="checkbox"
+								name="requireApproval"
+								defaultChecked={!!group.require_approval}
+								class="size-4"
+							/>
+							Require approval to join
+						</label>
+					{/if}
 					{#if settingsError}
 						<p class="text-sm text-red-600 dark:text-red-400">{settingsError}</p>
 					{:else if updateGroupForm.result?.ok}

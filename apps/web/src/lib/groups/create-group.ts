@@ -68,8 +68,10 @@ export interface CreateGroupData {
 	description?: string;
 	visibility: GroupVisibility;
 	// No `status`: a group that exists is published (FR-016c).
-	/** Optional because an unticked HTML checkbox sends nothing at all; `repo.ts`
-	 *  reads a missing value as `true` (`require_approval` defaults to 1). */
+	/** The create form always supplies this: `checkboxField` parses an unticked
+	 *  box as `false`, not as missing. It stays optional for callers that build
+	 *  this object directly, and for them a missing value still means approval
+	 *  on, because `repo.ts` stores anything but `false` as 1. */
 	requireApproval?: boolean;
 	locationName?: string;
 	/** One rule per non-empty line. Rules have no column — the records in the
