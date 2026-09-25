@@ -66,10 +66,20 @@ export type MintFailure =
 	 *  the group is not portable and must not be presented as if it were. */
 	| 'rotation-key-unverified';
 
+/** An account the mint registered before it failed: the did:plc exists, and
+ *  `recoveryKey` is the owner's rotation key, whose only copy is here. */
+export interface RegisteredAccount {
+	did: string;
+	handle: string;
+	recoveryKey: string;
+}
+
 export class GroupMintError extends Error {
 	constructor(
 		readonly failure: MintFailure,
-		message: string
+		message: string,
+		/** Set when the failure came after createAccount succeeded. */
+		readonly registered?: RegisteredAccount
 	) {
 		super(message);
 		this.name = 'GroupMintError';
@@ -263,29 +273,41 @@ export async function mintGroupAccount(
 		throw new GroupMintError('pds-unreachable', `createAccount returned no session: ${String(e)}`);
 	}
 
-	// One app password, created with the account-password session, and named so
-	// an operator reading listAppPasswords can tell what holds it.
-	const issued = await xrpc(
-		cfg.service,
-		'com.atproto.server.createAppPassword',
-		{ name: 'group-writer' },
-		session.accessJwt
-	);
-	if (!issued.ok) throw await refusal(issued);
+	// From here the did:plc exists. A failure below still hands back the owner's
+	// key, whose only copy is in this function, with the DID it belongs to.
+	const registered: RegisteredAccount = {
+		did: session.did,
+		handle: session.handle ?? handle,
+		recoveryKey: ownerRotationSecret
+	};
 	let appPassword: string;
 	try {
-		({ password: appPassword } = (await issued.json()) as { password: string });
-	} catch (e) {
-		throw new GroupMintError(
-			'pds-unreachable',
-			`createAppPassword returned no password: ${String(e)}`
+		// One app password, created with the account-password session, and named
+		// so an operator reading listAppPasswords can tell what holds it.
+		const issued = await xrpc(
+			cfg.service,
+			'com.atproto.server.createAppPassword',
+			{ name: 'group-writer' },
+			session.accessJwt
 		);
-	}
+		if (!issued.ok) throw await refusal(issued);
+		try {
+			({ password: appPassword } = (await issued.json()) as { password: string });
+		} catch (e) {
+			throw new GroupMintError(
+				'pds-unreachable',
+				`createAppPassword returned no password: ${String(e)}`
+			);
+		}
 
-	// Checked before the caller is told the group exists. If the owner's key is
-	// not first, we minted an identity only we can move, and the group is not
-	// really portable. Fail rather than return it.
-	await verifyRotationKey(session.did, ownerRotationKey);
+		// Checked before the caller is told the group exists. If the owner's key
+		// is not first, we minted an identity only we can move, and the group is
+		// not really portable. Fail rather than return it.
+		await verifyRotationKey(session.did, ownerRotationKey);
+	} catch (e) {
+		if (e instanceof GroupMintError) throw new GroupMintError(e.failure, e.message, registered);
+		throw new GroupMintError('pds-unreachable', String(e), registered);
+	}
 
 	return {
 		did: session.did,

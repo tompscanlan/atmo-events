@@ -45,7 +45,7 @@ import { registerGroupIdentity } from './server/events-index';
 import { splitRuleLines } from './about-record';
 import { labelMintRefusal, labelMintRefusalMessage } from './handle-label';
 import { formError } from './form-error';
-import type { GroupFormFailure, GroupFormResult } from './form-result';
+import type { GroupFormFailure, GroupFormResult, GroupFormSuccess } from './form-result';
 import type { GroupVisibility } from './types';
 
 /** The five settings a mint needs, plus the group tables. Structural rather
@@ -91,9 +91,10 @@ export interface RegisteredGroup {
 /** A successful create hands back the registered account. So does a create that
  *  fails after the mint, as `registered`: the did:plc exists either way, and the
  *  owner's key must not be lost with the error. */
-export type CreateGroupOutcome =
-	| GroupFormResult<RegisteredGroup>
-	| (GroupFormFailure & { registered: RegisteredGroup });
+export type CreateGroupOutcome = GroupFormResult<RegisteredGroup> | AfterMintFailure;
+
+/** A failure once the did:plc exists. It always carries the registered account. */
+type AfterMintFailure = GroupFormFailure & { registered: RegisteredGroup };
 
 /** The mint target, or null when this deployment is not configured to mint. All
  *  four values are required: a partial configuration is an operator error, and
@@ -209,8 +210,23 @@ export async function runCreateGroup(
 	try {
 		minted = await mintGroupAccount(mint, data.label);
 	} catch (e) {
-		if (e instanceof GroupMintError) return { ok: false, error: mintErrorMessage(e, data.label) };
-		throw e;
+		if (!(e instanceof GroupMintError)) throw e;
+		const error = mintErrorMessage(e, data.label);
+		// A mint can fail after the account exists, and then it hands back the
+		// owner's key with the error. The key goes to the owner either way.
+		if (!e.registered) return { ok: false, error };
+		const { did, handle, recoveryKey } = e.registered;
+		// "Try again" alone would send the user into "already taken": the address
+		// is registered now. The rotation-key message already says so.
+		const registeredNote =
+			e.failure === 'rotation-key-unverified'
+				? ''
+				: ` ${handle} was registered before this failed, so keep its recovery key and tell an administrator before using that name again.`;
+		return {
+			ok: false,
+			error: `${error}${registeredNote}`,
+			registered: { groupDid: did, handle, recoveryKey }
+		};
 	}
 
 	// From here on a did:plc exists, and the owner's rotation key exists only in
@@ -245,7 +261,7 @@ async function setUpMintedGroup(
 	row: Omit<CreateGroupInput, 'groupDid'>,
 	minted: MintedGroup,
 	registered: RegisteredGroup
-): Promise<CreateGroupOutcome> {
+): Promise<GroupFormSuccess<RegisteredGroup> | AfterMintFailure> {
 	// The app password was shown exactly once, so it is stored before the group
 	// row: a failure here leaves an orphan did:plc, and a failure after it would
 	// leave one we can never write as again.

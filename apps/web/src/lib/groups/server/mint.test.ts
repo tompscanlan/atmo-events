@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Secp256k1PrivateKeyExportable, parsePrivateMultikey } from '@atcute/crypto';
 import {
 	GroupMintError,
 	assertOwnerHoldsRotationKey,
@@ -139,6 +140,51 @@ describe('mintGroupAccount', () => {
 				throw new GroupMintError('rotation-key-unverified', 'rotationKeys[0] is ours');
 			})
 		).rejects.toMatchObject({ failure: 'rotation-key-unverified' });
+	});
+});
+
+/** The public did:key for a private multikey: what the PDS was sent. */
+async function publicKeyOf(secret: string): Promise<string> {
+	const { privateKeyBytes } = parsePrivateMultikey(secret);
+	const key = await Secp256k1PrivateKeyExportable.importRaw(privateKeyBytes);
+	return key.exportPublicKey('did');
+}
+
+// Once createAccount succeeds the did:plc exists, and the owner's key has no
+// other copy. A step after that which fails must hand the key back with the
+// error, or the owner of a permanent identity never sees it.
+describe('mintGroupAccount — a failure after the account exists', () => {
+	it.each([
+		[
+			'the app password is refused',
+			() => stubPds({ appPassword: Response.json({ error: 'InternalServerError' }, { status: 500 }) }),
+			async () => {}
+		],
+		[
+			'the rotation key cannot be confirmed',
+			() => stubPds(),
+			async () => {
+				throw new GroupMintError('rotation-key-unverified', 'directory unreachable');
+			}
+		]
+	])('hands back the DID, the handle and the key when %s', async (_why, arrange, verify) => {
+		const calls = arrange();
+
+		const error = await mintGroupAccount(CFG, 'kona', verify).catch((e: unknown) => e);
+
+		expect(error).toBeInstanceOf(GroupMintError);
+		const { registered } = error as GroupMintError;
+		expect(registered).toMatchObject({ did: DID, handle: 'kona.group.example.net' });
+		// The very key the account was registered with, not merely a key.
+		const sent = calls.find((c) => c.url.includes('createAccount'))?.body.recoveryKey;
+		expect(await publicKeyOf(registered!.recoveryKey)).toBe(sent);
+	});
+
+	it('hands back nothing when the account was never created', async () => {
+		stubPds({ account: Response.json({ error: 'HandleNotAvailable' }, { status: 400 }) });
+		const error = await mintGroupAccount(CFG, 'kona', async () => {}).catch((e: unknown) => e);
+		expect(error).toBeInstanceOf(GroupMintError);
+		expect((error as GroupMintError).registered).toBeUndefined();
 	});
 });
 

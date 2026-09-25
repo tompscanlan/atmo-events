@@ -73,7 +73,7 @@
 			{#if !created}
 				<p class="mt-1">
 					The group was not fully set up (the reason is under the form), but its address was
-					registered, so this is already its recovery key.
+					registered with this recovery key.
 				</p>
 			{/if}
 			<p class="mt-1">

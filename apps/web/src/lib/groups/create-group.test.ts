@@ -623,15 +623,23 @@ describe('a create that fails after the mint', () => {
 			}
 		],
 		['writing the profile', async () => {}, { fail: writing('net.openmeet.group.profile') }],
-		['writing the members space', async () => {}, { fail: writing('net.openmeet.group.access') }]
+		['writing the members space', async () => {}, { fail: writing('net.openmeet.group.access') }],
+		[
+			'issuing the app password',
+			async () => {},
+			{
+				fail: (nsid: string) =>
+					nsid.startsWith('com.atproto.server.createAppPassword') ? pdsDown() : undefined
+			}
+		]
 	])('hands back the recovery key when %s fails', async (_step, arrange, stub) => {
 		await arrange();
 		const { calls } = stubPds(stub);
 
 		const result = await runCreateGroup(env, OWNER, data());
 
-		// The mint happened: the failure is after the irreversible step.
-		expect(calls).toContain('plc.directory/data');
+		// The account exists: the failure is after the irreversible step.
+		expect(calls).toContain('com.atproto.server.createAccount');
 		expect(result.ok).toBe(false);
 		expect(result).toMatchObject({
 			error: expect.stringContaining('konatrail.group.stub.test'),
