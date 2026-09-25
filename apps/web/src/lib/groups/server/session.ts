@@ -76,6 +76,26 @@ async function errorName(res: Response): Promise<string | null> {
 	}
 }
 
+/** The errors a PDS sends as 400 when the access token itself is the problem. */
+const TOKEN_ERRORS: Record<string, true> = { ExpiredToken: true, InvalidToken: true };
+
+/** Whether the PDS turned the request away over its access token. A PDS answers
+ *  an expired or unverifiable token with 400 (`ExpiredToken`, `InvalidToken`)
+ *  and keeps 401 for a request that carried none, so the status alone cannot
+ *  tell a dead token from a bad request: a 400 is a token rejection only by its
+ *  error name. */
+async function tokenRejected(res: Response): Promise<boolean> {
+	if (res.status === 401) {
+		const name = await errorName(res);
+		return !name || AUTH_ERRORS[name] === true;
+	}
+	if (res.status === 400) {
+		const name = await errorName(res);
+		return name !== null && TOKEN_ERRORS[name] === true;
+	}
+	return false;
+}
+
 /** The authed transport for one group account: a typed `Client`, plus the raw
  *  `handle` the Client is built on.
  *
@@ -92,7 +112,8 @@ async function errorName(res: Response): Promise<string | null> {
  *  `apps/api/scripts/spaces-e2e.mjs` does. Once the space lexicons are
  *  published and generated, these calls can move onto the typed client.
  *
- *  A 401 is retried once with a refreshed token. The bodies sent here are JSON
+ *  A rejected access token (see `tokenRejected`) is retried once with a
+ *  refreshed one. The bodies sent here are JSON
  *  strings and Blobs, both re-readable; a streaming body would not be, and
  *  nothing here sends one. */
 export async function groupClient(
@@ -125,9 +146,7 @@ export async function groupClient(
 		};
 
 		const first = await send(current.accessJwt);
-		if (first.status !== 401) return first;
-		const name = await errorName(first);
-		if (name && !AUTH_ERRORS[name]) return first;
+		if (!(await tokenRejected(first))) return first;
 
 		const renewed = await refresh(cred, current);
 		if (renewed.did !== expectDid) {
