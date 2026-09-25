@@ -67,6 +67,47 @@ export function joinPolicyFor(group: {
 	return group.require_approval ? 'approval' : 'open';
 }
 
+/** A group's public face, from its profile record when there is one and from
+ *  the row only when there is not. The branch is taken ONCE, on the record's
+ *  presence, never per field: a record's `null` is an authored value (this
+ *  group has no description) and must win over whatever the row still holds.
+ *  A per-field `??` cannot tell that from absence, and let a stale row leak
+ *  into a page that reported `records`. `source` says which one rendered, so
+ *  a browser can see whether the page came from records. (Spec: FR-010.) */
+export function groupFace(
+	profile: GroupProfileFields | null,
+	group: {
+		name: string;
+		description: string | null;
+		location_name: string | null;
+		visibility: string;
+		require_approval: number;
+	}
+): {
+	source: 'records' | 'cache';
+	name: string;
+	description: string | null;
+	locationName: string | null;
+	joinPolicy: GroupJoinPolicy;
+} {
+	if (profile) {
+		return {
+			source: 'records',
+			name: profile.name,
+			description: profile.description,
+			locationName: profile.locationName,
+			joinPolicy: profile.joinPolicy
+		};
+	}
+	return {
+		source: 'cache',
+		name: group.name,
+		description: group.description,
+		locationName: group.location_name,
+		joinPolicy: joinPolicyFor(group)
+	};
+}
+
 /** The inverse, for the rebuild path — and it is deliberately PARTIAL even
  *  though it no longer has to be.
  *

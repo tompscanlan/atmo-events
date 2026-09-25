@@ -1,5 +1,5 @@
 import { canSeeMembers } from '$lib/groups/access';
-import { joinPolicyFor } from '$lib/groups/about-record';
+import { groupFace } from '$lib/groups/about-record';
 import { can } from '$lib/groups/permissions';
 import { groupSpaceReader, readGroupAbout } from '$lib/groups/server/about-read';
 import { refreshGroupHandle } from '$lib/groups/server/handles';
@@ -49,14 +49,10 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		 *  the page can say so rather than leaving it ambiguous — and so SC-002
 		 *  is observable in a browser rather than only in a test. */
 		about: {
-			source: about.profile ? ('records' as const) : ('cache' as const),
-			name: about.profile?.name ?? group.name,
-			description: about.profile?.description ?? group.description,
-			locationName: about.profile?.locationName ?? group.location_name,
-			/** The RECORD's join policy, which is what the group published. The
-			 *  columns are only consulted when there is no profile record to
-			 *  read — `joinPolicyFor` is that derivation (FR-004b). */
-			joinPolicy: about.profile?.joinPolicy ?? joinPolicyFor(group),
+			/** Every field from the profile record when there is one, its nulls
+			 *  included, and from the row only when there is not. The join policy
+			 *  is the RECORD's, which is what the group published (FR-004b). */
+			...groupFace(about.profile, group),
 			rules: about.rules.map((rule) => ({ text: rule.text, uri: rule.uri }))
 		},
 		memberCount: await countActiveMembers(db, group.id),

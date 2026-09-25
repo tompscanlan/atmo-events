@@ -21,7 +21,7 @@ import { GROUP_VISIBILITIES, type CallerMembership, type GroupRow } from './type
 import { decideJoinRequest, updateGroup, type JoinOutcome } from './server/repo';
 import { groupRouteContext } from './server/route-context';
 import { deleteGroupEvent, groupWriter, writeGroupEvent } from './server/event-writer';
-import { splitRuleLines } from './about-record';
+import { groupFace, splitRuleLines } from './about-record';
 import { groupSpaceReader, readGroupAbout } from './server/about-read';
 import { setGroupRules, writeGroupProfile } from './server/about-writer';
 import { reconcileGroupDeclaration } from './server/declaration-writer';
@@ -185,8 +185,10 @@ export const updateGroupForm = form(
 				profile: {
 					name: data.name,
 					description: data.description || null,
-					// Not on the settings form, so it is carried rather than cleared.
-					locationName: group.location_name,
+					// Not on the settings form, so it is carried rather than cleared —
+					// from the RECORD when there is one, so a stale row cannot be
+					// written back into it.
+					locationName: groupFace(about.profile, group).locationName,
 					// Preserved, so editing a group does not restamp its creation date.
 					createdAt: about.profile?.createdAt ?? undefined
 				}

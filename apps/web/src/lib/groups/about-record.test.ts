@@ -7,6 +7,7 @@
 //      off a PDS and decides whether strangers can walk into a group.
 import { describe, it, expect } from 'vitest';
 import {
+	groupFace,
 	groupProfileRecord,
 	groupRuleRecord,
 	joinPolicyFor,
@@ -128,7 +129,54 @@ describe('parseGroupProfile', () => {
 
 	it('survives a location that is not the shape we write', () => {
 		expect(parseGroupProfile({ displayName: 'Kona', location: 'Kona' })?.locationName).toBeNull();
-		expect(parseGroupProfile({ displayName: 'Kona', location: { name: 7 } })?.locationName).toBeNull();
+		expect(
+			parseGroupProfile({ displayName: 'Kona', location: { name: 7 } })?.locationName
+		).toBeNull();
+	});
+});
+
+// WHERE THE PAGE'S FACE COMES FROM. A profile record is authoritative for every
+// field it owns, INCLUDING the ones it leaves null: a null description is a
+// group that has none, not a record that forgot to say. A per-field `??` could
+// not tell those apart, so a stale or corrupted row leaked into a page that said
+// it was rendering from records (observed on the testnet, 2026-09-22).
+describe('groupFace', () => {
+	const row = {
+		name: 'ZZZ CORRUPTED CACHE',
+		description: 'CORRUPTED DESCRIPTION',
+		location_name: 'CORRUPTED LOCATION',
+		visibility: 'public',
+		require_approval: 1
+	};
+
+	it("renders a record's null as null, not the row's value", () => {
+		const face = groupFace(
+			{
+				name: 'Kona',
+				description: null,
+				joinPolicy: 'open',
+				locationName: null,
+				createdAt: null
+			},
+			row
+		);
+		expect(face).toEqual({
+			source: 'records',
+			name: 'Kona',
+			description: null,
+			locationName: null,
+			joinPolicy: 'open'
+		});
+	});
+
+	it('renders the row, and says so, only when there is no record', () => {
+		expect(groupFace(null, row)).toEqual({
+			source: 'cache',
+			name: 'ZZZ CORRUPTED CACHE',
+			description: 'CORRUPTED DESCRIPTION',
+			locationName: 'CORRUPTED LOCATION',
+			joinPolicy: 'approval'
+		});
 	});
 });
 
