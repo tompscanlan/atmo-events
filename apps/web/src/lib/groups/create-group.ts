@@ -22,7 +22,13 @@ import {
 	canStoreMintedCredentials,
 	storeGroupCredential
 } from './server/credentials';
-import { GroupMintError, mintGroupAccount, type MintConfig, type MintFailure } from './server/mint';
+import {
+	GroupMintError,
+	mintGroupAccount,
+	type MintConfig,
+	type MintFailure,
+	type MintedGroup
+} from './server/mint';
 import {
 	GroupRuleError,
 	createGroup,
@@ -39,7 +45,7 @@ import { registerGroupIdentity } from './server/events-index';
 import { splitRuleLines } from './about-record';
 import { labelMintRefusal, labelMintRefusalMessage } from './handle-label';
 import { formError } from './form-error';
-import type { GroupFormResult } from './form-result';
+import type { GroupFormFailure, GroupFormResult } from './form-result';
 import type { GroupVisibility } from './types';
 
 /** The five settings a mint needs, plus the group tables. Structural rather
@@ -73,13 +79,21 @@ export interface CreateGroupData {
 	rules?: string;
 }
 
-/** What a successful create hands back: the DID every URL will carry, the
- *  handle the PDS registered, and the rotation key shown exactly once. */
-export type CreateGroupOutcome = GroupFormResult<{
+/** The account a create registered: the DID every URL will carry, the handle
+ *  the PDS registered, and the owner's rotation key, which exists only in this
+ *  response. */
+export interface RegisteredGroup {
 	groupDid: string;
 	handle: string;
 	recoveryKey: string;
-}>;
+}
+
+/** A successful create hands back the registered account. So does a create that
+ *  fails after the mint, as `registered`: the did:plc exists either way, and the
+ *  owner's key must not be lost with the error. */
+export type CreateGroupOutcome =
+	| GroupFormResult<RegisteredGroup>
+	| (GroupFormFailure & { registered: RegisteredGroup });
 
 /** The mint target, or null when this deployment is not configured to mint. All
  *  four values are required: a partial configuration is an operator error, and
@@ -199,6 +213,39 @@ export async function runCreateGroup(
 		throw e;
 	}
 
+	// From here on a did:plc exists, and the owner's rotation key exists only in
+	// this response. So every way out carries it, including a throw: an error
+	// page would lose the one key that lets the owner move the group off our PDS.
+	const registered: RegisteredGroup = {
+		groupDid: minted.did,
+		handle: minted.handle,
+		recoveryKey: minted.ownerRotationSecret
+	};
+	try {
+		return await setUpMintedGroup(env, callerDid, data, mint, row, minted, registered);
+	} catch (e) {
+		return {
+			ok: false,
+			error: `${minted.handle} was registered, but setting it up failed (${
+				e instanceof Error ? e.message : String(e)
+			}). Keep its recovery key, and tell an administrator before creating it again.`,
+			registered
+		};
+	}
+}
+
+/** Everything after the mint: store, INSERT, provision, then the records. Every
+ *  failure it returns carries `registered`, and anything it throws is caught by
+ *  `runCreateGroup`, which carries it too. */
+async function setUpMintedGroup(
+	env: CreateGroupEnv,
+	callerDid: string,
+	data: CreateGroupData,
+	mint: MintConfig,
+	row: Omit<CreateGroupInput, 'groupDid'>,
+	minted: MintedGroup,
+	registered: RegisteredGroup
+): Promise<CreateGroupOutcome> {
 	// The app password was shown exactly once, so it is stored before the group
 	// row: a failure here leaves an orphan did:plc, and a failure after it would
 	// leave one we can never write as again.
@@ -208,7 +255,8 @@ export async function runCreateGroup(
 		if (e instanceof GroupCredentialKeyError) {
 			return {
 				ok: false,
-				error: `${minted.handle} was registered, but its credential could not be stored (${e.message}), so the group was not created. An administrator must fix GROUP_CREDENTIAL_KEY.`
+				error: `${minted.handle} was registered, but its credential could not be stored (${e.message}), so the group was not created. An administrator must fix GROUP_CREDENTIAL_KEY.`,
+				registered
 			};
 		}
 		throw e;
@@ -218,7 +266,9 @@ export async function runCreateGroup(
 	try {
 		group = await createGroup(env.DB, { ...row, groupDid: minted.did });
 	} catch (e) {
-		return formError(e);
+		// A domain refusal keeps its message. Anything else is rethrown by
+		// `formError` and caught by `runCreateGroup`, which keeps the key too.
+		return { ...formError(e), registered };
 	}
 
 	// Tell the indexer this account exists, before anything is written to it.
@@ -252,7 +302,8 @@ export async function runCreateGroup(
 		const detail = e instanceof GroupSpaceError ? e.message : String(e);
 		return {
 			ok: false,
-			error: `${minted.handle} was created, but its spaces were not provisioned: ${detail}`
+			error: `${minted.handle} was created, but its spaces were not provisioned: ${detail}`,
+			registered
 		};
 	}
 
@@ -324,7 +375,8 @@ export async function runCreateGroup(
 			ok: false,
 			error: `${minted.handle} was created, but its profile records were not written: ${
 				e instanceof Error ? e.message : String(e)
-			}. Saving the group's settings will write them.`
+			}. Saving the group's settings will write them.`,
+			registered
 		};
 	}
 
@@ -369,17 +421,13 @@ export async function runCreateGroup(
 			ok: false,
 			error: `${minted.handle} was created, but its members-space records were not written: ${
 				e instanceof Error ? e.message : String(e)
-			}. The group works and its roster reads from this site's database; "Repair this group" in its settings writes the missing records.`
+			}. The group works and its roster reads from this site's database; "Repair this group" in its settings writes the missing records.`,
+			registered
 		};
 	}
 
 	// The owner's rotation key is shown exactly once, is stored nowhere on our
 	// side, and is the only thing that lets them move this group off our PDS. So
 	// the caller must not redirect: a 303 would lose it.
-	return {
-		ok: true,
-		groupDid: group.group_did,
-		handle: minted.handle,
-		recoveryKey: minted.ownerRotationSecret
-	};
+	return { ok: true, ...registered };
 }

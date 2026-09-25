@@ -18,12 +18,16 @@
 	let visibility = $state('public');
 	let derivedLabel = $derived(labelTouched ? label : name ? labelFromGroupName(name) : '');
 	let createError = $derived(groupFormError(createGroupForm.result));
-	// The success branch carries the recovery key, so it is read once from the
-	// form result and never fetched again. No route can show it again.
-	let created = $derived.by(() => {
+	// The recovery key comes back once, in the form result: on success, and on a
+	// failure after the mint, which registered the address anyway. It is read from
+	// the result and never fetched again. No route can show it again.
+	let registered = $derived.by(() => {
 		const result = createGroupForm.result;
-		return result && result.ok ? result : undefined;
+		if (!result) return undefined;
+		if (result.ok) return result;
+		return 'registered' in result ? result.registered : undefined;
 	});
+	let created = $derived(createGroupForm.result?.ok ? registered : undefined);
 </script>
 
 <svelte:head><title>New group — atmo.rsvp</title></svelte:head>
@@ -63,13 +67,19 @@
 	<!-- Shown once. We never store the private key and cannot show it again. It
 	     lets the owner move the group off this PDS without our help, because it
 	     is the first PLC rotation key on the account. -->
-	{#if created}
+	{#if registered}
 		<div class="mb-8 rounded-2xl p-4 text-sm ring-1 ring-amber-500/40">
 			<p class="font-semibold">Save your group's recovery key now.</p>
+			{#if !created}
+				<p class="mt-1">
+					The group was not fully set up (the reason is under the form), but its address was
+					registered, so this is already its recovery key.
+				</p>
+			{/if}
 			<p class="mt-1">
 				This is the only time it is shown. It is not stored anywhere on this service. Keep it
 				somewhere safe — with it you can move
-				<strong>{created.handle}</strong> to another host, and without it you cannot.
+				<strong>{registered.handle}</strong> to another host, and without it you cannot.
 			</p>
 			<!-- The key is for moving the group, not for running it. If the page
 			     only said what it unlocks, people could take it for the group's
@@ -83,16 +93,18 @@
 				readonly
 				rows="2"
 				class="rounded-ui bg-base-100 dark:bg-base-900 mt-3 w-full border-0 px-3 py-1.5 font-mono text-xs"
-				value={created.recoveryKey}
+				value={registered.recoveryKey}
 			></textarea>
 			<!-- The link text is the handle, which the owner just chose and will
 			     recognize. The href carries the DID, because that is the group's
 			     permanent address and a handle can lapse. -->
-			<p class="mt-3">
-				<a class="underline" href={resolve('/(app)/groups/[actor]', { actor: created.groupDid })}
-					>Continue to {created.handle}</a
-				>
-			</p>
+			{#if created}
+				<p class="mt-3">
+					<a class="underline" href={resolve('/(app)/groups/[actor]', { actor: created.groupDid })}
+						>Continue to {created.handle}</a
+					>
+				</p>
+			{/if}
 		</div>
 	{/if}
 

@@ -44,7 +44,14 @@ function data(overrides: Partial<CreateGroupData> = {}): CreateGroupData {
  *  The PLC half echoes back the `recoveryKey` it was sent, as the real
  *  directory does, so a mint that forgot to send one, or sent it second, still
  *  fails here. */
-function stubPds(overrides: { account?: () => Response } = {}) {
+function stubPds(
+	overrides: {
+		account?: () => Response;
+		/** Answers a call instead of the stub when it returns a Response: the way
+		 *  a test fails one step after the mint. */
+		fail?: (nsid: string, init?: RequestInit) => Response | undefined;
+	} = {}
+) {
 	const calls: string[] = [];
 	/** Every record written into a space, in order: the create path's records. */
 	const spaceWrites: {
@@ -74,6 +81,8 @@ function stubPds(overrides: { account?: () => Response } = {}) {
 
 		const nsid = url.split('/xrpc/')[1] ?? url;
 		calls.push(nsid);
+		const failed = overrides.fail?.(nsid, init);
+		if (failed) return failed;
 		if (nsid.startsWith('com.atproto.server.createAccount')) {
 			({ recoveryKey } = JSON.parse(String(init?.body)) as { recoveryKey?: string });
 			return (
@@ -574,5 +583,71 @@ describe('a successful create', () => {
 		expect(group.members_space_uri).toBe(
 			`at://${MINTED_DID}/space/net.openmeet.space.members/self`
 		);
+	});
+});
+
+// The owner's rotation key exists in one place: the response to this create.
+// Once the did:plc is minted, every way the create can end has to carry it, or
+// the owner is left holding a group (or a registered address) with no key of
+// their own, and no route can show the key again.
+describe('a create that fails after the mint', () => {
+	const pdsDown = () => Response.json({ error: 'InternalServerError' }, { status: 500 });
+	const writing = (collection: string) => (nsid: string, init?: RequestInit) =>
+		(nsid.startsWith('com.atproto.space.putRecord') ||
+			nsid.startsWith('com.atproto.space.createRecord')) &&
+		(JSON.parse(String(init?.body)) as { collection: string }).collection === collection
+			? pdsDown()
+			: undefined;
+	/** Fails the named table's INSERT for the minted DID only, so the rehearsal,
+	 *  which inserts under its own DID, still passes. */
+	const refuseInsert = async (table: 'groups' | 'group_credentials') => {
+		await ensureGroupsSchema(harness.db);
+		await harness.db
+			.prepare(
+				`CREATE TRIGGER fail_${table} BEFORE INSERT ON ${table}
+				 WHEN NEW.group_did = '${MINTED_DID}'
+				 BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`
+			)
+			.run();
+	};
+
+	it.each([
+		['storing the credential', () => refuseInsert('group_credentials'), {}],
+		['inserting the group row', () => refuseInsert('groups'), {}],
+		[
+			'provisioning the spaces',
+			async () => {},
+			{
+				fail: (nsid: string) =>
+					nsid.startsWith('com.atproto.simplespace.createSpace') ? pdsDown() : undefined
+			}
+		],
+		['writing the profile', async () => {}, { fail: writing('net.openmeet.group.profile') }],
+		['writing the members space', async () => {}, { fail: writing('net.openmeet.group.access') }]
+	])('hands back the recovery key when %s fails', async (_step, arrange, stub) => {
+		await arrange();
+		const { calls } = stubPds(stub);
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		// The mint happened: the failure is after the irreversible step.
+		expect(calls).toContain('plc.directory/data');
+		expect(result.ok).toBe(false);
+		expect(result).toMatchObject({
+			error: expect.stringContaining('konatrail.group.stub.test'),
+			registered: {
+				groupDid: MINTED_DID,
+				handle: 'konatrail.group.stub.test',
+				recoveryKey: expect.stringMatching(/^z/)
+			}
+		});
+	});
+
+	it('carries no key when the create fails before the mint', async () => {
+		const { calls } = stubPds();
+		const result = await runCreateGroup(env, OWNER, data({ label: 'x' }));
+		expect(result.ok).toBe(false);
+		expect(calls).not.toContain('com.atproto.server.createAccount');
+		expect(result).not.toHaveProperty('registered');
 	});
 });

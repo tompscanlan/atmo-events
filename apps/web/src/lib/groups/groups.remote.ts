@@ -16,7 +16,7 @@ import { formError } from './form-error';
 // Not declared here: the Vite plugin rejects non-remote exports from a
 // `*.remote.ts`, so a field that a test needs lives in ./form-fields.ts.
 import { checkboxField } from './form-fields';
-import { runCreateGroup } from './create-group';
+import { runCreateGroup, type CreateGroupOutcome } from './create-group';
 import { GROUP_LABEL_PATTERN } from './handle-label';
 import { GROUP_VISIBILITIES, type CallerMembership, type GroupRow } from './types';
 import { decideJoinRequest, updateGroup, type JoinOutcome } from './server/repo';
@@ -117,7 +117,7 @@ export const createGroupForm = form(
 	}),
 	async (
 		data
-	): Promise<GroupFormResult<{ groupDid: string; handle: string; recoveryKey: string }>> => {
+	): Promise<CreateGroupOutcome> => {
 		const { locals, platform } = getRequestEvent();
 		if (!locals.did) error(401, 'Sign in to create a group');
 		// No redirect on success. The owner's rotation key comes back in the
