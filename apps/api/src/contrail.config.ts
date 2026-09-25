@@ -1,5 +1,6 @@
 import type { ContrailConfig } from '@atmo-dev/contrail';
 import { listAuthored, listDiscoverable, listDiscoverableByUris, listTalks } from './queries';
+import { CONTRAIL_SERVICE_FRAGMENT, serviceAudience } from './service';
 
 export const config: ContrailConfig = {
 	namespace: 'rsvp.atmo',
@@ -82,3 +83,18 @@ export const config: ContrailConfig = {
 		}
 	}
 };
+
+/**
+ * The public config as served from one origin. Contrail only publishes
+ * `/.well-known/did.json` when the service audience resolves its DID document
+ * back to the serving origin, so the audience follows the endpoint.
+ */
+export function contrailConfigFor(endpoint: string): ContrailConfig {
+	return {
+		...config,
+		serviceAuth: {
+			...config.serviceAuth!,
+			audience: serviceAudience(endpoint, CONTRAIL_SERVICE_FRAGMENT)
+		}
+	};
+}

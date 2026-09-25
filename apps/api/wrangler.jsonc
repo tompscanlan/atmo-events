@@ -1,8 +1,10 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "atmo-rsvp-contrail",
-	"main": "src/worker.ts",
+	"main": "src/dispatcher.ts",
 	"compatibility_date": "2025-12-25",
+	// The Spaces runtime pulls in @atproto/* protocol code that needs Node built-ins.
+	"compatibility_flags": ["nodejs_compat"],
 	"observability": {
 		"enabled": true
 	},
@@ -12,6 +14,12 @@
 			"custom_domain": true
 		}
 	],
+	// The origin this Worker serves. The service DID (`did:web:<host>`), the
+	// `#contrail` and `#spaces` audiences and the published did.json all follow it,
+	// so another deployment changes this value and nothing else.
+	"vars": {
+		"PUBLIC_SERVICE_ENDPOINT": "https://api.atmo.rsvp"
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",
@@ -19,6 +27,24 @@
 			"database_id": "00000000-0000-0000-0000-000000000000"
 		}
 	],
+	// Space reconcile and repo-sync jobs. Without the producer binding the Spaces
+	// runtime falls back to `waitUntil`, which is only fine in dev.
+	"queues": {
+		"producers": [
+			{
+				"binding": "SPACES_QUEUE",
+				"queue": "atmo-rsvp-spaces"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "atmo-rsvp-spaces",
+				"max_batch_size": 10,
+				"max_batch_timeout": 1,
+				"max_retries": 3
+			}
+		]
+	},
 	"triggers": {
 		"crons": ["*/1 * * * *"]
 	}
