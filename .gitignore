@@ -19,11 +19,8 @@ Thumbs.db
 !.env.example
 !.env.test
 
-# Wrangler local secrets. The `.env*` rules above do NOT cover these:
-# `.dev.vars` is the file `wrangler dev` reads for Worker secrets, and it was
-# untracked-but-committable only because nobody had written one yet.
-# GROUP_CREDENTIAL_KEY (which unwraps the group PDS passwords held in D1) and
-# the alpha invite code both belong in it locally.
+# Wrangler local secrets. The `.env*` rules above do not cover these:
+# `.dev.vars` is the file `wrangler dev` reads for Worker secrets.
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
