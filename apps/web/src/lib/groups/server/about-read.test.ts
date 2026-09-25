@@ -322,6 +322,36 @@ describe('pdsSpaceReader — the live wire shapes', () => {
 		expect(record).toMatchObject({ collection: GROUP_PROFILE_COLLECTION, rkey: 'self' });
 	});
 
+	// RecordNotFound is getRecord's answer for a key with no record, so it is the
+	// one 400 that reads as absent. Every other 400 is a read that failed, and
+	// the gate depends on it throwing: a refused read that came back as "no
+	// records" would send the gate to the rows.
+	it('reads a 400 RecordNotFound as absent', async () => {
+		vi.stubGlobal('fetch', async (input: URL | string) =>
+			String(input).includes('createSession')
+				? Response.json({ did: GROUP_DID, accessJwt: 'jwt', refreshJwt: 'refresh' })
+				: Response.json({ error: 'RecordNotFound' }, { status: 400 })
+		);
+		const reader = pdsSpaceReader(cred, GROUP_DID);
+		const query = { space: SPACE, repo: GROUP_DID, collection: GROUP_PROFILE_COLLECTION };
+		expect(await reader.get({ ...query, rkey: 'self' })).toBeNull();
+	});
+
+	it.each(['SpaceNotFound', 'RepoTakendown', 'InvalidRequest', undefined])(
+		'throws on any other 400 (%s), for get and list alike',
+		async (error) => {
+			vi.stubGlobal('fetch', async (input: URL | string) =>
+				String(input).includes('createSession')
+					? Response.json({ did: GROUP_DID, accessJwt: 'jwt', refreshJwt: 'refresh' })
+					: Response.json(error ? { error } : {}, { status: 400 })
+			);
+			const reader = pdsSpaceReader(cred, GROUP_DID);
+			const query = { space: SPACE, repo: GROUP_DID, collection: GROUP_PROFILE_COLLECTION };
+			await expect(reader.get({ ...query, rkey: 'self' })).rejects.toThrow(/getRecord failed: 400/);
+			await expect(reader.list(query)).rejects.toThrow(/listRecords failed: 400/);
+		}
+	);
+
 	// The parameter names are the PDS's, and `space` and `repo` are both
 	// required: listRecords returns 400 without `repo`.
 	it('sends space, repo and collection as query parameters', async () => {

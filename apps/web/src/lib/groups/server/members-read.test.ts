@@ -15,7 +15,7 @@
 //      failure each one is.
 //   4. The owner's row is immutable in SQL, so the rebuild inserts a missing
 //      one and does not fight one that disagrees.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import {
 	addMember,
@@ -24,7 +24,8 @@ import {
 	listMembers,
 	recordGroupSpaces
 } from './repo';
-import type { GroupSpaceReader } from './about-read';
+import { pdsSpaceReader, type GroupSpaceReader } from './about-read';
+import { clearGroupSessions } from './session';
 import {
 	NO_MEMBER_RECORDS,
 	effectivePermissions,
@@ -599,6 +600,31 @@ describe('the gate, from records', () => {
 		// No credential for a group that has a members space: nothing, not rows.
 		const noReader = await getCallerMembership(db, group, ADMIN, null);
 		expect(noReader.permissions.size).toBe(0);
+	});
+
+	// The same case through the live reader rather than a fake one. The row says
+	// ADMIN is an admin, and the PDS answers every members-space read with a 400
+	// that is not RecordNotFound. A reader that took that 400 for "no records"
+	// would find no config and hand the decision to the row: an admin's
+	// permissions for a caller the records may have removed.
+	it('fails closed when the PDS refuses a space read with a 400', async () => {
+		clearGroupSessions();
+		vi.stubGlobal('fetch', async (input: URL | string) =>
+			String(input).includes('com.atproto.server.createSession')
+				? Response.json({ did: GROUP_DID, accessJwt: 'jwt', refreshJwt: 'refresh' })
+				: Response.json({ error: 'SpaceNotFound', message: 'Space not found' }, { status: 400 })
+		);
+		try {
+			const reader = pdsSpaceReader(
+				{ service: 'https://pds.stub.test', identifier: 'g.stub.test', password: 'p' },
+				GROUP_DID
+			);
+			await expect(getCallerMembership(db, group, ADMIN, reader)).rejects.toThrow(
+				/failed: 400 SpaceNotFound/
+			);
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it('reads nothing for an anonymous caller', async () => {

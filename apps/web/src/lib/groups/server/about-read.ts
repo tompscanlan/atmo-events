@@ -147,8 +147,17 @@ export function pdsSpaceReader(
 		const { handle } = await groupClient(cred, groupDid);
 		const query = new URLSearchParams(params).toString();
 		const res = await handle(`/xrpc/${nsid}?${query}`, { method: 'GET' });
-		if (res.status === 400) return null; // RecordNotFound is the empty case.
-		if (!res.ok) throw new Error(`${nsid} failed: ${res.status}`);
+		if (!res.ok) {
+			const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+			const error = typeof body?.error === 'string' ? body.error : null;
+			// RecordNotFound is getRecord's answer for a key with no record, and the
+			// only 400 that means absent. Any other 400 (a space the PDS does not
+			// know, a repo taken down, a token it refused) is a read that failed,
+			// and it throws: the gate relies on that to fail closed, where "no
+			// records" would hand the decision to the rows.
+			if (res.status === 400 && error === 'RecordNotFound') return null;
+			throw new Error(`${nsid} failed: ${res.status}${error ? ` ${error}` : ''}`);
+		}
 		return (await res.json().catch(() => null)) as unknown;
 	};
 
