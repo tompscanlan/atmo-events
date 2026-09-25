@@ -36,7 +36,11 @@ import {
 } from './repo';
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
 import type { GroupRepoWriter } from './event-writer';
-import { readGroupMembers } from './members-read';
+import {
+	GROUP_MEMBERSHIP_COLLECTION,
+	isMembershipKey,
+	parseGroupMembership
+} from '../members-record';
 import { dropGroupMembership, putGroupMembership } from './members-writer';
 
 /** A grant whose row moved but whose record did not. Carries the subject, so
@@ -132,12 +136,26 @@ function removesAccess(from: GroupRoleName, to: GroupRoleName): boolean {
  * `undefined` means neither source has a date, and the record builder stamps
  * now. Always called BEFORE the role changes, so a role change reads the
  * pre-change row.
+ *
+ * One `getRecord`, not a roster listing: a membership record's key is the
+ * member's DID. An absent record falls through to the row; a read that fails
+ * throws, because a date guessed from the row would overwrite a published one.
  */
 export async function joinedAt(ctx: RosterContext, subject: string): Promise<string | undefined> {
-	const reader = await groupSpaceReader(ctx.env, ctx.db, ctx.group);
-	if (reader) {
-		const members = await readGroupMembers(reader, ctx.group);
-		const published = members.memberships.find((record) => record.subject === subject);
+	const reader =
+		ctx.reader !== undefined ? ctx.reader : await groupSpaceReader(ctx.env, ctx.db, ctx.group);
+	const space = ctx.group.members_space_uri;
+	if (reader && space && isMembershipKey(subject)) {
+		const record = await reader.get({
+			space,
+			repo: ctx.group.group_did,
+			collection: GROUP_MEMBERSHIP_COLLECTION,
+			rkey: subject
+		});
+		const published =
+			record && record.collection === GROUP_MEMBERSHIP_COLLECTION
+				? parseGroupMembership(record.value, record.rkey)
+				: null;
 		if (published?.createdAt) return published.createdAt;
 	}
 	const row = await getMemberRow(ctx.db, ctx.group.id, subject);
@@ -152,8 +170,9 @@ export async function joinGroup(ctx: RosterContext, message: string | null): Pro
 	if (outcome !== 'joined') return outcome;
 	// The row exists now, so its `created_at` is the date the record carries:
 	// one clock for both copies, which is what lets the pair survive a rebuild
-	// in either direction.
-	const createdAt = await joinedAt(ctx, ctx.callerDid);
+	// in either direction. The row has moved, so a failed read here is the
+	// record half failing, and it is labelled as such.
+	const createdAt = await published(ctx.callerDid, () => joinedAt(ctx, ctx.callerDid));
 	await published(ctx.callerDid, () =>
 		putGroupMembership({
 			...ctx,
@@ -183,7 +202,7 @@ export async function admitFromRequest(
 	role: AssignableRole
 ): Promise<{ did: string }> {
 	const admitted = await approveJoinRequest(ctx.db, ctx.group.id, requestId, ctx.callerDid, role);
-	const createdAt = await joinedAt(ctx, admitted.did);
+	const createdAt = await published(admitted.did, () => joinedAt(ctx, admitted.did));
 	await published(admitted.did, () =>
 		putGroupMembership({
 			...ctx,
@@ -203,7 +222,7 @@ export async function admitMember(
 	role: AssignableRole
 ): Promise<void> {
 	await addMember(ctx.db, ctx.group.id, did, role);
-	const createdAt = await joinedAt(ctx, did);
+	const createdAt = await published(did, () => joinedAt(ctx, did));
 	await published(did, () =>
 		putGroupMembership({ ...ctx, subject: did, roles: [role], createdAt, intent: 'admit' })
 	);

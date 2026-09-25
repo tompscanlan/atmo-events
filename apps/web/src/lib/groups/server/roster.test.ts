@@ -25,6 +25,7 @@ import {
 } from './repo';
 import { putGroupMembership, writeGroupAuthz } from './members-writer';
 import {
+	admitMember,
 	ejectMember,
 	leaveGroup,
 	promoteMember,
@@ -284,5 +285,36 @@ describe('a role change splits by direction', () => {
 		expect(error).toMatchObject({ name: 'GroupRuleError', reason: 'owner-protected' });
 		expect(order).toEqual([]);
 		expect(await gate(OWNER)).toEqual(granted('owner'));
+	});
+});
+
+// A grant reads the member's published join date after its row has moved, so
+// the date survives a role change. A read that fails there is the record half
+// failing: the row moved and the record did not, and the caller must be told
+// the pair is out of step rather than handed a 500 for a committed row.
+describe('a grant whose join-date read fails after the row moved', () => {
+	const NEWCOMER = 'did:plc:newcomeraaaaaaaaaaaaaaaaa';
+
+	it('reports the pair as out of step, with the row in and no record', async () => {
+		const base = reader;
+		// Only the newcomer's own membership read fails; the gate's reads for the
+		// admitting admin still succeed.
+		const failing: GroupSpaceReader = {
+			async get(q) {
+				if (q.rkey === NEWCOMER) {
+					throw new Error('com.atproto.space.getRecord failed: 400 SpaceNotFound');
+				}
+				return base.get(q);
+			},
+			list: (q) => base.list(q)
+		};
+
+		const error = await admitMember({ ...ctx(ADMIN), reader: failing }, NEWCOMER, 'member').catch(
+			(e: unknown) => e
+		);
+
+		expect(error).toBeInstanceOf(RosterRecordError);
+		expect(await getMemberRow(harness.db, group.id, NEWCOMER)).not.toBeNull();
+		expect(writes.some((w) => w.rkey === NEWCOMER)).toBe(false);
 	});
 });
