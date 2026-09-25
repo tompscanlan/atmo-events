@@ -2,6 +2,7 @@ import type { ContrailConfig } from '@atmo-dev/contrail';
 import { MAX_HYDRATION_URIS } from './search/constants';
 import { createMeiliSink, meiliSinkBackendFromEnv } from './search/server/meili-sink';
 import { discoverableSql } from './search/server/discoverability';
+import { GROUP_DECLARATION_COLLECTION } from './groups/declaration-record';
 
 // The `contrail` CLI (`pnpm backfill` / `contrail refresh`) fires `config.sinks`
 // on the backfill/refresh paths, so a fresh or re-synced install gets full search
@@ -121,6 +122,19 @@ export const config: ContrailConfig = {
 					collection: 'event',
 					field: 'subject.uri'
 				}
+			}
+		},
+		// Endpoint: rsvp.atmo.declaration.listRecords
+		// A public group's declaration, indexed from Jetstream like any other
+		// record, so it needs no group credential and no space config. The record
+		// exists only while the group is public: the writer deletes it when the
+		// group turns private, and Jetstream carries the delete, so the list needs
+		// no visibility filter. Nothing notifies the index on a declaration write;
+		// the cron picks it up.
+		declaration: {
+			collection: GROUP_DECLARATION_COLLECTION,
+			queryable: {
+				createdAt: { type: 'range' }
 			}
 		}
 		// `follow` (app.bsky.graph.follow) is auto-added by contrail 0.5+ when
