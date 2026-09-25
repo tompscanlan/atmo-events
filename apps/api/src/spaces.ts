@@ -132,7 +132,8 @@ export function createGroupSpaces(endpoint: string): SpacesWorkerHandler<Openmee
 			[EVENTS_SPACE_TYPE]: {
 				skey: EVENTS_SPACE_SKEY,
 				collections: [GROUP_EVENT_COLLECTION, GROUP_RSVP_COLLECTION],
-				policy: 'member-list'
+				readPolicy: 'member-list',
+				writePolicy: 'member-list'
 			}
 		},
 		// A user's read lease is short; reconciliation stays authoritative.
