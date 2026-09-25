@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import {
 	GroupCredentialKeyError,
@@ -105,6 +105,37 @@ describe('minted credential storage', () => {
 			resolveGroupCredential({ GROUP_CREDENTIAL_KEY: KEY }, harness.db, 'did:plc:unknown')
 		).resolves.toBeNull();
 	});
+
+	// A rebuild can reach the credential before any other groups call in the
+	// isolate, so these two must create the tables themselves, like every
+	// accessor in repo.ts does.
+	it.each(['read', 'write'] as const)(
+		'creates the tables before a %s on a database no groups code has touched',
+		async (op) => {
+			const bare = sqliteD1(false);
+			try {
+				// A fresh module is a fresh isolate: `ensureGroupsSchema` memoizes per
+				// module, and an earlier test in this file has already run it.
+				vi.resetModules();
+				const fresh = await import('./credentials');
+				const env = { GROUP_CREDENTIAL_KEY: KEY };
+				if (op === 'read') {
+					await expect(fresh.resolveGroupCredential(env, bare.db, DID)).resolves.toBeNull();
+				} else {
+					await fresh.storeGroupCredential(env, bare.db, DID, {
+						service: 'https://pds.example.net',
+						identifier: 'kona.group.example.net',
+						password: APP_PASSWORD
+					});
+					expect(bare.raw.prepare('SELECT count(*) AS n FROM group_credentials').get()).toEqual({
+						n: 1
+					});
+				}
+			} finally {
+				bare.close();
+			}
+		}
+	);
 });
 
 describe('mint readiness', () => {

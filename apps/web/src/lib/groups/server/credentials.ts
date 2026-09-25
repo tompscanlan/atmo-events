@@ -11,6 +11,8 @@
 // re-issuing goes through com.atproto.admin.updateAccountPassword, and then the
 // group's row is replaced.
 
+import { ensureGroupsSchema } from './schema';
+
 export interface GroupCredential {
 	/** PDS base URL, e.g. https://pds.example.com */
 	service: string;
@@ -99,6 +101,7 @@ export async function storeGroupCredential(
 		new TextEncoder().encode(cred.password) as BufferSource
 	);
 	const now = Date.now();
+	await ensureGroupsSchema(db);
 	await db
 		.prepare(
 			`INSERT INTO group_credentials (group_did, service, identifier, secret, iv, created_at, updated_at)
@@ -129,6 +132,7 @@ export async function resolveGroupCredential(
 	db: D1Database,
 	groupDid: string
 ): Promise<GroupCredential | null> {
+	await ensureGroupsSchema(db);
 	const row = await db
 		.prepare(`SELECT service, identifier, secret, iv FROM group_credentials WHERE group_did = ?`)
 		.bind(groupDid)
