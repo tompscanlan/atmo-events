@@ -30,6 +30,14 @@ beforeEach(() => {
 			return Response.json({ did: DID, accessJwt: 'access-1', refreshJwt: 'refresh-1' });
 		}
 		if (nsid === 'com.atproto.server.refreshSession') {
+			// refreshSession takes no input, and the PDS refuses a body outright
+			// (measured on the alpha PDS: `{}` gets this exact 400).
+			if (init?.body != null) {
+				return Response.json(
+					{ error: 'InvalidRequest', message: 'A request body was provided when none was expected' },
+					{ status: 400 }
+				);
+			}
 			return Response.json({ did: DID, accessJwt: 'access-2', refreshJwt: 'refresh-2' });
 		}
 		return reply(token);
@@ -48,6 +56,7 @@ function rejectFirstToken(status: number, error: string) {
 }
 
 const refreshes = () => calls.filter((c) => c.nsid === 'com.atproto.server.refreshSession');
+const logins = () => calls.filter((c) => c.nsid === 'com.atproto.server.createSession');
 
 describe('groupClient — renewing the access token', () => {
 	it.each([
@@ -63,6 +72,10 @@ describe('groupClient — renewing the access token', () => {
 		expect(res.status).toBe(200);
 		expect(refreshes()).toHaveLength(1);
 		expect(refreshes()[0].token).toBe('refresh-1');
+		// Renewed with the refresh token, not by logging in again: createSession
+		// is rate-limited per account, so a password login on every expiry
+		// would lock the group out under load.
+		expect(logins()).toHaveLength(1);
 		expect(calls.at(-1)).toMatchObject({ nsid: 'com.atproto.space.getRecord', token: 'access-2' });
 	});
 
@@ -75,6 +88,21 @@ describe('groupClient — renewing the access token', () => {
 
 		expect(calls.at(-1)).toMatchObject({ token: 'access-2' });
 		expect(refreshes()).toHaveLength(1);
+	});
+
+	// The gate reads four records at once, so one expiry reaches the PDS as
+	// several rejected calls together. They must share one renewal.
+	it('renews once for concurrent calls that all hold the expired token', async () => {
+		rejectFirstToken(400, 'ExpiredToken');
+		const { handle } = await groupClient(cred, DID);
+
+		const results = await Promise.all(
+			Array.from({ length: 5 }, () => handle(PATH, { method: 'GET' }))
+		);
+
+		expect(results.map((r) => r.status)).toEqual([200, 200, 200, 200, 200]);
+		expect(refreshes()).toHaveLength(1);
+		expect(logins()).toHaveLength(1);
 	});
 
 	it.each([

@@ -22,6 +22,12 @@ interface CachedSession {
 // Map rather than a static table.
 const sessions = new Map<string, CachedSession>();
 
+// Renewals in flight, by the same key. The gate reads several records at once,
+// so one expired token comes back as several rejections together, and they must
+// share one renewal: a refresh token is single-use, and the fallback, a
+// password login, is rate-limited per account.
+const renewing = new Map<string, Promise<CachedSession>>();
+
 const AUTH_ERRORS: Record<string, true> = {
 	ExpiredToken: true,
 	InvalidToken: true,
@@ -29,12 +35,10 @@ const AUTH_ERRORS: Record<string, true> = {
 	AuthenticationRequired: true
 };
 
-async function postJson(service: string, nsid: string, body: unknown, token?: string) {
-	const headers: Record<string, string> = { 'content-type': 'application/json' };
-	if (token) headers.authorization = `Bearer ${token}`;
+async function postJson(service: string, nsid: string, body: unknown) {
 	return fetch(new URL(`/xrpc/${nsid}`, service), {
 		method: 'POST',
-		headers,
+		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify(body ?? {})
 	});
 }
@@ -55,12 +59,13 @@ async function createSession(cred: GroupCredential): Promise<CachedSession> {
 }
 
 async function refresh(cred: GroupCredential, session: CachedSession): Promise<CachedSession> {
-	const res = await postJson(
-		cred.service,
-		'com.atproto.server.refreshSession',
-		{},
-		session.refreshJwt
-	);
+	// No body, not even `{}`: refreshSession takes no input, and a PDS refuses a
+	// call that sends one ("A request body was provided when none was expected"),
+	// which would turn every renewal into a password login.
+	const res = await fetch(new URL('/xrpc/com.atproto.server.refreshSession', cred.service), {
+		method: 'POST',
+		headers: { authorization: `Bearer ${session.refreshJwt}` }
+	});
 	if (!res.ok) return createSession(cred);
 	const data = (await res.json()) as { did: string; accessJwt: string; refreshJwt: string };
 	return { did: data.did, accessJwt: data.accessJwt, refreshJwt: data.refreshJwt };
@@ -78,6 +83,19 @@ async function errorName(res: Response): Promise<string | null> {
 
 /** The errors a PDS sends as 400 when the access token itself is the problem. */
 const TOKEN_ERRORS: Record<string, true> = { ExpiredToken: true, InvalidToken: true };
+
+/** One renewal per key at a time. A call whose token another call has already
+ *  replaced takes the new session instead of renewing again. */
+function renew(key: string, cred: GroupCredential, stale: CachedSession): Promise<CachedSession> {
+	const cached = sessions.get(key);
+	if (cached && cached.accessJwt !== stale.accessJwt) return Promise.resolve(cached);
+	let pending = renewing.get(key);
+	if (!pending) {
+		pending = refresh(cred, stale).finally(() => renewing.delete(key));
+		renewing.set(key, pending);
+	}
+	return pending;
+}
 
 /** Whether the PDS turned the request away over its access token. A PDS answers
  *  an expired or unverifiable token with 400 (`ExpiredToken`, `InvalidToken`)
@@ -148,7 +166,7 @@ export async function groupClient(
 		const first = await send(current.accessJwt);
 		if (!(await tokenRejected(first))) return first;
 
-		const renewed = await refresh(cred, current);
+		const renewed = await renew(key, cred, current);
 		if (renewed.did !== expectDid) {
 			sessions.delete(key);
 			throw new Error(`refreshed group session authenticates ${renewed.did}, not ${expectDid}`);
@@ -164,4 +182,5 @@ export async function groupClient(
  *  dies with the isolate. */
 export function clearGroupSessions() {
 	sessions.clear();
+	renewing.clear();
 }
