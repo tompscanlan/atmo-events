@@ -79,7 +79,9 @@ export async function groupRouteContext(
  *  answers from the roster row instead of failing the page. That is softer
  *  than the write gate on purpose, so a PDS blip does not 404 a member out of
  *  their own private group. The fallback grants no permission: without the
- *  records the loader returns none, so no management control renders. */
+ *  records the loader returns none, so no management control renders. It is
+ *  marked `unreadable`, so a form refuses with "could not be checked" rather
+ *  than "not allowed". */
 export async function readStanding(
 	db: D1Database,
 	group: GroupRow,
@@ -94,7 +96,8 @@ export async function readStanding(
 			`[groups] ${group.group_did}: members space unreadable; the roster row answers this read:`,
 			e
 		);
-		return getCallerMembership(db, group, callerDid, null);
+		const fallback = await getCallerMembership(db, group, callerDid, null);
+		return { ...fallback, unreadable: e instanceof Error ? e.message : String(e) };
 	}
 }
 

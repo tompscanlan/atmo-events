@@ -12,7 +12,7 @@ import { form, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
 import { ASSIGNABLE_ROLES, can } from './permissions';
 import type { GroupFormFailure, GroupFormResult } from './form-result';
-import { formError } from './form-error';
+import { formError, notAllowed } from './form-error';
 // Not declared here: the Vite plugin rejects non-remote exports from a
 // `*.remote.ts`, so a field that a test needs lives in ./form-fields.ts.
 import { checkboxField } from './form-fields';
@@ -140,7 +140,7 @@ export const updateGroupForm = form(
 	async (data): Promise<GroupFormResult> => {
 		const { db, env, group, membership, callerDid } = await context(data.groupDid);
 		if (!can(membership.permissions, 'MANAGE_GROUP')) {
-			return { ok: false, error: 'Not allowed: MANAGE_GROUP required' };
+			return notAllowed(membership, 'MANAGE_GROUP');
 		}
 		try {
 			await updateGroup(db, group.id, {
@@ -235,7 +235,7 @@ export const repairGroupForm = form(
 	async (data): Promise<GroupFormResult<{ summary: string }>> => {
 		const { db, env, group, membership, callerDid } = await context(data.groupDid);
 		if (!can(membership.permissions, 'MANAGE_GROUP')) {
-			return { ok: false, error: 'Not allowed: MANAGE_GROUP required' };
+			return notAllowed(membership, 'MANAGE_GROUP');
 		}
 		try {
 			const result = await repairGroup({ db, env, group, callerDid });
@@ -339,7 +339,7 @@ export const approveJoinRequestForm = form(
 	async (data): Promise<GroupFormResult> => {
 		const ctx = await context(data.groupDid);
 		if (!can(ctx.membership.permissions, 'ADMIT_MEMBERS')) {
-			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
+			return notAllowed(ctx.membership, 'ADMIT_MEMBERS');
 		}
 		try {
 			await admitFromRequest(ctx, data.requestId, data.role ?? 'member');
@@ -355,7 +355,7 @@ export const rejectJoinRequestForm = form(
 	async (data): Promise<GroupFormResult> => {
 		const { db, group, membership, callerDid } = await context(data.groupDid);
 		if (!can(membership.permissions, 'ADMIT_MEMBERS')) {
-			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
+			return notAllowed(membership, 'ADMIT_MEMBERS');
 		}
 		try {
 			// No record either way: a rejected request never granted anything, so
@@ -375,7 +375,7 @@ export const addMemberForm = form(
 	async (data): Promise<GroupFormResult> => {
 		const ctx = await context(data.groupDid);
 		if (!can(ctx.membership.permissions, 'ADMIT_MEMBERS')) {
-			return { ok: false, error: 'Not allowed: ADMIT_MEMBERS required' };
+			return notAllowed(ctx.membership, 'ADMIT_MEMBERS');
 		}
 		try {
 			await admitMember(ctx, data.did, data.role ?? 'member');
@@ -391,7 +391,7 @@ export const removeMemberForm = form(
 	async (data): Promise<GroupFormResult> => {
 		const ctx = await context(data.groupDid);
 		if (!can(ctx.membership.permissions, 'EJECT_MEMBERS')) {
-			return { ok: false, error: 'Not allowed: EJECT_MEMBERS required' };
+			return notAllowed(ctx.membership, 'EJECT_MEMBERS');
 		}
 		try {
 			await ejectMember(ctx, data.did);
@@ -407,7 +407,7 @@ export const changeMemberRoleForm = form(
 	async (data): Promise<GroupFormResult> => {
 		const ctx = await context(data.groupDid);
 		if (!can(ctx.membership.permissions, 'ASSIGN_ROLES')) {
-			return { ok: false, error: 'Not allowed: ASSIGN_ROLES required' };
+			return notAllowed(ctx.membership, 'ASSIGN_ROLES');
 		}
 		try {
 			await promoteMember(ctx, data.did, data.role);

@@ -174,4 +174,13 @@ describe('readStanding', () => {
 		expect(member.permissions.size).toBe(0);
 		expect((await readStanding(db, withSpace, STRANGER, down)).onRoster).toBe(false);
 	});
+
+	// No permission is granted, but that is "unknown", not "none": a form that
+	// then said "Not allowed" would send an owner looking for a role they hold.
+	it('marks the standing as unread, with the read error, so a form can say so', async () => {
+		const member = await readStanding(db, withSpace, MEMBER, down);
+		expect(member.unreadable).toMatch(/getRecord failed: 502|listRecords failed: 502/);
+		const clean = await readStanding(db, group, MEMBER, null);
+		expect(clean.unreadable).toBeUndefined();
+	});
 });

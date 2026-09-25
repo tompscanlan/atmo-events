@@ -106,6 +106,10 @@ export interface CallerMembership {
 	 *  authz records, whatever the row says; from the row when the group has no
 	 *  records yet or its space cannot be read. `role` above is always the row's. */
 	onRoster: boolean;
+	/** Set, to the read's error, when the members space could not be read and
+	 *  the row answered instead (`readStanding`). `permissions` is then empty
+	 *  because it is unknown, not because nothing is granted. */
+	unreadable?: string;
 }
 
 /** An event record the group authored, as read back out of the group DID's
