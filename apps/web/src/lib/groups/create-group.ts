@@ -356,11 +356,12 @@ export async function runCreateGroup(
 	// reverses T013's authz-first order.)
 	//
 	// Its own step, and its failure is reported separately, because the repair
-	// path is NOT the settings form: saving settings rewrites the profile and
-	// the rules, nothing roster- or authz-shaped. A group left here works —
-	// every reader falls back to the cache while the members space holds no
-	// membership record (`server/members-read.ts`) — so the honest report is
-	// what is missing, not an instruction that would not fix it.
+	// path is NOT a settings save: that rewrites the profile and the rules,
+	// nothing roster- or authz-shaped. A group left here works, since every
+	// reader falls back to the cache while the members space holds no
+	// membership record (`server/members-read.ts`). Its repair is "Repair this
+	// group" in the settings (`server/repair.ts`), which writes exactly these
+	// records when they are missing, so the report names it.
 	try {
 		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer, createdAt });
 		await putGroupMembership({
@@ -380,7 +381,7 @@ export async function runCreateGroup(
 			ok: false,
 			error: `${minted.handle} was created, but its members-space records were not written: ${
 				e instanceof Error ? e.message : String(e)
-			}. The group works and its roster reads from the database; the members space stays empty until a member's role changes.`
+			}. The group works and its roster reads from this site's database; "Repair this group" in its settings writes the missing records.`
 		};
 	}
 

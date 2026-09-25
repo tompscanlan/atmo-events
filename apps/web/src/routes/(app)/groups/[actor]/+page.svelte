@@ -5,6 +5,7 @@
 		joinGroupForm,
 		leaveGroupForm,
 		rejectJoinRequestForm,
+		repairGroupForm,
 		updateGroupForm
 	} from '$lib/groups/groups.remote';
 	import { groupFormError } from '$lib/groups/form-result';
@@ -49,6 +50,10 @@
 	);
 	let leaveError = $derived(groupFormError(leaveGroupForm.result));
 	let settingsError = $derived(groupFormError(updateGroupForm.result));
+	let repairError = $derived(groupFormError(repairGroupForm.result));
+	let repairSummary = $derived(
+		repairGroupForm.result?.ok === true ? repairGroupForm.result.summary : undefined
+	);
 	let showSettings = $state(false);
 	// The visibility the settings form currently has SELECTED, or null for "not
 	// changed yet", in which case the stored one applies. A private group is
@@ -333,6 +338,26 @@
 						<p class="text-base-500 dark:text-base-400 text-sm">Saved.</p>
 					{/if}
 					<div><Button type="submit">Save settings</Button></div>
+				</form>
+
+				<!-- A separate form, so repairing never submits the settings above. -->
+				<form
+					{...repairGroupForm}
+					class="border-base-200 dark:border-base-800 mt-8 flex flex-col gap-2 border-t pt-6"
+				>
+					<input type="hidden" name="groupDid" value={group.group_did} />
+					<h3 class="text-sm font-semibold">Repair this group</h3>
+					<p class="text-base-500 dark:text-base-400 text-xs">
+						Writes any of this group's member records that are missing and can be written safely,
+						then rebuilds this site's copy of the group from its records. It never overwrites a
+						record that exists, and running it twice changes nothing the second time.
+					</p>
+					{#if repairError}
+						<p class="text-sm text-red-600 dark:text-red-400">{repairError}</p>
+					{:else if repairSummary}
+						<p class="text-base-500 dark:text-base-400 text-sm">{repairSummary}</p>
+					{/if}
+					<div><Button type="submit" variant="secondary">Repair this group</Button></div>
 				</form>
 			{/if}
 		</section>

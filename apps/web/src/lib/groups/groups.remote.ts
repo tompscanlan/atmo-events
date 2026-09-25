@@ -25,6 +25,7 @@ import { groupFace, splitRuleLines } from './about-record';
 import { groupSpaceReader, readGroupAbout } from './server/about-read';
 import { setGroupRules, writeGroupProfile } from './server/about-writer';
 import { reconcileGroupDeclaration } from './server/declaration-writer';
+import { describeRepair, repairGroup } from './server/repair';
 // Every roster act is a row move PLUS a record write, composed once in
 // ./server/roster.ts so the app and the e2e harness drive the same sequence.
 import {
@@ -229,6 +230,38 @@ export const updateGroupForm = form(
 			};
 		}
 		return { ok: true };
+	}
+);
+
+/** Repairs a group whose records and this site's copy have drifted: writes the
+ *  members-space records the row is certain of and that do not exist, then
+ *  rebuilds the copy from the records (`./server/repair.ts` says what it will
+ *  and will not write, and why). MANAGE_GROUP, like the rest of the settings. */
+export const repairGroupForm = form(
+	v.object({ groupDid: didField }),
+	async (data): Promise<GroupFormResult<{ summary: string }>> => {
+		const { db, env, group, membership, callerDid } = await context(data.groupDid);
+		if (!can(membership.permissions, 'MANAGE_GROUP')) {
+			return { ok: false, error: 'Not allowed: MANAGE_GROUP required' };
+		}
+		try {
+			const result = await repairGroup({ db, env, group, callerDid });
+			return { ok: true, summary: describeRepair(result) };
+		} catch (e) {
+			try {
+				return formError(e);
+			} catch {
+				// Anything else is the PDS or the database failing partway. Every
+				// write the repair makes is keyed and checked first, so what landed
+				// stays and a second run picks up from there.
+				return {
+					ok: false,
+					error: `The repair stopped partway: ${
+						e instanceof Error ? e.message : String(e)
+					}. Anything it wrote is kept, and running it again continues from there.`
+				};
+			}
+		}
 	}
 );
 
