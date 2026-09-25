@@ -36,11 +36,13 @@ let applied: Promise<void> | null = null;
  *  runs as one `batch()`, and D1 runs a batch in a single transaction, so the
  *  schema is never half-applied.
  *
- *  Every error must come back as a rejected promise, never as a synchronous
- *  throw, because callers handle failure with `.catch`. The one in
- *  $lib/contrail/index.ts is what stops a groups failure from also stopping
- *  Contrail's ingest. `db.prepare` runs synchronously and throws on a bad
- *  binding, so it is called inside `.then`, and the function is `async` too.
+ *  Every function that touches a groups table awaits this before its first
+ *  statement, so a fresh deployment gets the tables on its first groups call,
+ *  with no deploy-time migration step. Nothing outside the groups code calls
+ *  it, so a failed apply fails that groups call and nothing else.
+ *
+ *  `db.prepare` runs synchronously and throws on a bad binding, so it is called
+ *  inside `.then`, where its error takes the same path as a failed batch.
  *
  *  A failure is not cached. If it were, one failed apply would leave the groups
  *  feature broken for the rest of the isolate's life. Instead `applied` is

@@ -9,7 +9,6 @@ import {
 	type MeiliSinkBackend,
 	type MeiliSinkEnv
 } from '../search/server/meili-sink';
-import { ensureGroupsSchema } from '../groups/server/schema';
 
 // The Meili search sink reads its backend from this module-level holder rather
 // than construction-time config: in a Cloudflare Worker the env
@@ -42,21 +41,7 @@ let sinkConfigured = false;
 export async function ensureInit(db: D1Database, env?: MeiliSinkEnv) {
 	geocodeCacheDb = db;
 	if (!initialized) {
-		// The groups tables (migrations/) are created in the same init. Every
-		// entry point already calls this function (the cron, the xrpc handler and
-		// every SSR read through getServerClient), so a fresh deployment has the
-		// tables before the first /groups request, with no deploy-time migration
-		// step.
-		//
-		// A failure here is isolated, like the sink setup below: the event app
-		// must not stop ingesting because a groups DDL statement failed. The error
-		// is not lost. ensureGroupsSchema does not cache a failure, and every
-		// groups repo call awaits it again, so /groups retries and reports the
-		// error itself.
-		const groupsSchema = ensureGroupsSchema(db).catch((e) => {
-			console.error('[groups] schema bootstrap failed; /groups will retry:', e);
-		});
-		await Promise.all([contrail.init(db), groupsSchema]);
+		await contrail.init(db);
 		initialized = true;
 	}
 	// Configure the search sink once, on the first env-bearing call. Apply the
