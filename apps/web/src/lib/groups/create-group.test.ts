@@ -651,6 +651,19 @@ describe('a create that fails after the mint', () => {
 		});
 	});
 
+	it('names both halves of the fix when the profile write fails', async () => {
+		stubPds({ fail: writing('net.openmeet.group.profile') });
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		// The members-space step never ran, and a settings save does not write it.
+		expect(result.ok).toBe(false);
+		expect(result).toMatchObject({
+			error: expect.stringContaining("Saving the group's settings writes them")
+		});
+		expect(result).toMatchObject({ error: expect.stringContaining('"Repair this group"') });
+	});
+
 	it('carries no key when the create fails before the mint', async () => {
 		const { calls } = stubPds();
 		const result = await runCreateGroup(env, OWNER, data({ label: 'x' }));

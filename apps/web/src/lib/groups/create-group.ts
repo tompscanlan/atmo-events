@@ -389,9 +389,13 @@ async function setUpMintedGroup(
 	} catch (e) {
 		return {
 			ok: false,
+			// Returning here also skips the members-space step below, and a
+			// settings save writes only the profile, the rules and the
+			// declaration. So the error names both halves of the fix: the save,
+			// then "Repair this group" for the members-space records.
 			error: `${minted.handle} was created, but its profile records were not written: ${
 				e instanceof Error ? e.message : String(e)
-			}. Saving the group's settings will write them.`,
+			}. Saving the group's settings writes them. Then "Repair this group" in its settings writes the members-space records this create skipped.`,
 			registered
 		};
 	}
