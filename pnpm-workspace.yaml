@@ -17,4 +17,3 @@ minimumReleaseAgeExclude:
 patchedDependencies:
   '@atmo-dev/contrail-appview@0.12.2': patches/@atmo-dev__contrail-appview@0.12.2.patch
   '@atmo-dev/contrail-base@0.12.2': patches/@atmo-dev__contrail-base@0.12.2.patch
-  partysocket@1.1.16: patches/partysocket@1.1.16.patch

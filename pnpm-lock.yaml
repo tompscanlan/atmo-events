@@ -7,7 +7,6 @@ settings:
 patchedDependencies:
   '@atmo-dev/contrail-appview@0.12.2': aa343d8a2faef8d66a275aec3ddcb5d88bb4bb484e197032bfdf8604bacb96d8
   '@atmo-dev/contrail-base@0.12.2': f13888cab253afcb9fe4fa92ace590d94e28ba71a58fea3919d6c2284daffa22
-  partysocket@1.1.16: 78128e629be1478656f15f407b8d2298cb4660fcd2b47f48e36befe9f08825b8
 
 importers:
 
@@ -3946,7 +3945,7 @@ snapshots:
       '@badrap/valita': 0.4.6
       '@mary-ext/event-iterator': 1.0.0
       '@mary-ext/simple-event-emitter': 1.0.1
-      partysocket: 1.1.16(patch_hash=78128e629be1478656f15f407b8d2298cb4660fcd2b47f48e36befe9f08825b8)
+      partysocket: 1.1.16
       type-fest: 4.41.0
       yocto-queue: 1.2.2
     transitivePeerDependencies:
@@ -6617,7 +6616,7 @@ snapshots:
     dependencies:
       entities: 6.0.1
 
-  partysocket@1.1.16(patch_hash=78128e629be1478656f15f407b8d2298cb4660fcd2b47f48e36befe9f08825b8):
+  partysocket@1.1.16:
     dependencies:
       event-target-polyfill: 0.0.4
 
