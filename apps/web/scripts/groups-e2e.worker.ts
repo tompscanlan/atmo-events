@@ -16,7 +16,7 @@
 // tsconfig's include, like scripts/geocode-events.ts.
 import { can, type GroupPermission } from '../src/lib/groups/permissions';
 import type { GroupRoleName } from '../src/lib/groups/permissions';
-import type { GroupRow } from '../src/lib/groups/types';
+import type { GroupRow, GroupVisibility } from '../src/lib/groups/types';
 import { groupEventRecord, type GroupEventFormInput } from '../src/lib/groups/event-record';
 import {
 	approveJoinRequest,
@@ -55,7 +55,11 @@ import {
 } from '../src/lib/groups/server/about-read';
 import { resolveGroupCredential, storeGroupCredential } from '../src/lib/groups/server/credentials';
 import { ensureGroupsSchema } from '../src/lib/groups/server/schema';
-import { pdsProvisioner, provisionGroupSpaces } from '../src/lib/groups/server/spaces';
+import {
+	pdsProvisioner,
+	provisionGroupSpaces,
+	readGroupVisibility
+} from '../src/lib/groups/server/spaces';
 import { groupRebuildSources, rebuildGroup } from '../src/lib/groups/server/rebuild';
 import {
 	effectivePermissions,
@@ -92,6 +96,14 @@ type AssignableRole = Exclude<GroupRoleName, 'owner'>;
 
 /** Args are already-parsed JSON from the driver, which is the only caller. */
 type Args = Record<string, unknown>;
+
+/** The visibility the driver chose at create, which it passes to every op that
+ *  needs one: the row keeps no copy. Anything but `public` is refused rather
+ *  than guessed, so a driver that forgot to pass it fails loudly. */
+function chosenVisibility(args: Args): GroupVisibility {
+	if (args.visibility === 'public' || args.visibility === 'private') return args.visibility;
+	throw new Error(`expected visibility 'public' or 'private', got ${String(args.visibility)}`);
+}
 
 async function groupById(env: Env, groupId: unknown): Promise<GroupRow> {
 	const row = await getGroupById(env.DB, String(groupId));
@@ -169,9 +181,9 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	},
 
 	/** The driver joins before it provisions the group's spaces, so there is no
-	 *  about space whose read policy could answer. The row's visibility stands in
-	 *  for it: it is the choice the create made, which is what provisioning
-	 *  would set the read policy from. */
+	 *  about space whose read policy could answer. The driver's own choice at
+	 *  create stands in for it, which is what provisioning sets the read policy
+	 *  from. */
 	requestJoin: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		return {
@@ -180,7 +192,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 				group,
 				String(args.did),
 				(args.message as string | null) ?? null,
-				group.visibility
+				chosenVisibility(args)
 			)
 		};
 	},
@@ -257,14 +269,14 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	 *  the members space for its roster. The e2e binds an existing DID through
 	 *  `createGroup`, which provisions nothing (only `runCreateGroup` does), so
 	 *  they are made here. Idempotent, like the create path's own call, and from
-	 *  the row's visibility, as a create would. */
+	 *  the driver's visibility choice, as a create would. */
 	provisionSpaces: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		const cred = await resolveGroupCredential(env, env.DB, group.group_did);
 		if (!cred) throw new Error(`no credential for ${group.group_did}`);
 		const uris = await provisionGroupSpaces(
 			pdsProvisioner(cred, group.group_did),
-			group.visibility
+			chosenVisibility(args)
 		);
 		await recordGroupSpaces(env.DB, group.id, uris);
 		return uris;
@@ -275,6 +287,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			db: env.DB,
 			env,
 			group: await groupById(env, args.groupId),
+			visibility: chosenVisibility(args),
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
 			profile: {
 				name: String(args.name),
@@ -310,12 +323,15 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		return readGroupAbout(reader, group);
 	},
 
+	/** The cache rebuild, with the group's visibility read from its host the
+	 *  way Repair reads it: the about space's read policy. */
 	rebuildGroupCache: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		const reader = await groupSpaceReader(env, env.DB, group);
 		if (!reader) throw new Error(`no credential for ${group.group_did}`);
-		const outcome = await rebuildGroupCache(env.DB, reader, group);
-		return { ...outcome, row: await groupById(env, args.groupId) };
+		const hostVisibility = await readGroupVisibility(reader, group);
+		const outcome = await rebuildGroupCache(env.DB, reader, group, hostVisibility);
+		return { ...outcome, hostVisibility, row: await groupById(env, args.groupId) };
 	},
 
 	/** Overwrites every column the profile record owns, so the rebuild has
@@ -345,20 +361,14 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		}),
 
 	/** The one record a stranger can read, and the only door here that changes
-	 *  what the anonymous web sees. Visibility is changed first through the
-	 *  app's own `updateGroup` (the same call the settings form makes), so the
-	 *  branch this exercises is taken from the row, as in production, rather
-	 *  than from an argument the harness made up. */
+	 *  what the anonymous web sees. The visibility is handed in, as the settings
+	 *  save hands in the form's choice: the row holds none. */
 	reconcileDeclaration: async (env, args) => {
-		if (args.visibility !== undefined) {
-			await updateGroup(env.DB, String(args.groupId), {
-				visibility: args.visibility as GroupRow['visibility']
-			});
-		}
 		const result = await reconcileGroupDeclaration({
 			db: env.DB,
 			env,
 			group: await groupById(env, args.groupId),
+			visibility: chosenVisibility(args),
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
 			createdAt: args.createdAt as string | undefined
 		});

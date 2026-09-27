@@ -20,8 +20,8 @@
  *  10. the profile and rules are read back from the about space with the group's
  *      own session;
  *  11. editing only the middle rule keeps the other two rules' URIs byte-identical;
- *  12. corrupted profile columns are rebuilt from records, and `visibility`, which
- *      no profile field owns, is left as it was;
+ *  12. corrupted profile columns are rebuilt from records, and the row carries no
+ *      visibility for a rebuild to guess;
  *  13. the roster is membership records keyed by member DID, plus the `access`
  *      record, and the app's reader agrees with the PDS;
  *  14. writing membership records leaves the space's own member list empty;
@@ -41,7 +41,7 @@
  *  22. an event written after the index has backfilled the repo is listed at
  *      once, and deleting it removes it;
  *  23. with every row deleted except the credential, the group is rebuilt from
- *      its DID alone: row, roles, permissions and roster.
+ *      its DID alone: row, roles, permissions and roster, and no visibility.
  *
  * These 24 checks (1 to 23, plus 15b) are the whole summary, so a clean run ends
  * with `SUMMARY: 24 passed, 0 failed`. Setup steps (credentials, session, bundle,
@@ -115,9 +115,15 @@ const CREATE_ARGS = {
 	groupDid: GROUP_DID,
 	ownerDid: ALICE,
 	name: 'Spike groups e2e',
-	description: 'Fixture group for apps/web/scripts/groups-e2e.mjs.',
-	visibility: 'public'
+	description: 'Fixture group for apps/web/scripts/groups-e2e.mjs.'
 };
+
+/** The visibility this run chose at create. The row keeps no copy, so every
+ *  step that needs the choice is handed it: the join refusal, which runs before
+ *  the group's spaces exist and so before its host can be asked, the space
+ *  provisioning, which sets the about space's read policy from it, and the
+ *  profile write, whose join policy is derived from it. */
+const CREATE_VISIBILITY = 'public';
 
 const EVENT_COLLECTION = 'community.lexicon.calendar.event';
 /** The group's only record in its public repo. Written out rather than
@@ -407,7 +413,12 @@ async function main() {
 		);
 
 		// 2. join under require_approval ---------------------------------------
-		const join = await must('requestJoin', { groupId: group.id, did: BOB, message: 'hello' });
+		const join = await must('requestJoin', {
+			groupId: group.id,
+			did: BOB,
+			message: 'hello',
+			visibility: CREATE_VISIBILITY
+		});
 		const pendingBob = await must('membership', {
 			groupId: group.id,
 			did: BOB,
@@ -592,7 +603,10 @@ async function main() {
 		// read back with the group's own session. No unit test can prove that
 		// read: the com.atproto.space.* parameter names and the space-scoped URI
 		// form are defined by the PDS, not by us.
-		const spaces = await must('provisionSpaces', { groupId: group.id });
+		const spaces = await must('provisionSpaces', {
+			groupId: group.id,
+			visibility: CREATE_VISIBILITY
+		});
 		note(`about space   ${spaces.aboutSpaceUri}`);
 		note(`members space ${spaces.membersSpaceUri}`);
 		membersSpaceUri = spaces.membersSpaceUri;
@@ -608,6 +622,7 @@ async function main() {
 		await must('writeGroupProfile', {
 			groupId: group.id,
 			callerDid: ALICE,
+			visibility: CREATE_VISIBILITY,
 			name: 'Spike groups e2e, from records',
 			description: 'Written into the about space, not a column.',
 			locationName: 'Kailua-Kona'
@@ -621,7 +636,8 @@ async function main() {
 		record(
 			about.profile?.name === 'Spike groups e2e, from records' &&
 				about.profile?.locationName === 'Kailua-Kona' &&
-				// Derived from the row (require_approval = 1, public), never the form.
+				// Derived from the chosen visibility (public) and the row's
+				// require_approval = 1, never the form.
 				about.profile?.joinPolicy === 'approval' &&
 				about.rules.map((rule) => rule.text).join('|') === 'Be kind|No spam|Stay on topic',
 			'profile + rules read back out of the about space with the group’s own session',
@@ -656,8 +672,9 @@ async function main() {
 
 		// 12. the row is a cache of the records ------------------------------------
 		// Corrupt every column the profile owns, rebuild from records, and check
-		// the row came back, while `visibility`, which no profile field owns, is
-		// left exactly as it was.
+		// the row came back. The rebuild reads the group's visibility from its
+		// host, the about space's read policy, and writes none into the row: there
+		// is no column for it, so no join policy can be turned back into one.
 		await must('corruptGroupCache', { groupId: group.id });
 		const rebuilt = await must('rebuildGroupCache', { groupId: group.id });
 		record(
@@ -666,12 +683,11 @@ async function main() {
 				rebuilt.row.description === 'Written into the about space, not a column.' &&
 				rebuilt.row.location_name === 'Kailua-Kona' &&
 				rebuilt.row.require_approval === 1 &&
-				// Untouched: no profile field owns visibility, so a rebuild must not
-				// guess one from the join policy it can read.
-				rebuilt.row.visibility === group.visibility,
-			'a corrupted cache rebuilds from records, and leaves what no record owns alone',
-			`name "${rebuilt.row.name}"; visibility ${rebuilt.row.visibility} (was ${group.visibility}); ` +
-				`${rebuilt.rules} rule record(s)`
+				rebuilt.hostVisibility === CREATE_VISIBILITY &&
+				!('visibility' in rebuilt.row),
+			'a corrupted cache rebuilds from records, and the row carries no visibility',
+			`name "${rebuilt.row.name}"; host reads it as ${rebuilt.hostVisibility}; ` +
+				`row columns ${Object.keys(rebuilt.row).length}; ${rebuilt.rules} rule record(s)`
 		);
 
 		// 13. the roster is records ------------------------------------------------
@@ -957,8 +973,8 @@ async function main() {
 		// A group that stops being discoverable must stop being announced, so the
 		// declaration is deleted rather than left pointing at a space nobody may
 		// read. A missing declaration is the only signal a private group gives.
-		// Visibility is flipped through the app's own updater, so the branch comes
-		// from the row.
+		// The visibility is handed to the app's own reconcile, the way the settings
+		// save hands it the form's choice. The row holds none.
 		await must('reconcileDeclaration', {
 			groupId: group.id,
 			callerDid: ALICE,
@@ -1030,9 +1046,8 @@ async function main() {
 		// Delete every row the group has except its credential, rebuild keyed by
 		// the DID, and the group comes back. Last, because it replaces the row the
 		// checks above act through. The unit tests cannot show the live half: the
-		// real space reader's records restoring the row, and the declaration
-		// probe, through the group's own session, reading this group as declared
-		// and so public.
+		// real space reader's records restoring the row through the group's own
+		// session. Nothing is restored for visibility, which stays at the host.
 		const profileNow = await must('readGroupAbout', { groupId: group.id });
 		const rosterNow = await must('recordedRoster', { groupId: group.id });
 		const beforeDrop = await must('groupSnapshot', { groupDid: GROUP_DID });
@@ -1046,7 +1061,7 @@ async function main() {
 			if (restored) group = restored.group;
 			else {
 				group = await must('createGroup', CREATE_ARGS);
-				await must('provisionSpaces', { groupId: group.id });
+				await must('provisionSpaces', { groupId: group.id, visibility: CREATE_VISIBILITY });
 			}
 		}
 		const afterRebuild = await must('groupSnapshot', { groupDid: GROUP_DID });
@@ -1067,14 +1082,14 @@ async function main() {
 		record(
 			wiped.left === null &&
 				restored?.path === 'restored' &&
-				afterRebuild.row.visibility === 'public' &&
+				!('visibility' in afterRebuild.row) &&
 				sameColumns &&
 				afterRebuild.row.created_at === Date.parse(profileNow.profile.createdAt) &&
 				rosterOf(afterRebuild) === rosterOf(beforeDrop) &&
 				afterRebuild.roster.every((m) => m.created_at === recordJoinedAt[m.did]) &&
 				sameGrants,
 			'the group, deleted down to its credential, is rebuilt from its DID alone',
-			`path ${restored?.path}; visibility ${afterRebuild.row.visibility} (declared); ` +
+			`path ${restored?.path}; ` +
 				`columns ${sameColumns ? 'identical' : 'DIFFER'}; roster ${rosterOf(afterRebuild)}; ` +
 				`${afterRebuild.grants.length} role grant row(s) ${sameGrants ? 'identical' : 'DIFFER'}`
 		);
