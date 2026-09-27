@@ -18,10 +18,12 @@ vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 import { load } from './+page.server';
 import { groupSpaceReader, type GroupSpaceReader } from '$lib/groups/server/about-read';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
-import { createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
+import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
 import { groupSpaceUris } from '$lib/groups/server/spaces';
 
 const OWNER = 'did:plc:owner';
+const MEMBER = 'did:plc:member';
+const STRANGER = 'did:plc:stranger';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const { aboutSpaceUri: ABOUT } = groupSpaceUris(GROUP_DID);
 
@@ -31,6 +33,7 @@ beforeEach(async () => {
 	harness = sqliteD1();
 	const row = await createGroup(harness.db, { groupDid: GROUP_DID, ownerDid: OWNER, name: 'Kona' });
 	await recordGroupSpaces(harness.db, row.id, groupSpaceUris(GROUP_DID));
+	await addMember(harness.db, row.id, MEMBER, 'member');
 });
 
 afterEach(() => {
@@ -39,9 +42,10 @@ afterEach(() => {
 });
 
 /** A host whose spaces hold no records and whose about space reports
- *  `readPolicy`. No records means no authz config, so the owner's standing
- *  comes from the rows and the gate admits them without asking the host. */
-function hostReading(readPolicy: string): GroupSpaceReader & { asked: string[] } {
+ *  `readPolicy`, or fails with it. No records means no authz config, so a
+ *  roster caller's standing comes from the rows and the gate admits them
+ *  without asking the host. */
+function hostReading(readPolicy: string | Error): GroupSpaceReader & { asked: string[] } {
 	const asked: string[] = [];
 	return {
 		asked,
@@ -53,12 +57,13 @@ function hostReading(readPolicy: string): GroupSpaceReader & { asked: string[] }
 		},
 		async getSpace(space) {
 			asked.push(space);
+			if (readPolicy instanceof Error) throw readPolicy;
 			return { readPolicy };
 		}
 	};
 }
 
-async function openAs(did: string) {
+async function openAs(did: string | null) {
 	return (await load({
 		params: { actor: GROUP_DID },
 		locals: { did },
@@ -86,5 +91,41 @@ describe('/groups/[actor] load', () => {
 			// approval and the host's visibility.
 			expect(data.about.joinPolicy).toBe(joinPolicy);
 		}
+	});
+
+	// A caller off the roster was already gated on the host's answer, so the
+	// page shows that one and does not ask again.
+	it("a stranger's page reuses the gate's answer and asks the host once", async () => {
+		const host = hostReading('com.atproto.simplespace.defs#publicPolicy');
+		vi.mocked(groupSpaceReader).mockResolvedValue(host);
+
+		const data = await openAs(STRANGER);
+
+		expect(data.visibility).toBe('public');
+		expect(host.asked).toEqual([ABOUT]);
+	});
+
+	// The gate never asks the host for a member, so a host that is down cannot
+	// lock them out; the page asks only to show the visibility. When it cannot
+	// say, the page still renders, with no visibility, and the join policy
+	// fails closed.
+	it("a member's page loads with no visibility when the host cannot say", async () => {
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.mocked(groupSpaceReader).mockResolvedValue(hostReading(new Error('getSpace failed: 502')));
+
+		const data = await openAs(MEMBER);
+
+		expect(data.visibility).toBeNull();
+		expect(data.about.joinPolicy).toBe('invite');
+		expect(logged).toHaveBeenCalled();
+		logged.mockRestore();
+	});
+
+	it("an owner's page loads with no visibility when the deployment holds no credential", async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(null);
+
+		const data = await openAs(OWNER);
+
+		expect(data.visibility).toBeNull();
 	});
 });
