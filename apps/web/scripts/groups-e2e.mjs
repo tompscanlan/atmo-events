@@ -37,9 +37,11 @@
  *  20. turning the group private deletes the declaration, and turning it public
  *      again re-declares it;
  * 20b. a group made private at its host through the app's own path reads back
- *      member-list, and its declaration is withdrawn and stays withdrawn;
- * 20c. that private group refuses a stranger's join and records no request, and
- *      its gate admits the owner and refuses the stranger;
+ *      member-list, its declaration is withdrawn, and withdrawing it again is a
+ *      no-op;
+ * 20c. that private group refuses a stranger's join and records no request, its
+ *      gate admits the owner and refuses the stranger, and once the host is set
+ *      back to public the app reads it as public;
  *  21. the events tab lists the group's events from the app's index, with the
  *      admin's edit from check 5;
  *  22. an event written after the index has backfilled the repo is listed at
@@ -658,7 +660,13 @@ async function main() {
 		if (stale.dropped.length) note(`reset a leftover authz config (${stale.dropped.join(', ')})`);
 		// A space that already existed keeps whatever read policy it had, so an
 		// earlier run could leave it private. Set it to this run's choice through
-		// the app's own path, and read it back from the host.
+		// the app's own path, and read it back from the host. What provisioning
+		// left is logged first: the set below would hide a fresh space provisioned
+		// with the wrong policy (spaces.test.ts pins that mapping).
+		const provisionedPolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
+		note(
+			`about space read policy as provisioning left it: ${provisionedPolicy.readPolicy ?? provisionedPolicy.error ?? provisionedPolicy.status}`
+		);
 		await must('setReadPolicy', {
 			groupId: group.id,
 			callerDid: ALICE,
@@ -1048,8 +1056,10 @@ async function main() {
 		// Check 20 hands the reconcile a visibility. Here the group is made private
 		// where that lives, the about space's read policy, through the app's own
 		// path (the call the settings save makes), and read back from the host.
-		// Then the declaration is aligned to the host's answer, the way Repair
-		// aligns it, twice: the second pass must leave it withdrawn.
+		// Then the declaration is reconciled to the host's answer, and reconciled
+		// again. The second pass re-sends the withdrawal, which must be a no-op at
+		// the PDS. It does not exercise Repair's own alignment, which reads the
+		// declaration first and writes only on a disagreement (repair.test.ts).
 		hostPrivate = true;
 		await must('setReadPolicy', { groupId: group.id, callerDid: ALICE, visibility: 'private' });
 		const privatePolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
@@ -1071,16 +1081,19 @@ async function main() {
 				realigned.visibility === 'private' &&
 				notFound(withdrawnAtHost) &&
 				notFound(stillWithdrawn),
-			'a group made private at its host reads back member-list, and its declaration is withdrawn and stays withdrawn',
+			'a group made private at its host reads back member-list, its declaration is withdrawn, and withdrawing it again is a no-op',
 			`getSpace ${privatePolicy.readPolicy ?? privatePolicy.error ?? privatePolicy.status}; ` +
 				`declaration ${withdrawnAtHost.error ?? withdrawnAtHost.status}, then ` +
-				`${stillWithdrawn.error ?? stillWithdrawn.status} after a second alignment`
+				`${stillWithdrawn.error ?? stillWithdrawn.status} after a repeated withdrawal`
 		);
 
 		// 20c. and its door is shut to strangers ---------------------------------
 		// The join goes through the roster act the join form calls, handed no
 		// visibility, so it asks the host. The gate is the page gate's own
-		// predicate over the host's answer and each caller's standing.
+		// predicate over the host's answer and each caller's standing. Then the
+		// host goes back to public, as the rest of the run and the next run
+		// expect, and the app must read it as public: every read above answered
+		// private, so this is the half that shows the app tells the two apart.
 		const strangerJoin = await call('joinGroup', {
 			groupId: group.id,
 			callerDid: MALLORY,
@@ -1089,35 +1102,33 @@ async function main() {
 		const requestsNow = await must('listJoinRequests', { groupId: group.id, status: 'all' });
 		const ownerGate = await must('gate', { groupId: group.id, did: ALICE });
 		const strangerGate = await must('gate', { groupId: group.id, did: MALLORY });
-		record(
-			!strangerJoin.ok &&
-				strangerJoin.error.reason === 'invite-only' &&
-				!requestsNow.some((request) => request.did === MALLORY) &&
-				ownerGate.visibility === 'private' &&
-				ownerGate.canSee === true &&
-				strangerGate.canSee === false,
-			"a private group refuses a stranger's join and records no request; its gate admits the owner only",
-			`${MALLORY} join: ${strangerJoin.ok ? `ACCEPTED (${strangerJoin.value.outcome})` : strangerJoin.error.reason}; ` +
-				`requests from them ${requestsNow.filter((request) => request.did === MALLORY).length}; ` +
-				`gate: owner ${ownerGate.canSee}, stranger ${strangerGate.canSee} (host ${ownerGate.visibility})`
-		);
-
-		// Back to public, as the rest of the run and the next run expect.
 		await must('setReadPolicy', {
 			groupId: group.id,
 			callerDid: ALICE,
 			visibility: CREATE_VISIBILITY
 		});
 		const backPolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
-		await must('reconcileDeclaration', { groupId: group.id, callerDid: ALICE, visibility: 'host' });
-		if (backPolicy.readPolicy === READ_POLICY[CREATE_VISIBILITY]) {
-			hostPrivate = false;
-			note(`about space read policy back to ${backPolicy.readPolicy}`);
-		} else {
-			console.log(
-				`WARN  the about space reads ${backPolicy.readPolicy ?? backPolicy.error ?? backPolicy.status} after the switch back`
-			);
-		}
+		const backAligned = await must('reconcileDeclaration', {
+			groupId: group.id,
+			callerDid: ALICE,
+			visibility: 'host'
+		});
+		if (backPolicy.readPolicy === READ_POLICY.public) hostPrivate = false;
+		record(
+			!strangerJoin.ok &&
+				strangerJoin.error.reason === 'invite-only' &&
+				!requestsNow.some((request) => request.did === MALLORY) &&
+				ownerGate.visibility === 'private' &&
+				ownerGate.canSee === true &&
+				strangerGate.canSee === false &&
+				backPolicy.readPolicy === READ_POLICY.public &&
+				backAligned.visibility === 'public',
+			"a private group refuses a stranger's join and records no request; its gate admits the owner only; set back to public, the app reads it as public",
+			`${MALLORY} join: ${strangerJoin.ok ? `ACCEPTED (${strangerJoin.value.outcome})` : strangerJoin.error.reason}; ` +
+				`requests from them ${requestsNow.filter((request) => request.did === MALLORY).length}; ` +
+				`gate: owner ${ownerGate.canSee}, stranger ${strangerGate.canSee} (host ${ownerGate.visibility}); ` +
+				`back: getSpace ${backPolicy.readPolicy ?? backPolicy.error ?? backPolicy.status}, app reads ${backAligned.visibility}`
+		);
 
 		// 21. the events tab's list comes from the index, not the PDS -------------
 		// The tab reads the app's own index, the way every other actor's events are
