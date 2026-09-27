@@ -405,6 +405,51 @@ export interface BrowseEntry {
 	row: GroupRow | null;
 }
 
+/** At most this many membership-record checks run at once for one browse
+ *  view. */
+const ROSTER_CHECKS_IN_FLIGHT = 6;
+
+/** The candidates `check` confirms, newest first, stopping once `wanted` of
+ *  them are confirmed.
+ *
+ *  A browse page shows at most `wanted` entries, so a candidate with `wanted`
+ *  confirmed groups at least as new as it cannot make the page, and it is not
+ *  checked. A check starts only while the confirmed and the running together
+ *  number fewer than `wanted`. So a rejection frees its slot for the next
+ *  candidate instead of leaving the page short, and the number of checks is at
+ *  most `wanted` plus the rejections among them.
+ *
+ *  A candidate that was not checked is never returned. Listing it unchecked is
+ *  the leak the check exists to close. */
+async function confirmNewest(
+	candidates: GroupRow[],
+	check: (row: GroupRow) => Promise<boolean>,
+	wanted: number
+): Promise<GroupRow[]> {
+	const queue = [...candidates].sort((a, b) => b.created_at - a.created_at);
+	const confirmed = new Set<GroupRow>();
+	const running = new Set<Promise<void>>();
+	let next = 0;
+	for (;;) {
+		while (
+			next < queue.length &&
+			running.size < ROSTER_CHECKS_IN_FLIGHT &&
+			confirmed.size + running.size < wanted
+		) {
+			const row = queue[next++];
+			const run: Promise<void> = check(row)
+				.then((ok) => {
+					if (ok) confirmed.add(row);
+				})
+				.finally(() => running.delete(run));
+			running.add(run);
+		}
+		if (running.size === 0) break;
+		await Promise.race(running);
+	}
+	return queue.filter((row) => confirmed.has(row));
+}
+
 /** Browse listing: enumerate, then hydrate.
  *
  *  Enumeration is the declaration index plus the caller's own groups, and
@@ -422,7 +467,10 @@ export interface BrowseEntry {
  *  membership: a revocation deletes the record first, and its row delete can
  *  fail. So an undeclared group the caller reaches only through a row, and does
  *  not own, is kept only when `onRoster` confirms them. The owner's own groups
- *  are not checked, because the owner cannot be removed.
+ *  are not checked, because the owner cannot be removed. The checks are
+ *  bounded (`confirmNewest`): newest first, a few at a time, and no further
+ *  than it takes to fill `limit`, because anyone who may admit members can
+ *  put a DID on as many rosters as they like.
  *
  *  Hydration is the one place a page may render `name`/`description` from the
  *  row instead of from records. The about space is never anonymously readable,
@@ -439,8 +487,9 @@ export async function listGroups(
 		declared: DeclaredGroup[];
 		limit?: number;
 		/** Whether the caller's membership record confirms them in this group.
-		 *  Asked only for an undeclared group the caller does not own. When
-		 *  absent, the membership row is taken as it stands. */
+		 *  Asked only for an undeclared group the caller does not own, and only
+		 *  for as many of those as can reach the page. When absent, the
+		 *  membership row is taken as it stands. */
 		onRoster?: (row: GroupRow) => Promise<boolean>;
 	}
 ): Promise<BrowseEntry[]> {
@@ -486,12 +535,17 @@ export async function listGroups(
 
 	const undeclared = own.filter((row) => !entries.has(row.group_did));
 	const onRoster = opts.onRoster;
-	const kept = await Promise.all(
-		undeclared.map(async (row) => row.owner_did === caller || !onRoster || (await onRoster(row)))
-	);
-	undeclared.forEach((row, i) => {
-		if (kept[i]) entries.set(row.group_did, { group_did: row.group_did, row, at: row.created_at });
-	});
+	const unchecked = undeclared.filter((row) => row.owner_did === caller || !onRoster);
+	const confirmed = onRoster
+		? await confirmNewest(
+				undeclared.filter((row) => row.owner_did !== caller),
+				onRoster,
+				limit
+			)
+		: [];
+	for (const row of [...unchecked, ...confirmed]) {
+		entries.set(row.group_did, { group_did: row.group_did, row, at: row.created_at });
+	}
 
 	return [...entries.values()]
 		.sort((a, b) => b.at - a.at)

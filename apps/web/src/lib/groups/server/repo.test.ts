@@ -3,18 +3,9 @@
 // without re-checking.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { DEFAULT_ROLE_PERMISSIONS } from '../permissions';
-import {
-	GROUP_MEMBERSHIP_COLLECTION,
-	GROUP_PERMISSIONS_COLLECTION,
-	GROUP_PERMISSIONS_RKEY,
-	GROUP_ROLE_COLLECTION,
-	groupBindingsRecord,
-	groupMembershipRecord,
-	groupRoleRecord
-} from '../members-record';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import type { GroupSpaceReader } from './about-read';
+import { membersSpaceReader, type CountingSpaceReader } from './__fixtures__/members-space';
 import {
 	GroupRuleError,
 	addMember,
@@ -286,9 +277,7 @@ describe('browse visibility', () => {
 
 	interface HostedGroup {
 		row: GroupRow;
-		reader: GroupSpaceReader;
-		/** Every get and list the reader has answered. */
-		reads: number;
+		reader: CountingSpaceReader;
 	}
 
 	/** A group with a members space whose authz config is written, holding a
@@ -303,51 +292,10 @@ describe('browse visibility', () => {
 			aboutSpaceUri: spaceUri(created.group_did, ABOUT_SPACE_TYPE, 'self'),
 			membersSpaceUri: space
 		});
-		const records = [
-			{
-				collection: GROUP_ROLE_COLLECTION,
-				rkey: 'member',
-				value: { ...groupRoleRecord({ id: 'member' }), $type: GROUP_ROLE_COLLECTION }
-			},
-			{
-				collection: GROUP_PERMISSIONS_COLLECTION,
-				rkey: GROUP_PERMISSIONS_RKEY,
-				value: {
-					...groupBindingsRecord({ altitude: 'community', bundles: DEFAULT_ROLE_PERMISSIONS }),
-					$type: GROUP_PERMISSIONS_COLLECTION
-				}
-			},
-			...members.map((did) => ({
-				collection: GROUP_MEMBERSHIP_COLLECTION,
-				rkey: did,
-				value: {
-					...groupMembershipRecord({ subject: did, roles: ['member'] }),
-					$type: GROUP_MEMBERSHIP_COLLECTION
-				}
-			}))
-		].map((r) => ({
-			...r,
-			uri: `${space}/${created.group_did}/${r.collection}/${r.rkey}`,
-			cid: 'bafytest'
-		}));
-
-		const hosted: HostedGroup = {
+		return {
 			row: { ...created, members_space_uri: space },
-			reads: 0,
-			reader: {
-				async get(query) {
-					hosted.reads++;
-					return (
-						records.find((r) => r.collection === query.collection && r.rkey === query.rkey) ?? null
-					);
-				},
-				async list(query) {
-					hosted.reads++;
-					return records.filter((r) => !query.collection || r.collection === query.collection);
-				}
-			}
+			reader: membersSpaceReader(space, created.group_did, members)
 		};
-		return hosted;
 	}
 
 	/** The check the browse loader builds: the caller's standing as the group's
@@ -446,7 +394,7 @@ describe('browse visibility', () => {
 			onRoster: rosterFromRecords(OWNER, [owned])
 		});
 		expect(names(entries)).toEqual(['Owned']);
-		expect(owned.reads).toBe(0);
+		expect(owned.reader.reads).toBe(0);
 	});
 
 	// The bounded exception to the rule above: a caller sees their own and their
@@ -483,5 +431,71 @@ describe('browse visibility', () => {
 			]
 		});
 		expect(names(entries)).toEqual(['did:plc:new', 'did:plc:mid']);
+	});
+
+	// Anyone who may admit members can put a DID on many rosters, and every
+	// undeclared group the caller does not own costs a record check. So the
+	// checks are bounded: newest first, a few at a time, and only as many as it
+	// takes to fill the page.
+	describe('record checks for undeclared groups', () => {
+		/** `n` undeclared groups owned by someone else, with ALICE's row in each.
+		 *  Returned newest first, one second apart. */
+		async function memberOf(n: number): Promise<string[]> {
+			const made: string[] = [];
+			for (let i = 0; i < n; i++) {
+				const name = `Group ${String(i).padStart(2, '0')}`;
+				const created = await group({ name, groupDid: `did:plc:candidate${i}` });
+				await addMember(db, created.id, ALICE, 'member');
+				harness.raw
+					.prepare('UPDATE groups SET created_at = ? WHERE id = ?')
+					.run(1_000_000_000 - i * 1000, created.id);
+				made.push(name);
+			}
+			return made;
+		}
+
+		/** A check that confirms everyone except `rejected`, and records which
+		 *  groups it was asked about, in order, and how many ran at once. */
+		function probe(rejected: string[]) {
+			const seen = { checked: [] as string[], running: 0, maxRunning: 0 };
+			const onRoster = async (row: GroupRow) => {
+				seen.checked.push(row.name);
+				seen.running++;
+				seen.maxRunning = Math.max(seen.maxRunning, seen.running);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				seen.running--;
+				return !rejected.includes(row.name);
+			};
+			return { seen, onRoster };
+		}
+
+		it('checks newest first, no more than the limit plus the rejections, and at most 6 at once', async () => {
+			const all = await memberOf(14);
+			const rejected = [all[1], all[4]];
+			const { seen, onRoster } = probe(rejected);
+
+			const entries = await listGroups(db, { callerDid: ALICE, declared: [], limit: 10, onRoster });
+
+			expect(names(entries)).toEqual(all.slice(0, 12).filter((n) => !rejected.includes(n)));
+			// Ten confirmed fill the page. Two of the checks along the way were
+			// rejections, so twelve checks in all, and the two oldest never asked.
+			expect(seen.checked).toEqual(all.slice(0, 12));
+			expect(seen.maxRunning).toBe(6);
+		});
+
+		// Checking only the newest `limit` is not enough: a rejection among them
+		// frees a slot an older group can fill, and that group must be checked
+		// before it is listed, not listed because it was next.
+		it('never lists a group beyond the cutoff unchecked, and checks the next one when a rejection frees a slot', async () => {
+			const all = await memberOf(5);
+			const rejected = [all[0], all[2]];
+			const { seen, onRoster } = probe(rejected);
+
+			const entries = await listGroups(db, { callerDid: ALICE, declared: [], limit: 2, onRoster });
+
+			expect(names(entries)).toEqual([all[1], all[3]]);
+			expect(seen.checked).toEqual(all.slice(0, 4));
+			for (const name of names(entries)) expect(seen.checked).toContain(name);
+		});
 	});
 });

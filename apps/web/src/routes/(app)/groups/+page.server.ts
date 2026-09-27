@@ -21,8 +21,11 @@ import type { PageServerLoad } from './$types';
  *  The exception is an undeclared group the caller reaches only through a
  *  membership row and does not own. Its row may be the trace of a removal
  *  whose row delete failed, so the caller's membership record is read, the
- *  same standing the group page gates on. That costs a group session and a
- *  members-space read for each such group, and only for a signed-in caller.
+ *  same standing the group page gates on. Each such check costs a credential
+ *  decrypt, a group session (a login on the first use in an isolate, cached
+ *  after), 4 members-space reads and 3 D1 reads. Only a signed-in caller pays
+ *  it, and `listGroups` bounds it: newest first, at most 6 at once, and no
+ *  more than the page's limit plus the rejections along the way.
  *
  *  Handles come from contrail's `identities` table, the same cache as every
  *  other actor's handle. A group it has never resolved shows its DID, which is
