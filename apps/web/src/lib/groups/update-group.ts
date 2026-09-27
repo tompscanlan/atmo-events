@@ -21,8 +21,17 @@
 // records all still describe the group as it was, so saving again finds the
 // same change and retries it. Once the host has taken the change, nothing puts
 // it back. A later failure leaves the host ahead of the row or the records,
-// the message says which writes landed, and saving again or "Repair this
-// group" (./server/repair.ts) brings the rest in line with the host.
+// the message says which writes landed, and "Repair this group"
+// (./server/repair.ts) brings the declaration and the row in line with the
+// host.
+//
+// A HOST AHEAD OF THE ROW REFUSES A SAVE THAT KEEPS THE ROW'S VALUE. The
+// settings form preselects the row's visibility. Once a failed save has left
+// the host ahead of the row, a save that keeps that default is not a choice to
+// change the host back, and taking it as one would undo the change the host
+// took, re-declare the group and report success. So it is refused before any
+// write, and the owner runs Repair first. A save that asks for what the host
+// already enforces goes through, and brings the row and the records to it.
 //
 // The row goes next, while it still has its visibility column. The schema
 // refuses a private group that does not require approval (a trigger in
@@ -59,40 +68,70 @@ export interface UpdateGroupData {
 
 const describeError = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The save stopped before its first write. Nothing landed anywhere, so the
- *  next save sees the same change and makes it. `to` is the visibility the save
- *  was moving the host to, when it was moving it. */
-function nothingSaved(e: unknown, to: GroupVisibility | null): GroupFormFailure {
+/** Said after a switch to private that stopped before the declaration was
+ *  withdrawn: browse lists what is declared, so the group is still in it. */
+const STILL_LISTED = 'Its declaration was not withdrawn, so it is still listed in browse.';
+
+/** A read failed, before the first write. Nothing landed anywhere, so saving
+ *  again retries it. `failed` names the read, because the host refusing the
+ *  change is a different failure with its own message (`hostRefused`). */
+function nothingSaved(failed: string, e: unknown): GroupFormFailure {
 	return {
 		ok: false,
-		error: to
-			? `The visibility change did not reach the group's PDS: ${describeError(
-					e
-				)}. Nothing was saved, so the group's visibility was not changed, and saving again will retry it.`
-			: `Nothing was saved: ${describeError(e)}. Saving again will retry it.`
+		error: `Nothing was saved, because ${failed}: ${describeError(e)}. Saving again will retry it.`
+	};
+}
+
+/** The host refused the visibility change, the first write, so nothing else
+ *  was written either. */
+function hostRefused(e: unknown): GroupFormFailure {
+	return {
+		ok: false,
+		error: `The visibility change did not reach the group's PDS: ${describeError(
+			e
+		)}. Nothing was saved, so the group's visibility was not changed, and saving again will retry it.`
+	};
+}
+
+/** The host and the row disagree, and the save asks for the row's value: the
+ *  form's stale default (see the header). */
+function rowBehindHost(host: GroupVisibility, row: GroupVisibility): GroupFormFailure {
+	return {
+		ok: false,
+		error: `This group's PDS enforces ${host}, but this site's copy says ${row}, which is what this form showed. Nothing was saved, so its PDS still enforces ${host}. Run "Repair this group" first to bring this site's copy in line with its PDS, then save your changes again.`
 	};
 }
 
 /** The host took the visibility change and the row did not. The host is what
- *  the group's pages read, so the group already has the new visibility. */
+ *  the group's pages read, so the group already has the new visibility. Only
+ *  Repair is offered: the form still shows the row's value, and saving it
+ *  would be refused (`rowBehindHost`). */
 function rowNotSaved(e: unknown, to: GroupVisibility): GroupFormFailure {
 	return {
 		ok: false,
 		error: `The group's PDS now reads it as ${to}, but this site did not save the change: ${describeError(
 			e
-		)}. The group's declaration, profile and rules were not updated either. Saving again, or "Repair this group", brings them in line with its PDS.`
+		)}. The group's declaration, profile and rules were not updated either.${
+			to === 'private' ? ` ${STILL_LISTED}` : ''
+		} Run "Repair this group" to bring its declaration and this site's copy in line with its PDS.`
 	};
 }
 
 /** A write to the group's records failed after the row was saved, and after the
- *  host when `to` names the visibility it took. */
-function recordsNotUpdated(e: unknown, to: GroupVisibility | null): GroupFormFailure {
+ *  host when `to` names the visibility it took. `withdrawn` says whether a
+ *  switch to private got its declaration withdrawn before the failure. */
+function recordsNotUpdated(
+	e: unknown,
+	to: GroupVisibility | null,
+	withdrawn: boolean
+): GroupFormFailure {
 	const landed = to
 		? `Settings were saved and the group's PDS now reads it as ${to}`
 		: 'Settings were saved';
+	const listed = to === 'private' && !withdrawn ? ` ${STILL_LISTED}` : '';
 	return {
 		ok: false,
-		error: `${landed}, but this group's records were not updated: ${describeError(e)}`
+		error: `${landed}, but this group's records were not updated: ${describeError(e)}.${listed}`
 	};
 }
 
@@ -115,22 +154,36 @@ export async function runUpdateGroup(
 		require_approval: data.requireApproval ? 1 : 0
 	};
 
-	// Every read before the first write. Only a change of visibility moves the
-	// about space's read policy, and a save that keeps it does not write to the
-	// host at all. The change is measured against the host, so a row that a
-	// failed save left behind cannot hide one.
-	let flipped = false;
+	// Every read before the first write, the host's visibility among them.
+	// `failed` names the read in progress, so a failure says which one it was.
+	const noCredential = 'this site holds no credential it can use for the group';
+	let failed = noCredential;
+	let host: GroupVisibility;
 	let about: GroupAbout;
 	let writer: GroupRepoWriter;
 	try {
 		const reader = await groupSpaceReader(env, db, group);
 		if (!reader) throw new GroupCredentialError(group.group_did);
-		flipped = (await readGroupVisibility(reader, group)) !== data.visibility;
+		failed = "the group's PDS did not say which visibility it enforces";
+		host = await readGroupVisibility(reader, group);
+		failed = "the group's profile and rules could not be read from its PDS";
 		about = await readGroupAbout(reader, group);
+		failed = noCredential;
 		writer = await groupWriter(env, db, fresh);
 	} catch (e) {
-		return nothingSaved(e, flipped ? data.visibility : null);
+		return nothingSaved(failed, e);
 	}
+
+	// The form's stale default (see the header): refused before any write.
+	if (host !== group.visibility && data.visibility === group.visibility) {
+		return rowBehindHost(host, group.visibility);
+	}
+
+	// Only a change of visibility moves the about space's read policy, and a
+	// save that keeps it does not write to the host at all. The change is
+	// measured against the host, so a row that a failed save left behind cannot
+	// hide one.
+	const flipped = host !== data.visibility;
 
 	// The host. A failure here, including the permission read in front of it,
 	// stops the save before anything is written.
@@ -138,7 +191,7 @@ export async function runUpdateGroup(
 		try {
 			await setAboutSpaceReadPolicy({ db, env, group: fresh, callerDid });
 		} catch (e) {
-			return nothingSaved(e, data.visibility);
+			return hostRefused(e);
 		}
 	}
 
@@ -155,6 +208,9 @@ export async function runUpdateGroup(
 		return flipped ? rowNotSaved(e, data.visibility) : formError(e);
 	}
 
+	// Whether the declaration step finished, so a failure after it can say the
+	// group is no longer listed.
+	let declarationDone = false;
 	try {
 		// The public declaration, first of the records. Visibility is on this
 		// form, so this edit can hide a group. A group switched to private has
@@ -172,6 +228,7 @@ export async function runUpdateGroup(
 			writer,
 			createdAt: about.profile?.createdAt ?? undefined
 		});
+		declarationDone = true;
 		await writeGroupProfile({
 			db,
 			env,
@@ -199,7 +256,7 @@ export async function runUpdateGroup(
 			existing: about.rules
 		});
 	} catch (e) {
-		return recordsNotUpdated(e, flipped ? data.visibility : null);
+		return recordsNotUpdated(e, flipped ? data.visibility : null, declarationDone);
 	}
 	return { ok: true };
 }
