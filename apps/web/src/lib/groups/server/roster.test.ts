@@ -170,8 +170,22 @@ async function hostPut(space: string, did: string) {
 	expect(res.ok).toBe(true);
 }
 
+/** Makes the group private where that lives: its about space's read policy at
+ *  the host. */
+async function hostPrivate() {
+	const res = await fetch(`${CRED.service}/xrpc/com.atproto.simplespace.updateSpace`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({
+			space: ABOUT,
+			readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' }
+		})
+	});
+	expect(res.ok).toBe(true);
+}
+
 /** The row and the `group` value both, for a case that needs another shape. */
-async function setGroup(changes: { visibility?: 'private'; require_approval?: 0 }) {
+async function setGroup(changes: { require_approval?: 0 }) {
 	const sets = Object.keys(changes).map((column) => `${column} = ?`);
 	await harness.db
 		.prepare(`UPDATE groups SET ${sets.join(', ')} WHERE id = ?`)
@@ -455,7 +469,7 @@ describe('the about space member list mirrors the roster', () => {
 	] as const)(
 		'%s into a %s group puts the newcomer on the list after the membership record',
 		async (act, visibility) => {
-			if (visibility === 'private') await setGroup({ visibility: 'private' });
+			if (visibility === 'private') await hostPrivate();
 
 			await entries[act]();
 

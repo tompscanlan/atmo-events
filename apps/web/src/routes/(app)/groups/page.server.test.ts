@@ -19,6 +19,7 @@ vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { load } from './+page.server';
 import { groupSpaceReader } from '$lib/groups/server/about-read';
+import { listDeclaredGroups } from '$lib/groups/server/declaration-index';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { membersSpaceReader } from '$lib/groups/server/__fixtures__/members-space';
 import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
@@ -44,7 +45,7 @@ afterEach(() => {
 /** An undeclared group someone else owns, with ALICE's row in it and, when
  *  `recorded`, her membership record in its members space. */
 async function joined(name: string, groupDid: string, recorded: boolean) {
-	const group = await createGroup(db, { groupDid, ownerDid: OWNER, name, visibility: 'private' });
+	const group = await createGroup(db, { groupDid, ownerDid: OWNER, name });
 	const members = spaceUri(groupDid, MEMBERS_SPACE_TYPE, 'self');
 	await recordGroupSpaces(db, group.id, {
 		aboutSpaceUri: spaceUri(groupDid, ABOUT_SPACE_TYPE, 'self'),
@@ -71,5 +72,29 @@ describe('/groups load', () => {
 
 		expect(data.groups.map((g) => g.name)).toEqual(['Kept']);
 		expect(readers.get('did:plc:gone')!.reads).toBeGreaterThan(0);
+	});
+
+	// Browse shows what placement says, with no host read per row: a group in
+	// the declaration index is public, and one the caller reaches only through
+	// their own groups, undeclared, is private.
+	it('browse marks a group private when the caller sees it only through their own undeclared groups', async () => {
+		await createGroup(db, { groupDid: 'did:plc:listed', ownerDid: ALICE, name: 'Listed' });
+		await createGroup(db, { groupDid: 'did:plc:hidden', ownerDid: ALICE, name: 'Hidden' });
+		vi.mocked(listDeclaredGroups).mockResolvedValueOnce([
+			{ did: 'did:plc:listed', createdAt: new Date().toISOString() }
+		]);
+
+		const data = (await load({
+			locals: { did: ALICE },
+			platform: { env: { DB: db } }
+		} as unknown as Parameters<typeof load>[0])) as {
+			groups: { name: string | null; visibility: string | null }[];
+		};
+
+		expect(Object.fromEntries(data.groups.map((g) => [g.name, g.visibility]))).toEqual({
+			Listed: 'public',
+			Hidden: 'private'
+		});
+		expect(groupSpaceReader).not.toHaveBeenCalled();
 	});
 });

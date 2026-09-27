@@ -10,8 +10,9 @@
 // They also pin the order the save writes in, because each failure between two
 // writes leaves a different half-state behind: the host, then the row, then the
 // declaration, then the profile, then the rules. The host goes first because
-// it is what the group's pages read the visibility from, and a group that has
-// just gone private stops announcing itself before anything else can fail.
+// it is the only place that holds the visibility, and a group that has just
+// gone private stops announcing itself before anything else can fail. The row
+// holds no visibility at all.
 //
 // The host is the same fake the create is tested against
 // (./server/__fixtures__/stub-pds.ts), reached through the real transports, so
@@ -62,9 +63,9 @@ function host(fail?: StubPdsOptions['fail']): Host {
 	return stubPds({ did: GROUP_DID, handle: HANDLE, fail });
 }
 
-/** The background and the scenario's "given": a group whose row says
- *  `visibility`, whose credential is stored, and whose two spaces the host
- *  provisioned for that choice. The host's log is cleared afterwards, so a case
+/** The background and the scenario's "given": a group whose credential is
+ *  stored and whose two spaces the host provisioned for `visibility`, the
+ *  choice made at create. The host's log is cleared afterwards, so a case
  *  asserts on the save alone. */
 async function givenGroup(
 	visibility: GroupVisibility,
@@ -75,7 +76,6 @@ async function givenGroup(
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
 		name: 'Kona Trail Runners',
-		visibility,
 		requireApproval
 	});
 	await storeGroupCredential(env, harness.db, GROUP_DID, CRED);
@@ -108,11 +108,15 @@ function traced(pds: Host): string[] {
 	});
 }
 
-/** The row's visibility and approval, read straight from D1. */
-function rowNow(): { visibility: string; require_approval: number } {
-	return harness.raw
-		.prepare('SELECT visibility, require_approval FROM groups WHERE group_did = ?')
-		.get(GROUP_DID) as { visibility: string; require_approval: number };
+/** The row's approval, read straight from D1. */
+function approvalNow(): number {
+	return (
+		harness.raw
+			.prepare('SELECT require_approval FROM groups WHERE group_did = ?')
+			.get(GROUP_DID) as {
+			require_approval: number;
+		}
+	).require_approval;
 }
 
 /** Every column a save can write, and the time of the last write, so "no row
@@ -120,7 +124,7 @@ function rowNow(): { visibility: string; require_approval: number } {
 function rowWhole(): Record<string, unknown> {
 	return harness.raw
 		.prepare(
-			'SELECT name, description, visibility, require_approval, updated_at FROM groups WHERE group_did = ?'
+			'SELECT name, description, require_approval, updated_at FROM groups WHERE group_did = ?'
 		)
 		.get(GROUP_DID) as Record<string, unknown>;
 }
@@ -138,22 +142,9 @@ describe('a settings flip moves the about space’s read policy', () => {
 		['public', 'private', 'memberListPolicy', 'deleteRecord'],
 		['private', 'public', 'publicPolicy', 'putRecord']
 	] as const)(
-		'a group whose row says %s, saved as %s, calls updateSpace once on the about space with %s',
+		'a group its host reads as %s, saved as %s, calls updateSpace once on the about space with %s',
 		async (from, to, name, declarationWrite) => {
-			// The row as the host found it: read at the moment updateSpace arrives.
-			const rowWhenHostChanged: unknown[] = [];
-			const pds = host((nsid) => {
-				if (nsid === 'com.atproto.simplespace.updateSpace') {
-					rowWhenHostChanged.push(
-						(
-							harness.raw
-								.prepare('SELECT visibility FROM groups WHERE group_did = ?')
-								.get(GROUP_DID) as { visibility: string }
-						).visibility
-					);
-				}
-				return undefined;
-			});
+			const pds = host();
 			const group = await givenGroup(from, pds);
 
 			const result = await save(group, to, { rules: 'Be kind' });
@@ -176,9 +167,8 @@ describe('a settings flip moves the about space’s read policy', () => {
 			expect(pds.requests.some((r) => r.nsid.startsWith('com.atproto.simplespace.putMember'))).toBe(
 				false
 			);
-			// The order: the host first, while the row still says what it said,
-			// then the row, the declaration, the profile and the rules.
-			expect(rowWhenHostChanged).toEqual([from]);
+			// The order: the host first, then the declaration, the profile and the
+			// rules.
 			expect(traced(pds)).toEqual([
 				`simplespace.updateSpace ${name}`,
 				`repo.${declarationWrite} net.openmeet.group.declaration`,
@@ -272,7 +262,7 @@ describe('a failed updateSpace stops the save', () => {
 // The next save then finds the same change to make and retries it, rather than
 // reporting success while the about space keeps the old read policy.
 describe('a visibility change that does not reach the host leaves the row where it was', () => {
-	it('a public open group saved as private, whose updateSpace answers 500, still says public and open on its row', async () => {
+	it('a public open group saved as private, whose updateSpace answers 500, is still public at its host and open on its row', async () => {
 		const pds = host((nsid) =>
 			nsid === 'com.atproto.simplespace.updateSpace' ? pdsDown() : undefined
 		);
@@ -283,7 +273,8 @@ describe('a visibility change that does not reach the host leaves the row where 
 		expect(result.ok).toBe(false);
 		// Neither half of the pair moved, though the approval change was only
 		// there because private requires it.
-		expect(rowNow()).toEqual({ visibility: 'public', require_approval: 0 });
+		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
+		expect(approvalNow()).toBe(0);
 		expect(!result.ok && result.error).toContain("did not reach the group's PDS");
 		expect(!result.ok && result.error).toContain('visibility was not changed');
 		expect(!result.ok && result.error).toContain('saving again will retry');
@@ -308,17 +299,18 @@ describe('a visibility change that does not reach the host leaves the row where 
 			{ space: ABOUT, readPolicy: policy('memberListPolicy') }
 		]);
 		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
-		expect(rowNow().visibility).toBe('private');
 	});
 
-	it('a public group saved as private, whose about space cannot be read before the host write, still says public on its row', async () => {
+	it('a public group saved as private, whose about space cannot be read before the host write, leaves the host and the row as they were', async () => {
 		const pds = host((nsid) => (nsid === 'com.atproto.space.getRecord' ? pdsDown() : undefined));
 		const group = await givenGroup('public', pds);
+		const before = rowWhole();
 
 		const result = await save(group, 'private');
 
 		expect(result.ok).toBe(false);
-		expect(rowNow()).toEqual({ visibility: 'public', require_approval: 1 });
+		expect(rowWhole()).toEqual(before);
+		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
 		expect(updateSpaceCalls(pds)).toEqual([]);
 		// The host never refused anything: the message names the read that failed.
 		expect(!result.ok && result.error).toContain('Nothing was saved');
@@ -333,34 +325,42 @@ describe('a visibility change that does not reach the host leaves the row where 
 // the host took is never taken back: a later failure leaves the host ahead of
 // the rest, and the message says which writes landed.
 describe('a visibility change reaches the host before the row', () => {
-	it('a public group saved as private calls updateSpace, then writes the row, then deletes the declaration, then writes the profile and the rules', async () => {
-		// The row as each host write found it, so the row write shows up in the
-		// sequence: after updateSpace, before the declaration.
+	// The row keeps the profile's columns and no visibility: the host is the
+	// only place that holds it. The row write sits after the host and before
+	// the records, which the row's name at each host write shows.
+	it('a settings save writes the host, the declaration, the profile and the rules in that order, and no row visibility', async () => {
 		const sequence: string[] = [];
 		const pds = host((nsid, init) => {
 			if (isHostWrite(nsid, init)) {
-				sequence.push(`${nsid.replace('com.atproto.', '')} (row ${rowNow().visibility})`);
+				const { name } = harness.raw
+					.prepare('SELECT name FROM groups WHERE group_did = ?')
+					.get(GROUP_DID) as { name: string };
+				sequence.push(`${nsid.replace('com.atproto.', '')} (row ${name})`);
 			}
 			return undefined;
 		});
 		const group = await givenGroup('public', pds);
 		sequence.length = 0;
+		harness.statements.length = 0;
 
-		const result = await save(group, 'private', { rules: 'Be kind' });
+		const result = await save(group, 'private', { name: 'Kona Night Runners', rules: 'Be kind' });
 
 		expect(result).toEqual({ ok: true });
-		expect(sequence).toEqual([
-			'simplespace.updateSpace (row public)',
-			'repo.deleteRecord (row private)',
-			'space.putRecord (row private)',
-			'space.createRecord (row private)'
-		]);
 		expect(traced(pds)).toEqual([
 			'simplespace.updateSpace memberListPolicy',
 			'repo.deleteRecord net.openmeet.group.declaration',
 			'space.putRecord net.openmeet.group.profile',
 			'space.createRecord net.openmeet.group.rule'
 		]);
+		expect(sequence).toEqual([
+			'simplespace.updateSpace (row Kona Trail Runners)',
+			'repo.deleteRecord (row Kona Night Runners)',
+			'space.putRecord (row Kona Night Runners)',
+			'space.createRecord (row Kona Night Runners)'
+		]);
+		const rowWrites = harness.statements.filter(isRowWrite);
+		expect(rowWrites.length).toBeGreaterThan(0);
+		expect(rowWrites.filter((sql) => /visibility/.test(sql))).toEqual([]);
 	});
 
 	it('a public group saved as private, whose updateSpace answers 500, leaves the whole row as it was and makes no declaration, profile or rules write', async () => {
@@ -384,7 +384,7 @@ describe('a visibility change reaches the host before the row', () => {
 		expect(!result.ok && result.error).toContain('Nothing was saved');
 	});
 
-	it('a public group saved as private, whose profile write fails after the host took the change, keeps the host and the row private and puts nothing back', async () => {
+	it('a public group saved as private, whose profile write fails after the host took the change, keeps the host private and puts nothing back', async () => {
 		const pds = host((nsid, init) =>
 			nsid === 'com.atproto.space.putRecord' &&
 			(JSON.parse(String(init?.body)) as { collection: string }).collection ===
@@ -397,13 +397,14 @@ describe('a visibility change reaches the host before the row', () => {
 		const result = await save(group, 'private');
 
 		expect(result.ok).toBe(false);
-		expect(rowNow()).toEqual({ visibility: 'private', require_approval: 1 });
+		expect(approvalNow()).toBe(1);
 		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
 		// One call: nothing moved the host back after the failure.
 		expect(updateSpaceCalls(pds).map((r) => r.body)).toEqual([
 			{ space: ABOUT, readPolicy: policy('memberListPolicy') }
 		]);
 		// And the message says what landed: the host and the row, not the records.
+		// The row write carried no visibility, since it has none.
 		// The declaration went before the profile, so the group is not listed.
 		expect(!result.ok && result.error).toContain('now reads it as private');
 		expect(!result.ok && result.error).toContain('records were not updated');
@@ -418,20 +419,21 @@ describe('a visibility change reaches the host before the row', () => {
 			 BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`
 		);
 
+		const before = rowWhole();
+
 		const result = await save(group, 'private', { rules: 'Be kind' });
 
 		expect(result.ok).toBe(false);
 		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
-		expect(rowNow().visibility).toBe('public');
+		expect(rowWhole()).toEqual(before);
 		expect(traced(pds)).toEqual(['simplespace.updateSpace memberListPolicy']);
 		expect(!result.ok && result.error).toContain('now reads it as private');
 		expect(!result.ok && result.error).toContain('disk I/O error');
 		expect(!result.ok && result.error).toContain('were not updated either');
-		// The declaration was never withdrawn, and saving again from a form that
-		// still shows the row's visibility would move the host back.
+		// The declaration was never withdrawn. The form shows what the host
+		// enforces, so saving again has no host change to make and finishes it.
 		expect(!result.ok && result.error).toContain('still listed in browse');
-		expect(!result.ok && result.error).toContain('Repair this group');
-		expect(!result.ok && result.error).not.toContain('Saving again');
+		expect(!result.ok && result.error).toContain('Saving the settings again finishes it');
 	});
 
 	it('a public group saved as private, whose declaration delete fails, says the group is still listed in browse', async () => {
@@ -441,7 +443,7 @@ describe('a visibility change reaches the host before the row', () => {
 		const result = await save(group, 'private');
 
 		expect(result.ok).toBe(false);
-		expect(rowNow().visibility).toBe('private');
+		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
 		expect(!result.ok && result.error).toContain('now reads it as private');
 		expect(!result.ok && result.error).toContain('records were not updated');
 		expect(!result.ok && result.error).toContain('still listed in browse');
@@ -467,13 +469,10 @@ describe('a save that keeps the visibility and fails', () => {
 	});
 });
 
-// A failed save can leave the host ahead of the row, and the settings form
-// preselects the row's visibility. Saved as it stands, that stale default would
-// move the host back and report success. So a save whose visibility is the
-// row's, while the host says otherwise, is refused before anything is written,
-// and the owner is sent to Repair, which brings the row to the host. A save
-// that asks for what the host already enforces goes through.
-describe('a save from a form that shows the row, while the host says otherwise', () => {
+// A failed save can leave the host ahead of the records. The settings form
+// shows what the host enforces, so saving again asks for that same value: no
+// host write, and the declaration, the profile and the rules catch up.
+describe('a save after one that the host took and the records did not', () => {
 	/** Moves the about space's read policy at the host, the way a save that
 	 *  failed after its host write leaves it. */
 	async function hostSays(visibility: GroupVisibility, pds: Host) {
@@ -489,36 +488,7 @@ describe('a save from a form that shows the row, while the host says otherwise',
 		pds.clearLog();
 	}
 
-	it.each([
-		['private', 'public'],
-		['public', 'private']
-	] as const)(
-		'a group the host reads as %s, whose row says %s, saved as the row says, writes nothing and points to Repair',
-		async (hostVisibility, rowVisibility) => {
-			const pds = host();
-			const group = await givenGroup(rowVisibility, pds);
-			await hostSays(hostVisibility, pds);
-			const before = rowWhole();
-
-			const result = await save(group, rowVisibility, {
-				name: 'Kona Night Runners',
-				rules: 'Be kind'
-			});
-
-			expect(result.ok).toBe(false);
-			expect(pds.writes()).toEqual([]);
-			expect(rowWhole()).toEqual(before);
-			expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(
-				policy(hostVisibility === 'public' ? 'publicPolicy' : 'memberListPolicy')
-			);
-			expect(!result.ok && result.error).toContain(`PDS enforces ${hostVisibility}`);
-			expect(!result.ok && result.error).toContain(`copy says ${rowVisibility}`);
-			expect(!result.ok && result.error).toContain('Repair this group');
-			expect(!result.ok && result.error).toContain('Nothing was saved');
-		}
-	);
-
-	it('a group the host reads as private, whose row says public, saved as private, brings the row and the declaration in line without calling updateSpace', async () => {
+	it('a group the host already reads as private, saved as private, withdraws its declaration without calling updateSpace', async () => {
 		const pds = host();
 		const group = await givenGroup('public', pds);
 		await hostSays('private', pds);
@@ -526,7 +496,6 @@ describe('a save from a form that shows the row, while the host says otherwise',
 		const result = await save(group, 'private', { rules: 'Be kind' });
 
 		expect(result).toEqual({ ok: true });
-		expect(rowNow().visibility).toBe('private');
 		expect(traced(pds)).toEqual([
 			'repo.deleteRecord net.openmeet.group.declaration',
 			'space.putRecord net.openmeet.group.profile',

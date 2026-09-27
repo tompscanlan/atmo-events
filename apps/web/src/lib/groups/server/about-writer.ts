@@ -22,7 +22,7 @@ import {
 	joinPolicyFor,
 	type GroupProfileInput
 } from '../about-record';
-import type { GroupRow } from '../types';
+import type { GroupRow, GroupVisibility } from '../types';
 import type { CredentialStoreEnv } from './credentials';
 import {
 	GroupRecordError,
@@ -69,9 +69,13 @@ function aboutSpace(group: GroupRow): string {
  *
  *  `createdAt` is threaded from the existing record when there is one, so an
  *  edit does not restamp the group's creation date. The caller supplies it
- *  because only the caller knows whether it already read the record. */
+ *  because only the caller knows whether it already read the record.
+ *
+ *  `visibility` is the one the caller has, the form's choice on a create or a
+ *  save. The row holds approval and no visibility. */
 export async function writeGroupProfile(
 	input: WriteGroupAboutInput & {
+		visibility: GroupVisibility;
 		profile: Omit<GroupProfileInput, 'joinPolicy'> & {
 			joinPolicy?: GroupProfileInput['joinPolicy'];
 		};
@@ -83,10 +87,10 @@ export async function writeGroupProfile(
 		...groupProfileRecord({
 			...input.profile,
 			// Unless the caller passes one, the join policy is derived from the
-			// row: `visibility` + `require_approval` are what the schema enforces
-			// (migrations/0001_groups.sql makes a private group require approval),
-			// so the record matches the row.
-			joinPolicy: input.profile.joinPolicy ?? joinPolicyFor(input.group)
+			// visibility and the row's approval, so a private group's profile says
+			// invite-only.
+			joinPolicy:
+				input.profile.joinPolicy ?? joinPolicyFor(input.visibility, input.group.require_approval)
 		}),
 		$type: GROUP_PROFILE_COLLECTION
 	};

@@ -22,10 +22,10 @@
 	let isMember = $derived(membership.role !== null);
 	let isPending = $derived(membership.pendingRequestId !== null);
 	// What the group published, not what our columns imply. `joinPolicy` is the
-	// profile record's own field; the loader derives it from `visibility` and
-	// `require_approval` only when there is no record to read. Reading the
-	// columns here would let the page contradict the record a stranger fetches
-	// from the group's PDS.
+	// profile record's own field; the loader derives it from the host's
+	// visibility and `require_approval` only when there is no record to read.
+	// Reading the columns here would let the page contradict the record a
+	// stranger fetches from the group's PDS.
 	let joinPolicy = $derived(about.joinPolicy);
 	let joiningLabel = $derived(
 		joinPolicy === 'open'
@@ -55,12 +55,15 @@
 		repairGroupForm.result?.ok === true ? repairGroupForm.result.summary : undefined
 	);
 	let showSettings = $state(false);
+	// The group's visibility as its host reports it: the about space's read
+	// policy. Null when the host could not be asked, and then no badge shows.
+	let visibility = $derived(data.visibility);
 	// The visibility currently selected in the settings form, or null for "not
-	// changed yet", in which case the stored one applies. A private group is
-	// invite-only and the groups table refuses one that does not require
-	// approval, so the form shows approval as fixed on while private is picked.
+	// changed yet", in which case the host's applies. A private group is
+	// invite-only and a save refuses one that does not require approval, so the
+	// form shows approval as fixed on while private is picked.
 	let pickedVisibility = $state<string | null>(null);
-	let settingsPrivate = $derived((pickedVisibility ?? group.visibility) === 'private');
+	let settingsPrivate = $derived((pickedVisibility ?? visibility) === 'private');
 </script>
 
 <svelte:head>
@@ -89,7 +92,7 @@
 			</p>
 		</div>
 		<div class="flex shrink-0 flex-wrap gap-2">
-			<Badge variant="secondary">{group.visibility}</Badge>
+			{#if visibility}<Badge variant="secondary">{visibility}</Badge>{/if}
 			{#if membership.role}<Badge>{membership.role}</Badge>{/if}
 		</div>
 	</div>
@@ -299,7 +302,7 @@
 							class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
 						>
 							{#each ['public', 'private'] as value (value)}
-								<option {value} selected={group.visibility === value}>{value}</option>
+								<option {value} selected={visibility === value}>{value}</option>
 							{/each}
 						</select>
 					</div>

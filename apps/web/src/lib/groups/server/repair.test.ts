@@ -5,13 +5,12 @@
 // with its row, and an authz config that is half there.
 //
 // It also brings the about space's member list in line with the membership
-// records, and the declaration and the row's visibility in line with the about
-// space's read policy. The list and the policy live at the host, so every case
+// records, and the declaration in line with the about space's read policy. The list and the policy live at the host, so every case
 // runs against the fake host (./__fixtures__/stub-pds.ts) with the group's
 // credential stored, and the host pages its listings small enough that a
 // second page is real.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
+import { isRowWrite, sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { stubPds, type StubPdsOptions } from './__fixtures__/stub-pds';
 import {
 	addMember,
@@ -456,13 +455,13 @@ describe('the about space member list follows the membership records', () => {
 });
 
 // Visibility lives at the host: the about space's read policy is what the page
-// gate reads. Repair brings the two copies of it this site and the network
-// still hold, the declaration in the public repo and the row's visibility
-// column, in line with that policy. Never the other way round: it does not call
-// updateSpace, so a change of visibility that reached the host is never undone
-// by a row that missed it. These cases run every transport for real, the
-// declaration probe included, so a second run sees what the first one wrote.
-describe('Repair aligns the declaration and the row to the host', () => {
+// gate reads. Repair brings the one other place that says it, the declaration
+// in the public repo, in line with that policy. Never the other way round: it
+// does not call updateSpace, so a change of visibility that reached the host is
+// never undone by a declaration that missed it. The row has no visibility to
+// align. These cases run every transport for real, the declaration probe
+// included, so a second run sees what the first one wrote.
+describe('Repair aligns the declaration to the host', () => {
 	const policyName = (visibility: GroupVisibility) =>
 		visibility === 'public' ? 'publicPolicy' : 'memberListPolicy';
 
@@ -485,8 +484,6 @@ describe('Repair aligns the declaration and the row to the host', () => {
 		});
 		return (await fetch(`${CRED.service}/xrpc/com.atproto.repo.getRecord?${query}`)).ok;
 	}
-
-	const rowVisibility = async () => (await getGroupByDid(db, GROUP_DID))?.visibility;
 
 	/** Repair with nothing injected: every read and write goes to the host. */
 	const hostRepair = async () =>
@@ -511,25 +508,21 @@ describe('Repair aligns the declaration and the row to the host', () => {
 		[
 			'private',
 			true,
-			'public',
 			false,
-			'private',
 			['repo.deleteRecord'],
-			"Brought the group in line with its PDS, which reads it as private: withdrew its declaration and set this site's copy to private."
+			'Brought the group in line with its PDS, which reads it as private: withdrew its declaration.'
 		],
 		[
 			'public',
 			false,
-			'private',
 			true,
-			'public',
 			['repo.putRecord'],
-			"Brought the group in line with its PDS, which reads it as public: published its declaration and set this site's copy to public."
+			'Brought the group in line with its PDS, which reads it as public: published its declaration.'
 		],
-		['private', false, 'private', false, 'private', [], null]
+		['private', false, false, [], null]
 	] as const)(
-		'a host reading the group as %s, with the declaration present: %s and the row saying %s, ends with the declaration present: %s and the row saying %s, and never calls updateSpace',
-		async (host, declaredBefore, row, declaredAfter, rowAfter, hostWrites, summary) => {
+		'a host reading the group as %s, with the declaration present: %s, ends with the declaration present: %s, and never calls updateSpace',
+		async (host, declaredBefore, declaredAfter, hostWrites, summary) => {
 			await hostCall('com.atproto.simplespace.updateSpace', {
 				space: ABOUT,
 				readPolicy: { $type: `com.atproto.simplespace.defs#${policyName(host)}` }
@@ -542,7 +535,6 @@ describe('Repair aligns the declaration and the row to the host', () => {
 					record: { aboutSpace: ABOUT, createdAt: new Date(group.created_at).toISOString() }
 				});
 			}
-			await updateGroup(db, group.id, { visibility: row });
 			pds.clearLog();
 
 			const result = await hostRepair();
@@ -556,7 +548,6 @@ describe('Repair aligns the declaration and the row to the host', () => {
 			).toBe(true);
 			expect(pds.writes().map((w) => w.nsid.replace('com.atproto.', ''))).toEqual(hostWrites);
 			expect(await declared()).toBe(declaredAfter);
-			expect(await rowVisibility()).toBe(rowAfter);
 			expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual({
 				$type: `com.atproto.simplespace.defs#${policyName(host)}`
 			});
@@ -568,23 +559,25 @@ describe('Repair aligns the declaration and the row to the host', () => {
 			pds.clearLog();
 			await hostRepair();
 			expect(pds.writes()).toEqual([]);
-			expect(await rowVisibility()).toBe(rowAfter);
+			expect(await declared()).toBe(declaredAfter);
 		}
 	);
 
 	// The shape a failed save really leaves: a public group open to join is
-	// saved as private, the host takes the change and the row write fails. The
-	// profile record still says anyone may join. Repair moves the row to private
-	// with approval, and the rebuild after it must keep that approval rather
-	// than take the profile's "open" and be refused by the schema on every run.
-	it('completes on a group the host reads as private whose row and profile still say public and open', async () => {
+	// saved as private and the host takes the change, while the profile record
+	// still says anyone may join. Repair withdraws the declaration and rebuilds
+	// the row from the records, and at no point writes a visibility into the
+	// row: there is no column for it. The rebuild keeps the row requiring
+	// approval, because the host reads the group as private, rather than take
+	// the profile's "open".
+	it('repair writes no visibility to the row', async () => {
 		await updateGroup(db, group.id, { requireApproval: false });
-		const open = (await getGroupByDid(db, GROUP_DID))!;
 		await writeGroupProfile({
 			db,
 			env,
-			group: open,
+			group: (await getGroupByDid(db, GROUP_DID))!,
 			callerDid: OWNER,
+			visibility: 'public',
 			profile: { name: 'Kona' }
 		});
 		await hostCall('com.atproto.repo.putRecord', {
@@ -598,14 +591,15 @@ describe('Repair aligns the declaration and the row to the host', () => {
 			readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' }
 		});
 		pds.clearLog();
+		harness.statements.length = 0;
 
-		await hostRepair();
+		const result = await hostRepair();
 
-		const row = (await getGroupByDid(db, GROUP_DID))!;
-		expect({ visibility: row.visibility, require_approval: row.require_approval }).toEqual({
-			visibility: 'private',
-			require_approval: 1
-		});
+		const rowWrites = harness.statements.filter(isRowWrite);
+		expect(rowWrites.length).toBeGreaterThan(0);
+		expect(rowWrites.filter((sql) => /visibility/.test(sql))).toEqual([]);
+		expect(result.host).toEqual({ visibility: 'private', declaration: 'withdrawn' });
+		expect((await getGroupByDid(db, GROUP_DID))?.require_approval).toBe(1);
 		expect(await declared()).toBe(false);
 		expect(pds.writes().map((w) => w.nsid.replace('com.atproto.', ''))).toEqual([
 			'repo.deleteRecord'

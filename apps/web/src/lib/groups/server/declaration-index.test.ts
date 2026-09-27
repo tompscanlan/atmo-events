@@ -162,7 +162,14 @@ describe('our declaration index', () => {
 		const group = await declaredGroup('did:plc:w5mbhkqzwkb2xdpxa6p5kfnb');
 		down = true;
 
-		await reconcileGroupDeclaration({ db, env, group, callerDid: OWNER, writer });
+		await reconcileGroupDeclaration({
+			db,
+			env,
+			group,
+			visibility: 'public',
+			callerDid: OWNER,
+			writer
+		});
 
 		expect(getRecordCalls).toEqual([]);
 		expect(await declaredDids()).toContain(group.group_did);

@@ -21,10 +21,9 @@
 // change with it.
 //
 // It is also where the app reads a group's visibility back from
-// (`readGroupVisibility`, with `getSpace`). The page gate, the join refusal, the
-// settings save and Repair all ask the host rather than our row, because the
-// host is what every other app is held to, and a save that failed partway can
-// leave the row behind it.
+// (`readGroupVisibility`, with `getSpace`). The page gate, the group page, the
+// join refusal, the settings save and Repair all ask the host, because the host
+// is what every other app is held to. The row holds no copy.
 //
 // The write policy is member-list on both. The vocabulary
 // (com.atproto.simplespace.defs) has no "only the owner" policy, and none is
@@ -82,7 +81,7 @@ export function visibilityFromReadPolicy(readPolicy: string): GroupVisibility {
 }
 
 /** A group's visibility as its host enforces it: `getSpace` on the about space,
- *  through `visibilityFromReadPolicy`. Never the row.
+ *  through `visibilityFromReadPolicy`. The only source: the row holds none.
  *
  *  It throws when it cannot ask: a group whose about space was never recorded
  *  (provisioning did not finish), or a host that does not answer. "Could not
@@ -264,15 +263,16 @@ export function pdsSpaceUpdater(cred: GroupCredential, groupDid: string): GroupS
 }
 
 export interface SetAboutSpaceReadPolicyInput extends GroupGateInput {
+	/** The visibility the group is moving to: the settings form's choice. */
+	visibility: GroupVisibility;
 	/** Overrides the PDS transport. When absent, it is built from the group's
 	 *  stored credential. */
 	updater?: GroupSpaceUpdater;
 }
 
-/** Moves a group's about space to the read policy its visibility names
- *  (`aboutSpaceReadPolicy(group.visibility)`), so pass the group as it is
- *  after the change. The settings save calls this only when the visibility
- *  changed.
+/** Moves a group's about space to the read policy `visibility` names
+ *  (`aboutSpaceReadPolicy`). The settings save calls this only when the
+ *  visibility changed.
  *
  *  It touches the about space only. The members space's policy and its own
  *  member list are not visibility's business: the members space is member-list
@@ -295,5 +295,5 @@ export async function setAboutSpaceReadPolicy(input: SetAboutSpaceReadPolicyInpu
 		if (!cred) throw new GroupCredentialError(input.group.group_did);
 		updater = pdsSpaceUpdater(cred, input.group.group_did);
 	}
-	await updater({ space, readPolicy: aboutSpaceReadPolicy(input.group.visibility) });
+	await updater({ space, readPolicy: aboutSpaceReadPolicy(input.visibility) });
 }

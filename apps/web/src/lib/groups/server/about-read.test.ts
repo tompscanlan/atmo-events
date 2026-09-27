@@ -12,7 +12,7 @@
 //      stays closed and the rebuild still completes.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { createGroup, getGroupById, recordGroupSpaces, updateGroup } from './repo';
+import { createGroup, getGroupById, recordGroupSpaces } from './repo';
 import {
 	cacheFromProfile,
 	pdsSpaceReader,
@@ -198,7 +198,7 @@ describe('rebuildGroupCache — cache repair', () => {
 			}
 		]);
 
-		const result = await rebuildGroupCache(db, reader, group);
+		const result = await rebuildGroupCache(db, reader, group, 'public');
 		expect(result).toEqual({ outcome: 'repaired', rules: 0 });
 
 		const repaired = await getGroupById(db, group.id);
@@ -210,12 +210,8 @@ describe('rebuildGroupCache — cache repair', () => {
 		});
 	});
 
-	// The columns no record owns must survive a rebuild untouched. `visibility` is
-	// the one that matters: a public group that requires approval also has an
-	// `approval` join policy, so a rebuild that turned the policy back into a
-	// visibility would publish this private group.
-	it('leaves visibility and owner_did alone', async () => {
-		await updateGroup(db, group.id, { visibility: 'private' });
+	// The column no record owns must survive a rebuild untouched.
+	it('leaves owner_did alone', async () => {
 		const reader = readerOver([
 			{
 				collection: GROUP_PROFILE_COLLECTION,
@@ -224,20 +220,20 @@ describe('rebuildGroupCache — cache repair', () => {
 			}
 		]);
 
-		await rebuildGroupCache(db, reader, group);
+		await rebuildGroupCache(db, reader, group, 'private');
 		const repaired = await getGroupById(db, group.id);
-		expect(repaired).toMatchObject({ visibility: 'private', owner_did: OWNER });
+		expect(repaired).toMatchObject({ owner_did: OWNER });
+		expect(repaired).not.toHaveProperty('visibility');
 	});
 
-	// The safety case. migrations/0001_groups.sql forbids a private group that is
-	// open to join, so a profile claiming `open` for a private group must not be
-	// applied as it stands. Otherwise a record edit could open a private group to
+	// The safety case. A private group must require approval, so a profile
+	// claiming `open` for a group its host reads as private must not be applied
+	// as it stands. Otherwise a record edit could open a private group to
 	// anyone. Nor may it stop the rebuild: a profile written while the group was
 	// public and open is exactly what a save that failed after the host took a
 	// switch to private leaves behind, and a rebuild that threw on it would throw
 	// on every run of Repair. The rest of the profile is applied.
 	it('keeps a private group requiring approval when its profile record claims open', async () => {
-		await updateGroup(db, group.id, { visibility: 'private', requireApproval: true });
 		const reader = readerOver([
 			{
 				collection: GROUP_PROFILE_COLLECTION,
@@ -246,10 +242,12 @@ describe('rebuildGroupCache — cache repair', () => {
 			}
 		]);
 
-		expect(await rebuildGroupCache(db, reader, group)).toEqual({ outcome: 'repaired', rules: 0 });
+		expect(await rebuildGroupCache(db, reader, group, 'private')).toEqual({
+			outcome: 'repaired',
+			rules: 0
+		});
 		expect(await getGroupById(db, group.id)).toMatchObject({
 			name: 'Kona Riders',
-			visibility: 'private',
 			require_approval: 1
 		});
 	});
@@ -257,7 +255,7 @@ describe('rebuildGroupCache — cache repair', () => {
 	// An empty about space is not "the group has no name": wiping the cache to
 	// match an absent record would destroy the only copy.
 	it('leaves the cache alone when there is no profile record', async () => {
-		const result = await rebuildGroupCache(db, readerOver([]), group);
+		const result = await rebuildGroupCache(db, readerOver([]), group, 'public');
 		expect(result.outcome).toBe('no-profile');
 		expect(await getGroupById(db, group.id)).toMatchObject({ name: 'Stale name' });
 	});

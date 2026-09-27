@@ -78,6 +78,7 @@ describe('writeGroupProfile', () => {
 			db,
 			env,
 			group,
+			visibility: 'public',
 			callerDid: ADMIN,
 			writer,
 			profile: { name: 'Kona', description: 'Weekly rides' }
@@ -94,13 +95,15 @@ describe('writeGroupProfile', () => {
 		});
 	});
 
-	// With no join policy given, the record describes the group as the database
-	// has it: `joinPolicy` is derived from visibility + require_approval.
-	it('derives joinPolicy from the row rather than trusting a caller', async () => {
+	// With no join policy given, the record describes the group as the save
+	// has it: `joinPolicy` is derived from the visibility the caller passes and
+	// the row's require_approval.
+	it('derives joinPolicy from the visibility and the row rather than trusting a caller', async () => {
 		await writeGroupProfile({
 			db,
 			env,
-			group: { ...group, visibility: 'private', require_approval: 1 },
+			group: { ...group, require_approval: 1 },
+			visibility: 'private',
 			callerDid: OWNER,
 			writer,
 			profile: { name: 'Kona', joinPolicy: undefined }
@@ -114,6 +117,7 @@ describe('writeGroupProfile', () => {
 				db,
 				env,
 				group,
+				visibility: 'public',
 				callerDid: MEMBER,
 				writer,
 				profile: { name: 'Hijacked' }
@@ -124,7 +128,15 @@ describe('writeGroupProfile', () => {
 
 	it('refuses an anonymous caller before any write is attempted', async () => {
 		await expect(
-			writeGroupProfile({ db, env, group, callerDid: null, writer, profile: { name: 'Nope' } })
+			writeGroupProfile({
+				db,
+				env,
+				group,
+				visibility: 'public',
+				callerDid: null,
+				writer,
+				profile: { name: 'Nope' }
+			})
 		).rejects.toThrow(GroupPermissionError);
 		expect(writes).toHaveLength(0);
 	});
@@ -137,6 +149,7 @@ describe('writeGroupProfile', () => {
 				db,
 				env,
 				group: { ...group, about_space_uri: null },
+				visibility: 'public',
 				callerDid: OWNER,
 				writer,
 				profile: { name: 'Kona' }

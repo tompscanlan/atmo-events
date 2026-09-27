@@ -7,6 +7,7 @@
 //      off a PDS and decides whether strangers can walk into a group.
 import { describe, it, expect } from 'vitest';
 import {
+	approvalRefusal,
 	groupFace,
 	groupProfileRecord,
 	groupRuleRecord,
@@ -19,16 +20,34 @@ import {
 
 describe('joinPolicyFor', () => {
 	// Private means invite-only, so visibility is consulted before
-	// require_approval. migrations/0001_groups.sql refuses a private group with
-	// require_approval = 0, but the mapping must not depend on that.
+	// require_approval. The forms refuse a private group with approval off
+	// (`approvalRefusal`), but the mapping must not depend on that.
 	it('reads private as invite regardless of require_approval', () => {
-		expect(joinPolicyFor({ visibility: 'private', require_approval: 1 })).toBe('invite');
-		expect(joinPolicyFor({ visibility: 'private', require_approval: 0 })).toBe('invite');
+		expect(joinPolicyFor('private', 1)).toBe('invite');
+		expect(joinPolicyFor('private', 0)).toBe('invite');
 	});
 
 	it('distinguishes approval from open for a public group', () => {
-		expect(joinPolicyFor({ visibility: 'public', require_approval: 1 })).toBe('approval');
-		expect(joinPolicyFor({ visibility: 'public', require_approval: 0 })).toBe('open');
+		expect(joinPolicyFor('public', 1)).toBe('approval');
+		expect(joinPolicyFor('public', 0)).toBe('open');
+	});
+
+	// A host nobody could ask is not a public group, the same way a join is
+	// refused then.
+	it('reads an unknown visibility as invite', () => {
+		expect(joinPolicyFor(null, 0)).toBe('invite');
+	});
+});
+
+describe('approvalRefusal', () => {
+	it('refuses only a private group with approval off', () => {
+		expect(approvalRefusal('private', false)).toBe(
+			'A private group must require approval to join — invite members instead'
+		);
+		expect(approvalRefusal('private', true)).toBeNull();
+		expect(approvalRefusal('public', false)).toBeNull();
+		// Absent means approval on, as everywhere else.
+		expect(approvalRefusal('private', undefined)).toBeNull();
 	});
 });
 
@@ -36,7 +55,7 @@ describe('requireApprovalFor', () => {
 	// The inverse is partial on purpose. Only `private` maps to `invite`, so the
 	// mapping looks invertible, but a rebuild that inverted it would forbid a
 	// public group from ever being invite-only. What comes back is the approval
-	// flag and nothing else; the stored visibility is what `about-read.ts` keeps.
+	// flag and nothing else. Visibility stays at the host.
 	it('restores require_approval and nothing else', () => {
 		expect(requireApprovalFor('open')).toBe(0);
 		expect(requireApprovalFor('approval')).toBe(1);
@@ -142,7 +161,6 @@ describe('groupFace', () => {
 		name: 'ZZZ CORRUPTED CACHE',
 		description: 'CORRUPTED DESCRIPTION',
 		location_name: 'CORRUPTED LOCATION',
-		visibility: 'public',
 		require_approval: 1
 	};
 
@@ -155,7 +173,8 @@ describe('groupFace', () => {
 				locationName: null,
 				createdAt: null
 			},
-			row
+			row,
+			'private'
 		);
 		expect(face).toEqual({
 			source: 'records',
@@ -166,14 +185,17 @@ describe('groupFace', () => {
 		});
 	});
 
+	// The row has approval and no visibility, so the fallback's join policy
+	// takes the host's.
 	it('renders the row, and says so, only when there is no record', () => {
-		expect(groupFace(null, row)).toEqual({
+		expect(groupFace(null, row, 'public')).toEqual({
 			source: 'cache',
 			name: 'ZZZ CORRUPTED CACHE',
 			description: 'CORRUPTED DESCRIPTION',
 			locationName: 'CORRUPTED LOCATION',
 			joinPolicy: 'approval'
 		});
+		expect(groupFace(null, row, 'private').joinPolicy).toBe('invite');
 	});
 });
 

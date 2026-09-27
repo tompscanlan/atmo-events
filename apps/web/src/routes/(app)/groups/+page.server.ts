@@ -3,6 +3,7 @@ import { listDeclaredGroups } from '$lib/groups/server/declaration-index';
 import { knownHandles } from '$lib/groups/server/handles';
 import { listGroups } from '$lib/groups/server/repo';
 import { readStanding } from '$lib/groups/server/route-context';
+import type { GroupVisibility } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
 
 /** Browse. The list is the declaration index plus the caller's own groups (see
@@ -26,6 +27,10 @@ import type { PageServerLoad } from './$types';
  *  after), 4 members-space reads and 3 D1 reads. Only a signed-in caller pays
  *  it, and `listGroups` bounds it: newest first, at most 6 at once, and no
  *  more than the page's limit plus the rejections along the way.
+ *
+ *  The visibility badge is placement, with no host read per row: a group from
+ *  the declaration index is public, and one the caller sees only through
+ *  their own groups, undeclared, is private.
  *
  *  Handles come from contrail's `identities` table, the same cache as every
  *  other actor's handle. A group it has never resolved shows its DID, which is
@@ -51,12 +56,12 @@ export const load: PageServerLoad = async ({ locals, platform }) => {
 		groups.map((group) => group.group_did)
 	);
 	return {
-		groups: groups.map(({ group_did, row }) => ({
+		groups: groups.map(({ group_did, row, declared }) => ({
 			group_did,
 			hosted: row !== null,
 			name: row?.name ?? null,
 			description: row?.description ?? null,
-			visibility: row?.visibility ?? null,
+			visibility: (declared ? 'public' : 'private') satisfies GroupVisibility,
 			handle: handles.get(group_did) ?? null
 		})),
 		callerDid: locals.did

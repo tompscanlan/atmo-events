@@ -29,7 +29,7 @@ import {
 	declarationRequired,
 	groupDeclarationRecord
 } from '../declaration-record';
-import type { GroupRow } from '../types';
+import type { GroupRow, GroupVisibility } from '../types';
 import type { GroupSpaceReader } from './about-read';
 import type { CredentialStoreEnv } from './credentials';
 import {
@@ -163,17 +163,20 @@ async function forgetDeclaration(input: WithdrawGroupDeclarationInput): Promise<
  * a change to which groups get a declaration only touches
  * `declarationRequired`.
  *
+ * `visibility` is the one the caller has: the form's choice on a create or a
+ * settings save, the host's read policy on a repair. The row holds none.
+ *
  * `assumeAbsent` is for the create path: a repo minted seconds ago cannot hold
  * a declaration, so a private group's create skips a delete that can only be a
  * no-op, and that could otherwise fail a group that was just created.
  */
 export async function reconcileGroupDeclaration(
-	input: WithdrawGroupDeclarationInput & { assumeAbsent?: boolean }
+	input: WithdrawGroupDeclarationInput & { visibility: GroupVisibility; assumeAbsent?: boolean }
 ): Promise<DeclarationWriteResult | null> {
 	// `writeGroupDeclaration` takes no notifier, so `input.notify` goes no
 	// further on this branch: a declare must never tell the index (see the file
 	// header).
-	if (declarationRequired(input.group)) return writeGroupDeclaration(input);
+	if (declarationRequired(input.visibility)) return writeGroupDeclaration(input);
 	if (input.assumeAbsent) return null;
 	await removeGroupDeclaration(input);
 	return null;

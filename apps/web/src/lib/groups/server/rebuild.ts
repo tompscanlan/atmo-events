@@ -14,6 +14,12 @@
 //                    `roles (id, group_id)` and a group with no row has no role
 //                    rows either.
 //
+// NOTHING IS RESTORED FOR VISIBILITY. A group's visibility is its about space's
+// read policy at the host, and its declaration already sits in its public
+// repo. Neither lives in a row, so a rebuild has nothing to write back and no
+// reason to guess. The repair path does ask the host, for one rule: a private
+// group keeps requiring approval whatever its profile says (`applyGroupCache`).
+//
 // WHAT IT REFUSES. `groups_identity_immutable` makes `owner_did` permanent once
 // written, so a rebuild that cannot find the `membership` record granting
 // `owner` stops rather than insert a plausible owner nobody could correct. It
@@ -23,7 +29,7 @@
 // leaves the database as it found it.
 import { GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY } from '../declaration-record';
 import { GROUP_ROLES, type GroupPermission, type GroupRoleName } from '../permissions';
-import type { GroupRow } from '../types';
+import type { GroupRow, GroupVisibility } from '../types';
 import {
 	pdsSpaceReader,
 	readGroupAbout,
@@ -46,7 +52,7 @@ import {
 } from './members-read';
 import { getGroupByDid, restoreGroup } from './repo';
 import { groupClient } from './session';
-import { groupSpaceUris } from './spaces';
+import { groupSpaceUris, readGroupVisibility } from './spaces';
 
 /** A rebuild that stopped before writing anything, and the one reason why. A
  *  stable tag rather than a message, so a command can report it without string
@@ -66,10 +72,9 @@ export class GroupRebuildRefused extends Error {
 export interface GroupRebuildSources {
 	/** The about and members spaces, through the group's own session. */
 	reader: GroupSpaceReader;
-	/** Whether the group's public repo holds its declaration. A restore takes
-	 *  the row's visibility from it (`visibilityFromPlacement`), and Repair reads
-	 *  it to decide whether the declaration has to be written or withdrawn to
-	 *  match the host (./repair.ts). */
+	/** Whether the group's public repo holds its declaration. The rebuild
+	 *  itself never asks: Repair reads it to decide whether the declaration has
+	 *  to be written or withdrawn to match the host (./repair.ts). */
 	declared: () => Promise<boolean>;
 }
 
@@ -98,15 +103,24 @@ export async function groupRebuildSources(
 	};
 }
 
-/** Rebuilds the group whose DID this is, from its records. */
+/** Rebuilds the group whose DID this is, from its records.
+ *
+ *  `visibility` is the host's, when the caller already read it (Repair does).
+ *  Otherwise a repair asks the host itself. A restore never needs it. */
 export async function rebuildGroup(
 	db: D1Database,
 	sources: GroupRebuildSources,
-	groupDid: string
+	groupDid: string,
+	visibility?: GroupVisibility
 ): Promise<GroupRebuildResult> {
 	const row = await getGroupByDid(db, groupDid);
 	if (row) {
-		const profile = await rebuildGroupCache(db, sources.reader, row);
+		const profile = await rebuildGroupCache(
+			db,
+			sources.reader,
+			row,
+			visibility ?? (await readGroupVisibility(sources.reader, row))
+		);
 		const members = await rebuildGroupMembers(db, sources.reader, row);
 		const group = (await getGroupByDid(db, groupDid)) ?? row;
 		return { path: 'repaired', group, profile: profile.outcome, members };
@@ -125,10 +139,9 @@ async function restoreFromRecords(
 		about_space_uri: spaces.aboutSpaceUri,
 		members_space_uri: spaces.membersSpaceUri
 	};
-	const [about, members, declared] = await Promise.all([
+	const [about, members] = await Promise.all([
 		readGroupAbout(sources.reader, located),
-		readGroupMembers(sources.reader, located),
-		sources.declared()
+		readGroupMembers(sources.reader, located)
 	]);
 
 	if (!about.profile) {
@@ -158,7 +171,6 @@ async function restoreFromRecords(
 		ownerDid,
 		name: about.profile.name,
 		description: about.profile.description,
-		visibility: visibilityFromPlacement(declared),
 		requireApproval: about.profile.joinPolicy !== 'open',
 		locationName: about.profile.locationName,
 		aboutSpaceUri: spaces.aboutSpaceUri,
@@ -196,27 +208,10 @@ function timestamp(value: string | null, fallback: number): number {
 	return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-// --- Visibility ---------------------------------------------------------------
-//
-// `groups.visibility` is planned for removal, with privacy expressed by where
-// the group's records are placed instead of by a column. Until then it is NOT
-// NULL, so a restored row needs a value, and the rebuild reads it from a
-// placement fact: whether the group's public repo holds its declaration. Removing the column means deleting this section and one line in
-// `restoreFromRecords`. `GroupRebuildSources.declared` stays: Repair reads it
-// too.
-//
-// The combination the data cannot produce, undeclared (so private) and open to
-// join, is refused by the schema's private-requires-approval trigger inside
-// `restoreGroup`, and nothing here re-implements it.
-
-/** Present in the public repo means public; absent means private. */
-export function visibilityFromPlacement(declared: boolean): GroupRow['visibility'] {
-	return declared ? 'public' : 'private';
-}
-
 /** Whether the group's public repo holds its declaration, read through the
  *  group's own session. An unreachable PDS throws: reading "could not ask" as
- *  "absent" would silently restore a public group as private. */
+ *  "absent" would have Repair re-declare, or leave declared, a group whose
+ *  state it never learned. */
 function pdsDeclarationProbe(cred: GroupCredential, groupDid: string): () => Promise<boolean> {
 	return async () => {
 		const { handle } = await groupClient(cred, groupDid);

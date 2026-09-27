@@ -37,7 +37,8 @@ export interface CreateGroupInput {
 	/** There is no name key beside `name`: the handle registered at mint
 	 *  reserves the name, and the DID is the URL key. */
 	description?: string | null;
-	visibility?: GroupRow['visibility'];
+	/** No visibility: the create's choice goes to the host, as the about
+	 *  space's read policy (`provisionGroupSpaces`), and nowhere here. */
 	requireApproval?: boolean;
 	locationName?: string | null;
 	/** No space URIs: create provisions the spaces (`./spaces.ts`), so they are
@@ -51,7 +52,8 @@ export interface CreateGroupInput {
 export interface UpdateGroupInput {
 	name?: string;
 	description?: string | null;
-	visibility?: GroupRow['visibility'];
+	/** No visibility: a change of it is a host write (`setAboutSpaceReadPolicy`),
+	 *  and the row holds no copy. */
 	requireApproval?: boolean;
 	locationName?: string | null;
 	/** No space URIs: they are derived from the group's own DID and the fixed
@@ -76,11 +78,6 @@ export class GroupRuleError extends Error {
 			 *  private group from being open-join, and this forbids the act of
 			 *  joining one. */
 			| 'invite-only'
-			/** The settings or create form tried to make a private group open-join.
-			 *  The `groups_private_requires_approval_*` triggers in
-			 *  migrations/0001_groups.sql refuse it (a private group must require
-			 *  approval); this is their tag. */
-			| 'private-needs-approval'
 			| 'constraint',
 		message: string
 	) {
@@ -104,12 +101,6 @@ function constraintMessage(e: unknown): GroupRuleError | null {
 	// fire on a statement that would also trip a unique index.
 	if (/owner role is reserved/.test(text)) {
 		return new GroupRuleError('owner-role-reserved', 'The owner role is reserved for the owner');
-	}
-	if (/private group must require approval/.test(text)) {
-		return new GroupRuleError(
-			'private-needs-approval',
-			'A private group must require approval to join — invite members instead'
-		);
 	}
 	if (/owner cannot be|owner role cannot be|owner must hold|are immutable/.test(text)) {
 		return new GroupRuleError('owner-protected', 'The group owner cannot be changed');
@@ -141,9 +132,9 @@ async function guard<T>(work: () => Promise<T>): Promise<T> {
 	}
 }
 
-const GROUP_COLUMNS = `id, group_did, owner_did, name, description, visibility,
-	require_approval, image_cid, image_mime, image_size, location_name, about_space_uri,
-	members_space_uri, created_at, updated_at`;
+const GROUP_COLUMNS = `id, group_did, owner_did, name, description, require_approval,
+	image_cid, image_mime, image_size, location_name, about_space_uri, members_space_uri,
+	created_at, updated_at`;
 
 /** Creates the group, seeds its three roles with their default bundles, and
  *  adds exactly one active owner membership. It is a single D1 batch, and D1
@@ -176,15 +167,13 @@ const REHEARSAL_NO_OWNER = 'rehearsal-no-owner';
 /** Runs `createGroup`'s batch and forces it to roll back, so a create can find
  *  out that the tables would refuse its row BEFORE a did:plc exists.
  *
- *  WHY A REHEARSAL AND NOT A CHECK. Two kinds of refusal can hit a create's
- *  INSERT after the mint, and a check written here cannot see either. One is
- *  schema drift: `ensureGroupsSchema` uses IF NOT EXISTS throughout, so a table
- *  that changed keeps its old shape (a leftover NOT NULL column refuses every
- *  create). The other is the trigger in migrations/0001_groups.sql that refuses
- *  a private group that is open to join. Re-checking that rule in TypeScript
- *  would break this module's rule that the schema is the authority, and drift
- *  cannot be listed in advance at all. Running the real statements asks the
- *  one thing that knows.
+ *  WHY A REHEARSAL AND NOT A CHECK. What can hit a create's INSERT after the
+ *  mint is schema drift, and a check written here cannot see it:
+ *  `ensureGroupsSchema` uses IF NOT EXISTS throughout, so a table that changed
+ *  keeps its old shape (a leftover NOT NULL column refuses every create), and
+ *  drift cannot be listed in advance at all. Running the real statements asks
+ *  the one thing that knows. The form's own choices are checked before this,
+ *  in app code (`approvalRefusal`).
  *
  *  HOW IT ROLLS BACK. D1 has no BEGIN/ROLLBACK. A batch is a transaction that
  *  commits unless a statement fails, so the batch ends in a statement that
@@ -249,7 +238,6 @@ interface GroupSeed {
 	ownerDid: string;
 	name: string;
 	description: string | null;
-	visibility: GroupRow['visibility'];
 	requireApproval: boolean;
 	locationName: string | null;
 	aboutSpaceUri: string | null;
@@ -276,7 +264,6 @@ function createGroupStatements(
 		ownerDid: input.ownerDid,
 		name: input.name,
 		description: input.description ?? null,
-		visibility: input.visibility ?? 'public',
 		requireApproval: input.requireApproval !== false,
 		locationName: input.locationName ?? null,
 		aboutSpaceUri: null,
@@ -298,9 +285,9 @@ function seedGroupStatements(db: D1Database, seed: GroupSeed): D1PreparedStateme
 		db
 			.prepare(
 				`INSERT INTO groups (id, group_did, owner_did, name, description,
-					visibility, require_approval, location_name, about_space_uri,
-					members_space_uri, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					require_approval, location_name, about_space_uri, members_space_uri,
+					created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
 			.bind(
 				seed.groupId,
@@ -308,7 +295,6 @@ function seedGroupStatements(db: D1Database, seed: GroupSeed): D1PreparedStateme
 				seed.ownerDid,
 				seed.name,
 				seed.description,
-				seed.visibility,
 				seed.requireApproval ? 1 : 0,
 				seed.locationName,
 				seed.aboutSpaceUri,
@@ -367,8 +353,8 @@ export type RestoreGroupInput = Omit<GroupSeed, 'groupId' | 'updatedAt'>;
 
 /** Inserts a group whose row was lost, in the same single batch a create uses,
  *  so the restored group can never exist without its roles or its owner.
- *  A rule the schema refuses (a private group that is open to join, say) comes
- *  back as the same `GroupRuleError` a create would get. */
+ *  A rule the schema refuses comes back as the same `GroupRuleError` a create
+ *  would get. */
 export async function restoreGroup(db: D1Database, input: RestoreGroupInput): Promise<GroupRow> {
 	await ensureGroupsSchema(db);
 	const groupId = crypto.randomUUID();
@@ -406,10 +392,16 @@ export interface DeclaredGroup {
 
 /** One row of the browse list. `row` is NULL for a group this deployment holds
  *  no row for. It renders by address and without a link, because the group
- *  page would answer 404. */
+ *  page would answer 404.
+ *
+ *  `declared` is where the entry came from: the declaration index, or only the
+ *  caller's own groups. It is placement, so browse can show a group as private
+ *  without asking its host: a group its public repo does not declare is one
+ *  that chose not to be announced. */
 export interface BrowseEntry {
 	group_did: string;
 	row: GroupRow | null;
+	declared: boolean;
 }
 
 /** At most this many membership-record checks run at once for one browse
@@ -498,7 +490,7 @@ async function confirmNewest(
  *  row instead of from records. The about space is never anonymously readable,
  *  so no indexer can read a group's name for us, and a list built from records
  *  would need a session and a space read for every group. Every listed row is
- *  hydrated, whatever its `visibility` column says.
+ *  hydrated.
  *
  *  `declared` is passed in, not read here, and `onRoster` is the caller's, so
  *  this stays a D1 function; the index read is `./declaration-index.ts`. */
@@ -551,6 +543,7 @@ export async function listGroups(
 		entries.set(d.did, {
 			group_did: d.did,
 			row,
+			declared: true,
 			at: Date.parse(d.createdAt ?? '') || row?.created_at || 0
 		});
 	}
@@ -566,13 +559,18 @@ export async function listGroups(
 			)
 		: [];
 	for (const row of [...unchecked, ...confirmed]) {
-		entries.set(row.group_did, { group_did: row.group_did, row, at: row.created_at });
+		entries.set(row.group_did, {
+			group_did: row.group_did,
+			row,
+			declared: false,
+			at: row.created_at
+		});
 	}
 
 	return [...entries.values()]
 		.sort((a, b) => b.at - a.at)
 		.slice(0, limit)
-		.map(({ group_did, row }) => ({ group_did, row }));
+		.map(({ group_did, row, declared }) => ({ group_did, row, declared }));
 }
 
 export async function updateGroup(
@@ -589,7 +587,6 @@ export async function updateGroup(
 	};
 	if (input.name !== undefined) push('name', input.name);
 	if (input.description !== undefined) push('description', input.description);
-	if (input.visibility !== undefined) push('visibility', input.visibility);
 	if (input.requireApproval !== undefined) push('require_approval', input.requireApproval ? 1 : 0);
 	if (input.locationName !== undefined) push('location_name', input.locationName);
 	if (sets.length === 0) return;
@@ -632,18 +629,16 @@ export async function recordGroupSpaces(
  *  Separate from `updateGroup` for the same reason as `recordGroupSpaces`: this
  *  is not user input. It is the cache-repair half of the rebuild, so it writes
  *  exactly the profile's columns and nothing else. In particular it never
- *  touches `visibility` or `owner_did`, which no record owns and which a
- *  rebuild must not guess.
+ *  touches `owner_did`, which no record owns and which a rebuild must not
+ *  guess.
  *
- *  A private row keeps requiring approval whatever `require_approval` the
- *  profile gives: the schema insists on it (the
- *  `groups_private_requires_approval_update` trigger in
- *  migrations/0001_groups.sql), and the statement reads the row's own
- *  visibility as it writes, so no profile can widen a private group. Nor can
- *  one stop the rebuild. A profile written while the group was public and open
- *  is what a save leaves behind when the host took a switch to private and the
- *  row did not, and Repair moves that row to private before it rebuilds. A
- *  write that refused such a profile would fail every run of Repair. */
+ *  `visibility` is the host's answer (`readGroupVisibility`), never a stored
+ *  one. A private group keeps requiring approval whatever `require_approval`
+ *  the profile gives, so no profile can widen a private group. Nor can one stop
+ *  the rebuild. A profile written while the group was public and open is what
+ *  a save leaves behind when the host took a switch to private and the profile
+ *  write did not, and a write that refused such a profile would fail every run
+ *  of Repair. */
 export async function applyGroupCache(
 	db: D1Database,
 	groupId: string,
@@ -652,21 +647,22 @@ export async function applyGroupCache(
 		description: string | null;
 		require_approval: number;
 		location_name: string | null;
-	}
+	},
+	visibility: GroupVisibility
 ): Promise<void> {
 	await ensureGroupsSchema(db);
+	const requireApproval = visibility === 'private' ? 1 : cache.require_approval;
 	await guard(() =>
 		db
 			.prepare(
-				`UPDATE groups SET name = ?, description = ?,
-				        require_approval = CASE WHEN visibility = 'private' THEN 1 ELSE ? END,
+				`UPDATE groups SET name = ?, description = ?, require_approval = ?,
 				        location_name = ?, updated_at = ?
 				 WHERE id = ?`
 			)
 			.bind(
 				cache.name,
 				cache.description,
-				cache.require_approval,
+				requireApproval,
 				cache.location_name,
 				Date.now(),
 				groupId
@@ -893,9 +889,8 @@ export type JoinOutcome = 'joined' | 'pending' | 'already-member' | 'already-pen
  *  retry still answers `already-member` instead of an error.
  *
  *  `visibility` is the group's host's answer (`readGroupVisibility`), passed in
- *  so this stays a D1 function, and never the row's column: the host is what
- *  every other app is held to, and a save that failed partway can leave the
- *  row behind it. Only `public` takes a join. `null` means nobody asked the
+ *  so this stays a D1 function. The row holds no copy of it: the host is what
+ *  every other app is held to. Only `public` takes a join. `null` means nobody asked the
  *  host, which the route skips for a caller already on the roster, so it is
  *  refused like a private group rather than read as public. */
 export async function requestJoin(

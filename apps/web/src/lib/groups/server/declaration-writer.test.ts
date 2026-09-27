@@ -135,7 +135,14 @@ describe('writeGroupDeclaration', () => {
 
 describe('reconcileGroupDeclaration', () => {
 	it('declares a public group', async () => {
-		await reconcileGroupDeclaration({ db, env, group, callerDid: OWNER, writer });
+		await reconcileGroupDeclaration({
+			db,
+			env,
+			group,
+			visibility: 'public',
+			callerDid: OWNER,
+			writer
+		});
 
 		expect(writes).toHaveLength(1);
 		expect(writes[0].intent).toBe('update');
@@ -145,7 +152,8 @@ describe('reconcileGroupDeclaration', () => {
 		await reconcileGroupDeclaration({
 			db,
 			env,
-			group: { ...group, visibility: 'private' },
+			group,
+			visibility: 'private',
 			callerDid: OWNER,
 			writer
 		});
@@ -164,7 +172,8 @@ describe('reconcileGroupDeclaration', () => {
 		await reconcileGroupDeclaration({
 			db,
 			env,
-			group: { ...group, visibility: 'private' },
+			group,
+			visibility: 'private',
 			callerDid: OWNER,
 			writer,
 			// A repo minted seconds ago cannot be holding a declaration, so the
@@ -202,7 +211,8 @@ describe('telling our index about a withdrawal', () => {
 		await reconcileGroupDeclaration({
 			db,
 			env,
-			group: { ...group, visibility: 'private' },
+			group,
+			visibility: 'private',
 			callerDid: OWNER,
 			writer: async (write) => {
 				steps.push(`pds ${write.intent}`);

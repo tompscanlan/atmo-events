@@ -180,13 +180,14 @@ export async function runCreateGroup(
 	}
 
 	// The row stores no handle: the PDS decided it, the row keeps the DID, and
-	// the identity resolver reads the handle back. One value serves both the
-	// rehearsal and the INSERT, so they cannot disagree.
+	// the identity resolver reads the handle back. Nor does it store the
+	// visibility: that goes to the host, as the about space's read policy, when
+	// the spaces are provisioned below. One value serves both the rehearsal and
+	// the INSERT, so they cannot disagree.
 	const row: Omit<CreateGroupInput, 'groupDid'> = {
 		ownerDid: callerDid,
 		name: data.name,
 		description: data.description || null,
-		visibility: data.visibility,
 		requireApproval: data.requireApproval,
 		locationName: data.locationName || null
 	};
@@ -351,6 +352,7 @@ async function setUpMintedGroup(
 			db: env.DB,
 			env,
 			group: withSpaces,
+			visibility: data.visibility,
 			callerDid,
 			writer,
 			profile: {
@@ -391,6 +393,7 @@ async function setUpMintedGroup(
 			db: env.DB,
 			env,
 			group: withSpaces,
+			visibility: data.visibility,
 			callerDid,
 			writer,
 			createdAt,
