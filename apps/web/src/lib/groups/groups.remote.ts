@@ -38,6 +38,7 @@ import {
 	promoteMember
 } from './server/roster';
 import { groupEventRecord } from './event-record';
+import { GroupSpaceError } from './server/spaces';
 
 /** The group key every form posts. A group is addressed by its DID, so there
  *  is no slug to post and no name that must be unique. `context` also accepts a
@@ -210,6 +211,14 @@ function rosterFailure(e: unknown): GroupFormFailure {
 		return {
 			ok: false,
 			error: `Access was revoked for ${e.subject}, but the roster still lists them: ${e.message}`
+		};
+	}
+	// A revocation's first write, the member-list removal, was refused. Nothing
+	// was changed, so it is safe to try again.
+	if (e instanceof GroupSpaceError) {
+		return {
+			ok: false,
+			error: `The group's PDS did not accept the change, so nothing was changed: ${e.message}. Try again.`
 		};
 	}
 	return formError(e);
