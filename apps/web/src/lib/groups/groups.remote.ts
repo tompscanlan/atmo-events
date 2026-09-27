@@ -17,15 +17,12 @@ import { formError, notAllowed } from './form-error';
 // `*.remote.ts`, so a field that a test needs lives in ./form-fields.ts.
 import { checkboxField } from './form-fields';
 import { runCreateGroup, type CreateGroupOutcome } from './create-group';
+import { runUpdateGroup } from './update-group';
 import { GROUP_LABEL_PATTERN } from './handle-label';
 import { GROUP_VISIBILITIES, type CallerMembership, type GroupRow } from './types';
-import { decideJoinRequest, updateGroup, type JoinOutcome } from './server/repo';
+import { decideJoinRequest, type JoinOutcome } from './server/repo';
 import { groupRouteContext } from './server/route-context';
-import { deleteGroupEvent, groupWriter, writeGroupEvent } from './server/event-writer';
-import { groupFace, splitRuleLines } from './about-record';
-import { groupSpaceReader, readGroupAbout } from './server/about-read';
-import { setGroupRules, writeGroupProfile } from './server/about-writer';
-import { reconcileGroupDeclaration } from './server/declaration-writer';
+import { deleteGroupEvent, writeGroupEvent } from './server/event-writer';
 import { describeRepair, repairGroup } from './server/repair';
 // Every roster act is a row move plus a record write, composed once in
 // ./server/roster.ts so the app and the e2e harness run the same sequence.
@@ -142,87 +139,8 @@ export const updateGroupForm = form(
 		if (!can(membership.permissions, 'MANAGE_GROUP')) {
 			return notAllowed(membership, 'MANAGE_GROUP');
 		}
-		try {
-			await updateGroup(db, group.id, {
-				name: data.name,
-				description: data.description || null,
-				visibility: data.visibility,
-				requireApproval: data.requireApproval
-			});
-		} catch (e) {
-			return formError(e);
-		}
-
-		// Then the records, which are the source of truth for the fields above.
-		// The row is written first only because the schema refuses a private group
-		// that does not require approval (a trigger in migrations/0001_groups.sql).
-		// A record written for a configuration the database then refused would
-		// describe a group that cannot exist.
-		try {
-			// The row we just updated, without re-reading it. The profile must
-			// describe the group as it is now, and `joinPolicy` is derived from
-			// the visibility and approval columns.
-			const fresh = {
-				...group,
-				name: data.name,
-				description: data.description || null,
-				visibility: data.visibility,
-				require_approval: data.requireApproval ? 1 : 0
-			};
-			const reader = await groupSpaceReader(env, db, group);
-			const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };
-			const writer = await groupWriter(env, db, fresh);
-			await writeGroupProfile({
-				db,
-				env,
-				group: fresh,
-				callerDid,
-				writer,
-				profile: {
-					name: data.name,
-					description: data.description || null,
-					// Not on the settings form, so it is kept rather than cleared. It
-					// comes from the record when there is one, so a stale row cannot be
-					// written back into it.
-					locationName: groupFace(about.profile, group).locationName,
-					// Preserved, so editing a group does not restamp its creation date.
-					createdAt: about.profile?.createdAt ?? undefined
-				}
-			});
-			await setGroupRules({
-				db,
-				env,
-				group: fresh,
-				callerDid,
-				writer,
-				desired: splitRuleLines(data.rules),
-				existing: about.rules
-			});
-			// The public declaration. Visibility is on this form, so this edit
-			// can hide a group. A group switched to private has its declaration
-			// deleted, not just left alone: the declaration is the only record an
-			// anonymous peer can see, and a stale one keeps announcing a group
-			// that asked not to be announced. Switching back declares it again,
-			// dated from the group's creation date (taken from the profile, so no
-			// extra read), because the declaration says when the group was
-			// created, not when its visibility last changed.
-			await reconcileGroupDeclaration({
-				db,
-				env,
-				group: fresh,
-				callerDid,
-				writer,
-				createdAt: about.profile?.createdAt ?? undefined
-			});
-		} catch (e) {
-			return {
-				ok: false,
-				error: `Settings were saved, but this group's records were not updated: ${
-					e instanceof Error ? e.message : String(e)
-				}`
-			};
-		}
-		return { ok: true };
+		// The ordered save, and every way it can fail, is in ./update-group.ts.
+		return runUpdateGroup(env, db, group, callerDid, data);
 	}
 );
 

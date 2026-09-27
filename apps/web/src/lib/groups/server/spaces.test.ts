@@ -62,39 +62,49 @@ afterEach(() => {
 const writes = () => sent.filter((s) => !s.nsid.startsWith('com.atproto.server.'));
 
 describe('provisionGroupSpaces', () => {
-	it('creates about as public-read and members as member-list-read, both app-open, under the group DID', async () => {
-		replies['com.atproto.simplespace.createSpace'] = {
-			status: 200,
-			body: { uri: 'at://did:plc:jcwgw6fcnb5vyoid7nz7sl26/space/placeholder/self' }
-		};
+	// The about space's read policy is the group's visibility, as the host
+	// enforces it. The members space's is not a choice at all.
+	it.each([
+		['public', 'publicPolicy'],
+		['private', 'memberListPolicy']
+	] as const)(
+		'creates about with the read policy a %s group names (%s) and members as member-list-read, both app-open, under the group DID',
+		async (visibility, policy) => {
+			replies['com.atproto.simplespace.createSpace'] = {
+				status: 200,
+				body: { uri: 'at://did:plc:jcwgw6fcnb5vyoid7nz7sl26/space/placeholder/self' }
+			};
 
-		await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID));
+			await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), visibility);
 
-		const calls = writes();
-		expect(calls.map((c) => c.nsid)).toEqual([
-			'com.atproto.simplespace.createSpace',
-			'com.atproto.simplespace.createSpace'
-		]);
+			const calls = writes();
+			expect(calls.map((c) => c.nsid)).toEqual([
+				'com.atproto.simplespace.createSpace',
+				'com.atproto.simplespace.createSpace'
+			]);
 
-		// The about space is the group's public face.
-		expect(calls[0].body).toEqual({
-			type: ABOUT_SPACE_TYPE,
-			skey: 'self',
-			readPolicy: { $type: 'com.atproto.simplespace.defs#publicPolicy' },
-			writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
-			appAccess: { $type: 'com.atproto.simplespace.defs#open' }
-		});
+			// The about space is the group's face: readable by anyone signed in for a
+			// public group, and only by its member list for a private one.
+			expect(calls[0].body).toEqual({
+				type: ABOUT_SPACE_TYPE,
+				skey: 'self',
+				readPolicy: { $type: `com.atproto.simplespace.defs#${policy}` },
+				writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
+				appAccess: { $type: 'com.atproto.simplespace.defs#open' }
+			});
 
-		// The members space is the gated half. `publicPolicy` here would publish
-		// the roster, which is the failure this assertion exists for.
-		expect(calls[1].body).toEqual({
-			type: MEMBERS_SPACE_TYPE,
-			skey: 'self',
-			readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
-			writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
-			appAccess: { $type: 'com.atproto.simplespace.defs#open' }
-		});
-	});
+			// The members space is the gated half, whatever the visibility.
+			// `publicPolicy` here would publish the roster, which is the failure this
+			// assertion exists for.
+			expect(calls[1].body).toEqual({
+				type: MEMBERS_SPACE_TYPE,
+				skey: 'self',
+				readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
+				writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
+				appAccess: { $type: 'com.atproto.simplespace.defs#open' }
+			});
+		}
+	);
 
 	it('returns the two URIs the host confirmed, keyed by space', async () => {
 		const provisioner = pdsProvisioner(CRED, GROUP_DID);
@@ -110,7 +120,7 @@ describe('provisionGroupSpaces', () => {
 			return Response.json({ uri: `at://${GROUP_DID}/space/${body.type}/${body.skey}#${call}` });
 		});
 
-		const uris = await provisionGroupSpaces(provisioner);
+		const uris = await provisionGroupSpaces(provisioner, 'public');
 
 		expect(uris).toEqual({
 			aboutSpaceUri: `at://${GROUP_DID}/space/${ABOUT_SPACE_TYPE}/self#1`,
@@ -124,7 +134,7 @@ describe('provisionGroupSpaces', () => {
 			body: { error: 'SpaceAlreadyExists', message: 'already' }
 		};
 
-		const uris = await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID));
+		const uris = await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), 'public');
 
 		// Deterministic from owner + type + skey. The host does no lookup, so this
 		// is derivation, not a guess. With skey `self` it is a function of the DID
@@ -139,7 +149,7 @@ describe('provisionGroupSpaces', () => {
 			body: { error: 'UnsupportedPolicy', message: 'no' }
 		};
 
-		await expect(provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID))).rejects.toThrow(
+		await expect(provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), 'public')).rejects.toThrow(
 			GroupSpaceError
 		);
 		expect(writes()).toHaveLength(1);

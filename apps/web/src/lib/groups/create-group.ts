@@ -303,11 +303,16 @@ async function setUpMintedGroup(
 	});
 
 	// Provisioning is not ordered by any name: the space key is `self`, so both
-	// URIs are a function of the group DID alone.
+	// URIs are a function of the group DID alone. The visibility chosen here sets
+	// the about space's read policy, so a private group's face is closed to
+	// strangers at the host from its first moment, not only on our pages.
 	let aboutUri: string;
 	let membersUri: string;
 	try {
-		const uris = await provisionGroupSpaces(pdsProvisioner(minted.credential, minted.did));
+		const uris = await provisionGroupSpaces(
+			pdsProvisioner(minted.credential, minted.did),
+			data.visibility
+		);
 		await recordGroupSpaces(env.DB, group.id, uris);
 		aboutUri = uris.aboutSpaceUri;
 		membersUri = uris.membersSpaceUri;
@@ -370,9 +375,13 @@ async function setUpMintedGroup(
 		}
 
 		// The declaration, the only record create writes to the public repo.
-		// Last of the public face, because it points at the about space:
-		// declaring a group whose profile write just failed would announce the
-		// group to the network and then hand a peer an empty space.
+		// Last of the public face, because it points at the about space: at
+		// create that space is still empty, so declaring a group whose profile
+		// write just failed would announce the group to the network and then
+		// hand a peer an empty space. The rule holds at create only. A settings
+		// save declares before the profile (./update-group.ts), because there a
+		// private group's withdrawal must not wait on a profile write that may
+		// fail, and declaring a public group ahead of its profile is the cost.
 		//
 		// A private group is not declared at all. `assumeAbsent` skips the
 		// withdrawal check, because a newly minted repo cannot hold a

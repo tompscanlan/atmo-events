@@ -9,11 +9,13 @@
 // which calls were made.
 //
 // The stub stands in for `GROUP_PDS_SERVICE`. It records every XRPC call in
-// order, so "did not happen" can be asserted rather than assumed.
+// order, so "did not happen" can be asserted rather than assumed. It is the
+// same fake host the settings save is tested against (./update-group.test.ts).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { ensureGroupsSchema } from './server/schema';
 import { clearGroupSessions } from './server/session';
+import { stubPds as stubGroupPds, type StubPdsOptions } from './server/__fixtures__/stub-pds';
 import { runCreateGroup, type CreateGroupData, type CreateGroupEnv } from './create-group';
 
 const OWNER = 'did:plc:owner';
@@ -37,151 +39,11 @@ function data(overrides: Partial<CreateGroupData> = {}): CreateGroupData {
 	};
 }
 
-/** Answers the whole mint + provision chain, including the PLC read that
- *  proves the owner's rotation key landed first. `account` replaces the
- *  `createAccount` response, which is where a name collision lands.
- *
- *  The PLC half echoes back the `recoveryKey` it was sent, as the real
- *  directory does, so a mint that forgot to send one, or sent it second, still
- *  fails here. */
-function stubPds(
-	overrides: {
-		account?: () => Response;
-		/** Answers a call instead of the stub when it returns a Response: the way
-		 *  a test fails one step after the mint. */
-		fail?: (nsid: string, init?: RequestInit) => Response | undefined;
-	} = {}
-) {
-	const calls: string[] = [];
-	/** Every record written into a space, in order: the create path's records. */
-	const spaceWrites: {
-		space: string;
-		collection: string;
-		rkey: string;
-		record: Record<string, unknown>;
-	}[] = [];
-	/** Every record written into the group's public repo: the declaration, and
-	 *  nothing else this path writes. Kept apart from `spaceWrites` because the
-	 *  container matters: a declaration written into a space would be invisible
-	 *  to the anonymous readers it exists for. */
-	const repoWrites: {
-		repo: string;
-		collection: string;
-		rkey: string;
-		record: Record<string, unknown>;
-	}[] = [];
-	let recoveryKey: string | undefined;
-	vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
-		const url = String(input);
-
-		if (url.startsWith('https://plc.directory/')) {
-			calls.push('plc.directory/data');
-			return Response.json({ rotationKeys: [recoveryKey, 'did:key:zPdsOwnedKey'] });
-		}
-
-		const nsid = url.split('/xrpc/')[1] ?? url;
-		calls.push(nsid);
-		const failed = overrides.fail?.(nsid, init);
-		if (failed) return failed;
-		if (nsid.startsWith('com.atproto.server.createAccount')) {
-			({ recoveryKey } = JSON.parse(String(init?.body)) as { recoveryKey?: string });
-			return (
-				overrides.account?.() ??
-				Response.json({
-					did: MINTED_DID,
-					// Not the submitted label: the PDS decides the name, so the handle
-					// a caller is told about must come from this value, never from the
-					// field they typed.
-					handle: 'konatrail.group.stub.test',
-					accessJwt: 'master-jwt'
-				})
-			);
-		}
-		if (nsid.startsWith('com.atproto.server.createAppPassword')) {
-			return Response.json({ password: 'app-pass-1234' });
-		}
-		if (nsid.startsWith('com.atproto.server.createSession')) {
-			return Response.json({
-				did: MINTED_DID,
-				handle: 'konatrail.group.stub.test',
-				accessJwt: 'group-jwt',
-				refreshJwt: 'group-refresh'
-			});
-		}
-		if (nsid.startsWith('com.atproto.simplespace.createSpace')) {
-			const body = JSON.parse(String(init?.body)) as { type: string; skey: string };
-			return Response.json({ uri: `at://${MINTED_DID}/space/${body.type}/${body.skey}` });
-		}
-		// The group's public face, written through the gate right after
-		// provisioning: `profile` at `self`, plus one record per rule.
-		if (
-			nsid.startsWith('com.atproto.space.putRecord') ||
-			nsid.startsWith('com.atproto.space.createRecord')
-		) {
-			const body = JSON.parse(String(init?.body)) as {
-				space: string;
-				collection: string;
-				rkey: string;
-				record: Record<string, unknown>;
-			};
-			spaceWrites.push(body);
-			return Response.json({
-				uri: `${body.space}/${MINTED_DID}/${body.collection}/${body.rkey}`,
-				cid: 'bafycreate'
-			});
-		}
-		// Reads answer from the writes. The write gate resolves from the members
-		// space's records, so a stub that could not read back what the create
-		// just wrote would test a gate no deployment runs. A missing record is
-		// the PDS's 400, which the reader maps to "absent".
-		if (nsid.startsWith('com.atproto.space.getRecord')) {
-			const q = new URL(url).searchParams;
-			const hit = spaceWrites.findLast(
-				(w) =>
-					w.space === q.get('space') &&
-					w.collection === q.get('collection') &&
-					w.rkey === q.get('rkey')
-			);
-			if (!hit) return Response.json({ error: 'RecordNotFound' }, { status: 400 });
-			return Response.json({
-				uri: `${hit.space}/${MINTED_DID}/${hit.collection}/${hit.rkey}`,
-				cid: 'bafycreate',
-				value: hit.record
-			});
-		}
-		if (nsid.startsWith('com.atproto.space.listRecords')) {
-			const q = new URL(url).searchParams;
-			const collection = q.get('collection');
-			const records = spaceWrites
-				.filter((w) => w.space === q.get('space') && (!collection || w.collection === collection))
-				.map((w) => ({
-					uri: `${w.space}/${MINTED_DID}/${w.collection}/${w.rkey}`,
-					cid: 'bafycreate',
-					value: w.record
-				}));
-			return Response.json({ records });
-		}
-		// The one record that does not go into a space: the declaration, which an
-		// anonymous peer reads straight from the group's repo.
-		if (
-			nsid.startsWith('com.atproto.repo.putRecord') ||
-			nsid.startsWith('com.atproto.repo.createRecord')
-		) {
-			const body = JSON.parse(String(init?.body)) as {
-				repo: string;
-				collection: string;
-				rkey: string;
-				record: Record<string, unknown>;
-			};
-			repoWrites.push(body);
-			return Response.json({
-				uri: `at://${body.repo}/${body.collection}/${body.rkey}`,
-				cid: 'bafycreate'
-			});
-		}
-		throw new Error(`unexpected call to ${url}`);
-	});
-	return { calls, spaceWrites, repoWrites };
+/** Answers the whole mint + provision chain (./server/__fixtures__/stub-pds.ts),
+ *  as the minted group. `account` replaces the `createAccount` response, which
+ *  is where a name collision lands. */
+function stubPds(overrides: Pick<StubPdsOptions, 'account' | 'fail'> = {}) {
+	return stubGroupPds({ did: MINTED_DID, handle: 'konatrail.group.stub.test', ...overrides });
 }
 
 async function rows(table: 'groups' | 'group_credentials') {
@@ -584,6 +446,71 @@ describe('a successful create', () => {
 			`at://${MINTED_DID}/space/net.openmeet.space.members/self`
 		);
 	});
+});
+
+// A group's about space is readable by exactly the audience its visibility
+// names, and the host enforces that, not our pages. So the create choice has to
+// reach the host: an about space provisioned public for a private group would
+// let any signed-in stranger's app read its profile and rules from the PDS.
+describe('the create choice sets the about space’s read policy', () => {
+	const ABOUT = `at://${MINTED_DID}/space/net.openmeet.space.about/self`;
+
+	it.each([
+		['public', 'publicPolicy'],
+		['private', 'memberListPolicy']
+	] as const)(
+		'a %s create with approval on provisions the about space with %s',
+		async (visibility, policy) => {
+			const { requests, spaces } = stubPds();
+
+			const result = await runCreateGroup(env, OWNER, data({ visibility, requireApproval: true }));
+
+			expect(result.ok).toBe(true);
+			const about = requests.filter(
+				(r) =>
+					r.nsid === 'com.atproto.simplespace.createSpace' &&
+					r.body?.type === 'net.openmeet.space.about'
+			);
+			expect(about).toHaveLength(1);
+			expect(about[0].body?.readPolicy).toEqual({
+				$type: `com.atproto.simplespace.defs#${policy}`
+			});
+			// And that is what the host now reports for it.
+			expect(spaces.get(ABOUT)?.readPolicy).toEqual({
+				$type: `com.atproto.simplespace.defs#${policy}`
+			});
+		}
+	);
+});
+
+// The members space holds the control plane (roles, memberships, permission
+// bindings). Public read there would publish the roster of every group, so the
+// visibility choice must not move it.
+describe('the members space is member-list read whatever the choice', () => {
+	const MEMBERS = `at://${MINTED_DID}/space/net.openmeet.space.members/self`;
+
+	it.each(['public', 'private'] as const)(
+		'a %s create provisions the members space with memberListPolicy',
+		async (visibility) => {
+			const { requests, spaces } = stubPds();
+
+			const result = await runCreateGroup(env, OWNER, data({ visibility }));
+
+			expect(result.ok).toBe(true);
+			const members = requests.filter(
+				(r) =>
+					r.nsid === 'com.atproto.simplespace.createSpace' &&
+					r.body?.type === 'net.openmeet.space.members'
+			);
+			expect(members).toHaveLength(1);
+			expect(members[0].body?.readPolicy).toEqual({
+				$type: 'com.atproto.simplespace.defs#memberListPolicy'
+			});
+			expect(spaces.get(MEMBERS)?.readPolicy).toEqual({
+				$type: 'com.atproto.simplespace.defs#memberListPolicy'
+			});
+		}
+	);
 });
 
 // The owner's rotation key exists in one place: the response to this create.
