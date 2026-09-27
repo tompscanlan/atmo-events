@@ -17,7 +17,7 @@
 // (./server/__fixtures__/stub-pds.ts), reached through the real transports, so
 // the bodies asserted here are the bodies a PDS would receive.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
+import { isRowWrite, sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { stubPds, type StubPdsOptions } from './server/__fixtures__/stub-pds';
 import { storeGroupCredential, type GroupCredential } from './server/credentials';
 import { createGroup, getGroupByDid, recordGroupSpaces } from './server/repo';
@@ -223,6 +223,28 @@ describe('a private switch withdraws the declaration before profile and rules', 
 			'repo.deleteRecord net.openmeet.group.declaration',
 			'space.putRecord net.openmeet.group.profile'
 		]);
+	});
+});
+
+// A private group is invite-only, so it cannot also be open to join. The pair
+// is two fields of this form, and visibility is the host's read policy, which
+// no trigger on our tables can see. So the save refuses it in app code, before
+// the host, the row or any record is written.
+describe('a private group must require approval', () => {
+	it('a settings save refuses a private group that is open to join before any write', async () => {
+		const pds = host();
+		const group = await givenGroup('public', pds, false);
+		harness.statements.length = 0;
+
+		const result = await save(group, 'private', { requireApproval: false, rules: 'Be kind' });
+
+		expect(result).toEqual({
+			ok: false,
+			error: 'A private group must require approval to join — invite members instead'
+		});
+		expect(pds.writes()).toEqual([]);
+		expect(harness.statements.filter(isRowWrite)).toEqual([]);
+		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
 	});
 });
 

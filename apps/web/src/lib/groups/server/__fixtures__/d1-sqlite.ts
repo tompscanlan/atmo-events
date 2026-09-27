@@ -78,7 +78,17 @@ export interface SqliteD1 {
 	db: D1Database;
 	/** The underlying handle, for a test that wants to poke at raw SQL. */
 	raw: DatabaseSync;
+	/** Every SQL text prepared through `db`, in order, so a case can assert
+	 *  that nothing was written rather than infer it from the rows. Clear it
+	 *  with `.length = 0` before the act. */
+	statements: string[];
 	close(): void;
+}
+
+/** Whether a prepared statement writes a row. DDL is not a write here: the
+ *  schema self-heal runs its CREATE statements before any groups call. */
+export function isRowWrite(sql: string): boolean {
+	return /^\s*(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(sql);
 }
 
 /** @param applySchema apply every migration in migrations/. Off for the
@@ -97,8 +107,12 @@ export function sqliteD1(applySchema = true): SqliteD1 {
 		applyGroupsSchemaSync(sqlite);
 	}
 
+	const statements: string[] = [];
 	const api = {
-		prepare: (sql: string) => new Statement(sqlite, sql),
+		prepare: (sql: string) => {
+			statements.push(sql);
+			return new Statement(sqlite, sql);
+		},
 		async batch(statements: { all(): Promise<unknown>; run(): Promise<unknown> }[]) {
 			// D1 runs a batch in one transaction; so does this.
 			sqlite.exec('BEGIN');
@@ -124,6 +138,7 @@ export function sqliteD1(applySchema = true): SqliteD1 {
 	return {
 		db: api as unknown as D1Database,
 		raw: sqlite,
+		statements,
 		close: () => sqlite.close()
 	};
 }

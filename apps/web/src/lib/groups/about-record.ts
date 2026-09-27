@@ -18,6 +18,7 @@
 // settles, migrating is a prefix change plus a record replay, not a reshape.
 // That is why every collection string below is in exactly one place. The same
 // rule gave `net.openmeet.space.*` its prefix (see ./types.ts).
+import type { GroupVisibility } from './types';
 
 /** Both collections, and both only here. A prefix change is one edit. */
 export const GROUP_PROFILE_COLLECTION = 'net.openmeet.group.profile';
@@ -37,6 +38,29 @@ export type GroupJoinPolicy = (typeof GROUP_JOIN_POLICIES)[number];
 
 function isJoinPolicy(value: unknown): value is GroupJoinPolicy {
 	return typeof value === 'string' && (GROUP_JOIN_POLICIES as readonly string[]).includes(value);
+}
+
+/** What the create and settings forms say when asked for a private group that
+ *  anyone may join. */
+export const PRIVATE_NEEDS_APPROVAL =
+	'A private group must require approval to join — invite members instead';
+
+/** The refusal for a visibility and approval pair no group may have, or null.
+ *
+ *  A private group is invite-only, so it cannot also be open to join. Its
+ *  address is no secret: the handle of a did:plc is in the PLC directory's
+ *  public log, so access cannot rest on nobody knowing it.
+ *
+ *  Decided here, from the two choices on the form, because a group's
+ *  visibility is its about space's read policy at the host, which no statement
+ *  on our tables can read. The create and the settings save both ask this
+ *  before their first write. An absent `requireApproval` means approval on, as
+ *  it does everywhere else. */
+export function approvalRefusal(
+	visibility: GroupVisibility,
+	requireApproval: boolean | undefined
+): string | null {
+	return visibility === 'private' && requireApproval === false ? PRIVATE_NEEDS_APPROVAL : null;
 }
 
 /** The cache columns the profile record is authoritative for. */

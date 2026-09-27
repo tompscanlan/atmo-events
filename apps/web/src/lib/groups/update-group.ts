@@ -9,9 +9,10 @@
 // THE ORDER MATTERS. Each failure between two writes leaves a different
 // half-state behind, so the sequence is:
 //
-//   reads -> host (only when the visibility changes) -> row -> declaration -> profile -> rules
+//   refuse -> reads -> host (only when the visibility changes) -> row -> declaration -> profile -> rules
 //
-// Every read comes first, the host's read policy among them, so a read that
+// A private group open to join is refused from the form's own fields, before
+// anything else. Then every read comes first, the host's read policy among them, so a read that
 // fails writes nothing anywhere. Whether the visibility changes is decided
 // against the host, not the row, because the host is what the group's pages
 // read it from (`groupRouteContext`).
@@ -44,7 +45,7 @@
 import type { CredentialStoreEnv } from './server/credentials';
 import { updateGroup } from './server/repo';
 import { GroupCredentialError, groupWriter, type GroupRepoWriter } from './server/event-writer';
-import { groupFace, splitRuleLines } from './about-record';
+import { approvalRefusal, groupFace, splitRuleLines } from './about-record';
 import { groupSpaceReader, readGroupAbout, type GroupAbout } from './server/about-read';
 import { setGroupRules, writeGroupProfile } from './server/about-writer';
 import { reconcileGroupDeclaration } from './server/declaration-writer';
@@ -142,6 +143,11 @@ export async function runUpdateGroup(
 	callerDid: string,
 	data: UpdateGroupData
 ): Promise<GroupFormResult> {
+	// A private group requires approval to join. The form sends both halves of
+	// that pair, so it is refused from them, before any read or write.
+	const approval = approvalRefusal(data.visibility, data.requireApproval);
+	if (approval) return { ok: false, error: approval };
+
 	// The group as this save describes it. The records must describe the group
 	// as it is after the save: the declaration and the about space's read policy
 	// follow its visibility, and the profile's `joinPolicy` is derived from the
