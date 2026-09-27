@@ -20,13 +20,15 @@ The app reads both spaces as the group, with the group's own credential. A space
 whatever its read policy.
 
 A group's visibility is its about space's read policy: public, or the member list for a private
-group. The group pages ask the PDS for it (`com.atproto.simplespace.getSpace`) instead of reading
-D1, so every app sees the same answer. A member on the roster is let in without the question.
-Anyone else gets the ordinary 404 when the deployment holds no credential for the group, since
-then the PDS cannot be asked, and a 503 rather than a guess when the PDS is asked and does not
-answer. The settings save changes the read policy before anything else, and the repair aligns the
-declaration and D1 to it, never the other way round. While D1 disagrees with the PDS, a settings
-save that keeps D1's value is refused until the repair has run.
+group. D1 has no column for it. The group pages ask the PDS for it
+(`com.atproto.simplespace.getSpace`), so every app sees the same answer. A member on the roster is
+let in without the question, and the page then asks only to show the visibility. Anyone else gets
+the ordinary 404 when the deployment holds no credential for the group, since then the PDS cannot
+be asked, and a 503 rather than a guess when the PDS is asked and does not answer. Browse shows it
+from placement instead, with no PDS read per group: a group the declaration index lists is public,
+and one the caller sees only through their own groups is private. The settings save changes the
+read policy before anything else, and the repair aligns the declaration to it, never the other way
+round.
 
 The about space's member list mirrors the roster. Joining or being admitted puts a member on it,
 and leaving or being removed takes them off, always on the side of less access: the membership
@@ -38,8 +40,8 @@ the whole roster from the PDS.
 When a record and a D1 row disagree, the record wins. `server/rebuild.ts` can rebuild a group's
 rows from its DID alone, and the settings page has a repair step for a group whose create was
 interrupted (`server/repair.ts`). The repair also makes the about space's member list equal the
-membership records, and the declaration and D1's copy of the visibility agree with the about
-space's read policy.
+membership records, and the declaration agree with the about space's read policy. A rebuild
+restores nothing for the visibility, because nothing in D1 holds it.
 
 ## Roles and permissions
 
@@ -49,8 +51,9 @@ and `CREATE_EVENT`. Which role holds which permission is data, written as record
 space, and a member's permissions are the union of what their role holds. The owner cannot be
 demoted, removed or leave; the schema enforces that as well as the code.
 
-A private group always requires approval to join. There is no suspension: removing someone deletes
-their membership record.
+A private group always requires approval to join. The create and the settings save refuse the pair
+before any write, in app code rather than the schema, since only the PDS knows the visibility.
+There is no suspension: removing someone deletes their membership record.
 
 ## Hosting
 
