@@ -21,10 +21,12 @@ whatever its read policy.
 
 A group's visibility is its about space's read policy: public, or the member list for a private
 group. The group pages ask the PDS for it (`com.atproto.simplespace.getSpace`) instead of reading
-D1, so every app sees the same answer. A member on the roster is let in without the question. When
-the PDS cannot answer, anyone else gets a 503 rather than a guess. The settings save changes the
-read policy before anything else, and the repair aligns the declaration and D1 to it, never the
-other way round.
+D1, so every app sees the same answer. A member on the roster is let in without the question.
+Anyone else gets the ordinary 404 when the deployment holds no credential for the group, since
+then the PDS cannot be asked, and a 503 rather than a guess when the PDS is asked and does not
+answer. The settings save changes the read policy before anything else, and the repair aligns the
+declaration and D1 to it, never the other way round. While D1 disagrees with the PDS, a settings
+save that keeps D1's value is refused until the repair has run.
 
 The about space's member list mirrors the roster. Joining or being admitted puts a member on it,
 and leaving or being removed takes them off, always on the side of less access: the membership
