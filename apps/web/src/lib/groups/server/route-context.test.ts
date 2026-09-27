@@ -2,7 +2,8 @@
 // up and gates it, and every way that can fail gives the same refusal. A
 // different status or message for "no such DID" than for "a private group you
 // are not in" would tell anyone holding a DID which of the two they hold, and
-// so reveal that a private group exists.
+// so reveal that a private group exists. The one exception is a host that
+// cannot say whether the group is private: that is a 503, covered at the end.
 //
 // The handle resolver is stubbed at its module boundary, the way the PDS is
 // stubbed elsewhere in this directory: what is under test is which branch runs
@@ -13,16 +14,21 @@ vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { actorToDid } from '$lib/atproto/methods';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { addMember, createGroup } from './repo';
+import { stubPds } from './__fixtures__/stub-pds';
+import { addMember, createGroup, recordGroupSpaces } from './repo';
 import {
 	GROUP_NOT_FOUND,
+	GROUP_VISIBILITY_UNCHECKED,
 	groupActorToDid,
 	groupPath,
 	groupRouteContext,
 	readStanding
 } from './route-context';
 import type { GroupSpaceReader } from './about-read';
-import type { GroupRow } from '../types';
+import { storeGroupCredential, type GroupCredential } from './credentials';
+import { clearGroupSessions } from './session';
+import { pdsProvisioner, provisionGroupSpaces } from './spaces';
+import type { GroupRow, GroupVisibility } from '../types';
 
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
@@ -84,7 +90,7 @@ describe('one group, two spellings', () => {
 	// can be down. Every URL the app publishes carries the DID, so this is the
 	// path real traffic takes.
 	it('never consults the handle resolver for a did: actor', async () => {
-		await groupRouteContext(NO_ENV, db, GROUP_DID, null);
+		await groupRouteContext(NO_ENV, db, GROUP_DID, OWNER);
 		expect(await groupActorToDid(GROUP_DID)).toBe(GROUP_DID);
 
 		expect(resolver).not.toHaveBeenCalled();
@@ -153,6 +159,9 @@ describe('readStanding', () => {
 		},
 		async list() {
 			throw new Error('com.atproto.space.listRecords failed: 502');
+		},
+		async getSpace() {
+			throw new Error('com.atproto.simplespace.getSpace failed: 502');
 		}
 	};
 	let withSpace: GroupRow;
@@ -182,5 +191,130 @@ describe('readStanding', () => {
 		expect(member.unreadable).toMatch(/getRecord failed: 502|listRecords failed: 502/);
 		const clean = await readStanding(db, group, MEMBER, null);
 		expect(clean.unreadable).toBeUndefined();
+	});
+});
+
+// The gate asks the host. A group's visibility is its about space's read
+// policy, read with `com.atproto.simplespace.getSpace`, and never our row: a
+// save that failed partway can leave the row behind the host, and the host is
+// what every other app is held to. So each case gives the row the opposite
+// answer to the host wherever the case allows it, and a gate that read the row
+// would fail it.
+describe('the page gate reads visibility from the host', () => {
+	const HOSTED = 'did:plc:hostedgroupaaaaaaaaaaaaa';
+	/** 32 bytes, base64: the credential store accepts nothing shorter. */
+	const KEY = btoa('0123456789abcdef0123456789abcdef');
+	const ENV = { GROUP_CREDENTIAL_KEY: KEY };
+	const CRED: GroupCredential = {
+		service: 'https://pds.stub.test',
+		identifier: 'hosted.group.stub.test',
+		password: 'app-pass-1234'
+	};
+	const GET_SPACE = 'com.atproto.simplespace.getSpace';
+
+	let pds: ReturnType<typeof stubPds>;
+	/** Set by a case to make the host refuse every getSpace. */
+	let getSpaceFails: boolean;
+
+	beforeEach(() => {
+		clearGroupSessions();
+		getSpaceFails = false;
+		pds = stubPds({
+			did: HOSTED,
+			handle: CRED.identifier,
+			fail: (nsid) =>
+				getSpaceFails && nsid === GET_SPACE
+					? Response.json({ error: 'UpstreamFailure' }, { status: 502 })
+					: undefined
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+		clearGroupSessions();
+	});
+
+	/** A group whose row says `row` and whose about space the host provisioned
+	 *  for `host`. The credential is stored unless the case says otherwise, and
+	 *  the host's log starts empty. */
+	async function hosted(
+		row: GroupVisibility,
+		host: GroupVisibility,
+		{ credential = true } = {}
+	): Promise<GroupRow> {
+		const created = await createGroup(db, {
+			groupDid: HOSTED,
+			ownerDid: OWNER,
+			name: 'Hosted',
+			visibility: row
+		});
+		await recordGroupSpaces(
+			db,
+			created.id,
+			await provisionGroupSpaces(pdsProvisioner(CRED, HOSTED), host)
+		);
+		if (credential) await storeGroupCredential(ENV, db, HOSTED, CRED);
+		pds.clearLog();
+		return created;
+	}
+
+	/** The route's answer, as a caller sees it: 200 with the visibility it
+	 *  hands the forms, or the refusal's status and message. */
+	async function open(callerDid: string | null) {
+		try {
+			const ctx = await groupRouteContext(ENV, db, HOSTED, callerDid);
+			return { status: 200, visibility: ctx.visibility };
+		} catch (e) {
+			const http = e as { status: number; body: { message: string } };
+			return { status: http.status, message: http.body.message };
+		}
+	}
+
+	const getSpaceCalls = () => pds.requests.filter((r) => r.nsid === GET_SPACE);
+
+	it('refuses an anonymous caller with the standard 404 when the host reads the group as private, though the row says public', async () => {
+		await hosted('public', 'private');
+
+		expect(await open(null)).toEqual({ status: 404, message: GROUP_NOT_FOUND });
+		expect(getSpaceCalls()).toHaveLength(1);
+	});
+
+	it('admits a signed-in stranger when the host reads the group as public, though the row says private', async () => {
+		await hosted('private', 'public');
+
+		expect(await open(STRANGER)).toEqual({ status: 200, visibility: 'public' });
+	});
+
+	// Not the 404: a group whose visibility could not be read might be public,
+	// and a 404 would tell its visitors it does not exist. What this answer
+	// gives away is that a group this deployment hosts sits at the DID, which the
+	// PLC log already publishes.
+	it('answers 503, visibility could not be checked, when the host does not answer for a stranger', async () => {
+		await hosted('public', 'public');
+		getSpaceFails = true;
+
+		expect(await open(STRANGER)).toEqual({ status: 503, message: GROUP_VISIBILITY_UNCHECKED });
+		expect(GROUP_VISIBILITY_UNCHECKED).toContain('visibility could not be checked');
+	});
+
+	it('refuses a stranger with the standard 404 when this deployment holds no credential for the group, whatever its row says', async () => {
+		await hosted('public', 'public', { credential: false });
+
+		expect(await open(STRANGER)).toEqual({ status: 404, message: GROUP_NOT_FOUND });
+		expect(getSpaceCalls()).toEqual([]);
+	});
+
+	// The membership half does not change: a caller on the roster sees the
+	// group at every visibility, so the host is not asked, and a host that is
+	// down cannot lock a member out of their own group.
+	it('admits a member on the roster without asking the host, even when the host would fail', async () => {
+		const group = await hosted('private', 'private');
+		await addMember(db, group.id, MEMBER, 'member');
+		getSpaceFails = true;
+
+		expect(await open(MEMBER)).toEqual({ status: 200, visibility: null });
+		expect(getSpaceCalls()).toEqual([]);
 	});
 });

@@ -94,6 +94,9 @@ function readerOver(records: SpaceFixture[]): GroupSpaceReader {
 		},
 		async list(query) {
 			return all.filter((r) => !query.collection || r.collection === query.collection);
+		},
+		async getSpace() {
+			throw new Error('this fake holds records, not a space configuration');
 		}
 	};
 }
@@ -594,6 +597,9 @@ describe('the gate, from records', () => {
 			},
 			async list() {
 				throw new Error('com.atproto.space.listRecords failed: 502');
+			},
+			async getSpace() {
+				throw new Error('com.atproto.simplespace.getSpace failed: 502');
 			}
 		};
 		await expect(getCallerMembership(db, group, ADMIN, down)).rejects.toThrow(/502/);
@@ -633,6 +639,9 @@ describe('the gate, from records', () => {
 				throw new Error('an anonymous caller must not reach the PDS');
 			},
 			async list() {
+				throw new Error('an anonymous caller must not reach the PDS');
+			},
+			async getSpace() {
 				throw new Error('an anonymous caller must not reach the PDS');
 			}
 		};

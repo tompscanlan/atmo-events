@@ -16,7 +16,7 @@
 //   for a private group, but that does not hide the records: group events are
 //   written to the public repo, so a private group's events are not private at
 //   the protocol layer.
-import type { CallerMembership, GroupRow } from './types';
+import type { CallerMembership, GroupVisibility } from './types';
 
 /** On the roster, as the loader decided it (`getCallerMembership`): the
  *  caller's membership record when the group's records can answer, the row only
@@ -31,9 +31,16 @@ function isActiveMember(membership: CallerMembership): boolean {
  *  and handle are published to plc.directory's audit log at genesis, so anyone
  *  who reads that log can enumerate them. That is why the gate has to be
  *  membership. Browse does not ask this: it lists what is declared, and a
- *  private group withdraws its declaration (`listGroups`). */
-export function canSeeGroup(group: GroupRow, membership: CallerMembership): boolean {
-	if (group.visibility !== 'private') return true;
+ *  private group withdraws its declaration (`listGroups`).
+ *
+ *  `visibility` is the host's answer, the about space's read policy
+ *  (`readGroupVisibility`), and never our row: the host is what every other
+ *  app is held to, and a save that failed partway can leave the row behind it.
+ *  It is taken as an argument so this stays pure; the loader does the read,
+ *  and skips it for a caller on the roster, whom every visibility admits. Only
+ *  `public` opens the group to a stranger. */
+export function canSeeGroup(visibility: GroupVisibility, membership: CallerMembership): boolean {
+	if (visibility === 'public') return true;
 	return isActiveMember(membership);
 }
 

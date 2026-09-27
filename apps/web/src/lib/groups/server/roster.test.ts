@@ -45,7 +45,7 @@ import {
 	RosterRowError
 } from './roster';
 import type { GroupRepoWrite, GroupRepoWriter } from './event-writer';
-import type { GroupSpaceReader } from './about-read';
+import { pdsSpaceReader, type GroupSpaceReader } from './about-read';
 import { storeGroupCredential, type GroupCredential } from './credentials';
 import { clearGroupSessions } from './session';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
@@ -242,7 +242,10 @@ beforeEach(async () => {
 		},
 		async list(q) {
 			return live(q.space, q.collection);
-		}
+		},
+		// A space's configuration is the host's, not a record, so it comes from
+		// the fake host.
+		getSpace: (space) => pdsSpaceReader(CRED, GROUP_DID).getSpace(space)
 	};
 
 	// Publish the roster and the authz config, so the gate resolves from
@@ -401,7 +404,8 @@ describe('a grant whose join-date read fails after the row moved', () => {
 				}
 				return base.get(q);
 			},
-			list: (q) => base.list(q)
+			list: (q) => base.list(q),
+			getSpace: (space) => base.getSpace(space)
 		};
 
 		const error = await admitMember({ ...ctx(ADMIN), reader: failing }, NEWCOMER, 'member').catch(

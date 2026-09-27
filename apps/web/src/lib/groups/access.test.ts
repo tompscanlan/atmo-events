@@ -6,11 +6,12 @@
 //
 // They are membership tests, not permission tests: read access is not
 // something a group grants. So the fixtures carry a roster row and no
-// permissions at all.
+// permissions at all. The visibility is an argument, the host's answer
+// (`readGroupVisibility`), because the gate never reads it off our row.
 import { describe, it, expect } from 'vitest';
 import { canSeeGroup, canSeeMembers } from './access';
 import type { GroupRoleName } from './permissions';
-import type { CallerMembership, GroupRow } from './types';
+import type { CallerMembership } from './types';
 
 function membership(role: GroupRoleName | null): CallerMembership {
 	return {
@@ -24,41 +25,43 @@ function membership(role: GroupRoleName | null): CallerMembership {
 	};
 }
 
-function group(visibility: GroupRow['visibility']): GroupRow {
-	return { visibility } as GroupRow;
-}
-
 const STRANGER = membership(null);
 
 describe('canSeeGroup', () => {
-	it('hides only private groups from a stranger', () => {
+	it('hides a group the host reads as private from a stranger, and shows a public one', () => {
 		// Two visibilities, so this predicate is the whole of the read rule: a
 		// group is either open to a stranger or it is not.
-		expect(canSeeGroup(group('public'), STRANGER)).toBe(true);
-		expect(canSeeGroup(group('private'), STRANGER)).toBe(false);
+		expect(canSeeGroup('public', STRANGER)).toBe(true);
+		expect(canSeeGroup('private', STRANGER)).toBe(false);
 	});
 
 	it('opens a private group to anyone on the roster, whatever the role', () => {
-		expect(canSeeGroup(group('private'), membership('member'))).toBe(true);
-		expect(canSeeGroup(group('private'), membership('admin'))).toBe(true);
+		expect(canSeeGroup('private', membership('member'))).toBe(true);
+		expect(canSeeGroup('private', membership('admin'))).toBe(true);
 	});
 });
 
 // The predicates ask `onRoster`, which the loader takes from the membership
 // record whenever the records can answer, and never `role`, which is always the
 // row's. The two disagree after a revocation whose row delete failed, and that
-// is exactly when reading `role` would leak.
+// is exactly when reading `role` would leak. Moving visibility to the host
+// leaves this half as it was.
 describe('the roster is what the loader says, not the row', () => {
-	it('closes a private group to a DID whose row survived its revoked record', () => {
-		const revoked = { ...membership('admin'), onRoster: false };
-		expect(canSeeGroup(group('private'), revoked)).toBe(false);
+	const revoked = { ...membership('admin'), onRoster: false };
+	const recorded = { ...membership(null), did: 'did:plc:alice', onRoster: true };
+
+	it('closes a group the host reads as private to a stranger, and to a DID whose row survived its revoked record', () => {
+		expect(canSeeGroup('private', STRANGER)).toBe(false);
+		expect(canSeeGroup('private', revoked)).toBe(false);
 		expect(canSeeMembers(revoked)).toBe(false);
 	});
 
-	it('opens it to a DID the records put on the roster before any row exists', () => {
-		const recorded = { ...membership(null), did: 'did:plc:alice', onRoster: true };
-		expect(canSeeGroup(group('private'), recorded)).toBe(true);
+	it('opens it to a DID the records put on the roster before any row exists, and a public host to everyone', () => {
+		expect(canSeeGroup('private', recorded)).toBe(true);
 		expect(canSeeMembers(recorded)).toBe(true);
+		for (const caller of [STRANGER, revoked, recorded, membership('member')]) {
+			expect(canSeeGroup('public', caller)).toBe(true);
+		}
 	});
 });
 

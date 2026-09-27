@@ -143,7 +143,10 @@ beforeEach(async () => {
 		},
 		async list(q) {
 			return live(q.space, q.collection);
-		}
+		},
+		// A space's configuration is the host's, not a record, so it comes from
+		// the fake host.
+		getSpace: (space) => pdsSpaceReader(CRED, GROUP_DID).getSpace(space)
 	};
 	sources = { reader, declared: async () => true };
 });

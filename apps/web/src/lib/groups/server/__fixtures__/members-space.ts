@@ -67,6 +67,11 @@ export function membersSpaceReader(
 		async list(query) {
 			reader.reads++;
 			return records.filter((r) => !query.collection || r.collection === query.collection);
+		},
+		// Not a record read, and not counted: a members space holds no answer
+		// about the about space's configuration.
+		async getSpace() {
+			throw new Error('this fixture holds members-space records, not a space configuration');
 		}
 	};
 	return reader;

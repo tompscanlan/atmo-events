@@ -60,6 +60,9 @@ function readerOver(
 		},
 		async list() {
 			return all;
+		},
+		async getSpace() {
+			throw new Error('this fake holds records, not a space configuration');
 		}
 	};
 }
@@ -167,6 +170,10 @@ describe('readGroupAbout', () => {
 			async list() {
 				called = true;
 				return [];
+			},
+			async getSpace() {
+				called = true;
+				return { readPolicy: 'com.atproto.simplespace.defs#publicPolicy' };
 			}
 		};
 		const about = await readGroupAbout(reader, { ...group, about_space_uri: null });
