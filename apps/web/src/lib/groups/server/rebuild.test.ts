@@ -317,17 +317,20 @@ describe('rebuildGroup — a surviving row', () => {
 		const { row, records } = await appGroup(true);
 		await db.prepare(`UPDATE groups SET name = 'drifted' WHERE id = ?`).bind(row.id).run();
 
-		const result = await rebuildGroup(db, sources(records, true), GROUP_DID, 'public');
+		const result = await rebuildGroup(db, sources(records, true), GROUP_DID);
 
 		expect(result.path).toBe('repaired');
 		expect(result.group.id).toBe(row.id);
 		expect(result.group.name).toBe('Kona Surf Club');
 	});
 
-	// With no visibility handed in, the repair asks the host, and a private
-	// group keeps requiring approval whatever its profile says.
-	it('asks the host for the visibility when the caller has none', async () => {
+	// The row's approval is a plain cache of the profile's join policy. A
+	// private group is invite-only because its host says private, which the
+	// page derives (`groupFace`), not because the row is forced to 1: any client
+	// can move the host's read policy without touching this row.
+	it('the group cache follows the profile join policy, with no private override', async () => {
 		const { row, records } = await appGroup(false);
+		await db.prepare(`UPDATE groups SET require_approval = 1 WHERE id = ?`).bind(row.id).run();
 
 		const result = await rebuildGroup(
 			db,
@@ -340,6 +343,6 @@ describe('rebuildGroup — a surviving row', () => {
 
 		expect(result.path).toBe('repaired');
 		expect(result.group.id).toBe(row.id);
-		expect(result.group.require_approval).toBe(1);
+		expect(result.group.require_approval).toBe(0);
 	});
 });

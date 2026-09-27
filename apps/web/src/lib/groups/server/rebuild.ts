@@ -17,8 +17,9 @@
 // NOTHING IS RESTORED FOR VISIBILITY. A group's visibility is its about space's
 // read policy at the host, and its declaration already sits in its public
 // repo. Neither lives in a row, so a rebuild has nothing to write back and no
-// reason to guess. The repair path does ask the host, for one rule: a private
-// group keeps requiring approval whatever its profile says (`applyGroupCache`).
+// reason to guess, and neither path asks the host. The row's approval is a
+// plain cache of the profile's join policy; a private group is invite-only
+// because its host says private, which the page derives (`groupFace`).
 //
 // WHAT IT REFUSES. `groups_identity_immutable` makes `owner_did` permanent once
 // written, so a rebuild that cannot find the `membership` record granting
@@ -29,7 +30,7 @@
 // leaves the database as it found it.
 import { GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY } from '../declaration-record';
 import { GROUP_ROLES, type GroupPermission, type GroupRoleName } from '../permissions';
-import type { GroupRow, GroupVisibility } from '../types';
+import type { GroupRow } from '../types';
 import {
 	pdsSpaceReader,
 	readGroupAbout,
@@ -52,7 +53,7 @@ import {
 } from './members-read';
 import { getGroupByDid, restoreGroup } from './repo';
 import { groupClient } from './session';
-import { groupSpaceUris, readGroupVisibility } from './spaces';
+import { groupSpaceUris } from './spaces';
 
 /** A rebuild that stopped before writing anything, and the one reason why. A
  *  stable tag rather than a message, so a command can report it without string
@@ -103,24 +104,16 @@ export async function groupRebuildSources(
 	};
 }
 
-/** Rebuilds the group whose DID this is, from its records.
- *
- *  `visibility` is the host's, when the caller already read it (Repair does).
- *  Otherwise a repair asks the host itself. A restore never needs it. */
+/** Rebuilds the group whose DID this is, from its records. A restore never
+ *  needs the group's visibility, and neither does a repair (see the header). */
 export async function rebuildGroup(
 	db: D1Database,
 	sources: GroupRebuildSources,
-	groupDid: string,
-	visibility?: GroupVisibility
+	groupDid: string
 ): Promise<GroupRebuildResult> {
 	const row = await getGroupByDid(db, groupDid);
 	if (row) {
-		const profile = await rebuildGroupCache(
-			db,
-			sources.reader,
-			row,
-			visibility ?? (await readGroupVisibility(sources.reader, row))
-		);
+		const profile = await rebuildGroupCache(db, sources.reader, row);
 		const members = await rebuildGroupMembers(db, sources.reader, row);
 		const group = (await getGroupByDid(db, groupDid)) ?? row;
 		return { path: 'repaired', group, profile: profile.outcome, members };

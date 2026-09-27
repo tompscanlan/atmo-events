@@ -174,7 +174,7 @@ describe('groupFace', () => {
 				createdAt: null
 			},
 			row,
-			'private'
+			'public'
 		);
 		expect(face).toEqual({
 			source: 'records',
@@ -196,6 +196,34 @@ describe('groupFace', () => {
 			joinPolicy: 'approval'
 		});
 		expect(groupFace(null, row, 'private').joinPolicy).toBe('invite');
+	});
+
+	const openProfile = {
+		name: 'Kona',
+		description: null,
+		joinPolicy: 'open' as const,
+		locationName: null,
+		createdAt: null
+	};
+
+	// The join policy is derived, not stored: a group is invite-only when its
+	// host reads it as private, whatever the profile record or the row says. Any
+	// client can change the host's read policy without touching our records, so
+	// a stored "private means approval" could never stay true.
+	it('a private group shows invite-only whatever its profile says', () => {
+		expect(groupFace(openProfile, row, 'private').joinPolicy).toBe('invite');
+		expect(groupFace({ ...openProfile, joinPolicy: 'approval' }, row, 'private').joinPolicy).toBe(
+			'invite'
+		);
+		// A public group shows what its profile published.
+		expect(groupFace(openProfile, row, 'public').joinPolicy).toBe('open');
+	});
+
+	// A host nobody could ask is not a public one, which is also how a join is
+	// refused then.
+	it('a group whose visibility is unknown shows invite-only', () => {
+		expect(groupFace(openProfile, row, null).joinPolicy).toBe('invite');
+		expect(groupFace(null, { ...row, require_approval: 0 }, null).joinPolicy).toBe('invite');
 	});
 });
 

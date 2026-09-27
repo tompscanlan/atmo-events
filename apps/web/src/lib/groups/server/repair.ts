@@ -55,9 +55,9 @@
 // choice that got through, and moving it to match a declaration that missed
 // the change would undo that choice. It reads the declaration before it
 // writes one, and writes only on a disagreement. It writes no visibility to
-// the row, which has no column for one. The rebuild after it takes the same
-// reading of the host, so a private group keeps requiring approval whatever
-// join policy the profile still carries (`applyGroupCache`).
+// the row, which has no column for one. The rebuild after it caches the
+// profile's join policy as it stands; a private group is invite-only because
+// its host says private, which the page and the join refusal read.
 //
 // Idempotent: a second run writes nothing, and its rebuild is a no-op.
 //
@@ -205,7 +205,7 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 
 	const host = await alignToHost({ ...write, createdAt }, sources);
 
-	const rebuild = await rebuildGroup(db, sources, group.group_did, host.visibility);
+	const rebuild = await rebuildGroup(db, sources, group.group_did);
 
 	return { wrote, unrecordedMembers, authzHeldBack, memberList, host, rebuild };
 }

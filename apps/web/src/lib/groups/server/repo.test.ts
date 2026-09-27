@@ -213,8 +213,12 @@ describe('private groups are invite-only', () => {
 // which the route reads and hands in. The row holds no copy, so what is handed
 // in is the only answer, whatever the row's approval setting says.
 describe('the join refusal reads the host, not the row', () => {
-	it('refuses a join to a group the host reads as private, though its row is open to join, and writes nothing', async () => {
+	// The row's approval is a cache of the profile's join policy, and nothing
+	// forces it on for a private group, so a private group can sit at 0. The
+	// refusal comes first, before approval is consulted at all.
+	it('a private group refuses a join whatever its cached approval says', async () => {
 		const created = await group({ requireApproval: false });
+		expect(created.require_approval).toBe(0);
 
 		await expect(requestJoin(db, created, ALICE, 'let me in', 'private')).rejects.toMatchObject({
 			reason: 'invite-only'
@@ -224,9 +228,9 @@ describe('the join refusal reads the host, not the row', () => {
 			reason: 'invite-only'
 		});
 
+		expect(harness.raw.prepare('SELECT COUNT(*) AS n FROM join_requests').get()).toEqual({ n: 0 });
 		const membership = await getCallerMembership(db, created, ALICE, null);
 		expect(membership.role).toBeNull();
-		expect(membership.pendingRequestId).toBeNull();
 		expect(await countActiveMembers(db, created.id)).toBe(1);
 	});
 

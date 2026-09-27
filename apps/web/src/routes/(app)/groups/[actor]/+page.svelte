@@ -22,10 +22,10 @@
 	let isMember = $derived(membership.role !== null);
 	let isPending = $derived(membership.pendingRequestId !== null);
 	// What the group published, not what our columns imply. `joinPolicy` is the
-	// profile record's own field; the loader derives it from the host's
-	// visibility and `require_approval` only when there is no record to read.
-	// Reading the columns here would let the page contradict the record a
-	// stranger fetches from the group's PDS.
+	// profile record's own field for a public group, and invite-only for any
+	// other: the loader derives it from the host's visibility (`groupFace`), and
+	// from `require_approval` only when there is no record to read. Reading the
+	// columns here would let the page contradict the group's host.
 	let joinPolicy = $derived(about.joinPolicy);
 	let joiningLabel = $derived(
 		joinPolicy === 'open'

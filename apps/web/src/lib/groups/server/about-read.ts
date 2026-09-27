@@ -28,7 +28,7 @@ import {
 	requireApprovalFor,
 	type GroupProfileFields
 } from '../about-record';
-import type { GroupRow, GroupVisibility } from '../types';
+import type { GroupRow } from '../types';
 import type { CredentialStoreEnv } from './credentials';
 import { resolveGroupCredential } from './credentials';
 import { applyGroupCache } from './repo';
@@ -346,19 +346,18 @@ export function cacheFromProfile(profile: GroupProfileFields): {
  *  state, and wiping the cache to match an absent record would destroy data the
  *  records cannot replace.
  *
- *  `visibility` is the host's (`readGroupVisibility`): a private group keeps
- *  requiring approval whatever the profile says (`applyGroupCache`).
+ *  It reads no visibility: the row's approval caches the profile's join
+ *  policy as it stands (`applyGroupCache`).
  *
  *  A group with no row at all is handled by `./rebuild.ts`, which also owns the
  *  one entry point that picks between the two. */
 export async function rebuildGroupCache(
 	db: D1Database,
 	reader: GroupSpaceReader,
-	group: GroupRow,
-	visibility: GroupVisibility
+	group: GroupRow
 ): Promise<{ outcome: 'repaired' | 'no-profile'; rules: number }> {
 	const about = await readGroupAbout(reader, group);
 	if (!about.profile) return { outcome: 'no-profile', rules: about.rules.length };
-	await applyGroupCache(db, group.id, cacheFromProfile(about.profile), visibility);
+	await applyGroupCache(db, group.id, cacheFromProfile(about.profile));
 	return { outcome: 'repaired', rules: about.rules.length };
 }

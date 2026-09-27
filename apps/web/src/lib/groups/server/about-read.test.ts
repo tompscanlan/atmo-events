@@ -198,7 +198,7 @@ describe('rebuildGroupCache — cache repair', () => {
 			}
 		]);
 
-		const result = await rebuildGroupCache(db, reader, group, 'public');
+		const result = await rebuildGroupCache(db, reader, group);
 		expect(result).toEqual({ outcome: 'repaired', rules: 0 });
 
 		const repaired = await getGroupById(db, group.id);
@@ -220,42 +220,16 @@ describe('rebuildGroupCache — cache repair', () => {
 			}
 		]);
 
-		await rebuildGroupCache(db, reader, group, 'private');
+		await rebuildGroupCache(db, reader, group);
 		const repaired = await getGroupById(db, group.id);
 		expect(repaired).toMatchObject({ owner_did: OWNER });
 		expect(repaired).not.toHaveProperty('visibility');
 	});
 
-	// The safety case. A private group must require approval, so a profile
-	// claiming `open` for a group its host reads as private must not be applied
-	// as it stands. Otherwise a record edit could open a private group to
-	// anyone. Nor may it stop the rebuild: a profile written while the group was
-	// public and open is exactly what a save that failed after the host took a
-	// switch to private leaves behind, and a rebuild that threw on it would throw
-	// on every run of Repair. The rest of the profile is applied.
-	it('keeps a private group requiring approval when its profile record claims open', async () => {
-		const reader = readerOver([
-			{
-				collection: GROUP_PROFILE_COLLECTION,
-				rkey: 'self',
-				value: groupProfileRecord({ name: 'Kona Riders', joinPolicy: 'open' })
-			}
-		]);
-
-		expect(await rebuildGroupCache(db, reader, group, 'private')).toEqual({
-			outcome: 'repaired',
-			rules: 0
-		});
-		expect(await getGroupById(db, group.id)).toMatchObject({
-			name: 'Kona Riders',
-			require_approval: 1
-		});
-	});
-
 	// An empty about space is not "the group has no name": wiping the cache to
 	// match an absent record would destroy the only copy.
 	it('leaves the cache alone when there is no profile record', async () => {
-		const result = await rebuildGroupCache(db, readerOver([]), group, 'public');
+		const result = await rebuildGroupCache(db, readerOver([]), group);
 		expect(result.outcome).toBe('no-profile');
 		expect(await getGroupById(db, group.id)).toMatchObject({ name: 'Stale name' });
 	});

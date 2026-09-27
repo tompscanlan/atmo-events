@@ -80,9 +80,9 @@ export interface GroupProfileFields {
  *  `visibility` is what the caller has: the form's choice on a create or a
  *  settings save, or the host's read policy (`readGroupVisibility`). Never a
  *  row field, because the row holds none. A private group is invite-only
- *  (`approvalRefusal`), so anything but `public` decides the policy before
- *  `requireApproval` is consulted. That includes `null`, a host nobody could
- *  ask, which is also how a join is refused then (`requestJoin`). */
+ *  whatever its approval setting, so anything but `public` decides the policy
+ *  before `requireApproval` is consulted. That includes `null`, a host nobody
+ *  could ask, which is also how a join is refused then (`requestJoin`). */
 export function joinPolicyFor(
 	visibility: GroupVisibility | null,
 	requireApproval: number | boolean
@@ -99,8 +99,13 @@ export function joinPolicyFor(
  *  leak into a page that reports `records`. `source` says which one rendered,
  *  so a browser can see whether the page came from records.
  *
- *  `visibility` is the host's, for the fallback's join policy: the row has
- *  approval and no visibility. */
+ *  The join policy is the one exception, and it is derived on both branches:
+ *  `visibility` is the host's, and anything but `public` (private, or null for
+ *  a host nobody could ask) shows invite-only whatever the profile or the row
+ *  says. Any client can change the host's read policy without touching our
+ *  records, so a stored "private means approval" could never stay true. A
+ *  public group shows the profile's policy, or the row's approval without
+ *  one. */
 export function groupFace(
 	profile: GroupProfileFields | null,
 	group: {
@@ -123,7 +128,7 @@ export function groupFace(
 			name: profile.name,
 			description: profile.description,
 			locationName: profile.locationName,
-			joinPolicy: profile.joinPolicy
+			joinPolicy: visibility === 'public' ? profile.joinPolicy : 'invite'
 		};
 	}
 	return {

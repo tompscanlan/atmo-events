@@ -632,13 +632,11 @@ export async function recordGroupSpaces(
  *  touches `owner_did`, which no record owns and which a rebuild must not
  *  guess.
  *
- *  `visibility` is the host's answer (`readGroupVisibility`), never a stored
- *  one. A private group keeps requiring approval whatever `require_approval`
- *  the profile gives, so no profile can widen a private group. Nor can one stop
- *  the rebuild. A profile written while the group was public and open is what
- *  a save leaves behind when the host took a switch to private and the profile
- *  write did not, and a write that refused such a profile would fail every run
- *  of Repair. */
+ *  `require_approval` is a plain cache of the profile's join policy, for a
+ *  private group too. What makes a private group invite-only is its host's
+ *  read policy, which the page and the join refusal read (`groupFace`,
+ *  `requestJoin`); no value stored here could stay in step with a host any
+ *  client can change. */
 export async function applyGroupCache(
 	db: D1Database,
 	groupId: string,
@@ -647,11 +645,9 @@ export async function applyGroupCache(
 		description: string | null;
 		require_approval: number;
 		location_name: string | null;
-	},
-	visibility: GroupVisibility
+	}
 ): Promise<void> {
 	await ensureGroupsSchema(db);
-	const requireApproval = visibility === 'private' ? 1 : cache.require_approval;
 	await guard(() =>
 		db
 			.prepare(
@@ -662,7 +658,7 @@ export async function applyGroupCache(
 			.bind(
 				cache.name,
 				cache.description,
-				requireApproval,
+				cache.require_approval,
 				cache.location_name,
 				Date.now(),
 				groupId

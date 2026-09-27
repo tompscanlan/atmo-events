@@ -567,9 +567,9 @@ describe('Repair aligns the declaration to the host', () => {
 	// saved as private and the host takes the change, while the profile record
 	// still says anyone may join. Repair withdraws the declaration and rebuilds
 	// the row from the records, and at no point writes a visibility into the
-	// row: there is no column for it. The rebuild keeps the row requiring
-	// approval, because the host reads the group as private, rather than take
-	// the profile's "open".
+	// row: there is no column for it. The row's approval stays a cache of the
+	// profile's "open". The group is still invite-only, because its host reads
+	// it as private and the page derives the policy from that (`groupFace`).
 	it('repair writes no visibility to the row', async () => {
 		await updateGroup(db, group.id, { requireApproval: false });
 		await writeGroupProfile({
@@ -599,7 +599,7 @@ describe('Repair aligns the declaration to the host', () => {
 		expect(rowWrites.length).toBeGreaterThan(0);
 		expect(rowWrites.filter((sql) => /visibility/.test(sql))).toEqual([]);
 		expect(result.host).toEqual({ visibility: 'private', declaration: 'withdrawn' });
-		expect((await getGroupByDid(db, GROUP_DID))?.require_approval).toBe(1);
+		expect((await getGroupByDid(db, GROUP_DID))?.require_approval).toBe(0);
 		expect(await declared()).toBe(false);
 		expect(pds.writes().map((w) => w.nsid.replace('com.atproto.', ''))).toEqual([
 			'repo.deleteRecord'
@@ -608,6 +608,6 @@ describe('Repair aligns the declaration to the host', () => {
 		pds.clearLog();
 		await hostRepair();
 		expect(pds.writes()).toEqual([]);
-		expect((await getGroupByDid(db, GROUP_DID))?.require_approval).toBe(1);
+		expect((await getGroupByDid(db, GROUP_DID))?.require_approval).toBe(0);
 	});
 });
