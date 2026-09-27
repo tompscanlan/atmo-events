@@ -21,6 +21,9 @@ if ! git -C "$ROOT" merge-base --is-ancestor "$BASE" HEAD; then
 	echo "ABORT base $BASE is not an ancestor of HEAD"; exit 2
 fi
 pass "base ${BASE:0:7} is an ancestor of HEAD $(git -C "$ROOT" rev-parse --short HEAD)"
+dirty=$(git -C "$ROOT" status --porcelain --untracked-files=normal | grep -c . || true)
+[ "$dirty" = 0 ] && pass "clean tree at $(git -C "$ROOT" rev-parse HEAD): 0 uncommitted paths, so every check below grades the committed HEAD" \
+	|| fail "$dirty uncommitted path(s): commit first, because the diff checks and the working-file checks would grade different trees"
 
 # 1. Groups + routes suites: zero failures, no mass deletion, and every contract case present BY NAME and passing.
 #    Base 9d6c601: 495 passed in 40 files. The floor allows the rewrites the contract names
@@ -53,6 +56,15 @@ NAMED = [
     "repair writes no visibility to the row",
     "the group page loads the visibility its host reports",
     "browse marks a group private when the caller sees it only through their own undeclared groups",
+    # Fix round: a private group's join policy is derived from the host, never stored.
+    "a private group shows invite-only whatever its profile says",
+    "a group whose visibility is unknown shows invite-only",
+    "the group cache follows the profile join policy, with no private override",
+    "a private group refuses a join whatever its cached approval says",
+    # Fix round: the page loader, per caller class.
+    "a stranger's page reuses the gate's answer and asks the host once",
+    "a member's page loads with no visibility when the host cannot say",
+    "an owner's page loads with no visibility when the deployment holds no credential",
 ]
 for t in NAMED:
     checks.append((f"case passes: '{t}'", t in passed, passed.get(t, "not found or not passing")))
@@ -133,13 +145,19 @@ out(idx.length > 0 && !idx.includes('visibility'), `groups_browse keys on: ${idx
 newGroup('g2', 'did:plc:group2');
 const seededOwner = count(db, "roles WHERE group_id = 'g2' AND is_owner = 1");
 out(seededOwner === 1, `a group created after the reset gets its owner role (${seededOwner})`);
+console.log('REHEARSAL COMPLETE');
 JS
-(cd "$WEB" && node "$TMP/rehearse.mjs" "$TMP/base" "$WEB/migrations" 2>/dev/null) > "$TMP/r.out"
-if grep -q 'reset rehearsal' "$TMP/r.out"; then
-	cat "$TMP/r.out"
-	FAILS=$((FAILS + $(grep -c '^FAIL' "$TMP/r.out")))
+(cd "$WEB" && node "$TMP/rehearse.mjs" "$TMP/base" "$WEB/migrations" 2>"$TMP/r.err") > "$TMP/r.out"
+rc=$?
+grep 'reset rehearsal' "$TMP/r.out"
+FAILS=$((FAILS + $(grep -c '^FAIL' "$TMP/r.out")))
+# A rehearsal that crashes part-way prints early PASS lines and no FAIL, so success needs all three:
+# a clean exit, the completion marker, and every one of its 9 assertions reported.
+n=$(grep -c 'reset rehearsal' "$TMP/r.out" || true)
+if [ "$rc" = 0 ] && grep -q '^REHEARSAL COMPLETE$' "$TMP/r.out" && [ "$n" = 9 ]; then
+	pass "reset rehearsal ran to completion: exit 0, marker present, $n of 9 assertions reported"
 else
-	fail "reset rehearsal produced no output"
+	fail "reset rehearsal did not complete: exit $rc, $n of 9 assertions reported, stderr: $(head -c 300 "$TMP/r.err")"
 fi
 
 # 3. Structure the contract names.
@@ -171,6 +189,18 @@ parsed=$(cd "$WEB" && node --check scripts/groups-e2e.mjs 2>&1 && echo PARSED)
 n=$(git -C "$ROOT" diff --name-only "$BASE"...HEAD -- apps/web/src/lib/contrail | grep -c . || true)
 m=$(git -C "$ROOT" ls-files apps/web/src/lib/contrail | grep -c .)
 [ "$m" -gt 0 ] && [ "$n" = 0 ] && pass "src/lib/contrail: $m files, 0 changed" || fail "src/lib/contrail: $n of $m files changed"
+# 3g. Nothing still says a private group's cached approval is forced (the clamp is gone, the policy is derived).
+n=$(git -C "$ROOT" grep -ciE 'keeps requiring approval|whatever join policy the profile|private group must require approval.{0,40}(schema|trigger)' -- apps/web/src apps/web/scripts ':!*.test.ts' | awk -F: '{s+=$NF} END {print s+0}')
+c=$(src_count 'export async function applyGroupCache' 'apps/web/src/lib/groups/server/repo.ts')
+[ "$c" = 1 ] && [ "$n" = 0 ] && pass "applyGroupCache present; 0 comments claim a forced private approval" \
+	|| fail "applyGroupCache defined $c time(s); $n comment(s) still claim a forced private approval"
+# 3h. The e2e puts a PRIVATE read policy on the host, and proves absence by the not-found answer, not by any non-200.
+e=$WEB/scripts/groups-e2e.mjs
+m=$(grep -c 'memberListPolicy' "$e" || true)
+nf=$(grep -c 'RecordNotFound' "$e" || true)
+bad=$(grep -cE '\.status !== 200' "$e" || true)
+[ "$m" -ge 1 ] && [ "$nf" -ge 1 ] && [ "$bad" = 0 ] && pass "groups-e2e: memberListPolicy $m, RecordNotFound $nf, bare '.status !== 200' absence checks 0" \
+	|| fail "groups-e2e: memberListPolicy $m (want >= 1), RecordNotFound $nf (want >= 1), bare '.status !== 200' $bad (want 0)"
 echo "      R9 listing now (information, not a gate):"
 git -C "$ROOT" grep -nE '\w\.visibility\s*(===|!==)' -- apps/web/src ':!*.test.ts' ':!*.svelte' ':!apps/web/src/lib/contrail' | sed 's/^/        /'
 
