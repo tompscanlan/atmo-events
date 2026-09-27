@@ -13,6 +13,16 @@
 //
 // The permission is always MANAGE_GROUP: announcing the group changes the
 // group's own face, as writing its profile does.
+//
+// A WITHDRAWAL TELLS OUR OWN INDEX; A DECLARE NEVER DOES. Browse lists whatever
+// the declaration index holds, so a group that turns private must leave the
+// index when its declaration leaves the repo, not a cron tick later. The index
+// learns of it through `notifyOfUpdate`, which re-reads the URI from the
+// group's PDS and deletes its entry when no record comes back. It deletes on
+// any answer that is not a record, a 5xx included, so the same call after a
+// declare would drop a live declaration whenever the PDS blinked, and nothing
+// would restore it until the group's next write. A declaration that was just
+// written reaches the index from Jetstream instead.
 import {
 	GROUP_DECLARATION_COLLECTION,
 	GROUP_DECLARATION_RKEY,
@@ -28,6 +38,7 @@ import {
 	requireGroupPermission,
 	type GroupRepoWriter
 } from './event-writer';
+import { contrailNotifier, type GroupEventNotifier } from './events-index';
 
 export interface WriteGroupDeclarationInput {
 	db: D1Database;
@@ -43,6 +54,14 @@ export interface WriteGroupDeclarationInput {
 	writer?: GroupRepoWriter;
 	/** Overrides the members-space reader the gate resolves from. */
 	reader?: GroupSpaceReader | null;
+}
+
+/** A withdrawal's input. Only a withdrawal takes a notifier:
+ *  `writeGroupDeclaration` has none to call. */
+export interface WithdrawGroupDeclarationInput extends WriteGroupDeclarationInput {
+	/** Overrides the index notification. Tests pass this; nothing else should,
+	 *  because a caller that supplies its own is a caller that can forget. */
+	notify?: GroupEventNotifier;
 }
 
 export interface DeclarationWriteResult {
@@ -95,12 +114,17 @@ export async function writeGroupDeclaration(
 	return { uri: result.uri, cid: result.cid };
 }
 
-/** Withdraws the declaration.
+/** Withdraws the declaration, then tells our own index it is gone.
  *
  *  Safe to call when there is none: the reference PDS treats deleting a missing
  *  record as a no-op rather than an error, so this needs no read first and no
- *  "did it exist" branch that could disagree with the repo. */
-export async function removeGroupDeclaration(input: WriteGroupDeclarationInput): Promise<void> {
+ *  "did it exist" branch that could disagree with the repo. The index is told
+ *  either way, which is harmless: it deletes only an entry it holds.
+ *
+ *  The index is told only after the PDS has accepted the delete. A delete that
+ *  fails throws before it, so the index never drops a declaration the repo
+ *  still holds. */
+export async function removeGroupDeclaration(input: WithdrawGroupDeclarationInput): Promise<void> {
 	await requireGroupPermission(input, 'MANAGE_GROUP');
 
 	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
@@ -111,6 +135,24 @@ export async function removeGroupDeclaration(input: WriteGroupDeclarationInput):
 		record: {},
 		intent: 'delete'
 	});
+
+	await forgetDeclaration(input);
+}
+
+/** Tells our own index that the group's declaration is gone.
+ *
+ *  A failure is logged and swallowed. The PDS has already deleted the record,
+ *  so the save did what it was asked to, and a dead index means browse lists
+ *  the group until the next cron tick carries the delete in from Jetstream.
+ *  Reporting it as a failed save would be untrue and would invite a retry of a
+ *  delete that landed. */
+async function forgetDeclaration(input: WithdrawGroupDeclarationInput): Promise<void> {
+	const uri = `at://${input.group.group_did}/${GROUP_DECLARATION_COLLECTION}/${GROUP_DECLARATION_RKEY}`;
+	try {
+		await (input.notify ?? contrailNotifier(input.db))(uri);
+	} catch (e) {
+		console.error(`[groups] could not tell the index that ${uri} was withdrawn:`, e);
+	}
 }
 
 /**
@@ -126,8 +168,11 @@ export async function removeGroupDeclaration(input: WriteGroupDeclarationInput):
  * no-op, and that could otherwise fail a group that was just created.
  */
 export async function reconcileGroupDeclaration(
-	input: WriteGroupDeclarationInput & { assumeAbsent?: boolean }
+	input: WithdrawGroupDeclarationInput & { assumeAbsent?: boolean }
 ): Promise<DeclarationWriteResult | null> {
+	// `writeGroupDeclaration` takes no notifier, so `input.notify` goes no
+	// further on this branch: a declare must never tell the index (see the file
+	// header).
 	if (declarationRequired(input.group)) return writeGroupDeclaration(input);
 	if (input.assumeAbsent) return null;
 	await removeGroupDeclaration(input);
