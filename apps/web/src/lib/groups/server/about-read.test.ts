@@ -5,11 +5,11 @@
 //   1. a space record's URI is space-scoped, so the collection and rkey have to
 //      come off the tail. A reader that assumed at://<repo>/<collection>/<rkey>
 //      would mis-split every record and silently return nothing;
-//   2. the rebuild must not be able to widen a private group. The profile is
-//      the source of truth for `require_approval`, so a profile claiming `open`
-//      on a private group would open it. The write keeps a private row
-//      requiring approval instead, the rule the schema enforces, so the group
-//      stays closed and the rebuild still completes.
+//   2. the rebuild caches the profile as it stands. `require_approval` follows
+//      the profile's join policy, `open` included, for a private group too. That
+//      does not open a private group: it is invite-only because its host reads
+//      it as private, and the join policy is derived from that where it is
+//      shown and enforced (`groupFace`, `requestJoin`), not from the row.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { createGroup, getGroupById, recordGroupSpaces } from './repo';

@@ -35,9 +35,9 @@ function isActiveMember(membership: CallerMembership): boolean {
  *
  *  `visibility` is the host's answer, the about space's read policy
  *  (`readGroupVisibility`): the host is what every other app is held to, and
- *  our row holds no copy. It is taken as an argument so this stays pure; the loader does the read,
- *  and skips it for a caller on the roster, whom every visibility admits. Only
- *  `public` opens the group to a stranger. */
+ *  our row holds no copy. It is taken as an argument so this stays pure; the
+ *  loader does the read, and skips it for a caller on the roster, whom every
+ *  visibility admits. Only `public` opens the group to a stranger. */
 export function canSeeGroup(visibility: GroupVisibility, membership: CallerMembership): boolean {
 	if (visibility === 'public') return true;
 	return isActiveMember(membership);

@@ -84,8 +84,9 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		about: {
 			/** Every field from the profile record when there is one, its nulls
 			 *  included, and from the row only when there is not. The join policy
-			 *  is the record's, which is what the group published, and otherwise
-			 *  the row's approval under the host's visibility. */
+			 *  is derived: the record's, or else the row's approval, only for a
+			 *  public host; invite-only for a private one or one that could not
+			 *  be asked (`groupFace`). */
 			...groupFace(about.profile, group, visibility),
 			rules: about.rules.map((rule) => ({ text: rule.text, uri: rule.uri }))
 		},
