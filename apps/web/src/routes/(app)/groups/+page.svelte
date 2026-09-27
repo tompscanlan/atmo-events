@@ -64,9 +64,9 @@
 								</p>
 							{:else}
 								<!-- Declared on the network, with no page here: a group another
-								     app hosts, or one the caller may not see. Its name is in an
-								     about space no anonymous reader may open, so we only have the
-								     address, and a link would only reach a 404. -->
+								     app hosts. Its name is in an about space no anonymous reader
+								     may open, so we only have the address, and a link would only
+								     reach a 404. -->
 								<p class="truncate font-mono text-lg font-semibold">
 									{group.handle ?? group.group_did}
 								</p>
