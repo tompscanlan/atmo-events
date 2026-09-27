@@ -58,7 +58,8 @@
 // a disagreement. The declaration goes before the row, because it is what
 // other apps see and the row no longer decides who may see the group. A row
 // moved to private also requires approval, which the schema insists on for a
-// private group.
+// private group, and the rebuild keeps it so whatever join policy the profile
+// still carries (`applyGroupCache`).
 //
 // Idempotent: a second run writes nothing, and its rebuild is a no-op.
 //

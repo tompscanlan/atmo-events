@@ -635,11 +635,15 @@ export async function recordGroupSpaces(
  *  touches `visibility` or `owner_did`, which no record owns and which a
  *  rebuild must not guess.
  *
- *  `require_approval` still meets the schema rule that a private group must
- *  require approval (the `groups_private_requires_approval_update` trigger in
- *  migrations/0001_groups.sql). So a profile claiming `open` on a private group
- *  is refused here instead of quietly widening the group, and `guard` reports
- *  it as `GroupRuleError('private-needs-approval')`. */
+ *  A private row keeps requiring approval whatever `require_approval` the
+ *  profile gives: the schema insists on it (the
+ *  `groups_private_requires_approval_update` trigger in
+ *  migrations/0001_groups.sql), and the statement reads the row's own
+ *  visibility as it writes, so no profile can widen a private group. Nor can
+ *  one stop the rebuild. A profile written while the group was public and open
+ *  is what a save leaves behind when the host took a switch to private and the
+ *  row did not, and Repair moves that row to private before it rebuilds. A
+ *  write that refused such a profile would fail every run of Repair. */
 export async function applyGroupCache(
 	db: D1Database,
 	groupId: string,
@@ -654,7 +658,8 @@ export async function applyGroupCache(
 	await guard(() =>
 		db
 			.prepare(
-				`UPDATE groups SET name = ?, description = ?, require_approval = ?,
+				`UPDATE groups SET name = ?, description = ?,
+				        require_approval = CASE WHEN visibility = 'private' THEN 1 ELSE ? END,
 				        location_name = ?, updated_at = ?
 				 WHERE id = ?`
 			)

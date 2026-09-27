@@ -22,6 +22,7 @@ import {
 	updateGroup
 } from './repo';
 import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './members-writer';
+import { writeGroupProfile } from './about-writer';
 import { GroupPermissionError, type GroupRepoWrite, type GroupRepoWriter } from './event-writer';
 import { readGroupMembers, hasAuthzRecords } from './members-read';
 import { describeRepair, repairGroup } from './repair';
@@ -570,4 +571,49 @@ describe('Repair aligns the declaration and the row to the host', () => {
 			expect(await rowVisibility()).toBe(rowAfter);
 		}
 	);
+
+	// The shape a failed save really leaves: a public group open to join is
+	// saved as private, the host takes the change and the row write fails. The
+	// profile record still says anyone may join. Repair moves the row to private
+	// with approval, and the rebuild after it must keep that approval rather
+	// than take the profile's "open" and be refused by the schema on every run.
+	it('completes on a group the host reads as private whose row and profile still say public and open', async () => {
+		await updateGroup(db, group.id, { requireApproval: false });
+		const open = (await getGroupByDid(db, GROUP_DID))!;
+		await writeGroupProfile({
+			db,
+			env,
+			group: open,
+			callerDid: OWNER,
+			profile: { name: 'Kona' }
+		});
+		await hostCall('com.atproto.repo.putRecord', {
+			repo: GROUP_DID,
+			collection: GROUP_DECLARATION_COLLECTION,
+			rkey: GROUP_DECLARATION_RKEY,
+			record: { aboutSpace: ABOUT, createdAt: new Date(group.created_at).toISOString() }
+		});
+		await hostCall('com.atproto.simplespace.updateSpace', {
+			space: ABOUT,
+			readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' }
+		});
+		pds.clearLog();
+
+		await hostRepair();
+
+		const row = (await getGroupByDid(db, GROUP_DID))!;
+		expect({ visibility: row.visibility, require_approval: row.require_approval }).toEqual({
+			visibility: 'private',
+			require_approval: 1
+		});
+		expect(await declared()).toBe(false);
+		expect(pds.writes().map((w) => w.nsid.replace('com.atproto.', ''))).toEqual([
+			'repo.deleteRecord'
+		]);
+
+		pds.clearLog();
+		await hostRepair();
+		expect(pds.writes()).toEqual([]);
+		expect((await getGroupByDid(db, GROUP_DID))?.require_approval).toBe(1);
+	});
 });
