@@ -20,6 +20,12 @@
 // read policy, and the app reads as the group, so what the app renders does not
 // change with it.
 //
+// It is also where the app reads a group's visibility back from
+// (`readGroupVisibility`, with `getSpace`). The page gate, the join refusal, the
+// settings save and Repair all ask the host rather than our row, because the
+// host is what every other app is held to, and a save that failed partway can
+// leave the row behind it.
+//
 // The write policy is member-list on both. The vocabulary
 // (com.atproto.simplespace.defs) has no "only the owner" policy, and none is
 // needed: the write policy governs whether other users' writes are tracked and
@@ -33,7 +39,13 @@
 // managingAppPolicy would need a managing-app DID and a checkUserAccess
 // endpoint. App access is `open`: an allowList of client ids would decide which
 // other apps may read a group, and `open` leaves that decision to later.
-import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupVisibility } from '../types';
+import {
+	ABOUT_SPACE_TYPE,
+	MEMBERS_SPACE_TYPE,
+	type GroupRow,
+	type GroupVisibility
+} from '../types';
+import type { GroupSpaceReader } from './about-read';
 import { resolveGroupCredential, type GroupCredential } from './credentials';
 import { GroupCredentialError, requireGroupPermission, type GroupGateInput } from './event-writer';
 import { groupClient } from './session';
@@ -56,6 +68,40 @@ export type SpaceReadPolicy = typeof POLICY_PUBLIC | typeof POLICY_MEMBER_LIST;
  *  function does not know closes the space rather than opening it. */
 export function aboutSpaceReadPolicy(visibility: GroupVisibility): SpaceReadPolicy {
 	return visibility === 'public' ? POLICY_PUBLIC : POLICY_MEMBER_LIST;
+}
+
+/** The inverse: a group's visibility, from the read policy its about space
+ *  reports. `publicPolicy` is public and `memberListPolicy` is private.
+ *
+ *  Any other policy reads as private too. A `managingAppPolicy`, or a variant
+ *  this app has never heard of, was not set by this app, and treating it as
+ *  public would open a group on the strength of a value nobody here chose. It
+ *  is the same rule `aboutSpaceReadPolicy` applies in the other direction. */
+export function visibilityFromReadPolicy(readPolicy: string): GroupVisibility {
+	return readPolicy === POLICY_PUBLIC ? 'public' : 'private';
+}
+
+/** A group's visibility as its host enforces it: `getSpace` on the about space,
+ *  through `visibilityFromReadPolicy`. Never the row.
+ *
+ *  It throws when it cannot ask: a group whose about space was never recorded
+ *  (provisioning did not finish), or a host that does not answer. "Could not
+ *  ask" must not come back as either visibility, and each caller decides what
+ *  a failure means for it. The page gate answers a 503, a save stops before its
+ *  first write, and Repair stops before it aligns anything to the host. */
+export async function readGroupVisibility(
+	reader: GroupSpaceReader,
+	group: Pick<GroupRow, 'group_did' | 'about_space_uri'>
+): Promise<GroupVisibility> {
+	const space = group.about_space_uri;
+	if (!space) {
+		throw new GroupSpaceError(
+			`${group.group_did} has no about space yet, so its visibility cannot be read from its PDS`,
+			ABOUT_SPACE_TYPE
+		);
+	}
+	const { readPolicy } = await reader.getSpace(space);
+	return visibilityFromReadPolicy(readPolicy);
 }
 
 /** The space key is a constant, `self`, as the proposal's space table gives it

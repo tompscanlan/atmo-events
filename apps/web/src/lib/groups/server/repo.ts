@@ -10,7 +10,13 @@ import {
 	type GroupPermission,
 	type GroupRoleName
 } from '../permissions';
-import type { CallerMembership, GroupRow, JoinRequestRow, MemberRow } from '../types';
+import type {
+	CallerMembership,
+	GroupRow,
+	GroupVisibility,
+	JoinRequestRow,
+	MemberRow
+} from '../types';
 import type { GroupSpaceReader } from './about-read';
 import {
 	NO_MEMBER_RECORDS,
@@ -65,9 +71,10 @@ export class GroupRuleError extends Error {
 			| 'owner-role-reserved'
 			| 'not-found'
 			| 'already-pending'
-			/** A stranger asked to join a private group. `requestJoin` raises this,
-			 *  not the schema: the schema forbids a private group from being
-			 *  open-join, and this forbids the act of joining one. */
+			/** A stranger asked to join a group its host reads as private.
+			 *  `requestJoin` raises this, not the schema: the schema forbids a
+			 *  private group from being open-join, and this forbids the act of
+			 *  joining one. */
 			| 'invite-only'
 			/** The settings or create form tried to make a private group open-join.
 			 *  The `groups_private_requires_approval_*` triggers in
@@ -628,11 +635,15 @@ export async function recordGroupSpaces(
  *  touches `visibility` or `owner_did`, which no record owns and which a
  *  rebuild must not guess.
  *
- *  `require_approval` still meets the schema rule that a private group must
- *  require approval (the `groups_private_requires_approval_update` trigger in
- *  migrations/0001_groups.sql). So a profile claiming `open` on a private group
- *  is refused here instead of quietly widening the group, and `guard` reports
- *  it as `GroupRuleError('private-needs-approval')`. */
+ *  A private row keeps requiring approval whatever `require_approval` the
+ *  profile gives: the schema insists on it (the
+ *  `groups_private_requires_approval_update` trigger in
+ *  migrations/0001_groups.sql), and the statement reads the row's own
+ *  visibility as it writes, so no profile can widen a private group. Nor can
+ *  one stop the rebuild. A profile written while the group was public and open
+ *  is what a save leaves behind when the host took a switch to private and the
+ *  row did not, and Repair moves that row to private before it rebuilds. A
+ *  write that refused such a profile would fail every run of Repair. */
 export async function applyGroupCache(
 	db: D1Database,
 	groupId: string,
@@ -647,7 +658,8 @@ export async function applyGroupCache(
 	await guard(() =>
 		db
 			.prepare(
-				`UPDATE groups SET name = ?, description = ?, require_approval = ?,
+				`UPDATE groups SET name = ?, description = ?,
+				        require_approval = CASE WHEN visibility = 'private' THEN 1 ELSE ? END,
 				        location_name = ?, updated_at = ?
 				 WHERE id = ?`
 			)
@@ -878,12 +890,20 @@ export type JoinOutcome = 'joined' | 'pending' | 'already-member' | 'already-pen
  *  may admit members, through `addMember`, never through this function. The
  *  refusal sits here, below the roster check, instead of in the form: every
  *  caller of `requestJoin` inherits it, and an existing member's idempotent
- *  retry still answers `already-member` instead of an error. */
+ *  retry still answers `already-member` instead of an error.
+ *
+ *  `visibility` is the group's host's answer (`readGroupVisibility`), passed in
+ *  so this stays a D1 function, and never the row's column: the host is what
+ *  every other app is held to, and a save that failed partway can leave the
+ *  row behind it. Only `public` takes a join. `null` means nobody asked the
+ *  host, which the route skips for a caller already on the roster, so it is
+ *  refused like a private group rather than read as public. */
 export async function requestJoin(
 	db: D1Database,
 	group: GroupRow,
 	did: string,
-	message: string | null
+	message: string | null,
+	visibility: GroupVisibility | null
 ): Promise<JoinOutcome> {
 	await ensureGroupsSchema(db);
 	const existing = await db
@@ -892,7 +912,7 @@ export async function requestJoin(
 		.first<{ status: string }>();
 	if (existing) return 'already-member';
 
-	if (group.visibility === 'private') {
+	if (visibility !== 'public') {
 		throw new GroupRuleError('invite-only', 'This group is invite-only');
 	}
 

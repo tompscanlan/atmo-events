@@ -7,8 +7,9 @@
 //      would mis-split every record and silently return nothing;
 //   2. the rebuild must not be able to widen a private group. The profile is
 //      the source of truth for `require_approval`, so a profile claiming `open`
-//      on a private group would open it, and the schema, not TypeScript, has to
-//      refuse.
+//      on a private group would open it. The write keeps a private row
+//      requiring approval instead, the rule the schema enforces, so the group
+//      stays closed and the rebuild still completes.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { createGroup, getGroupById, recordGroupSpaces, updateGroup } from './repo';
@@ -60,6 +61,9 @@ function readerOver(
 		},
 		async list() {
 			return all;
+		},
+		async getSpace() {
+			throw new Error('this fake holds records, not a space configuration');
 		}
 	};
 }
@@ -167,6 +171,10 @@ describe('readGroupAbout', () => {
 			async list() {
 				called = true;
 				return [];
+			},
+			async getSpace() {
+				called = true;
+				return { readPolicy: 'com.atproto.simplespace.defs#publicPolicy' };
 			}
 		};
 		const about = await readGroupAbout(reader, { ...group, about_space_uri: null });
@@ -222,22 +230,28 @@ describe('rebuildGroupCache — cache repair', () => {
 	});
 
 	// The safety case. migrations/0001_groups.sql forbids a private group that is
-	// open to join, so a profile claiming `open` for a private group must be
-	// refused rather than applied. Otherwise a record edit could open a private
-	// group to anyone.
-	it('refuses to open a private group from a profile record', async () => {
+	// open to join, so a profile claiming `open` for a private group must not be
+	// applied as it stands. Otherwise a record edit could open a private group to
+	// anyone. Nor may it stop the rebuild: a profile written while the group was
+	// public and open is exactly what a save that failed after the host took a
+	// switch to private leaves behind, and a rebuild that threw on it would throw
+	// on every run of Repair. The rest of the profile is applied.
+	it('keeps a private group requiring approval when its profile record claims open', async () => {
 		await updateGroup(db, group.id, { visibility: 'private', requireApproval: true });
 		const reader = readerOver([
 			{
 				collection: GROUP_PROFILE_COLLECTION,
 				rkey: 'self',
-				value: groupProfileRecord({ name: 'Kona', joinPolicy: 'open' })
+				value: groupProfileRecord({ name: 'Kona Riders', joinPolicy: 'open' })
 			}
 		]);
 
-		await expect(rebuildGroupCache(db, reader, group)).rejects.toThrow();
-		const untouched = await getGroupById(db, group.id);
-		expect(untouched).toMatchObject({ visibility: 'private', require_approval: 1 });
+		expect(await rebuildGroupCache(db, reader, group)).toEqual({ outcome: 'repaired', rules: 0 });
+		expect(await getGroupById(db, group.id)).toMatchObject({
+			name: 'Kona Riders',
+			visibility: 'private',
+			require_approval: 1
+		});
 	});
 
 	// An empty about space is not "the group has no name": wiping the cache to

@@ -66,8 +66,10 @@ export class GroupRebuildRefused extends Error {
 export interface GroupRebuildSources {
 	/** The about and members spaces, through the group's own session. */
 	reader: GroupSpaceReader;
-	/** Whether the group's public repo holds its declaration. Used only for
-	 *  visibility: see `visibilityFromPlacement`, and delete the two together. */
+	/** Whether the group's public repo holds its declaration. A restore takes
+	 *  the row's visibility from it (`visibilityFromPlacement`), and Repair reads
+	 *  it to decide whether the declaration has to be written or withdrawn to
+	 *  match the host (./repair.ts). */
 	declared: () => Promise<boolean>;
 }
 
@@ -198,10 +200,10 @@ function timestamp(value: string | null, fallback: number): number {
 //
 // `groups.visibility` is planned for removal, with privacy expressed by where
 // the group's records are placed instead of by a column. Until then it is NOT
-// NULL, so a restored row needs a value, and the rebuild reads it from the one
-// placement fact that exists: whether the group's public repo holds its
-// declaration. Removing the column means deleting this section,
-// `GroupRebuildSources.declared`, and one line in `restoreFromRecords`.
+// NULL, so a restored row needs a value, and the rebuild reads it from a
+// placement fact: whether the group's public repo holds its declaration. Removing the column means deleting this section and one line in
+// `restoreFromRecords`. `GroupRebuildSources.declared` stays: Repair reads it
+// too.
 //
 // The combination the data cannot produce, undeclared (so private) and open to
 // join, is refused by the schema's private-requires-approval trigger inside

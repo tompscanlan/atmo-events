@@ -346,7 +346,8 @@
 					<h3 class="text-sm font-semibold">Repair this group</h3>
 					<p class="text-base-500 dark:text-base-400 text-xs">
 						Writes any of this group's member records that are missing and can be written safely,
-						brings the group's member list at its PDS in line with those records, then rebuilds this
+						brings the group's member list at its PDS in line with those records, publishes or
+						withdraws its declaration to match the visibility its PDS enforces, then rebuilds this
 						site's copy of the group from its records. It never overwrites a record that exists, and
 						running it twice changes nothing the second time.
 					</p>

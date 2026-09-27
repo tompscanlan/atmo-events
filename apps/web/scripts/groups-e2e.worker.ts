@@ -168,14 +168,22 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		};
 	},
 
-	requestJoin: async (env, args) => ({
-		outcome: await requestJoin(
-			env.DB,
-			await groupById(env, args.groupId),
-			String(args.did),
-			(args.message as string | null) ?? null
-		)
-	}),
+	/** The driver joins before it provisions the group's spaces, so there is no
+	 *  about space whose read policy could answer. The row's visibility stands in
+	 *  for it: it is the choice the create made, which is what provisioning
+	 *  would set the read policy from. */
+	requestJoin: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		return {
+			outcome: await requestJoin(
+				env.DB,
+				group,
+				String(args.did),
+				(args.message as string | null) ?? null,
+				group.visibility
+			)
+		};
+	},
 
 	approveJoinRequest: async (env, args) => {
 		await approveJoinRequest(

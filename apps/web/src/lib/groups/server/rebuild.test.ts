@@ -67,6 +67,9 @@ function readerOver(records: Stored[]): GroupSpaceReader {
 			return all.filter(
 				(r) => r.space === q.space && (!q.collection || r.collection === q.collection)
 			);
+		},
+		async getSpace() {
+			throw new Error('this fake holds records, not a space configuration');
 		}
 	};
 }

@@ -7,16 +7,26 @@ group's PDS. D1 holds a cache of them that the app can query.
 
 ## Where a group's data lives
 
-| what                                   | where                                                   | read policy                       |
-| -------------------------------------- | ------------------------------------------------------- | --------------------------------- |
-| public events                          | the group's public repo                                 | anyone                            |
-| declaration (makes the group findable) | the group's public repo, only while the group is public | anyone                            |
-| profile and rules                      | the `net.openmeet.space.about` space                    | public, but a space needs a login |
-| roles, permissions, membership, access | the `net.openmeet.space.members` space                  | member list                       |
-| a cache of the records above           | D1, `migrations/0001_groups.sql`                        | the app                           |
-| the group's writing credential         | D1, encrypted, `migrations/0002_group_credentials.sql`  | the app                           |
+| what                                   | where                                                   | read policy            |
+| -------------------------------------- | ------------------------------------------------------- | ---------------------- |
+| public events                          | the group's public repo                                 | anyone                 |
+| declaration (makes the group findable) | the group's public repo, only while the group is public | anyone                 |
+| profile and rules                      | the `net.openmeet.space.about` space                    | the group's visibility |
+| roles, permissions, membership, access | the `net.openmeet.space.members` space                  | member list            |
+| a cache of the records above           | D1, `migrations/0001_groups.sql`                        | the app                |
+| the group's writing credential         | D1, encrypted, `migrations/0002_group_credentials.sql`  | the app                |
 
-The app reads both spaces as the group, with the group's own credential.
+The app reads both spaces as the group, with the group's own credential. A space needs a login
+whatever its read policy.
+
+A group's visibility is its about space's read policy: public, or the member list for a private
+group. The group pages ask the PDS for it (`com.atproto.simplespace.getSpace`) instead of reading
+D1, so every app sees the same answer. A member on the roster is let in without the question.
+Anyone else gets the ordinary 404 when the deployment holds no credential for the group, since
+then the PDS cannot be asked, and a 503 rather than a guess when the PDS is asked and does not
+answer. The settings save changes the read policy before anything else, and the repair aligns the
+declaration and D1 to it, never the other way round. While D1 disagrees with the PDS, a settings
+save that keeps D1's value is refused until the repair has run.
 
 The about space's member list mirrors the roster. Joining or being admitted puts a member on it,
 and leaving or being removed takes them off, always on the side of less access: the membership
@@ -28,7 +38,8 @@ the whole roster from the PDS.
 When a record and a D1 row disagree, the record wins. `server/rebuild.ts` can rebuild a group's
 rows from its DID alone, and the settings page has a repair step for a group whose create was
 interrupted (`server/repair.ts`). The repair also makes the about space's member list equal the
-membership records.
+membership records, and the declaration and D1's copy of the visibility agree with the about
+space's read policy.
 
 ## Roles and permissions
 

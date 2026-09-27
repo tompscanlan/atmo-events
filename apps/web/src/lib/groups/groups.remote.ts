@@ -19,7 +19,12 @@ import { checkboxField } from './form-fields';
 import { runCreateGroup, type CreateGroupOutcome } from './create-group';
 import { runUpdateGroup } from './update-group';
 import { GROUP_LABEL_PATTERN } from './handle-label';
-import { GROUP_VISIBILITIES, type CallerMembership, type GroupRow } from './types';
+import {
+	GROUP_VISIBILITIES,
+	type CallerMembership,
+	type GroupRow,
+	type GroupVisibility
+} from './types';
 import { decideJoinRequest, type JoinOutcome } from './server/repo';
 import { groupRouteContext } from './server/route-context';
 import { deleteGroupEvent, writeGroupEvent } from './server/event-writer';
@@ -78,6 +83,9 @@ interface GroupRequestContext {
 	env: App.Platform['env'];
 	group: GroupRow;
 	membership: CallerMembership;
+	/** What the group's host said its visibility is, when the gate asked
+	 *  (`GroupRouteContext.visibility`). The join refusal reads it from here. */
+	visibility: GroupVisibility | null;
 	/** Never null: `context` throws 401 before returning. */
 	callerDid: string;
 }
@@ -95,8 +103,13 @@ async function context(actor: string): Promise<GroupRequestContext> {
 	const { locals, platform } = getRequestEvent();
 	if (!locals.did) error(401, 'Sign in to do that');
 	const db = platform!.env.DB;
-	const { group, membership } = await groupRouteContext(platform!.env, db, actor, locals.did);
-	return { db, env: platform!.env, group, membership, callerDid: locals.did };
+	const { group, membership, visibility } = await groupRouteContext(
+		platform!.env,
+		db,
+		actor,
+		locals.did
+	);
+	return { db, env: platform!.env, group, membership, visibility, callerDid: locals.did };
 }
 
 export const createGroupForm = form(
@@ -146,9 +159,11 @@ export const updateGroupForm = form(
 
 /** Repairs a group whose records and this site's copy no longer agree. It
  *  writes the missing members-space records that the row is certain of, makes
- *  the about space's member list equal the membership records, then rebuilds
- *  the copy from the records (`./server/repair.ts` says what it will and will
- *  not write, and why). Needs MANAGE_GROUP, like the other settings. */
+ *  the about space's member list equal the membership records, brings the
+ *  declaration and the row's visibility in line with the about space's read
+ *  policy at the host, then rebuilds the copy from the records
+ *  (`./server/repair.ts` says what it will and will not write, and why). Needs
+ *  MANAGE_GROUP, like the other settings. */
 export const repairGroupForm = form(
 	v.object({ groupDid: didField }),
 	async (data): Promise<GroupFormResult<{ summary: string }>> => {

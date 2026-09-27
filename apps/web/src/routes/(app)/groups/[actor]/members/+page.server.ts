@@ -28,9 +28,9 @@ import type { PageServerLoad } from './$types';
  *  visibility.
  *
  *  Before that, `groupRouteContext` decides whether the caller may see the
- *  group at all, from `groups.visibility` (an app-local column no record owns)
- *  and `membership.onRoster`, which comes from the membership record whenever
- *  the records can answer. */
+ *  group at all, from `membership.onRoster`, which comes from the membership
+ *  record whenever the records can answer, and for a caller off the roster from
+ *  the visibility the group's host enforces (its about space's read policy). */
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
 	const { group, membership } = await groupRouteContext(

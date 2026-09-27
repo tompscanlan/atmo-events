@@ -5,14 +5,24 @@
 // with its row, and an authz config that is half there.
 //
 // It also brings the about space's member list in line with the membership
-// records. The list lives at the host, so every case runs against the fake
-// host (./__fixtures__/stub-pds.ts) with the group's credential stored, and
-// the host pages its listings small enough that a second page is real.
+// records, and the declaration and the row's visibility in line with the about
+// space's read policy. The list and the policy live at the host, so every case
+// runs against the fake host (./__fixtures__/stub-pds.ts) with the group's
+// credential stored, and the host pages its listings small enough that a
+// second page is real.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { stubPds, type StubPdsOptions } from './__fixtures__/stub-pds';
-import { addMember, createGroup, getMemberRow, recordGroupSpaces } from './repo';
+import {
+	addMember,
+	createGroup,
+	getGroupByDid,
+	getMemberRow,
+	recordGroupSpaces,
+	updateGroup
+} from './repo';
 import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './members-writer';
+import { writeGroupProfile } from './about-writer';
 import { GroupPermissionError, type GroupRepoWrite, type GroupRepoWriter } from './event-writer';
 import { readGroupMembers, hasAuthzRecords } from './members-read';
 import { describeRepair, repairGroup } from './repair';
@@ -21,7 +31,13 @@ import { pdsSpaceReader, type GroupSpaceReader } from './about-read';
 import { storeGroupCredential, type GroupCredential } from './credentials';
 import { clearGroupSessions } from './session';
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
-import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
+import {
+	ABOUT_SPACE_TYPE,
+	MEMBERS_SPACE_TYPE,
+	type GroupRow,
+	type GroupVisibility
+} from '../types';
+import { GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY } from '../declaration-record';
 import {
 	GROUP_ACCESS_COLLECTION,
 	GROUP_EVENT_PERMISSIONS_COLLECTION,
@@ -143,7 +159,10 @@ beforeEach(async () => {
 		},
 		async list(q) {
 			return live(q.space, q.collection);
-		}
+		},
+		// A space's configuration is the host's, not a record, so it comes from
+		// the fake host.
+		getSpace: (space) => pdsSpaceReader(CRED, GROUP_DID).getSpace(space)
 	};
 	sources = { reader, declared: async () => true };
 });
@@ -433,5 +452,168 @@ describe('the about space member list follows the membership records', () => {
 
 		expect(memberListWrites()).toEqual([]);
 		expect(pds.listed(ABOUT)).toEqual([...ROSTER, STRANGER].sort());
+	});
+});
+
+// Visibility lives at the host: the about space's read policy is what the page
+// gate reads. Repair brings the two copies of it this site and the network
+// still hold, the declaration in the public repo and the row's visibility
+// column, in line with that policy. Never the other way round: it does not call
+// updateSpace, so a change of visibility that reached the host is never undone
+// by a row that missed it. These cases run every transport for real, the
+// declaration probe included, so a second run sees what the first one wrote.
+describe('Repair aligns the declaration and the row to the host', () => {
+	const policyName = (visibility: GroupVisibility) =>
+		visibility === 'public' ? 'publicPolicy' : 'memberListPolicy';
+
+	/** Calls the host directly, the way the group's owner could from any
+	 *  client, so a case can set up a host that drifted from this site. */
+	async function hostCall(nsid: string, body: Record<string, unknown>) {
+		const res = await fetch(`${CRED.service}/xrpc/${nsid}`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+		expect(res.ok).toBe(true);
+	}
+
+	async function declared(): Promise<boolean> {
+		const query = new URLSearchParams({
+			repo: GROUP_DID,
+			collection: GROUP_DECLARATION_COLLECTION,
+			rkey: GROUP_DECLARATION_RKEY
+		});
+		return (await fetch(`${CRED.service}/xrpc/com.atproto.repo.getRecord?${query}`)).ok;
+	}
+
+	const rowVisibility = async () => (await getGroupByDid(db, GROUP_DID))?.visibility;
+
+	/** Repair with nothing injected: every read and write goes to the host. */
+	const hostRepair = async () =>
+		repairGroup({ db, env, group: (await getGroupByDid(db, GROUP_DID))!, callerDid: OWNER });
+
+	// A complete group: the owner's membership record, the access record, the
+	// authz config and the owner on the about space's list. So the only thing a
+	// repair can find to change is what the case sets up.
+	beforeEach(async () => {
+		const seed = { db, env, group, callerDid: OWNER };
+		await writeGroupAccess(seed);
+		await putGroupMembership({ ...seed, subject: OWNER, roles: ['owner'], intent: 'admit' });
+		await writeGroupAuthz(seed);
+		await hostList('putMember', ABOUT, OWNER);
+		// The withdrawal tells our own index, which has nothing to tell here.
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+	});
+
+	afterEach(() => vi.restoreAllMocks());
+
+	it.each([
+		[
+			'private',
+			true,
+			'public',
+			false,
+			'private',
+			['repo.deleteRecord'],
+			"Brought the group in line with its PDS, which reads it as private: withdrew its declaration and set this site's copy to private."
+		],
+		[
+			'public',
+			false,
+			'private',
+			true,
+			'public',
+			['repo.putRecord'],
+			"Brought the group in line with its PDS, which reads it as public: published its declaration and set this site's copy to public."
+		],
+		['private', false, 'private', false, 'private', [], null]
+	] as const)(
+		'a host reading the group as %s, with the declaration present: %s and the row saying %s, ends with the declaration present: %s and the row saying %s, and never calls updateSpace',
+		async (host, declaredBefore, row, declaredAfter, rowAfter, hostWrites, summary) => {
+			await hostCall('com.atproto.simplespace.updateSpace', {
+				space: ABOUT,
+				readPolicy: { $type: `com.atproto.simplespace.defs#${policyName(host)}` }
+			});
+			if (declaredBefore) {
+				await hostCall('com.atproto.repo.putRecord', {
+					repo: GROUP_DID,
+					collection: GROUP_DECLARATION_COLLECTION,
+					rkey: GROUP_DECLARATION_RKEY,
+					record: { aboutSpace: ABOUT, createdAt: new Date(group.created_at).toISOString() }
+				});
+			}
+			await updateGroup(db, group.id, { visibility: row });
+			pds.clearLog();
+
+			const result = await hostRepair();
+
+			// It asked the host, and the only host writes are the declaration's:
+			// no updateSpace, and nothing at all when everything already agreed.
+			expect(
+				pds.requests.some(
+					(r) => r.nsid === 'com.atproto.simplespace.getSpace' && r.params.space === ABOUT
+				)
+			).toBe(true);
+			expect(pds.writes().map((w) => w.nsid.replace('com.atproto.', ''))).toEqual(hostWrites);
+			expect(await declared()).toBe(declaredAfter);
+			expect(await rowVisibility()).toBe(rowAfter);
+			expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual({
+				$type: `com.atproto.simplespace.defs#${policyName(host)}`
+			});
+			// The owner is told what changed, and nothing when nothing did.
+			if (summary) expect(describeRepair(result)).toContain(summary);
+			else expect(describeRepair(result)).not.toContain('reads it as');
+
+			// Idempotent: a second run finds nothing to change.
+			pds.clearLog();
+			await hostRepair();
+			expect(pds.writes()).toEqual([]);
+			expect(await rowVisibility()).toBe(rowAfter);
+		}
+	);
+
+	// The shape a failed save really leaves: a public group open to join is
+	// saved as private, the host takes the change and the row write fails. The
+	// profile record still says anyone may join. Repair moves the row to private
+	// with approval, and the rebuild after it must keep that approval rather
+	// than take the profile's "open" and be refused by the schema on every run.
+	it('completes on a group the host reads as private whose row and profile still say public and open', async () => {
+		await updateGroup(db, group.id, { requireApproval: false });
+		const open = (await getGroupByDid(db, GROUP_DID))!;
+		await writeGroupProfile({
+			db,
+			env,
+			group: open,
+			callerDid: OWNER,
+			profile: { name: 'Kona' }
+		});
+		await hostCall('com.atproto.repo.putRecord', {
+			repo: GROUP_DID,
+			collection: GROUP_DECLARATION_COLLECTION,
+			rkey: GROUP_DECLARATION_RKEY,
+			record: { aboutSpace: ABOUT, createdAt: new Date(group.created_at).toISOString() }
+		});
+		await hostCall('com.atproto.simplespace.updateSpace', {
+			space: ABOUT,
+			readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' }
+		});
+		pds.clearLog();
+
+		await hostRepair();
+
+		const row = (await getGroupByDid(db, GROUP_DID))!;
+		expect({ visibility: row.visibility, require_approval: row.require_approval }).toEqual({
+			visibility: 'private',
+			require_approval: 1
+		});
+		expect(await declared()).toBe(false);
+		expect(pds.writes().map((w) => w.nsid.replace('com.atproto.', ''))).toEqual([
+			'repo.deleteRecord'
+		]);
+
+		pds.clearLog();
+		await hostRepair();
+		expect(pds.writes()).toEqual([]);
+		expect((await getGroupByDid(db, GROUP_DID))?.require_approval).toBe(1);
 	});
 });

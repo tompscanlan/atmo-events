@@ -11,22 +11,40 @@
 // group key, so a form with its own lookup could reveal whether a private group
 // exists. Every refusal below is the same 404 with the same message, which
 // makes an invisible group look exactly like one that never existed.
+//
+// ONE EXCEPTION: A HOST THAT DOES NOT ANSWER. Whether a group is private is its
+// about space's read policy, which only its host can report. When that read
+// fails for a caller off the roster, the route answers 503 "visibility could
+// not be checked" instead of guessing. A 404 there would tell the visitors of
+// a public group that it does not exist. What the 503 gives away is that this
+// deployment hosts a group at the DID, and the DID is already public in the
+// PLC log (../access.ts).
 import { error } from '@sveltejs/kit';
 import { actorToDid } from '$lib/atproto/methods';
 import { canSeeGroup } from '../access';
-import type { CallerMembership, GroupRow } from '../types';
+import type { CallerMembership, GroupRow, GroupVisibility } from '../types';
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
 import type { CredentialStoreEnv } from './credentials';
 import { getCallerMembership, getGroupByDid } from './repo';
+import { readGroupVisibility } from './spaces';
 
 /** Every refusal says this, byte for byte. An unknown DID, a handle that does
  *  not resolve, a DID this deployment holds no group for, and a private group
  *  the caller may not see are one answer on purpose. */
 export const GROUP_NOT_FOUND = 'Group not found';
 
+/** The one other answer, with a 503: the host did not say whether the group is
+ *  private, so the caller is neither admitted nor told it does not exist. */
+export const GROUP_VISIBILITY_UNCHECKED = 'Group visibility could not be checked';
+
 export interface GroupRouteContext {
 	group: GroupRow;
 	membership: CallerMembership;
+	/** The group's visibility as its host reported it, so a form can use the
+	 *  answer the gate already read instead of asking again. `null` when the
+	 *  caller is on the roster: every visibility admits them, so the host was
+	 *  not asked. */
+	visibility: GroupVisibility | null;
 }
 
 /** A route key to a DID, or null when it cannot be one.
@@ -51,8 +69,10 @@ export async function groupActorToDid(actor: string): Promise<string | null> {
 	}
 }
 
-/** Resolve → look up → gate. Throws the 404 above at each step; returns the
- *  group and the caller's standing in it, which every caller needs next. */
+/** Resolve → look up → gate. Throws the 404 above at each step, and the 503
+ *  when the host cannot say whether a caller off the roster may see the group.
+ *  Returns the group, the caller's standing in it and the visibility the gate
+ *  read, which every caller needs next. */
 export async function groupRouteContext(
 	env: CredentialStoreEnv,
 	db: D1Database,
@@ -65,14 +85,31 @@ export async function groupRouteContext(
 	const group = await getGroupByDid(db, did);
 	if (!group) error(404, GROUP_NOT_FOUND);
 
-	// The membership lookup comes first because whether the caller may see the
-	// group is a question about their membership record. An anonymous caller has
-	// no standing to resolve, so no credential is unsealed for them.
-	const reader = callerDid ? await groupSpaceReader(env, db, group) : null;
-	const membership = await readStanding(db, group, callerDid, reader);
-	if (!canSeeGroup(group, membership)) error(404, GROUP_NOT_FOUND);
+	// The reader is built for every caller, anonymous ones included, because it
+	// is also how the gate asks the host about the group's visibility.
+	const reader = await groupSpaceReader(env, db, group);
 
-	return { group, membership };
+	// The membership half first. Whether the caller is on the roster is a
+	// question about their membership record, and a caller on it sees the group
+	// at every visibility, so the host is not asked at all: one read fewer, and
+	// a host that is down cannot lock a member out of their own group.
+	const membership = await readStanding(db, group, callerDid, reader);
+	if (membership.onRoster) return { group, membership, visibility: null };
+
+	// A deployment that holds no credential for the group cannot ask its host,
+	// and without the host's answer nobody off the roster is admitted.
+	if (!reader) error(404, GROUP_NOT_FOUND);
+
+	let visibility: GroupVisibility;
+	try {
+		visibility = await readGroupVisibility(reader, group);
+	} catch (e) {
+		console.error(`[groups] ${group.group_did}: the about space's read policy did not answer:`, e);
+		error(503, GROUP_VISIBILITY_UNCHECKED);
+	}
+	if (!canSeeGroup(visibility, membership)) error(404, GROUP_NOT_FOUND);
+
+	return { group, membership, visibility };
 }
 
 /** The caller's standing for a read. When the members space errors, this

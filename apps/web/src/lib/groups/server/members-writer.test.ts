@@ -104,6 +104,9 @@ beforeEach(async () => {
 		},
 		async list(q) {
 			return live(q.space, q.collection);
+		},
+		async getSpace() {
+			throw new Error('this fake holds records, not a space configuration');
 		}
 	};
 });

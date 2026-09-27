@@ -51,6 +51,13 @@ export interface GroupRuleRecord {
 	createdAt: string | null;
 }
 
+/** A space's configuration, as `com.atproto.simplespace.getSpace` reports it,
+ *  narrowed to what this app reads: the read policy, by its `$type`
+ *  (`com.atproto.simplespace.defs#publicPolicy` and so on). */
+export interface GroupSpaceConfig {
+	readPolicy: string;
+}
+
 /** The read half of the space transport. Injectable for the same reason
  *  `GroupRepoWriter` is: the parsing and the rebuild can be tested without a
  *  live PDS. */
@@ -65,11 +72,19 @@ export interface GroupSpaceReader {
 	 *  what is missing from it: Repair takes a DID off the about space's member
 	 *  list because no membership record names it. */
 	list(query: { space: string; repo: string; collection?: string }): Promise<GroupSpaceRecord[]>;
+	/** The space's configuration, or a throw. The about space's read policy is
+	 *  where a group's visibility lives (`readGroupVisibility` in ./spaces.ts),
+	 *  so a failed read must never come back as either answer. */
+	getSpace(space: string): Promise<GroupSpaceConfig>;
 }
 
 /** Records per `listRecords` page. The host's default is 50 and its maximum
  *  1000; the listing follows the cursor either way. */
 const LIST_RECORDS_LIMIT = 100;
+
+/** Named once, like `listMembers` in ./member-list.ts, because it is the one
+ *  simplespace method this reader calls. */
+const GET_SPACE = '/xrpc/com.atproto.simplespace.getSpace';
 
 /** Collection and rkey are the last two path segments of a record URI in both
  *  the space-scoped and the plain-repo form, so taking them from the tail works
@@ -146,7 +161,11 @@ function toSpaceRecord(
  *
  *  It uses the raw `handle` rather than the typed client, for the reason
  *  `session.ts` documents: `com.atproto.space.*` is not in this app's
- *  generated lexicon set. */
+ *  generated lexicon set.
+ *
+ *  `getSpace` needs the space owner, or a member's space credential. The
+ *  group's app password is the owner's own credential, the same one
+ *  `listMembers` already reads the about space's member list with. */
 export function pdsSpaceReader(
 	cred: Parameters<typeof groupClient>[0],
 	groupDid: string
@@ -216,6 +235,29 @@ export function pdsSpaceReader(
 				}
 				cursor = next;
 			}
+		},
+		// Every non-OK answer throws, `SpaceNotFound` included: a space the host
+		// does not know has no read policy to report, and the gate must not guess
+		// one. A body without a typed read policy throws for the same reason.
+		async getSpace(space) {
+			const { handle } = await groupClient(cred, groupDid);
+			const res = await handle(`${GET_SPACE}?${new URLSearchParams({ space })}`, {
+				method: 'GET'
+			});
+			const body: unknown = await res.json().catch(() => null);
+			if (!res.ok) {
+				const error =
+					body && typeof body === 'object' && 'error' in body && typeof body.error === 'string'
+						? ` ${body.error}`
+						: '';
+				throw new Error(`com.atproto.simplespace.getSpace failed: ${res.status}${error}`);
+			}
+			const policy =
+				body && typeof body === 'object' && 'readPolicy' in body ? asRecord(body.readPolicy) : {};
+			if (typeof policy.$type !== 'string') {
+				throw new Error(`com.atproto.simplespace.getSpace returned no read policy for ${space}`);
+			}
+			return { readPolicy: policy.$type };
 		}
 	};
 }
