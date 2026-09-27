@@ -18,9 +18,17 @@ group's PDS. D1 holds a cache of them that the app can query.
 
 The app reads both spaces as the group, with the group's own credential.
 
+The about space's member list mirrors the roster. Joining or being admitted puts a member on it,
+and leaving or being removed takes them off, always on the side of less access: the membership
+record is written before the list entry and removed after it (`server/roster.ts`). Under a
+member-list read policy that list is what lets a member read the group's face with their own
+credential, from any app. The members space's own list stays empty, because a DID on it could read
+the whole roster from the PDS.
+
 When a record and a D1 row disagree, the record wins. `server/rebuild.ts` can rebuild a group's
 rows from its DID alone, and the settings page has a repair step for a group whose create was
-interrupted (`server/repair.ts`).
+interrupted (`server/repair.ts`). The repair also makes the about space's member list equal the
+membership records.
 
 ## Roles and permissions
 

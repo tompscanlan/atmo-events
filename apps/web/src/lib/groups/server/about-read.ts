@@ -61,8 +61,15 @@ export interface GroupSpaceReader {
 		collection: string;
 		rkey: string;
 	}): Promise<GroupSpaceRecord | null>;
+	/** EVERY record in the slice, across every page, or a throw. Callers act on
+	 *  what is missing from it: Repair takes a DID off the about space's member
+	 *  list because no membership record names it. */
 	list(query: { space: string; repo: string; collection?: string }): Promise<GroupSpaceRecord[]>;
 }
+
+/** Records per `listRecords` page. The host's default is 50 and its maximum
+ *  1000; the listing follows the cursor either way. */
+const LIST_RECORDS_LIMIT = 100;
 
 /** Collection and rkey are the last two path segments of a record URI in both
  *  the space-scoped and the plain-repo form, so taking them from the tail works
@@ -167,21 +174,48 @@ export function pdsSpaceReader(
 			const body = await send('com.atproto.space.getRecord', query);
 			return toSpaceRecord(body, query);
 		},
+		// Every page, not the first: the host returns at most `limit` records and
+		// a cursor when there may be more, so a single call reads a group with
+		// more members than one page as a group with fewer.
 		async list(query) {
 			// The PDS accepts `collection`, so the slice is narrowed server-side.
 			// Callers still check each record's collection, because a host that
 			// ignored the parameter must not turn other records into rules.
-			const body = await send('com.atproto.space.listRecords', {
-				space: query.space,
-				repo: query.repo,
-				...(query.collection ? { collection: query.collection } : {})
-			});
-			if (!body || typeof body !== 'object' || !('records' in body)) return [];
-			const records = body.records;
-			if (!Array.isArray(records)) return [];
-			return records
-				.map((record) => toSpaceRecord(record, query))
-				.filter((record): record is GroupSpaceRecord => record !== null);
+			const records: GroupSpaceRecord[] = [];
+			let cursor: string | undefined;
+			for (;;) {
+				const body = await send('com.atproto.space.listRecords', {
+					space: query.space,
+					repo: query.repo,
+					...(query.collection ? { collection: query.collection } : {}),
+					limit: String(LIST_RECORDS_LIMIT),
+					...(cursor ? { cursor } : {})
+				});
+				const page =
+					body && typeof body === 'object' && 'records' in body && Array.isArray(body.records)
+						? body.records
+						: null;
+				if (!page) {
+					// A first page with no records array has always read as empty. A
+					// later one is a listing that broke partway, and returning what came
+					// before it would pass a partial slice off as the whole.
+					if (cursor) throw new Error(`com.atproto.space.listRecords returned no records page`);
+					return records;
+				}
+				for (const record of page) {
+					const parsed = toSpaceRecord(record, query);
+					if (parsed) records.push(parsed);
+				}
+				const next =
+					body && typeof body === 'object' && 'cursor' in body && typeof body.cursor === 'string'
+						? body.cursor
+						: undefined;
+				if (!next || page.length === 0) return records;
+				if (next === cursor) {
+					throw new Error(`com.atproto.space.listRecords repeated its cursor`);
+				}
+				cursor = next;
+			}
 		}
 	};
 }

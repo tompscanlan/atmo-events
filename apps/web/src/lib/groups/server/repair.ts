@@ -1,11 +1,13 @@
 // Repairing a group whose records and cache have drifted apart. It runs from the
-// group's settings page, behind MANAGE_GROUP, in two steps, always in this
+// group's settings page, behind MANAGE_GROUP, in three steps, always in this
 // order:
 //
 //   1. Complete the members space, as far as the row can say for certain: the
 //      `access` record, the owner's `membership`, and the authz config, each
 //      only if it does not exist.
-//   2. Rebuild the cache from the records (`rebuildGroup`, the repair path).
+//   2. Make the about space's member list equal the set of DIDs that hold a
+//      membership record (./member-list.ts).
+//   3. Rebuild the cache from the records (`rebuildGroup`, the repair path).
 //
 // WHY STEP 1. A create writes the group's row before its records
 // (`../create-group.ts`), so a PDS failure after the INSERT leaves a roster
@@ -29,6 +31,18 @@
 //     reported, not completed, because completing it from the row would
 //     overwrite the part that exists.
 //
+// WHY STEP 2. The roster mirrors every entry and exit into the about space's
+// list, and a list write that failed leaves a DID out of step
+// (`RosterListError`). Groups created before the mirror have an empty list. The
+// list is filled from the membership RECORDS, never the rows, for the reason
+// step 1 gives: a row with no record could be a failed removal, and listing it
+// would give a removed member read access at the host. It adds the holders the
+// list lacks and removes the DIDs no record names, and it never puts or removes
+// the group's own DID. It runs after step 1, so an owner's record written there
+// is listed too. Removing is safe only because the membership records were read
+// to the last page (`pdsSpaceReader` follows the cursor, and a page that fails
+// throws before anything is written).
+//
 // Idempotent: a second run writes nothing, and its rebuild is a no-op.
 //
 // It cannot help a group whose authz config exists while the owner has no
@@ -40,6 +54,12 @@ import type { GroupRow } from '../types';
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
 import type { CredentialStoreEnv } from './credentials';
 import { GroupRecordError, requireGroupPermission, type GroupRepoWriter } from './event-writer';
+import {
+	alignAboutMembers,
+	groupMemberList,
+	type AboutMemberAlignment,
+	type GroupMemberList
+} from './member-list';
 import { readGroupMembers, type GroupMembers } from './members-read';
 import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './members-writer';
 import {
@@ -62,6 +82,9 @@ export interface RepairGroupInput {
 	reader?: GroupSpaceReader | null;
 	/** Overrides where the rebuild reads from. */
 	sources?: GroupRebuildSources | null;
+	/** Overrides the about space's member-list transport. When absent it is
+	 *  built from the group's stored credential. */
+	memberList?: GroupMemberList;
 }
 
 export interface GroupRepairResult {
@@ -72,6 +95,8 @@ export interface GroupRepairResult {
 	unrecordedMembers: string[];
 	/** Why the authz config was not written, when it was missing. */
 	authzHeldBack: 'partial' | 'unrecorded-members' | null;
+	/** What step 2 changed on the about space's member list. */
+	memberList: AboutMemberAlignment;
 	rebuild: GroupRebuildResult;
 }
 
@@ -127,6 +152,16 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 		wrote.authz = true;
 	}
 
+	// Step 2. `members` was read before step 1, so the owner's record, if step 1
+	// just wrote it, is added by hand: it holds a record now.
+	const holders = new Set(recorded);
+	if (wrote.ownerMembership) holders.add(group.owner_did);
+	const memberList = await alignAboutMembers(
+		input.memberList ?? (await groupMemberList(env, db, group)),
+		group,
+		holders
+	);
+
 	const sources =
 		input.sources !== undefined
 			? input.sources
@@ -138,7 +173,7 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 	}
 	const rebuild = await rebuildGroup(db, sources, group.group_did);
 
-	return { wrote, unrecordedMembers, authzHeldBack, rebuild };
+	return { wrote, unrecordedMembers, authzHeldBack, memberList, rebuild };
 }
 
 /** Whether the space holds all of the authz config, none of it, or some. */
@@ -177,9 +212,19 @@ export function describeRepair(result: GroupRepairResult): string {
 	const sentences = [
 		written.length > 0
 			? `Wrote the missing ${joinList(written)}.`
-			: 'No records were missing that could be written.',
-		"Rebuilt this site's copy of the group from its records."
+			: 'No records were missing that could be written.'
 	];
+	const { added, removed } = result.memberList;
+	if (added.length > 0 || removed.length > 0) {
+		const changes = [
+			added.length > 0 && `added ${countOf(added.length)}`,
+			removed.length > 0 && `removed ${countOf(removed.length)}`
+		].filter((part): part is string => typeof part === 'string');
+		sentences.push(
+			`Brought the group's member list at its PDS in line with the membership records: ${joinList(changes)}.`
+		);
+	}
+	sentences.push("Rebuilt this site's copy of the group from its records.");
 	const waiting = result.unrecordedMembers.length;
 	if (waiting > 0) {
 		sentences.push(
@@ -196,6 +241,10 @@ export function describeRepair(result: GroupRepairResult): string {
 		);
 	}
 	return sentences.join(' ');
+}
+
+function countOf(n: number): string {
+	return `${n} member${n === 1 ? '' : 's'}`;
 }
 
 function joinList(items: string[]): string {

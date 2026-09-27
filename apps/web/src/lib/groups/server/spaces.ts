@@ -24,11 +24,15 @@
 // (com.atproto.simplespace.defs) has no "only the owner" policy, and none is
 // needed: the write policy governs whether other users' writes are tracked and
 // forwarded, the owner always writes as the owner, and nothing member-authored
-// is written yet. The space member list also starts empty, so the app reads
-// these spaces back as the group. A managingAppPolicy would need a managing-app
-// DID and a checkUserAccess endpoint. App access is `open`: an allowList of
-// client ids would decide which other apps may read a group, and `open` leaves
-// that decision to later.
+// is written yet. Both member lists start empty. The about space's list then
+// mirrors the roster (./member-list.ts): the create lists the owner, and every
+// later entry and exit follows, so under member-list read a member reads the
+// group's face with their own credential. The members space's list stays empty
+// for good (./members-writer.ts says why). Either way the app reads these
+// spaces back as the group, the owner, whom no list governs. A
+// managingAppPolicy would need a managing-app DID and a checkUserAccess
+// endpoint. App access is `open`: an allowList of client ids would decide which
+// other apps may read a group, and `open` leaves that decision to later.
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupVisibility } from '../types';
 import { resolveGroupCredential, type GroupCredential } from './credentials';
 import { GroupCredentialError, requireGroupPermission, type GroupGateInput } from './event-writer';

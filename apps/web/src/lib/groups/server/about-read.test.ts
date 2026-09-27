@@ -352,6 +352,40 @@ describe('pdsSpaceReader — the live wire shapes', () => {
 		}
 	);
 
+	// The host returns one page and a cursor. A listing that stopped there would
+	// read a group with more rules or members than one page as a smaller group.
+	it('follows the cursor to the last page of a listing', async () => {
+		const pages: (string | null)[] = [];
+		vi.stubGlobal('fetch', async (input: URL | string) => {
+			const url = new URL(String(input));
+			if (url.pathname.endsWith('createSession')) {
+				return Response.json({ did: GROUP_DID, accessJwt: 'jwt', refreshJwt: 'refresh' });
+			}
+			const cursor = url.searchParams.get('cursor');
+			pages.push(cursor);
+			const rkey = cursor ? 'second' : 'first';
+			return Response.json({
+				cursor: cursor ? undefined : 'page-two',
+				records: [
+					{
+						collection: GROUP_RULE_COLLECTION,
+						rkey,
+						cid: 'bafyrule',
+						value: groupRuleRecord({ text: rkey, order: 0 })
+					}
+				]
+			});
+		});
+		const reader = pdsSpaceReader(cred, GROUP_DID);
+		const records = await reader.list({
+			space: SPACE,
+			repo: GROUP_DID,
+			collection: GROUP_RULE_COLLECTION
+		});
+		expect(pages).toEqual([null, 'page-two']);
+		expect(records.map((r) => r.rkey)).toEqual(['first', 'second']);
+	});
+
 	// The parameter names are the PDS's, and `space` and `repo` are both
 	// required: listRecords returns 400 without `repo`.
 	it('sends space, repo and collection as query parameters', async () => {

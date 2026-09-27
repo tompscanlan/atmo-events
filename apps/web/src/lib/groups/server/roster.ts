@@ -1,24 +1,33 @@
 // A roster act is one D1 row move plus one `membership` record write, composed
-// here. The row is what the schema checks; the record is what everyone outside
-// this app reads. Keeping the pair in one place stops the two from drifting.
+// here, and an entry or an exit also changes the about space's member list at
+// the host. The row is what the schema checks; the record is what everyone
+// outside this app reads; the list is what lets a member read the group's face
+// at the host with their own credential (./member-list.ts). Keeping the three
+// in one place stops them from drifting.
 //
 // THE ORDER FOLLOWS THE DIRECTION OF THE CHANGE. The gate resolves from the
-// record (`getCallerMembership`), so whichever half runs second is the one a
-// partial failure leaves undone, and that must always leave less access than
-// intended, never more:
+// record (`getCallerMembership`), and the host from the list, so whichever half
+// runs later is the one a partial failure leaves undone, and that must always
+// leave less access than intended, never more:
 //
 //   * A grant (join, admit, promotion) moves the row first. The repo and the
 //     schema refuse an impossible roster (a private group has no self-service
 //     join, a DID off the roster cannot be promoted), and writing the record
 //     first would publish a grant the database then refused. If the record
 //     write fails, the record still grants the old, smaller set, and
-//     `RosterRecordError` reports the pair as out of step.
-//   * A revocation (leave, eject, demotion) runs a read-only pre-check, then
-//     the record, then the row. Row first, a failed record delete would leave
-//     the ejected member's record granting everything it granted before. If
-//     the record write fails, nothing has changed and it is a plain failure. If
-//     the row write fails after it, the gate already denies, and
+//     `RosterRecordError` reports the pair as out of step. An entry (join,
+//     admit) then puts the DID on the list, last. If that fails, the host
+//     grants less than the record, and `RosterListError` reports it.
+//   * A revocation (leave, eject, demotion) runs a read-only pre-check and the
+//     gate, then takes the DID off the list (leave, eject), then the record,
+//     then the row. If the list write fails, nothing has changed and it is a
+//     plain failure. If the record write fails after it, the host already
+//     denies, and `RosterListError` reports the list as out of step. If the row
+//     write fails after that, the gate already denies too, and
 //     `RosterRowError` reports the roster as out of step.
+//
+// A role change (promotion, demotion) never touches the list: every member,
+// whatever the role, reads the about space the same way.
 //
 // There is no suspension. A moderator ejects.
 import { GROUP_ROLES, type GroupRoleName } from '../permissions';
@@ -41,7 +50,13 @@ import {
 	isMembershipKey,
 	parseGroupMembership
 } from '../members-record';
-import { dropGroupMembership, putGroupMembership } from './members-writer';
+import {
+	authoriseMembership,
+	dropGroupMembership,
+	putGroupMembership,
+	type MembershipDrop
+} from './members-writer';
+import { aboutSpace, groupMemberList, putAboutMember, type GroupMemberList } from './member-list';
 
 /** A grant whose row moved but whose record did not. Carries the subject, so
  *  the caller can say whose membership is out of step. */
@@ -69,6 +84,23 @@ export class RosterRowError extends Error {
 	}
 }
 
+/** An act whose row and membership record agree but whose entry on the about
+ *  space's member list does not. `change` says which way: a `grant` put the
+ *  row and the record in and the DID is not on the list, so the host grants
+ *  less than the record until Repair lists it; a `revoke` took the DID off the
+ *  list and the record did not go, so the host already denies and a retry
+ *  finishes the removal. Carries the subject, like the other two. */
+export class RosterListError extends Error {
+	constructor(
+		readonly subject: string,
+		readonly change: 'grant' | 'revoke',
+		readonly cause: unknown
+	) {
+		super(cause instanceof Error ? cause.message : String(cause));
+		this.name = 'RosterListError';
+	}
+}
+
 /** What a roster act needs: the bindings, the group, and who is asking. A
  *  handler's own context satisfies it structurally. */
 export interface RosterContext {
@@ -79,6 +111,9 @@ export interface RosterContext {
 	/** Override the PDS transport and the gate's reader. Tests pass these. */
 	writer?: GroupRepoWriter;
 	reader?: GroupSpaceReader | null;
+	/** Override the about space's member-list transport. When absent it is
+	 *  built from the group's stored credential. */
+	memberList?: GroupMemberList;
 }
 
 type AssignableRole = Exclude<GroupRoleName, 'owner'>;
@@ -92,7 +127,7 @@ async function published<T>(subject: string, write: () => Promise<T>): Promise<T
 	}
 }
 
-/** A revocation's row half, second: re-labels its failure as out of step. */
+/** A revocation's row half, last: re-labels its failure as out of step. */
 async function unlisted(subject: string, write: () => Promise<void>): Promise<void> {
 	try {
 		await write();
@@ -101,11 +136,50 @@ async function unlisted(subject: string, write: () => Promise<void>): Promise<vo
 	}
 }
 
+function memberListFor(ctx: RosterContext): Promise<GroupMemberList> {
+	return ctx.memberList
+		? Promise.resolve(ctx.memberList)
+		: groupMemberList(ctx.env, ctx.db, ctx.group);
+}
+
+/** An entry's list half, last: the row and the record are in, so every failure
+ *  from here, a missing about space and a missing credential included, is the
+ *  list out of step. */
+async function listed(ctx: RosterContext, subject: string): Promise<void> {
+	try {
+		await putAboutMember(await memberListFor(ctx), ctx.group, subject);
+	} catch (e) {
+		throw new RosterListError(subject, 'grant', e);
+	}
+}
+
+/** Leave and eject: pre-check, gate, list, record, row (see the file header).
+ *
+ *  The gate runs here as well as inside `dropGroupMembership`, because the list
+ *  entry goes first: a caller the gate would refuse must be refused before it
+ *  takes anyone's host access away, not after. The about space and the
+ *  transport are resolved before the first write too, so a group with neither
+ *  fails with nothing changed. */
+async function revoke(ctx: RosterContext, subject: string, intent: MembershipDrop): Promise<void> {
+	await changeableRow(ctx, subject);
+	await authoriseMembership({ ...ctx, subject, intent });
+	const space = aboutSpace(ctx.group);
+	const list = await memberListFor(ctx);
+
+	await list.remove({ space, did: subject });
+	try {
+		await dropGroupMembership({ ...ctx, subject, intent });
+	} catch (e) {
+		throw new RosterListError(subject, 'revoke', e);
+	}
+	await unlisted(subject, () => removeMember(ctx.db, ctx.group.id, subject));
+}
+
 /** The read-only pre-check in front of a revocation or a role change: the DID
  *  is on the roster and is not the owner. It gives the same refusals as the
  *  repo and the owner-protection triggers, which stay as the backstop. It runs
- *  first because a revocation deletes the record before the row, and a
- *  trigger firing on the row would be too late to save the owner's record. */
+ *  first because a revocation removes the list entry and the record before the
+ *  row, and a trigger firing on the row would be too late to save either. */
 async function changeableRow(ctx: RosterContext, did: string): Promise<MemberRow> {
 	const row = await getMemberRow(ctx.db, ctx.group.id, did);
 	if (!row) throw new GroupRuleError('not-found', 'That DID is not on the roster');
@@ -162,9 +236,10 @@ export async function joinedAt(ctx: RosterContext, subject: string): Promise<str
 	return row ? new Date(row.created_at).toISOString() : undefined;
 }
 
-/** Self-service join. Only `joined` puts anyone on the roster. `pending` is a
- *  join request, which the draft community standard models as a method, not a
- *  record, and no host serves that method, so nothing is published for it. */
+/** Self-service join. Only `joined` puts anyone on the roster, and only then is
+ *  the DID listed. `pending` is a join request, which the draft community
+ *  standard models as a method, not a record, and no host serves that method,
+ *  so nothing is published for it. */
 export async function joinGroup(ctx: RosterContext, message: string | null): Promise<JoinOutcome> {
 	const outcome = await requestJoin(ctx.db, ctx.group, ctx.callerDid, message);
 	if (outcome !== 'joined') return outcome;
@@ -182,16 +257,15 @@ export async function joinGroup(ctx: RosterContext, message: string | null): Pro
 			intent: 'join'
 		})
 	);
+	await listed(ctx, ctx.callerDid);
 	return outcome;
 }
 
-/** Self-service leave. It is a revocation, so the record goes first. The owner
- *  cannot leave, and the pre-check says so before the owner's record is
- *  touched. */
+/** Self-service leave. It is a revocation, so the list entry and then the
+ *  record go first. The owner cannot leave, and the pre-check says so before
+ *  anything of the owner's is touched. */
 export async function leaveGroup(ctx: RosterContext): Promise<void> {
-	await changeableRow(ctx, ctx.callerDid);
-	await dropGroupMembership({ ...ctx, subject: ctx.callerDid, intent: 'leave' });
-	await unlisted(ctx.callerDid, () => removeMember(ctx.db, ctx.group.id, ctx.callerDid));
+	await revoke(ctx, ctx.callerDid, 'leave');
 }
 
 /** Approve a pending request. The applicant is named by the request, which is
@@ -212,6 +286,7 @@ export async function admitFromRequest(
 			intent: 'admit'
 		})
 	);
+	await listed(ctx, admitted.did);
 	return admitted;
 }
 
@@ -226,19 +301,18 @@ export async function admitMember(
 	await published(did, () =>
 		putGroupMembership({ ...ctx, subject: did, roles: [role], createdAt, intent: 'admit' })
 	);
+	await listed(ctx, did);
 }
 
-/** Eject. It is a revocation, so the record goes first, behind the same
- *  pre-check as leave. */
+/** Eject. It is a revocation, so the list entry and then the record go first,
+ *  behind the same pre-check as leave. */
 export async function ejectMember(ctx: RosterContext, did: string): Promise<void> {
-	await changeableRow(ctx, did);
-	await dropGroupMembership({ ...ctx, subject: did, intent: 'eject' });
-	await unlisted(did, () => removeMember(ctx.db, ctx.group.id, did));
+	await revoke(ctx, did, 'eject');
 }
 
 /** Assign a role. A promotion is a grant and a demotion is a revocation, and
  *  each takes its own order (see the file header). The owner is refused before
- *  either. */
+ *  either. The member list is not touched: the DID stays a member. */
 export async function promoteMember(
 	ctx: RosterContext,
 	did: string,

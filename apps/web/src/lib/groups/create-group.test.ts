@@ -220,7 +220,10 @@ describe('a successful create', () => {
 			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord',
-			'com.atproto.space.putRecord'
+			'com.atproto.space.putRecord',
+			// Last, the owner onto the about space's member list: a grant writes
+			// the membership record first and the list after it.
+			'com.atproto.simplespace.putMember'
 		]);
 	});
 
@@ -483,6 +486,50 @@ describe('the create choice sets the about space’s read policy', () => {
 	);
 });
 
+// The owner is the first member, so the owner is the first DID the about
+// space's member list mirrors, whatever the visibility: under member-list read
+// that entry is what lets the owner read a private group's face at the host
+// from any app, and a public group gets it too, so a later flip needs no
+// backfill. The entry follows the owner's membership record, and the members
+// space's own list is never written.
+describe('the create puts the owner on the about space’s member list', () => {
+	const ABOUT = `at://${MINTED_DID}/space/net.openmeet.space.about/self`;
+	const MEMBERS = `at://${MINTED_DID}/space/net.openmeet.space.members/self`;
+	const MEMBER_LIST = /^com\.atproto\.simplespace\.(putMember|removeMember|listMembers)$/;
+
+	it.each(['public', 'private'] as const)(
+		'a %s create puts the owner on the list after the owner’s membership record',
+		async (visibility) => {
+			const { requests, listed } = stubPds();
+
+			const result = await runCreateGroup(env, OWNER, data({ visibility }));
+
+			expect(result.ok).toBe(true);
+			const membership = requests.findIndex(
+				(r) =>
+					r.nsid === 'com.atproto.space.putRecord' &&
+					r.body?.collection === 'net.openmeet.group.membership' &&
+					r.body?.rkey === OWNER
+			);
+			const putMember = requests.findIndex((r) => r.nsid === 'com.atproto.simplespace.putMember');
+			expect(membership).toBeGreaterThan(-1);
+			expect(putMember).toBeGreaterThan(membership);
+			expect(requests[putMember].body).toEqual({
+				space: ABOUT,
+				did: OWNER,
+				read: true,
+				write: false
+			});
+			expect(listed(ABOUT)).toEqual([OWNER]);
+			const memberListCalls = requests.filter((r) => MEMBER_LIST.test(r.nsid));
+			expect(memberListCalls.filter((r) => (r.body?.space ?? r.params.space) === MEMBERS)).toEqual(
+				[]
+			);
+			expect(listed(MEMBERS)).toEqual([]);
+		}
+	);
+});
+
 // The members space holds the control plane (roles, memberships, permission
 // bindings). Public read there would publish the roster of every group, so the
 // visibility choice must not move it.
@@ -551,6 +598,14 @@ describe('a create that fails after the mint', () => {
 		],
 		['writing the profile', async () => {}, { fail: writing('net.openmeet.group.profile') }],
 		['writing the members space', async () => {}, { fail: writing('net.openmeet.group.access') }],
+		[
+			'adding the owner to the member list',
+			async () => {},
+			{
+				fail: (nsid: string) =>
+					nsid.startsWith('com.atproto.simplespace.putMember') ? pdsDown() : undefined
+			}
+		],
 		[
 			'issuing the app password',
 			async () => {},

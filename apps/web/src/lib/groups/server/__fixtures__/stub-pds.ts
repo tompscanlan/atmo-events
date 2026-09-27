@@ -16,6 +16,18 @@
 //   space config    `createSpace`, `getSpace` and `updateSpace` share one table,
 //                   as they do on a real host. An `updateSpace` replaces only
 //                   the fields it carries, so a test can see what it left alone.
+//   member lists    `putMember`, `removeMember` and `listMembers` share one
+//                   list per space, which a test can seed and inspect. Each
+//                   needs the space to exist, as on a real host.
+//
+// Both listings page the way the reference host does, so a caller that reads
+// only the first page is caught:
+//
+//   listRecords   newest URI first, a cursor only when the page is full
+//   listMembers   by DID ascending, a cursor whenever the page is not empty
+//
+// A test can shrink either page (`recordPageSize`, `memberPageSize`) to put a
+// record or a member on page two without writing a hundred of them.
 //
 // The PLC half echoes back the `recoveryKey` the mint sent, as the real
 // directory does, so a mint that forgot to send one, or sent it second, still
@@ -31,15 +43,31 @@ export interface StubPdsOptions {
 	 *  lands. */
 	account?: () => Response;
 	/** Answers a call instead of the stub when it returns a Response: the way a
-	 *  test fails one step. */
-	fail?: (nsid: string, init?: RequestInit) => Response | undefined;
+	 *  test fails one step. `query` is the call's query string, so a test can
+	 *  fail one page of a listing. */
+	fail?: (nsid: string, init?: RequestInit, query?: URLSearchParams) => Response | undefined;
+	/** The most records one `listRecords` page returns, below what the caller
+	 *  asked for. */
+	recordPageSize?: number;
+	/** The most members one `listMembers` page returns, below what the caller
+	 *  asked for. */
+	memberPageSize?: number;
 }
 
-/** One XRPC call as the host saw it: the method without its query string, and
- *  the parsed JSON body of a procedure (`null` for a query). */
+/** One XRPC call as the host saw it: the method without its query string, the
+ *  parsed JSON body of a procedure (`null` for a query), and the query
+ *  parameters (empty for a procedure). */
 export interface StubPdsRequest {
 	nsid: string;
 	body: Record<string, unknown> | null;
+	params: Record<string, string>;
+}
+
+/** One entry on a space's member list, as `listMembers` reports it. */
+export interface StubSpaceMember {
+	did: string;
+	read: boolean;
+	write: boolean;
 }
 
 /** A space's configuration, as `getSpace` reports it. */
@@ -48,6 +76,9 @@ export interface StubSpaceConfig {
 	writePolicy: unknown;
 	appAccess: unknown;
 }
+
+/** A `putMember` body. */
+type MemberPut = StubSpaceMember & { space: string };
 
 interface SpaceRecordWrite {
 	space: string;
@@ -94,6 +125,16 @@ export function stubPds(options: StubPdsOptions) {
 	const spaces = new Map<string, StubSpaceConfig>();
 	/** What a space read sees: the latest write per record, minus deletes. */
 	const liveRecords = new Map<string, SpaceRecordWrite>();
+	/** Each space's member list, by space URI, then by member DID. */
+	const memberLists = new Map<string, Map<string, StubSpaceMember>>();
+	const memberList = (space: string) => {
+		let list = memberLists.get(space);
+		if (!list) memberLists.set(space, (list = new Map()));
+		return list;
+	};
+	const pageSize = (asked: string | null, fallback: number, cap: number | undefined) =>
+		Math.min(asked ? Number(asked) : fallback, cap ?? Infinity);
+	const spaceNotFound = () => Response.json({ error: 'SpaceNotFound' }, { status: 400 });
 	const recordKey = (space: string | null, collection: string | null, rkey: string | null) =>
 		`${space}|${collection}|${rkey}`;
 	let recoveryKey: string | undefined;
@@ -111,12 +152,12 @@ export function stubPds(options: StubPdsOptions) {
 		calls.push(tail);
 		const body =
 			typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
-		requests.push({ nsid, body });
+		const query = new URL(url).searchParams;
+		requests.push({ nsid, body, params: Object.fromEntries(query) });
 
-		const failed = options.fail?.(nsid, init);
+		const failed = options.fail?.(nsid, init, query);
 		if (failed) return failed;
 
-		const query = new URL(url).searchParams;
 		switch (nsid) {
 			case 'com.atproto.server.createAccount':
 				({ recoveryKey } = (body ?? {}) as { recoveryKey?: string });
@@ -192,18 +233,59 @@ export function stubPds(options: StubPdsOptions) {
 				});
 			}
 
+			// The reference host's paging: newest URI first, `uri < cursor` after
+			// the first page, and a cursor only when the page came back full.
 			case 'com.atproto.space.listRecords': {
 				const collection = query.get('collection');
-				const records = [...liveRecords.values()]
+				const cursor = query.get('cursor');
+				const limit = pageSize(query.get('limit'), 50, options.recordPageSize);
+				const page = [...liveRecords.values()]
 					.filter(
 						(w) => w.space === query.get('space') && (!collection || w.collection === collection)
 					)
-					.map((w) => ({
-						uri: `${w.space}/${did}/${w.collection}/${w.rkey}`,
+					.map((w) => ({ uri: `${w.space}/${did}/${w.collection}/${w.rkey}`, write: w }))
+					.sort((a, b) => (a.uri < b.uri ? 1 : a.uri > b.uri ? -1 : 0))
+					.filter((r) => !cursor || r.uri < cursor)
+					.slice(0, limit);
+				return Response.json({
+					cursor: page.length >= limit ? page.at(-1)?.uri : undefined,
+					records: page.map(({ uri, write }) => ({
+						uri,
 						cid: 'bafycreate',
-						value: w.record
-					}));
-				return Response.json({ records });
+						value: write.record
+					}))
+				});
+			}
+
+			// A member list is the space owner's to change. Both procedures are
+			// upserts and deletes with no output, so success is an empty 200.
+			case 'com.atproto.simplespace.putMember': {
+				const { space, did: member, read, write } = body as unknown as MemberPut;
+				if (!spaces.has(space)) return spaceNotFound();
+				memberList(space).set(member, { did: member, read, write });
+				return new Response(null, { status: 200 });
+			}
+
+			case 'com.atproto.simplespace.removeMember': {
+				const { space, did: member } = body as { space: string; did: string };
+				if (!spaces.has(space)) return spaceNotFound();
+				memberList(space).delete(member);
+				return new Response(null, { status: 200 });
+			}
+
+			// The reference host's paging: DIDs ascending, `did > cursor` after the
+			// first page, and the last DID as the cursor whenever the page has one.
+			// So the page after the last is an empty one, not a missing cursor.
+			case 'com.atproto.simplespace.listMembers': {
+				const space = query.get('space') ?? '';
+				if (!spaces.has(space)) return spaceNotFound();
+				const cursor = query.get('cursor');
+				const limit = pageSize(query.get('limit'), 100, options.memberPageSize);
+				const members = [...memberList(space).values()]
+					.sort((a, b) => (a.did < b.did ? -1 : a.did > b.did ? 1 : 0))
+					.filter((m) => !cursor || m.did > cursor)
+					.slice(0, limit);
+				return Response.json({ cursor: members.at(-1)?.did, members });
 			}
 
 			// The group's public repo, where the declaration lives.
@@ -231,6 +313,12 @@ export function stubPds(options: StubPdsOptions) {
 		spaceWrites,
 		repoWrites,
 		spaces,
+		/** The DIDs on a space's member list, sorted. A test seeds a list through
+		 *  the real transport, so the seed goes through the same checks. */
+		listed: (space: string) => [...memberList(space).keys()].sort(),
+		/** A space's member list with each entry's access, sorted by DID. */
+		members: (space: string) =>
+			[...memberList(space).values()].sort((a, b) => (a.did < b.did ? -1 : 1)),
 		/** The calls that changed something on the host, in order. */
 		writes: () => requests.filter((r) => WRITE_METHODS.has(r.nsid)),
 		/** Forgets every call so far, so a test's assertions start after its

@@ -41,6 +41,7 @@ import { setGroupRules, writeGroupProfile } from './server/about-writer';
 import { reconcileGroupDeclaration } from './server/declaration-writer';
 import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './server/members-writer';
 import { pdsWriter } from './server/event-writer';
+import { pdsMemberList, putAboutMember } from './server/member-list';
 import { registerGroupIdentity } from './server/events-index';
 import { splitRuleLines } from './about-record';
 import { labelMintRefusal, labelMintRefusalMessage } from './handle-label';
@@ -451,6 +452,28 @@ async function setUpMintedGroup(
 			error: `${minted.handle} was created, but its members-space records were not written: ${
 				e instanceof Error ? e.message : String(e)
 			}. The group works and its roster reads from this site's database; "Repair this group" in its settings writes the missing records.`,
+			registered
+		};
+	}
+
+	// The owner onto the about space's member list: the roster's first entry,
+	// mirrored like every later one (`server/roster.ts`), after the owner's
+	// membership record. Under member-list read that entry is what lets the
+	// owner read a private group's face at the host from any app. A public group
+	// gets it too, so a later flip to private needs no backfill.
+	//
+	// Its own step, with its own error, because everything else is in place by
+	// now: the group works here, and "Repair this group" fills the list from the
+	// membership records. The transport uses the credential still in scope, like
+	// the writer above.
+	try {
+		await putAboutMember(pdsMemberList(minted.credential, minted.did), withSpaces, callerDid);
+	} catch (e) {
+		return {
+			ok: false,
+			error: `${minted.handle} was created, but you were not added to its member list at its PDS: ${
+				e instanceof Error ? e.message : String(e)
+			}. The group works on this site; "Repair this group" in its settings adds you.`,
 			registered
 		};
 	}
