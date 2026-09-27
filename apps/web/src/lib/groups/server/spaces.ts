@@ -1,4 +1,4 @@
-// Space provisioning.
+// Space provisioning, and the one change a space's configuration gets later.
 //
 // A group's control plane (profile, rules, roles, membership, access) lives in
 // the standard's places rather than in our database columns, so a group is
@@ -14,9 +14,11 @@
 //                               visibility
 //
 // The about space's read policy is how the host, rather than our pages, keeps a
-// private group's face from strangers, so it follows the group's visibility at
-// create. The owner is exempt from its own read policy, and the app reads as the
-// group, so what the app renders does not change with it.
+// private group's face from strangers. So it follows the group's visibility at
+// create, and a settings save that changes the visibility moves it with
+// `updateSpace` (`setAboutSpaceReadPolicy`). The owner is exempt from its own
+// read policy, and the app reads as the group, so what the app renders does not
+// change with it.
 //
 // The write policy is member-list on both. The vocabulary
 // (com.atproto.simplespace.defs) has no "only the owner" policy, and none is
@@ -28,7 +30,8 @@
 // client ids would decide which other apps may read a group, and `open` leaves
 // that decision to later.
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupVisibility } from '../types';
-import type { GroupCredential } from './credentials';
+import { resolveGroupCredential, type GroupCredential } from './credentials';
+import { GroupCredentialError, requireGroupPermission, type GroupGateInput } from './event-writer';
 import { groupClient } from './session';
 
 const POLICY_PUBLIC = 'com.atproto.simplespace.defs#publicPolicy';
@@ -43,8 +46,10 @@ export type SpaceReadPolicy = typeof POLICY_PUBLIC | typeof POLICY_MEMBER_LIST;
 /** Who may read a group's about space, from its visibility: anyone signed in
  *  for a public group, the space's own member list for a private one.
  *
- *  Anything but `public` reads as member-list, so a value this function does
- *  not know closes the space rather than opening it. */
+ *  The create and the settings save both ask this one function, so the policy a
+ *  group is provisioned with and the policy a later change moves it to cannot
+ *  disagree. Anything but `public` reads as member-list, so a value this
+ *  function does not know closes the space rather than opening it. */
 export function aboutSpaceReadPolicy(visibility: GroupVisibility): SpaceReadPolicy {
 	return visibility === 'public' ? POLICY_PUBLIC : POLICY_MEMBER_LIST;
 }
@@ -173,4 +178,72 @@ export async function provisionGroupSpaces(
 		readPolicy: POLICY_MEMBER_LIST
 	});
 	return { aboutSpaceUri: about.uri, membersSpaceUri: members.uri };
+}
+
+/** A read-policy change on an existing space. Injectable, like the
+ *  provisioner. The about space is the only space whose policy ever changes,
+ *  so a failure is reported against that space type. */
+export type GroupSpaceUpdater = (update: {
+	space: string;
+	readPolicy: SpaceReadPolicy;
+}) => Promise<void>;
+
+/** The real transport: the group's own session, then `updateSpace`.
+ *
+ *  The body is the space and the read policy and nothing else. The host
+ *  replaces only the fields it is sent, so the write policy and the app access
+ *  stay as they were provisioned. The group's app password is the space
+ *  owner's own credential, which is what `updateSpace` requires; no OAuth scope
+ *  is involved. The procedure has no output, so success is the status alone. */
+export function pdsSpaceUpdater(cred: GroupCredential, groupDid: string): GroupSpaceUpdater {
+	return async ({ space, readPolicy }) => {
+		const { handle } = await groupClient(cred, groupDid);
+		const res = await handle('/xrpc/com.atproto.simplespace.updateSpace', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ space, readPolicy: { $type: readPolicy } })
+		});
+		if (!res.ok) {
+			const body: unknown = await res.json().catch(() => null);
+			throw new GroupSpaceError(
+				`updateSpace failed for ${space}: ${res.status} ${JSON.stringify(body)}`,
+				ABOUT_SPACE_TYPE
+			);
+		}
+	};
+}
+
+export interface SetAboutSpaceReadPolicyInput extends GroupGateInput {
+	/** Overrides the PDS transport. When absent, it is built from the group's
+	 *  stored credential. */
+	updater?: GroupSpaceUpdater;
+}
+
+/** Moves a group's about space to the read policy its visibility names
+ *  (`aboutSpaceReadPolicy(group.visibility)`), so pass the group as it is
+ *  after the change. The settings save calls this only when the visibility
+ *  changed.
+ *
+ *  It touches the about space only. The members space's policy and its own
+ *  member list are not visibility's business: the members space is member-list
+ *  read for every group.
+ *
+ *  Gated like every other write the app makes as a group: MANAGE_GROUP, the
+ *  permission for the group's own face. */
+export async function setAboutSpaceReadPolicy(input: SetAboutSpaceReadPolicyInput): Promise<void> {
+	await requireGroupPermission(input, 'MANAGE_GROUP');
+	const space = input.group.about_space_uri;
+	if (!space) {
+		throw new GroupSpaceError(
+			`${input.group.group_did} has no about space yet, so its read policy cannot be changed`,
+			ABOUT_SPACE_TYPE
+		);
+	}
+	let updater = input.updater;
+	if (!updater) {
+		const cred = await resolveGroupCredential(input.env, input.db, input.group.group_did);
+		if (!cred) throw new GroupCredentialError(input.group.group_did);
+		updater = pdsSpaceUpdater(cred, input.group.group_did);
+	}
+	await updater({ space, readPolicy: aboutSpaceReadPolicy(input.group.visibility) });
 }
