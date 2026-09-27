@@ -15,6 +15,7 @@
 // Not deployed, not routed, never imported by the app. `scripts/` is outside
 // tsconfig's include, like scripts/geocode-events.ts.
 import { can, type GroupPermission } from '../src/lib/groups/permissions';
+import { canSeeGroup } from '../src/lib/groups/access';
 import type { GroupRoleName } from '../src/lib/groups/permissions';
 import type { GroupRow, GroupVisibility } from '../src/lib/groups/types';
 import { groupEventRecord, type GroupEventFormInput } from '../src/lib/groups/event-record';
@@ -58,7 +59,8 @@ import { ensureGroupsSchema } from '../src/lib/groups/server/schema';
 import {
 	pdsProvisioner,
 	provisionGroupSpaces,
-	readGroupVisibility
+	readGroupVisibility,
+	setAboutSpaceReadPolicy
 } from '../src/lib/groups/server/spaces';
 import { groupRebuildSources, rebuildGroup } from '../src/lib/groups/server/rebuild';
 import {
@@ -79,6 +81,7 @@ import {
 } from '../src/lib/groups/server/members-writer';
 import {
 	admitMember,
+	joinGroup,
 	ejectMember,
 	promoteMember,
 	type RosterContext
@@ -323,15 +326,53 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		return readGroupAbout(reader, group);
 	},
 
-	/** The cache rebuild, with the group's visibility read from its host the
-	 *  way Repair reads it: the about space's read policy. */
 	rebuildGroupCache: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		const reader = await groupSpaceReader(env, env.DB, group);
 		if (!reader) throw new Error(`no credential for ${group.group_did}`);
-		const hostVisibility = await readGroupVisibility(reader, group);
-		const outcome = await rebuildGroupCache(env.DB, reader, group, hostVisibility);
-		return { ...outcome, hostVisibility, row: await groupById(env, args.groupId) };
+		const outcome = await rebuildGroupCache(env.DB, reader, group);
+		return { ...outcome, row: await groupById(env, args.groupId) };
+	},
+
+	/** The about space's read policy, moved the way the settings save moves it
+	 *  (`setAboutSpaceReadPolicy`, behind MANAGE_GROUP). Called whether or not
+	 *  the space was just created: provisioning a space that already exists
+	 *  keeps whatever policy it had, so a reused fixture space could otherwise
+	 *  stay public, or private, from an earlier run. */
+	setReadPolicy: async (env, args) => {
+		await setAboutSpaceReadPolicy({
+			db: env.DB,
+			env,
+			group: await groupById(env, args.groupId),
+			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			visibility: chosenVisibility(args)
+		});
+		return { visibility: args.visibility };
+	},
+
+	/** Self-service join, through the roster act the join form calls. It is
+	 *  handed no visibility, so it asks the group's host, as it does for a
+	 *  caller the page gate did not ask about. */
+	joinGroup: async (env, args) => ({
+		outcome: await joinGroup(await rosterCtx(env, args), (args.message as string | null) ?? null)
+	}),
+
+	/** The page gate's decision for one caller: the host's answer and the
+	 *  caller's standing, put through the gate's own predicate (`canSeeGroup`).
+	 *  The route module itself cannot be bundled here: it pulls in the app's
+	 *  identity resolver, which is a Svelte module. */
+	gate: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const reader = await spaceReader(env, group);
+		const [visibility, membership] = await Promise.all([
+			readGroupVisibility(reader, group),
+			getCallerMembership(env.DB, group, args.did == null ? null : String(args.did), reader)
+		]);
+		return {
+			visibility,
+			onRoster: membership.onRoster,
+			canSee: canSeeGroup(visibility, membership)
+		};
 	},
 
 	/** Overwrites every column the profile record owns, so the rebuild has
@@ -362,17 +403,23 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	/** The one record a stranger can read, and the only door here that changes
 	 *  what the anonymous web sees. The visibility is handed in, as the settings
-	 *  save hands in the form's choice: the row holds none. */
+	 *  save hands in the form's choice: the row holds none. `visibility: 'host'`
+	 *  takes the host's answer instead, the way Repair aligns the declaration. */
 	reconcileDeclaration: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const visibility =
+			args.visibility === 'host'
+				? await readGroupVisibility(await spaceReader(env, group), group)
+				: chosenVisibility(args);
 		const result = await reconcileGroupDeclaration({
 			db: env.DB,
 			env,
-			group: await groupById(env, args.groupId),
-			visibility: chosenVisibility(args),
+			group,
+			visibility,
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
 			createdAt: args.createdAt as string | undefined
 		});
-		return { uri: result?.uri ?? null };
+		return { uri: result?.uri ?? null, visibility };
 	},
 
 	/** The authz config: one `role` record per seeded role and the two binding
