@@ -435,7 +435,7 @@ describe('the about space member list mirrors the roster', () => {
 			expect(await joinGroup(ctx(NEWCOMER), null)).toBe('joined');
 		},
 		'an admission from a request': async () => {
-			expect(await requestJoin(harness.db, group, NEWCOMER, 'hello')).toBe('pending');
+			expect(await requestJoin(harness.db, group, NEWCOMER, 'hello', 'public')).toBe('pending');
 			const request = await harness.db
 				.prepare(`SELECT id FROM join_requests WHERE group_id = ? AND did = ?`)
 				.bind(group.id, NEWCOMER)

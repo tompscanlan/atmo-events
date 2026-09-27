@@ -31,7 +31,7 @@
 //
 // There is no suspension. A moderator ejects.
 import { GROUP_ROLES, type GroupRoleName } from '../permissions';
-import type { GroupRow, MemberRow } from '../types';
+import type { GroupRow, GroupVisibility, MemberRow } from '../types';
 import type { CredentialStoreEnv } from './credentials';
 import {
 	GroupRuleError,
@@ -57,6 +57,7 @@ import {
 	type MembershipDrop
 } from './members-writer';
 import { aboutSpace, groupMemberList, putAboutMember, type GroupMemberList } from './member-list';
+import { readGroupVisibility } from './spaces';
 
 /** A grant whose row moved but whose record did not. Carries the subject, so
  *  the caller can say whose membership is out of step. */
@@ -114,6 +115,11 @@ export interface RosterContext {
 	/** Override the about space's member-list transport. When absent it is
 	 *  built from the group's stored credential. */
 	memberList?: GroupMemberList;
+	/** The group's visibility as its host reported it to the route
+	 *  (`groupRouteContext`), which a join's refusal reads. `null` when the
+	 *  route did not ask, because the caller is on the roster. When absent, a
+	 *  join asks the host itself. */
+	visibility?: GroupVisibility | null;
 }
 
 type AssignableRole = Exclude<GroupRoleName, 'owner'>;
@@ -236,12 +242,29 @@ export async function joinedAt(ctx: RosterContext, subject: string): Promise<str
 	return row ? new Date(row.created_at).toISOString() : undefined;
 }
 
+/** The visibility a join is refused by: the one the route read when it did,
+ *  and the host's own answer otherwise. A deployment with no credential for
+ *  the group cannot ask, and that is `null`, which refuses a stranger. */
+async function joinVisibility(ctx: RosterContext): Promise<GroupVisibility | null> {
+	if (ctx.visibility !== undefined) return ctx.visibility;
+	const reader =
+		ctx.reader !== undefined ? ctx.reader : await groupSpaceReader(ctx.env, ctx.db, ctx.group);
+	return reader ? readGroupVisibility(reader, ctx.group) : null;
+}
+
 /** Self-service join. Only `joined` puts anyone on the roster, and only then is
  *  the DID listed. `pending` is a join request, which the draft community
  *  standard models as a method, not a record, and no host serves that method,
- *  so nothing is published for it. */
+ *  so nothing is published for it. Whether the group takes a join at all is its
+ *  host's visibility, not its row's (`requestJoin`). */
 export async function joinGroup(ctx: RosterContext, message: string | null): Promise<JoinOutcome> {
-	const outcome = await requestJoin(ctx.db, ctx.group, ctx.callerDid, message);
+	const outcome = await requestJoin(
+		ctx.db,
+		ctx.group,
+		ctx.callerDid,
+		message,
+		await joinVisibility(ctx)
+	);
 	if (outcome !== 'joined') return outcome;
 	// The row exists now, so its `created_at` is the date the record carries:
 	// one clock for both copies, which is what lets the pair survive a rebuild

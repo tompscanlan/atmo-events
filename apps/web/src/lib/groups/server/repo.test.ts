@@ -160,7 +160,7 @@ describe('getGroupByDid', () => {
 describe('joining', () => {
 	it('records a pending request and no roster row when approval is required', async () => {
 		const created = await group();
-		expect(await requestJoin(db, created, ALICE, 'hello')).toBe('pending');
+		expect(await requestJoin(db, created, ALICE, 'hello', 'public')).toBe('pending');
 
 		const membership = await getCallerMembership(db, created, ALICE, null);
 		expect(membership.role).toBeNull();
@@ -169,19 +169,19 @@ describe('joining', () => {
 
 		// The partial unique index is what stops a second request; the repo turns
 		// that refusal into an outcome rather than an error.
-		expect(await requestJoin(db, created, ALICE, 'hello again')).toBe('already-pending');
+		expect(await requestJoin(db, created, ALICE, 'hello again', 'public')).toBe('already-pending');
 	});
 
 	it('puts the caller straight on the roster when approval is off', async () => {
 		const created = await group({ requireApproval: false });
-		expect(await requestJoin(db, created, ALICE, null)).toBe('joined');
+		expect(await requestJoin(db, created, ALICE, null, 'public')).toBe('joined');
 		expect((await getCallerMembership(db, created, ALICE, null)).role).toBe('member');
-		expect(await requestJoin(db, created, ALICE, null)).toBe('already-member');
+		expect(await requestJoin(db, created, ALICE, null, 'public')).toBe('already-member');
 	});
 
 	it('approves into the chosen role and closes the request in one step', async () => {
 		const created = await group();
-		await requestJoin(db, created, ALICE, null);
+		await requestJoin(db, created, ALICE, null, 'public');
 		const pending = (await getCallerMembership(db, created, ALICE, null)).pendingRequestId!;
 
 		await approveJoinRequest(db, created.id, pending, OWNER, 'admin');
@@ -200,23 +200,10 @@ describe('joining', () => {
 // group that requires approval would still take a pending request from a
 // stranger.
 describe('private groups are invite-only', () => {
-	it('refuses a self-service join, and records nothing on the way out', async () => {
-		const created = await group({ visibility: 'private' });
-
-		await expect(requestJoin(db, created, ALICE, 'let me in')).rejects.toMatchObject({
-			reason: 'invite-only'
-		});
-
-		const membership = await getCallerMembership(db, created, ALICE, null);
-		expect(membership.role).toBeNull();
-		expect(membership.pendingRequestId).toBeNull();
-		expect(await countActiveMembers(db, created.id)).toBe(1);
-	});
-
 	it('still answers already-member for someone on the roster', async () => {
 		const created = await group({ visibility: 'private' });
 		await addMember(db, created.id, ALICE, 'member');
-		expect(await requestJoin(db, created, ALICE, null)).toBe('already-member');
+		expect(await requestJoin(db, created, ALICE, null, 'private')).toBe('already-member');
 	});
 
 	it('cannot be created open-join', async () => {
@@ -235,6 +222,46 @@ describe('private groups are invite-only', () => {
 		await expect(updateGroup(db, closed.id, { requireApproval: false })).rejects.toMatchObject({
 			reason: 'private-needs-approval'
 		});
+	});
+});
+
+// Whether a group takes self-service joins is a question about its visibility,
+// and its visibility is what its host enforces: the about space's read policy,
+// which the route reads and hands in. The row can disagree with the host after
+// a save that failed partway, so each case below gives the row the opposite
+// answer, and a refusal that read the row would get it wrong.
+describe('the join refusal reads the host, not the row', () => {
+	it('refuses a join to a group the host reads as private, though its row says public and open, and writes nothing', async () => {
+		const created = await group({ requireApproval: false });
+
+		await expect(requestJoin(db, created, ALICE, 'let me in', 'private')).rejects.toMatchObject({
+			reason: 'invite-only'
+		});
+		// A visibility nobody read is not a public one.
+		await expect(requestJoin(db, created, ALICE, 'let me in', null)).rejects.toMatchObject({
+			reason: 'invite-only'
+		});
+
+		const membership = await getCallerMembership(db, created, ALICE, null);
+		expect(membership.role).toBeNull();
+		expect(membership.pendingRequestId).toBeNull();
+		expect(await countActiveMembers(db, created.id)).toBe(1);
+	});
+
+	it('takes a pending request for a group the host reads as public, though its row says private', async () => {
+		const created = await group({ visibility: 'private' });
+
+		expect(await requestJoin(db, created, ALICE, 'hello', 'public')).toBe('pending');
+		expect((await getCallerMembership(db, created, ALICE, null)).pendingRequestId).not.toBeNull();
+	});
+
+	it('answers already-member for a DID on the roster, whatever the host says', async () => {
+		const created = await group({ requireApproval: false });
+		await addMember(db, created.id, ALICE, 'member');
+
+		for (const visibility of ['public', 'private', null] as const) {
+			expect(await requestJoin(db, created, ALICE, null, visibility)).toBe('already-member');
+		}
 	});
 });
 
