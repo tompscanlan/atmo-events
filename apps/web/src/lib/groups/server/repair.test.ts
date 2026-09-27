@@ -26,7 +26,8 @@ import { GroupPermissionError, type GroupRepoWrite, type GroupRepoWriter } from 
 import { readGroupMembers, hasAuthzRecords } from './members-read';
 import { describeRepair, repairGroup } from './repair';
 import type { GroupRebuildSources } from './rebuild';
-import { pdsSpaceReader, type GroupSpaceReader } from './about-read';
+import { pdsSpaceReader, readGroupAbout, type GroupSpaceReader } from './about-read';
+import { groupFace } from '../about-record';
 import { storeGroupCredential, type GroupCredential } from './credentials';
 import { clearGroupSessions } from './session';
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
@@ -599,7 +600,13 @@ describe('Repair aligns the declaration to the host', () => {
 		expect(rowWrites.length).toBeGreaterThan(0);
 		expect(rowWrites.filter((sql) => /visibility/.test(sql))).toEqual([]);
 		expect(result.host).toEqual({ visibility: 'private', declaration: 'withdrawn' });
-		expect((await getGroupByDid(db, GROUP_DID))?.require_approval).toBe(0);
+		const row = (await getGroupByDid(db, GROUP_DID))!;
+		expect(row.require_approval).toBe(0);
+		// The row and the profile both still say open, and the page shows the
+		// group invite-only anyway, from the host's answer.
+		const about = await readGroupAbout(pdsSpaceReader(CRED, GROUP_DID), row);
+		expect(about.profile?.joinPolicy).toBe('open');
+		expect(groupFace(about.profile, row, result.host.visibility).joinPolicy).toBe('invite');
 		expect(await declared()).toBe(false);
 		expect(pds.writes().map((w) => w.nsid.replace('com.atproto.', ''))).toEqual([
 			'repo.deleteRecord'
