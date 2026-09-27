@@ -27,6 +27,7 @@ import { describeRepair, repairGroup } from './server/repair';
 // Every roster act is a row move plus a record write, composed once in
 // ./server/roster.ts so the app and the e2e harness run the same sequence.
 import {
+	RosterListError,
 	RosterRecordError,
 	RosterRowError,
 	admitFromRequest,
@@ -112,9 +113,7 @@ export const createGroupForm = form(
 		/** No column behind this one: the rule records are the only copy. */
 		rules: v.optional(v.pipe(v.string(), v.maxLength(8000)))
 	}),
-	async (
-		data
-	): Promise<CreateGroupOutcome> => {
+	async (data): Promise<CreateGroupOutcome> => {
 		const { locals, platform } = getRequestEvent();
 		if (!locals.did) error(401, 'Sign in to create a group');
 		// No redirect on success. The owner's rotation key comes back in the
@@ -176,19 +175,30 @@ export const repairGroupForm = form(
 	}
 );
 
-/** Maps a roster failure to a form result. The two roster errors mean the
- *  second half of the act failed after the first half took effect, so the
+/** Maps a roster failure to a form result. The three roster errors mean a
+ *  later half of the act failed after an earlier half took effect, so the
  *  caller is told what is out of step instead of being told to retry. Which
- *  half runs second depends on the direction of the change
- *  (`server/roster.ts`): a grant moves the row and then writes the record
- *  (`RosterRecordError`), a revocation deletes the record and then the row
- *  (`RosterRowError`). Every other failure (an owner who cannot be demoted, a
- *  private group with no self-service join, a DID that is not on the roster, or
- *  a revocation whose record write changed nothing) is a plain one.
+ *  half runs later depends on the direction of the change
+ *  (`server/roster.ts`): a grant moves the row, writes the record
+ *  (`RosterRecordError`) and then lists the DID on the about space
+ *  (`RosterListError`); a revocation takes the DID off that list, deletes the
+ *  record (`RosterListError`) and then the row (`RosterRowError`). Every other
+ *  failure (an owner who cannot be demoted, a private group with no
+ *  self-service join, a DID that is not on the roster, or a revocation whose
+ *  first write changed nothing) is a plain one.
  *
  *  Returns the failure member rather than `GroupFormResult`, so it also works
  *  in a handler whose success carries a payload. */
 function rosterFailure(e: unknown): GroupFormFailure {
+	if (e instanceof RosterListError) {
+		return {
+			ok: false,
+			error:
+				e.change === 'grant'
+					? `${e.subject} is on the roster, but was not added to the group's member list at its PDS: ${e.message}. "Repair this group" in the group's settings adds them.`
+					: `${e.subject} can no longer read the group at its PDS, but their membership was not removed: ${e.message}. Removing them again finishes it.`
+		};
+	}
 	if (e instanceof RosterRecordError) {
 		return {
 			ok: false,

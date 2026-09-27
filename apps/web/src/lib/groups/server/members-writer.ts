@@ -23,6 +23,12 @@
 // membership, role and permission record straight from the PDS with its own
 // credential, around the app's roster gate. The list stays empty and the app
 // is the space's only reader.
+//
+// The ABOUT space's list is the other way round: it mirrors the roster. That
+// space holds only the group's face (profile, rules), and its list is what
+// lets a member read a private group's face at the host from any app. The
+// roster acts write it (./roster.ts, through ./member-list.ts), never this
+// file.
 import {
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
@@ -113,8 +119,10 @@ function membersSpace(group: GroupRow): string {
 }
 
 /** The gate for one roster intent. Returns nothing: it passes or throws, like
- *  `requireGroupPermission`. */
-async function authoriseMembership(
+ *  `requireGroupPermission`. Exported for the roster, which removes a leaving
+ *  or ejected DID from the about space's member list before the record, and
+ *  must refuse the caller before that write, not only before this file's. */
+export async function authoriseMembership(
 	input: WriteGroupMembersInput & { subject: string; intent: MembershipIntent }
 ): Promise<void> {
 	if (SELF_SERVICE.includes(input.intent)) {
