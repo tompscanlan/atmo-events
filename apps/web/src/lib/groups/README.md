@@ -26,9 +26,11 @@ let in without the question, and the page then asks only to show the visibility.
 the ordinary 404 when the deployment holds no credential for the group, since then the PDS cannot
 be asked, and a 503 rather than a guess when the PDS is asked and does not answer. Browse shows it
 from placement instead, with no PDS read per group: a group the declaration index lists is public,
-and one the caller sees only through their own groups is private. The settings save changes the
-read policy before anything else, and the repair aligns the declaration to it, never the other way
-round.
+and one the caller sees only through their own groups is private. So browse's badge says whether
+the group is declared and the page's badge what its host enforces, and the two can differ: a save
+that changed the host but stopped before the declaration leaves them apart until the next save or
+the repair aligns the declaration. The settings save changes the read policy before anything else,
+and the repair aligns the declaration to it, never the other way round.
 
 The about space's member list mirrors the roster. Joining or being admitted puts a member on it,
 and leaving or being removed takes them off, always on the side of less access: the membership
@@ -51,9 +53,11 @@ and `CREATE_EVENT`. Which role holds which permission is data, written as record
 space, and a member's permissions are the union of what their role holds. The owner cannot be
 demoted, removed or leave; the schema enforces that as well as the code.
 
-A private group always requires approval to join. The create and the settings save refuse the pair
-before any write, in app code rather than the schema, since only the PDS knows the visibility.
-There is no suspension: removing someone deletes their membership record.
+A private group is invite-only. That is derived, not stored: whatever the profile's join policy or
+D1's approval flag says, a group whose PDS reads it as private, or cannot be asked, shows
+invite-only and refuses a self-service join. D1's `require_approval` is a plain cache of the
+profile's join policy. The create and the settings save also refuse a private group with approval
+off, before any write. There is no suspension: removing someone deletes their membership record.
 
 ## Hosting
 
@@ -86,7 +90,7 @@ Unit tests run with `vitest` and need no network. These scripts run the real cod
 PDS and delete what they write:
 
 ```bash
-node apps/web/scripts/groups-e2e.mjs            # the group flow, 24 checks
+node apps/web/scripts/groups-e2e.mjs            # the group flow, 26 checks
 node apps/api/scripts/spaces-e2e.mjs            # the members-only Spaces read path
 node apps/web/scripts/group-declaration.mjs <origin>   # every public group is declared, no private one is
 node apps/web/scripts/inherited-surface.mjs <origin>   # the app's existing pages still answer

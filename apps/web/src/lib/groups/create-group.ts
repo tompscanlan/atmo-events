@@ -11,11 +11,11 @@
 //
 // Every refusal comes before the mint: a private group open to join, a label
 // the PDS would reject, a deployment that could not keep the credential the
-// mint returns only once, and a row the groups tables would refuse. The INSERT is rehearsed and rolled
-// back, so an INSERT that fails after the mint means the database changed or
-// failed in between. Registering the handle is the name reservation, so a
-// duplicate name fails at the mint and leaves nothing behind: no DID, no row,
-// no space.
+// mint returns only once, and a row the groups tables would refuse. The INSERT
+// is rehearsed and rolled back, so an INSERT that fails after the mint means
+// the database changed or failed in between. Registering the handle is the
+// name reservation, so a duplicate name fails at the mint and leaves nothing
+// behind: no DID, no row, no space.
 import type { CredentialStoreEnv } from './server/credentials';
 import {
 	GroupCredentialKeyError,
