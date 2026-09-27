@@ -248,12 +248,16 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	/** Both spaces the fixture group needs: the about space for its profile and
 	 *  the members space for its roster. The e2e binds an existing DID through
 	 *  `createGroup`, which provisions nothing (only `runCreateGroup` does), so
-	 *  they are made here. Idempotent, like the create path's own call. */
+	 *  they are made here. Idempotent, like the create path's own call, and from
+	 *  the row's visibility, as a create would. */
 	provisionSpaces: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		const cred = await resolveGroupCredential(env, env.DB, group.group_did);
 		if (!cred) throw new Error(`no credential for ${group.group_did}`);
-		const uris = await provisionGroupSpaces(pdsProvisioner(cred, group.group_did));
+		const uris = await provisionGroupSpaces(
+			pdsProvisioner(cred, group.group_did),
+			group.visibility
+		);
 		await recordGroupSpaces(env.DB, group.id, uris);
 		return uris;
 	},

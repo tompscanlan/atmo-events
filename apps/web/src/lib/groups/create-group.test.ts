@@ -448,6 +448,71 @@ describe('a successful create', () => {
 	});
 });
 
+// A group's about space is readable by exactly the audience its visibility
+// names, and the host enforces that, not our pages. So the create choice has to
+// reach the host: an about space provisioned public for a private group would
+// let any signed-in stranger's app read its profile and rules from the PDS.
+describe('the create choice sets the about space’s read policy', () => {
+	const ABOUT = `at://${MINTED_DID}/space/net.openmeet.space.about/self`;
+
+	it.each([
+		['public', 'publicPolicy'],
+		['private', 'memberListPolicy']
+	] as const)(
+		'a %s create with approval on provisions the about space with %s',
+		async (visibility, policy) => {
+			const { requests, spaces } = stubPds();
+
+			const result = await runCreateGroup(env, OWNER, data({ visibility, requireApproval: true }));
+
+			expect(result.ok).toBe(true);
+			const about = requests.filter(
+				(r) =>
+					r.nsid === 'com.atproto.simplespace.createSpace' &&
+					r.body?.type === 'net.openmeet.space.about'
+			);
+			expect(about).toHaveLength(1);
+			expect(about[0].body?.readPolicy).toEqual({
+				$type: `com.atproto.simplespace.defs#${policy}`
+			});
+			// And that is what the host now reports for it.
+			expect(spaces.get(ABOUT)?.readPolicy).toEqual({
+				$type: `com.atproto.simplespace.defs#${policy}`
+			});
+		}
+	);
+});
+
+// The members space holds the control plane (roles, memberships, permission
+// bindings). Public read there would publish the roster of every group, so the
+// visibility choice must not move it.
+describe('the members space is member-list read whatever the choice', () => {
+	const MEMBERS = `at://${MINTED_DID}/space/net.openmeet.space.members/self`;
+
+	it.each(['public', 'private'] as const)(
+		'a %s create provisions the members space with memberListPolicy',
+		async (visibility) => {
+			const { requests, spaces } = stubPds();
+
+			const result = await runCreateGroup(env, OWNER, data({ visibility }));
+
+			expect(result.ok).toBe(true);
+			const members = requests.filter(
+				(r) =>
+					r.nsid === 'com.atproto.simplespace.createSpace' &&
+					r.body?.type === 'net.openmeet.space.members'
+			);
+			expect(members).toHaveLength(1);
+			expect(members[0].body?.readPolicy).toEqual({
+				$type: 'com.atproto.simplespace.defs#memberListPolicy'
+			});
+			expect(spaces.get(MEMBERS)?.readPolicy).toEqual({
+				$type: 'com.atproto.simplespace.defs#memberListPolicy'
+			});
+		}
+	);
+});
+
 // The owner's rotation key exists in one place: the response to this create.
 // Once the did:plc is minted, every way the create can end has to carry it, or
 // the owner is left holding a group (or a registered address) with no key of
