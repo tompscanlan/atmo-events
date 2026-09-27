@@ -420,7 +420,13 @@ const ROSTER_CHECKS_IN_FLIGHT = 6;
  *  most `wanted` plus the rejections among them.
  *
  *  A candidate that was not checked is never returned. Listing it unchecked is
- *  the leak the check exists to close. */
+ *  the leak the check exists to close.
+ *
+ *  A check that fails fails the whole listing, as it would under `Promise.all`.
+ *  The first failure is kept rather than left to the race, because a race that
+ *  a sibling check wins in the same turn would drop it without a word and
+ *  return a shorter page. No check starts after a failure, and the ones already
+ *  running are waited out before it is thrown. */
 async function confirmNewest(
 	candidates: GroupRow[],
 	check: (row: GroupRow) => Promise<boolean>,
@@ -429,24 +435,33 @@ async function confirmNewest(
 	const queue = [...candidates].sort((a, b) => b.created_at - a.created_at);
 	const confirmed = new Set<GroupRow>();
 	const running = new Set<Promise<void>>();
+	// An array, not a nullable local: a callback sets it, which narrowing cannot see.
+	const failures: unknown[] = [];
 	let next = 0;
 	for (;;) {
 		while (
+			failures.length === 0 &&
 			next < queue.length &&
 			running.size < ROSTER_CHECKS_IN_FLIGHT &&
 			confirmed.size + running.size < wanted
 		) {
 			const row = queue[next++];
 			const run: Promise<void> = check(row)
-				.then((ok) => {
-					if (ok) confirmed.add(row);
-				})
+				.then(
+					(ok) => {
+						if (ok) confirmed.add(row);
+					},
+					(error: unknown) => {
+						if (failures.length === 0) failures.push(error);
+					}
+				)
 				.finally(() => running.delete(run));
 			running.add(run);
 		}
 		if (running.size === 0) break;
 		await Promise.race(running);
 	}
+	if (failures.length > 0) throw failures[0];
 	return queue.filter((row) => confirmed.has(row));
 }
 
@@ -488,7 +503,7 @@ export async function listGroups(
 		limit?: number;
 		/** Whether the caller's membership record confirms them in this group.
 		 *  Asked only for an undeclared group the caller does not own, and only
-		 *  for as many of those as can reach the page. When absent, the
+		 *  for as many of those as could fill the page on their own. When absent, the
 		 *  membership row is taken as it stands. */
 		onRoster?: (row: GroupRow) => Promise<boolean>;
 	}

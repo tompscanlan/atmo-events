@@ -497,5 +497,21 @@ describe('browse visibility', () => {
 			expect(seen.checked).toEqual(all.slice(0, 4));
 			for (const name of names(entries)) expect(seen.checked).toContain(name);
 		});
+
+		// A failed check is a failed listing, however the checks happen to settle.
+		// Two that finish in the same turn must not let the failure slip past as a
+		// shorter page.
+		it('fails the listing when a check fails, even when another settles alongside it', async () => {
+			const all = await memberOf(3);
+			const onRoster = async (row: GroupRow) => {
+				await Promise.resolve();
+				if (row.name === all[1]) throw new Error('the database did not answer');
+				return true;
+			};
+
+			await expect(
+				listGroups(db, { callerDid: ALICE, declared: [], limit: 10, onRoster })
+			).rejects.toThrow('the database did not answer');
+		});
 	});
 });
