@@ -19,6 +19,9 @@
 //   member lists    `putMember`, `removeMember` and `listMembers` share one
 //                   list per space, which a test can seed and inspect. Each
 //                   needs the space to exist, as on a real host.
+//   repo records    The declaration lives in the group's public repo, and
+//                   Repair reads it back (`getRecord`) to decide whether to
+//                   write or withdraw it, so a second run can write nothing.
 //
 // Both listings page the way the reference host does, so a caller that reads
 // only the first page is caught:
@@ -125,6 +128,8 @@ export function stubPds(options: StubPdsOptions) {
 	const spaces = new Map<string, StubSpaceConfig>();
 	/** What a space read sees: the latest write per record, minus deletes. */
 	const liveRecords = new Map<string, SpaceRecordWrite>();
+	/** The same for the group's public repo, keyed by repo, collection and rkey. */
+	const liveRepoRecords = new Map<string, RepoRecordWrite>();
 	/** Each space's member list, by space URI, then by member DID. */
 	const memberLists = new Map<string, Map<string, StubSpaceMember>>();
 	const memberList = (space: string) => {
@@ -293,6 +298,7 @@ export function stubPds(options: StubPdsOptions) {
 			case 'com.atproto.repo.createRecord': {
 				const write = body as unknown as RepoRecordWrite;
 				repoWrites.push(write);
+				liveRepoRecords.set(recordKey(write.repo, write.collection, write.rkey), write);
 				return Response.json({
 					uri: `at://${write.repo}/${write.collection}/${write.rkey}`,
 					cid: 'bafycreate'
@@ -301,8 +307,23 @@ export function stubPds(options: StubPdsOptions) {
 
 			// Deleting a missing record is a no-op on the reference PDS, not an
 			// error, so there is nothing to look up first.
-			case 'com.atproto.repo.deleteRecord':
+			case 'com.atproto.repo.deleteRecord': {
+				const { repo, collection, rkey } = body as Record<string, string>;
+				liveRepoRecords.delete(recordKey(repo, collection, rkey));
 				return Response.json({});
+			}
+
+			case 'com.atproto.repo.getRecord': {
+				const hit = liveRepoRecords.get(
+					recordKey(query.get('repo'), query.get('collection'), query.get('rkey'))
+				);
+				if (!hit) return Response.json({ error: 'RecordNotFound' }, { status: 400 });
+				return Response.json({
+					uri: `at://${hit.repo}/${hit.collection}/${hit.rkey}`,
+					cid: 'bafycreate',
+					value: hit.record
+				});
+			}
 		}
 		throw new Error(`unexpected call to ${url}`);
 	});

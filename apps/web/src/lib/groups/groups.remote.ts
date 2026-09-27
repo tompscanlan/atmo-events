@@ -159,9 +159,11 @@ export const updateGroupForm = form(
 
 /** Repairs a group whose records and this site's copy no longer agree. It
  *  writes the missing members-space records that the row is certain of, makes
- *  the about space's member list equal the membership records, then rebuilds
- *  the copy from the records (`./server/repair.ts` says what it will and will
- *  not write, and why). Needs MANAGE_GROUP, like the other settings. */
+ *  the about space's member list equal the membership records, brings the
+ *  declaration and the row's visibility in line with the about space's read
+ *  policy at the host, then rebuilds the copy from the records
+ *  (`./server/repair.ts` says what it will and will not write, and why). Needs
+ *  MANAGE_GROUP, like the other settings. */
 export const repairGroupForm = form(
 	v.object({ groupDid: didField }),
 	async (data): Promise<GroupFormResult<{ summary: string }>> => {

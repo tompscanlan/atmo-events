@@ -1,5 +1,5 @@
 // Repairing a group whose records and cache have drifted apart. It runs from the
-// group's settings page, behind MANAGE_GROUP, in three steps, always in this
+// group's settings page, behind MANAGE_GROUP, in four steps, always in this
 // order:
 //
 //   1. Complete the members space, as far as the row can say for certain: the
@@ -7,7 +7,9 @@
 //      only if it does not exist.
 //   2. Make the about space's member list equal the set of DIDs that hold a
 //      membership record (./member-list.ts).
-//   3. Rebuild the cache from the records (`rebuildGroup`, the repair path).
+//   3. Make the declaration and the row's visibility agree with the about
+//      space's read policy at the host.
+//   4. Rebuild the cache from the records (`rebuildGroup`, the repair path).
 //
 // WHY STEP 1. A create writes the group's row before its records
 // (`../create-group.ts`), so a PDS failure after the INSERT leaves a roster
@@ -43,16 +45,33 @@
 // to the last page (`pdsSpaceReader` follows the cursor, and a page that fails
 // throws before anything is written).
 //
+// WHY STEP 3. A group's visibility is its about space's read policy: that is
+// what the page gate reads (`readGroupVisibility`) and what every other app is
+// held to. The settings save writes the host first, so a save that fails after
+// it leaves the declaration, and the row's column, behind the host. Step 3
+// reads the policy with `getSpace` and aligns both to it: `memberListPolicy`
+// means no declaration and a private row, `publicPolicy` a declaration and a
+// public row. The direction is fixed. It never changes the host's read
+// policy, because the host holds the user's last choice that got through, and
+// moving it to match a row that missed the change would undo that choice. It
+// reads the declaration before it writes one, and each write happens only on
+// a disagreement. The declaration goes before the row, because it is what
+// other apps see and the row no longer decides who may see the group. A row
+// moved to private also requires approval, which the schema insists on for a
+// private group.
+//
 // Idempotent: a second run writes nothing, and its rebuild is a no-op.
 //
 // It cannot help a group whose authz config exists while the owner has no
 // membership record: MANAGE_GROUP resolves from records, so the owner is
 // refused here too. A create cannot leave that shape (it writes the owner's
 // record before the config); only an edit of the config itself could.
+import { declarationRequired } from '../declaration-record';
 import { GROUP_ROLES, type GroupPermission, type GroupRoleName } from '../permissions';
-import type { GroupRow } from '../types';
+import type { GroupRow, GroupVisibility } from '../types';
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
 import type { CredentialStoreEnv } from './credentials';
+import { reconcileGroupDeclaration } from './declaration-writer';
 import { GroupRecordError, requireGroupPermission, type GroupRepoWriter } from './event-writer';
 import {
 	alignAboutMembers,
@@ -68,7 +87,8 @@ import {
 	type GroupRebuildResult,
 	type GroupRebuildSources
 } from './rebuild';
-import { listMembers, rolePermissions } from './repo';
+import { listMembers, rolePermissions, updateGroup } from './repo';
+import { readGroupVisibility } from './spaces';
 
 export interface RepairGroupInput {
 	db: D1Database;
@@ -78,9 +98,10 @@ export interface RepairGroupInput {
 	callerDid: string | null;
 	/** Overrides the PDS transport. Tests pass this. */
 	writer?: GroupRepoWriter;
-	/** Overrides the members-space reader, for both the gate and step 1. */
+	/** Overrides the space reader, for the gate, step 1 and step 3's read of
+	 *  the about space's read policy. */
 	reader?: GroupSpaceReader | null;
-	/** Overrides where the rebuild reads from. */
+	/** Overrides where the rebuild reads from, and step 3's declaration probe. */
 	sources?: GroupRebuildSources | null;
 	/** Overrides the about space's member-list transport. When absent it is
 	 *  built from the group's stored credential. */
@@ -97,7 +118,20 @@ export interface GroupRepairResult {
 	authzHeldBack: 'partial' | 'unrecorded-members' | null;
 	/** What step 2 changed on the about space's member list. */
 	memberList: AboutMemberAlignment;
+	/** What step 3 found at the host and changed to match it. */
+	host: HostAlignment;
 	rebuild: GroupRebuildResult;
+}
+
+/** Step 3's result. */
+export interface HostAlignment {
+	/** The group's visibility, as the about space's read policy gives it. */
+	visibility: GroupVisibility;
+	/** `declared` or `withdrawn` when the declaration disagreed with the host
+	 *  and was written or deleted; null when it already agreed. */
+	declaration: 'declared' | 'withdrawn' | null;
+	/** Whether the row's visibility column was rewritten to the host's. */
+	row: boolean;
 }
 
 export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairResult> {
@@ -171,9 +205,50 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 			`this deployment holds no credential for ${group.group_did}, so it cannot be rebuilt`
 		);
 	}
+
+	const host = await alignToHost({ ...write, createdAt }, sources);
+
 	const rebuild = await rebuildGroup(db, sources, group.group_did);
 
-	return { wrote, unrecordedMembers, authzHeldBack, memberList, rebuild };
+	return { wrote, unrecordedMembers, authzHeldBack, memberList, host, rebuild };
+}
+
+/** Step 3: the declaration, then the row's visibility, made to agree with the
+ *  about space's read policy. Reads come first, and each write happens only on
+ *  a disagreement, so a group that already agrees gets no write at all. It
+ *  never writes the host (see the header). */
+async function alignToHost(
+	input: RepairGroupInput & { reader: GroupSpaceReader; createdAt: string },
+	sources: GroupRebuildSources
+): Promise<HostAlignment> {
+	const { db, group } = input;
+	const visibility = await readGroupVisibility(input.reader, group);
+	const declared = await sources.declared();
+
+	// The group as the host has it. A private group requires approval, so the
+	// row cannot be moved to private without it.
+	const aligned: GroupRow = {
+		...group,
+		visibility,
+		require_approval: visibility === 'private' ? 1 : group.require_approval
+	};
+
+	let declaration: HostAlignment['declaration'] = null;
+	if (declared !== declarationRequired(aligned)) {
+		// Re-declared under the row's own creation instant, like every other
+		// record Repair writes, and not today's.
+		await reconcileGroupDeclaration({ ...input, group: aligned });
+		declaration = declared ? 'withdrawn' : 'declared';
+	}
+
+	const row = visibility !== group.visibility;
+	if (row) {
+		await updateGroup(db, group.id, {
+			visibility,
+			requireApproval: aligned.require_approval === 1
+		});
+	}
+	return { visibility, declaration, row };
 }
 
 /** Whether the space holds all of the authz config, none of it, or some. */
@@ -222,6 +297,17 @@ export function describeRepair(result: GroupRepairResult): string {
 		].filter((part): part is string => typeof part === 'string');
 		sentences.push(
 			`Brought the group's member list at its PDS in line with the membership records: ${joinList(changes)}.`
+		);
+	}
+	const { host } = result;
+	if (host.declaration || host.row) {
+		const changes = [
+			host.declaration === 'withdrawn' && 'withdrew its declaration',
+			host.declaration === 'declared' && 'published its declaration',
+			host.row && `set this site's copy to ${host.visibility}`
+		].filter((part): part is string => typeof part === 'string');
+		sentences.push(
+			`Brought the group in line with its PDS, which reads it as ${host.visibility}: ${joinList(changes)}.`
 		);
 	}
 	sentences.push("Rebuilt this site's copy of the group from its records.");
