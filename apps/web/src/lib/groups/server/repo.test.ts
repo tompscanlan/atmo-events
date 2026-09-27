@@ -1,9 +1,20 @@
 // The repository against the real schema: creation-as-one-transaction, the
-// approval flow, and the visibility filter. Each case is a rule a route trusts
+// approval flow, and what browse lists. Each case is a rule a route trusts
 // without re-checking.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { DEFAULT_ROLE_PERMISSIONS } from '../permissions';
+import {
+	GROUP_MEMBERSHIP_COLLECTION,
+	GROUP_PERMISSIONS_COLLECTION,
+	GROUP_PERMISSIONS_RKEY,
+	GROUP_ROLE_COLLECTION,
+	groupBindingsRecord,
+	groupMembershipRecord,
+	groupRoleRecord
+} from '../members-record';
+import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
+import type { GroupSpaceReader } from './about-read';
 import {
 	GroupRuleError,
 	addMember,
@@ -15,12 +26,14 @@ import {
 	getGroupByDid,
 	listGroups,
 	listMembers,
+	recordGroupSpaces,
 	rehearseCreateGroup,
 	removeMember,
 	requestJoin,
 	rolePermissions,
 	updateGroup
 } from './repo';
+import { spaceUri } from './spaces';
 
 const OWNER = 'did:plc:owner';
 const ALICE = 'did:plc:alice';
@@ -271,6 +284,81 @@ describe('browse visibility', () => {
 	const names = (entries: Awaited<ReturnType<typeof listGroups>>) =>
 		entries.map((e) => e.row?.name ?? e.group_did);
 
+	interface HostedGroup {
+		row: GroupRow;
+		reader: GroupSpaceReader;
+		/** Every get and list the reader has answered. */
+		reads: number;
+	}
+
+	/** A group with a members space whose authz config is written, holding a
+	 *  membership record for each of `members` and for nobody else. */
+	async function hostedWithRecords(
+		input: Partial<Parameters<typeof createGroup>[1]>,
+		members: string[]
+	): Promise<HostedGroup> {
+		const created = await group({ visibility: 'private', ...input });
+		const space = spaceUri(created.group_did, MEMBERS_SPACE_TYPE, 'self');
+		await recordGroupSpaces(db, created.id, {
+			aboutSpaceUri: spaceUri(created.group_did, ABOUT_SPACE_TYPE, 'self'),
+			membersSpaceUri: space
+		});
+		const records = [
+			{
+				collection: GROUP_ROLE_COLLECTION,
+				rkey: 'member',
+				value: { ...groupRoleRecord({ id: 'member' }), $type: GROUP_ROLE_COLLECTION }
+			},
+			{
+				collection: GROUP_PERMISSIONS_COLLECTION,
+				rkey: GROUP_PERMISSIONS_RKEY,
+				value: {
+					...groupBindingsRecord({ altitude: 'community', bundles: DEFAULT_ROLE_PERMISSIONS }),
+					$type: GROUP_PERMISSIONS_COLLECTION
+				}
+			},
+			...members.map((did) => ({
+				collection: GROUP_MEMBERSHIP_COLLECTION,
+				rkey: did,
+				value: {
+					...groupMembershipRecord({ subject: did, roles: ['member'] }),
+					$type: GROUP_MEMBERSHIP_COLLECTION
+				}
+			}))
+		].map((r) => ({
+			...r,
+			uri: `${space}/${created.group_did}/${r.collection}/${r.rkey}`,
+			cid: 'bafytest'
+		}));
+
+		const hosted: HostedGroup = {
+			row: { ...created, members_space_uri: space },
+			reads: 0,
+			reader: {
+				async get(query) {
+					hosted.reads++;
+					return (
+						records.find((r) => r.collection === query.collection && r.rkey === query.rkey) ?? null
+					);
+				},
+				async list(query) {
+					hosted.reads++;
+					return records.filter((r) => !query.collection || r.collection === query.collection);
+				}
+			}
+		};
+		return hosted;
+	}
+
+	/** The check the browse loader builds: the caller's standing as the group's
+	 *  records give it, through the same function every group page gates on. */
+	function rosterFromRecords(callerDid: string, hosted: HostedGroup[]) {
+		return async (row: GroupRow) => {
+			const reader = hosted.find((h) => h.row.id === row.id)?.reader ?? null;
+			return (await getCallerMembership(db, row, callerDid, reader)).onRoster;
+		};
+	}
+
 	// The browse rule is "declared means listed". The declaration index is the
 	// enumeration, and the row only names what the index already listed. So a
 	// row the index does not hold is not listed, whatever its columns say.
@@ -307,22 +395,58 @@ describe('browse visibility', () => {
 		]);
 	});
 
-	// The window between a private flip and the tick that drops its declaration.
-	// The index still lists the group; the row already says private. A stranger
-	// gets what a stranger gets of any group we hold no page for them on: the
-	// address, never the name.
-	it('withholds a private row from a caller not on its roster while the index catches up', async () => {
-		const secret = await group({ name: 'Secret', groupDid: 'did:plc:d', visibility: 'private' });
-		await addMember(db, secret.id, ALICE, 'member');
-		const stale = [declared('did:plc:d', '2026-09-20T00:00:00.000Z')];
+	// Declared means listed, and the row only supplies the name. The column is
+	// not consulted: a group that went private withdraws its declaration, and the
+	// withdrawal tells our own index at once (`removeGroupDeclaration`), so a
+	// declared row is one whose group is still announcing itself.
+	it('is not gated by the column: a declared row that says private is hydrated for a signed-in stranger', async () => {
+		await group({ name: 'Secret', groupDid: 'did:plc:d', visibility: 'private' });
 
-		expect(await listGroups(db, { callerDid: null, declared: stale })).toEqual([
-			{ group_did: 'did:plc:d', row: null }
+		const entries = await listGroups(db, {
+			callerDid: BOB,
+			declared: [declared('did:plc:d', '2026-09-20T00:00:00.000Z')],
+			// A stranger is on no roster, and that does not matter for a
+			// declared group.
+			onRoster: async () => false
+		});
+		expect(entries).toEqual([
+			{
+				group_did: 'did:plc:d',
+				row: expect.objectContaining({ name: 'Secret', visibility: 'private' })
+			}
 		]);
-		expect(await listGroups(db, { callerDid: BOB, declared: stale })).toEqual([
-			{ group_did: 'did:plc:d', row: null }
-		]);
-		expect(names(await listGroups(db, { callerDid: ALICE, declared: stale }))).toEqual(['Secret']);
+	});
+
+	// A revocation deletes the membership record before the row (`roster.ts`), so
+	// a half-failed one leaves a row with no record behind it. Browse reaches an
+	// undeclared group only through that row, so the record has the last word.
+	it('does not keep an undeclared group for a removed member whose row survived but whose record is gone', async () => {
+		const gone = await hostedWithRecords({ name: 'Gone', groupDid: 'did:plc:gone' }, []);
+		const kept = await hostedWithRecords({ name: 'Kept', groupDid: 'did:plc:kept' }, [ALICE]);
+		await addMember(db, gone.row.id, ALICE, 'member');
+		await addMember(db, kept.row.id, ALICE, 'member');
+
+		const entries = await listGroups(db, {
+			callerDid: ALICE,
+			declared: [],
+			onRoster: rosterFromRecords(ALICE, [gone, kept])
+		});
+		expect(names(entries)).toEqual(['Kept']);
+	});
+
+	// The owner cannot be removed (`memberships_owner_undeletable`), so the check
+	// would only cost a session and a space read. The reader below would answer "no
+	// record" for the owner if it were asked, and it must not be.
+	it('keeps the owner undeclared group with no membership record read', async () => {
+		const owned = await hostedWithRecords({ name: 'Owned', groupDid: 'did:plc:owned' }, []);
+
+		const entries = await listGroups(db, {
+			callerDid: OWNER,
+			declared: [],
+			onRoster: rosterFromRecords(OWNER, [owned])
+		});
+		expect(names(entries)).toEqual(['Owned']);
+		expect(owned.reads).toBe(0);
 	});
 
 	// The bounded exception to the rule above: a caller sees their own and their
