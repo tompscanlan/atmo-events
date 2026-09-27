@@ -298,9 +298,16 @@
 						<select
 							id="settings-visibility"
 							name="visibility"
+							required
 							onchange={(e) => (pickedVisibility = e.currentTarget.value)}
 							class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
 						>
+							<!-- The host did not say. No option is preselected then, because a
+							     save would otherwise send the first one and could move the group
+							     to it; the owner has to pick one. -->
+							{#if visibility === null}
+								<option value="" disabled selected>could not be read from its PDS</option>
+							{/if}
 							{#each ['public', 'private'] as value (value)}
 								<option {value} selected={visibility === value}>{value}</option>
 							{/each}
