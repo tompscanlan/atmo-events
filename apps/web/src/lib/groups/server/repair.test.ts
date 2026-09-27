@@ -3,15 +3,24 @@
 // tests focus on where writing would be wrong: a non-owner row with no record
 // (a failed grant looks the same as a failed removal), a record that disagrees
 // with its row, and an authz config that is half there.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+//
+// It also brings the about space's member list in line with the membership
+// records. The list lives at the host, so every case runs against the fake
+// host (./__fixtures__/stub-pds.ts) with the group's credential stored, and
+// the host pages its listings small enough that a second page is real.
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
+import { stubPds, type StubPdsOptions } from './__fixtures__/stub-pds';
 import { addMember, createGroup, getMemberRow, recordGroupSpaces } from './repo';
-import { putGroupMembership, writeGroupAuthz } from './members-writer';
+import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './members-writer';
 import { GroupPermissionError, type GroupRepoWrite, type GroupRepoWriter } from './event-writer';
 import { readGroupMembers, hasAuthzRecords } from './members-read';
 import { describeRepair, repairGroup } from './repair';
 import type { GroupRebuildSources } from './rebuild';
-import type { GroupSpaceReader } from './about-read';
+import { pdsSpaceReader, type GroupSpaceReader } from './about-read';
+import { storeGroupCredential, type GroupCredential } from './credentials';
+import { clearGroupSessions } from './session';
+import { pdsProvisioner, provisionGroupSpaces } from './spaces';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import {
 	GROUP_ACCESS_COLLECTION,
@@ -28,6 +37,20 @@ const MEMBER = 'did:plc:6cz6dldz42itymdbte47ewcv';
 const ABOUT = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self');
 const MEMBERS = spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self');
 
+/** 32 bytes, base64: the credential store accepts nothing shorter. */
+const KEY = btoa('0123456789abcdef0123456789abcdef');
+const CRED: GroupCredential = {
+	service: 'https://pds.stub.test',
+	identifier: 'kona.group.stub.test',
+	password: 'app-pass-1234'
+};
+
+const MEMBER_LIST_METHODS = new Set([
+	'com.atproto.simplespace.putMember',
+	'com.atproto.simplespace.removeMember',
+	'com.atproto.simplespace.listMembers'
+]);
+
 let harness: SqliteD1;
 let db: D1Database;
 let group: GroupRow;
@@ -35,14 +58,61 @@ let writes: GroupRepoWrite[];
 let writer: GroupRepoWriter;
 let reader: GroupSpaceReader;
 let sources: GroupRebuildSources;
-const env = {};
+let pds: ReturnType<typeof stubPds>;
+/** Set by a case to answer one host call its own way. */
+let failHost: StubPdsOptions['fail'] | null;
+const env = { GROUP_CREDENTIAL_KEY: KEY };
+
+/** A member-list call, by the space and the DID it names. A query carries them
+ *  as parameters, a procedure in its body. */
+function memberListCalls() {
+	return pds.requests
+		.filter((r) => MEMBER_LIST_METHODS.has(r.nsid))
+		.map((r) => ({
+			nsid: r.nsid,
+			space: (r.body?.space as string | undefined) ?? r.params.space,
+			did: r.body?.did as string | undefined
+		}));
+}
+
+const memberListWrites = () =>
+	memberListCalls().filter((c) => c.nsid !== 'com.atproto.simplespace.listMembers');
+
+/** Changes a space's member list at the host directly, the way the group's
+ *  owner could from any client, so a case can set up a list that drifted. */
+async function hostList(method: 'putMember' | 'removeMember', space: string, did: string) {
+	const res = await fetch(`${CRED.service}/xrpc/com.atproto.simplespace.${method}`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify(
+			method === 'putMember' ? { space, did, read: true, write: false } : { space, did }
+		)
+	});
+	expect(res.ok).toBe(true);
+}
 
 beforeEach(async () => {
 	harness = sqliteD1();
 	db = harness.db;
+	clearGroupSessions();
 	group = await createGroup(db, { groupDid: GROUP_DID, ownerDid: OWNER, name: 'Kona' });
-	await recordGroupSpaces(db, group.id, { aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS });
+
+	// The host pages two at a time, so any listing of three or more has a second
+	// page that a one-call read would miss.
+	failHost = null;
+	pds = stubPds({
+		did: GROUP_DID,
+		handle: CRED.identifier,
+		recordPageSize: 2,
+		memberPageSize: 2,
+		fail: (nsid, init, query) => failHost?.(nsid, init, query)
+	});
+	await storeGroupCredential(env, db, GROUP_DID, CRED);
+	const uris = await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), 'public');
+	expect(uris).toEqual({ aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS });
+	await recordGroupSpaces(db, group.id, uris);
 	group = { ...group, about_space_uri: ABOUT, members_space_uri: MEMBERS };
+	pds.clearLog();
 
 	writes = [];
 	writer = async (write) => {
@@ -78,7 +148,11 @@ beforeEach(async () => {
 	sources = { reader, declared: async () => true };
 });
 
-afterEach(() => harness.close());
+afterEach(() => {
+	vi.unstubAllGlobals();
+	clearGroupSessions();
+	harness.close();
+});
 
 const repair = (callerDid: string | null = OWNER) =>
 	repairGroup({ db, env, group, callerDid, writer, reader, sources });
@@ -227,5 +301,137 @@ describe('repairGroup', () => {
 		await expect(repair(MEMBER)).rejects.toBeInstanceOf(GroupPermissionError);
 		await expect(repair(null)).rejects.toBeInstanceOf(GroupPermissionError);
 		expect(writes).toHaveLength(0);
+	});
+});
+
+// The about space's member list is read access at the host, so Repair makes it
+// equal the set of DIDs that hold a membership record: never the rows, which
+// cannot tell a failed admission from a failed removal. These cases run the
+// real transports end to end: the records, the reader and the list all go
+// through the group's stored credential to the fake host.
+describe('the about space member list follows the membership records', () => {
+	const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
+	// Sorted by DID, the host's order: the stranger lands on the first page of
+	// the list and the extra on the second.
+	const STRANGER = 'did:plc:aaaastrangeraaaaaaaaaaaa';
+	const PAGE_TWO_EXTRA = 'did:plc:zzzzpagetwoextrazzzzzzzz';
+	const ROSTER = [OWNER, ADMIN, MEMBER].sort();
+
+	/** Repair with nothing injected but where the rebuild reads, which is the
+	 *  same reader it would build (the declaration probe is not under test). */
+	const realRepair = () =>
+		repairGroup({
+			db,
+			env,
+			group,
+			callerDid: OWNER,
+			sources: { reader: pdsSpaceReader(CRED, GROUP_DID), declared: async () => true }
+		});
+
+	// A complete group: owner, admin and member rows with a membership record
+	// each, the access record and the authz config, and the list already
+	// holding all three.
+	beforeEach(async () => {
+		await addMember(db, group.id, ADMIN, 'admin');
+		await addMember(db, group.id, MEMBER, 'member');
+		const seed = { db, env, group, callerDid: OWNER };
+		await writeGroupAccess(seed);
+		for (const [subject, role] of [
+			[OWNER, 'owner'],
+			[ADMIN, 'admin'],
+			[MEMBER, 'member']
+		] as const) {
+			await putGroupMembership({ ...seed, subject, roles: [role], intent: 'admit' });
+		}
+		await writeGroupAuthz(seed);
+		for (const did of ROSTER) await hostList('putMember', ABOUT, did);
+		pds.clearLog();
+	});
+
+	it('repair makes the about space list equal the membership records', async () => {
+		await hostList('removeMember', ABOUT, MEMBER);
+		await hostList('putMember', ABOUT, STRANGER);
+		await hostList('putMember', ABOUT, PAGE_TWO_EXTRA);
+		pds.clearLog();
+
+		await realRepair();
+
+		expect(pds.listed(ABOUT)).toEqual(ROSTER);
+		expect(pds.members(ABOUT).every((m) => m.read && !m.write)).toBe(true);
+		expect(memberListCalls().filter((c) => c.did === GROUP_DID || c.space !== ABOUT)).toEqual([]);
+		expect(pds.listed(MEMBERS)).toEqual([]);
+	});
+
+	it('a second repair makes no member-list write', async () => {
+		await hostList('removeMember', ABOUT, MEMBER);
+		await hostList('putMember', ABOUT, PAGE_TWO_EXTRA);
+		await realRepair();
+		expect(pds.listed(ABOUT)).toEqual(ROSTER);
+		pds.clearLog();
+
+		await realRepair();
+
+		expect(memberListWrites()).toEqual([]);
+		expect(pds.listed(ABOUT)).toEqual(ROSTER);
+	});
+
+	// A failed admission and a failed removal leave the same row, so a row with
+	// no record is never put on the list, just as it is never written a record.
+	it('repair never lists a member whose row has no membership record', async () => {
+		const UNRECORDED = 'did:plc:unrecordedaaaaaaaaaaaaaa';
+		await addMember(db, group.id, UNRECORDED, 'member');
+		await hostList('removeMember', ABOUT, MEMBER);
+		pds.clearLog();
+
+		const result = await realRepair();
+
+		expect(result.unrecordedMembers).toEqual([UNRECORDED]);
+		expect(pds.listed(ABOUT)).toEqual(ROSTER);
+		expect(memberListWrites().map((c) => c.did)).toEqual([MEMBER]);
+	});
+
+	it('repair never puts or removes the group’s own DID', async () => {
+		await hostList('putMember', ABOUT, GROUP_DID);
+		await hostList('putMember', ABOUT, STRANGER);
+		pds.clearLog();
+
+		await realRepair();
+
+		expect(pds.listed(ABOUT)).toEqual([...ROSTER, GROUP_DID].sort());
+		expect(memberListCalls().filter((c) => c.did === GROUP_DID)).toEqual([]);
+	});
+
+	// Three membership records at two a page: a read that stopped at the first
+	// page would see the third holder as an extra and take them off the list.
+	it('repair reads every page of membership records before it takes anyone off the list', async () => {
+		await hostList('putMember', ABOUT, STRANGER);
+		pds.clearLog();
+
+		await realRepair();
+
+		expect(pds.listed(ABOUT)).toEqual(ROSTER);
+		expect(memberListWrites().map((c) => c.did)).toEqual([STRANGER]);
+		const membershipPages = pds.requests.filter(
+			(r) =>
+				r.nsid === 'com.atproto.space.listRecords' &&
+				r.params.collection === GROUP_MEMBERSHIP_COLLECTION
+		);
+		expect(membershipPages.length).toBeGreaterThan(1);
+	});
+
+	it('repair takes nobody off the list when a page of membership records cannot be read', async () => {
+		await hostList('putMember', ABOUT, STRANGER);
+		pds.clearLog();
+		failHost = (nsid, _init, query) =>
+			nsid === 'com.atproto.space.listRecords' &&
+			query?.get('collection') === GROUP_MEMBERSHIP_COLLECTION &&
+			query.has('cursor')
+				? Response.json({ error: 'UpstreamFailure' }, { status: 502 })
+				: undefined;
+
+		await expect(realRepair()).rejects.toThrow(/listRecords failed: 502/);
+
+		expect(memberListWrites()).toEqual([]);
+		expect(pds.listed(ABOUT)).toEqual([...ROSTER, STRANGER].sort());
 	});
 });
