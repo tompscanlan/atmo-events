@@ -376,9 +376,13 @@ async function setUpMintedGroup(
 		}
 
 		// The declaration, the only record create writes to the public repo.
-		// Last of the public face, because it points at the about space:
-		// declaring a group whose profile write just failed would announce the
-		// group to the network and then hand a peer an empty space.
+		// Last of the public face, because it points at the about space: at
+		// create that space is still empty, so declaring a group whose profile
+		// write just failed would announce the group to the network and then
+		// hand a peer an empty space. The rule holds at create only. A settings
+		// save declares before the profile (./update-group.ts), because there a
+		// private group's withdrawal must not wait on a profile write that may
+		// fail, and declaring a public group ahead of its profile is the cost.
 		//
 		// A private group is not declared at all. `assumeAbsent` skips the
 		// withdrawal check, because a newly minted repo cannot hold a

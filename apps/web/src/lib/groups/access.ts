@@ -30,8 +30,8 @@ function isActiveMember(membership: CallerMembership): boolean {
  *  visible to everyone. There is no secret address to rely on: the group's DID
  *  and handle are published to plc.directory's audit log at genesis, so anyone
  *  who reads that log can enumerate them. That is why the gate has to be
- *  membership. `listGroups` applies the same rule when it hydrates a declared
- *  row, so browse cannot name a group its page would refuse. */
+ *  membership. Browse does not ask this: it lists what is declared, and a
+ *  private group withdraws its declaration (`listGroups`). */
 export function canSeeGroup(group: GroupRow, membership: CallerMembership): boolean {
 	if (group.visibility !== 'private') return true;
 	return isActiveMember(membership);

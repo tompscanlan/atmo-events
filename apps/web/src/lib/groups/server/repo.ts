@@ -398,12 +398,71 @@ export interface DeclaredGroup {
 }
 
 /** One row of the browse list. `row` is NULL for a group this deployment holds
- *  no row for, and for one the caller may not see. The two render the same
- *  way, by address and without a link, because the group page answers both
- *  with the same 404. */
+ *  no row for. It renders by address and without a link, because the group
+ *  page would answer 404. */
 export interface BrowseEntry {
 	group_did: string;
 	row: GroupRow | null;
+}
+
+/** At most this many membership-record checks run at once for one browse
+ *  view. */
+const ROSTER_CHECKS_IN_FLIGHT = 6;
+
+/** The candidates `check` confirms, newest first, stopping once `wanted` of
+ *  them are confirmed.
+ *
+ *  A browse page shows at most `wanted` entries, so a candidate with `wanted`
+ *  confirmed groups at least as new as it cannot make the page, and it is not
+ *  checked. A check starts only while the confirmed and the running together
+ *  number fewer than `wanted`. So a rejection frees its slot for the next
+ *  candidate instead of leaving the page short, and the number of checks is at
+ *  most `wanted` plus the rejections among them.
+ *
+ *  A candidate that was not checked is never returned. Listing it unchecked is
+ *  the leak the check exists to close.
+ *
+ *  A check that fails fails the whole listing, as it would under `Promise.all`.
+ *  The first failure is kept rather than left to the race, because a race that
+ *  a sibling check wins in the same turn would drop it without a word and
+ *  return a shorter page. No check starts after a failure, and the ones already
+ *  running are waited out before it is thrown. */
+async function confirmNewest(
+	candidates: GroupRow[],
+	check: (row: GroupRow) => Promise<boolean>,
+	wanted: number
+): Promise<GroupRow[]> {
+	const queue = [...candidates].sort((a, b) => b.created_at - a.created_at);
+	const confirmed = new Set<GroupRow>();
+	const running = new Set<Promise<void>>();
+	// An array, not a nullable local: a callback sets it, which narrowing cannot see.
+	const failures: unknown[] = [];
+	let next = 0;
+	for (;;) {
+		while (
+			failures.length === 0 &&
+			next < queue.length &&
+			running.size < ROSTER_CHECKS_IN_FLIGHT &&
+			confirmed.size + running.size < wanted
+		) {
+			const row = queue[next++];
+			const run: Promise<void> = check(row)
+				.then(
+					(ok) => {
+						if (ok) confirmed.add(row);
+					},
+					(error: unknown) => {
+						if (failures.length === 0) failures.push(error);
+					}
+				)
+				.finally(() => running.delete(run));
+			running.add(run);
+		}
+		if (running.size === 0) break;
+		await Promise.race(running);
+	}
+	if (failures.length > 0) throw failures[0];
+	return queue.filter((row) => confirmed.has(row));
 }
 
 /** Browse listing: enumerate, then hydrate.
@@ -413,22 +472,41 @@ export interface BrowseEntry {
  *  declaration and a private one withdraws it, so neither the index nor this
  *  function needs a visibility filter. That includes groups this deployment
  *  holds no row for, because another app's declaration is still a group on the
- *  network. A signed-in caller also gets every group they own or are an active
- *  member of, declared or not, because a private group that is invisible to
- *  its own members cannot be reached from anywhere.
+ *  network. A withdrawal tells our own index at once
+ *  (`removeGroupDeclaration`), so a group that turns private leaves this list
+ *  with the save, not a cron tick later.
+ *
+ *  A signed-in caller also gets every group they own or are an active member
+ *  of, declared or not, because a private group that is invisible to its own
+ *  members cannot be reached from anywhere. A membership row can outlive the
+ *  membership: a revocation deletes the record first, and its row delete can
+ *  fail. So an undeclared group the caller reaches only through a row, and does
+ *  not own, is kept only when `onRoster` confirms them. The owner's own groups
+ *  are not checked, because the owner cannot be removed. The checks are
+ *  bounded (`confirmNewest`): newest first, a few at a time, and no further
+ *  than it takes to fill `limit`, because anyone who may admit members can
+ *  put a DID on as many rosters as they like.
  *
  *  Hydration is the one place a page may render `name`/`description` from the
  *  row instead of from records. The about space is never anonymously readable,
  *  so no indexer can read a group's name for us, and a list built from records
- *  would need a session and a space read for every group. A private row is not
- *  hydrated for a caller off its roster. The index lags a private flip by up
- *  to one cron tick, and in that window the entry stays but the name does not.
+ *  would need a session and a space read for every group. Every listed row is
+ *  hydrated, whatever its `visibility` column says.
  *
- *  `declared` is passed in, not read here, so this stays a D1 function; the
- *  index read is `./declaration-index.ts`. */
+ *  `declared` is passed in, not read here, and `onRoster` is the caller's, so
+ *  this stays a D1 function; the index read is `./declaration-index.ts`. */
 export async function listGroups(
 	db: D1Database,
-	opts: { callerDid?: string | null; declared: DeclaredGroup[]; limit?: number }
+	opts: {
+		callerDid?: string | null;
+		declared: DeclaredGroup[];
+		limit?: number;
+		/** Whether the caller's membership record confirms them in this group.
+		 *  Asked only for an undeclared group the caller does not own, and only
+		 *  for as many of those as could fill the page on their own. When absent, the
+		 *  membership row is taken as it stands. */
+		onRoster?: (row: GroupRow) => Promise<boolean>;
+	}
 ): Promise<BrowseEntry[]> {
 	await ensureGroupsSchema(db);
 	const caller = opts.callerDid ?? null;
@@ -446,7 +524,6 @@ export async function listGroups(
 					.all<GroupRow>()
 			).results ?? [])
 		: [];
-	const ownIds = new Set(own.map((row) => row.id));
 
 	const byDid = new Map<string, GroupRow>();
 	const dids = opts.declared.map((d) => d.did);
@@ -464,17 +541,25 @@ export async function listGroups(
 	for (const d of opts.declared) {
 		if (entries.has(d.did)) continue;
 		const row = byDid.get(d.did) ?? null;
-		const visible = row && (row.visibility !== 'private' || ownIds.has(row.id));
 		entries.set(d.did, {
 			group_did: d.did,
-			row: visible ? row : null,
+			row,
 			at: Date.parse(d.createdAt ?? '') || row?.created_at || 0
 		});
 	}
-	for (const row of own) {
-		if (!entries.has(row.group_did)) {
-			entries.set(row.group_did, { group_did: row.group_did, row, at: row.created_at });
-		}
+
+	const undeclared = own.filter((row) => !entries.has(row.group_did));
+	const onRoster = opts.onRoster;
+	const unchecked = undeclared.filter((row) => row.owner_did === caller || !onRoster);
+	const confirmed = onRoster
+		? await confirmNewest(
+				undeclared.filter((row) => row.owner_did !== caller),
+				onRoster,
+				limit
+			)
+		: [];
+	for (const row of [...unchecked, ...confirmed]) {
+		entries.set(row.group_did, { group_did: row.group_did, row, at: row.created_at });
 	}
 
 	return [...entries.values()]

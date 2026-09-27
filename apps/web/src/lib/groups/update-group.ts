@@ -16,9 +16,11 @@
 // host nor a record may change for a configuration the database then refuses.
 // The host goes next: the about space's read policy is what actually keeps a
 // private group's face from strangers, and if the host refuses the change,
-// nothing after it may claim the change happened. The declaration comes before
-// the profile and the rules, so a group that has just gone private stops being
-// announced even when a later write fails.
+// nothing after it may claim the change happened. A visibility change that
+// fails anywhere between the row and the host puts the row's visibility and
+// approval back, so the next save sees the change again and retries it. The
+// declaration comes before the profile and the rules, so a group that has just
+// gone private stops being announced even when a later write fails.
 import type { CredentialStoreEnv } from './server/credentials';
 import { updateGroup } from './server/repo';
 import { groupWriter, type GroupRepoWriter } from './server/event-writer';
@@ -44,13 +46,50 @@ export interface UpdateGroupData {
 	rules?: string;
 }
 
+const describeError = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
 /** A write to the group's records failed after the row was saved. */
 function recordsNotUpdated(e: unknown): GroupFormFailure {
 	return {
 		ok: false,
-		error: `Settings were saved, but this group's records were not updated: ${
-			e instanceof Error ? e.message : String(e)
-		}`
+		error: `Settings were saved, but this group's records were not updated: ${describeError(e)}`
+	};
+}
+
+/** A visibility change that failed before the host took it.
+ *
+ *  The row goes back to its previous visibility and approval pair. Left at the
+ *  new pair, the row would claim a visibility the host is not enforcing, and
+ *  the next save would compare against it, find nothing to change, skip the
+ *  host and report success. Put back, the next save sees the change again and
+ *  retries it. The pair is one the schema accepted before, so the trigger that
+ *  refuses a private group without approval cannot refuse putting it back. */
+async function visibilityNotApplied(
+	db: D1Database,
+	group: GroupRow,
+	to: GroupVisibility,
+	e: unknown
+): Promise<GroupFormFailure> {
+	try {
+		await updateGroup(db, group.id, {
+			visibility: group.visibility,
+			requireApproval: group.require_approval !== 0
+		});
+	} catch (restoreError) {
+		return {
+			ok: false,
+			error: `The visibility change did not reach the group's PDS (${describeError(
+				e
+			)}), and this site could not put the group's previous visibility back either (${describeError(
+				restoreError
+			)}). This site may now show the group as ${to} while its PDS does not enforce that. The group's declaration, profile and rules were not updated.`
+		};
+	}
+	return {
+		ok: false,
+		error: `The visibility change did not reach the group's PDS: ${describeError(
+			e
+		)}. The group's visibility was not changed, and saving again will retry it. Its declaration, profile and rules were not updated.`
 	};
 }
 
@@ -84,8 +123,13 @@ export async function runUpdateGroup(
 		require_approval: data.requireApproval ? 1 : 0
 	};
 
+	// Only a change of visibility moves the about space's read policy, and a
+	// save that keeps it does not call the host at all.
+	const flipped = fresh.visibility !== group.visibility;
+
 	// Every read comes before the first write to the PDS, so the writes below
 	// run back to back in their order and a failed read changes nothing there.
+	// On a visibility change, a failed read also puts the row back.
 	let about: GroupAbout;
 	let writer: GroupRepoWriter;
 	try {
@@ -93,23 +137,17 @@ export async function runUpdateGroup(
 		about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };
 		writer = await groupWriter(env, db, fresh);
 	} catch (e) {
-		return recordsNotUpdated(e);
+		return flipped ? visibilityNotApplied(db, group, fresh.visibility, e) : recordsNotUpdated(e);
 	}
 
-	// The host. Only a change of visibility moves the about space's read policy,
-	// and a save that keeps it does not call the host at all. A failure here
-	// stops the save: the declaration, profile and rules would otherwise be
-	// written for a visibility the host is not enforcing.
-	if (fresh.visibility !== group.visibility) {
+	// The host. A failure here, including the permission read in front of it,
+	// stops the save and puts the row back: the declaration, profile and rules
+	// would otherwise be written for a visibility the host is not enforcing.
+	if (flipped) {
 		try {
 			await setAboutSpaceReadPolicy({ db, env, group: fresh, callerDid });
 		} catch (e) {
-			return {
-				ok: false,
-				error: `Settings were saved on this site, but the visibility change did not reach the group's PDS: ${
-					e instanceof Error ? e.message : String(e)
-				}. The group's declaration, profile and rules were not updated.`
-			};
+			return visibilityNotApplied(db, group, fresh.visibility, e);
 		}
 	}
 

@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { stubPds, type StubPdsOptions } from './server/__fixtures__/stub-pds';
 import { storeGroupCredential, type GroupCredential } from './server/credentials';
-import { createGroup, recordGroupSpaces } from './server/repo';
+import { createGroup, getGroupByDid, recordGroupSpaces } from './server/repo';
 import { clearGroupSessions } from './server/session';
 import { pdsProvisioner, provisionGroupSpaces } from './server/spaces';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow, type GroupVisibility } from './types';
@@ -65,13 +65,17 @@ function host(fail?: StubPdsOptions['fail']): Host {
  *  `visibility`, whose credential is stored, and whose two spaces the host
  *  provisioned for that choice. The host's log is cleared afterwards, so a case
  *  asserts on the save alone. */
-async function givenGroup(visibility: GroupVisibility, pds: Host): Promise<GroupRow> {
+async function givenGroup(
+	visibility: GroupVisibility,
+	pds: Host,
+	requireApproval = true
+): Promise<GroupRow> {
 	const row = await createGroup(harness.db, {
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
 		name: 'Kona Trail Runners',
 		visibility,
-		requireApproval: true
+		requireApproval
 	});
 	await storeGroupCredential(env, harness.db, GROUP_DID, CRED);
 	const uris = await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), visibility);
@@ -101,6 +105,13 @@ function traced(pds: Host): string[] {
 		}
 		return `${method} ${w.body?.collection}`;
 	});
+}
+
+/** The row's visibility and approval, read straight from D1. */
+function rowNow(): { visibility: string; require_approval: number } {
+	return harness.raw
+		.prepare('SELECT visibility, require_approval FROM groups WHERE group_did = ?')
+		.get(GROUP_DID) as { visibility: string; require_approval: number };
 }
 
 const updateSpaceCalls = (pds: Host) =>
@@ -216,5 +227,84 @@ describe('a failed updateSpace stops the save', () => {
 		expect(!result.ok && result.error).not.toContain('records were not updated');
 		expect(traced(pds)).toEqual(['simplespace.updateSpace memberListPolicy']);
 		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
+	});
+});
+
+// A visibility change that fails before the host has taken it must leave the
+// row where it was. Otherwise the row already says the new visibility, the
+// next save sees no change to make, skips the host, and reports success while
+// the about space keeps the old read policy.
+describe('a visibility change that does not reach the host leaves the row where it was', () => {
+	it('a public open group saved as private, whose updateSpace answers 500, still says public and open on its row', async () => {
+		const pds = host((nsid) =>
+			nsid === 'com.atproto.simplespace.updateSpace' ? pdsDown() : undefined
+		);
+		const group = await givenGroup('public', pds, false);
+
+		const result = await save(group, 'private', { requireApproval: true });
+
+		expect(result.ok).toBe(false);
+		// The pair goes back together: approval moved only because private
+		// requires it.
+		expect(rowNow()).toEqual({ visibility: 'public', require_approval: 0 });
+		expect(!result.ok && result.error).toContain("did not reach the group's PDS");
+		expect(!result.ok && result.error).toContain('visibility was not changed');
+		expect(!result.ok && result.error).toContain('saving again will retry');
+	});
+
+	it('saving the same values again with the PDS healthy calls updateSpace, returns ok, and leaves the about space member-list read', async () => {
+		let hostDown = true;
+		const pds = host((nsid) =>
+			hostDown && nsid === 'com.atproto.simplespace.updateSpace' ? pdsDown() : undefined
+		);
+		const group = await givenGroup('public', pds);
+		const failed = await save(group, 'private');
+		expect(failed.ok).toBe(false);
+
+		hostDown = false;
+		pds.clearLog();
+		// The settings form resolves the group from the row on every save.
+		const again = await save((await getGroupByDid(harness.db, GROUP_DID))!, 'private');
+
+		expect(again).toEqual({ ok: true });
+		expect(updateSpaceCalls(pds).map((r) => r.body)).toEqual([
+			{ space: ABOUT, readPolicy: policy('memberListPolicy') }
+		]);
+		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
+		expect(rowNow().visibility).toBe('private');
+	});
+
+	it('a public group saved as private, whose updateSpace answers 500 and whose row cannot be put back, says both failed', async () => {
+		const pds = host((nsid) =>
+			nsid === 'com.atproto.simplespace.updateSpace' ? pdsDown() : undefined
+		);
+		const group = await givenGroup('public', pds);
+		// Refuses only the way back, so the save's own row write still lands.
+		harness.raw.exec(
+			`CREATE TRIGGER refuse_restore BEFORE UPDATE ON groups
+			 WHEN OLD.visibility = 'private' AND NEW.visibility = 'public'
+			 BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`
+		);
+
+		const result = await save(group, 'private');
+
+		expect(result.ok).toBe(false);
+		expect(!result.ok && result.error).toContain("did not reach the group's PDS");
+		expect(!result.ok && result.error).toContain(
+			"could not put the group's previous visibility back"
+		);
+		expect(!result.ok && result.error).not.toContain('visibility was not changed');
+	});
+
+	it('a public group saved as private, whose about space cannot be read before the host write, still says public on its row', async () => {
+		const pds = host((nsid) => (nsid === 'com.atproto.space.getRecord' ? pdsDown() : undefined));
+		const group = await givenGroup('public', pds);
+
+		const result = await save(group, 'private');
+
+		expect(result.ok).toBe(false);
+		expect(rowNow()).toEqual({ visibility: 'public', require_approval: 1 });
+		expect(updateSpaceCalls(pds)).toEqual([]);
+		expect(!result.ok && result.error).toContain("did not reach the group's PDS");
 	});
 });

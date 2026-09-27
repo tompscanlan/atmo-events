@@ -1,9 +1,11 @@
 // The repository against the real schema: creation-as-one-transaction, the
-// approval flow, and the visibility filter. Each case is a rule a route trusts
+// approval flow, and what browse lists. Each case is a rule a route trusts
 // without re-checking.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { DEFAULT_ROLE_PERMISSIONS } from '../permissions';
+import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
+import { membersSpaceReader, type CountingSpaceReader } from './__fixtures__/members-space';
 import {
 	GroupRuleError,
 	addMember,
@@ -15,12 +17,14 @@ import {
 	getGroupByDid,
 	listGroups,
 	listMembers,
+	recordGroupSpaces,
 	rehearseCreateGroup,
 	removeMember,
 	requestJoin,
 	rolePermissions,
 	updateGroup
 } from './repo';
+import { spaceUri } from './spaces';
 
 const OWNER = 'did:plc:owner';
 const ALICE = 'did:plc:alice';
@@ -271,6 +275,38 @@ describe('browse visibility', () => {
 	const names = (entries: Awaited<ReturnType<typeof listGroups>>) =>
 		entries.map((e) => e.row?.name ?? e.group_did);
 
+	interface HostedGroup {
+		row: GroupRow;
+		reader: CountingSpaceReader;
+	}
+
+	/** A group with a members space whose authz config is written, holding a
+	 *  membership record for each of `members` and for nobody else. */
+	async function hostedWithRecords(
+		input: Partial<Parameters<typeof createGroup>[1]>,
+		members: string[]
+	): Promise<HostedGroup> {
+		const created = await group({ visibility: 'private', ...input });
+		const space = spaceUri(created.group_did, MEMBERS_SPACE_TYPE, 'self');
+		await recordGroupSpaces(db, created.id, {
+			aboutSpaceUri: spaceUri(created.group_did, ABOUT_SPACE_TYPE, 'self'),
+			membersSpaceUri: space
+		});
+		return {
+			row: { ...created, members_space_uri: space },
+			reader: membersSpaceReader(space, created.group_did, members)
+		};
+	}
+
+	/** The check the browse loader builds: the caller's standing as the group's
+	 *  records give it, through the same function every group page gates on. */
+	function rosterFromRecords(callerDid: string, hosted: HostedGroup[]) {
+		return async (row: GroupRow) => {
+			const reader = hosted.find((h) => h.row.id === row.id)?.reader ?? null;
+			return (await getCallerMembership(db, row, callerDid, reader)).onRoster;
+		};
+	}
+
 	// The browse rule is "declared means listed". The declaration index is the
 	// enumeration, and the row only names what the index already listed. So a
 	// row the index does not hold is not listed, whatever its columns say.
@@ -307,22 +343,58 @@ describe('browse visibility', () => {
 		]);
 	});
 
-	// The window between a private flip and the tick that drops its declaration.
-	// The index still lists the group; the row already says private. A stranger
-	// gets what a stranger gets of any group we hold no page for them on: the
-	// address, never the name.
-	it('withholds a private row from a caller not on its roster while the index catches up', async () => {
-		const secret = await group({ name: 'Secret', groupDid: 'did:plc:d', visibility: 'private' });
-		await addMember(db, secret.id, ALICE, 'member');
-		const stale = [declared('did:plc:d', '2026-09-20T00:00:00.000Z')];
+	// Declared means listed, and the row only supplies the name. The column is
+	// not consulted: a group that went private withdraws its declaration, and the
+	// withdrawal tells our own index at once (`removeGroupDeclaration`), so a
+	// declared row is one whose group is still announcing itself.
+	it('is not gated by the column: a declared row that says private is hydrated for a signed-in stranger', async () => {
+		await group({ name: 'Secret', groupDid: 'did:plc:d', visibility: 'private' });
 
-		expect(await listGroups(db, { callerDid: null, declared: stale })).toEqual([
-			{ group_did: 'did:plc:d', row: null }
+		const entries = await listGroups(db, {
+			callerDid: BOB,
+			declared: [declared('did:plc:d', '2026-09-20T00:00:00.000Z')],
+			// A stranger is on no roster, and that does not matter for a
+			// declared group.
+			onRoster: async () => false
+		});
+		expect(entries).toEqual([
+			{
+				group_did: 'did:plc:d',
+				row: expect.objectContaining({ name: 'Secret', visibility: 'private' })
+			}
 		]);
-		expect(await listGroups(db, { callerDid: BOB, declared: stale })).toEqual([
-			{ group_did: 'did:plc:d', row: null }
-		]);
-		expect(names(await listGroups(db, { callerDid: ALICE, declared: stale }))).toEqual(['Secret']);
+	});
+
+	// A revocation deletes the membership record before the row (`roster.ts`), so
+	// a half-failed one leaves a row with no record behind it. Browse reaches an
+	// undeclared group only through that row, so the record has the last word.
+	it('does not keep an undeclared group for a removed member whose row survived but whose record is gone', async () => {
+		const gone = await hostedWithRecords({ name: 'Gone', groupDid: 'did:plc:gone' }, []);
+		const kept = await hostedWithRecords({ name: 'Kept', groupDid: 'did:plc:kept' }, [ALICE]);
+		await addMember(db, gone.row.id, ALICE, 'member');
+		await addMember(db, kept.row.id, ALICE, 'member');
+
+		const entries = await listGroups(db, {
+			callerDid: ALICE,
+			declared: [],
+			onRoster: rosterFromRecords(ALICE, [gone, kept])
+		});
+		expect(names(entries)).toEqual(['Kept']);
+	});
+
+	// The owner cannot be removed (`memberships_owner_undeletable`), so the check
+	// would only cost a session and a space read. The reader below would answer "no
+	// record" for the owner if it were asked, and it must not be.
+	it('keeps the owner undeclared group with no membership record read', async () => {
+		const owned = await hostedWithRecords({ name: 'Owned', groupDid: 'did:plc:owned' }, []);
+
+		const entries = await listGroups(db, {
+			callerDid: OWNER,
+			declared: [],
+			onRoster: rosterFromRecords(OWNER, [owned])
+		});
+		expect(names(entries)).toEqual(['Owned']);
+		expect(owned.reader.reads).toBe(0);
 	});
 
 	// The bounded exception to the rule above: a caller sees their own and their
@@ -359,5 +431,87 @@ describe('browse visibility', () => {
 			]
 		});
 		expect(names(entries)).toEqual(['did:plc:new', 'did:plc:mid']);
+	});
+
+	// Anyone who may admit members can put a DID on many rosters, and every
+	// undeclared group the caller does not own costs a record check. So the
+	// checks are bounded: newest first, a few at a time, and only as many as it
+	// takes to fill the page.
+	describe('record checks for undeclared groups', () => {
+		/** `n` undeclared groups owned by someone else, with ALICE's row in each.
+		 *  Returned newest first, one second apart. */
+		async function memberOf(n: number): Promise<string[]> {
+			const made: string[] = [];
+			for (let i = 0; i < n; i++) {
+				const name = `Group ${String(i).padStart(2, '0')}`;
+				const created = await group({ name, groupDid: `did:plc:candidate${i}` });
+				await addMember(db, created.id, ALICE, 'member');
+				harness.raw
+					.prepare('UPDATE groups SET created_at = ? WHERE id = ?')
+					.run(1_000_000_000 - i * 1000, created.id);
+				made.push(name);
+			}
+			return made;
+		}
+
+		/** A check that confirms everyone except `rejected`, and records which
+		 *  groups it was asked about, in order, and how many ran at once. */
+		function probe(rejected: string[]) {
+			const seen = { checked: [] as string[], running: 0, maxRunning: 0 };
+			const onRoster = async (row: GroupRow) => {
+				seen.checked.push(row.name);
+				seen.running++;
+				seen.maxRunning = Math.max(seen.maxRunning, seen.running);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				seen.running--;
+				return !rejected.includes(row.name);
+			};
+			return { seen, onRoster };
+		}
+
+		it('checks newest first, no more than the limit plus the rejections, and at most 6 at once', async () => {
+			const all = await memberOf(14);
+			const rejected = [all[1], all[4]];
+			const { seen, onRoster } = probe(rejected);
+
+			const entries = await listGroups(db, { callerDid: ALICE, declared: [], limit: 10, onRoster });
+
+			expect(names(entries)).toEqual(all.slice(0, 12).filter((n) => !rejected.includes(n)));
+			// Ten confirmed fill the page. Two of the checks along the way were
+			// rejections, so twelve checks in all, and the two oldest never asked.
+			expect(seen.checked).toEqual(all.slice(0, 12));
+			expect(seen.maxRunning).toBe(6);
+		});
+
+		// Checking only the newest `limit` is not enough: a rejection among them
+		// frees a slot an older group can fill, and that group must be checked
+		// before it is listed, not listed because it was next.
+		it('never lists a group beyond the cutoff unchecked, and checks the next one when a rejection frees a slot', async () => {
+			const all = await memberOf(5);
+			const rejected = [all[0], all[2]];
+			const { seen, onRoster } = probe(rejected);
+
+			const entries = await listGroups(db, { callerDid: ALICE, declared: [], limit: 2, onRoster });
+
+			expect(names(entries)).toEqual([all[1], all[3]]);
+			expect(seen.checked).toEqual(all.slice(0, 4));
+			for (const name of names(entries)) expect(seen.checked).toContain(name);
+		});
+
+		// A failed check is a failed listing, however the checks happen to settle.
+		// Two that finish in the same turn must not let the failure slip past as a
+		// shorter page.
+		it('fails the listing when a check fails, even when another settles alongside it', async () => {
+			const all = await memberOf(3);
+			const onRoster = async (row: GroupRow) => {
+				await Promise.resolve();
+				if (row.name === all[1]) throw new Error('the database did not answer');
+				return true;
+			};
+
+			await expect(
+				listGroups(db, { callerDid: ALICE, declared: [], limit: 10, onRoster })
+			).rejects.toThrow('the database did not answer');
+		});
 	});
 });

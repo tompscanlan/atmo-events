@@ -1,12 +1,15 @@
-// The declaration writer. Three things here are worth a test:
+// The declaration writer. Four things here are worth a test:
 //   * the record goes to the public repo, not a space. It is the only group
 //     record that must be anonymously readable, so a stray `space` would make
 //     the group undiscoverable while every "the record was written" assertion
 //     still passed;
 //   * a private group's declaration is deleted, not just left alone. Absence is
 //     the signal, so a stale one keeps announcing a group that asked not to be;
+//   * a withdrawal tells our own index, after the PDS delete and never instead
+//     of it, and a failure to tell it does not fail the save. The index's side
+//     of this runs for real in ./declaration-index.test.ts;
 //   * the gate is MANAGE_GROUP, since announcing a group changes its face.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { addMember, createGroup, recordGroupSpaces } from './repo';
 import {
@@ -17,7 +20,7 @@ import {
 import { GroupPermissionError, type GroupRepoWrite, type GroupRepoWriter } from './event-writer';
 import { GroupRecordError } from './event-writer';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
-import { GROUP_DECLARATION_COLLECTION } from '../declaration-record';
+import { GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY } from '../declaration-record';
 import { spaceUri } from './spaces';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -186,5 +189,73 @@ describe('removeGroupDeclaration', () => {
 			removeGroupDeclaration({ db, env, group, callerDid: MEMBER, writer })
 		).rejects.toBeInstanceOf(GroupPermissionError);
 		expect(writes).toHaveLength(0);
+	});
+});
+
+describe('telling our index about a withdrawal', () => {
+	const uri = `at://${GROUP_DID}/${GROUP_DECLARATION_COLLECTION}/${GROUP_DECLARATION_RKEY}`;
+
+	afterEach(() => vi.restoreAllMocks());
+
+	it('tells the index about the declaration once the PDS has deleted it', async () => {
+		const steps: string[] = [];
+		await reconcileGroupDeclaration({
+			db,
+			env,
+			group: { ...group, visibility: 'private' },
+			callerDid: OWNER,
+			writer: async (write) => {
+				steps.push(`pds ${write.intent}`);
+				return writer(write);
+			},
+			notify: async (notified) => {
+				steps.push(`index ${notified}`);
+			}
+		});
+
+		expect(steps).toEqual(['pds delete', `index ${uri}`]);
+	});
+
+	it('does not tell the index when the PDS delete fails', async () => {
+		const notified: string[] = [];
+		await expect(
+			removeGroupDeclaration({
+				db,
+				env,
+				group,
+				callerDid: OWNER,
+				writer: async () => {
+					throw new Error('com.atproto.repo.deleteRecord failed: 502');
+				},
+				notify: async (u) => {
+					notified.push(u);
+				}
+			})
+		).rejects.toThrow(/502/);
+		expect(notified).toEqual([]);
+	});
+
+	// By the time the index is told, the PDS has already deleted the record, so
+	// the save did what it was asked to. Reporting a dead index as a failed save
+	// would invite a retry of a delete that landed.
+	it('logs a failure to tell the index and does not fail the save', async () => {
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		await expect(
+			removeGroupDeclaration({
+				db,
+				env,
+				group,
+				callerDid: OWNER,
+				writer,
+				notify: async () => {
+					throw new Error('D1_ERROR: Network connection lost');
+				}
+			})
+		).resolves.toBeUndefined();
+
+		expect(writes).toHaveLength(1);
+		expect(logged).toHaveBeenCalledTimes(1);
+		expect(String(logged.mock.calls[0][0])).toContain(uri);
 	});
 });

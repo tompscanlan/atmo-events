@@ -128,9 +128,11 @@ export const config: ContrailConfig = {
 		// A public group's declaration, indexed from Jetstream like any other
 		// record, so it needs no group credential and no space config. The record
 		// exists only while the group is public: the writer deletes it when the
-		// group turns private, and Jetstream carries the delete, so the list needs
-		// no visibility filter. Nothing notifies the index on a declaration write;
-		// the cron picks it up.
+		// group turns private, so the list needs no visibility filter. The writer
+		// notifies the index after that delete, so a withdrawal leaves the list
+		// at once. It never notifies after a declaration write, because a notify
+		// deletes the entry on any PDS answer that is not the record; the cron
+		// picks a new declaration up.
 		declaration: {
 			collection: GROUP_DECLARATION_COLLECTION,
 			queryable: {
