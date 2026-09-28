@@ -18,6 +18,7 @@
 // settles, migrating is a prefix change plus a record replay, not a reshape.
 // That is why every collection string below is in exactly one place. The same
 // rule gave `net.openmeet.space.*` its prefix (see ./types.ts).
+import type { GroupVisibility } from './types';
 
 /** Both collections, and both only here. A prefix change is one edit. */
 export const GROUP_PROFILE_COLLECTION = 'net.openmeet.group.profile';
@@ -29,14 +30,37 @@ export const GROUP_RULE_COLLECTION = 'net.openmeet.group.rule';
 export const GROUP_PROFILE_RKEY = 'self';
 
 /** How a stranger gets in. This is the draft's `profile.joinPolicy`, and it is
- *  the only part of our `visibility` / `require_approval` pair that belongs on
- *  the profile. Who may read a space is the `access` record's job, not the
- *  profile's. */
+ *  the only part of the visibility / `require_approval` pair that belongs on
+ *  the profile. Who may read a space is the `access` record's job, and the
+ *  about space's read policy, not the profile's. */
 export const GROUP_JOIN_POLICIES = ['open', 'approval', 'invite'] as const;
 export type GroupJoinPolicy = (typeof GROUP_JOIN_POLICIES)[number];
 
 function isJoinPolicy(value: unknown): value is GroupJoinPolicy {
 	return typeof value === 'string' && (GROUP_JOIN_POLICIES as readonly string[]).includes(value);
+}
+
+/** What the create and settings forms say when asked for a private group that
+ *  anyone may join. */
+export const PRIVATE_NEEDS_APPROVAL =
+	'A private group must require approval to join — invite members instead';
+
+/** The refusal for a visibility and approval pair no group may have, or null.
+ *
+ *  A private group is invite-only, so it cannot also be open to join. Its
+ *  address is no secret: the handle of a did:plc is in the PLC directory's
+ *  public log, so access cannot rest on nobody knowing it.
+ *
+ *  Decided here, from the two choices on the form, because a group's
+ *  visibility is its about space's read policy at the host, which no statement
+ *  on our tables can read. The create and the settings save both ask this
+ *  before their first write. An absent `requireApproval` means approval on, as
+ *  it does everywhere else. */
+export function approvalRefusal(
+	visibility: GroupVisibility,
+	requireApproval: boolean | undefined
+): string | null {
+	return visibility === 'private' && requireApproval === false ? PRIVATE_NEEDS_APPROVAL : null;
 }
 
 /** The cache columns the profile record is authoritative for. */
@@ -51,17 +75,20 @@ export interface GroupProfileFields {
 	createdAt: string | null;
 }
 
-/** `visibility` + `require_approval` -> the one join policy they encode.
+/** A visibility and an approval setting -> the one join policy they encode.
  *
- *  A private group is invite-only (migrations/0001_groups.sql refuses a private
- *  group that does not require approval), so `private` decides the policy
- *  before `require_approval` is consulted. */
-export function joinPolicyFor(group: {
-	visibility: string;
-	require_approval: number;
-}): GroupJoinPolicy {
-	if (group.visibility === 'private') return 'invite';
-	return group.require_approval ? 'approval' : 'open';
+ *  `visibility` is what the caller has: the form's choice on a create or a
+ *  settings save, or the host's read policy (`readGroupVisibility`). Never a
+ *  row field, because the row holds none. A private group is invite-only
+ *  whatever its approval setting, so anything but `public` decides the policy
+ *  before `requireApproval` is consulted. That includes `null`, a host nobody
+ *  could ask, which is also how a join is refused then (`requestJoin`). */
+export function joinPolicyFor(
+	visibility: GroupVisibility | null,
+	requireApproval: number | boolean
+): GroupJoinPolicy {
+	if (visibility !== 'public') return 'invite';
+	return requireApproval ? 'approval' : 'open';
 }
 
 /** A group's public face, from its profile record when there is one and from
@@ -70,16 +97,24 @@ export function joinPolicyFor(group: {
  *  group has no description) and must win over whatever the row still holds.
  *  A per-field `??` cannot tell that from absence, and would let a stale row
  *  leak into a page that reports `records`. `source` says which one rendered,
- *  so a browser can see whether the page came from records. */
+ *  so a browser can see whether the page came from records.
+ *
+ *  The join policy is the one exception, and it is derived on both branches:
+ *  `visibility` is the host's, and anything but `public` (private, or null for
+ *  a host nobody could ask) shows invite-only whatever the profile or the row
+ *  says. Any client can change the host's read policy without touching our
+ *  records, so a stored "private means approval" could never stay true. A
+ *  public group shows the profile's policy, or the row's approval without
+ *  one. */
 export function groupFace(
 	profile: GroupProfileFields | null,
 	group: {
 		name: string;
 		description: string | null;
 		location_name: string | null;
-		visibility: string;
 		require_approval: number;
-	}
+	},
+	visibility: GroupVisibility | null
 ): {
 	source: 'records' | 'cache';
 	name: string;
@@ -93,7 +128,7 @@ export function groupFace(
 			name: profile.name,
 			description: profile.description,
 			locationName: profile.locationName,
-			joinPolicy: profile.joinPolicy
+			joinPolicy: visibility === 'public' ? profile.joinPolicy : 'invite'
 		};
 	}
 	return {
@@ -101,20 +136,19 @@ export function groupFace(
 		name: group.name,
 		description: group.description,
 		locationName: group.location_name,
-		joinPolicy: joinPolicyFor(group)
+		joinPolicy: joinPolicyFor(visibility, group.require_approval)
 	};
 }
 
 /** The inverse, for the rebuild path. It is partial on purpose.
  *
- *  `require_approval` round-trips. `visibility` could be inverted (with two
+ *  `require_approval` round-trips. Visibility could be inverted (with two
  *  values, `invite` can only come from `private`), but it is not: reading
  *  `private` back out of `invite` would tie the two together for good and
  *  forbid a public group from ever being invite-only. That is a restriction the
- *  join policy should express, not the visibility. So a rebuild must not guess
- *  a visibility from a profile. A repair keeps the stored one; a group with no
- *  row at all takes it from whether its public repo declares it
- *  (`server/rebuild.ts`). */
+ *  join policy should express, not the visibility. Nor does a rebuild need
+ *  one: visibility is the about space's read policy at the host, which a
+ *  rebuild never writes, and the row has no column for it. */
 export function requireApprovalFor(policy: GroupJoinPolicy): number {
 	return policy === 'open' ? 0 : 1;
 }

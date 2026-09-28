@@ -3,10 +3,11 @@
 -- A group is a PDS account, `group_did`, whose writing credential the app holds
 -- (see 0002). Its public events live in that account's public repo, where
 -- anyone can read them and Contrail indexes them. Its control plane lives in
--- two spaces on the same account: `about_space_uri` (public read) and
--- `members_space_uri` (member-list read). A space is never anonymously
--- readable, even under a public policy, which is why there are two. The rows
--- here are a cache of those records that the app can query.
+-- two spaces on the same account: `about_space_uri` (public read, or
+-- member-list read for a private group) and `members_space_uri` (member-list
+-- read). A space is never anonymously readable, even under a public policy,
+-- which is why there are two. The rows here are a cache of those records that
+-- the app can query.
 --
 -- The invariants the app depends on are enforced here, not only in TypeScript:
 --   * exactly one owner role per group: `groups_seed_owner_role` creates it,
@@ -17,8 +18,13 @@
 --   * the owner cannot be demoted, removed or leave: the `memberships_owner_*`
 --     triggers, plus `groups_identity_immutable` so the rule cannot be sidestepped
 --     by rewriting `owner_did`.
---   * a private group requires approval to join: `groups_private_requires_approval_*`.
 --   * one pending join request per (group, did): a partial unique index.
+--
+-- Nothing here says whether a group is private. That is where its records are:
+-- its about space's read policy at the host, and whether its public repo holds
+-- a declaration. A column would be a second copy that no other app can read.
+-- The rule that a private group requires approval to join is app code
+-- ($lib/groups/about-record.ts), because no trigger can ask the host.
 --
 -- Statements are separated by the `-- @statement` marker, not by `;`. D1 runs one
 -- statement per prepare(), and the triggers contain `;` inside BEGIN..END, so the
@@ -40,7 +46,6 @@ CREATE TABLE IF NOT EXISTS groups (
 	-- PDS handle, resolved like any other actor's. Registering the handle at
 	-- create is what reserves the name.
 	description TEXT,
-	visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private')),
 	require_approval INTEGER NOT NULL DEFAULT 1 CHECK (require_approval IN (0, 1)),
 	-- The avatar as a blob ref in the group's repo: the three fields a
 	-- `{$type:'blob'}` needs, so it can be rebuilt without a second fetch.
@@ -57,7 +62,7 @@ CREATE TABLE IF NOT EXISTS groups (
 	updated_at INTEGER NOT NULL
 )
 -- @statement
-CREATE INDEX IF NOT EXISTS groups_browse ON groups (visibility, created_at DESC)
+CREATE INDEX IF NOT EXISTS groups_browse ON groups (created_at DESC)
 -- @statement
 -- `group_did` is where the group's writes go and `owner_did` anchors every
 -- owner-protection trigger below. If either could be rewritten, one UPDATE would
@@ -68,27 +73,6 @@ FOR EACH ROW
 WHEN NEW.owner_did <> OLD.owner_did OR NEW.group_did <> OLD.group_did
 BEGIN
 	SELECT RAISE(ABORT, 'groups.owner_did and groups.group_did are immutable');
-END
--- @statement
--- A private group cannot be open-join. Its address is not a secret: the handle
--- of a did:plc is in the PLC directory's public log, so access cannot rest on
--- nobody knowing it. The app refuses too, but the create form, the settings form
--- and the join path are separate code paths, and the schema covers them all.
--- The error text is matched in $lib/groups/server/repo.ts.
-CREATE TRIGGER IF NOT EXISTS groups_private_requires_approval_insert
-BEFORE INSERT ON groups
-FOR EACH ROW
-WHEN NEW.visibility = 'private' AND NEW.require_approval = 0
-BEGIN
-	SELECT RAISE(ABORT, 'a private group must require approval to join');
-END
--- @statement
-CREATE TRIGGER IF NOT EXISTS groups_private_requires_approval_update
-BEFORE UPDATE ON groups
-FOR EACH ROW
-WHEN NEW.visibility = 'private' AND NEW.require_approval = 0
-BEGIN
-	SELECT RAISE(ABORT, 'a private group must require approval to join');
 END
 -- @statement
 CREATE TABLE IF NOT EXISTS roles (

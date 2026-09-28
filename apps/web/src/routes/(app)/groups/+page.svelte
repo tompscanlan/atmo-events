@@ -76,7 +76,9 @@
 							{/if}
 						</div>
 						<div class="flex shrink-0 gap-2">
-							{#if group.visibility && group.visibility !== 'public'}
+							<!-- Placement, not a column: private is a group only the caller's own
+							     groups list, because its public repo does not declare it. -->
+							{#if group.visibility === 'private'}
 								<Badge variant="secondary">{group.visibility}</Badge>
 							{/if}
 						</div>

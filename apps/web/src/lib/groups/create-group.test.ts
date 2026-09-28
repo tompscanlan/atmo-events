@@ -12,7 +12,7 @@
 // order, so "did not happen" can be asserted rather than assumed. It is the
 // same fake host the settings save is tested against (./update-group.test.ts).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
+import { isRowWrite, sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { ensureGroupsSchema } from './server/schema';
 import { clearGroupSessions } from './server/session';
 import { stubPds as stubGroupPds, type StubPdsOptions } from './server/__fixtures__/stub-pds';
@@ -122,13 +122,14 @@ describe('refusing before the irreversible step', () => {
 		expect(await rows('groups')).toEqual([]);
 	});
 
-	// Plain form input that the schema refuses. A trigger in
-	// migrations/0001_groups.sql refuses this pair, but only at the INSERT,
-	// which runs after the mint. Without the rehearsal the user would see the
-	// rule and be left with a did:plc, a spent invite use and an orphan
-	// credential row. The rehearsal puts the same refusal before the mint.
-	it('mints nothing for a private group that does not require approval', async () => {
+	// Plain form input the app refuses. Visibility is a choice sent to the host,
+	// not a column, so no trigger can see this pair: the app refuses it, from
+	// the form's two fields, before anything is written. That means before the
+	// mint (a did:plc is permanent), and before the rehearsal's INSERT too, even
+	// though that one is rolled back.
+	it('create refuses a private group that is open to join before any write', async () => {
 		const { calls } = stubPds();
+		harness.statements.length = 0;
 
 		const result = await runCreateGroup(
 			env,
@@ -141,6 +142,7 @@ describe('refusing before the irreversible step', () => {
 			error: 'A private group must require approval to join — invite members instead'
 		});
 		expect(calls).toEqual([]);
+		expect(harness.statements.filter(isRowWrite)).toEqual([]);
 		expect(await rows('groups')).toEqual([]);
 		expect(await rows('group_credentials')).toEqual([]);
 	});

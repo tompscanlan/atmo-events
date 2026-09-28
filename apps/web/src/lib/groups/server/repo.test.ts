@@ -21,8 +21,7 @@ import {
 	rehearseCreateGroup,
 	removeMember,
 	requestJoin,
-	rolePermissions,
-	updateGroup
+	rolePermissions
 } from './repo';
 import { spaceUri } from './spaces';
 
@@ -126,15 +125,16 @@ describe('rehearseCreateGroup', () => {
 		expect(counts()).toEqual(before);
 	});
 
+	// Drift, as a table that changed under IF NOT EXISTS would present it: the
+	// INSERT is refused, and the rehearsal says so with the table's own words.
 	it('meets the refusal the real create would meet', async () => {
-		await expect(
-			rehearseCreateGroup(db, {
-				ownerDid: OWNER,
-				name: 'Kona',
-				visibility: 'private',
-				requireApproval: false
-			})
-		).rejects.toMatchObject({ reason: 'private-needs-approval' });
+		harness.raw.exec(
+			`CREATE TRIGGER drifted BEFORE INSERT ON groups
+			 BEGIN SELECT RAISE(ABORT, 'NOT NULL constraint failed: groups.legacy'); END`
+		);
+		await expect(rehearseCreateGroup(db, { ownerDid: OWNER, name: 'Kona' })).rejects.toThrow(
+			/groups\.legacy/
+		);
 		expect(counts()).toEqual([0, 0, 0, 0]);
 	});
 });
@@ -195,44 +195,30 @@ describe('joining', () => {
 	});
 });
 
-// Two rules in two layers. The schema refuses the open-join configuration, and
-// `requestJoin` refuses the act. The schema alone is not enough: a private
-// group that requires approval would still take a pending request from a
-// stranger.
+// Two rules in two layers. The create and the settings save refuse the
+// open-join configuration (`approvalRefusal`, ../create-group.test.ts and
+// ../update-group.test.ts), and `requestJoin` refuses the act. The first alone
+// is not enough: a private group that requires approval would still take a
+// pending request from a stranger.
 describe('private groups are invite-only', () => {
 	it('still answers already-member for someone on the roster', async () => {
-		const created = await group({ visibility: 'private' });
+		const created = await group();
 		await addMember(db, created.id, ALICE, 'member');
 		expect(await requestJoin(db, created, ALICE, null, 'private')).toBe('already-member');
-	});
-
-	it('cannot be created open-join', async () => {
-		await expect(group({ visibility: 'private', requireApproval: false })).rejects.toMatchObject({
-			reason: 'private-needs-approval'
-		});
-	});
-
-	it('cannot be edited into open-join, in either order', async () => {
-		const open = await group({ requireApproval: false });
-		await expect(updateGroup(db, open.id, { visibility: 'private' })).rejects.toMatchObject({
-			reason: 'private-needs-approval'
-		});
-
-		const closed = await group({ visibility: 'private', groupDid: 'did:plc:second' });
-		await expect(updateGroup(db, closed.id, { requireApproval: false })).rejects.toMatchObject({
-			reason: 'private-needs-approval'
-		});
 	});
 });
 
 // Whether a group takes self-service joins is a question about its visibility,
 // and its visibility is what its host enforces: the about space's read policy,
-// which the route reads and hands in. The row can disagree with the host after
-// a save that failed partway, so each case below gives the row the opposite
-// answer, and a refusal that read the row would get it wrong.
+// which the route reads and hands in. The row holds no copy, so what is handed
+// in is the only answer, whatever the row's approval setting says.
 describe('the join refusal reads the host, not the row', () => {
-	it('refuses a join to a group the host reads as private, though its row says public and open, and writes nothing', async () => {
+	// The row's approval is a cache of the profile's join policy, and nothing
+	// forces it on for a private group, so a private group can sit at 0. The
+	// refusal comes first, before approval is consulted at all.
+	it('a private group refuses a join whatever its cached approval says', async () => {
 		const created = await group({ requireApproval: false });
+		expect(created.require_approval).toBe(0);
 
 		await expect(requestJoin(db, created, ALICE, 'let me in', 'private')).rejects.toMatchObject({
 			reason: 'invite-only'
@@ -242,14 +228,14 @@ describe('the join refusal reads the host, not the row', () => {
 			reason: 'invite-only'
 		});
 
+		expect(harness.raw.prepare('SELECT COUNT(*) AS n FROM join_requests').get()).toEqual({ n: 0 });
 		const membership = await getCallerMembership(db, created, ALICE, null);
 		expect(membership.role).toBeNull();
-		expect(membership.pendingRequestId).toBeNull();
 		expect(await countActiveMembers(db, created.id)).toBe(1);
 	});
 
-	it('takes a pending request for a group the host reads as public, though its row says private', async () => {
-		const created = await group({ visibility: 'private' });
+	it('takes a pending request for a group the host reads as public', async () => {
+		const created = await group();
 
 		expect(await requestJoin(db, created, ALICE, 'hello', 'public')).toBe('pending');
 		expect((await getCallerMembership(db, created, ALICE, null)).pendingRequestId).not.toBeNull();
@@ -313,7 +299,7 @@ describe('browse visibility', () => {
 		input: Partial<Parameters<typeof createGroup>[1]>,
 		members: string[]
 	): Promise<HostedGroup> {
-		const created = await group({ visibility: 'private', ...input });
+		const created = await group(input);
 		const space = spaceUri(created.group_did, MEMBERS_SPACE_TYPE, 'self');
 		await recordGroupSpaces(db, created.id, {
 			aboutSpaceUri: spaceUri(created.group_did, ABOUT_SPACE_TYPE, 'self'),
@@ -362,34 +348,41 @@ describe('browse visibility', () => {
 			]
 		});
 		expect(anonymous).toEqual([
-			{ group_did: 'did:plc:foreign', row: null },
+			{ group_did: 'did:plc:foreign', row: null, declared: true },
 			expect.objectContaining({
 				group_did: 'did:plc:a',
-				row: expect.objectContaining({ name: 'Ours' })
+				row: expect.objectContaining({ name: 'Ours' }),
+				declared: true
 			})
 		]);
 	});
 
-	// Declared means listed, and the row only supplies the name. The column is
-	// not consulted: a group that went private withdraws its declaration, and the
-	// withdrawal tells our own index at once (`removeGroupDeclaration`), so a
-	// declared row is one whose group is still announcing itself.
-	it('is not gated by the column: a declared row that says private is hydrated for a signed-in stranger', async () => {
-		await group({ name: 'Secret', groupDid: 'did:plc:d', visibility: 'private' });
+	// Declared means listed, and the row only supplies the name. A group that
+	// went private withdraws its declaration, and the withdrawal tells our own
+	// index at once (`removeGroupDeclaration`), so a declared row is one whose
+	// group is still announcing itself.
+	it('hydrates a declared row for a signed-in stranger, with no roster check', async () => {
+		await group({ name: 'Listed', groupDid: 'did:plc:d' });
+		let asked = 0;
 
 		const entries = await listGroups(db, {
 			callerDid: BOB,
 			declared: [declared('did:plc:d', '2026-09-20T00:00:00.000Z')],
 			// A stranger is on no roster, and that does not matter for a
 			// declared group.
-			onRoster: async () => false
+			onRoster: async () => {
+				asked++;
+				return false;
+			}
 		});
 		expect(entries).toEqual([
 			{
 				group_did: 'did:plc:d',
-				row: expect.objectContaining({ name: 'Secret', visibility: 'private' })
+				row: expect.objectContaining({ name: 'Listed' }),
+				declared: true
 			}
 		]);
+		expect(asked).toBe(0);
 	});
 
 	// A revocation deletes the membership record before the row (`roster.ts`), so
@@ -425,15 +418,18 @@ describe('browse visibility', () => {
 	});
 
 	// The bounded exception to the rule above: a caller sees their own and their
-	// joined groups whatever their visibility, because a private group that is
-	// invisible to its own members has nowhere to be reached from.
+	// joined groups undeclared, because a private group that is invisible to its
+	// own members has nowhere to be reached from. They come back marked as not
+	// declared, which is what browse shows as private.
 	it('adds the caller own and joined groups even when private', async () => {
-		const secret = await group({ name: 'Secret', groupDid: 'did:plc:d', visibility: 'private' });
+		const secret = await group({ name: 'Secret', groupDid: 'did:plc:d' });
 		await addMember(db, secret.id, ALICE, 'member');
 
 		const own = (callerDid: string) => listGroups(db, { callerDid, declared: [] });
 		expect(names(await own(OWNER))).toEqual(['Secret']);
-		expect(names(await own(ALICE))).toEqual(['Secret']);
+		expect(await own(ALICE)).toEqual([
+			{ group_did: 'did:plc:d', row: expect.objectContaining({ name: 'Secret' }), declared: false }
+		]);
 		expect(names(await own(BOB))).toEqual([]);
 	});
 

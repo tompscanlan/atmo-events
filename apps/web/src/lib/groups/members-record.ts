@@ -193,11 +193,11 @@ export interface GroupAccessFields {
  * scope list here would describe a capability nothing can issue and nothing can
  * check.
  *
- * It does not carry `groups.visibility`. Visibility narrows browse and the
- * group page and has no upstream equivalent. It also cannot be derived from a
- * role list: `public` and `private` have the same readers of the same records,
- * since the roles that may read the space do not change when the group stops
- * being listed. It stays app-local.
+ * It does not carry the group's visibility. That is the about space's read
+ * policy at the host, and whether the public repo holds a declaration. It also
+ * cannot be derived from a role list: `public` and `private` have the same
+ * readers of the members space, since the roles that may read it do not change
+ * when the group stops being listed.
  */
 export function groupAccessRecord(input: {
 	roles: readonly GroupRoleName[];

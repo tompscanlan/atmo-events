@@ -22,7 +22,7 @@
 // Pure, like ./about-record.ts and ./event-record.ts: shape only, no D1 and no
 // PDS, so the builder and the predicate can be tested without a request.
 // Permission, authorship and transport live in ./server/declaration-writer.ts.
-import type { GroupRow } from './types';
+import type { GroupVisibility } from './types';
 
 /** The collection, and only here, so a prefix change is one edit. Ours rather
  *  than the draft's `community.opensocial.declaration` for the same reason as
@@ -75,7 +75,11 @@ export function groupDeclarationRecord(input: GroupDeclarationInput): Record<str
  *
  * One predicate rather than a visibility check at each call site, so that when
  * this rule changes, this function is the only thing that moves.
+ *
+ * It takes the visibility the caller has, not a row: the form's choice on a
+ * create or a settings save, the host's read policy on a repair. Anything but
+ * `public` is not declared, so a value nobody chose never announces a group.
  */
-export function declarationRequired(group: Pick<GroupRow, 'visibility'>): boolean {
-	return group.visibility !== 'private';
+export function declarationRequired(visibility: GroupVisibility): boolean {
+	return visibility === 'public';
 }

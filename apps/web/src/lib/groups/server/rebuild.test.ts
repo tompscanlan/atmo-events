@@ -26,8 +26,9 @@ import {
 } from '../members-record';
 import { DEFAULT_ROLE_PERMISSIONS, type GroupRoleName } from '../permissions';
 import type { GroupRow } from '../types';
-import { GroupRebuildRefused, rebuildGroup, visibilityFromPlacement } from './rebuild';
-import { addMember, createGroup, GroupRuleError, recordGroupSpaces } from './repo';
+import * as rebuildModule from './rebuild';
+import { GroupRebuildRefused, rebuildGroup } from './rebuild';
+import { addMember, createGroup, recordGroupSpaces } from './repo';
 import { groupSpaceUris } from './spaces';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -48,8 +49,9 @@ interface Stored {
 
 /** A reader over a fixed record set that honours `space`, unlike the roster
  *  tests' fixture: a profile answered out of the members space would pass a
- *  rebuild that read the wrong space. */
-function readerOver(records: Stored[]): GroupSpaceReader {
+ *  rebuild that read the wrong space. `readPolicy` is the about space's, for a
+ *  case whose rebuild asks the host; without it the host does not answer. */
+function readerOver(records: Stored[], readPolicy?: string): GroupSpaceReader {
 	const all = records.map((r) => ({
 		...r,
 		uri: `${r.space}/${GROUP_DID}/${r.collection}/${r.rkey}`,
@@ -68,7 +70,8 @@ function readerOver(records: Stored[]): GroupSpaceReader {
 				(r) => r.space === q.space && (!q.collection || r.collection === q.collection)
 			);
 		},
-		async getSpace() {
+		async getSpace(space) {
+			if (readPolicy && space === ABOUT) return { readPolicy };
 			throw new Error('this fake holds records, not a space configuration');
 		}
 	};
@@ -277,32 +280,35 @@ describe('rebuildGroup — a group with no row', () => {
 	});
 });
 
-describe('rebuildGroup — visibility comes from placement', () => {
-	it('restores an undeclared group as private', async () => {
-		const { row, records } = await appGroup(true);
-		await dropGroupRows(row.id);
-
-		const result = await rebuildGroup(db, sources(records, false), GROUP_DID);
-
-		expect(result.group.visibility).toBe('private');
-		expect(result.group.require_approval).toBe(1);
-	});
-
-	it('leaves an undeclared, open-to-join group to the schema, which refuses it whole', async () => {
+// Visibility is not restored, because there is nothing to restore it into: it
+// is the about space's read policy at the host, and the declaration is already
+// in the public repo. So a cold rebuild neither reads the declaration nor maps
+// its presence onto anything.
+describe('rebuildGroup — visibility stays at the host', () => {
+	it('a rebuild does not derive visibility', async () => {
 		const { row, records } = await appGroup(false);
 		await dropGroupRows(row.id);
+		let probed = 0;
 
-		const refusal = await rebuildGroup(db, sources(records, false), GROUP_DID).catch((e) => e);
+		const result = await rebuildGroup(
+			db,
+			{
+				reader: readerOver(records),
+				declared: async () => {
+					probed++;
+					return false;
+				}
+			},
+			GROUP_DID
+		);
 
-		expect(refusal).toBeInstanceOf(GroupRuleError);
-		expect(refusal.reason).toBe('private-needs-approval');
-		// One batch, so the refused row took its roles and owner with it.
-		for (const table of ['groups', 'roles', 'memberships']) expect(await count(table)).toBe(0);
-	});
-
-	it('maps a declaration to public and its absence to private', () => {
-		expect(visibilityFromPlacement(true)).toBe('public');
-		expect(visibilityFromPlacement(false)).toBe('private');
+		expect(result.path).toBe('restored');
+		expect(probed).toBe(0);
+		expect(result.group).not.toHaveProperty('visibility');
+		// The profile's join policy round-trips, and nothing overrides it.
+		expect(result.group.require_approval).toBe(0);
+		// Nor is there a helper left that maps placement onto a visibility.
+		expect(Object.keys(rebuildModule).filter((name) => /visibility/i.test(name))).toEqual([]);
 	});
 });
 
@@ -316,5 +322,27 @@ describe('rebuildGroup — a surviving row', () => {
 		expect(result.path).toBe('repaired');
 		expect(result.group.id).toBe(row.id);
 		expect(result.group.name).toBe('Kona Surf Club');
+	});
+
+	// The row's approval is a plain cache of the profile's join policy. A
+	// private group is invite-only because its host says private, which the
+	// page derives (`groupFace`), not because the row is forced to 1: any client
+	// can move the host's read policy without touching this row.
+	it('the group cache follows the profile join policy, with no private override', async () => {
+		const { row, records } = await appGroup(false);
+		await db.prepare(`UPDATE groups SET require_approval = 1 WHERE id = ?`).bind(row.id).run();
+
+		const result = await rebuildGroup(
+			db,
+			{
+				reader: readerOver(records, 'com.atproto.simplespace.defs#memberListPolicy'),
+				declared: async () => false
+			},
+			GROUP_DID
+		);
+
+		expect(result.path).toBe('repaired');
+		expect(result.group.id).toBe(row.id);
+		expect(result.group.require_approval).toBe(0);
 	});
 });

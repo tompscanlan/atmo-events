@@ -91,6 +91,40 @@ describe('the migration itself', () => {
 	});
 });
 
+// A group's visibility is where its records are: the about space's read policy
+// at its host, and whether its public repo holds a declaration. A column would
+// be a second copy that no other app can read and that a failed save leaves
+// behind, so the table has none, and nothing in the schema keys on one.
+describe('visibility is not a column', () => {
+	it('the groups table has no visibility column', () => {
+		const columns = (db.prepare('PRAGMA table_info(groups)').all() as { name: string }[]).map(
+			(c) => c.name
+		);
+		expect(columns).toContain('require_approval');
+		expect(columns).not.toContain('visibility');
+	});
+
+	// The rule those triggers carried, that a private group requires approval,
+	// is app code now: a trigger cannot ask the host what the group is.
+	it('no trigger ties approval to visibility', () => {
+		const triggers = db
+			.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")
+			.all() as { name: string; sql: string }[];
+		expect(triggers.length).toBeGreaterThan(0);
+		expect(triggers.map((t) => t.name)).not.toContainEqual(
+			expect.stringMatching(/^groups_private_requires_approval/)
+		);
+		expect(triggers.filter((t) => /visibility/.test(t.sql))).toEqual([]);
+	});
+
+	it('the browse index does not key on visibility', () => {
+		const keys = (db.prepare("PRAGMA index_info('groups_browse')").all() as { name: string }[]).map(
+			(c) => c.name
+		);
+		expect(keys).toEqual(['created_at']);
+	});
+});
+
 describe('a role is owner, admin or member', () => {
 	beforeEach(() => insertGroup('g1', 'did:plc:owner'));
 
@@ -253,25 +287,6 @@ describe('a membership is active or absent', () => {
 	});
 });
 
-describe('a private group requires approval to join', () => {
-	it('refuses a private open-join group on insert', () => {
-		expect(() =>
-			insertGroup('g1', 'did:plc:owner', { visibility: 'private', require_approval: 0 })
-		).toThrow(/private group must require approval/);
-	});
-
-	it('refuses making a group private and open-join by update, either way round', () => {
-		insertGroup('g1', 'did:plc:owner', { require_approval: 0 });
-		expect(() =>
-			db.prepare("UPDATE groups SET visibility = 'private' WHERE id = ?").run('g1')
-		).toThrow(/private group must require approval/);
-		insertGroup('g2', 'did:plc:owner', { visibility: 'private' });
-		expect(() =>
-			db.prepare('UPDATE groups SET require_approval = 0 WHERE id = ?').run('g2')
-		).toThrow(/private group must require approval/);
-	});
-});
-
 describe('group row defaults and domains', () => {
 	it('defaults require_approval to 1', () => {
 		insertGroup('g1', 'did:plc:owner');
@@ -280,23 +295,16 @@ describe('group row defaults and domains', () => {
 		});
 	});
 
-	it('defaults visibility to public and both space URIs to unprovisioned', () => {
+	it('defaults both space URIs to unprovisioned', () => {
 		insertGroup('g1', 'did:plc:owner');
 		expect(
-			db
-				.prepare('SELECT visibility, about_space_uri, members_space_uri FROM groups WHERE id = ?')
-				.get('g1')
+			db.prepare('SELECT about_space_uri, members_space_uri FROM groups WHERE id = ?').get('g1')
 		).toEqual({
-			visibility: 'public',
 			// NULL, not a default type: a group's spaces exist once the PDS has
 			// confirmed them, and the row must be able to say "not yet".
 			about_space_uri: null,
 			members_space_uri: null
 		});
-	});
-
-	it('refuses an unknown visibility', () => {
-		expect(() => insertGroup('g1', 'did:plc:owner', { visibility: 'secret' })).toThrow();
 	});
 
 	// The group's only uniqueness. There is no second name to reserve: the handle

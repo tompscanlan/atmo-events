@@ -20,8 +20,8 @@
  *  10. the profile and rules are read back from the about space with the group's
  *      own session;
  *  11. editing only the middle rule keeps the other two rules' URIs byte-identical;
- *  12. corrupted profile columns are rebuilt from records, and `visibility`, which
- *      no profile field owns, is left as it was;
+ *  12. corrupted profile columns are rebuilt from records, and the row carries no
+ *      visibility for a rebuild to guess;
  *  13. the roster is membership records keyed by member DID, plus the `access`
  *      record, and the app's reader agrees with the PDS;
  *  14. writing membership records leaves the space's own member list empty;
@@ -36,16 +36,30 @@
  *  19. a public group is declared in its public repo, readable with no credential;
  *  20. turning the group private deletes the declaration, and turning it public
  *      again re-declares it;
+ * 20b. a group made private at its host through the app's own path reads back
+ *      member-list, its declaration is withdrawn, and withdrawing it again is a
+ *      no-op;
+ * 20c. that private group refuses a stranger's join and records no request, its
+ *      gate admits the owner and refuses the stranger, and once the host is set
+ *      back to public the app reads it as public;
  *  21. the events tab lists the group's events from the app's index, with the
  *      admin's edit from check 5;
  *  22. an event written after the index has backfilled the repo is listed at
  *      once, and deleting it removes it;
  *  23. with every row deleted except the credential, the group is rebuilt from
- *      its DID alone: row, roles, permissions and roster.
+ *      its DID alone: row, roles, permissions and roster, and no visibility.
  *
- * These 24 checks (1 to 23, plus 15b) are the whole summary, so a clean run ends
- * with `SUMMARY: 24 passed, 0 failed`. Setup steps (credentials, session, bundle,
- * runtime) print as notes and are not counted.
+ * These 26 checks (1 to 23, plus 15b, 20b and 20c) are the whole summary, so a
+ * clean run ends with `SUMMARY: 26 passed, 0 failed`. Setup steps (credentials,
+ * session, bundle, runtime) print as notes and are not counted.
+ *
+ * Every absence is proved by the PDS's own not-found answer (`RecordNotFound`),
+ * never by any status that is not 200: a 5xx, a refused token or a repo the PDS
+ * does not host says nothing about the record.
+ *
+ * NOT COVERED: a member reading a private group's face with their own
+ * credential. This run holds the group's credential and no member's, so that
+ * read belongs to a smoke test against a deployment.
  *
  * HOW IT RUNS. Group facts are D1 rows and a group event is an outbound PDS
  * write, so the real modules run on workerd with a real D1 binding. Vite bundles
@@ -115,9 +129,22 @@ const CREATE_ARGS = {
 	groupDid: GROUP_DID,
 	ownerDid: ALICE,
 	name: 'Spike groups e2e',
-	description: 'Fixture group for apps/web/scripts/groups-e2e.mjs.',
-	visibility: 'public'
+	description: 'Fixture group for apps/web/scripts/groups-e2e.mjs.'
 };
+
+/** The about space's two read policies, written out rather than imported, for
+ *  the same reason as the declaration collection above. */
+const READ_POLICY = {
+	public: 'com.atproto.simplespace.defs#publicPolicy',
+	private: 'com.atproto.simplespace.defs#memberListPolicy'
+};
+
+/** The visibility this run chose at create. The row keeps no copy, so every
+ *  step that needs the choice is handed it: the join refusal, which runs before
+ *  the group's spaces exist and so before its host can be asked, the space
+ *  provisioning, which sets the about space's read policy from it, and the
+ *  profile write, whose join policy is derived from it. */
+const CREATE_VISIBILITY = 'public';
 
 const EVENT_COLLECTION = 'community.lexicon.calendar.event';
 /** The group's only record in its public repo. Written out rather than
@@ -273,6 +300,12 @@ async function startWorker(stateDir, credentialKey) {
 	return { stop, seconds: ((Date.now() - started) / 1000).toFixed(1) };
 }
 
+/** Whether a read proves the record absent: the PDS's own not-found answer, and
+ *  nothing else. */
+function notFound(read) {
+	return read.error === 'RecordNotFound';
+}
+
 /** Unauthenticated read straight from the PDS. */
 async function getRecord(repo, rkey, collection = EVENT_COLLECTION) {
 	const url = new URL('/xrpc/com.atproto.repo.getRecord', PDS);
@@ -306,6 +339,16 @@ async function spaceRecord(token, space, collection, rkey) {
 	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
 	const body = await response.json().catch(() => ({}));
 	return { status: response.status, ...body };
+}
+
+/** A space's read policy as the host reports it, read with the group's own
+ *  session and not through the app's reader. */
+async function spaceReadPolicy(token, space) {
+	const url = new URL('/xrpc/com.atproto.simplespace.getSpace', PDS);
+	url.searchParams.set('space', space);
+	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+	const body = await response.json().catch(() => ({}));
+	return { status: response.status, readPolicy: body.readPolicy?.$type ?? null, error: body.error };
 }
 
 /** The space's own member list: the PDS's access list for the space. It is
@@ -367,6 +410,9 @@ async function main() {
 	/** Set once the group has been declared, so the `finally` withdraws it. A
 	 *  leftover declaration would announce a fixture group to the network. */
 	let declared = false;
+	/** Set while the about space may be private, so the `finally` puts the
+	 *  fixture back to the public read policy the next run starts from. */
+	let hostPrivate = false;
 	try {
 		worker = await startWorker(stateDir, credentialKey);
 		note(`worker bundled and ready in ${worker.seconds}s (workerd, empty D1 under ${stateDir})`);
@@ -407,7 +453,12 @@ async function main() {
 		);
 
 		// 2. join under require_approval ---------------------------------------
-		const join = await must('requestJoin', { groupId: group.id, did: BOB, message: 'hello' });
+		const join = await must('requestJoin', {
+			groupId: group.id,
+			did: BOB,
+			message: 'hello',
+			visibility: CREATE_VISIBILITY
+		});
 		const pendingBob = await must('membership', {
 			groupId: group.id,
 			did: BOB,
@@ -474,7 +525,7 @@ async function main() {
 				asPersisted.value?.name === 'Kona sunrise paddle' &&
 				address?.$type === 'community.lexicon.location.address' &&
 				address?.country === 'US' &&
-				inOwnersRepo.status !== 200,
+				notFound(inOwnersRepo),
 			"owner's event is authored by the GROUP DID, not by the owner",
 			`read back ${asPersisted.uri} (cid ${asPersisted.cid}); author ${authorityOf(asPersisted.uri)}; ` +
 				`location ${address?.name}/${address?.country}; ` +
@@ -505,7 +556,7 @@ async function main() {
 				authorityOf(afterEdit.uri) === GROUP_DID &&
 				afterEdit.value?.name === editedName &&
 				afterEdit.cid !== asPersisted.cid &&
-				inAdminsRepo.status !== 200 &&
+				notFound(inAdminsRepo) &&
 				adminsEvents.status === 200 &&
 				adminsCopies.length === 0,
 			'admin edits an event they did not create; the author is still the GROUP DID',
@@ -592,7 +643,10 @@ async function main() {
 		// read back with the group's own session. No unit test can prove that
 		// read: the com.atproto.space.* parameter names and the space-scoped URI
 		// form are defined by the PDS, not by us.
-		const spaces = await must('provisionSpaces', { groupId: group.id });
+		const spaces = await must('provisionSpaces', {
+			groupId: group.id,
+			visibility: CREATE_VISIBILITY
+		});
 		note(`about space   ${spaces.aboutSpaceUri}`);
 		note(`members space ${spaces.membersSpaceUri}`);
 		membersSpaceUri = spaces.membersSpaceUri;
@@ -604,10 +658,32 @@ async function main() {
 		// record the last cleanup dropped, holds nothing.
 		const stale = await must('dropAuthz', { groupId: group.id });
 		if (stale.dropped.length) note(`reset a leftover authz config (${stale.dropped.join(', ')})`);
+		// A space that already existed keeps whatever read policy it had, so an
+		// earlier run could leave it private. Set it to this run's choice through
+		// the app's own path, and read it back from the host. What provisioning
+		// left is logged first: the set below would hide a fresh space provisioned
+		// with the wrong policy (spaces.test.ts pins that mapping).
+		const provisionedPolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
+		note(
+			`about space read policy as provisioning left it: ${provisionedPolicy.readPolicy ?? provisionedPolicy.error ?? provisionedPolicy.status}`
+		);
+		await must('setReadPolicy', {
+			groupId: group.id,
+			callerDid: ALICE,
+			visibility: CREATE_VISIBILITY
+		});
+		const startPolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
+		if (startPolicy.readPolicy !== READ_POLICY[CREATE_VISIBILITY]) {
+			throw new Error(
+				`the about space reads back ${startPolicy.readPolicy ?? startPolicy.error ?? startPolicy.status}, not ${READ_POLICY[CREATE_VISIBILITY]}`
+			);
+		}
+		note(`about space read policy ${startPolicy.readPolicy}`);
 
 		await must('writeGroupProfile', {
 			groupId: group.id,
 			callerDid: ALICE,
+			visibility: CREATE_VISIBILITY,
 			name: 'Spike groups e2e, from records',
 			description: 'Written into the about space, not a column.',
 			locationName: 'Kailua-Kona'
@@ -621,7 +697,8 @@ async function main() {
 		record(
 			about.profile?.name === 'Spike groups e2e, from records' &&
 				about.profile?.locationName === 'Kailua-Kona' &&
-				// Derived from the row (require_approval = 1, public), never the form.
+				// Derived from the chosen visibility (public) and the row's
+				// require_approval = 1, never the form.
 				about.profile?.joinPolicy === 'approval' &&
 				about.rules.map((rule) => rule.text).join('|') === 'Be kind|No spam|Stay on topic',
 			'profile + rules read back out of the about space with the group’s own session',
@@ -656,8 +733,8 @@ async function main() {
 
 		// 12. the row is a cache of the records ------------------------------------
 		// Corrupt every column the profile owns, rebuild from records, and check
-		// the row came back, while `visibility`, which no profile field owns, is
-		// left exactly as it was.
+		// the row came back. The row has no visibility column, so no join policy
+		// can be turned back into one, and its approval is the profile's.
 		await must('corruptGroupCache', { groupId: group.id });
 		const rebuilt = await must('rebuildGroupCache', { groupId: group.id });
 		record(
@@ -666,11 +743,9 @@ async function main() {
 				rebuilt.row.description === 'Written into the about space, not a column.' &&
 				rebuilt.row.location_name === 'Kailua-Kona' &&
 				rebuilt.row.require_approval === 1 &&
-				// Untouched: no profile field owns visibility, so a rebuild must not
-				// guess one from the join policy it can read.
-				rebuilt.row.visibility === group.visibility,
-			'a corrupted cache rebuilds from records, and leaves what no record owns alone',
-			`name "${rebuilt.row.name}"; visibility ${rebuilt.row.visibility} (was ${group.visibility}); ` +
+				!('visibility' in rebuilt.row),
+			'a corrupted cache rebuilds from records, and the row carries no visibility',
+			`name "${rebuilt.row.name}"; row columns ${Object.keys(rebuilt.row).length}; ` +
 				`${rebuilt.rules} rule record(s)`
 		);
 
@@ -917,7 +992,7 @@ async function main() {
 			BOB
 		);
 		record(
-			ejectedRecord.status !== 200 &&
+			notFound(ejectedRecord) &&
 				afterEject.hasAccess === false &&
 				strangerCheck.hasAccess === false &&
 				afterEject.roster.map((entry) => entry.did).join(',') === ALICE,
@@ -957,8 +1032,8 @@ async function main() {
 		// A group that stops being discoverable must stop being announced, so the
 		// declaration is deleted rather than left pointing at a space nobody may
 		// read. A missing declaration is the only signal a private group gives.
-		// Visibility is flipped through the app's own updater, so the branch comes
-		// from the row.
+		// The visibility is handed to the app's own reconcile, the way the settings
+		// save hands it the form's choice. The row holds none.
 		await must('reconcileDeclaration', {
 			groupId: group.id,
 			callerDid: ALICE,
@@ -972,9 +1047,87 @@ async function main() {
 		});
 		const redeclared = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
 		record(
-			withdrawn.status !== 200 && redeclared.status === 200,
+			notFound(withdrawn) && redeclared.status === 200,
 			'turning a group private DELETES its declaration; turning it back re-declares it',
 			`private: ${withdrawn.error ?? withdrawn.status}; public again: ${redeclared.status}`
+		);
+
+		// 20b. private at the host ----------------------------------------------
+		// Check 20 hands the reconcile a visibility. Here the group is made private
+		// where that lives, the about space's read policy, through the app's own
+		// path (the call the settings save makes), and read back from the host.
+		// Then the declaration is reconciled to the host's answer, and reconciled
+		// again. The second pass re-sends the withdrawal, which must be a no-op at
+		// the PDS. It does not exercise Repair's own alignment, which reads the
+		// declaration first and writes only on a disagreement (repair.test.ts).
+		hostPrivate = true;
+		await must('setReadPolicy', { groupId: group.id, callerDid: ALICE, visibility: 'private' });
+		const privatePolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
+		const aligned = await must('reconcileDeclaration', {
+			groupId: group.id,
+			callerDid: ALICE,
+			visibility: 'host'
+		});
+		const withdrawnAtHost = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
+		const realigned = await must('reconcileDeclaration', {
+			groupId: group.id,
+			callerDid: ALICE,
+			visibility: 'host'
+		});
+		const stillWithdrawn = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
+		record(
+			privatePolicy.readPolicy === READ_POLICY.private &&
+				aligned.visibility === 'private' &&
+				realigned.visibility === 'private' &&
+				notFound(withdrawnAtHost) &&
+				notFound(stillWithdrawn),
+			'a group made private at its host reads back member-list, its declaration is withdrawn, and withdrawing it again is a no-op',
+			`getSpace ${privatePolicy.readPolicy ?? privatePolicy.error ?? privatePolicy.status}; ` +
+				`declaration ${withdrawnAtHost.error ?? withdrawnAtHost.status}, then ` +
+				`${stillWithdrawn.error ?? stillWithdrawn.status} after a repeated withdrawal`
+		);
+
+		// 20c. and its door is shut to strangers ---------------------------------
+		// The join goes through the roster act the join form calls, handed no
+		// visibility, so it asks the host. The gate is the page gate's own
+		// predicate over the host's answer and each caller's standing. Then the
+		// host goes back to public, as the rest of the run and the next run
+		// expect, and the app must read it as public: every read above answered
+		// private, so this is the half that shows the app tells the two apart.
+		const strangerJoin = await call('joinGroup', {
+			groupId: group.id,
+			callerDid: MALLORY,
+			message: 'let me in'
+		});
+		const requestsNow = await must('listJoinRequests', { groupId: group.id, status: 'all' });
+		const ownerGate = await must('gate', { groupId: group.id, did: ALICE });
+		const strangerGate = await must('gate', { groupId: group.id, did: MALLORY });
+		await must('setReadPolicy', {
+			groupId: group.id,
+			callerDid: ALICE,
+			visibility: CREATE_VISIBILITY
+		});
+		const backPolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
+		const backAligned = await must('reconcileDeclaration', {
+			groupId: group.id,
+			callerDid: ALICE,
+			visibility: 'host'
+		});
+		if (backPolicy.readPolicy === READ_POLICY.public) hostPrivate = false;
+		record(
+			!strangerJoin.ok &&
+				strangerJoin.error.reason === 'invite-only' &&
+				!requestsNow.some((request) => request.did === MALLORY) &&
+				ownerGate.visibility === 'private' &&
+				ownerGate.canSee === true &&
+				strangerGate.canSee === false &&
+				backPolicy.readPolicy === READ_POLICY.public &&
+				backAligned.visibility === 'public',
+			"a private group refuses a stranger's join and records no request; its gate admits the owner only; set back to public, the app reads it as public",
+			`${MALLORY} join: ${strangerJoin.ok ? `ACCEPTED (${strangerJoin.value.outcome})` : strangerJoin.error.reason}; ` +
+				`requests from them ${requestsNow.filter((request) => request.did === MALLORY).length}; ` +
+				`gate: owner ${ownerGate.canSee}, stranger ${strangerGate.canSee} (host ${ownerGate.visibility}); ` +
+				`back: getSpace ${backPolicy.readPolicy ?? backPolicy.error ?? backPolicy.status}, app reads ${backAligned.visibility}`
 		);
 
 		// 21. the events tab's list comes from the index, not the PDS -------------
@@ -1030,9 +1183,8 @@ async function main() {
 		// Delete every row the group has except its credential, rebuild keyed by
 		// the DID, and the group comes back. Last, because it replaces the row the
 		// checks above act through. The unit tests cannot show the live half: the
-		// real space reader's records restoring the row, and the declaration
-		// probe, through the group's own session, reading this group as declared
-		// and so public.
+		// real space reader's records restoring the row through the group's own
+		// session. Nothing is restored for visibility, which stays at the host.
 		const profileNow = await must('readGroupAbout', { groupId: group.id });
 		const rosterNow = await must('recordedRoster', { groupId: group.id });
 		const beforeDrop = await must('groupSnapshot', { groupDid: GROUP_DID });
@@ -1046,7 +1198,7 @@ async function main() {
 			if (restored) group = restored.group;
 			else {
 				group = await must('createGroup', CREATE_ARGS);
-				await must('provisionSpaces', { groupId: group.id });
+				await must('provisionSpaces', { groupId: group.id, visibility: CREATE_VISIBILITY });
 			}
 		}
 		const afterRebuild = await must('groupSnapshot', { groupDid: GROUP_DID });
@@ -1067,14 +1219,14 @@ async function main() {
 		record(
 			wiped.left === null &&
 				restored?.path === 'restored' &&
-				afterRebuild.row.visibility === 'public' &&
+				!('visibility' in afterRebuild.row) &&
 				sameColumns &&
 				afterRebuild.row.created_at === Date.parse(profileNow.profile.createdAt) &&
 				rosterOf(afterRebuild) === rosterOf(beforeDrop) &&
 				afterRebuild.roster.every((m) => m.created_at === recordJoinedAt[m.did]) &&
 				sameGrants,
 			'the group, deleted down to its credential, is rebuilt from its DID alone',
-			`path ${restored?.path}; visibility ${afterRebuild.row.visibility} (declared); ` +
+			`path ${restored?.path}; ` +
 				`columns ${sameColumns ? 'identical' : 'DIFFER'}; roster ${rosterOf(afterRebuild)}; ` +
 				`${afterRebuild.grants.length} role grant row(s) ${sameGrants ? 'identical' : 'DIFFER'}`
 		);
@@ -1095,10 +1247,12 @@ async function main() {
 			}
 			// The record decides whether the fixture is clean, not the delete call.
 			const after = await getRecord(GROUP_DID, rkey);
-			if (after.status === 200) {
-				console.log(`WARN  could not clean up ${uri}: ${refusal ?? 'still readable'}`);
+			if (notFound(after)) {
+				note(`cleaned up ${uri} (${after.error})`);
 			} else {
-				note(`cleaned up ${uri} (${after.error ?? after.status})`);
+				console.log(
+					`WARN  could not confirm ${uri} is gone: ${refusal ?? after.error ?? after.status}`
+				);
 			}
 		}
 		// The declaration matters most: a leftover one keeps announcing a fixture
@@ -1113,10 +1267,12 @@ async function main() {
 					visibility: 'private'
 				});
 				const after = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
-				if (after.status === 200) {
-					console.log(`WARN  ${GROUP_DID} is still declared to the network`);
+				if (notFound(after)) {
+					note(`withdrew the declaration (${after.error})`);
 				} else {
-					note(`withdrew the declaration (${after.error ?? after.status})`);
+					console.log(
+						`WARN  could not confirm ${GROUP_DID} is no longer declared: ${after.error ?? after.status}`
+					);
 				}
 			} catch (error) {
 				console.log(`WARN  could not withdraw the declaration: ${error.message}`);
@@ -1125,6 +1281,27 @@ async function main() {
 		// The space records, cleaned up the same way the events are: emptied
 		// through the app, then re-read to check the space really is empty again.
 		// Before the worker stops, because this goes through it.
+		if (spacesProvisioned && hostPrivate) {
+			// First, while the owner's records still stand: a run that stopped with
+			// the about space private leaves it public again for the next one.
+			try {
+				const reset = await call('setReadPolicy', {
+					groupId: group.id,
+					callerDid: ALICE,
+					visibility: CREATE_VISIBILITY
+				});
+				const policy = await spaceReadPolicy(groupToken, aboutSpaceUri);
+				if (reset.ok && policy.readPolicy === READ_POLICY[CREATE_VISIBILITY]) {
+					note(`put the about space back to ${policy.readPolicy}`);
+				} else {
+					console.log(
+						`WARN  the about space may still be private: ${reset.ok ? policy.readPolicy : reset.error.message}`
+					);
+				}
+			} catch (error) {
+				console.log(`WARN  could not reset the about space read policy: ${error.message}`);
+			}
+		}
 		if (spacesProvisioned) {
 			try {
 				await call('setGroupRules', { groupId: group.id, callerDid: ALICE, rules: '' });

@@ -7,15 +7,15 @@
 //
 // THE ORDER MATTERS. A did:plc is permanent, so the sequence is:
 //
-//   refuse -> refuse -> rehearse -> mint -> store -> INSERT -> provision
+//   refuse -> refuse -> refuse -> rehearse -> mint -> store -> INSERT -> provision
 //
-// Every refusal comes before the mint: a label the PDS would reject, a
-// deployment that could not keep the credential the mint returns only once, and
-// a row the groups tables would refuse. The INSERT is rehearsed and rolled
-// back, so an INSERT that fails after the mint means the database changed or
-// failed in between. Registering the handle is the name reservation, so a
-// duplicate name fails at the mint and leaves nothing behind: no DID, no row,
-// no space.
+// Every refusal comes before the mint: a private group open to join, a label
+// the PDS would reject, a deployment that could not keep the credential the
+// mint returns only once, and a row the groups tables would refuse. The INSERT
+// is rehearsed and rolled back, so an INSERT that fails after the mint means
+// the database changed or failed in between. Registering the handle is the
+// name reservation, so a duplicate name fails at the mint and leaves nothing
+// behind: no DID, no row, no space.
 import type { CredentialStoreEnv } from './server/credentials';
 import {
 	GroupCredentialKeyError,
@@ -30,7 +30,6 @@ import {
 	type MintedGroup
 } from './server/mint';
 import {
-	GroupRuleError,
 	createGroup,
 	recordGroupSpaces,
 	rehearseCreateGroup,
@@ -43,7 +42,7 @@ import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './server/
 import { pdsWriter } from './server/event-writer';
 import { pdsMemberList, putAboutMember } from './server/member-list';
 import { registerGroupIdentity } from './server/events-index';
-import { splitRuleLines } from './about-record';
+import { approvalRefusal, splitRuleLines } from './about-record';
 import { labelMintRefusal, labelMintRefusalMessage } from './handle-label';
 import { formError } from './form-error';
 import type { GroupFormFailure, GroupFormResult, GroupFormSuccess } from './form-result';
@@ -145,9 +144,15 @@ export async function runCreateGroup(
 	callerDid: string,
 	data: CreateGroupData
 ): Promise<CreateGroupOutcome> {
-	// Refuse before minting, in three ways, because a did:plc is permanent.
+	// Refuse before minting, in four ways, because a did:plc is permanent.
 	//
-	// 1. The label must be one the PDS will accept as a handle. What this app
+	// 1. The form's choices must describe a group that may exist: a private
+	//    group requires approval to join. Checked first, before any read or
+	//    write, the rehearsal's rolled-back INSERT included.
+	const approval = approvalRefusal(data.visibility, data.requireApproval);
+	if (approval) return { ok: false, error: approval };
+
+	// 2. The label must be one the PDS will accept as a handle. What this app
 	//    accepts in a form is wider than the PDS's handle rules (3-18
 	//    characters, no dot, not reserved), and the handle registration is
 	//    itself the name reservation, so a label we could not mint must fail on
@@ -155,7 +160,7 @@ export async function runCreateGroup(
 	const refusal = labelMintRefusal(data.label);
 	if (refusal) return { ok: false, error: labelMintRefusalMessage(refusal, data.label) };
 
-	// 2. The deployment must be able to keep what the mint hands back once.
+	// 3. The deployment must be able to keep what the mint hands back once.
 	//    Checking after the mint would strand an account whose only credential
 	//    has already been shown and discarded.
 	const mint = mintConfig(env);
@@ -175,30 +180,26 @@ export async function runCreateGroup(
 	}
 
 	// The row stores no handle: the PDS decided it, the row keeps the DID, and
-	// the identity resolver reads the handle back. One value serves both the
-	// rehearsal and the INSERT, so they cannot disagree.
+	// the identity resolver reads the handle back. Nor does it store the
+	// visibility: that goes to the host, as the about space's read policy, when
+	// the spaces are provisioned below. One value serves both the rehearsal and
+	// the INSERT, so they cannot disagree.
 	const row: Omit<CreateGroupInput, 'groupDid'> = {
 		ownerDid: callerDid,
 		name: data.name,
 		description: data.description || null,
-		visibility: data.visibility,
 		requireApproval: data.requireApproval,
 		locationName: data.locationName || null
 	};
 
-	// 3. The groups tables must accept the row. Two things can refuse the
-	//    INSERT: schema drift, and the trigger in migrations/0001_groups.sql
-	//    that refuses a private group with approval off, which the create form
-	//    can send. Rehearsing the INSERT asks the schema itself, so the rule is
-	//    defined in one place.
+	// 4. The groups tables must accept the row. With the form's own choices
+	//    already checked (1. above), what can still refuse the INSERT is the
+	//    deployment's: schema drift, or a database that does not answer.
+	//    Rehearsing the INSERT asks the schema itself, because drift cannot be
+	//    listed in advance.
 	try {
 		await rehearseCreateGroup(env.DB, row);
 	} catch (e) {
-		if (e instanceof GroupRuleError && e.reason === 'private-needs-approval') {
-			return { ok: false, error: e.message };
-		}
-		// Nothing else the form sends can trip the schema, so the rest is the
-		// deployment's: drift, or a database that did not answer.
 		return {
 			ok: false,
 			error: `Group creation is unavailable on this deployment: the database would not accept the new group (${
@@ -351,6 +352,7 @@ async function setUpMintedGroup(
 			db: env.DB,
 			env,
 			group: withSpaces,
+			visibility: data.visibility,
 			callerDid,
 			writer,
 			profile: {
@@ -391,6 +393,7 @@ async function setUpMintedGroup(
 			db: env.DB,
 			env,
 			group: withSpaces,
+			visibility: data.visibility,
 			callerDid,
 			writer,
 			createdAt,

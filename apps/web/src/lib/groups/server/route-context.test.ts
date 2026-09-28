@@ -105,8 +105,7 @@ describe('every refusal is the same refusal', () => {
 		const secret = await createGroup(db, {
 			groupDid: 'did:plc:secretgroup',
 			ownerDid: OWNER,
-			name: 'Secret',
-			visibility: 'private'
+			name: 'Secret'
 		});
 
 		const answers = [
@@ -129,8 +128,7 @@ describe('every refusal is the same refusal', () => {
 		const secret = await createGroup(db, {
 			groupDid: 'did:plc:secretgroup',
 			ownerDid: OWNER,
-			name: 'Secret',
-			visibility: 'private'
+			name: 'Secret'
 		});
 		await addMember(db, secret.id, MEMBER, 'member');
 
@@ -195,11 +193,8 @@ describe('readStanding', () => {
 });
 
 // The gate asks the host. A group's visibility is its about space's read
-// policy, read with `com.atproto.simplespace.getSpace`, and never our row: a
-// save that failed partway can leave the row behind the host, and the host is
-// what every other app is held to. So each case gives the row the opposite
-// answer to the host wherever the case allows it, and a gate that read the row
-// would fail it.
+// policy, read with `com.atproto.simplespace.getSpace`: the host is what every
+// other app is held to, and our row holds no copy.
 describe('the page gate reads visibility from the host', () => {
 	const HOSTED = 'did:plc:hostedgroupaaaaaaaaaaaaa';
 	/** 32 bytes, base64: the credential store accepts nothing shorter. */
@@ -236,19 +231,14 @@ describe('the page gate reads visibility from the host', () => {
 		clearGroupSessions();
 	});
 
-	/** A group whose row says `row` and whose about space the host provisioned
-	 *  for `host`. The credential is stored unless the case says otherwise, and
-	 *  the host's log starts empty. */
-	async function hosted(
-		row: GroupVisibility,
-		host: GroupVisibility,
-		{ credential = true } = {}
-	): Promise<GroupRow> {
+	/** A group whose about space the host provisioned for `host`. The
+	 *  credential is stored unless the case says otherwise, and the host's log
+	 *  starts empty. */
+	async function hosted(host: GroupVisibility, { credential = true } = {}): Promise<GroupRow> {
 		const created = await createGroup(db, {
 			groupDid: HOSTED,
 			ownerDid: OWNER,
-			name: 'Hosted',
-			visibility: row
+			name: 'Hosted'
 		});
 		await recordGroupSpaces(
 			db,
@@ -274,15 +264,15 @@ describe('the page gate reads visibility from the host', () => {
 
 	const getSpaceCalls = () => pds.requests.filter((r) => r.nsid === GET_SPACE);
 
-	it('refuses an anonymous caller with the standard 404 when the host reads the group as private, though the row says public', async () => {
-		await hosted('public', 'private');
+	it('refuses an anonymous caller with the standard 404 when the host reads the group as private', async () => {
+		await hosted('private');
 
 		expect(await open(null)).toEqual({ status: 404, message: GROUP_NOT_FOUND });
 		expect(getSpaceCalls()).toHaveLength(1);
 	});
 
-	it('admits a signed-in stranger when the host reads the group as public, though the row says private', async () => {
-		await hosted('private', 'public');
+	it('admits a signed-in stranger when the host reads the group as public', async () => {
+		await hosted('public');
 
 		expect(await open(STRANGER)).toEqual({ status: 200, visibility: 'public' });
 	});
@@ -292,15 +282,15 @@ describe('the page gate reads visibility from the host', () => {
 	// gives away is that a group this deployment hosts sits at the DID, which the
 	// PLC log already publishes.
 	it('answers 503, visibility could not be checked, when the host does not answer for a stranger', async () => {
-		await hosted('public', 'public');
+		await hosted('public');
 		getSpaceFails = true;
 
 		expect(await open(STRANGER)).toEqual({ status: 503, message: GROUP_VISIBILITY_UNCHECKED });
 		expect(GROUP_VISIBILITY_UNCHECKED).toContain('visibility could not be checked');
 	});
 
-	it('refuses a stranger with the standard 404 when this deployment holds no credential for the group, whatever its row says', async () => {
-		await hosted('public', 'public', { credential: false });
+	it('refuses a stranger with the standard 404 when this deployment holds no credential for the group', async () => {
+		await hosted('public', { credential: false });
 
 		expect(await open(STRANGER)).toEqual({ status: 404, message: GROUP_NOT_FOUND });
 		expect(getSpaceCalls()).toEqual([]);
@@ -310,7 +300,7 @@ describe('the page gate reads visibility from the host', () => {
 	// group at every visibility, so the host is not asked, and a host that is
 	// down cannot lock a member out of their own group.
 	it('admits a member on the roster without asking the host, even when the host would fail', async () => {
-		const group = await hosted('private', 'private');
+		const group = await hosted('private');
 		await addMember(db, group.id, MEMBER, 'member');
 		getSpaceFails = true;
 

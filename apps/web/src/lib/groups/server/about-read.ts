@@ -346,6 +346,9 @@ export function cacheFromProfile(profile: GroupProfileFields): {
  *  state, and wiping the cache to match an absent record would destroy data the
  *  records cannot replace.
  *
+ *  It reads no visibility: the row's approval caches the profile's join
+ *  policy as it stands (`applyGroupCache`).
+ *
  *  A group with no row at all is handled by `./rebuild.ts`, which also owns the
  *  one entry point that picks between the two. */
 export async function rebuildGroupCache(

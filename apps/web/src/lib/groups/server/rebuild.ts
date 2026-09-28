@@ -14,6 +14,13 @@
 //                    `roles (id, group_id)` and a group with no row has no role
 //                    rows either.
 //
+// NOTHING IS RESTORED FOR VISIBILITY. A group's visibility is its about space's
+// read policy at the host, and its declaration already sits in its public
+// repo. Neither lives in a row, so a rebuild has nothing to write back and no
+// reason to guess, and neither path asks the host. The row's approval is a
+// plain cache of the profile's join policy; a private group is invite-only
+// because its host says private, which the page derives (`groupFace`).
+//
 // WHAT IT REFUSES. `groups_identity_immutable` makes `owner_did` permanent once
 // written, so a rebuild that cannot find the `membership` record granting
 // `owner` stops rather than insert a plausible owner nobody could correct. It
@@ -66,10 +73,9 @@ export class GroupRebuildRefused extends Error {
 export interface GroupRebuildSources {
 	/** The about and members spaces, through the group's own session. */
 	reader: GroupSpaceReader;
-	/** Whether the group's public repo holds its declaration. A restore takes
-	 *  the row's visibility from it (`visibilityFromPlacement`), and Repair reads
-	 *  it to decide whether the declaration has to be written or withdrawn to
-	 *  match the host (./repair.ts). */
+	/** Whether the group's public repo holds its declaration. The rebuild
+	 *  itself never asks: Repair reads it to decide whether the declaration has
+	 *  to be written or withdrawn to match the host (./repair.ts). */
 	declared: () => Promise<boolean>;
 }
 
@@ -98,7 +104,8 @@ export async function groupRebuildSources(
 	};
 }
 
-/** Rebuilds the group whose DID this is, from its records. */
+/** Rebuilds the group whose DID this is, from its records. A restore never
+ *  needs the group's visibility, and neither does a repair (see the header). */
 export async function rebuildGroup(
 	db: D1Database,
 	sources: GroupRebuildSources,
@@ -125,10 +132,9 @@ async function restoreFromRecords(
 		about_space_uri: spaces.aboutSpaceUri,
 		members_space_uri: spaces.membersSpaceUri
 	};
-	const [about, members, declared] = await Promise.all([
+	const [about, members] = await Promise.all([
 		readGroupAbout(sources.reader, located),
-		readGroupMembers(sources.reader, located),
-		sources.declared()
+		readGroupMembers(sources.reader, located)
 	]);
 
 	if (!about.profile) {
@@ -158,7 +164,6 @@ async function restoreFromRecords(
 		ownerDid,
 		name: about.profile.name,
 		description: about.profile.description,
-		visibility: visibilityFromPlacement(declared),
 		requireApproval: about.profile.joinPolicy !== 'open',
 		locationName: about.profile.locationName,
 		aboutSpaceUri: spaces.aboutSpaceUri,
@@ -196,27 +201,10 @@ function timestamp(value: string | null, fallback: number): number {
 	return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-// --- Visibility ---------------------------------------------------------------
-//
-// `groups.visibility` is planned for removal, with privacy expressed by where
-// the group's records are placed instead of by a column. Until then it is NOT
-// NULL, so a restored row needs a value, and the rebuild reads it from a
-// placement fact: whether the group's public repo holds its declaration. Removing the column means deleting this section and one line in
-// `restoreFromRecords`. `GroupRebuildSources.declared` stays: Repair reads it
-// too.
-//
-// The combination the data cannot produce, undeclared (so private) and open to
-// join, is refused by the schema's private-requires-approval trigger inside
-// `restoreGroup`, and nothing here re-implements it.
-
-/** Present in the public repo means public; absent means private. */
-export function visibilityFromPlacement(declared: boolean): GroupRow['visibility'] {
-	return declared ? 'public' : 'private';
-}
-
 /** Whether the group's public repo holds its declaration, read through the
  *  group's own session. An unreachable PDS throws: reading "could not ask" as
- *  "absent" would silently restore a public group as private. */
+ *  "absent" would have Repair re-declare, or leave declared, a group whose
+ *  state it never learned. */
 function pdsDeclarationProbe(cred: GroupCredential, groupDid: string): () => Promise<boolean> {
 	return async () => {
 		const { handle } = await groupClient(cred, groupDid);

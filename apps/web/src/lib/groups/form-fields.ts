@@ -15,9 +15,11 @@ import * as v from 'valibot';
  *      created at all.
  *    * `updateGroup` skips a column whose input is `undefined`, so the row
  *      would keep its old value, while the `profile` record (derived through
- *      `data.requireApproval ? 1 : 0`) would be written `open`. The group page
- *      renders the record's `joinPolicy` and the join gate reads the row, so
- *      the group would advertise open joining while still queueing approvals.
+ *      `data.requireApproval ? 1 : 0`) would be written `open`. For a public
+ *      group the page renders the record's `joinPolicy` and the join gate
+ *      reads the row, so the group would advertise open joining while still
+ *      queueing approvals. (A private group shows invite-only whatever the
+ *      record says.)
  *
  *  With the default the entry is always present, the transform always runs,
  *  and the output is `boolean` rather than `boolean | undefined`. */

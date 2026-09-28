@@ -8,7 +8,13 @@ import type { GroupPermission, GroupRoleName } from './permissions';
  *  pointer and no listing hint, so any peer could list an "unlisted" group. If
  *  unlisted groups are wanted, the flag belongs on a record, the way upstream
  *  does it for events (`preferences.showInDiscovery`, set in
- *  `packages/ui/src/editor/save.ts`). */
+ *  `packages/ui/src/editor/save.ts`).
+ *
+ *  Not a column. A group's visibility is where its records are: its about
+ *  space's read policy at the host (`readGroupVisibility` in
+ *  ./server/spaces.ts), and whether its public repo holds a declaration. A
+ *  value of this type is either a form's choice, on its way to the host, or
+ *  the host's own answer. */
 export const GROUP_VISIBILITIES = ['public', 'private'] as const;
 export type GroupVisibility = (typeof GROUP_VISIBILITIES)[number];
 
@@ -45,7 +51,7 @@ export interface GroupRow {
 	owner_did: string;
 	name: string;
 	description: string | null;
-	visibility: GroupVisibility;
+	/** No `visibility`: see `GroupVisibility`. */
 	require_approval: number;
 	image_cid: string | null;
 	image_mime: string | null;

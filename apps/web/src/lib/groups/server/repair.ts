@@ -7,8 +7,8 @@
 //      only if it does not exist.
 //   2. Make the about space's member list equal the set of DIDs that hold a
 //      membership record (./member-list.ts).
-//   3. Make the declaration and the row's visibility agree with the about
-//      space's read policy at the host.
+//   3. Make the declaration agree with the about space's read policy at the
+//      host.
 //   4. Rebuild the cache from the records (`rebuildGroup`, the repair path).
 //
 // WHY STEP 1. A create writes the group's row before its records
@@ -48,18 +48,16 @@
 // WHY STEP 3. A group's visibility is its about space's read policy: that is
 // what the page gate reads (`readGroupVisibility`) and what every other app is
 // held to. The settings save writes the host first, so a save that fails after
-// it leaves the declaration, and the row's column, behind the host. Step 3
-// reads the policy with `getSpace` and aligns both to it: `memberListPolicy`
-// means no declaration and a private row, `publicPolicy` a declaration and a
-// public row. The direction is fixed. It never changes the host's read
-// policy, because the host holds the user's last choice that got through, and
-// moving it to match a row that missed the change would undo that choice. It
-// reads the declaration before it writes one, and each write happens only on
-// a disagreement. The declaration goes before the row, because it is what
-// other apps see and the row no longer decides who may see the group. A row
-// moved to private also requires approval, which the schema insists on for a
-// private group, and the rebuild keeps it so whatever join policy the profile
-// still carries (`applyGroupCache`).
+// it leaves the declaration behind the host. Step 3 reads the policy with
+// `getSpace` and aligns the declaration to it: `memberListPolicy` means no
+// declaration, `publicPolicy` a declaration. The direction is fixed. It never
+// changes the host's read policy, because the host holds the user's last
+// choice that got through, and moving it to match a declaration that missed
+// the change would undo that choice. It reads the declaration before it
+// writes one, and writes only on a disagreement. It writes no visibility to
+// the row, which has no column for one. The rebuild after it caches the
+// profile's join policy as it stands; a private group is invite-only because
+// its host says private, which the page and the join refusal read.
 //
 // Idempotent: a second run writes nothing, and its rebuild is a no-op.
 //
@@ -88,7 +86,7 @@ import {
 	type GroupRebuildResult,
 	type GroupRebuildSources
 } from './rebuild';
-import { listMembers, rolePermissions, updateGroup } from './repo';
+import { listMembers, rolePermissions } from './repo';
 import { readGroupVisibility } from './spaces';
 
 export interface RepairGroupInput {
@@ -131,8 +129,6 @@ export interface HostAlignment {
 	/** `declared` or `withdrawn` when the declaration disagreed with the host
 	 *  and was written or deleted; null when it already agreed. */
 	declaration: 'declared' | 'withdrawn' | null;
-	/** Whether the row's visibility column was rewritten to the host's. */
-	row: boolean;
 }
 
 export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairResult> {
@@ -214,42 +210,25 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 	return { wrote, unrecordedMembers, authzHeldBack, memberList, host, rebuild };
 }
 
-/** Step 3: the declaration, then the row's visibility, made to agree with the
- *  about space's read policy. Reads come first, and each write happens only on
- *  a disagreement, so a group that already agrees gets no write at all. It
- *  never writes the host (see the header). */
+/** Step 3: the declaration made to agree with the about space's read policy.
+ *  Reads come first, and the write happens only on a disagreement, so a group
+ *  that already agrees gets no write at all. It never writes the host, and it
+ *  writes nothing to the row (see the header). */
 async function alignToHost(
 	input: RepairGroupInput & { reader: GroupSpaceReader; createdAt: string },
 	sources: GroupRebuildSources
 ): Promise<HostAlignment> {
-	const { db, group } = input;
-	const visibility = await readGroupVisibility(input.reader, group);
+	const visibility = await readGroupVisibility(input.reader, input.group);
 	const declared = await sources.declared();
 
-	// The group as the host has it. A private group requires approval, so the
-	// row cannot be moved to private without it.
-	const aligned: GroupRow = {
-		...group,
-		visibility,
-		require_approval: visibility === 'private' ? 1 : group.require_approval
-	};
-
 	let declaration: HostAlignment['declaration'] = null;
-	if (declared !== declarationRequired(aligned)) {
+	if (declared !== declarationRequired(visibility)) {
 		// Re-declared under the row's own creation instant, like every other
 		// record Repair writes, and not today's.
-		await reconcileGroupDeclaration({ ...input, group: aligned });
+		await reconcileGroupDeclaration({ ...input, visibility });
 		declaration = declared ? 'withdrawn' : 'declared';
 	}
-
-	const row = visibility !== group.visibility;
-	if (row) {
-		await updateGroup(db, group.id, {
-			visibility,
-			requireApproval: aligned.require_approval === 1
-		});
-	}
-	return { visibility, declaration, row };
+	return { visibility, declaration };
 }
 
 /** Whether the space holds all of the authz config, none of it, or some. */
@@ -301,14 +280,11 @@ export function describeRepair(result: GroupRepairResult): string {
 		);
 	}
 	const { host } = result;
-	if (host.declaration || host.row) {
-		const changes = [
-			host.declaration === 'withdrawn' && 'withdrew its declaration',
-			host.declaration === 'declared' && 'published its declaration',
-			host.row && `set this site's copy to ${host.visibility}`
-		].filter((part): part is string => typeof part === 'string');
+	if (host.declaration) {
 		sentences.push(
-			`Brought the group in line with its PDS, which reads it as ${host.visibility}: ${joinList(changes)}.`
+			`Brought the group in line with its PDS, which reads it as ${host.visibility}: ${
+				host.declaration === 'withdrawn' ? 'withdrew its declaration' : 'published its declaration'
+			}.`
 		);
 	}
 	sentences.push("Rebuilt this site's copy of the group from its records.");
