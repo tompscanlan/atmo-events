@@ -22,7 +22,9 @@ whatever its read policy.
 A group's visibility is its about space's read policy: public, or the member list for a private
 group. D1 has no column for it. The group pages ask the PDS for it
 (`com.atproto.simplespace.getSpace`), so every app sees the same answer. A member on the roster is
-let in without the question, and the page then asks only to show the visibility. Anyone else gets
+let in without the question, and the page then asks only to show the visibility. When the members
+space errors, nobody is on the roster for that read, whatever the D1 rows say, so until the space
+answers a member is treated like anyone else. Anyone else gets
 the ordinary 404 when the deployment holds no credential for the group, since then the PDS cannot
 be asked, and a 503 rather than a guess when the PDS is asked and does not answer. Browse shows it
 from placement instead, with no PDS read per group: a group the declaration index lists is public,
