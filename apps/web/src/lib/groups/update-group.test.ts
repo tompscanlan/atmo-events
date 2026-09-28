@@ -500,7 +500,7 @@ describe('a visibility change reaches the host before the row', () => {
 		expect(profile?.record.joinPolicy).toBe('invite');
 	});
 
-	it('a switch to public whose host does not answer the second read saves the row, leaves the declaration alone, and says the group was not announced', async () => {
+	it('a switch to public whose host does not answer the second read saves the row, leaves the declaration alone, and says so', async () => {
 		let reads = 0;
 		let hostSilent = true;
 		const pds = host((nsid) =>
@@ -519,7 +519,11 @@ describe('a visibility change reaches the host before the row', () => {
 
 		expect(result.ok).toBe(false);
 		expect(!result.ok && result.error).toContain('saved the settings');
-		expect(!result.ok && result.error).toContain('not announced');
+		// True whether or not the group was declared before this save.
+		expect(!result.ok && result.error).toContain(
+			"neither published nor withdrew the group's declaration"
+		);
+		expect(!result.ok && result.error).toContain('as it was before this save');
 		expect(!result.ok && result.error).toContain('getSpace failed: 500');
 		expect(!result.ok && result.error).toContain('Saving the settings again finishes it');
 		expect(rowWhole().description).toBe('Trail runs at dawn');
@@ -591,6 +595,7 @@ describe('a visibility change reaches the host before the row', () => {
 		expect(!result.ok && result.error).toContain('now reads it as private');
 		expect(!result.ok && result.error).toContain('records were not updated');
 		expect(!result.ok && result.error).not.toContain('still listed');
+		expect(!result.ok && result.error).toContain('Saving the settings again finishes it');
 	});
 
 	it('a public group saved as private, whose row write fails after the host took the change, says the host has it and this site does not', async () => {
@@ -640,7 +645,46 @@ describe('a visibility change reaches the host before the row', () => {
 		]);
 		expect(!result.ok && result.error).toContain('now reads it as private');
 		expect(!result.ok && result.error).toContain('still listed in browse');
+		// Everything the row holds is in the list of what was not saved.
+		expect(!result.ok && result.error).toContain(
+			'name, description, approval setting, profile and rules were not saved'
+		);
 		expect(!result.ok && result.error).toContain('Saving the settings again finishes it');
+	});
+
+	it('a switch to public whose declaration write fails says the settings were saved, and saving again finishes it', async () => {
+		let failPut = true;
+		const pds = host((nsid, init) =>
+			failPut &&
+			nsid === 'com.atproto.repo.putRecord' &&
+			(JSON.parse(String(init?.body)) as { collection: string }).collection ===
+				'net.openmeet.group.declaration'
+				? pdsDown()
+				: undefined
+		);
+		const group = await givenGroup('private', pds);
+
+		const result = await save(group, 'public', {
+			shownVisibility: 'private',
+			description: 'Trail runs at dawn'
+		});
+
+		expect(result.ok).toBe(false);
+		expect(!result.ok && result.error).toContain('now reads it as public');
+		expect(!result.ok && result.error).toContain('records were not updated');
+		expect(!result.ok && result.error).not.toContain('still listed');
+		expect(!result.ok && result.error).toContain('Saving the settings again finishes it');
+		expect(await declaredNow()).toBe(false);
+
+		// The page now shows public, so saving again is an untouched save that
+		// declares the group.
+		failPut = false;
+		pds.clearLog();
+		expect(await save(group, 'public', { description: 'Trail runs at dawn' })).toEqual({
+			ok: true
+		});
+		expect(updateSpaceCalls(pds)).toEqual([]);
+		expect(await declaredNow()).toBe(true);
 	});
 
 	it('a switch to private whose withdrawal fails leaves the row as it was, and saving again finishes it', async () => {
@@ -805,7 +849,7 @@ describe('a save changes the visibility only when the owner changed it', () => {
 		const result = await save(group, 'private', { ...NOT_SHOWN, description: 'Members only' });
 
 		expect(result.ok).toBe(false);
-		expect(!result.ok && result.error).toContain("could not read the group's visibility");
+		expect(!result.ok && result.error).toContain('cannot tell which visibility the page showed');
 		expect(!result.ok && result.error).toContain('Nothing was saved');
 		expect(!result.ok && result.error).toMatch(/reload/i);
 		expect(pds.writes()).toEqual([]);
@@ -847,5 +891,79 @@ describe('a save changes the visibility only when the owner changed it', () => {
 		expect(updateSpaceCalls(pds)).toEqual([]);
 		expect(await declaredNow()).toBe(false);
 		expect(rowWhole().description).toBe('Members only');
+	});
+});
+
+// The approval control is drawn for the visibility the form has chosen: a
+// private choice fixes it on. A stale form whose save ends up with the other
+// visibility therefore sends an approval nobody chose for the group it will
+// be, so the row's approval stands, and the profile's join policy follows it.
+describe('a stale form and the approval setting', () => {
+	/** An empty database and a new host, so one case can set up a second group
+	 *  under the same DID. */
+	function startOver(): Host {
+		harness.close();
+		harness = sqliteD1();
+		clearGroupSessions();
+		vi.unstubAllGlobals();
+		return host();
+	}
+
+	/** The settings form resolves the group from the row on every save. */
+	const rowGroup = async () => (await getGroupByDid(harness.db, GROUP_DID))!;
+
+	const profileJoinPolicy = (pds: Host) =>
+		pds.spaceWrites.find((w) => w.collection === 'net.openmeet.group.profile')?.record.joinPolicy;
+
+	it('a stale form keeps the saved approval when the visibility it ends up with is not the one it chose', async () => {
+		// A private group, whose stale tab shows private with approval fixed on.
+		let pds = host();
+		await givenGroup('private', pds);
+		// Elsewhere it is made public and open to join.
+		expect(
+			await save(await rowGroup(), 'public', { shownVisibility: 'private', requireApproval: false })
+		).toEqual({ ok: true });
+		expect(approvalNow()).toBe(0);
+		pds.clearLog();
+
+		const opened = await save(await rowGroup(), 'private', {
+			requireApproval: true,
+			description: 'Typo fixed'
+		});
+
+		expect(opened).toEqual({ ok: true });
+		expect(approvalNow()).toBe(0);
+		expect(profileJoinPolicy(pds)).toBe('open');
+		expect(updateSpaceCalls(pds)).toEqual([]);
+		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
+		expect(await declaredNow()).toBe(true);
+		expect(rowWhole().description).toBe('Typo fixed');
+
+		// A public group open to join, whose stale tab shows public with
+		// approval off.
+		pds = startOver();
+		await givenGroup('public', pds, false);
+		expect(await save(await rowGroup(), 'public', { requireApproval: false })).toEqual({
+			ok: true
+		});
+		// Elsewhere it is made private, which requires approval.
+		expect(
+			await save(await rowGroup(), 'private', { shownVisibility: 'public', requireApproval: true })
+		).toEqual({ ok: true });
+		expect(approvalNow()).toBe(1);
+		pds.clearLog();
+
+		const closed = await save(await rowGroup(), 'public', {
+			requireApproval: false,
+			description: 'Typo fixed'
+		});
+
+		expect(closed).toEqual({ ok: true });
+		expect(approvalNow()).toBe(1);
+		expect(profileJoinPolicy(pds)).toBe('invite');
+		expect(updateSpaceCalls(pds)).toEqual([]);
+		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
+		expect(await declaredNow()).toBe(false);
+		expect(rowWhole().description).toBe('Typo fixed');
 	});
 });

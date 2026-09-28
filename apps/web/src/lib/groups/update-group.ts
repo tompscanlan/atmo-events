@@ -32,15 +32,18 @@
 //   chosen != shown = host   a change, so the host takes the choice
 //   chosen != shown != host  the host has already moved to the choice (there
 //                            are two values), so there is nothing to change
-//   nothing shown            the page could not read the host when it opened.
-//                            A choice that matches the host now is untouched;
-//                            one that differs is refused before any write,
-//                            because a change and a stale default look alike
+//   nothing shown            the page could not read the host when it opened,
+//                            or predates this field. A choice that matches
+//                            the host now is untouched; one that differs is
+//                            refused before any write, because a change and a
+//                            stale default look alike
 //
 // Every later step (the declaration, the profile, the rules) follows the
 // visibility that decision settles on, never the form's choice by itself.
 // There is no lock around it, which is why the public side reads the host
-// again below.
+// again below. The approval control is drawn for the chosen visibility, so
+// when the save settles on the other one the row's approval stands, for the
+// row and for the profile's join policy alike.
 //
 // The host goes first of the writes because it is the group's visibility. If
 // it refuses the change, nothing else is written: the host, the row and the
@@ -117,11 +120,12 @@ const describeError = (e: unknown) => (e instanceof Error ? e.message : String(e
  *  declaration: browse lists what is declared, so the group is still in it. */
 const STILL_LISTED = 'Its declaration was not withdrawn, so it is still listed in browse.';
 
-/** The page showed no visibility, and the choice differs from what the host
- *  holds now. A change the owner made and a default the host has since left
- *  behind look the same from here, so nothing is written. */
+/** The form sent no shown visibility, because its page could not read the
+ *  host or was rendered before the form carried one, and the choice differs
+ *  from what the host holds now. A change the owner made and a default the
+ *  host has since left behind look the same from here, so nothing is written. */
 const SHOWN_UNKNOWN =
-	"This page could not read the group's visibility when it opened, so this save cannot tell whether you changed it. Nothing was saved. Reload the page and save again.";
+	'This save cannot tell which visibility the page showed: either the page could not read it when it opened, or the page was opened before this site was updated. So it cannot tell whether you changed the visibility. Nothing was saved. Reload the page and save again.';
 
 /** A read failed, before the first write. Nothing landed anywhere, so saving
  *  again retries it. `failed` names the read, because the host refusing the
@@ -154,7 +158,7 @@ function notWithdrawn(e: unknown, flipped: boolean): GroupFormFailure {
 		ok: false,
 		error: `The group's PDS ${flipped ? 'now reads' : 'reads'} it as private, but its declaration could not be withdrawn: ${describeError(
 			e
-		)}. ${STILL_LISTED} Its name, description, profile and rules were not saved, so browse still shows what it showed before. Saving the settings again finishes it.`
+		)}. ${STILL_LISTED} Its name, description, approval setting, profile and rules were not saved, so browse still shows what it showed before. Saving the settings again finishes it.`
 	};
 }
 
@@ -177,24 +181,29 @@ function rowNotSaved(e: unknown, to: GroupVisibility, flipped: boolean): GroupFo
 }
 
 /** A group ending up public saved its row, then could not read the host again
- *  before the declaration. Announcing needs a fresh public answer, so the
- *  declaration is left as it was, declared or not, and the profile and the
- *  rules after it are not written. */
+ *  before the declaration. Announcing needs a fresh public answer, so this
+ *  save neither publishes nor withdraws the declaration, and the profile and
+ *  the rules after it are not written. The group may already have been
+ *  declared, or not, so the message says only what this save did. */
 function notAnnounced(e: unknown, flipped: boolean): GroupFormFailure {
 	const landed = flipped
 		? "The group's PDS took the change to public and this site saved the settings"
 		: 'This site saved the settings';
 	return {
 		ok: false,
-		error: `${landed}, but the group was not announced: its PDS did not answer when asked again whether it is public (${describeError(
+		error: `${landed}, but this save neither published nor withdrew the group's declaration, which is what lists it in browse: its PDS did not answer when asked again whether it is public (${describeError(
 			e
-		)}). Its declaration was left as it was, and its profile and rules were not updated. Saving the settings again finishes it.`
+		)}). The declaration is as it was before this save, and the group's profile and rules were not updated. Saving the settings again finishes it.`
 	};
 }
 
 /** A write to the group's records failed after the row was saved, and after the
  *  host when `to` names the visibility it took. `listed` says the group ended
- *  up private and its declaration was not withdrawn before the failure. */
+ *  up private and its declaration was not withdrawn before the failure.
+ *
+ *  Saving again finishes it on either side. The form then shows what the host
+ *  holds, so the next save has no host change to make, and it writes the
+ *  declaration (or withdraws it), the profile and the rules again. */
 function recordsNotUpdated(
 	e: unknown,
 	to: GroupVisibility | null,
@@ -207,7 +216,7 @@ function recordsNotUpdated(
 		ok: false,
 		error: `${landed}, but this group's records were not updated: ${describeError(e)}.${
 			listed ? ` ${STILL_LISTED}` : ''
-		}`
+		} Saving the settings again finishes it.`
 	};
 }
 
@@ -227,13 +236,16 @@ interface SaveState {
 	writer: GroupRepoWriter;
 	/** Whether this save moved the host. */
 	flipped: boolean;
+	/** The approval this save writes: the form's, or the row's when the save
+	 *  settles on a visibility the form did not choose. */
+	requireApproval: boolean;
 }
 
 function writeRow(s: SaveState): Promise<void> {
 	return updateGroup(s.db, s.group.id, {
 		name: s.data.name,
 		description: s.data.description || null,
-		requireApproval: s.data.requireApproval
+		requireApproval: s.requireApproval
 	});
 }
 
@@ -359,17 +371,6 @@ export async function runUpdateGroup(
 	const approval = approvalRefusal(data.visibility, data.requireApproval);
 	if (approval) return { ok: false, error: approval };
 
-	// The group as this save describes it. The records must describe the group
-	// as it is after the save: the declaration and the about space's read policy
-	// follow the visibility this save settles on, and the profile's `joinPolicy`
-	// is derived from that and the approval setting.
-	const fresh: GroupRow = {
-		...group,
-		name: data.name,
-		description: data.description || null,
-		require_approval: data.requireApproval ? 1 : 0
-	};
-
 	// Every read before the first write, the host's visibility among them.
 	// `failed` names the read in progress, so a failure says which one it was.
 	const noCredential = 'this site holds no credential it can use for the group';
@@ -387,7 +388,7 @@ export async function runUpdateGroup(
 		failed = "the group's profile and rules could not be read from its PDS";
 		about = await readGroupAbout(reader, group);
 		failed = noCredential;
-		writer = await groupWriter(env, db, fresh);
+		writer = await groupWriter(env, db, group);
 	} catch (e) {
 		return nothingSaved(failed, e);
 	}
@@ -402,6 +403,23 @@ export async function runUpdateGroup(
 	}
 	const flipped = shown !== undefined && data.visibility !== shown && shown === host;
 	const visibility: GroupVisibility = flipped ? data.visibility : host;
+
+	// The approval control is drawn for the chosen visibility: a private choice
+	// fixes it on. When the save settles on the other visibility, the form's
+	// approval was drawn for a group this one will not be, so the row's stands.
+	const requireApproval =
+		visibility === data.visibility ? data.requireApproval : Boolean(group.require_approval);
+
+	// The group as this save describes it. The records must describe the group
+	// as it is after the save: the declaration and the about space's read policy
+	// follow the visibility this save settles on, and the profile's `joinPolicy`
+	// is derived from that and the approval above.
+	const fresh: GroupRow = {
+		...group,
+		name: data.name,
+		description: data.description || null,
+		require_approval: requireApproval ? 1 : 0
+	};
 
 	// The host. A failure here, including the permission read in front of it,
 	// stops the save before anything is written.
@@ -429,7 +447,8 @@ export async function runUpdateGroup(
 		reader,
 		about,
 		writer,
-		flipped
+		flipped,
+		requireApproval
 	};
 	return declarationRequired(visibility) ? saveAsPublic(state) : saveAsPrivate(state);
 }
