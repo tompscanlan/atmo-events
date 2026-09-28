@@ -147,9 +147,9 @@ describe('groupPath', () => {
 	});
 });
 
-// A members space that errors answers a read from the roster row, where the
-// write gate fails closed. A PDS blip must not 404 a member out of their own
-// private group, and must not grant anything either.
+// A members space that errors confirms nobody, for a read as for a write. The
+// row cannot stand in for the record: a removal whose row delete failed leaves
+// a row behind, and it must not open a private group while the space is down.
 describe('readStanding', () => {
 	const down: GroupSpaceReader = {
 		async get() {
@@ -175,10 +175,14 @@ describe('readStanding', () => {
 
 	afterEach(() => vi.restoreAllMocks());
 
-	it('answers from the row when the members space errors, and grants nothing', async () => {
+	it('puts a caller off the roster when the members space errors, and grants nothing', async () => {
 		const member = await readStanding(db, withSpace, MEMBER, down);
-		expect(member.onRoster).toBe(true);
+		expect(member.onRoster).toBe(false);
 		expect(member.permissions.size).toBe(0);
+		// The row still names the role and status the page shows. Neither opens
+		// a read.
+		expect(member.role).toBe('member');
+		expect(member.status).toBe('active');
 		expect((await readStanding(db, withSpace, STRANGER, down)).onRoster).toBe(false);
 	});
 
@@ -297,8 +301,9 @@ describe('the page gate reads visibility from the host', () => {
 	});
 
 	// The membership half does not change: a caller on the roster sees the
-	// group at every visibility, so the host is not asked, and a host that is
-	// down cannot lock a member out of their own group.
+	// group at every visibility, so the host is not asked about it, and a
+	// visibility read that fails cannot lock out a member whose standing was
+	// read.
 	it('admits a member on the roster without asking the host, even when the host would fail', async () => {
 		const group = await hosted('private');
 		await addMember(db, group.id, MEMBER, 'member');

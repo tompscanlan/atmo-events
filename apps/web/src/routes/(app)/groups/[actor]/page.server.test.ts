@@ -16,10 +16,17 @@ vi.mock('$lib/groups/server/about-read', async (importOriginal) => ({
 vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { load } from './+page.server';
+import { notAllowed } from '$lib/groups/form-error';
 import { groupSpaceReader, type GroupSpaceReader } from '$lib/groups/server/about-read';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
-import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
+import { addMember, createGroup, getGroupByDid, recordGroupSpaces } from '$lib/groups/server/repo';
+import {
+	GROUP_NOT_FOUND,
+	GROUP_VISIBILITY_UNCHECKED,
+	groupRouteContext
+} from '$lib/groups/server/route-context';
 import { groupSpaceUris } from '$lib/groups/server/spaces';
+import type { CallerMembership } from '$lib/groups/types';
 
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
@@ -70,7 +77,12 @@ async function openAs(did: string | null) {
 		platform: { env: { DB: harness.db } }
 	} as unknown as Parameters<typeof load>[0])) as {
 		visibility: string | null;
-		about: { joinPolicy: string };
+		about: { name: string; joinPolicy: string };
+		membership: CallerMembership;
+		canSeeMembers: boolean;
+		canManageGroup: boolean;
+		canAdmitMembers: boolean;
+		canCreateEvent: boolean;
 	};
 }
 
@@ -105,10 +117,10 @@ describe('/groups/[actor] load', () => {
 		expect(host.asked).toEqual([ABOUT]);
 	});
 
-	// The gate never asks the host for a member, so a host that is down cannot
-	// lock them out; the page asks only to show the visibility. When it cannot
-	// say, the page still renders, with no visibility, and the join policy
-	// fails closed.
+	// The gate never asks the host about visibility for a member whose standing
+	// it read, so a failed visibility read cannot lock them out; the page asks
+	// only to show the visibility. When it cannot say, the page still renders,
+	// with no visibility, and the join policy fails closed.
 	it("a member's page loads with no visibility when the host cannot say", async () => {
 		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
 		vi.mocked(groupSpaceReader).mockResolvedValue(hostReading(new Error('getSpace failed: 502')));
@@ -127,5 +139,143 @@ describe('/groups/[actor] load', () => {
 		const data = await openAs(OWNER);
 
 		expect(data.visibility).toBeNull();
+	});
+});
+
+// A caller whose membership cannot be read is not on the roster for a read,
+// and the visibility gate decides for them as for any stranger. The window
+// that matters is a members space that errors while the about space still
+// answers: a host that is down as a whole fails the page anyway. REMOVED is a
+// removal whose row delete failed, so a row still names them and no record
+// does, and only the members space could have said which one to believe.
+describe('a members space that cannot be read', () => {
+	const REMOVED = 'did:plc:removed';
+	const PUBLIC = 'com.atproto.simplespace.defs#publicPolicy';
+	const PRIVATE = 'com.atproto.simplespace.defs#memberListPolicy';
+
+	let logged: ReturnType<typeof vi.spyOn>;
+
+	beforeEach(async () => {
+		const row = (await getGroupByDid(harness.db, GROUP_DID))!;
+		await addMember(harness.db, row.id, REMOVED, 'member');
+		logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+	});
+
+	afterEach(() => logged.mockRestore());
+
+	/** A host whose members space fails every read while its about space
+	 *  answers with a private profile, and whose about space reports
+	 *  `readPolicy`, or fails with it. `aboutReads` counts every about-space
+	 *  read, so a case can prove the profile was never read. */
+	function membersDown(
+		readPolicy: string | Error
+	): GroupSpaceReader & { asked: string[]; aboutReads: number } {
+		const host = {
+			asked: [] as string[],
+			aboutReads: 0,
+			async get(q: Parameters<GroupSpaceReader['get']>[0]) {
+				if (q.space !== ABOUT) throw new Error('com.atproto.space.getRecord failed: 502');
+				host.aboutReads++;
+				return {
+					uri: `${ABOUT}/${q.collection}/${q.rkey}`,
+					cid: 'bafytest',
+					collection: q.collection,
+					rkey: q.rkey,
+					value: { displayName: 'Members only', joinPolicy: 'invite' }
+				};
+			},
+			async list(q: Parameters<GroupSpaceReader['list']>[0]) {
+				if (q.space !== ABOUT) throw new Error('com.atproto.space.listRecords failed: 502');
+				host.aboutReads++;
+				return [];
+			},
+			async getSpace(space: string) {
+				host.asked.push(space);
+				if (readPolicy instanceof Error) throw readPolicy;
+				return { readPolicy };
+			}
+		};
+		return host;
+	}
+
+	it('a stale row does not open a private group, and its profile is never read', async () => {
+		const host = membersDown(PRIVATE);
+		vi.mocked(groupSpaceReader).mockResolvedValue(host);
+
+		await expect(openAs(REMOVED)).rejects.toMatchObject({
+			status: 404,
+			body: { message: GROUP_NOT_FOUND }
+		});
+		expect(host.asked).toEqual([ABOUT]);
+		expect(host.aboutReads).toBe(0);
+	});
+
+	// The events tab, the members page and every group form take their context
+	// from the same call, so they refuse the stale row with the page's 404.
+	it('the route context the tabs and forms share refuses the stale row the same way', async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(membersDown(PRIVATE));
+
+		await expect(groupRouteContext({}, harness.db, GROUP_DID, REMOVED)).rejects.toMatchObject({
+			status: 404,
+			body: { message: GROUP_NOT_FOUND }
+		});
+	});
+
+	it('a stale row gets the 503 when the host cannot say the visibility either', async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(membersDown(new Error('getSpace failed: 502')));
+
+		await expect(openAs(REMOVED)).rejects.toMatchObject({
+			status: 503,
+			body: { message: GROUP_VISIBILITY_UNCHECKED }
+		});
+	});
+
+	// Members lose what only members see for as long as the space is down. The
+	// row still names their role, which is display only, and a form that needs
+	// a permission says it could not be checked rather than "Not allowed".
+	it('a member reads a public group as a stranger does, and a form says why', async () => {
+		const host = membersDown(PUBLIC);
+		vi.mocked(groupSpaceReader).mockResolvedValue(host);
+
+		const data = await openAs(MEMBER);
+
+		expect(data.visibility).toBe('public');
+		expect(host.asked).toEqual([ABOUT]);
+		expect(data.membership.onRoster).toBe(false);
+		expect(data.membership.unreadable).toMatch(/failed: 502/);
+		expect(data.membership.role).toBe('member');
+		expect(data.membership.permissions.size).toBe(0);
+		expect({
+			canSeeMembers: data.canSeeMembers,
+			canManageGroup: data.canManageGroup,
+			canAdmitMembers: data.canAdmitMembers,
+			canCreateEvent: data.canCreateEvent
+		}).toEqual({
+			canSeeMembers: false,
+			canManageGroup: false,
+			canAdmitMembers: false,
+			canCreateEvent: false
+		});
+		expect(notAllowed(data.membership, 'MANAGE_GROUP')).toEqual({
+			ok: false,
+			error: expect.stringContaining('could not be checked')
+		});
+	});
+
+	it('a caller with no row gets the answers a stranger always got', async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(membersDown(PRIVATE));
+		await expect(openAs(STRANGER)).rejects.toMatchObject({
+			status: 404,
+			body: { message: GROUP_NOT_FOUND }
+		});
+
+		vi.mocked(groupSpaceReader).mockResolvedValue(membersDown(new Error('getSpace failed: 502')));
+		await expect(openAs(STRANGER)).rejects.toMatchObject({
+			status: 503,
+			body: { message: GROUP_VISIBILITY_UNCHECKED }
+		});
+
+		vi.mocked(groupSpaceReader).mockResolvedValue(membersDown(PUBLIC));
+		expect((await openAs(STRANGER)).visibility).toBe('public');
 	});
 });
