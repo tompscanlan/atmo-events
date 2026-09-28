@@ -91,8 +91,10 @@ export async function groupRouteContext(
 
 	// The membership half first. Whether the caller is on the roster is a
 	// question about their membership record, and a caller on it sees the group
-	// at every visibility, so the host is not asked at all: one read fewer, and
-	// a host that is down cannot lock a member out of their own group.
+	// at every visibility, so the host is not asked about visibility: one read
+	// fewer, and a visibility read that fails cannot lock out a member whose
+	// standing was read. A members space that cannot be read confirms nobody,
+	// so the caller then goes through the visibility check like anyone else.
 	const membership = await readStanding(db, group, callerDid, reader);
 	if (membership.onRoster) return { group, membership, visibility: null };
 
@@ -112,13 +114,19 @@ export async function groupRouteContext(
 	return { group, membership, visibility };
 }
 
-/** The caller's standing for a read. When the members space errors, this
- *  answers from the roster row instead of failing the page. That is softer
- *  than the write gate on purpose, so a PDS blip does not 404 a member out of
- *  their own private group. The fallback grants no permission: without the
- *  records the loader returns none, so no management control renders. It is
- *  marked `unreadable`, so a form refuses with "could not be checked" rather
- *  than "not allowed". */
+/** The caller's standing for a read. When the members space errors, the caller
+ *  is off the roster for this read and holds no permission, and the gate then
+ *  decides as it would for a stranger: a public group reads as it does for
+ *  anyone, a private one is a 404, and one whose host cannot say which is a
+ *  503. The row cannot stand in for the record: a removal whose row delete
+ *  failed leaves a row and no record, and answering from the row would let the
+ *  member it removed read a private group whenever the members space is down
+ *  and the about space is not. Members lose what only members see for as long
+ *  as that lasts.
+ *
+ *  The row still supplies `role`, `status` and `pendingRequestId`, which the
+ *  page shows and nothing gates on. The standing is marked `unreadable`, so a
+ *  form refuses with "could not be checked" rather than "not allowed". */
 export async function readStanding(
 	db: D1Database,
 	group: GroupRow,
@@ -130,11 +138,16 @@ export async function readStanding(
 	} catch (e) {
 		if (!reader) throw e;
 		console.error(
-			`[groups] ${group.group_did}: members space unreadable; the roster row answers this read:`,
+			`[groups] ${group.group_did}: members space unreadable; the caller is off the roster for this read:`,
 			e
 		);
-		const fallback = await getCallerMembership(db, group, callerDid, null);
-		return { ...fallback, unreadable: e instanceof Error ? e.message : String(e) };
+		const row = await getCallerMembership(db, group, callerDid, null);
+		return {
+			...row,
+			permissions: new Set(),
+			onRoster: false,
+			unreadable: e instanceof Error ? e.message : String(e)
+		};
 	}
 }
 

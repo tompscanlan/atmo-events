@@ -110,11 +110,14 @@ export interface CallerMembership {
 	/** On the roster: the only question the read gate asks. Taken from the
 	 *  caller's `membership` record when the members space reads clean and holds
 	 *  authz records, whatever the row says; from the row when the group has no
-	 *  records yet or its space cannot be read. `role` above is always the row's. */
+	 *  records yet or this deployment holds no credential to read them. False
+	 *  when the members space errors (`readStanding`), whatever the row says.
+	 *  `role` above is always the row's. */
 	onRoster: boolean;
-	/** Set, to the read's error, when the members space could not be read and
-	 *  the row answered instead (`readStanding`). `permissions` is then empty
-	 *  because it is unknown, not because nothing is granted. */
+	/** Set, to the read's error, when the members space could not be read
+	 *  (`readStanding`). The caller is then off the roster for the read, and
+	 *  `permissions` is empty because it is unknown, not because nothing is
+	 *  granted. */
 	unreadable?: string;
 }
 

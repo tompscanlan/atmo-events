@@ -748,9 +748,10 @@ export async function listJoinRequests(
  *
  *  `onRoster` uses the same sources for the read gate: the record when the
  *  space reads cleanly and holds config, so a half-failed revocation cannot
- *  open a private group either, and the row in both fallback cases. The softer
- *  read-side handling of a space that errors belongs to `readStanding`
- *  (`route-context.ts`), not to this function. */
+ *  open a private group either, and the row when there is no config or no
+ *  credential to read it with. A space that errors propagates here too.
+ *  `readStanding` (`route-context.ts`) turns that into "off the roster" for a
+ *  read, never into the row's answer. */
 export async function getCallerMembership(
 	db: D1Database,
 	group: GroupRow,

@@ -18,10 +18,12 @@
 //   the protocol layer.
 import type { CallerMembership, GroupVisibility } from './types';
 
-/** On the roster, as the loader decided it (`getCallerMembership`): the
- *  caller's membership record when the group's records can answer, the row only
- *  when they cannot. Asking `role` here instead would let a revocation whose row
- *  delete failed keep a private group open to the DID it removed. */
+/** On the roster, as the read path decided it (`readStanding`): the caller's
+ *  membership record when the group's members space answers, and the row only
+ *  when the space cannot be asked, because it holds no config yet or this
+ *  deployment holds no credential for the group. A members space that errors
+ *  puts nobody on the roster. Asking `role` here instead would let a revocation
+ *  whose row delete failed keep a private group open to the DID it removed. */
 function isActiveMember(membership: CallerMembership): boolean {
 	return membership.onRoster;
 }

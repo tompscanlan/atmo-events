@@ -1,4 +1,4 @@
-import { groupSpaceReader } from '$lib/groups/server/about-read';
+import { groupSpaceReader, type GroupSpaceReader } from '$lib/groups/server/about-read';
 import { listDeclaredGroups } from '$lib/groups/server/declaration-index';
 import { knownHandles } from '$lib/groups/server/handles';
 import { listGroups } from '$lib/groups/server/repo';
@@ -22,11 +22,15 @@ import type { PageServerLoad } from './$types';
  *  The exception is an undeclared group the caller reaches only through a
  *  membership row and does not own. Its row may be the trace of a removal
  *  whose row delete failed, so the caller's membership record is read, the
- *  same standing the group page gates on. Each such check costs a credential
- *  decrypt, a group session (a login on the first use in an isolate, cached
- *  after), 4 members-space reads and 3 D1 reads. Only a signed-in caller pays
- *  it, and `listGroups` bounds it: newest first, at most 6 at once, and no
- *  more than the page's limit plus the rejections along the way.
+ *  same standing the group page gates on. When that record cannot be read,
+ *  because the members space errors or the group's reader cannot be built,
+ *  the group is left out: the row alone does not list it.
+ *
+ *  Each such check costs a credential decrypt, a group session (a login on
+ *  the first use in an isolate, cached after), 4 members-space reads and 3 D1
+ *  reads. Only a signed-in caller pays it, and `listGroups` bounds it: newest
+ *  first, at most 6 at once, and no more than the page's limit plus the
+ *  rejections along the way.
  *
  *  The visibility badge is placement, with no host read per row: a group from
  *  the declaration index is public, and one the caller sees only through
@@ -42,12 +46,20 @@ export const load: PageServerLoad = async ({ locals, platform }) => {
 		callerDid: locals.did,
 		declared: await listDeclaredGroups(db),
 		onRoster: async (row) => {
-			// A reader that cannot be built is a read that failed, and the row
-			// answers it, as `readStanding` answers a members space that errors.
-			const reader = await groupSpaceReader(env, db, row).catch((e) => {
-				console.error(`[groups] ${row.group_did}: no members-space reader for browse:`, e);
-				return null;
-			});
+			// A reader that cannot be built is a members space that cannot be
+			// read, and that confirms nobody, as in `readStanding`. A null reader
+			// is not that: it is a group this deployment holds no credential for,
+			// and its row answers, as on the group page.
+			let reader: GroupSpaceReader | null;
+			try {
+				reader = await groupSpaceReader(env, db, row);
+			} catch (e) {
+				console.error(
+					`[groups] ${row.group_did}: no members-space reader for browse; the group is left out:`,
+					e
+				);
+				return false;
+			}
 			return (await readStanding(db, row, locals.did, reader)).onRoster;
 		}
 	});

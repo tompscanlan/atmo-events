@@ -20,9 +20,11 @@ import type { PageServerLoad } from './$types';
  *  The gate already asked the host for a caller off the roster, and that
  *  answer is reused. For a caller on the roster the gate did not ask, so the
  *  page does. A host that does not answer then leaves the page without a
- *  visibility (null) rather than failing it, which is why the gate skips the
- *  host for members: a host that is down must not lock them out. `null` too
- *  when this deployment holds no credential to ask with. */
+ *  visibility (null) rather than failing it, which is why the gate skips this
+ *  read for members: a visibility read that fails must not lock out a member
+ *  whose standing was read. A members space that cannot be read confirms
+ *  nobody, so that caller was gated as a stranger. `null` too when this
+ *  deployment holds no credential to ask with. */
 async function hostVisibility(
 	gate: GroupVisibility | null,
 	reader: GroupSpaceReader | null,
