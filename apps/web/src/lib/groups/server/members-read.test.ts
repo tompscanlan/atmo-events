@@ -569,8 +569,9 @@ describe('the gate, from records', () => {
 	it('takes the roster from the row in both fallback cases, and nobody else is on it', async () => {
 		// Readable, no config yet: the rows are what the group was created with.
 		expect((await getCallerMembership(db, group, ADMIN, readerOver([]))).onRoster).toBe(true);
-		// A members space this deployment cannot read: the row answers the read,
-		// while the permission half still grants nothing.
+		// No credential, so no reader: the row answers the read, while the
+		// permission half still grants nothing. A space that errors is a
+		// different case, and `readStanding` puts nobody on the roster for it.
 		const unreadable = await getCallerMembership(db, group, ADMIN, null);
 		expect(unreadable.onRoster).toBe(true);
 		expect(unreadable.permissions.size).toBe(0);
