@@ -32,6 +32,16 @@ that changed the host but stopped before the declaration leaves them apart until
 the repair aligns the declaration. The settings save changes the read policy before anything else,
 and the repair aligns the declaration to it, never the other way round.
 
+The settings form sends the visibility it showed as well as the one chosen, and the save changes the
+read policy only when the two differ, so a tab opened before someone else changed the visibility
+cannot change it back. A form that could not show one is refused if its choice differs from the
+PDS. After the read policy, a save that leaves the group private withdraws the declaration before
+the D1 row takes the new name and description, because browse shows a declared group's text from
+that row. A save that leaves it public writes the row, asks the PDS again, and declares the group
+only if the answer is still public. `update-group.ts` has the whole order and what each failure
+leaves behind. There is no lock: the moment between that last read and the declaration is the
+repair's to heal.
+
 The about space's member list mirrors the roster. Joining or being admitted puts a member on it,
 and leaving or being removed takes them off, always on the side of less access: the membership
 record is written before the list entry and removed after it (`server/roster.ts`). Under a

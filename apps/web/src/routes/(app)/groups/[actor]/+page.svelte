@@ -257,6 +257,13 @@
 			{#if showSettings}
 				<form {...updateGroupForm} class="mt-4 flex flex-col gap-4">
 					<input type="hidden" name="groupDid" value={group.group_did} />
+					<!-- The visibility this form shows, which is the host's as the page
+					     read it, and empty when the host could not be read. The save
+					     moves the visibility only when the choice below differs from
+					     it, so a tab opened before someone else changed the visibility
+					     does not change it back. A hidden input's value is its default,
+					     so a reset keeps it, and a reload after a save refreshes it. -->
+					<input type="hidden" name="shownVisibility" value={visibility ?? ''} />
 					<!-- Default values, not values. A successful remote-form submission
 					     resets the form, and a reset restores each control's default
 					     (`defaultValue` / `defaultChecked`), not the `value` property

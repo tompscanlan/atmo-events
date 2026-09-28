@@ -2,6 +2,7 @@
 // `groups.remote.ts` because the Vite plugin rejects non-remote exports from
 // `*.remote.ts`, so anything declared there cannot be imported by a test.
 import * as v from 'valibot';
+import { GROUP_VISIBILITIES } from './types';
 
 /** An HTML checkbox sends `on` when ticked and nothing at all when not, so
  *  presence is the value.
@@ -26,4 +27,18 @@ import * as v from 'valibot';
 export const checkboxField = v.pipe(
 	v.optional(v.string(), ''),
 	v.transform((value) => value !== '')
+);
+
+/** The visibility the settings form showed when its page opened: the host's,
+ *  as the page read it, sent in a hidden input beside the one chosen. The save
+ *  changes the visibility only when the two differ (./update-group.ts).
+ *
+ *  Two ways to have none, and both parse to `undefined`, "shown unknown": the
+ *  page sends an empty value when it could not read the host, and a form
+ *  rendered before this field existed sends no key at all. The `''` default is
+ *  there for the reason `checkboxField` gives, so a missing key still runs the
+ *  transform. Anything else must be one of the visibilities. */
+export const shownVisibilityField = v.pipe(
+	v.optional(v.union([v.literal(''), v.picklist(GROUP_VISIBILITIES)]), ''),
+	v.transform((value) => (value === '' ? undefined : value))
 );

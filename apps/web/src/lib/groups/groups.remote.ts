@@ -15,7 +15,7 @@ import type { GroupFormFailure, GroupFormResult } from './form-result';
 import { formError, notAllowed } from './form-error';
 // Not declared here: the Vite plugin rejects non-remote exports from a
 // `*.remote.ts`, so a field that a test needs lives in ./form-fields.ts.
-import { checkboxField } from './form-fields';
+import { checkboxField, shownVisibilityField } from './form-fields';
 import { runCreateGroup, type CreateGroupOutcome } from './create-group';
 import { runUpdateGroup } from './update-group';
 import { GROUP_LABEL_PATTERN } from './handle-label';
@@ -144,6 +144,9 @@ export const updateGroupForm = form(
 		name: v.pipe(v.string(), v.trim(), v.minLength(2), v.maxLength(120)),
 		description: v.optional(v.pipe(v.string(), v.maxLength(4000))),
 		visibility: v.picklist(GROUP_VISIBILITIES),
+		/** What the form showed, so the save can tell a change from a stale
+		 *  default (./update-group.ts). Empty or missing is "shown unknown". */
+		shownVisibility: shownVisibilityField,
 		requireApproval: checkboxField,
 		rules: v.optional(v.pipe(v.string(), v.maxLength(8000)))
 	}),
@@ -153,8 +156,8 @@ export const updateGroupForm = form(
 			return notAllowed(membership, 'MANAGE_GROUP');
 		}
 		// The ordered save, and every way it can fail, is in ./update-group.ts.
-		// The visibility is the form's choice: it goes to the host, and the row
-		// keeps no copy.
+		// The visibility goes to the host, and the row keeps no copy. It moves
+		// only when the form's choice differs from what the form showed.
 		return runUpdateGroup(env, db, group, callerDid, data);
 	}
 );

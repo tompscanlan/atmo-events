@@ -403,7 +403,8 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	/** The one record a stranger can read, and the only door here that changes
 	 *  what the anonymous web sees. The visibility is handed in, as the settings
-	 *  save hands in the form's choice: the row holds none. `visibility: 'host'`
+	 *  save hands in the one it settles on (the form's choice when the owner
+	 *  changed it, the host's otherwise): the row holds none. `visibility: 'host'`
 	 *  takes the host's answer instead, the way Repair aligns the declaration. */
 	reconcileDeclaration: async (env, args) => {
 		const group = await groupById(env, args.groupId);
