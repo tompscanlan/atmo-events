@@ -8,7 +8,7 @@
 // pass while the form still broke.
 import { describe, it, expect } from 'vitest';
 import * as v from 'valibot';
-import { checkboxField } from './form-fields';
+import { checkboxField, shownVisibilityField } from './form-fields';
 
 const form = v.object({ requireApproval: checkboxField });
 
@@ -24,5 +24,30 @@ describe('checkboxField', () => {
 
 	it('reads an empty string as false', () => {
 		expect(v.parse(form, { requireApproval: '' }).requireApproval).toBe(false);
+	});
+});
+
+// The settings form's hidden record of what it showed. A page that could not
+// read the host sends it empty, and a page rendered before the field existed
+// sends nothing; the save reads both as "shown unknown", so both must parse to
+// `undefined` rather than to a visibility or an error.
+describe('shownVisibilityField', () => {
+	const settings = v.object({ shownVisibility: shownVisibilityField });
+
+	it('reads a missing key as unknown', () => {
+		expect(v.parse(settings, {}).shownVisibility).toBeUndefined();
+	});
+
+	it('reads an empty value as unknown', () => {
+		expect(v.parse(settings, { shownVisibility: '' }).shownVisibility).toBeUndefined();
+	});
+
+	it('reads a visibility as itself', () => {
+		expect(v.parse(settings, { shownVisibility: 'private' }).shownVisibility).toBe('private');
+		expect(v.parse(settings, { shownVisibility: 'public' }).shownVisibility).toBe('public');
+	});
+
+	it('refuses a value that is not a visibility', () => {
+		expect(() => v.parse(settings, { shownVisibility: 'unlisted' })).toThrow();
 	});
 });
