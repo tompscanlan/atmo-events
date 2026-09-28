@@ -156,8 +156,8 @@ export const updateGroupForm = form(
 			return notAllowed(membership, 'MANAGE_GROUP');
 		}
 		// The ordered save, and every way it can fail, is in ./update-group.ts.
-		// The visibility is the form's choice: it goes to the host, and the row
-		// keeps no copy.
+		// The visibility goes to the host, and the row keeps no copy. It moves
+		// only when the form's choice differs from what the form showed.
 		return runUpdateGroup(env, db, group, callerDid, data);
 	}
 );
