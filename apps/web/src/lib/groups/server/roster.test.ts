@@ -432,6 +432,41 @@ describe('a grant whose join-date read fails after the row moved', () => {
 	});
 });
 
+// An admission is an entry. For a DID already on the roster it would publish
+// the requested role over a row that kept its old one, and the gate reads the
+// record, so the member would hold a role the roster does not show and that no
+// role change granted. It is refused before anything is written, the way a
+// direct add of a rostered DID already is.
+describe('an admission for a DID already on the roster', () => {
+	/** A pending request for `did`, written past `requestJoin`, which answers
+	 *  `already-member` for a rostered DID. This is the state a request from
+	 *  before a direct add closed requests is left in. */
+	async function staleRequest(did: string): Promise<string> {
+		const id = crypto.randomUUID();
+		await harness.db
+			.prepare(
+				`INSERT INTO join_requests (id, group_id, did, status, created_at, updated_at)
+				 VALUES (?, ?, ?, 'pending', 0, 0)`
+			)
+			.bind(id, group.id, did)
+			.run();
+		return id;
+	}
+
+	it('approving it is refused, and the row, the record and the list stay as they were', async () => {
+		const request = await staleRequest(MEMBER);
+
+		const error = await admitFromRequest(ctx(ADMIN), request, 'admin').catch((e: unknown) => e);
+
+		expect(error).toMatchObject({ name: 'GroupRuleError', reason: 'constraint' });
+		expect(order).toEqual([]);
+		expect(memberListCalls()).toEqual([]);
+		expect((await getMemberRow(harness.db, group.id, MEMBER))?.role).toBe('member');
+		expect((await membershipRecord(MEMBER))?.value).toMatchObject({ roles: ['member'] });
+		expect(await gate(MEMBER)).toEqual(granted('member'));
+	});
+});
+
 // The about space's member list mirrors the roster. Under member-list read,
 // that list is what lets a member read the group's face at the host with their
 // own credential, from any app. So a DID goes on it when it enters the roster

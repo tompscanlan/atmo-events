@@ -193,6 +193,31 @@ describe('joining', () => {
 			reason: 'not-found'
 		});
 	});
+
+	// A DID can hold a row and a pending request at once only through data that
+	// predates the direct add closing requests, or a direct add racing the
+	// approval. Approving it anyway would leave the row at its old role while
+	// the caller publishes the requested one, and the record wins in the gate.
+	// So the approval is refused, as a direct add of a rostered DID is, and
+	// neither the row nor the request moves.
+	it('refuses to approve a request for a DID already on the roster, and changes nothing', async () => {
+		const created = await group();
+		await addMember(db, created.id, ALICE, 'member');
+		harness.raw
+			.prepare(
+				`INSERT INTO join_requests (id, group_id, did, status, created_at, updated_at)
+				 VALUES ('stale', ?, ?, 'pending', 0, 0)`
+			)
+			.run(created.id, ALICE);
+
+		await expect(approveJoinRequest(db, created.id, 'stale', OWNER, 'admin')).rejects.toMatchObject(
+			{ name: 'GroupRuleError', reason: 'constraint' }
+		);
+
+		const membership = await getCallerMembership(db, created, ALICE, null);
+		expect(membership.role).toBe('member');
+		expect(membership.pendingRequestId).toBe('stale');
+	});
 });
 
 // Two rules in two layers. The create and the settings save refuse the

@@ -956,6 +956,13 @@ export async function addMember(
 /** Approve: roster insert and request close in one batch, so an approved
  *  request always has a member behind it.
  *
+ *  A request from a DID already on the roster is refused, and the batch
+ *  changes nothing: the unique index fails the insert, which rolls back the
+ *  close, and it surfaces as `GroupRuleError('constraint')`. Approving it
+ *  anyway would keep the row at its old role while the caller publishes the
+ *  requested one, and the gate reads the record. A direct add refuses a
+ *  rostered DID the same way.
+ *
  *  Returns the DID it admitted, because the caller needs it and only this
  *  function knows it: the applicant is named by the request, not by the form,
  *  and the membership record the caller writes next is keyed by that DID
@@ -981,8 +988,7 @@ export async function approveJoinRequest(
 				.prepare(
 					`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
 					 SELECT ?, ?, ?, r.id, 'active', ?, ? FROM roles r
-					 WHERE r.group_id = ? AND r.name = ?
-					 ON CONFLICT (group_id, did) DO NOTHING`
+					 WHERE r.group_id = ? AND r.name = ?`
 				)
 				.bind(crypto.randomUUID(), groupId, request.did, now, now, groupId, role),
 			db

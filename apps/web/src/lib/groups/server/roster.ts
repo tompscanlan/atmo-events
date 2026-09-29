@@ -292,7 +292,9 @@ export async function leaveGroup(ctx: RosterContext): Promise<void> {
 }
 
 /** Approve a pending request. The applicant is named by the request, which is
- *  why `approveJoinRequest` returns the DID it admitted. */
+ *  why `approveJoinRequest` returns the DID it admitted. A request from a DID
+ *  already on the roster is refused there, before any record is written, so
+ *  an approval never publishes a role the row does not hold. */
 export async function admitFromRequest(
 	ctx: RosterContext,
 	requestId: string,
