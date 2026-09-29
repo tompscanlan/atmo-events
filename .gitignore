@@ -19,6 +19,12 @@ Thumbs.db
 !.env.example
 !.env.test
 
+# Wrangler local secrets. The `.env*` rules above do not cover these:
+# `.dev.vars` is the file `wrangler dev` reads for Worker secrets.
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
 # VOD processing data (audio, transcripts)
 scripts/vod-processing/data
 scripts/vod-processing/model
