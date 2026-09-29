@@ -1,0 +1,82 @@
+// A group's public events, read through the same index as every other actor's. They
+// live in the group's public repo, not a space, because a space refuses anonymous
+// readers. The index stays current two ways: an actor-scoped query backfills the repo
+// once, and every gated write notifies the index with the URI it wrote. The client
+// comes from `$lib/contrail/index`, not the barrel, which pulls in a stylesheet.
+import { getServerClient } from '$lib/contrail/index';
+import type { ActorIdentifier } from '@atcute/lexicons';
+import type { ResourceUri } from '@atcute/lexicons/syntax';
+import type { RsvpAtmoEventListRecords } from '../../../lexicon-types';
+import type { GroupEventRecord, GroupRow } from '../types';
+
+/** Records where a group's repo lives, in the table the index resolves DIDs through.
+ *  COALESCE, so a partial write never erases a value already resolved. Returns false
+ *  when the row did not land, which is not fatal: the index can still resolve the DID
+ *  over the network, and a D1 seeded from `migrations/` alone has no `identities`. */
+export async function registerGroupIdentity(
+	db: D1Database,
+	identity: { did: string; handle: string | null; pds: string | null }
+): Promise<boolean> {
+	try {
+		await db
+			.prepare(
+				`INSERT INTO identities (did, handle, pds, resolved_at) VALUES (?, ?, ?, ?)
+				 ON CONFLICT (did) DO UPDATE SET
+					handle = COALESCE(excluded.handle, identities.handle),
+					pds = COALESCE(excluded.pds, identities.pds),
+					resolved_at = excluded.resolved_at`
+			)
+			.bind(identity.did, identity.handle, identity.pds, Date.now())
+			.run();
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** Called by the write gate with the URI it just wrote. A seam, so tests need no appview. */
+export type GroupEventNotifier = (uri: string) => Promise<void>;
+
+/** The group's public events, newest first by the record's own `createdAt`, since a
+ *  backfill stamps a whole repo with one ingest time. */
+export async function listGroupEvents(
+	db: D1Database,
+	group: GroupRow,
+	limit = 50
+): Promise<GroupEventRecord[]> {
+	// `listAuthored` answers in the `listRecords` shape. The generated types know only
+	// the endpoints that have a published lexicon.
+	const res = await getServerClient(db).get(
+		'rsvp.atmo.event.listAuthored' as 'rsvp.atmo.event.listRecords',
+		{
+			params: {
+				actor: group.group_did as ActorIdentifier,
+				sort: 'createdAt',
+				order: 'desc',
+				limit: Math.min(Math.max(limit, 1), 200)
+			}
+		}
+	);
+	if (!res.ok) return [];
+
+	return res.data.records.map((record: RsvpAtmoEventListRecords.Record) => ({
+		uri: record.uri,
+		cid: record.cid ?? '',
+		rkey: record.rkey,
+		value: record.value as unknown as Record<string, unknown>
+	}));
+}
+
+/** Hands a just-written URI to the index, which re-fetches it and applies a create,
+ *  update or delete. Throws what the index reports; the write gate decides what to show. */
+export function contrailNotifier(db: D1Database): GroupEventNotifier {
+	return async (uri: string) => {
+		const res = await getServerClient(db).post('rsvp.atmo.notifyOfUpdate', {
+			input: { uris: [uri as ResourceUri] }
+		});
+		if (!res.ok) throw new Error(`the index refused ${uri}`);
+		if (res.data.errors?.length) {
+			throw new Error(`the index rejected ${uri}: ${res.data.errors.join('; ')}`);
+		}
+	};
+}

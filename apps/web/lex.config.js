@@ -17,7 +17,8 @@ export default defineLexiconConfig({
                   "community.lexicon.location.address",
                   "community.lexicon.location.fsq",
                   "community.lexicon.location.geo",
-                  "community.lexicon.location.hthree"
+                  "community.lexicon.location.hthree",
+                  "net.openmeet.group.declaration"
         ],
       },
     ],
