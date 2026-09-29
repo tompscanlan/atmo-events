@@ -1,0 +1,11 @@
+# Copy to `.dev.vars` (git-ignored) for `wrangler dev`. Values below are examples only.
+
+# 32-byte base64 AES-256-GCM key that wraps the group PDS passwords held in D1.
+# Generate one with:
+#   node -e "console.log(Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'))"
+# In production this is a Worker secret: `wrangler secret put GROUP_CREDENTIAL_KEY`.
+GROUP_CREDENTIAL_KEY=
+
+# Invite code for the group PDS, which requires one to create an account.
+# In production this is a Worker secret: `wrangler secret put GROUP_PDS_INVITE_CODE`.
+GROUP_PDS_INVITE_CODE=
