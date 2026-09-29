@@ -157,7 +157,8 @@ describe('mintGroupAccount — a failure after the account exists', () => {
 	it.each([
 		[
 			'the app password is refused',
-			() => stubPds({ appPassword: Response.json({ error: 'InternalServerError' }, { status: 500 }) }),
+			() =>
+				stubPds({ appPassword: Response.json({ error: 'InternalServerError' }, { status: 500 }) }),
 			async () => {}
 		],
 		[

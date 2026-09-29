@@ -34,7 +34,10 @@ beforeEach(() => {
 			// (measured on the alpha PDS: `{}` gets this exact 400).
 			if (init?.body != null) {
 				return Response.json(
-					{ error: 'InvalidRequest', message: 'A request body was provided when none was expected' },
+					{
+						error: 'InvalidRequest',
+						message: 'A request body was provided when none was expected'
+					},
 					{ status: 400 }
 				);
 			}
