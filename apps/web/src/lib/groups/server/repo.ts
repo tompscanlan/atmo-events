@@ -931,30 +931,54 @@ export async function requestJoin(
 }
 
 /** Puts `did` on the roster with `role`. Used by the no-approval join path and
- *  by approval; the owner role is unreachable through it because the schema
- *  reserves that role for `groups.owner_did`. */
+ *  by a direct add; the owner role is unreachable through it because the
+ *  schema reserves that role for `groups.owner_did`.
+ *
+ *  A DID already on the roster is refused by the unique index, as
+ *  `GroupRuleError('constraint')`.
+ *
+ *  A pending request from `did` is closed as approved in the same batch, by
+ *  `decidedBy` (null for an open join, which nobody decided). The DID is in,
+ *  so the request is answered: left pending it would sit in the queue for a
+ *  member, and approving it would try to admit them again. */
 export async function addMember(
 	db: D1Database,
 	groupId: string,
 	did: string,
-	role: Exclude<GroupRoleName, 'owner'>
+	role: Exclude<GroupRoleName, 'owner'>,
+	decidedBy: string | null = null
 ): Promise<void> {
 	await ensureGroupsSchema(db);
 	const now = Date.now();
 	await guard(() =>
-		db
-			.prepare(
-				`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
-				 SELECT ?, ?, ?, r.id, 'active', ?, ? FROM roles r
-				 WHERE r.group_id = ? AND r.name = ?`
-			)
-			.bind(crypto.randomUUID(), groupId, did, now, now, groupId, role)
-			.run()
+		db.batch([
+			db
+				.prepare(
+					`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
+					 SELECT ?, ?, ?, r.id, 'active', ?, ? FROM roles r
+					 WHERE r.group_id = ? AND r.name = ?`
+				)
+				.bind(crypto.randomUUID(), groupId, did, now, now, groupId, role),
+			db
+				.prepare(
+					`UPDATE join_requests SET status = 'approved', decided_by_did = ?, decided_at = ?,
+					   updated_at = ?
+					 WHERE group_id = ? AND did = ? AND status = 'pending'`
+				)
+				.bind(decidedBy, now, now, groupId, did)
+		])
 	);
 }
 
 /** Approve: roster insert and request close in one batch, so an approved
  *  request always has a member behind it.
+ *
+ *  A request from a DID already on the roster is refused, and the batch
+ *  changes nothing: the unique index fails the insert, which rolls back the
+ *  close, and it surfaces as `GroupRuleError('constraint')`. Approving it
+ *  anyway would keep the row at its old role while the caller publishes the
+ *  requested one, and the gate reads the record. A direct add refuses a
+ *  rostered DID the same way.
  *
  *  Returns the DID it admitted, because the caller needs it and only this
  *  function knows it: the applicant is named by the request, not by the form,
@@ -981,8 +1005,7 @@ export async function approveJoinRequest(
 				.prepare(
 					`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
 					 SELECT ?, ?, ?, r.id, 'active', ?, ? FROM roles r
-					 WHERE r.group_id = ? AND r.name = ?
-					 ON CONFLICT (group_id, did) DO NOTHING`
+					 WHERE r.group_id = ? AND r.name = ?`
 				)
 				.bind(crypto.randomUUID(), groupId, request.did, now, now, groupId, role),
 			db

@@ -292,7 +292,9 @@ export async function leaveGroup(ctx: RosterContext): Promise<void> {
 }
 
 /** Approve a pending request. The applicant is named by the request, which is
- *  why `approveJoinRequest` returns the DID it admitted. */
+ *  why `approveJoinRequest` returns the DID it admitted. A request from a DID
+ *  already on the roster is refused there, before any record is written, so
+ *  an approval never publishes a role the row does not hold. */
 export async function admitFromRequest(
 	ctx: RosterContext,
 	requestId: string,
@@ -313,13 +315,14 @@ export async function admitFromRequest(
 	return admitted;
 }
 
-/** Direct add, without a request. */
+/** Direct add, without going through a request. A request the DID has
+ *  pending is closed by the same row write, as decided by the caller. */
 export async function admitMember(
 	ctx: RosterContext,
 	did: string,
 	role: AssignableRole
 ): Promise<void> {
-	await addMember(ctx.db, ctx.group.id, did, role);
+	await addMember(ctx.db, ctx.group.id, did, role, ctx.callerDid);
 	const createdAt = await published(did, () => joinedAt(ctx, did));
 	await published(did, () =>
 		putGroupMembership({ ...ctx, subject: did, roles: [role], createdAt, intent: 'admit' })

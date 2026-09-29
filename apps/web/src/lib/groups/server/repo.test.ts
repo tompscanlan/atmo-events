@@ -16,6 +16,7 @@ import {
 	getCallerMembership,
 	getGroupByDid,
 	listGroups,
+	listJoinRequests,
 	listMembers,
 	recordGroupSpaces,
 	rehearseCreateGroup,
@@ -192,6 +193,66 @@ describe('joining', () => {
 		await expect(approveJoinRequest(db, created.id, pending, OWNER)).rejects.toMatchObject({
 			reason: 'not-found'
 		});
+	});
+
+	// A DID can hold a row and a pending request at once only through data that
+	// predates the direct add closing requests, or a direct add racing the
+	// approval. Approving it anyway would leave the row at its old role while
+	// the caller publishes the requested one, and the record wins in the gate.
+	// So the approval is refused, as a direct add of a rostered DID is, and
+	// neither the row nor the request moves.
+	it('refuses to approve a request for a DID already on the roster, and changes nothing', async () => {
+		const created = await group();
+		await addMember(db, created.id, ALICE, 'member');
+		harness.raw
+			.prepare(
+				`INSERT INTO join_requests (id, group_id, did, status, created_at, updated_at)
+				 VALUES ('stale', ?, ?, 'pending', 0, 0)`
+			)
+			.run(created.id, ALICE);
+
+		await expect(approveJoinRequest(db, created.id, 'stale', OWNER, 'admin')).rejects.toMatchObject(
+			{ name: 'GroupRuleError', reason: 'constraint' }
+		);
+
+		const membership = await getCallerMembership(db, created, ALICE, null);
+		expect(membership.role).toBe('member');
+		expect(membership.pendingRequestId).toBe('stale');
+	});
+
+	// A direct add is an answer to the applicant's request, so it closes it.
+	// Left pending, the request would sit in the queue for a member, and
+	// approving it later would try to admit them a second time.
+	it('closes a pending request when the DID is added directly', async () => {
+		const created = await group();
+		await requestJoin(db, created, ALICE, 'hello', 'public');
+
+		await addMember(db, created.id, ALICE, 'admin', OWNER);
+
+		const membership = await getCallerMembership(db, created, ALICE, null);
+		expect(membership.role).toBe('admin');
+		expect(membership.pendingRequestId).toBeNull();
+		expect(await listJoinRequests(db, created.id, 'all')).toMatchObject([
+			{ did: ALICE, status: 'approved' }
+		]);
+		expect(
+			harness.raw.prepare(`SELECT decided_by_did AS by FROM join_requests WHERE did = ?`).get(ALICE)
+		).toEqual({ by: OWNER });
+	});
+
+	// The same holds for an open join by someone whose request predates the
+	// group turning approval off: they are in, so the request is answered.
+	it('closes a pending request when an open join admits the DID', async () => {
+		const created = await group();
+		await requestJoin(db, created, ALICE, 'hello', 'public');
+		harness.raw.prepare(`UPDATE groups SET require_approval = 0 WHERE id = ?`).run(created.id);
+
+		expect(await requestJoin(db, { ...created, require_approval: 0 }, ALICE, null, 'public')).toBe(
+			'joined'
+		);
+
+		expect((await getCallerMembership(db, created, ALICE, null)).pendingRequestId).toBeNull();
+		expect(await listJoinRequests(db, created.id, 'pending')).toEqual([]);
 	});
 });
 
