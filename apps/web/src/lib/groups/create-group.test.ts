@@ -95,6 +95,60 @@ describe('a name the PDS refuses', () => {
 	});
 });
 
+describe('a mint failure that is the deployment’s, not the user’s', () => {
+	// A spent, wrong, disabled or taken-down invite code all come back from the
+	// PDS as the same error, and the create path holds no admin credential to
+	// ask which. So the form says only that it is not the user's fault, and this
+	// log line is what an operator greps or alerts on.
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	const refuseInvite = () =>
+		stubPds({
+			account: () =>
+				Response.json(
+					{ error: 'InvalidInviteCode', message: 'Provided invite code not available' },
+					{ status: 400 }
+				)
+		});
+
+	it('logs one structured line naming the failure, and no secret', async () => {
+		refuseInvite();
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		expect(result.ok).toBe(false);
+		expect(logged).toHaveBeenCalledTimes(1);
+		expect(logged).toHaveBeenCalledWith({
+			event: 'groups.mint-failed',
+			failure: 'invite-unavailable',
+			registered: false
+		});
+		const line = JSON.stringify(logged.mock.calls);
+		expect(line).not.toContain(env.GROUP_PDS_INVITE_CODE);
+		expect(line).not.toContain(env.GROUP_CREDENTIAL_KEY);
+		expect(line).not.toContain(env.GROUP_ACCOUNT_EMAIL);
+	});
+
+	it('logs nothing for a name the user can change', async () => {
+		stubPds({
+			account: () =>
+				Response.json(
+					{ error: 'HandleNotAvailable', message: 'Handle already taken' },
+					{ status: 400 }
+				)
+		});
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		expect(result.ok).toBe(false);
+		expect(logged).not.toHaveBeenCalled();
+	});
+});
+
 describe('refusing before the irreversible step', () => {
 	// A deployment that cannot keep the credential must not mint: the app
 	// password is shown exactly once, so minting first strands the account.

@@ -213,6 +213,18 @@ export async function runCreateGroup(
 		minted = await mintGroupAccount(mint, data.label);
 	} catch (e) {
 		if (!(e instanceof GroupMintError)) throw e;
+		// A name the user can change is answered on the form. Every other failure
+		// is the deployment's, and the form cannot name its cause: a spent, wrong,
+		// disabled or taken-down invite code all arrive as `invite-unavailable`.
+		// This line is what an operator greps or alerts on. It carries the class
+		// only, never the code, the email or the PDS's own message.
+		if (e.failure !== 'handle-taken' && e.failure !== 'handle-invalid') {
+			console.error({
+				event: 'groups.mint-failed',
+				failure: e.failure,
+				registered: e.registered !== undefined
+			});
+		}
 		const error = mintErrorMessage(e, data.label);
 		// A mint can fail after the account exists, and then it hands back the
 		// owner's key with the error. The key goes to the owner either way.
