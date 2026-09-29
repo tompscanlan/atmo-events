@@ -315,13 +315,14 @@ export async function admitFromRequest(
 	return admitted;
 }
 
-/** Direct add, without a request. */
+/** Direct add, without going through a request. A request the DID has
+ *  pending is closed by the same row write, as decided by the caller. */
 export async function admitMember(
 	ctx: RosterContext,
 	did: string,
 	role: AssignableRole
 ): Promise<void> {
-	await addMember(ctx.db, ctx.group.id, did, role);
+	await addMember(ctx.db, ctx.group.id, did, role, ctx.callerDid);
 	const createdAt = await published(did, () => joinedAt(ctx, did));
 	await published(did, () =>
 		putGroupMembership({ ...ctx, subject: did, roles: [role], createdAt, intent: 'admit' })

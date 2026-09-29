@@ -931,25 +931,42 @@ export async function requestJoin(
 }
 
 /** Puts `did` on the roster with `role`. Used by the no-approval join path and
- *  by approval; the owner role is unreachable through it because the schema
- *  reserves that role for `groups.owner_did`. */
+ *  by a direct add; the owner role is unreachable through it because the
+ *  schema reserves that role for `groups.owner_did`.
+ *
+ *  A DID already on the roster is refused by the unique index, as
+ *  `GroupRuleError('constraint')`.
+ *
+ *  A pending request from `did` is closed as approved in the same batch, by
+ *  `decidedBy` (null for an open join, which nobody decided). The DID is in,
+ *  so the request is answered: left pending it would sit in the queue for a
+ *  member, and approving it would try to admit them again. */
 export async function addMember(
 	db: D1Database,
 	groupId: string,
 	did: string,
-	role: Exclude<GroupRoleName, 'owner'>
+	role: Exclude<GroupRoleName, 'owner'>,
+	decidedBy: string | null = null
 ): Promise<void> {
 	await ensureGroupsSchema(db);
 	const now = Date.now();
 	await guard(() =>
-		db
-			.prepare(
-				`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
-				 SELECT ?, ?, ?, r.id, 'active', ?, ? FROM roles r
-				 WHERE r.group_id = ? AND r.name = ?`
-			)
-			.bind(crypto.randomUUID(), groupId, did, now, now, groupId, role)
-			.run()
+		db.batch([
+			db
+				.prepare(
+					`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
+					 SELECT ?, ?, ?, r.id, 'active', ?, ? FROM roles r
+					 WHERE r.group_id = ? AND r.name = ?`
+				)
+				.bind(crypto.randomUUID(), groupId, did, now, now, groupId, role),
+			db
+				.prepare(
+					`UPDATE join_requests SET status = 'approved', decided_by_did = ?, decided_at = ?,
+					   updated_at = ?
+					 WHERE group_id = ? AND did = ? AND status = 'pending'`
+				)
+				.bind(decidedBy, now, now, groupId, did)
+		])
 	);
 }
 

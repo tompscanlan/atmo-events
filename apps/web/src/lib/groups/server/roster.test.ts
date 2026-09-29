@@ -465,6 +465,22 @@ describe('an admission for a DID already on the roster', () => {
 		expect((await membershipRecord(MEMBER))?.value).toMatchObject({ roles: ['member'] });
 		expect(await gate(MEMBER)).toEqual(granted('member'));
 	});
+
+	it('a direct add closes the pending request it answers', async () => {
+		expect(await requestJoin(harness.db, group, NEWCOMER, 'hello', 'public')).toBe('pending');
+
+		await admitMember(ctx(ADMIN), NEWCOMER, 'member');
+
+		const request = await harness.db
+			.prepare(`SELECT status, decided_by_did FROM join_requests WHERE group_id = ? AND did = ?`)
+			.bind(group.id, NEWCOMER)
+			.first<{ status: string; decided_by_did: string | null }>();
+		expect(request).toEqual({ status: 'approved', decided_by_did: ADMIN });
+		expect(
+			(await getCallerMembership(harness.db, group, NEWCOMER, reader)).pendingRequestId
+		).toBeNull();
+		expect(await gate(NEWCOMER)).toEqual(granted('member'));
+	});
 });
 
 // The about space's member list mirrors the roster. Under member-list read,
