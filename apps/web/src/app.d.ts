@@ -115,6 +115,16 @@ declare global {
 				/** Min ms between geocoder calls in the drip — the rate limiter. Set to
 				 *  the ceiling the geocoder tier allows; defaults to DEFAULT_GEOCODE_SLEEP_MS. */
 				GEOCODE_SLEEP_MS?: string;
+				/** PDS that new group accounts are created on. It must serve Spaces. */
+				GROUP_PDS_SERVICE?: string;
+				/** Handle suffix for groups, e.g. `groups.example.com`. */
+				GROUP_HANDLE_DOMAIN?: string;
+				/** Invite code for the group PDS (set via `wrangler secret put`). */
+				GROUP_PDS_INVITE_CODE?: string;
+				/** Address group accounts are created with; each gets a plus address. */
+				GROUP_ACCOUNT_EMAIL?: string;
+				/** Key that encrypts stored group app passwords (set via `wrangler secret put`). */
+				GROUP_CREDENTIAL_KEY?: string;
 			};
 			/** Cloudflare Worker execution context. Use `ctx.waitUntil(promise)` to
 			 *  let the worker keep a fire-and-forget task alive after the response
