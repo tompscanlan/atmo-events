@@ -98,7 +98,7 @@ const CREATE_VISIBILITY = 'public';
 
 const EVENT_COLLECTION = 'community.lexicon.calendar.event';
 /** The record in the group's public repo that lets other apps find it. */
-const DECLARATION_COLLECTION = 'net.openmeet.group.declaration';
+const DECLARATION_COLLECTION = 'group.opensocial.declaration';
 
 /** Owner and admin hold all six permissions, a member holds none. */
 const SEEDED_BUNDLE_SIZES = { owner: 6, admin: 6, member: 0 };
@@ -699,13 +699,13 @@ async function main() {
 		const bobsRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
-			'net.openmeet.group.membership',
+			'group.opensocial.membership',
 			BOB
 		);
 		const accessRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
-			'net.openmeet.group.access',
+			'group.opensocial.access',
 			'self'
 		);
 		record(
@@ -715,15 +715,18 @@ async function main() {
 				recorded.hasAccess === true &&
 				// Keyed by the member DID, and the app's reader agrees with the PDS.
 				bobsRecord.status === 200 &&
-				bobsRecord.value?.subject === BOB &&
+				bobsRecord.value?.member === BOB &&
 				JSON.stringify(bobsRecord.value?.roles) === JSON.stringify(['admin']) &&
 				accessRecord.status === 200 &&
-				JSON.stringify(accessRecord.value?.roles) === JSON.stringify(['owner', 'admin', 'member']),
+				accessRecord.value?.public === false &&
+				JSON.stringify(accessRecord.value?.readRoles) ===
+					JSON.stringify(['owner', 'admin', 'member']),
 			'the roster is membership records in the members space, keyed by member DID',
 			`source ${recorded.source}; ${recorded.roster.length} member(s) ` +
 				`(${recorded.roster.map((e) => e.role).join(', ')}); ` +
 				`${BOB} read straight off the PDS at rkey=${BOB} as ${JSON.stringify(bobsRecord.value?.roles)}; ` +
-				`access record roles ${JSON.stringify(accessRecord.value?.roles)}`
+				`access record readRoles ${JSON.stringify(accessRecord.value?.readRoles)}, ` +
+				`public ${accessRecord.value?.public}`
 		);
 
 		// 14. the space's own member list stays empty ------------------------------
@@ -747,7 +750,7 @@ async function main() {
 		const permissionsRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
-			'net.openmeet.group.permissions',
+			'group.opensocial.permissions',
 			'self'
 		);
 		const eventPermissionsRecord = await spaceRecord(
@@ -759,12 +762,13 @@ async function main() {
 		const adminRoleRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
-			'net.openmeet.group.role',
+			'group.opensocial.role',
 			'admin'
 		);
-		const communityActions = (permissionsRecord.value?.bindings ?? []).find(
+		const adminBinding = (permissionsRecord.value?.roles ?? []).find(
 			(binding) => binding.role === 'admin'
-		)?.actions;
+		);
+		const communityActions = adminBinding?.actions;
 		const modalityActions = (eventPermissionsRecord.value?.bindings ?? []).find(
 			(binding) => binding.role === 'admin'
 		)?.actions;
@@ -772,14 +776,18 @@ async function main() {
 			authz.hasAuthz === true &&
 				authz.roles.join(',') === 'owner,admin,member' &&
 				adminRoleRecord.status === 200 &&
-				adminRoleRecord.value?.id === 'admin' &&
+				adminRoleRecord.value?.displayName === 'Admin' &&
 				JSON.stringify(communityActions) ===
-					JSON.stringify(['community.configure', 'admit', 'eject', 'role.assign']) &&
+					JSON.stringify(['group.configure', 'admit', 'eject', 'role.assign']) &&
+				// No admin may assign or eject the owner.
+				JSON.stringify(adminBinding?.assignable) === JSON.stringify(['admin', 'member']) &&
+				JSON.stringify(permissionsRecord.value?.defaultRoles) === JSON.stringify(['member']) &&
 				JSON.stringify(modalityActions) === JSON.stringify(['manageEvents', 'createEvent']) &&
 				authz.effective.permissions.join(',') ===
 					'ADMIT_MEMBERS,ASSIGN_ROLES,CREATE_EVENT,EJECT_MEMBERS,MANAGE_EVENTS,MANAGE_GROUP',
 			'roles and both binding records are in the members space, and a grant is their union',
-			`roles [${authz.roles.join(', ')}]; permissions ${JSON.stringify(communityActions)}; ` +
+			`roles [${authz.roles.join(', ')}]; permissions ${JSON.stringify(communityActions)} ` +
+				`assigning ${JSON.stringify(adminBinding?.assignable)}; ` +
 				`eventPermissions ${JSON.stringify(modalityActions)}; ` +
 				`admin resolves to ${authz.effective.permissions.length} permission(s)`
 		);
@@ -862,7 +870,7 @@ async function main() {
 		const demotedRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
-			'net.openmeet.group.membership',
+			'group.opensocial.membership',
 			BOB
 		);
 		const demoted = await must('membership', { groupId: group.id, did: BOB, probe: rosterProbe });
@@ -897,7 +905,7 @@ async function main() {
 		const ejectedRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
-			'net.openmeet.group.membership',
+			'group.opensocial.membership',
 			BOB
 		);
 		record(
@@ -922,14 +930,14 @@ async function main() {
 		const declaration = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
 		record(
 			declaration.status === 200 &&
-				declaration.value?.aboutSpace === aboutSpaceUri &&
+				declaration.value?.meta === aboutSpaceUri &&
 				typeof declaration.value?.createdAt === 'string' &&
 				// Discovery only: nothing that shows a stranger the group's name.
 				Object.keys(declaration.value ?? {})
 					.sort()
-					.join(',') === '$type,aboutSpace,createdAt',
+					.join(',') === '$type,createdAt,meta',
 			'a public group is DECLARED in its public repo, readable with no credential',
-			`anonymous getRecord ${declaration.status}; points at ${declaration.value?.aboutSpace}; ` +
+			`anonymous getRecord ${declaration.status}; points at ${declaration.value?.meta}; ` +
 				`fields ${Object.keys(declaration.value ?? {}).join(', ')}`
 		);
 

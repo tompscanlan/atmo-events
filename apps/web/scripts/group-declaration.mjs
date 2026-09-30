@@ -15,8 +15,8 @@
  * /groups/<did> answers 200 for a public group, and 404 for a private one or a
  * DID that is not a group here. The declaration on the group's own PDS must agree:
  *
- *   public  -> it exists, has exactly $type, aboutSpace and createdAt, and
- *              points at this DID's about space;
+ *   public  -> it exists, has exactly $type, createdAt and meta, and
+ *              points at this DID's meta space;
  *   private -> RecordNotFound, because the owner chose not to be found.
  *
  * The origin's index must agree too. It is read without an `actor` parameter,
@@ -33,8 +33,8 @@ if (!args[0]?.startsWith('http')) {
 }
 const origin = args.shift().replace(/\/$/, '');
 
-const COLLECTION = 'net.openmeet.group.declaration';
-const ABOUT_SPACE_TYPE = 'net.openmeet.space.about';
+const COLLECTION = 'group.opensocial.declaration';
+const META_SPACE_TYPE = 'group.opensocial.meta';
 
 let passed = 0;
 let failed = 0;
@@ -136,17 +136,14 @@ async function checkGroup(group, index) {
 		);
 	}
 	const value = body.value ?? {};
-	const want = `at://${did}/space/${ABOUT_SPACE_TYPE}/self`;
+	const want = `at://${did}/space/${META_SPACE_TYPE}/self`;
 	const fields = Object.keys(value).sort().join(',');
 	// Asserted on the raw JSON a stranger receives, not through our own code.
-	if (value.$type !== COLLECTION || fields !== '$type,aboutSpace,createdAt') {
+	if (value.$type !== COLLECTION || fields !== '$type,createdAt,meta') {
 		return fail(`${label}: declaration shape`, `$type ${value.$type}; fields ${fields}`);
 	}
-	if (value.aboutSpace !== want) {
-		return fail(
-			`${label}: declaration points elsewhere`,
-			`aboutSpace ${value.aboutSpace}, expected ${want}`
-		);
+	if (value.meta !== want) {
+		return fail(`${label}: declaration points elsewhere`, `meta ${value.meta}, expected ${want}`);
 	}
 	if (Number.isNaN(Date.parse(value.createdAt))) {
 		return fail(`${label}: declaration createdAt`, `not a date: ${value.createdAt}`);
@@ -169,7 +166,7 @@ async function checkGroup(group, index) {
 		);
 	}
 	const indexed = index ? ', indexed' : '';
-	pass(`${label}: public, declared${indexed}, points at its own about space (${value.createdAt})`);
+	pass(`${label}: public, declared${indexed}, points at its own meta space (${value.createdAt})`);
 }
 
 // ---------------------------------------------------------------------------
