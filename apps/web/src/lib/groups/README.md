@@ -11,13 +11,43 @@ group's PDS. D1 holds a cache of them that the app can query.
 | -------------------------------------- | ------------------------------------------------------- | ---------------------- |
 | public events                          | the group's public repo                                 | anyone                 |
 | declaration (makes the group findable) | the group's public repo, only while the group is public | anyone                 |
-| profile and rules                      | the `net.openmeet.space.about` space                    | the group's visibility |
-| roles, permissions, membership, access | the `net.openmeet.space.members` space                  | member list            |
+| profile and rules                      | the about space, of type `group.opensocial.meta`        | the group's visibility |
+| roles, permissions, membership, access | the members space, of type `group.opensocial.members`   | member list            |
 | a cache of the records above           | D1, `migrations/0001_groups.sql`                        | the app                |
 | the group's writing credential         | D1, encrypted, `migrations/0002_group_credentials.sql`  | the app                |
 
 The app reads both spaces as the group, with the group's own credential. A space needs a login
 whatever its read policy.
+
+## The records
+
+The spaces and records are the ones the opensocial.group proposal drafts as `group.opensocial.*`, at
+commit `d2c89a9` of `tangled.org/opensocial.group/proposal`. The standard calls the about space
+`meta`. The app keeps its own name for it, and so does D1's `about_space_uri` column.
+
+The event actions are the one exception. The standard puts a modality's authz in that modality's own
+space, and a group has no events space yet, so the two event actions stay in a record of the app's
+own in the members space, `eventPermissions`, beside the standard's `permissions`.
+
+Some records carry a field the standard does not declare. Each is one the app reads back:
+
+- `profile.location`, where an events group meets;
+- `createdAt` on the profile, which an edit keeps and a rebuild restores the group's date from;
+- `createdAt` on a rule, which is kept when the rule moves and orders rules with the same `order`;
+- `createdAt` on the declaration, which the declaration index sorts by.
+
+A rule's required `title` is the first 64 graphemes of its line, and its `text` is the whole line.
+A role's required `displayName` is its id with a capital, so `owner` shows as "Owner".
+
+The group.opensocial lexicons do not resolve, so they cannot be pulled. Unchanged copies of the
+ones the app writes are in `lexicons/reference/group/opensocial`, and `record-lexicons.test.ts`
+checks every record builder against them, failing any field they do not declare and the list above
+does not name. Codegen does not read those copies: `@atcute/lex-cli` rejects the proposal's
+`space-ref` format. The declaration index needs the declaration's lexicon, so
+`lexicons/custom/group/opensocial/declaration.json` is the proposal's with `meta` given the format
+`uri`, and nothing else changed. `pnpm generate` rewrites `lex.config.js` and adds
+`group.opensocial.declaration` to its pull list. Take it out again: the NSID does not resolve, so
+there is nothing to pull.
 
 A group's visibility is its about space's read policy: public, or the member list for a private
 group. D1 has no column for it. The group pages ask the PDS for it
@@ -73,7 +103,9 @@ There are three roles: `owner`, `admin` and `member`. Permission names are a fix
 `permissions.ts`: `MANAGE_GROUP`, `ADMIT_MEMBERS`, `EJECT_MEMBERS`, `ASSIGN_ROLES`, `MANAGE_EVENTS`
 and `CREATE_EVENT`. Which role holds which permission is data, written as records in the members
 space, and a member's permissions are the union of what their role holds. The owner cannot be
-demoted, removed or leave; the schema enforces that as well as the code.
+demoted, removed or leave; the schema enforces that as well as the code. The published
+`permissions` record says so too: each role lists the roles it may assign and eject, and only the
+owner's list holds `owner`. A new member gets `member`, the record's `defaultRoles`.
 
 Permissions are read from the members space on every call, with no cache. A members space that
 cannot be read grants nothing and does not fall back to D1. A group with no members space, or no
