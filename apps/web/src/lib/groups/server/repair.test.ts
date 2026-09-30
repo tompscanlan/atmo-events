@@ -533,7 +533,7 @@ describe('Repair aligns the declaration to the host', () => {
 					repo: GROUP_DID,
 					collection: GROUP_DECLARATION_COLLECTION,
 					rkey: GROUP_DECLARATION_RKEY,
-					record: { aboutSpace: ABOUT, createdAt: new Date(group.created_at).toISOString() }
+					record: { meta: ABOUT, createdAt: new Date(group.created_at).toISOString() }
 				});
 			}
 			pds.clearLog();
@@ -585,7 +585,7 @@ describe('Repair aligns the declaration to the host', () => {
 			repo: GROUP_DID,
 			collection: GROUP_DECLARATION_COLLECTION,
 			rkey: GROUP_DECLARATION_RKEY,
-			record: { aboutSpace: ABOUT, createdAt: new Date(group.created_at).toISOString() }
+			record: { meta: ABOUT, createdAt: new Date(group.created_at).toISOString() }
 		});
 		await hostCall('com.atproto.simplespace.updateSpace', {
 			space: ABOUT,

@@ -92,14 +92,14 @@ describe('splitRecordUri', () => {
 	it('takes the collection and rkey off the tail of a space-scoped URI', () => {
 		expect(
 			splitRecordUri(
-				'at://did:plc:owner/space/net.openmeet.space.about/self/did:plc:repo/net.openmeet.group.rule/3mvg'
+				'at://did:plc:owner/space/group.opensocial.meta/self/did:plc:repo/group.opensocial.rule/3mvg'
 			)
-		).toEqual({ collection: 'net.openmeet.group.rule', rkey: '3mvg' });
+		).toEqual({ collection: 'group.opensocial.rule', rkey: '3mvg' });
 	});
 
 	it('handles a plain repo URI the same way', () => {
-		expect(splitRecordUri('at://did:plc:repo/net.openmeet.group.profile/self')).toEqual({
-			collection: 'net.openmeet.group.profile',
+		expect(splitRecordUri('at://did:plc:repo/group.opensocial.profile/self')).toEqual({
+			collection: 'group.opensocial.profile',
 			rkey: 'self'
 		});
 	});
@@ -124,7 +124,7 @@ describe('readGroupAbout', () => {
 				value: groupRuleRecord({ text: 'Be kind', order: 0 })
 			},
 			// A record class this reader does not read must not become a rule.
-			{ collection: 'net.openmeet.group.role', rkey: 'admin', value: { name: 'admin' } }
+			{ collection: 'group.opensocial.role', rkey: 'admin', value: { name: 'admin' } }
 		]);
 
 		const about = await readGroupAbout(reader, group);

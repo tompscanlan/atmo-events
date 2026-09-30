@@ -3,7 +3,7 @@ import { pdslsUrl } from './pdsls';
 import { spaceRecordUri } from './server/about-read';
 
 const GROUP = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
-const SPACE = `at://${GROUP}/space/net.openmeet.space.members/self`;
+const SPACE = `at://${GROUP}/space/group.opensocial.members/self`;
 
 describe('pdslsUrl', () => {
 	it('opens a bare DID as its repo', () => {
@@ -23,9 +23,9 @@ describe('pdslsUrl', () => {
 	});
 
 	it('takes a record in a space as the path, unchanged', () => {
-		const uri = spaceRecordUri(SPACE, GROUP, 'net.openmeet.group.membership', 'did:plc:member');
+		const uri = spaceRecordUri(SPACE, GROUP, 'group.opensocial.membership', 'did:plc:member');
 		expect(pdslsUrl(uri)).toBe(
-			`https://pds.ls/${SPACE}/${GROUP}/net.openmeet.group.membership/did:plc:member`
+			`https://pds.ls/${SPACE}/${GROUP}/group.opensocial.membership/did:plc:member`
 		);
 	});
 });

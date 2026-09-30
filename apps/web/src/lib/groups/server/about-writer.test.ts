@@ -54,7 +54,7 @@ beforeEach(async () => {
 	await addMember(db, group.id, MEMBER, 'member');
 	await recordGroupSpaces(db, group.id, {
 		aboutSpaceUri: ABOUT,
-		membersSpaceUri: spaceUri(GROUP_DID, 'net.openmeet.space.members', 'self')
+		membersSpaceUri: spaceUri(GROUP_DID, 'group.opensocial.members', 'self')
 	});
 	group = { ...group, about_space_uri: ABOUT };
 

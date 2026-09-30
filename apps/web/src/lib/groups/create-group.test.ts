@@ -284,7 +284,7 @@ describe('a successful create', () => {
 	});
 
 	// The only record a stranger can read, and the only one in the public repo.
-	it('declares a public group in its PUBLIC repo, pointing at the about space', async () => {
+	it('declares a public group in its PUBLIC repo, pointing at the meta space', async () => {
 		const { repoWrites } = stubPds();
 
 		await runCreateGroup(env, OWNER, data());
@@ -292,16 +292,16 @@ describe('a successful create', () => {
 		expect(repoWrites).toHaveLength(1);
 		expect(repoWrites[0]).toMatchObject({
 			repo: MINTED_DID,
-			collection: 'net.openmeet.group.declaration',
+			collection: 'group.opensocial.declaration',
 			rkey: 'self'
 		});
 		expect(repoWrites[0].record).toMatchObject({
-			$type: 'net.openmeet.group.declaration',
-			aboutSpace: `at://${MINTED_DID}/space/net.openmeet.space.about/self`
+			$type: 'group.opensocial.declaration',
+			meta: `at://${MINTED_DID}/space/group.opensocial.meta/self`
 		});
 		// "Discovery only": no name, no avatar, nothing a stranger could
-		// render without the credential the about space demands.
-		expect(Object.keys(repoWrites[0].record).sort()).toEqual(['$type', 'aboutSpace', 'createdAt']);
+		// render without the credential the meta space demands.
+		expect(Object.keys(repoWrites[0].record).sort()).toEqual(['$type', 'createdAt', 'meta']);
 	});
 
 	// A private group writes nothing to its public repo. A create that wrote a
@@ -325,17 +325,15 @@ describe('a successful create', () => {
 
 		await runCreateGroup(env, OWNER, data({ locationName: 'Kailua-Kona' }));
 
-		const profile = spaceWrites.filter(
-			(write) => write.collection === 'net.openmeet.group.profile'
-		);
+		const profile = spaceWrites.filter((write) => write.collection === 'group.opensocial.profile');
 		expect(profile).toHaveLength(1);
 		expect(profile[0]).toMatchObject({
-			space: `at://${MINTED_DID}/space/net.openmeet.space.about/self`,
-			collection: 'net.openmeet.group.profile',
+			space: `at://${MINTED_DID}/space/group.opensocial.meta/self`,
+			collection: 'group.opensocial.profile',
 			rkey: 'self'
 		});
 		expect(profile[0].record).toMatchObject({
-			$type: 'net.openmeet.group.profile',
+			$type: 'group.opensocial.profile',
 			displayName: 'Kona Trail Runners',
 			// Derived from the row, not taken from the form.
 			joinPolicy: 'approval',
@@ -352,28 +350,30 @@ describe('a successful create', () => {
 
 		await runCreateGroup(env, OWNER, data());
 
-		const members = `at://${MINTED_DID}/space/net.openmeet.space.members/self`;
-		const access = spaceWrites.find((w) => w.collection === 'net.openmeet.group.access');
-		const membership = spaceWrites.find((w) => w.collection === 'net.openmeet.group.membership');
+		const members = `at://${MINTED_DID}/space/group.opensocial.members/self`;
+		const access = spaceWrites.find((w) => w.collection === 'group.opensocial.access');
+		const membership = spaceWrites.find((w) => w.collection === 'group.opensocial.membership');
 
 		expect(access).toMatchObject({ space: members, rkey: 'self' });
-		expect(access?.record).toMatchObject({
-			$type: 'net.openmeet.group.access',
-			roles: ['owner', 'admin', 'member']
+		expect(access?.record).toEqual({
+			$type: 'group.opensocial.access',
+			public: false,
+			readRoles: ['owner', 'admin', 'member'],
+			grants: []
 		});
 		// Keyed by the member DID, which is what makes "is this DID a member" a
 		// single getRecord for any app that can read the space.
 		expect(membership).toMatchObject({ space: members, rkey: OWNER });
 		expect(membership?.record).toMatchObject({
-			$type: 'net.openmeet.group.membership',
-			subject: OWNER,
+			$type: 'group.opensocial.membership',
+			member: OWNER,
 			roles: ['owner']
 		});
 		// Before any authz record. Once a config exists the gate resolves from
 		// records, so writing the config first would leave the owner unable to
 		// admit themselves. This stub reads back its own writes, so it catches
 		// that order.
-		const firstAuthz = spaceWrites.findIndex((w) => w.collection === 'net.openmeet.group.role');
+		const firstAuthz = spaceWrites.findIndex((w) => w.collection === 'group.opensocial.role');
 		expect(firstAuthz).toBeGreaterThan(-1);
 		expect(spaceWrites.indexOf(membership!)).toBeLessThan(firstAuthz);
 	});
@@ -388,25 +388,33 @@ describe('a successful create', () => {
 
 		await runCreateGroup(env, OWNER, data());
 
-		const members = `at://${MINTED_DID}/space/net.openmeet.space.members/self`;
-		const roles = spaceWrites.filter((w) => w.collection === 'net.openmeet.group.role');
+		const members = `at://${MINTED_DID}/space/group.opensocial.members/self`;
+		const roles = spaceWrites.filter((w) => w.collection === 'group.opensocial.role');
 		expect(roles.map((w) => w.rkey)).toEqual(['owner', 'admin', 'member']);
 		expect(roles.every((w) => w.space === members)).toBe(true);
-		// Keyed by the role id, and the record repeats it: a role lifted out of
-		// its key is otherwise anonymous.
-		expect(roles[1].record).toMatchObject({ $type: 'net.openmeet.group.role', id: 'admin' });
+		// Keyed by the role id. The standard requires a display name, derived from it.
+		expect(roles[1].record).toEqual({ $type: 'group.opensocial.role', displayName: 'Admin' });
 
-		const permissions = spaceWrites.find((w) => w.collection === 'net.openmeet.group.permissions');
+		const permissions = spaceWrites.find((w) => w.collection === 'group.opensocial.permissions');
 		expect(permissions).toMatchObject({ space: members, rkey: 'self' });
-		expect(permissions?.record).toMatchObject({
-			$type: 'net.openmeet.group.permissions',
-			bindings: [
-				{ role: 'owner', actions: ['community.configure', 'admit', 'eject', 'role.assign'] },
-				{ role: 'admin', actions: ['community.configure', 'admit', 'eject', 'role.assign'] },
+		expect(permissions?.record).toEqual({
+			$type: 'group.opensocial.permissions',
+			roles: [
+				{
+					role: 'owner',
+					actions: ['group.configure', 'admit', 'eject', 'role.assign'],
+					assignable: ['owner', 'admin', 'member']
+				},
+				{
+					role: 'admin',
+					actions: ['group.configure', 'admit', 'eject', 'role.assign'],
+					assignable: ['admin', 'member']
+				},
 				// Bound to nothing is a different statement from not bound, and the
 				// seeded member holds nothing at either altitude.
-				{ role: 'member', actions: [] }
-			]
+				{ role: 'member', actions: [], assignable: [] }
+			],
+			defaultRoles: ['member']
 		});
 
 		const eventPermissions = spaceWrites.find(
@@ -435,8 +443,9 @@ describe('a successful create', () => {
 
 		await runCreateGroup(env, OWNER, data({ rules: 'Be kind\n\n  No spam  \n' }));
 
-		const rules = spaceWrites.filter((write) => write.collection === 'net.openmeet.group.rule');
+		const rules = spaceWrites.filter((write) => write.collection === 'group.opensocial.rule');
 		expect(rules.map((write) => write.record.text)).toEqual(['Be kind', 'No spam']);
+		expect(rules.map((write) => write.record.title)).toEqual(['Be kind', 'No spam']);
 		expect(rules.map((write) => write.record.order)).toEqual([0, 1]);
 		// Distinct TIDs, so each rule has its own address.
 		expect(new Set(rules.map((write) => write.rkey)).size).toBe(2);
@@ -465,26 +474,32 @@ describe('a successful create', () => {
 	});
 
 	// A rebuild restores the group's creation date from its profile and the
-	// owner's join date from their membership, so every record a create writes
-	// must carry the row's own instant, not each writer's own, later "now".
-	it('stamps every record it writes with the row’s creation time', async () => {
+	// owner's join date from their membership, so every dated record a create
+	// writes must carry the row's own instant, not each writer's own, later "now".
+	it('stamps every dated record it writes with the row’s creation time', async () => {
 		const { spaceWrites, repoWrites } = stubPds();
 
 		await runCreateGroup(env, OWNER, data());
 
 		const [group] = (await rows('groups')) as { created_at: number }[];
-		const stamped = [...spaceWrites, ...repoWrites].filter((w) => 'createdAt' in w.record);
+		const written = [...spaceWrites, ...repoWrites];
+		const stamped = written.filter((w) => 'createdAt' in w.record);
 		expect(stamped.map((w) => w.collection)).toEqual(
 			expect.arrayContaining([
-				'net.openmeet.group.profile',
-				'net.openmeet.group.declaration',
-				'net.openmeet.group.membership',
-				'net.openmeet.group.access',
-				'net.openmeet.group.role'
+				'group.opensocial.profile',
+				'group.opensocial.declaration',
+				'group.opensocial.membership',
+				'net.openmeet.group.eventPermissions'
 			])
 		);
 		expect(new Set(stamped.map((w) => w.record.createdAt))).toEqual(
 			new Set([new Date(group.created_at).toISOString()])
+		);
+		// The standard dates none of these, and nothing reads a date back from them.
+		expect(
+			new Set(written.filter((w) => !('createdAt' in w.record)).map((w) => w.collection))
+		).toEqual(
+			new Set(['group.opensocial.access', 'group.opensocial.role', 'group.opensocial.permissions'])
 		);
 	});
 
@@ -500,10 +515,8 @@ describe('a successful create', () => {
 			about_space_uri: string;
 			members_space_uri: string;
 		}[];
-		expect(group.about_space_uri).toBe(`at://${MINTED_DID}/space/net.openmeet.space.about/self`);
-		expect(group.members_space_uri).toBe(
-			`at://${MINTED_DID}/space/net.openmeet.space.members/self`
-		);
+		expect(group.about_space_uri).toBe(`at://${MINTED_DID}/space/group.opensocial.meta/self`);
+		expect(group.members_space_uri).toBe(`at://${MINTED_DID}/space/group.opensocial.members/self`);
 	});
 });
 
@@ -512,7 +525,7 @@ describe('a successful create', () => {
 // reach the host: an about space provisioned public for a private group would
 // let any signed-in stranger's app read its profile and rules from the PDS.
 describe('the create choice sets the about space’s read policy', () => {
-	const ABOUT = `at://${MINTED_DID}/space/net.openmeet.space.about/self`;
+	const ABOUT = `at://${MINTED_DID}/space/group.opensocial.meta/self`;
 
 	it.each([
 		['public', 'publicPolicy'],
@@ -528,7 +541,7 @@ describe('the create choice sets the about space’s read policy', () => {
 			const about = requests.filter(
 				(r) =>
 					r.nsid === 'com.atproto.simplespace.createSpace' &&
-					r.body?.type === 'net.openmeet.space.about'
+					r.body?.type === 'group.opensocial.meta'
 			);
 			expect(about).toHaveLength(1);
 			expect(about[0].body?.readPolicy).toEqual({
@@ -549,8 +562,8 @@ describe('the create choice sets the about space’s read policy', () => {
 // backfill. The entry follows the owner's membership record, and the members
 // space's own list is never written.
 describe('the create puts the owner on the about space’s member list', () => {
-	const ABOUT = `at://${MINTED_DID}/space/net.openmeet.space.about/self`;
-	const MEMBERS = `at://${MINTED_DID}/space/net.openmeet.space.members/self`;
+	const ABOUT = `at://${MINTED_DID}/space/group.opensocial.meta/self`;
+	const MEMBERS = `at://${MINTED_DID}/space/group.opensocial.members/self`;
 	const MEMBER_LIST = /^com\.atproto\.simplespace\.(putMember|removeMember|listMembers)$/;
 
 	it.each(['public', 'private'] as const)(
@@ -564,7 +577,7 @@ describe('the create puts the owner on the about space’s member list', () => {
 			const membership = requests.findIndex(
 				(r) =>
 					r.nsid === 'com.atproto.space.putRecord' &&
-					r.body?.collection === 'net.openmeet.group.membership' &&
+					r.body?.collection === 'group.opensocial.membership' &&
 					r.body?.rkey === OWNER
 			);
 			const putMember = requests.findIndex((r) => r.nsid === 'com.atproto.simplespace.putMember');
@@ -590,7 +603,7 @@ describe('the create puts the owner on the about space’s member list', () => {
 // bindings). Public read there would publish the roster of every group, so the
 // visibility choice must not move it.
 describe('the members space is member-list read whatever the choice', () => {
-	const MEMBERS = `at://${MINTED_DID}/space/net.openmeet.space.members/self`;
+	const MEMBERS = `at://${MINTED_DID}/space/group.opensocial.members/self`;
 
 	it.each(['public', 'private'] as const)(
 		'a %s create provisions the members space with memberListPolicy',
@@ -603,7 +616,7 @@ describe('the members space is member-list read whatever the choice', () => {
 			const members = requests.filter(
 				(r) =>
 					r.nsid === 'com.atproto.simplespace.createSpace' &&
-					r.body?.type === 'net.openmeet.space.members'
+					r.body?.type === 'group.opensocial.members'
 			);
 			expect(members).toHaveLength(1);
 			expect(members[0].body?.readPolicy).toEqual({
@@ -652,8 +665,8 @@ describe('a create that fails after the mint', () => {
 					nsid.startsWith('com.atproto.simplespace.createSpace') ? pdsDown() : undefined
 			}
 		],
-		['writing the profile', async () => {}, { fail: writing('net.openmeet.group.profile') }],
-		['writing the members space', async () => {}, { fail: writing('net.openmeet.group.access') }],
+		['writing the profile', async () => {}, { fail: writing('group.opensocial.profile') }],
+		['writing the members space', async () => {}, { fail: writing('group.opensocial.access') }],
 		[
 			'adding the owner to the member list',
 			async () => {},
@@ -710,7 +723,7 @@ describe('a create that fails after the mint', () => {
 	});
 
 	it('names both halves of the fix when the profile write fails', async () => {
-		stubPds({ fail: writing('net.openmeet.group.profile') });
+		stubPds({ fail: writing('group.opensocial.profile') });
 
 		const result = await runCreateGroup(env, OWNER, data());
 

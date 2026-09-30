@@ -45,7 +45,6 @@ export interface GroupRoleRecord {
 	/** The role id, which is also the record key. */
 	id: GroupRoleName;
 	uri: string;
-	createdAt: string | null;
 }
 
 export interface GroupMembers {
@@ -122,7 +121,7 @@ export async function readGroupMembers(
 		const parsed = parseGroupRole(record.value, record.rkey);
 		// An unknown role is dropped: nothing could resolve its grant.
 		if (!parsed) continue;
-		roles.push({ id: parsed.id, uri: record.uri, createdAt: parsed.createdAt });
+		roles.push({ id: parsed.id, uri: record.uri });
 	}
 	roles.sort((a, b) => GROUP_ROLES.indexOf(a.id) - GROUP_ROLES.indexOf(b.id));
 
@@ -230,7 +229,7 @@ export async function readCallerAuthz(
 	for (const record of roleRecords) {
 		if (record.collection !== GROUP_ROLE_COLLECTION) continue;
 		const role = parseGroupRole(record.value, record.rkey);
-		if (role) roles.push({ id: role.id, uri: record.uri, createdAt: role.createdAt });
+		if (role) roles.push({ id: role.id, uri: record.uri });
 	}
 
 	return {

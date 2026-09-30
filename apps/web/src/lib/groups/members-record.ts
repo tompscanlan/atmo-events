@@ -3,7 +3,14 @@
 // `eventPermissions`). A membership is keyed by the member's DID, so `getRecord(did)`
 // answers "is this DID a member" in one call. There is no `status` and no suspension:
 // a grant is revoked by deleting the record that made it.
+//
+// All but `eventPermissions` are the opensocial.group proposal's records, as in
+// ./about-record.ts. The standard puts a modality's authz in the modality's own
+// space, and a group has no events space yet, so the event actions keep a record of
+// their own here.
 import {
+	ASSIGNABLE_BY_ROLE,
+	DEFAULT_ROLES,
 	GROUP_ROLES,
 	permissionsFromActions,
 	publishedActions,
@@ -12,16 +19,16 @@ import {
 	type PermissionAltitude
 } from './permissions';
 
-export const GROUP_MEMBERSHIP_COLLECTION = 'net.openmeet.group.membership';
-export const GROUP_ACCESS_COLLECTION = 'net.openmeet.group.access';
-export const GROUP_ROLE_COLLECTION = 'net.openmeet.group.role';
-export const GROUP_PERMISSIONS_COLLECTION = 'net.openmeet.group.permissions';
+export const GROUP_MEMBERSHIP_COLLECTION = 'group.opensocial.membership';
+export const GROUP_ACCESS_COLLECTION = 'group.opensocial.access';
+export const GROUP_ROLE_COLLECTION = 'group.opensocial.role';
+export const GROUP_PERMISSIONS_COLLECTION = 'group.opensocial.permissions';
 export const GROUP_EVENT_PERMISSIONS_COLLECTION = 'net.openmeet.group.eventPermissions';
 
 export const GROUP_ACCESS_RKEY = 'self';
 
 /** Both binding records are `self`. They are two collections, not one record, so the
- *  community half can move onto an upstream collection name without the modality half. */
+ *  standard's record carries only the standard's actions. */
 export const GROUP_PERMISSIONS_RKEY = 'self';
 
 /** Every role may read the members space. Derived, so a new role does not lose its read. */
@@ -82,23 +89,24 @@ export interface GroupMembershipInput {
 }
 
 /** One membership. `roles` holds our role ids, the same strings `role` records are
- *  keyed by. `subject` repeats the record key so a record lifted out of its key (a
- *  `listRecords` page, a CAR export) is not anonymous. The key still wins. */
+ *  keyed by. The subject is written as `member`, which repeats the record key so a
+ *  record lifted out of its key (a `listRecords` page, a CAR export) is not
+ *  anonymous. The key still wins. */
 export function groupMembershipRecord(input: GroupMembershipInput): Record<string, unknown> {
 	// `$type` is stamped by the writer, which owns the collection name.
 	return {
-		subject: input.subject,
+		member: input.subject,
 		roles: [...asRoles(input.roles)],
 		createdAt: input.createdAt || new Date().toISOString()
 	};
 }
 
-/** A membership record -> its fields, or null. A valid rkey wins over `subject`. */
+/** A membership record -> its fields, or null. A valid rkey wins over `member`. */
 export function parseGroupMembership(value: unknown, rkey?: string): GroupMembershipFields | null {
 	if (!value || typeof value !== 'object') return null;
 	const raw = value as Record<string, unknown>;
 	const keyed = rkey && isMembershipKey(rkey) ? rkey : '';
-	const claimed = typeof raw.subject === 'string' ? raw.subject.trim() : '';
+	const claimed = typeof raw.member === 'string' ? raw.member.trim() : '';
 	const subject = keyed || claimed;
 	if (!subject) return null;
 	return {
@@ -109,31 +117,30 @@ export function parseGroupMembership(value: unknown, rkey?: string): GroupMember
 }
 
 export interface GroupAccessFields {
+	/** The roles that may read the space. */
 	roles: GroupRoleName[];
-	createdAt: string | null;
+	public: boolean;
 }
 
-/** The access record for a space: which roles may read it. The draft's per-role OAuth
- *  scopes are omitted, since no authorization server for a community DID exists yet.
- *  It does not carry visibility, which is the about space's read policy. */
+/** The members space's access record: which roles may read it. It is never public,
+ *  and it grants no OAuth scopes, since no authorization server for a group DID
+ *  exists yet. It does not carry the group's visibility, which is the about space's
+ *  read policy. */
 export function groupAccessRecord(input: {
 	roles: readonly GroupRoleName[];
-	createdAt?: string;
 }): Record<string, unknown> {
 	return {
-		roles: [...asRoles(input.roles)],
-		createdAt: input.createdAt || new Date().toISOString()
+		public: false,
+		readRoles: [...asRoles(input.roles)],
+		grants: []
 	};
 }
 
 export function parseGroupAccess(value: unknown): GroupAccessFields | null {
 	if (!value || typeof value !== 'object') return null;
 	const raw = value as Record<string, unknown>;
-	if (!Array.isArray(raw.roles)) return null;
-	return {
-		roles: asRoles(raw.roles),
-		createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : null
-	};
+	if (!Array.isArray(raw.readRoles)) return null;
+	return { roles: asRoles(raw.readRoles), public: raw.public === true };
 }
 
 // The authz config. `role` declares that a role exists, so adding one is a record, not
@@ -144,26 +151,19 @@ export function parseGroupAccess(value: unknown): GroupAccessFields | null {
 /** A role record's key is its id. Unknown ids are dropped at parse. */
 export interface GroupRoleFields {
 	id: GroupRoleName;
-	createdAt: string | null;
 }
 
-/** One role's existence. `id` repeats the key, like `membership.subject`. */
-export function groupRoleRecord(input: {
-	id: GroupRoleName;
-	createdAt?: string;
-}): Record<string, unknown> {
-	return {
-		id: input.id,
-		createdAt: input.createdAt || new Date().toISOString()
-	};
+/** One role's existence. The standard requires a display name, and ours is the id
+ *  with a capital, so `owner` shows as "Owner". */
+export function groupRoleRecord(input: { id: GroupRoleName }): Record<string, unknown> {
+	return { displayName: input.id.charAt(0).toUpperCase() + input.id.slice(1) };
 }
 
-/** The rkey wins over a disagreeing `id`, since the key is what the host addresses. */
+/** The id is the key, since the key is what the host addresses. */
 export function parseGroupRole(value: unknown, rkey?: string): GroupRoleFields | null {
 	if (!value || typeof value !== 'object') return null;
-	const raw = value as Record<string, unknown>;
-	const id = asRole(rkey) ?? asRole(raw.id);
-	return id ? { id, createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : null } : null;
+	const id = asRole(rkey);
+	return id ? { id } : null;
 }
 
 /** One role's bundle, in our names. Published identifiers exist only on the wire. */
@@ -175,40 +175,60 @@ export interface GroupRoleBinding {
 export interface GroupBindingsFields {
 	altitude: PermissionAltitude;
 	bindings: GroupRoleBinding[];
-	createdAt: string | null;
 }
 
-/** The binding record for one altitude. A list of `{ role, actions }` pairs, not a
- *  map, because a lexicon has no open-map type. A role that grants nothing is still
- *  written with empty `actions`, since "bound to nothing" differs from "not bound". */
+/**
+ * The binding record for one altitude. A list of `{ role, actions }` pairs, not a
+ * map, because a lexicon has no open-map type. A role that grants nothing is still
+ * written with empty `actions`, since "bound to nothing" differs from "not bound".
+ *
+ * The community record is the standard's `permissions`: `{ roles, defaultRoles }`,
+ * where each binding also lists the roles it may assign and eject. Every role it
+ * names is one it binds, since a reader must reject an unknown role. The modality
+ * record is `eventPermissions`, which is ours: `{ bindings, createdAt }`.
+ */
 export function groupBindingsRecord(input: {
 	altitude: PermissionAltitude;
 	bundles: Readonly<Partial<Record<GroupRoleName, readonly GroupPermission[]>>>;
 	createdAt?: string;
 }): Record<string, unknown> {
-	const bindings = GROUP_ROLES.filter((role) => input.bundles[role] !== undefined).map((role) => ({
-		role,
-		actions: publishedActions(input.altitude, input.bundles[role] ?? [])
-	}));
+	const bound = GROUP_ROLES.filter((role) => input.bundles[role] !== undefined);
+	const actions = (role: GroupRoleName) =>
+		publishedActions(input.altitude, input.bundles[role] ?? []);
+
+	if (input.altitude === 'community') {
+		const declared = (roles: readonly GroupRoleName[]) =>
+			roles.filter((role) => bound.includes(role));
+		return {
+			roles: bound.map((role) => ({
+				role,
+				actions: actions(role),
+				assignable: declared(ASSIGNABLE_BY_ROLE[role])
+			})),
+			defaultRoles: declared(DEFAULT_ROLES)
+		};
+	}
 	return {
-		bindings,
+		bindings: bound.map((role) => ({ role, actions: actions(role) })),
 		createdAt: input.createdAt || new Date().toISOString()
 	};
 }
 
 /** A binding record -> its bundles, in our names. The altitude comes from the
- *  collection the caller read, not from the record. */
+ *  collection the caller read, not from the record, and says which of the two
+ *  shapes to read. */
 export function parseGroupBindings(
 	altitude: PermissionAltitude,
 	value: unknown
 ): GroupBindingsFields | null {
 	if (!value || typeof value !== 'object') return null;
 	const raw = value as Record<string, unknown>;
-	if (!Array.isArray(raw.bindings)) return null;
+	const entries = altitude === 'community' ? raw.roles : raw.bindings;
+	if (!Array.isArray(entries)) return null;
 
 	const bindings: GroupRoleBinding[] = [];
 	const seen = new Set<GroupRoleName>();
-	for (const entry of raw.bindings) {
+	for (const entry of entries) {
 		if (!entry || typeof entry !== 'object') continue;
 		const row = entry as Record<string, unknown>;
 		const role = asRole(row.role);
@@ -231,9 +251,5 @@ export function parseGroupBindings(
 		bindings.push({ role, permissions });
 	}
 
-	return {
-		altitude,
-		bindings,
-		createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : null
-	};
+	return { altitude, bindings };
 }

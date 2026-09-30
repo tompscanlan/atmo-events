@@ -1,8 +1,9 @@
 // The permission vocabulary is fixed in code. Which role holds which permission is
-// data, per group. The four community names are published in a `permissions` record
-// under the draft community standard's identifiers. The two modality names are ours,
-// since the standard leaves events to the app, and travel in `eventPermissions`.
-// There is no read permission: the host's read policy decides who may read.
+// data, per group. The four community names are published in the standard's
+// `permissions` record under its action identifiers. The two modality names are ours,
+// since the standard leaves a modality's authz to the modality's own space, and travel
+// in `eventPermissions`. There is no read permission: the host's read policy decides
+// who may read.
 
 export const COMMUNITY_PERMISSIONS = [
 	'MANAGE_GROUP',
@@ -21,7 +22,7 @@ export type CommunityPermission = (typeof COMMUNITY_PERMISSIONS)[number];
 /** Our name -> the identifier a record publishes. The only bridge between the two, so
  *  an upstream rename is an edit here plus a record replay. */
 export const PUBLISHED_ACTION: Readonly<Record<GroupPermission, string>> = {
-	MANAGE_GROUP: 'community.configure',
+	MANAGE_GROUP: 'group.configure',
 	ADMIT_MEMBERS: 'admit',
 	EJECT_MEMBERS: 'eject',
 	ASSIGN_ROLES: 'role.assign',
@@ -108,6 +109,18 @@ export const DEFAULT_ROLE_PERMISSIONS: Readonly<Record<GroupRoleName, readonly G
 		],
 		member: []
 	};
+
+/** The roles each role may assign and eject, published as the standard's
+ *  `assignable`. Only the owner's list holds `owner`, so no admin can assign or eject
+ *  the owner. The SQL triggers on `groups.owner_did` still pin it. */
+export const ASSIGNABLE_BY_ROLE: Readonly<Record<GroupRoleName, readonly GroupRoleName[]>> = {
+	owner: ['owner', 'admin', 'member'],
+	admin: ['admin', 'member'],
+	member: []
+};
+
+/** The roles a member is admitted with, published as the standard's `defaultRoles`. */
+export const DEFAULT_ROLES: readonly GroupRoleName[] = ['member'];
 
 export type EnforcedGroupPermission = GroupPermission;
 

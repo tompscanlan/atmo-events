@@ -117,7 +117,7 @@ const NOT_SHOWN: Partial<UpdateGroupData> = { shownVisibility: undefined };
 async function declaredNow(): Promise<boolean> {
 	const q = new URLSearchParams({
 		repo: GROUP_DID,
-		collection: 'net.openmeet.group.declaration',
+		collection: 'group.opensocial.declaration',
 		rkey: 'self'
 	});
 	return (await fetch(`${CRED.service}/xrpc/com.atproto.repo.getRecord?${q}`)).ok;
@@ -215,9 +215,9 @@ describe('a settings flip moves the about space’s read policy', () => {
 			// them depends on the direction, and the order cases below pin it.
 			expect(traced(pds)).toEqual([
 				`simplespace.updateSpace ${name}`,
-				`repo.${declarationWrite} net.openmeet.group.declaration`,
-				'space.putRecord net.openmeet.group.profile',
-				'space.createRecord net.openmeet.group.rule'
+				`repo.${declarationWrite} group.opensocial.declaration`,
+				'space.putRecord group.opensocial.profile',
+				'space.createRecord group.opensocial.rule'
 			]);
 		}
 	);
@@ -241,7 +241,7 @@ describe('a private switch withdraws the declaration before profile and rules', 
 		const pds = host((nsid, init) =>
 			nsid === 'com.atproto.space.putRecord' &&
 			(JSON.parse(String(init?.body)) as { collection: string }).collection ===
-				'net.openmeet.group.profile'
+				'group.opensocial.profile'
 				? pdsDown()
 				: undefined
 		);
@@ -254,8 +254,8 @@ describe('a private switch withdraws the declaration before profile and rules', 
 		// the rules were never reached.
 		expect(traced(pds)).toEqual([
 			'simplespace.updateSpace memberListPolicy',
-			'repo.deleteRecord net.openmeet.group.declaration',
-			'space.putRecord net.openmeet.group.profile'
+			'repo.deleteRecord group.opensocial.declaration',
+			'space.putRecord group.opensocial.profile'
 		]);
 	});
 });
@@ -422,9 +422,9 @@ describe('a visibility change reaches the host before the row', () => {
 		expect(result).toEqual({ ok: true });
 		expect(traced(pds)).toEqual([
 			'simplespace.updateSpace memberListPolicy',
-			'repo.deleteRecord net.openmeet.group.declaration',
-			'space.putRecord net.openmeet.group.profile',
-			'space.createRecord net.openmeet.group.rule'
+			'repo.deleteRecord group.opensocial.declaration',
+			'space.putRecord group.opensocial.profile',
+			'space.createRecord group.opensocial.rule'
 		]);
 		expect(sequence).toEqual([
 			'simplespace.getSpace (row Kona Trail Runners)',
@@ -453,9 +453,9 @@ describe('a visibility change reaches the host before the row', () => {
 		expect(result).toEqual({ ok: true });
 		expect(traced(pds)).toEqual([
 			'simplespace.updateSpace publicPolicy',
-			'repo.putRecord net.openmeet.group.declaration',
-			'space.putRecord net.openmeet.group.profile',
-			'space.createRecord net.openmeet.group.rule'
+			'repo.putRecord group.opensocial.declaration',
+			'space.putRecord group.opensocial.profile',
+			'space.createRecord group.opensocial.rule'
 		]);
 		expect(sequence).toEqual([
 			'simplespace.getSpace (row Kona Trail Runners)',
@@ -492,11 +492,11 @@ describe('a visibility change reaches the host before the row', () => {
 		expect(rowWhole().description).toBe('Trail runs at dawn');
 		expect(traced(pds)).toEqual([
 			'simplespace.updateSpace publicPolicy',
-			'repo.deleteRecord net.openmeet.group.declaration',
-			'space.putRecord net.openmeet.group.profile'
+			'repo.deleteRecord group.opensocial.declaration',
+			'space.putRecord group.opensocial.profile'
 		]);
 		expect(await declaredNow()).toBe(false);
-		const profile = pds.spaceWrites.find((w) => w.collection === 'net.openmeet.group.profile');
+		const profile = pds.spaceWrites.find((w) => w.collection === 'group.opensocial.profile');
 		expect(profile?.record.joinPolicy).toBe('invite');
 	});
 
@@ -541,9 +541,9 @@ describe('a visibility change reaches the host before the row', () => {
 		});
 		expect(again).toEqual({ ok: true });
 		expect(traced(pds)).toEqual([
-			'repo.putRecord net.openmeet.group.declaration',
-			'space.putRecord net.openmeet.group.profile',
-			'space.createRecord net.openmeet.group.rule'
+			'repo.putRecord group.opensocial.declaration',
+			'space.putRecord group.opensocial.profile',
+			'space.createRecord group.opensocial.rule'
 		]);
 		expect(await declaredNow()).toBe(true);
 	});
@@ -574,7 +574,7 @@ describe('a visibility change reaches the host before the row', () => {
 		const pds = host((nsid, init) =>
 			nsid === 'com.atproto.space.putRecord' &&
 			(JSON.parse(String(init?.body)) as { collection: string }).collection ===
-				'net.openmeet.group.profile'
+				'group.opensocial.profile'
 				? pdsDown()
 				: undefined
 		);
@@ -616,7 +616,7 @@ describe('a visibility change reaches the host before the row', () => {
 		// rules come after it, so they were never reached.
 		expect(traced(pds)).toEqual([
 			'simplespace.updateSpace memberListPolicy',
-			'repo.deleteRecord net.openmeet.group.declaration'
+			'repo.deleteRecord group.opensocial.declaration'
 		]);
 		expect(!result.ok && result.error).toContain('now reads it as private');
 		expect(!result.ok && result.error).toContain('disk I/O error');
@@ -640,7 +640,7 @@ describe('a visibility change reaches the host before the row', () => {
 		// Nothing after the withdrawal was attempted.
 		expect(traced(pds)).toEqual([
 			'simplespace.updateSpace memberListPolicy',
-			'repo.deleteRecord net.openmeet.group.declaration'
+			'repo.deleteRecord group.opensocial.declaration'
 		]);
 		expect(!result.ok && result.error).toContain('now reads it as private');
 		expect(!result.ok && result.error).toContain('still listed in browse');
@@ -657,7 +657,7 @@ describe('a visibility change reaches the host before the row', () => {
 			failPut &&
 			nsid === 'com.atproto.repo.putRecord' &&
 			(JSON.parse(String(init?.body)) as { collection: string }).collection ===
-				'net.openmeet.group.declaration'
+				'group.opensocial.declaration'
 				? pdsDown()
 				: undefined
 		);
@@ -763,9 +763,9 @@ describe('a save after one that the host took and the records did not', () => {
 
 		expect(result).toEqual({ ok: true });
 		expect(traced(pds)).toEqual([
-			'repo.deleteRecord net.openmeet.group.declaration',
-			'space.putRecord net.openmeet.group.profile',
-			'space.createRecord net.openmeet.group.rule'
+			'repo.deleteRecord group.opensocial.declaration',
+			'space.putRecord group.opensocial.profile',
+			'space.createRecord group.opensocial.rule'
 		]);
 	});
 });
@@ -794,7 +794,7 @@ describe('a save changes the visibility only when the owner changed it', () => {
 		expect(await declaredNow()).toBe(false);
 		expect(rowWhole().description).toBe('Typo fixed');
 		// The profile follows the host too.
-		const profile = pds.spaceWrites.find((w) => w.collection === 'net.openmeet.group.profile');
+		const profile = pds.spaceWrites.find((w) => w.collection === 'group.opensocial.profile');
 		expect(profile?.record.joinPolicy).toBe('invite');
 	});
 
@@ -867,8 +867,8 @@ describe('a save changes the visibility only when the owner changed it', () => {
 		expect(updateSpaceCalls(pds)).toEqual([]);
 		expect(rowWhole().description).toBe('Members only');
 		expect(traced(pds)).toEqual([
-			'repo.deleteRecord net.openmeet.group.declaration',
-			'space.putRecord net.openmeet.group.profile'
+			'repo.deleteRecord group.opensocial.declaration',
+			'space.putRecord group.opensocial.profile'
 		]);
 	});
 
@@ -912,7 +912,7 @@ describe('a stale form and the approval setting', () => {
 	const rowGroup = async () => (await getGroupByDid(harness.db, GROUP_DID))!;
 
 	const profileJoinPolicy = (pds: Host) =>
-		pds.spaceWrites.find((w) => w.collection === 'net.openmeet.group.profile')?.record.joinPolicy;
+		pds.spaceWrites.find((w) => w.collection === 'group.opensocial.profile')?.record.joinPolicy;
 
 	it('a stale form keeps the saved approval when the visibility it ends up with is not the one it chose', async () => {
 		// A private group, whose stale tab shows private with approval fixed on.

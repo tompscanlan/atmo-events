@@ -334,7 +334,12 @@ describe('writeGroupAccess', () => {
 			rkey: GROUP_ACCESS_RKEY,
 			intent: 'update'
 		});
-		expect(writes[0].record.roles).toEqual(['owner', 'admin', 'member']);
+		expect(writes[0].record).toEqual({
+			$type: GROUP_ACCESS_COLLECTION,
+			public: false,
+			readRoles: ['owner', 'admin', 'member'],
+			grants: []
+		});
 	});
 
 	it('needs MANAGE_GROUP: the space policy is configuration, not a roster act', async () => {
@@ -393,7 +398,9 @@ describe('writeGroupAuthz', () => {
 		});
 
 		expect(writes.map((write) => write.rkey)).toEqual(['member', 'self', 'self']);
-		expect(writes[1].record.bindings).toEqual([{ role: 'member', actions: ['admit'] }]);
+		expect(writes[1].record.roles).toEqual([
+			{ role: 'member', actions: ['admit'], assignable: [] }
+		]);
 		expect(writes[2].record.bindings).toEqual([{ role: 'member', actions: ['createEvent'] }]);
 	});
 });

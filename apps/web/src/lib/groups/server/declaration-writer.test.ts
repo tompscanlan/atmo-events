@@ -85,16 +85,16 @@ describe('writeGroupDeclaration', () => {
 		expect(result.uri).toBe(`at://${GROUP_DID}/${GROUP_DECLARATION_COLLECTION}/self`);
 	});
 
-	it('carries the about space pointer and nothing that names the group', async () => {
+	it('carries the meta space pointer and nothing that names the group', async () => {
 		await writeGroupDeclaration({ db, env, group, callerDid: OWNER, writer });
 
 		const record = writes[0].record as Record<string, unknown>;
-		expect(record.aboutSpace).toBe(ABOUT);
+		expect(record.meta).toBe(ABOUT);
 		expect(typeof record.createdAt).toBe('string');
-		// "Discovery only": a peer finds the group and asks the about space for
+		// "Discovery only": a peer finds the group and asks the meta space for
 		// the rest. Anything renderable here would be a promise the space
 		// refuses to keep for an anonymous caller.
-		expect(Object.keys(record).sort()).toEqual(['$type', 'aboutSpace', 'createdAt']);
+		expect(Object.keys(record).sort()).toEqual(['$type', 'createdAt', 'meta']);
 	});
 
 	it('preserves the supplied date, so re-declaring does not restamp the group', async () => {

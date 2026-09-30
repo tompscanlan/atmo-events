@@ -7,6 +7,8 @@
 //      off a PDS and decides whether strangers can walk into a group.
 import { describe, it, expect } from 'vitest';
 import {
+	GROUP_PROFILE_COLLECTION,
+	GROUP_RULE_COLLECTION,
 	approvalRefusal,
 	groupFace,
 	groupProfileRecord,
@@ -89,7 +91,7 @@ describe('groupProfileRecord', () => {
 		).not.toHaveProperty('description');
 	});
 
-	// The draft's profile has an avatar and ours deliberately does not: moving a
+	// The standard's profile has an avatar and ours deliberately does not: moving a
 	// blob between repos is its own problem, and no group UI uploads one. An
 	// omission that is a decision gets asserted, or the next writer "fixes" it.
 	it('writes no avatar', () => {
@@ -228,15 +230,51 @@ describe('groupFace', () => {
 });
 
 describe('rules', () => {
-	it('round-trips text and the declared order extension', () => {
+	it('round-trips text and order', () => {
 		const record = groupRuleRecord({ text: '  Be kind  ', order: 2 });
 		expect(record.text).toBe('Be kind');
 		expect(record.order).toBe(2);
 		expect(parseGroupRule(record)).toMatchObject({ text: 'Be kind', order: 2 });
 	});
 
-	// A reader that does not know `order` gets an unordered set (that is what
-	// the draft promises), so a record without it must still parse.
+	// The standard requires a title and the settings form has one textarea line
+	// per rule, so the title is taken from the line and the text keeps all of it.
+	it('titles a short rule with its whole line', () => {
+		expect(groupRuleRecord({ text: '  Be kind  ', order: 0 }).title).toBe('Be kind');
+	});
+
+	it('titles a long rule with its first 64 graphemes, with no ellipsis', () => {
+		const line = `${'a'.repeat(60)} and then some more words`;
+		const record = groupRuleRecord({ text: line, order: 0 });
+		expect(record.title).toBe(line.slice(0, 64));
+		expect(record.text).toBe(line);
+	});
+
+	// A grapheme is what a reader sees as one character. Cutting by UTF-16 unit
+	// would split an emoji and count it as several.
+	it('counts graphemes, not code units, so an emoji is never split', () => {
+		// One grapheme of two code points and four UTF-16 units.
+		const thumbsUp = '\u{1F44D}\u{1F3FD}';
+		const title = groupRuleRecord({ text: thumbsUp.repeat(70), order: 0 }).title as string;
+		expect(title).toBe(thumbsUp.repeat(64));
+	});
+
+	// The title's other bound is 640 bytes. Only a line of heavily combined
+	// characters reaches it before 64 graphemes, and the title stops short then.
+	it('stops the title before it would pass 640 bytes', () => {
+		const heavy = `e${'\u0301'.repeat(10)}`;
+		const title = groupRuleRecord({ text: heavy.repeat(64), order: 0 }).title as string;
+		expect(new TextEncoder().encode(title).length).toBeLessThanOrEqual(640);
+		expect(title).toBe(heavy.repeat(Math.floor(640 / new TextEncoder().encode(heavy).length)));
+	});
+
+	it('keeps order when a title is added, and parses the text, not the title', () => {
+		const record = groupRuleRecord({ text: 'x'.repeat(80), order: 3 });
+		expect(parseGroupRule(record)).toMatchObject({ text: 'x'.repeat(80), order: 3 });
+	});
+
+	// A reader that does not know `order` gets an unordered set, so a record
+	// without it must still parse.
 	it('parses a rule with no order as order 0 rather than failing', () => {
 		expect(parseGroupRule({ text: 'Be kind' })).toMatchObject({ text: 'Be kind', order: 0 });
 	});
@@ -250,5 +288,12 @@ describe('rules', () => {
 		expect(splitRuleLines('Be kind\n\n  No spam  \n\n')).toEqual(['Be kind', 'No spam']);
 		expect(splitRuleLines('')).toEqual([]);
 		expect(splitRuleLines(null)).toEqual([]);
+	});
+});
+
+describe('collections', () => {
+	it('publishes the profile and rules under the group.opensocial names', () => {
+		expect(GROUP_PROFILE_COLLECTION).toBe('group.opensocial.profile');
+		expect(GROUP_RULE_COLLECTION).toBe('group.opensocial.rule');
 	});
 });

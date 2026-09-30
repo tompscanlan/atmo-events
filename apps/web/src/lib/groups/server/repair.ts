@@ -100,7 +100,7 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 
 	// Create's order: the authz config goes last (see ../create-group.ts).
 	if (!members.access) {
-		await writeGroupAccess({ ...write, createdAt });
+		await writeGroupAccess(write);
 		wrote.access = true;
 	}
 

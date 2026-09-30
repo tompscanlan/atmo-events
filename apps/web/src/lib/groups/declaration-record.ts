@@ -3,7 +3,7 @@
 // app learns that a DID is a group. Only a public group has one.
 import type { GroupVisibility } from './types';
 
-export const GROUP_DECLARATION_COLLECTION = 'net.openmeet.group.declaration';
+export const GROUP_DECLARATION_COLLECTION = 'group.opensocial.declaration';
 export const GROUP_DECLARATION_RKEY = 'self';
 
 export interface GroupDeclarationInput {
@@ -12,12 +12,14 @@ export interface GroupDeclarationInput {
 	createdAt?: string | null;
 }
 
-/** `{ aboutSpace, createdAt }` and nothing else. The draft publishes no lexicon, so
- *  the field name is provisional. There is no parser: the app never reads it back. */
+/** `{ meta, createdAt }` and nothing else. `meta` is the standard's one field, the
+ *  about space's URI. `createdAt` is ours: the declaration index sorts by it, so
+ *  browse lists the newest group first. There is no parser: the app reads back only
+ *  that date, through the index. */
 export function groupDeclarationRecord(input: GroupDeclarationInput): Record<string, unknown> {
 	// `$type` is stamped by the writer, which owns the collection name.
 	return {
-		aboutSpace: input.aboutSpaceUri,
+		meta: input.aboutSpaceUri,
 		createdAt: input.createdAt || new Date().toISOString()
 	};
 }

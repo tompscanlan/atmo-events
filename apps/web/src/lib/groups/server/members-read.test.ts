@@ -260,8 +260,10 @@ describe('the authz config as records', () => {
 					rkey: GROUP_PERMISSIONS_RKEY,
 					value: {
 						$type: GROUP_PERMISSIONS_COLLECTION,
-						bindings: [{ role: 'member', actions: ['createEvent', 'takedown', 'admit'] }],
-						createdAt: '2026-09-20T10:00:00.000Z'
+						roles: [
+							{ role: 'member', actions: ['createEvent', 'takedown', 'admit'], assignable: [] }
+						],
+						defaultRoles: ['member']
 					}
 				}
 			]),

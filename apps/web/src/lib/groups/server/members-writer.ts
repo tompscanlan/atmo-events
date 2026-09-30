@@ -167,15 +167,12 @@ export async function dropGroupMembership(
 /** Puts the members space's `access` record: the roles that may read it. Needs
  *  MANAGE_GROUP, since it is configuration. Idempotent, keyed `self`. */
 export async function writeGroupAccess(
-	input: WriteGroupMembersInput & { roles?: readonly GroupRoleName[]; createdAt?: string }
+	input: WriteGroupMembersInput & { roles?: readonly GroupRoleName[] }
 ): Promise<{ uri: string; cid: string }> {
 	await requireGroupPermission(input, 'MANAGE_GROUP');
 
 	const record = {
-		...groupAccessRecord({
-			roles: input.roles ?? MEMBERS_SPACE_READER_ROLES,
-			createdAt: input.createdAt
-		}),
+		...groupAccessRecord({ roles: input.roles ?? MEMBERS_SPACE_READER_ROLES }),
 		$type: GROUP_ACCESS_COLLECTION
 	};
 
@@ -208,6 +205,7 @@ export async function writeGroupAuthz(
 	input: WriteGroupMembersInput & {
 		/** Defaults to the bundles `createGroup` seeds D1 with, so records and cache agree. */
 		bundles?: Readonly<Partial<Record<GroupRoleName, readonly GroupPermission[]>>>;
+		/** Only `eventPermissions` carries a date. */
 		createdAt?: string;
 	}
 ): Promise<AuthzWriteResult> {
@@ -230,18 +228,14 @@ export async function writeGroupAuthz(
 	// Only roles the bindings name, since no reader could resolve any other.
 	for (const role of GROUP_ROLES) {
 		if (bundles[role] === undefined) continue;
-		const result = await put(
-			GROUP_ROLE_COLLECTION,
-			role,
-			groupRoleRecord({ id: role, createdAt: input.createdAt })
-		);
+		const result = await put(GROUP_ROLE_COLLECTION, role, groupRoleRecord({ id: role }));
 		roles.push({ role, uri: result.uri, cid: result.cid });
 	}
 
 	const permissions = await put(
 		GROUP_PERMISSIONS_COLLECTION,
 		GROUP_PERMISSIONS_RKEY,
-		groupBindingsRecord({ altitude: 'community', bundles, createdAt: input.createdAt })
+		groupBindingsRecord({ altitude: 'community', bundles })
 	);
 	const eventPermissions = await put(
 		GROUP_EVENT_PERMISSIONS_COLLECTION,

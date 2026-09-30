@@ -1,18 +1,17 @@
 // A group's public face as records, in its about space: the profile, and one record
 // per rule. The D1 name and description columns are a cache of them.
-// The names are ours, not the draft's `community.opensocial.*`: that prefix resolves
-// to a domain someone else holds, where a live service publishes unrelated schemas.
-// The leaves match the draft, so a settled standard is a prefix change plus a record
-// replay. The same holds for every group collection and space type.
+// The records are the opensocial.group proposal's `group.opensocial.*` lexicons as
+// drafted at d2c89a9. Those do not resolve, so `lexicons/reference/group/opensocial`
+// holds copies, and a test checks every builder here against them.
 import type { GroupVisibility } from './types';
 
-export const GROUP_PROFILE_COLLECTION = 'net.openmeet.group.profile';
-export const GROUP_RULE_COLLECTION = 'net.openmeet.group.rule';
+export const GROUP_PROFILE_COLLECTION = 'group.opensocial.profile';
+export const GROUP_RULE_COLLECTION = 'group.opensocial.rule';
 
 /** A singleton. Rules are keyed by TID, so a moderation action can cite one rule. */
 export const GROUP_PROFILE_RKEY = 'self';
 
-/** The draft's `profile.joinPolicy`. Who may read the space is not the profile's job. */
+/** The standard's `profile.joinPolicy`. Who may read the space is not the profile's job. */
 export const GROUP_JOIN_POLICIES = ['open', 'approval', 'invite'] as const;
 export type GroupJoinPolicy = (typeof GROUP_JOIN_POLICIES)[number];
 
@@ -106,8 +105,9 @@ export interface GroupProfileInput {
 	createdAt?: string;
 }
 
-/** `displayName`, `description` and `joinPolicy` are the draft's fields. `location`
- *  is our extension. There is no `avatar`: moving a blob between repos is its own problem. */
+/** `displayName`, `description` and `joinPolicy` are the standard's fields. `location`
+ *  and `createdAt` are ours. There is no `avatar`: moving a blob between repos is its
+ *  own problem. */
 export function groupProfileRecord(input: GroupProfileInput): Record<string, unknown> {
 	// `$type` is stamped by the writer, which owns the collection name.
 	const record: Record<string, unknown> = {
@@ -159,11 +159,37 @@ export interface GroupRuleInput {
 	createdAt?: string;
 }
 
-/** One rule. `order` is our extension: the draft leaves ordering to an app that needs
- *  it, and a reader that does not know the field gets an unordered set. */
+/** The standard's bounds on a rule title. */
+const RULE_TITLE_MAX_GRAPHEMES = 64;
+const RULE_TITLE_MAX_BYTES = 640;
+
+const graphemes = new Intl.Segmenter();
+const utf8 = new TextEncoder();
+
+/** The standard requires a title, and a rule here is one line of the rules textarea,
+ *  so the title is the line's first 64 graphemes, with no ellipsis. It also stops
+ *  before 640 bytes, which only a line of heavily combined characters reaches first. */
+function ruleTitle(text: string): string {
+	let title = '';
+	let size = 0;
+	let count = 0;
+	for (const { segment } of graphemes.segment(text)) {
+		const next = utf8.encode(segment).length;
+		if (count === RULE_TITLE_MAX_GRAPHEMES || size + next > RULE_TITLE_MAX_BYTES) break;
+		title += segment;
+		size += next;
+		count += 1;
+	}
+	return title;
+}
+
+/** One rule. `text` is the whole line and `title` its start. `order` keeps the
+ *  textarea's order. `createdAt` is ours, kept when a rule moves. */
 export function groupRuleRecord(input: GroupRuleInput): Record<string, unknown> {
+	const text = input.text.trim();
 	return {
-		text: input.text.trim(),
+		title: ruleTitle(text),
+		text,
 		order: input.order,
 		createdAt: input.createdAt || new Date().toISOString()
 	};

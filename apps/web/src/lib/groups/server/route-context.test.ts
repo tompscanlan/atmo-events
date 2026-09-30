@@ -168,7 +168,7 @@ describe('readStanding', () => {
 		await addMember(db, group.id, MEMBER, 'member');
 		withSpace = {
 			...group,
-			members_space_uri: `at://${GROUP_DID}/space/net.openmeet.space.members/self`
+			members_space_uri: `at://${GROUP_DID}/space/group.opensocial.members/self`
 		};
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 	});

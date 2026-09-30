@@ -2,7 +2,7 @@
 //
 //   1. the record key is the member's DID, so a DID that is not a legal record
 //      key has to be refused here and not by a PDS 400 three layers down;
-//   2. the key wins over a disagreeing `subject` field, because the key is what
+//   2. the key wins over a disagreeing `member` field, because the key is what
 //      the host addresses the record by. Trusting the field would let a record
 //      grant roles to somebody it was not filed under;
 //   3. an unknown role is dropped rather than carried, so a record written by a
@@ -48,11 +48,12 @@ describe('membershipRkey', () => {
 });
 
 describe('groupMembershipRecord', () => {
-	it('carries the subject and its roles, and stamps a date when none is given', () => {
+	it('carries the member and its roles, and stamps a date when none is given', () => {
 		const record = groupMembershipRecord({ subject: MEMBER, roles: ['admin'] });
-		expect(record.subject).toBe(MEMBER);
+		expect(record.member).toBe(MEMBER);
 		expect(record.roles).toEqual(['admin']);
 		expect(typeof record.createdAt).toBe('string');
+		expect(Object.keys(record).sort()).toEqual(['createdAt', 'member', 'roles']);
 	});
 
 	it('preserves a supplied date, so a promotion does not restamp the join date', () => {
@@ -82,20 +83,20 @@ describe('groupMembershipRecord', () => {
 });
 
 describe('parseGroupMembership', () => {
-	it('prefers the record KEY over a subject field that disagrees with it', () => {
+	it('prefers the record KEY over a member field that disagrees with it', () => {
 		const parsed = parseGroupMembership(
-			{ subject: 'did:plc:someone-else', roles: ['admin'] },
+			{ member: 'did:plc:someone-else', roles: ['admin'] },
 			MEMBER
 		);
 		expect(parsed?.subject).toBe(MEMBER);
 	});
 
-	it('falls back to the subject field when the record came without its key', () => {
-		expect(parseGroupMembership({ subject: MEMBER, roles: ['member'] })?.subject).toBe(MEMBER);
+	it('falls back to the member field when the record came without its key', () => {
+		expect(parseGroupMembership({ member: MEMBER, roles: ['member'] })?.subject).toBe(MEMBER);
 	});
 
 	it('reads a record with no role we know as granting nothing', () => {
-		const parsed = parseGroupMembership({ subject: MEMBER, roles: ['greeter'] }, MEMBER);
+		const parsed = parseGroupMembership({ member: MEMBER, roles: ['greeter'] }, MEMBER);
 		expect(parsed?.roles).toEqual([]);
 	});
 
@@ -118,95 +119,186 @@ describe('parseGroupMembership', () => {
 describe('groupAccessRecord', () => {
 	it('names every role as a reader, because the roster is members-only at every visibility', () => {
 		const record = groupAccessRecord({ roles: MEMBERS_SPACE_READER_ROLES });
-		expect(record.roles).toEqual(['owner', 'admin', 'member']);
+		expect(record.readRoles).toEqual(['owner', 'admin', 'member']);
 	});
 
-	it('carries no OAuth scopes: no authorization server can issue them yet', () => {
-		expect(groupAccessRecord({ roles: ['owner'] })).not.toHaveProperty('scopes');
+	// The members space is never public, whatever the group's visibility.
+	it('is not public', () => {
+		expect(groupAccessRecord({ roles: MEMBERS_SPACE_READER_ROLES }).public).toBe(false);
 	});
 
-	it('carries no visibility: visibility does not invert from a role list', () => {
-		expect(groupAccessRecord({ roles: ['owner'] })).not.toHaveProperty('visibility');
+	it('grants no OAuth scopes: no authorization server can issue them yet', () => {
+		expect(groupAccessRecord({ roles: ['owner'] }).grants).toEqual([]);
+	});
+
+	it('carries nothing but the three fields the standard requires', () => {
+		expect(Object.keys(groupAccessRecord({ roles: ['owner'] })).sort()).toEqual([
+			'grants',
+			'public',
+			'readRoles'
+		]);
 	});
 
 	it('parses back, dropping roles outside the vocabulary', () => {
-		expect(parseGroupAccess({ roles: ['owner', 'guest'] })?.roles).toEqual(['owner']);
+		expect(parseGroupAccess({ public: false, readRoles: ['owner', 'guest'] })?.roles).toEqual([
+			'owner'
+		]);
 	});
 
-	it('is null when there is no roles list at all, rather than defaulting to open', () => {
-		expect(parseGroupAccess({ createdAt: '2026-09-01T12:00:00.000Z' })).toBeNull();
+	it('is null when there is no readRoles list at all, rather than defaulting to open', () => {
+		expect(parseGroupAccess({ public: false, grants: [] })).toBeNull();
 	});
 });
 
 describe('groupRoleRecord', () => {
-	it('repeats its id in the body, so a record lifted out of its key is not anonymous', () => {
-		expect(groupRoleRecord({ id: 'admin' })).toMatchObject({ id: 'admin' });
+	it('names the role for display, derived from its id', () => {
+		expect(groupRoleRecord({ id: 'owner' })).toEqual({ displayName: 'Owner' });
+		expect(groupRoleRecord({ id: 'admin' })).toEqual({ displayName: 'Admin' });
+		expect(groupRoleRecord({ id: 'member' })).toEqual({ displayName: 'Member' });
 	});
 
-	it('carries no permissions: what a role may do is the binding record’s answer', () => {
-		expect(Object.keys(groupRoleRecord({ id: 'admin' })).sort()).toEqual(['createdAt', 'id']);
+	it('takes its id from the key, because the key is what the host addresses', () => {
+		expect(parseGroupRole({ displayName: 'Owner' }, 'member')?.id).toBe('member');
 	});
 
-	it('prefers the key over a disagreeing id, because the key is what the host addresses', () => {
-		expect(parseGroupRole({ id: 'owner' }, 'member')?.id).toBe('member');
-	});
-
-	it('is null for a role outside this build’s vocabulary', () => {
-		expect(parseGroupRole({ id: 'greeter' }, 'greeter')).toBeNull();
+	it('is null for a role outside this build’s vocabulary, or with no key', () => {
+		expect(parseGroupRole({ displayName: 'Greeter' }, 'greeter')).toBeNull();
+		expect(parseGroupRole({ displayName: 'Admin' })).toBeNull();
 	});
 });
 
 describe('groupBindingsRecord', () => {
 	it('splits one bundle across the two altitudes, publishing each in its own dialect', () => {
 		const bundles = { owner: DEFAULT_ROLE_PERMISSIONS.owner };
-		expect(groupBindingsRecord({ altitude: 'community', bundles }).bindings).toEqual([
-			{ role: 'owner', actions: ['community.configure', 'admit', 'eject', 'role.assign'] }
+		expect(groupBindingsRecord({ altitude: 'community', bundles }).roles).toEqual([
+			{
+				role: 'owner',
+				actions: ['group.configure', 'admit', 'eject', 'role.assign'],
+				assignable: ['owner']
+			}
 		]);
 		expect(groupBindingsRecord({ altitude: 'modality', bundles }).bindings).toEqual([
 			{ role: 'owner', actions: ['manageEvents', 'createEvent'] }
 		]);
 	});
 
+	// `assignable` bounds both role.assign and eject. Only the owner's binding
+	// lists `owner`, so no admin can assign or eject the owner.
+	it('lets the owner assign every role, an admin every role but owner, and a member none', () => {
+		const record = groupBindingsRecord({
+			altitude: 'community',
+			bundles: DEFAULT_ROLE_PERMISSIONS
+		});
+		expect(record.roles).toEqual([
+			{
+				role: 'owner',
+				actions: ['group.configure', 'admit', 'eject', 'role.assign'],
+				assignable: ['owner', 'admin', 'member']
+			},
+			{
+				role: 'admin',
+				actions: ['group.configure', 'admit', 'eject', 'role.assign'],
+				assignable: ['admin', 'member']
+			},
+			{ role: 'member', actions: [], assignable: [] }
+		]);
+		expect(record.defaultRoles).toEqual(['member']);
+	});
+
+	it('carries only the standard’s two fields on the community record', () => {
+		const record = groupBindingsRecord({
+			altitude: 'community',
+			bundles: DEFAULT_ROLE_PERMISSIONS
+		});
+		expect(Object.keys(record).sort()).toEqual(['defaultRoles', 'roles']);
+	});
+
+	// Every role the record names must be one it binds, or a reader rejects it.
+	it('names no role in assignable or defaultRoles that it does not bind', () => {
+		const record = groupBindingsRecord({
+			altitude: 'community',
+			bundles: { owner: DEFAULT_ROLE_PERMISSIONS.owner }
+		});
+		expect(record.roles).toEqual([
+			expect.objectContaining({ role: 'owner', assignable: ['owner'] })
+		]);
+		expect(record.defaultRoles).toEqual([]);
+	});
+
 	it('writes a bound-to-nothing role rather than omitting it', () => {
-		expect(
-			groupBindingsRecord({ altitude: 'community', bundles: { member: [] } }).bindings
-		).toEqual([{ role: 'member', actions: [] }]);
+		expect(groupBindingsRecord({ altitude: 'community', bundles: { member: [] } }).roles).toEqual([
+			{ role: 'member', actions: [], assignable: [] }
+		]);
+		expect(groupBindingsRecord({ altitude: 'modality', bundles: { member: [] } }).bindings).toEqual(
+			[{ role: 'member', actions: [] }]
+		);
+	});
+
+	it('keeps the event record’s own shape, with its date', () => {
+		const record = groupBindingsRecord({
+			altitude: 'modality',
+			bundles: { member: [] },
+			createdAt: '2026-09-20T12:00:00.000Z'
+		});
+		expect(record).toEqual({
+			bindings: [{ role: 'member', actions: [] }],
+			createdAt: '2026-09-20T12:00:00.000Z'
+		});
+	});
+
+	it('round-trips both records through the parser', () => {
+		const expected = {
+			community: ['MANAGE_GROUP', 'ADMIT_MEMBERS', 'EJECT_MEMBERS', 'ASSIGN_ROLES'],
+			modality: ['MANAGE_EVENTS', 'CREATE_EVENT']
+		};
+		for (const altitude of ['community', 'modality'] as const) {
+			const record = groupBindingsRecord({ altitude, bundles: DEFAULT_ROLE_PERMISSIONS });
+			expect(parseGroupBindings(altitude, record)?.bindings, altitude).toEqual([
+				{ role: 'owner', permissions: expected[altitude] },
+				{ role: 'admin', permissions: expected[altitude] },
+				{ role: 'member', permissions: [] }
+			]);
+		}
 	});
 
 	it('unions a repeated role rather than letting the last binding win', () => {
 		// The model has no precedence, so "the later row wins" would be a rule
 		// this record invented.
 		const parsed = parseGroupBindings('community', {
-			bindings: [
-				{ role: 'admin', actions: ['admit'] },
-				{ role: 'admin', actions: ['eject'] }
-			]
+			roles: [
+				{ role: 'admin', actions: ['admit'], assignable: [] },
+				{ role: 'admin', actions: ['eject'], assignable: [] }
+			],
+			defaultRoles: []
 		});
 		expect(parsed?.bindings).toEqual([
 			{ role: 'admin', permissions: ['ADMIT_MEMBERS', 'EJECT_MEMBERS'] }
 		]);
 	});
 
-	it('is null without a bindings list, rather than an empty authz config', () => {
+	it('is null without a roles list, rather than an empty authz config', () => {
 		// An absent record and a record binding nothing must stay distinguishable:
 		// one is a group with no authz config yet, the other is a group that
 		// granted nothing on purpose.
-		expect(parseGroupBindings('community', { createdAt: '2026-09-20T12:00:00.000Z' })).toBeNull();
-		expect(parseGroupBindings('community', { bindings: [] })?.bindings).toEqual([]);
+		expect(parseGroupBindings('community', { defaultRoles: ['member'] })).toBeNull();
+		expect(parseGroupBindings('community', { roles: [], defaultRoles: [] })?.bindings).toEqual([]);
+		expect(parseGroupBindings('modality', { createdAt: '2026-09-20T12:00:00.000Z' })).toBeNull();
+		expect(parseGroupBindings('modality', { bindings: [] })?.bindings).toEqual([]);
 	});
 });
 
 describe('collections', () => {
-	it('publishes under our own prefix, with the draft’s leaf names', () => {
-		expect(GROUP_MEMBERSHIP_COLLECTION).toBe('net.openmeet.group.membership');
-		expect(GROUP_ACCESS_COLLECTION).toBe('net.openmeet.group.access');
-		expect(GROUP_ROLE_COLLECTION).toBe('net.openmeet.group.role');
-		expect(GROUP_PERMISSIONS_COLLECTION).toBe('net.openmeet.group.permissions');
+	it('publishes the roster and authz config under the group.opensocial names', () => {
+		expect(GROUP_MEMBERSHIP_COLLECTION).toBe('group.opensocial.membership');
+		expect(GROUP_ACCESS_COLLECTION).toBe('group.opensocial.access');
+		expect(GROUP_ROLE_COLLECTION).toBe('group.opensocial.role');
+		expect(GROUP_PERMISSIONS_COLLECTION).toBe('group.opensocial.permissions');
 	});
 
-	it('keeps the modality binding on a leaf of OUR own, not on the community record', () => {
-		// The community record must stay swappable onto an upstream collection
-		// name, so the event actions cannot ride on it.
+	it('keeps the event actions on a record of their own, not on the permissions record', () => {
+		// The standard puts a modality's authz in the modality's own space, and
+		// that space does not exist yet, so the event actions stay on their own
+		// record rather than ride on the standard one.
 		expect(GROUP_EVENT_PERMISSIONS_COLLECTION).toBe('net.openmeet.group.eventPermissions');
 		expect(GROUP_EVENT_PERMISSIONS_COLLECTION).not.toBe(GROUP_PERMISSIONS_COLLECTION);
 	});

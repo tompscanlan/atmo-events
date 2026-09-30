@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+	ASSIGNABLE_BY_ROLE,
 	ASSIGNABLE_ROLES,
 	COMMUNITY_PERMISSIONS,
 	DEFAULT_ROLE_PERMISSIONS,
@@ -47,7 +48,7 @@ describe('the published bridge', () => {
 	// standard's own identifiers rather than our spellings.
 	it('publishes the standard identifier for every community action', () => {
 		expect(Object.fromEntries(COMMUNITY_PERMISSIONS.map((p) => [p, PUBLISHED_ACTION[p]]))).toEqual({
-			MANAGE_GROUP: 'community.configure',
+			MANAGE_GROUP: 'group.configure',
 			ADMIT_MEMBERS: 'admit',
 			EJECT_MEMBERS: 'eject',
 			ASSIGN_ROLES: 'role.assign'
@@ -67,6 +68,19 @@ describe('the seeded role bundles', () => {
 		// would only produce a constraint error.
 		expect([...GROUP_ROLES]).toEqual(['owner', 'admin', 'member']);
 		expect(ASSIGNABLE_ROLES).toEqual(['admin', 'member']);
+	});
+
+	// Published as each binding's `assignable`, which bounds both role.assign and
+	// eject. The owner is protected by being on no other role's list.
+	it('lets no role but the owner assign or eject the owner', () => {
+		expect(ASSIGNABLE_BY_ROLE).toEqual({
+			owner: ['owner', 'admin', 'member'],
+			admin: ['admin', 'member'],
+			member: []
+		});
+		for (const role of GROUP_ROLES) {
+			if (role !== 'owner') expect(ASSIGNABLE_BY_ROLE[role], role).not.toContain('owner');
+		}
 	});
 
 	it('names only permissions that exist, with no duplicates', () => {

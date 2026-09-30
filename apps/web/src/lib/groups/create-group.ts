@@ -295,7 +295,7 @@ async function setUpMintedGroup(
 	// here leaves a working group that a settings save can finish. The writer
 	// uses the credential in scope rather than decrypting the stored copy.
 	const withSpaces = { ...group, about_space_uri: aboutUri, members_space_uri: membersUri };
-	// Every record takes the row's creation instant, so a rebuild from the
+	// Every dated record takes the row's creation instant, so a rebuild from the
 	// records restores the same date.
 	const createdAt = new Date(group.created_at).toISOString();
 	const writer = pdsWriter(minted.credential, minted.did);
@@ -357,7 +357,7 @@ async function setUpMintedGroup(
 	// permission. A failure here leaves a working group that "Repair this group"
 	// can finish (server/repair.ts).
 	try {
-		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer, createdAt });
+		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer });
 		await putGroupMembership({
 			db: env.DB,
 			env,

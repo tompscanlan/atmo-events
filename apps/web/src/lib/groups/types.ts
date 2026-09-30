@@ -14,10 +14,11 @@ export type MembershipStatus = (typeof MEMBERSHIP_STATUSES)[number];
 export const JOIN_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'withdrawn'] as const;
 export type JoinRequestStatus = (typeof JOIN_REQUEST_STATUSES)[number];
 
-/** Host-side space kinds, not record lexicons. The prefix is ours for the reason in
- *  ./about-record.ts; `net.openmeet.group.*` is kept for XRPC methods. */
-export const ABOUT_SPACE_TYPE = 'net.openmeet.space.about';
-export const MEMBERS_SPACE_TYPE = 'net.openmeet.space.members';
+/** Host-side space kinds, not record lexicons: the standard's two well-known spaces.
+ *  The about space is the one it calls `meta`, which holds the group's profile and
+ *  rules. The D1 column keeps the name `about_space_uri`. */
+export const ABOUT_SPACE_TYPE = 'group.opensocial.meta';
+export const MEMBERS_SPACE_TYPE = 'group.opensocial.members';
 
 /** A `groups` row as D1 returns it. No `visibility`: see `GroupVisibility`. */
 export interface GroupRow {

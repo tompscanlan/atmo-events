@@ -81,14 +81,17 @@ const writer: GroupRepoWriter = async (write) => {
 
 /** A public group we host, its identity registered the way the mint does it,
  *  and its declaration both on the PDS and in our index. */
-async function declaredGroup(groupDid: string): Promise<GroupRow> {
+async function declaredGroup(groupDid: string, createdAt?: string): Promise<GroupRow> {
 	const created = await createGroup(db, { groupDid, ownerDid: OWNER, name: 'Kona' });
 	expect(
 		await registerGroupIdentity(db, { did: groupDid, handle: 'kona.pds.example.test', pds: PDS })
 	).toBe(true);
 	const uri = declarationUri(groupDid);
 	pds.set(uri, {
-		...groupDeclarationRecord({ aboutSpaceUri: spaceUri(groupDid, ABOUT_SPACE_TYPE, 'self') }),
+		...groupDeclarationRecord({
+			aboutSpaceUri: spaceUri(groupDid, ABOUT_SPACE_TYPE, 'self'),
+			createdAt
+		}),
 		$type: GROUP_DECLARATION_COLLECTION
 	});
 	await notify(uri);
@@ -131,6 +134,28 @@ afterAll(() => {
 });
 
 describe('our declaration index', () => {
+	// The standard's declaration has only `meta`. Ours also carries `createdAt`,
+	// because browse lists the newest group first, and this is where it is read.
+	it('lists declarations newest first, with the date each one carries', async () => {
+		const older = await declaredGroup(
+			'did:plc:vq2mtsxokd6ajwn4c5ldaxfz',
+			'2026-01-02T03:04:05.000Z'
+		);
+		const newer = await declaredGroup(
+			'did:plc:ohb3quxgnfq7lxdkamqesfyc',
+			'2026-06-07T08:09:10.000Z'
+		);
+
+		const listed = (await listDeclaredGroups(db)).filter((d) =>
+			[older.group_did, newer.group_did].includes(d.did)
+		);
+
+		expect(listed).toEqual([
+			{ did: newer.group_did, createdAt: '2026-06-07T08:09:10.000Z' },
+			{ did: older.group_did, createdAt: '2026-01-02T03:04:05.000Z' }
+		]);
+	});
+
 	// The premise the withdrawal relies on: the index re-reads the URI from the
 	// group's PDS, finds nothing, and deletes its entry.
 	it('notifyOfUpdate deletes an indexed declaration the PDS no longer has', async () => {

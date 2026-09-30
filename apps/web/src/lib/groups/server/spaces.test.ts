@@ -68,6 +68,13 @@ afterEach(() => {
 const writes = () => sent.filter((s) => !s.nsid.startsWith('com.atproto.server.'));
 
 describe('provisionGroupSpaces', () => {
+	// The about space is the standard's meta space. Its type is written out here
+	// so a rename of the constant cannot pass by agreeing with itself.
+	it('provisions the group.opensocial meta and members space types', () => {
+		expect(ABOUT_SPACE_TYPE).toBe('group.opensocial.meta');
+		expect(MEMBERS_SPACE_TYPE).toBe('group.opensocial.members');
+	});
+
 	// The about space's read policy is the group's visibility, as the host
 	// enforces it. The members space's is not a choice at all.
 	it.each([
@@ -194,13 +201,13 @@ describe('provisionGroupSpaces', () => {
 });
 
 describe('pdsWriter target', () => {
-	const record = { $type: 'net.openmeet.test', value: 1 };
+	const record = { $type: 'com.example.test', value: 1 };
 
 	it('sends a space write to com.atproto.space.putRecord carrying both space and repo', async () => {
 		const space = spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'kona');
 		replies['com.atproto.space.putRecord'] = {
 			status: 200,
-			body: { uri: `at://${GROUP_DID}/net.openmeet.test/self`, cid: 'bafy' }
+			body: { uri: `at://${GROUP_DID}/com.example.test/self`, cid: 'bafy' }
 		};
 
 		await pdsWriter(
@@ -208,7 +215,7 @@ describe('pdsWriter target', () => {
 			GROUP_DID
 		)({
 			repo: GROUP_DID,
-			collection: 'net.openmeet.test',
+			collection: 'com.example.test',
 			rkey: 'self',
 			record,
 			intent: 'update',
@@ -221,7 +228,7 @@ describe('pdsWriter target', () => {
 		expect(writes()[0].body).toEqual({
 			space,
 			repo: GROUP_DID,
-			collection: 'net.openmeet.test',
+			collection: 'com.example.test',
 			rkey: 'self',
 			record
 		});
@@ -230,7 +237,7 @@ describe('pdsWriter target', () => {
 	it('sends a repo write to com.atproto.repo.putRecord with no space field', async () => {
 		replies['com.atproto.repo.putRecord'] = {
 			status: 200,
-			body: { uri: `at://${GROUP_DID}/net.openmeet.test/self`, cid: 'bafy' }
+			body: { uri: `at://${GROUP_DID}/com.example.test/self`, cid: 'bafy' }
 		};
 
 		await pdsWriter(
@@ -238,7 +245,7 @@ describe('pdsWriter target', () => {
 			GROUP_DID
 		)({
 			repo: GROUP_DID,
-			collection: 'net.openmeet.test',
+			collection: 'com.example.test',
 			rkey: 'self',
 			record,
 			intent: 'update'
@@ -252,13 +259,13 @@ describe('pdsWriter target', () => {
 		const space = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'kona');
 		replies['com.atproto.space.createRecord'] = {
 			status: 200,
-			body: { uri: `at://${GROUP_DID}/net.openmeet.test/new`, cid: 'bafy' }
+			body: { uri: `at://${GROUP_DID}/com.example.test/new`, cid: 'bafy' }
 		};
 		const write = pdsWriter(CRED, GROUP_DID);
 
 		await write({
 			repo: GROUP_DID,
-			collection: 'net.openmeet.test',
+			collection: 'com.example.test',
 			rkey: 'new',
 			record,
 			intent: 'create',
@@ -266,7 +273,7 @@ describe('pdsWriter target', () => {
 		});
 		await write({
 			repo: GROUP_DID,
-			collection: 'net.openmeet.test',
+			collection: 'com.example.test',
 			rkey: 'new',
 			record: {},
 			intent: 'delete',
