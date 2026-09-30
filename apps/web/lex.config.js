@@ -1,5 +1,8 @@
 import { defineLexiconConfig } from "@atcute/lex-cli";
 
+// `pnpm generate` rewrites this file and adds group.opensocial.declaration to the
+// pull list. That NSID does not resolve, so take it out again. The declaration's
+// lexicon is in lexicons/custom (see src/lib/groups/README.md).
 export default defineLexiconConfig({
   files: ["lexicons/custom/**/*.json", "lexicons/pulled/**/*.json", "lexicons/generated/**/*.json"],
   outdir: "src/lexicon-types/",
@@ -17,8 +20,7 @@ export default defineLexiconConfig({
                   "community.lexicon.location.address",
                   "community.lexicon.location.fsq",
                   "community.lexicon.location.geo",
-                  "community.lexicon.location.hthree",
-                  "net.openmeet.group.declaration"
+                  "community.lexicon.location.hthree"
         ],
       },
     ],

@@ -4,7 +4,7 @@
   "defs": {
     "main": {
       "type": "query",
-      "description": "Get a single net.openmeet.group.declaration record by AT URI",
+      "description": "Get a single group.opensocial.declaration record by AT URI",
       "parameters": {
         "type": "params",
         "required": [
@@ -53,7 +53,7 @@
             },
             "value": {
               "type": "ref",
-              "ref": "net.openmeet.group.declaration#main"
+              "ref": "group.opensocial.declaration#main"
             },
             "did": {
               "type": "string",

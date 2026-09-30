@@ -3,7 +3,7 @@ import * as v from "@atcute/lexicons/validations";
 import type {} from "@atcute/lexicons/ambient";
 import * as ComAtprotoLabelDefs from "@atcute/atproto/types/label/defs";
 import * as ComAtprotoRepoStrongRef from "@atcute/atproto/types/repo/strongRef";
-import * as NetOpenmeetGroupDeclaration from "../../../net/openmeet/group/declaration.js";
+import * as GroupOpensocialDeclaration from "../../../group/opensocial/declaration.js";
 
 const _appBskyActorProfileSchema = /*#__PURE__*/ v.object({
   $type: /*#__PURE__*/ v.optional(
@@ -110,7 +110,7 @@ const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.declaration.getRecord", {
       time_us: /*#__PURE__*/ v.integer(),
       uri: /*#__PURE__*/ v.resourceUriString(),
       get value() {
-        return NetOpenmeetGroupDeclaration.mainSchema;
+        return GroupOpensocialDeclaration.mainSchema;
       },
     }),
   },

@@ -2,15 +2,15 @@
 // Pass `lexicons` to `createWorker(config, { lexicons })` to expose them
 // at `/xrpc/<namespace>.lexicons` for consumer apps to typegen against.
 
-import _0 from "../pulled/app/bsky/actor/profile.json";
-import _1 from "../pulled/app/bsky/graph/follow.json";
-import _2 from "../pulled/community/lexicon/calendar/event.json";
-import _3 from "../pulled/community/lexicon/calendar/rsvp.json";
-import _4 from "../pulled/community/lexicon/location/address.json";
-import _5 from "../pulled/community/lexicon/location/fsq.json";
-import _6 from "../pulled/community/lexicon/location/geo.json";
-import _7 from "../pulled/community/lexicon/location/hthree.json";
-import _8 from "../pulled/net/openmeet/group/declaration.json";
+import _0 from "../custom/group/opensocial/declaration.json";
+import _1 from "../pulled/app/bsky/actor/profile.json";
+import _2 from "../pulled/app/bsky/graph/follow.json";
+import _3 from "../pulled/community/lexicon/calendar/event.json";
+import _4 from "../pulled/community/lexicon/calendar/rsvp.json";
+import _5 from "../pulled/community/lexicon/location/address.json";
+import _6 from "../pulled/community/lexicon/location/fsq.json";
+import _7 from "../pulled/community/lexicon/location/geo.json";
+import _8 from "../pulled/community/lexicon/location/hthree.json";
 import _9 from "./rsvp/atmo/authFull.json";
 import _10 from "./rsvp/atmo/declaration/getRecord.json";
 import _11 from "./rsvp/atmo/declaration/listRecords.json";

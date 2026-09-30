@@ -4,7 +4,7 @@
   "defs": {
     "main": {
       "type": "query",
-      "description": "Query net.openmeet.group.declaration records with filters",
+      "description": "Query group.opensocial.declaration records with filters",
       "parameters": {
         "type": "params",
         "properties": {
@@ -115,7 +115,7 @@
         },
         "value": {
           "type": "ref",
-          "ref": "net.openmeet.group.declaration#main"
+          "ref": "group.opensocial.declaration#main"
         },
         "did": {
           "type": "string",
