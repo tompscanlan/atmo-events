@@ -1,0 +1,34 @@
+{
+  "lexicon": 1,
+  "id": "group.opensocial.membership",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Membership grant authored by the group DID in members/self. The rkey must equal member, a DID that is also a valid record key. Grants access immediately according to roles; acceptance only controls roster visibility.",
+      "key": "any",
+      "record": {
+        "type": "object",
+        "required": ["member", "roles", "createdAt"],
+        "properties": {
+          "member": {
+            "type": "string",
+            "format": "did"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "ref",
+              "ref": "group.opensocial.defs#roleId"
+            },
+            "description": "Distinct role IDs declared by this group. Unknown roles and duplicate entries must be rejected.",
+            "maxLength": 100
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}
