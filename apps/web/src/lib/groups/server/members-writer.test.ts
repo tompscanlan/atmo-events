@@ -204,6 +204,26 @@ describe('putGroupMembership', () => {
 		).rejects.toThrow(GroupRecordError);
 		expect(writes).toHaveLength(0);
 	});
+
+	it('refuses to write into a members space of another type', async () => {
+		await expect(
+			putGroupMembership({
+				db,
+				env,
+				group: {
+					...group,
+					members_space_uri: `at://${group.group_did}/space/com.example.other/self`
+				},
+				callerDid: OWNER,
+				writer,
+				reader,
+				subject: STRANGER,
+				roles: ['member'],
+				intent: 'admit'
+			})
+		).rejects.toThrow(/is not .*'s members space/);
+		expect(writes).toHaveLength(0);
+	});
 });
 
 describe('the self-service intents', () => {

@@ -14,7 +14,7 @@ import {
 	joinPolicyFor,
 	type GroupProfileInput
 } from '../about-record';
-import type { GroupRow, GroupVisibility } from '../types';
+import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from '../types';
 import type { CredentialStoreEnv } from './credentials';
 import {
 	GroupRecordError,
@@ -39,14 +39,20 @@ export interface ProfileWriteResult {
 }
 
 /** Read off the row, not computed: NULL means provisioning did not finish, and
- *  a write must not target a space the PDS has never heard of. */
+ *  a write must not target a space the PDS has never heard of. A row made before
+ *  the space type changed names a space of the old type, and is refused too, so
+ *  no record lands where no reader looks. */
 function aboutSpace(group: GroupRow): string {
-	if (!group.about_space_uri) {
+	const space = group.about_space_uri;
+	if (!space) {
 		throw new GroupRecordError(
 			`${group.group_did} has no about space yet, so its profile cannot be written`
 		);
 	}
-	return group.about_space_uri;
+	if (!space.startsWith(`at://${group.group_did}/space/${ABOUT_SPACE_TYPE}/`)) {
+		throw new GroupRecordError(`${space} is not ${group.group_did}'s about space`);
+	}
+	return space;
 }
 
 /** Puts the group's one `profile` record, keyed `self`. The caller passes the

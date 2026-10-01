@@ -12,7 +12,7 @@ import {
 	declarationRequired,
 	groupDeclarationRecord
 } from '../declaration-record';
-import type { GroupRow, GroupVisibility } from '../types';
+import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from '../types';
 import type { GroupSpaceReader } from './about-read';
 import type { CredentialStoreEnv } from './credentials';
 import {
@@ -43,14 +43,19 @@ export interface DeclarationWriteResult {
 	cid: string;
 }
 
-/** Read off the row. A declaration must not point at a space that was never made. */
+/** Read off the row. A declaration must not point at a space that was never made,
+ *  nor at one of another type: the lexicon requires the group's own meta space. */
 function aboutSpace(group: GroupRow): string {
-	if (!group.about_space_uri) {
+	const space = group.about_space_uri;
+	if (!space) {
 		throw new GroupRecordError(
 			`${group.group_did} has no about space yet, so it cannot be declared to the network`
 		);
 	}
-	return group.about_space_uri;
+	if (!space.startsWith(`at://${group.group_did}/space/${ABOUT_SPACE_TYPE}/`)) {
+		throw new GroupRecordError(`${space} is not ${group.group_did}'s about space`);
+	}
+	return space;
 }
 
 /** Puts the declaration, keyed `self`, so re-declaring overwrites. */

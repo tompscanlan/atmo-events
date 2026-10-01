@@ -27,7 +27,7 @@ import {
 	type GroupPermission,
 	type GroupRoleName
 } from '../permissions';
-import type { GroupRow } from '../types';
+import { MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import type { GroupSpaceReader } from './about-read';
 import type { CredentialStoreEnv } from './credentials';
 import {
@@ -68,14 +68,18 @@ const PERMISSION_FOR: Readonly<
 	eject: 'EJECT_MEMBERS'
 };
 
-/** Read off the row, like `aboutSpace` in ./about-writer.ts. */
+/** Read off the row, and checked like `aboutSpace` in ./about-writer.ts. */
 function membersSpace(group: GroupRow): string {
-	if (!group.members_space_uri) {
+	const space = group.members_space_uri;
+	if (!space) {
 		throw new GroupRecordError(
 			`${group.group_did} has no members space yet, so its roster records cannot be written`
 		);
 	}
-	return group.members_space_uri;
+	if (!space.startsWith(`at://${group.group_did}/space/${MEMBERS_SPACE_TYPE}/`)) {
+		throw new GroupRecordError(`${space} is not ${group.group_did}'s members space`);
+	}
+	return space;
 }
 
 /** The gate for one roster intent. Exported because the roster must refuse the

@@ -157,6 +157,28 @@ describe('writeGroupProfile', () => {
 		).rejects.toThrow(/no about space/);
 		expect(writes).toHaveLength(0);
 	});
+
+	// A row made before the space type changed still names a space of the old
+	// type. Writing the new records there would strand them where no reader looks.
+	it('refuses a space of another type, or one under another DID', async () => {
+		for (const about_space_uri of [
+			`at://${group.group_did}/space/com.example.other/self`,
+			`at://did:plc:someoneelse/space/${ABOUT_SPACE_TYPE}/self`
+		]) {
+			await expect(
+				writeGroupProfile({
+					db,
+					env,
+					group: { ...group, about_space_uri },
+					visibility: 'public',
+					callerDid: OWNER,
+					writer,
+					profile: { name: 'Kona' }
+				})
+			).rejects.toThrow(/is not .*'s about space/);
+		}
+		expect(writes).toHaveLength(0);
+	});
 });
 
 describe('setGroupRules: a citation survives an edit', () => {
