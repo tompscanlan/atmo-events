@@ -37,12 +37,17 @@ import {
 	GROUP_EVENT_PERMISSIONS_COLLECTION,
 	GROUP_PERMISSIONS_COLLECTION,
 	GROUP_PERMISSIONS_RKEY,
-	GROUP_ROLE_COLLECTION
+	GROUP_ROLE_COLLECTION,
+	GROUP_SPACE_COLLECTION
 } from '../src/lib/groups/members-record';
 import { listGroupEvents, registerGroupIdentity } from '../src/lib/groups/server/events-index';
 import { splitRuleLines } from '../src/lib/groups/about-record';
 import { reconcileGroupDeclaration } from '../src/lib/groups/server/declaration-writer';
-import { setGroupRules, writeGroupProfile } from '../src/lib/groups/server/about-writer';
+import {
+	setGroupRules,
+	writeAboutAccess,
+	writeGroupProfile
+} from '../src/lib/groups/server/about-writer';
 import {
 	groupSpaceReader,
 	readGroupAbout,
@@ -63,6 +68,7 @@ import {
 	hasMemberRecords,
 	hasRecordedAccess,
 	readGroupMembers,
+	readGroupSpaceIndex,
 	rebuildGroupMembers,
 	rosterFromRecords,
 	rosterFromRows
@@ -71,7 +77,8 @@ import {
 	dropGroupMembership,
 	putGroupMembership,
 	writeGroupAccess,
-	writeGroupAuthz
+	writeGroupAuthz,
+	writeGroupSpaceIndex
 } from '../src/lib/groups/server/members-writer';
 import {
 	admitMember,
@@ -370,6 +377,51 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			group: await groupById(env, args.groupId),
 			callerDid: args.callerDid == null ? null : String(args.callerDid)
 		}),
+
+	/** The about space's `access` record, saying the visibility the driver passes,
+	 *  as create and the settings save write it. */
+	writeAboutAccess: async (env, args) =>
+		writeAboutAccess({
+			db: env.DB,
+			env,
+			group: await groupById(env, args.groupId),
+			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			visibility: chosenVisibility(args)
+		}),
+
+	/** The index of the group's two spaces, read first as the repair reads it. */
+	writeSpaceIndex: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		return writeGroupSpaceIndex({
+			db: env.DB,
+			env,
+			group,
+			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			existing: await readGroupSpaceIndex(await spaceReader(env, group), group)
+		});
+	},
+
+	/** Deletes every index entry through the group's writer. No app path does
+	 *  this, but the e2e reuses one DID across runs, and a leftover entry would
+	 *  let the index check pass without this run's write. */
+	dropSpaceIndex: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		if (!group.members_space_uri) return { dropped: [] };
+		const writer = await groupWriter(env, env.DB, group);
+		const dropped: string[] = [];
+		for (const entry of await readGroupSpaceIndex(await spaceReader(env, group), group)) {
+			await writer({
+				repo: group.group_did,
+				collection: GROUP_SPACE_COLLECTION,
+				rkey: entry.rkey,
+				record: {},
+				intent: 'delete',
+				space: group.members_space_uri
+			});
+			dropped.push(entry.rkey);
+		}
+		return { dropped };
+	},
 
 	/** The only record a stranger can read. The driver passes a visibility, as the
 	 *  settings save does, or `'host'` to use the host's answer, as the repair does. */

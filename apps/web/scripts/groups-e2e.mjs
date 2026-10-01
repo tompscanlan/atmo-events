@@ -4,12 +4,13 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 26 numbered checks (1 to 23, plus 15b, 20b and 20c), prints one PASS
- * or FAIL line each, and a clean run ends with `SUMMARY: 26 passed, 0 failed`.
- * Setup steps print as notes and are not counted. In order: create and the
- * seeded roles (1), join, approval and promotion (2-3), events written as the
- * group DID and the edit gate (4-6), leaving (7-8), a cover image uploaded
- * into the group's repo (9), the profile and rules in the about space (10-12), the roster and authz
+ * It runs 28 numbered checks (1 to 23, plus 10b, 13b, 15b, 20b and 20c), prints
+ * one PASS or FAIL line each, and a clean run ends with `SUMMARY: 28 passed, 0
+ * failed`. Setup steps print as notes and are not counted. In order: create and
+ * the seeded roles (1), join, approval and promotion (2-3), events written as
+ * the group DID and the edit gate (4-6), leaving (7-8), a cover image uploaded
+ * into the group's repo (9), the profile, rules and access record in the about
+ * space (10-12), the roster, the index of the group's spaces and the authz
  * config as records in the members space (13-18), the discovery declaration and
  * visibility at the host (19-20c), the events index (21-22), and a rebuild of
  * the whole group from its DID (23).
@@ -45,7 +46,8 @@
  * Cleanup runs in the `finally`. It deletes the events, withdraws the
  * declaration, and removes the rules, the authz config and the owner's
  * membership. Then it re-reads each one and prints WARN for anything left. The
- * profile and `access` records stay at fixed keys that the next run overwrites.
+ * profile and both `access` records stay at fixed keys that the next run
+ * overwrites, and the space index stays until the next run resets it.
  */
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -267,6 +269,19 @@ async function spaceRecord(token, space, collection, rkey) {
 	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
 	const body = await response.json().catch(() => ({}));
 	return { status: response.status, ...body };
+}
+
+/** Every record of one collection in one of the group's spaces, read like
+ *  `spaceRecord`. One page: the collections read this way stay small. */
+async function spaceRecords(token, space, collection) {
+	const url = new URL('/xrpc/com.atproto.space.listRecords', PDS);
+	url.searchParams.set('space', space);
+	url.searchParams.set('repo', GROUP_DID);
+	url.searchParams.set('collection', collection);
+	url.searchParams.set('limit', '100');
+	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+	const body = await response.json().catch(() => ({}));
+	return { status: response.status, records: body.records ?? [], cursor: body.cursor };
 }
 
 /** A space's read policy as the host reports it. */
@@ -617,6 +632,48 @@ async function main() {
 		}
 		note(`about space read policy ${startPolicy.readPolicy}`);
 
+		// 10b. the about space's access record says the visibility ----------------
+		// The standard keeps visibility in this record, but a simplespace host
+		// enforces the read policy and never reads the record, so the record must
+		// say what the policy says. Written the other way first, so a record left
+		// by an earlier run cannot pass for this run's write.
+		const OTHER_VISIBILITY = CREATE_VISIBILITY === 'public' ? 'private' : 'public';
+		await must('writeAboutAccess', {
+			groupId: group.id,
+			callerDid: ALICE,
+			visibility: OTHER_VISIBILITY
+		});
+		const otherAccess = await spaceRecord(
+			groupToken,
+			aboutSpaceUri,
+			'group.opensocial.access',
+			'self'
+		);
+		await must('writeAboutAccess', {
+			groupId: group.id,
+			callerDid: ALICE,
+			visibility: CREATE_VISIBILITY
+		});
+		const aboutAccess = await spaceRecord(
+			groupToken,
+			aboutSpaceUri,
+			'group.opensocial.access',
+			'self'
+		);
+		record(
+			otherAccess.value?.public === (OTHER_VISIBILITY === 'public') &&
+				aboutAccess.status === 200 &&
+				aboutAccess.value?.public === (startPolicy.readPolicy === READ_POLICY.public) &&
+				JSON.stringify(aboutAccess.value?.readRoles) ===
+					JSON.stringify(['owner', 'admin', 'member']) &&
+				JSON.stringify(aboutAccess.value?.grants) === '[]',
+			'the about space’s access record says what its read policy says',
+			`read policy ${startPolicy.readPolicy}; access public ${aboutAccess.value?.public} ` +
+				`(${otherAccess.value?.public} when written ${OTHER_VISIBILITY}), ` +
+				`readRoles ${JSON.stringify(aboutAccess.value?.readRoles)}, ` +
+				`grants ${JSON.stringify(aboutAccess.value?.grants)}`
+		);
+
 		await must('writeGroupProfile', {
 			groupId: group.id,
 			callerDid: ALICE,
@@ -720,13 +777,42 @@ async function main() {
 				accessRecord.status === 200 &&
 				accessRecord.value?.public === false &&
 				JSON.stringify(accessRecord.value?.readRoles) ===
-					JSON.stringify(['owner', 'admin', 'member']),
+					JSON.stringify(['owner', 'admin', 'member']) &&
+				JSON.stringify(accessRecord.value?.grants) === '[]',
 			'the roster is membership records in the members space, keyed by member DID',
 			`source ${recorded.source}; ${recorded.roster.length} member(s) ` +
 				`(${recorded.roster.map((e) => e.role).join(', ')}); ` +
 				`${BOB} read straight off the PDS at rkey=${BOB} as ${JSON.stringify(bobsRecord.value?.roles)}; ` +
 				`access record readRoles ${JSON.stringify(accessRecord.value?.readRoles)}, ` +
 				`public ${accessRecord.value?.public}`
+		);
+
+		// 13b. the members space indexes both spaces -------------------------------
+		// One entry per space, the two well-known ones included. The key is a TID,
+		// so a writer that did not list the index first would add a second entry
+		// on every write: the second write here must add nothing.
+		const staleIndex = await must('dropSpaceIndex', { groupId: group.id });
+		if (staleIndex.dropped.length) {
+			note(`reset ${staleIndex.dropped.length} leftover space index entr(ies)`);
+		}
+		const firstIndexWrite = await must('writeSpaceIndex', { groupId: group.id, callerDid: ALICE });
+		const secondIndexWrite = await must('writeSpaceIndex', {
+			groupId: group.id,
+			callerDid: ALICE
+		});
+		const spaceIndex = await spaceRecords(groupToken, membersSpaceUri, 'group.opensocial.space');
+		const indexedSpaces = spaceIndex.records.map((entry) => entry.value?.space).sort();
+		record(
+			spaceIndex.status === 200 &&
+				spaceIndex.records.length === 2 &&
+				JSON.stringify(indexedSpaces) === JSON.stringify([aboutSpaceUri, membersSpaceUri].sort()) &&
+				firstIndexWrite.added.length === 2 &&
+				secondIndexWrite.added.length === 0 &&
+				secondIndexWrite.removed.length === 0,
+			'the members space indexes both spaces, one entry each',
+			`listRecords ${spaceIndex.status}: ${spaceIndex.records.length} group.opensocial.space ` +
+				`record(s) for ${indexedSpaces.join(' and ')}; the first write added ` +
+				`${firstIndexWrite.added.length}, the second ${secondIndexWrite.added.length}`
 		);
 
 		// 14. the space's own member list stays empty ------------------------------
