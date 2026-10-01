@@ -7,14 +7,14 @@ group's PDS. D1 holds a cache of them that the app can query.
 
 ## Where a group's data lives
 
-| what                                   | where                                                   | read policy            |
-| -------------------------------------- | ------------------------------------------------------- | ---------------------- |
-| public events                          | the group's public repo                                 | anyone                 |
-| declaration (makes the group findable) | the group's public repo, only while the group is public | anyone                 |
-| profile and rules                      | the about space, of type `group.opensocial.meta`        | the group's visibility |
-| roles, permissions, membership, access | the members space, of type `group.opensocial.members`   | member list            |
-| a cache of the records above           | D1, `migrations/0001_groups.sql`                        | the app                |
-| the group's writing credential         | D1, encrypted, `migrations/0002_group_credentials.sql`  | the app                |
+| what                                                | where                                                   | read policy            |
+| --------------------------------------------------- | ------------------------------------------------------- | ---------------------- |
+| public events                                       | the group's public repo                                 | anyone                 |
+| declaration (makes the group findable)              | the group's public repo, only while the group is public | anyone                 |
+| profile, rules, access                              | the about space, of type `group.opensocial.meta`        | the group's visibility |
+| roles, permissions, membership, access, space index | the members space, of type `group.opensocial.members`   | member list            |
+| a cache of the records above                        | D1, `migrations/0001_groups.sql`                        | the app                |
+| the group's writing credential                      | D1, encrypted, `migrations/0002_group_credentials.sql`  | the app                |
 
 The app reads both spaces as the group, with the group's own credential. A space needs a login
 whatever its read policy.
@@ -39,6 +39,16 @@ Some records carry a field the standard does not declare. Each is one the app re
 A rule's required `title` is the first 64 graphemes of its line, and its `text` is the whole line.
 A role's required `displayName` is its id with a capital, so `owner` shows as "Owner".
 
+Each space has an `access` record. The standard keeps a group's visibility in the meta space's one
+and has the host enforce it. A simplespace PDS enforces the space's read policy instead and never
+reads the record, so the app writes the record to say what the policy says: public exactly when the
+read policy is, every role a reader, and no grants. The members space's says not public. A group
+with a declaration must have an access record that says public, so the record is written before a
+declaration is published and after one is withdrawn. The members space also holds `space`, the
+standard's index of the group's spaces: one entry for the about space and one for the members space.
+Its key is a TID, so a put cannot land on an existing entry. The writer lists the index and adds
+only what is missing, and it deletes all but the oldest entry for a space that has several.
+
 The group.opensocial lexicons do not resolve, so they cannot be pulled. Unchanged copies of the
 ones the app writes are in `lexicons/reference/group/opensocial`, and `record-lexicons.test.ts`
 checks every record builder against them, failing any field they do not declare and the list above
@@ -61,8 +71,8 @@ per group: a group the declaration index lists is public, and one the caller see
 own groups is private. So browse's badge says whether the group is declared and the page's badge
 what its host enforces, and the two can differ: a save that changed the host but stopped before the
 declaration leaves them apart until the next save or the repair aligns the declaration. The settings
-save changes the read policy before anything else, and the repair aligns the declaration to it,
-never the other way around.
+save changes the read policy before anything else, and the repair aligns the declaration and the
+about space's access record to it, never the other way around.
 
 The settings form sends the visibility it showed as well as the one chosen, and the save changes the
 read policy only when the two differ, so a tab opened before someone else changed the visibility
@@ -170,7 +180,7 @@ Unit tests run with `vitest` and need no network. The e2e script runs the real c
 PDS and deletes what it writes. The two probes only read a running deployment:
 
 ```bash
-node apps/web/scripts/groups-e2e.mjs            # the group flow, 26 checks
+node apps/web/scripts/groups-e2e.mjs            # the group flow, 28 checks
 node apps/web/scripts/group-declaration.mjs <origin>   # every public group is declared, no private one is
 node apps/web/scripts/inherited-surface.mjs <origin>   # the app's existing pages still answer
 ```
