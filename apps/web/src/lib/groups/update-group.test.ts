@@ -29,6 +29,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isRowWrite, sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { stubPds, type StubPdsOptions } from './server/__fixtures__/stub-pds';
+import {
+	ABOUT_SPACE_READER_ROLES,
+	GROUP_ACCESS_COLLECTION,
+	GROUP_ACCESS_RKEY,
+	groupAccessRecord
+} from './members-record';
+import { pdsWriter } from './server/event-writer';
+import { pdsSpaceReader } from './server/about-read';
 import { storeGroupCredential, type GroupCredential } from './server/credentials';
 import { createGroup, getGroupByDid, recordGroupSpaces } from './server/repo';
 import { clearGroupSessions } from './server/session';
@@ -73,9 +81,10 @@ function host(fail?: StubPdsOptions['fail']): Host {
 }
 
 /** The background and the scenario's "given": a group whose credential is
- *  stored and whose two spaces the host provisioned for `visibility`, the
- *  choice made at create. The host's log is cleared afterwards, so a case
- *  asserts on the save alone. */
+ *  stored, whose two spaces the host provisioned for `visibility`, the choice
+ *  made at create, and whose about space's access record says that choice, as
+ *  a create leaves it. The host's log is cleared afterwards, so a case asserts
+ *  on the save alone. */
 async function givenGroup(
 	visibility: GroupVisibility,
 	pds: Host,
@@ -90,8 +99,29 @@ async function givenGroup(
 	await storeGroupCredential(env, harness.db, GROUP_DID, CRED);
 	const uris = await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), visibility);
 	await recordGroupSpaces(harness.db, row.id, uris);
+	const group = {
+		...row,
+		about_space_uri: uris.aboutSpaceUri,
+		members_space_uri: uris.membersSpaceUri
+	};
+	// Through the transport and past the gate, whose own reads a case may have
+	// broken at the host already.
+	await pdsWriter(
+		CRED,
+		GROUP_DID
+	)({
+		repo: GROUP_DID,
+		collection: GROUP_ACCESS_COLLECTION,
+		rkey: GROUP_ACCESS_RKEY,
+		record: {
+			...groupAccessRecord({ roles: ABOUT_SPACE_READER_ROLES, public: visibility === 'public' }),
+			$type: GROUP_ACCESS_COLLECTION
+		},
+		intent: 'update',
+		space: uris.aboutSpaceUri
+	});
 	pds.clearLog();
-	return { ...row, about_space_uri: uris.aboutSpaceUri, members_space_uri: uris.membersSpaceUri };
+	return group;
 }
 
 /** The owner saving the settings form. `shownVisibility`, what the form showed
@@ -121,6 +151,18 @@ async function declaredNow(): Promise<boolean> {
 		rkey: 'self'
 	});
 	return (await fetch(`${CRED.service}/xrpc/com.atproto.repo.getRecord?${q}`)).ok;
+}
+
+/** The about space's access record as the host holds it, read with the group's
+ *  own session, or null. */
+async function aboutAccessNow(): Promise<Record<string, unknown> | null> {
+	const found = await pdsSpaceReader(CRED, GROUP_DID).get({
+		space: ABOUT,
+		repo: GROUP_DID,
+		collection: GROUP_ACCESS_COLLECTION,
+		rkey: GROUP_ACCESS_RKEY
+	});
+	return found?.value ?? null;
 }
 
 /** Moves the about space's read policy at the host, the way another client, or
@@ -210,15 +252,27 @@ describe('a settings flip moves the about space’s read policy', () => {
 			expect(pds.requests.some((r) => r.nsid.startsWith('com.atproto.simplespace.putMember'))).toBe(
 				false
 			);
-			// The host's writes in order: the read policy first, then the
-			// declaration, the profile and the rules. Where the row falls among
-			// them depends on the direction, and the order cases below pin it.
+			// The host's writes in order: the read policy first, then the access
+			// record and the declaration, then the profile and the rules. A
+			// declared group's access says public, so the access record goes
+			// before a declaration is published and after one is withdrawn. Where
+			// the row falls among them depends on the direction, and the order
+			// cases below pin it.
+			const access = 'space.putRecord group.opensocial.access';
+			const declaration = `repo.${declarationWrite} group.opensocial.declaration`;
 			expect(traced(pds)).toEqual([
 				`simplespace.updateSpace ${name}`,
-				`repo.${declarationWrite} group.opensocial.declaration`,
+				...(to === 'public' ? [access, declaration] : [declaration, access]),
 				'space.putRecord group.opensocial.profile',
 				'space.createRecord group.opensocial.rule'
 			]);
+			// The same save leaves the access record saying what the read policy says.
+			expect(await aboutAccessNow()).toEqual({
+				$type: 'group.opensocial.access',
+				public: to === 'public',
+				readRoles: ['owner', 'admin', 'member'],
+				grants: []
+			});
 		}
 	);
 });
@@ -255,6 +309,7 @@ describe('a private switch withdraws the declaration before profile and rules', 
 		expect(traced(pds)).toEqual([
 			'simplespace.updateSpace memberListPolicy',
 			'repo.deleteRecord group.opensocial.declaration',
+			'space.putRecord group.opensocial.access',
 			'space.putRecord group.opensocial.profile'
 		]);
 	});
@@ -423,6 +478,7 @@ describe('a visibility change reaches the host before the row', () => {
 		expect(traced(pds)).toEqual([
 			'simplespace.updateSpace memberListPolicy',
 			'repo.deleteRecord group.opensocial.declaration',
+			'space.putRecord group.opensocial.access',
 			'space.putRecord group.opensocial.profile',
 			'space.createRecord group.opensocial.rule'
 		]);
@@ -430,6 +486,7 @@ describe('a visibility change reaches the host before the row', () => {
 			'simplespace.getSpace (row Kona Trail Runners)',
 			'simplespace.updateSpace (row Kona Trail Runners)',
 			'repo.deleteRecord (row Kona Trail Runners)',
+			'space.putRecord (row Kona Night Runners)',
 			'space.putRecord (row Kona Night Runners)',
 			'space.createRecord (row Kona Night Runners)'
 		]);
@@ -453,6 +510,7 @@ describe('a visibility change reaches the host before the row', () => {
 		expect(result).toEqual({ ok: true });
 		expect(traced(pds)).toEqual([
 			'simplespace.updateSpace publicPolicy',
+			'space.putRecord group.opensocial.access',
 			'repo.putRecord group.opensocial.declaration',
 			'space.putRecord group.opensocial.profile',
 			'space.createRecord group.opensocial.rule'
@@ -461,6 +519,7 @@ describe('a visibility change reaches the host before the row', () => {
 			'simplespace.getSpace (row Kona Trail Runners)',
 			'simplespace.updateSpace (row Kona Trail Runners)',
 			'simplespace.getSpace (row Kona Night Runners)',
+			'space.putRecord (row Kona Night Runners)',
 			'repo.putRecord (row Kona Night Runners)',
 			'space.putRecord (row Kona Night Runners)',
 			'space.createRecord (row Kona Night Runners)'
@@ -532,7 +591,8 @@ describe('a visibility change reaches the host before the row', () => {
 		expect(await declaredNow()).toBe(false);
 
 		// The page now shows public, so saving again is an untouched save that
-		// declares the group.
+		// declares the group. The access record still says private, so it is
+		// rewritten first.
 		hostSilent = false;
 		pds.clearLog();
 		const again = await save(group, 'public', {
@@ -541,6 +601,7 @@ describe('a visibility change reaches the host before the row', () => {
 		});
 		expect(again).toEqual({ ok: true });
 		expect(traced(pds)).toEqual([
+			'space.putRecord group.opensocial.access',
 			'repo.putRecord group.opensocial.declaration',
 			'space.putRecord group.opensocial.profile',
 			'space.createRecord group.opensocial.rule'
@@ -762,11 +823,14 @@ describe('a save after one that the host took and the records did not', () => {
 		const result = await save(group, 'private', { rules: 'Be kind' });
 
 		expect(result).toEqual({ ok: true });
+		// The access record still says public, as the earlier save left it.
 		expect(traced(pds)).toEqual([
 			'repo.deleteRecord group.opensocial.declaration',
+			'space.putRecord group.opensocial.access',
 			'space.putRecord group.opensocial.profile',
 			'space.createRecord group.opensocial.rule'
 		]);
+		expect((await aboutAccessNow())?.public).toBe(false);
 	});
 });
 

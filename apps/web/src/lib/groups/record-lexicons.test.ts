@@ -17,20 +17,23 @@ import {
 } from './about-record';
 import { GROUP_DECLARATION_COLLECTION, groupDeclarationRecord } from './declaration-record';
 import {
+	ABOUT_SPACE_READER_ROLES,
 	GROUP_ACCESS_COLLECTION,
 	GROUP_MEMBERSHIP_COLLECTION,
 	GROUP_PERMISSIONS_COLLECTION,
 	GROUP_ROLE_COLLECTION,
+	GROUP_SPACE_COLLECTION,
 	MEMBERS_SPACE_READER_ROLES,
 	groupAccessRecord,
 	groupBindingsRecord,
 	groupMembershipRecord,
 	groupRoleRecord,
+	groupSpaceRecord,
 	membershipRkey
 } from './members-record';
 import { DEFAULT_ROLE_PERMISSIONS, GROUP_ROLES } from './permissions';
 import { spaceUri } from './server/spaces';
-import { ABOUT_SPACE_TYPE } from './types';
+import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from './types';
 
 const REFERENCE_DIR = new URL('../../../lexicons/reference/group/opensocial/', import.meta.url);
 
@@ -45,14 +48,20 @@ interface Lexicon {
 }
 
 const LEXICONS = new Map<string, Lexicon>(
-	['declaration', 'profile', 'rule', 'role', 'permissions', 'membership', 'access', 'defs'].map(
-		(name) => {
-			const doc = JSON.parse(
-				readFileSync(new URL(`${name}.json`, REFERENCE_DIR), 'utf8')
-			) as Lexicon;
-			return [doc.id, doc];
-		}
-	)
+	[
+		'declaration',
+		'profile',
+		'rule',
+		'role',
+		'permissions',
+		'membership',
+		'access',
+		'space',
+		'defs'
+	].map((name) => {
+		const doc = JSON.parse(readFileSync(new URL(`${name}.json`, REFERENCE_DIR), 'utf8')) as Lexicon;
+		return [doc.id, doc];
+	})
 );
 
 /** Fields a record carries beyond its lexicon, and why. Nothing else may be extra. */
@@ -67,7 +76,8 @@ const EXTRA_FIELDS: Readonly<Record<string, readonly string[]>> = {
 	'group.opensocial.role': [],
 	'group.opensocial.permissions': [],
 	'group.opensocial.membership': [],
-	'group.opensocial.access': []
+	'group.opensocial.access': [],
+	'group.opensocial.space': []
 };
 
 const segmenter = new Intl.Segmenter();
@@ -291,7 +301,24 @@ describe('every record builder matches its group.opensocial lexicon', () => {
 	});
 
 	it('access, for the members space', () => {
-		const record = groupAccessRecord({ roles: MEMBERS_SPACE_READER_ROLES });
+		const record = groupAccessRecord({ roles: MEMBERS_SPACE_READER_ROLES, public: false });
 		expect(recordViolations(GROUP_ACCESS_COLLECTION, record)).toEqual([]);
+	});
+
+	it('access, for the about space of a public group and a private one', () => {
+		for (const isPublic of [true, false]) {
+			const record = groupAccessRecord({ roles: ABOUT_SPACE_READER_ROLES, public: isPublic });
+			expect(recordViolations(GROUP_ACCESS_COLLECTION, record), String(isPublic)).toEqual([]);
+		}
+	});
+
+	it('space, one index entry for each of the two spaces', () => {
+		for (const type of [ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE]) {
+			const space = spaceUri(GROUP_DID, type, 'self');
+			const record = groupSpaceRecord({ space, createdAt: CREATED_AT });
+			expect(recordViolations(GROUP_SPACE_COLLECTION, record), type).toEqual([]);
+			// The lexicon's own wording: the space's authority must be the group.
+			expect(record.space).toBe(`at://${GROUP_DID}/space/${type}/self`);
+		}
 	});
 });

@@ -260,17 +260,22 @@ describe('a successful create', () => {
 			'com.atproto.simplespace.createSpace',
 			'com.atproto.simplespace.createSpace',
 			// The records land after both spaces exist, since there is nowhere to
-			// put them before. Profile first (the about space), then the
-			// declaration in the public repo, which points at the about space and
-			// so cannot come before it. Then the members space: the access record,
-			// the owner's membership, and last the authz config (three roles and
-			// the two binding records). The membership comes first because once a
-			// config exists the gate resolves from it, and an owner with no
-			// membership record could not admit themselves. That order is asserted
-			// on `spaceWrites` in the members-space test below.
+			// put them before. The about space first: the profile, then the access
+			// record. Then the declaration in the public repo, which points at the
+			// about space and so cannot come before it, and which a reader may
+			// only find while the access record says public. Then the members
+			// space: the access record, one index entry per space, the owner's
+			// membership, and last the authz config (three roles and the two
+			// binding records). The membership comes first because once a config
+			// exists the gate resolves from it, and an owner with no membership
+			// record could not admit themselves. That order is asserted on
+			// `spaceWrites` in the members-space test below.
+			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord',
 			'com.atproto.repo.putRecord',
 			'com.atproto.space.putRecord',
+			'com.atproto.space.createRecord',
+			'com.atproto.space.createRecord',
 			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord',
@@ -351,7 +356,9 @@ describe('a successful create', () => {
 		await runCreateGroup(env, OWNER, data());
 
 		const members = `at://${MINTED_DID}/space/group.opensocial.members/self`;
-		const access = spaceWrites.find((w) => w.collection === 'group.opensocial.access');
+		const access = spaceWrites.find(
+			(w) => w.collection === 'group.opensocial.access' && w.space === members
+		);
 		const membership = spaceWrites.find((w) => w.collection === 'group.opensocial.membership');
 
 		expect(access).toMatchObject({ space: members, rkey: 'self' });
@@ -383,6 +390,68 @@ describe('a successful create', () => {
 	// record uses the standard's identifiers, because a peer app can only check
 	// what it can name. The eventPermissions record uses ours, because the
 	// standard defines none.
+	// The standard keeps visibility in the meta space's access record, where a
+	// simplespace host never reads it. The host enforces the read policy, so the
+	// record is written to say the same thing, before the declaration.
+	it.each(['public', 'private'] as const)(
+		'writes the about space’s access record for a %s group, saying what its read policy says',
+		async (visibility) => {
+			const pds = stubPds();
+			const { spaceWrites } = pds;
+
+			await runCreateGroup(env, OWNER, data({ visibility }));
+
+			const meta = `at://${MINTED_DID}/space/group.opensocial.meta/self`;
+			const access = spaceWrites.filter(
+				(w) => w.collection === 'group.opensocial.access' && w.space === meta
+			);
+			expect(access).toHaveLength(1);
+			expect(access[0]).toMatchObject({ rkey: 'self' });
+			expect(access[0].record).toEqual({
+				$type: 'group.opensocial.access',
+				public: visibility === 'public',
+				readRoles: ['owner', 'admin', 'member'],
+				grants: []
+			});
+			if (visibility === 'public') {
+				// Before the declaration, so a declared group's access never says private.
+				const order = pds
+					.writes()
+					.map((w) => `${w.body?.collection}${w.body?.space ? ` ${w.body.space}` : ''}`);
+				expect(order.indexOf(`group.opensocial.access ${meta}`)).toBeGreaterThan(-1);
+				expect(order.indexOf(`group.opensocial.access ${meta}`)).toBeLessThan(
+					order.indexOf('group.opensocial.declaration')
+				);
+			}
+		}
+	);
+
+	// The standard indexes every space in members/self, the two well-known ones
+	// included, exactly once each.
+	it('indexes both spaces in the members space, one entry each', async () => {
+		const { spaceWrites } = stubPds();
+
+		await runCreateGroup(env, OWNER, data());
+
+		const [group] = (await rows('groups')) as { created_at: number }[];
+		const members = `at://${MINTED_DID}/space/group.opensocial.members/self`;
+		const index = spaceWrites.filter((w) => w.collection === 'group.opensocial.space');
+		expect(index.map((w) => w.record.space)).toEqual([
+			`at://${MINTED_DID}/space/group.opensocial.meta/self`,
+			members
+		]);
+		for (const entry of index) {
+			expect(entry.space).toBe(members);
+			expect(entry.rkey).toMatch(/^[234567a-z]{13}$/);
+			expect(entry.record).toEqual({
+				$type: 'group.opensocial.space',
+				space: entry.record.space,
+				createdAt: new Date(group.created_at).toISOString()
+			});
+		}
+		expect(new Set(index.map((w) => w.rkey)).size).toBe(2);
+	});
+
 	it('writes one role record per seeded role and both binding records', async () => {
 		const { spaceWrites } = stubPds();
 
@@ -489,6 +558,7 @@ describe('a successful create', () => {
 				'group.opensocial.profile',
 				'group.opensocial.declaration',
 				'group.opensocial.membership',
+				'group.opensocial.space',
 				'net.openmeet.group.eventPermissions'
 			])
 		);

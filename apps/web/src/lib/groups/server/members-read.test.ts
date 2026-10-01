@@ -116,7 +116,7 @@ const accessRecord: SpaceFixture = {
 	collection: GROUP_ACCESS_COLLECTION,
 	rkey: GROUP_ACCESS_RKEY,
 	value: {
-		...groupAccessRecord({ roles: ['owner', 'admin', 'member'] }),
+		...groupAccessRecord({ roles: ['owner', 'admin', 'member'], public: false }),
 		$type: GROUP_ACCESS_COLLECTION
 	}
 };

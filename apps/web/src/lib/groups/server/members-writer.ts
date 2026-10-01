@@ -1,11 +1,13 @@
-// Writes a group's roster and authz config into its members space. Each roster
-// intent needs its own grant, so a member who may admit still cannot eject or
-// promote. The authz records need MANAGE_GROUP, like any configuration write.
+// Writes a group's roster, its authz config and the index of its spaces into its
+// members space. Each roster intent needs its own grant, so a member who may admit
+// still cannot eject or promote. The other records need MANAGE_GROUP, like any
+// configuration write.
 //
 // Nothing here writes the members space's own member list. A read policy covers
 // the whole space, so a listed DID could read every roster record from the PDS,
 // around the app's gate. The list stays empty. The about space's list mirrors
 // the roster instead (./roster.ts).
+import { now as tidNow } from '@atcute/tid';
 import {
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
@@ -14,11 +16,13 @@ import {
 	GROUP_PERMISSIONS_COLLECTION,
 	GROUP_PERMISSIONS_RKEY,
 	GROUP_ROLE_COLLECTION,
+	GROUP_SPACE_COLLECTION,
 	MEMBERS_SPACE_READER_ROLES,
 	groupAccessRecord,
 	groupBindingsRecord,
 	groupMembershipRecord,
 	groupRoleRecord,
+	groupSpaceRecord,
 	membershipRkey
 } from '../members-record';
 import {
@@ -29,6 +33,7 @@ import {
 } from '../permissions';
 import { MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import type { GroupSpaceReader } from './about-read';
+import { aboutSpace } from './about-writer';
 import type { CredentialStoreEnv } from './credentials';
 import {
 	GroupPermissionError,
@@ -37,6 +42,7 @@ import {
 	requireGroupPermission,
 	type GroupRepoWriter
 } from './event-writer';
+import type { GroupSpaceIndexEntry } from './members-read';
 
 export interface WriteGroupMembersInput {
 	db: D1Database;
@@ -176,7 +182,7 @@ export async function writeGroupAccess(
 	await requireGroupPermission(input, 'MANAGE_GROUP');
 
 	const record = {
-		...groupAccessRecord({ roles: input.roles ?? MEMBERS_SPACE_READER_ROLES }),
+		...groupAccessRecord({ roles: input.roles ?? MEMBERS_SPACE_READER_ROLES, public: false }),
 		$type: GROUP_ACCESS_COLLECTION
 	};
 
@@ -190,6 +196,64 @@ export async function writeGroupAccess(
 		space: membersSpace(input.group)
 	});
 	return { uri: result.uri, cid: result.cid };
+}
+
+export interface SpaceIndexWriteResult {
+	/** The spaces this call indexed. */
+	added: string[];
+	/** The keys of the entries it deleted, each a second entry for a space. */
+	removed: string[];
+}
+
+/**
+ * Leaves exactly one `space` entry for each of the group's two spaces: it adds one
+ * for a space with none, and deletes all but the oldest for a space with several.
+ * An entry for any other space is left alone. `existing` is passed in, as for
+ * rules, so a new group passes `[]` and reads nothing. Needs MANAGE_GROUP, since
+ * it is configuration.
+ */
+export async function writeGroupSpaceIndex(
+	input: WriteGroupMembersInput & {
+		existing: readonly GroupSpaceIndexEntry[];
+		createdAt?: string;
+	}
+): Promise<SpaceIndexWriteResult> {
+	await requireGroupPermission(input, 'MANAGE_GROUP');
+
+	const members = membersSpace(input.group);
+	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const oldestFirst = [...input.existing].sort((a, b) => a.rkey.localeCompare(b.rkey));
+	const result: SpaceIndexWriteResult = { added: [], removed: [] };
+
+	for (const space of [aboutSpace(input.group), members]) {
+		const [kept, ...extra] = oldestFirst.filter((entry) => entry.space === space);
+		if (!kept) {
+			await writer({
+				repo: input.group.group_did,
+				collection: GROUP_SPACE_COLLECTION,
+				rkey: tidNow(),
+				record: {
+					...groupSpaceRecord({ space, createdAt: input.createdAt }),
+					$type: GROUP_SPACE_COLLECTION
+				},
+				intent: 'create',
+				space: members
+			});
+			result.added.push(space);
+		}
+		for (const entry of extra) {
+			await writer({
+				repo: input.group.group_did,
+				collection: GROUP_SPACE_COLLECTION,
+				rkey: entry.rkey,
+				record: {},
+				intent: 'delete',
+				space: members
+			});
+			result.removed.push(entry.rkey);
+		}
+	}
+	return result;
 }
 
 /** What landed, so a partial failure can say which records exist. */

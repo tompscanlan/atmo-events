@@ -5,8 +5,8 @@
 // is fixed, and every read comes before the first write:
 //
 //   refuse -> reads -> decide the visibility -> host, if it changed -> then
-//     private   withdraw the declaration -> row -> profile -> rules
-//     public    row -> read the host again -> declaration -> profile -> rules
+//     private   withdraw the declaration -> row -> access -> profile -> rules
+//     public    row -> read the host again -> access -> declaration -> profile -> rules
 //
 // The visibility lives only at the host, and another client can change it
 // while a settings tab is open. So the form also sends the visibility it
@@ -27,17 +27,23 @@
 // public writes the row first, and is declared only if a fresh host read still
 // says public. The gap between that read and the write is left to the repair
 // (server/repair.ts).
+//
+// The about space's access record says the visibility too, and is written only
+// when it says something else. A declared group's access must say public, so it
+// goes before a declaration is published and after one is withdrawn.
 import type { CredentialStoreEnv } from './server/credentials';
 import { updateGroup } from './server/repo';
 import { GroupCredentialError, groupWriter, type GroupRepoWriter } from './server/event-writer';
 import { approvalRefusal, groupFace, splitRuleLines } from './about-record';
 import {
 	groupSpaceReader,
+	readAboutAccess,
 	readGroupAbout,
 	type GroupAbout,
 	type GroupSpaceReader
 } from './server/about-read';
-import { setGroupRules, writeGroupProfile } from './server/about-writer';
+import { setGroupRules, writeAboutAccess, writeGroupProfile } from './server/about-writer';
+import { ABOUT_SPACE_READER_ROLES, accessSays, type GroupAccessFields } from './members-record';
 import { reconcileGroupDeclaration } from './server/declaration-writer';
 import { declarationRequired } from './declaration-record';
 import { readGroupVisibility, setAboutSpaceReadPolicy } from './server/spaces';
@@ -150,6 +156,8 @@ interface SaveState {
 	data: UpdateGroupData;
 	reader: GroupSpaceReader;
 	about: GroupAbout;
+	/** The about space's access record as read, then as this save last wrote it. */
+	access: GroupAccessFields | null;
 	writer: GroupRepoWriter;
 	/** Whether this save moved the host. */
 	flipped: boolean;
@@ -178,8 +186,27 @@ function reconcileDeclaration(s: SaveState, visibility: GroupVisibility) {
 	});
 }
 
-/** The profile's `joinPolicy` is derived from `visibility` and the approval. */
-async function writeProfileAndRules(s: SaveState, visibility: GroupVisibility): Promise<void> {
+/** Writes the about space's access record when it does not already say
+ *  `visibility`, and keeps what it wrote, so a second call writes nothing. */
+async function alignAccess(s: SaveState, visibility: GroupVisibility): Promise<void> {
+	const isPublic = visibility === 'public';
+	if (accessSays(s.access, isPublic)) return;
+	await writeAboutAccess({
+		db: s.db,
+		env: s.env,
+		group: s.fresh,
+		visibility,
+		callerDid: s.callerDid,
+		writer: s.writer
+	});
+	s.access = { roles: [...ABOUT_SPACE_READER_ROLES], public: isPublic };
+}
+
+/** The about space's records: the access record, if it disagrees, then the
+ *  profile, whose `joinPolicy` is derived from `visibility` and the approval,
+ *  then the rules. */
+async function writeAboutRecords(s: SaveState, visibility: GroupVisibility): Promise<void> {
+	await alignAccess(s, visibility);
 	await writeGroupProfile({
 		db: s.db,
 		env: s.env,
@@ -221,7 +248,7 @@ async function saveAsPrivate(s: SaveState): Promise<GroupFormResult> {
 		return rowNotSaved(e, 'private', s.flipped);
 	}
 	try {
-		await writeProfileAndRules(s, 'private');
+		await writeAboutRecords(s, 'private');
 	} catch (e) {
 		return recordsNotUpdated(e, s.flipped ? 'private' : null, false);
 	}
@@ -247,9 +274,12 @@ async function saveAsPublic(s: SaveState): Promise<GroupFormResult> {
 
 	let declarationDone = false;
 	try {
+		// Public: the access record before the declaration. Private, because the
+		// host moved during this save: after the withdrawal, with the profile.
+		if (declarationRequired(now)) await alignAccess(s, now);
 		await reconcileDeclaration(s, now);
 		declarationDone = true;
-		await writeProfileAndRules(s, now);
+		await writeAboutRecords(s, now);
 	} catch (e) {
 		return recordsNotUpdated(
 			e,
@@ -277,6 +307,7 @@ export async function runUpdateGroup(
 	let reader: GroupSpaceReader;
 	let host: GroupVisibility;
 	let about: GroupAbout;
+	let access: GroupAccessFields | null;
 	let writer: GroupRepoWriter;
 	try {
 		const found = await groupSpaceReader(env, db, group);
@@ -286,6 +317,8 @@ export async function runUpdateGroup(
 		host = await readGroupVisibility(reader, group);
 		failed = "the group's profile and rules could not be read from its PDS";
 		about = await readGroupAbout(reader, group);
+		failed = "the group's access record could not be read from its PDS";
+		access = await readAboutAccess(reader, group);
 		failed = noCredential;
 		writer = await groupWriter(env, db, group);
 	} catch (e) {
@@ -337,6 +370,7 @@ export async function runUpdateGroup(
 		data,
 		reader,
 		about,
+		access,
 		writer,
 		flipped,
 		requireApproval

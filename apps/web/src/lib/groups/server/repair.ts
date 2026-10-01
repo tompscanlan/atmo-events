@@ -2,9 +2,11 @@
 // settings page, behind MANAGE_GROUP. Four steps, in order:
 //
 //   1. Write the members-space records the row is certain of, if missing:
-//      `access`, the owner's `membership`, and the authz config.
+//      `access`, the index of the two spaces, the owner's `membership`, and
+//      the authz config.
 //   2. Make the about space's member list equal the membership records.
-//   3. Make the declaration agree with the about space's read policy.
+//   3. Make the about space's access record and the declaration agree with
+//      its read policy.
 //   4. Rebuild the cache from the records.
 //
 // Step 1 exists because a create that fails after the INSERT leaves the
@@ -18,13 +20,16 @@
 // record loses access once it exists.
 //
 // Step 3 never changes the host's read policy: it holds the owner's last
-// choice that got through. A second run writes nothing. The repair cannot
+// choice that got through, so the records follow it. A second run writes
+// nothing. The repair cannot
 // help a group whose authz config exists while the owner has no membership
 // record, because MANAGE_GROUP then refuses the owner too.
 import { declarationRequired } from '../declaration-record';
 import { GROUP_ROLES, type GroupPermission, type GroupRoleName } from '../permissions';
 import type { GroupRow, GroupVisibility } from '../types';
-import { groupSpaceReader, type GroupSpaceReader } from './about-read';
+import { groupSpaceReader, readAboutAccess, type GroupSpaceReader } from './about-read';
+import { writeAboutAccess } from './about-writer';
+import { accessSays } from '../members-record';
 import type { CredentialStoreEnv } from './credentials';
 import { reconcileGroupDeclaration } from './declaration-writer';
 import { GroupRecordError, requireGroupPermission, type GroupRepoWriter } from './event-writer';
@@ -34,8 +39,13 @@ import {
 	type AboutMemberAlignment,
 	type GroupMemberList
 } from './member-list';
-import { readGroupMembers, type GroupMembers } from './members-read';
-import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './members-writer';
+import { readGroupMembers, readGroupSpaceIndex, type GroupMembers } from './members-read';
+import {
+	putGroupMembership,
+	writeGroupAccess,
+	writeGroupAuthz,
+	writeGroupSpaceIndex
+} from './members-writer';
 import {
 	groupRebuildSources,
 	rebuildGroup,
@@ -62,8 +72,9 @@ export interface RepairGroupInput {
 }
 
 export interface GroupRepairResult {
-	/** What step 1 wrote. `false` means it was already there, or held back. */
-	wrote: { access: boolean; ownerMembership: boolean; authz: boolean };
+	/** What step 1 wrote. `false` means it was already there, or held back.
+	 *  `spaceIndex` means an entry was added or a second one deleted. */
+	wrote: { access: boolean; spaceIndex: boolean; ownerMembership: boolean; authz: boolean };
 	/** Active members, other than the owner, with no membership record. */
 	unrecordedMembers: string[];
 	/** Why the authz config was not written, when it was missing. */
@@ -80,6 +91,9 @@ export interface HostAlignment {
 	visibility: GroupVisibility;
 	/** What changed, or null when the declaration already agreed. */
 	declaration: 'declared' | 'withdrawn' | null;
+	/** Whether the about space's access record was missing or said otherwise,
+	 *  and was rewritten. */
+	access: boolean;
 }
 
 export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairResult> {
@@ -96,13 +110,25 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 	// The row's creation instant, as a create stamps its records.
 	const createdAt = new Date(group.created_at).toISOString();
 	const write = { ...input, reader };
-	const wrote: GroupRepairResult['wrote'] = { access: false, ownerMembership: false, authz: false };
+	const wrote: GroupRepairResult['wrote'] = {
+		access: false,
+		spaceIndex: false,
+		ownerMembership: false,
+		authz: false
+	};
 
 	// Create's order: the authz config goes last (see ../create-group.ts).
 	if (!members.access) {
 		await writeGroupAccess(write);
 		wrote.access = true;
 	}
+
+	const index = await writeGroupSpaceIndex({
+		...write,
+		existing: await readGroupSpaceIndex(reader, group),
+		createdAt
+	});
+	wrote.spaceIndex = index.added.length > 0 || index.removed.length > 0;
 
 	const recorded = new Set(members.memberships.map((record) => record.subject));
 	const unrecordedMembers: string[] = [];
@@ -157,20 +183,33 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 	return { wrote, unrecordedMembers, authzHeldBack, memberList, host, rebuild };
 }
 
-/** Step 3. Writes only on a disagreement, and never to the host or the row. */
+/** Step 3. Writes only on a disagreement, and never to the host or the row. A
+ *  declared group's access must say public, so the access record goes before a
+ *  declaration is published and after one is withdrawn. */
 async function alignToHost(
 	input: RepairGroupInput & { reader: GroupSpaceReader; createdAt: string },
 	sources: GroupRebuildSources
 ): Promise<HostAlignment> {
 	const visibility = await readGroupVisibility(input.reader, input.group);
-	const declared = await sources.declared();
+	const [declared, access] = await Promise.all([
+		sources.declared(),
+		readAboutAccess(input.reader, input.group)
+	]);
 
+	const alignAccess = async () => {
+		if (accessSays(access, visibility === 'public')) return false;
+		await writeAboutAccess({ ...input, visibility });
+		return true;
+	};
+
+	let accessWritten = declarationRequired(visibility) ? await alignAccess() : false;
 	let declaration: HostAlignment['declaration'] = null;
 	if (declared !== declarationRequired(visibility)) {
 		await reconcileGroupDeclaration({ ...input, visibility });
 		declaration = declared ? 'withdrawn' : 'declared';
 	}
-	return { visibility, declaration };
+	if (!declarationRequired(visibility)) accessWritten = await alignAccess();
+	return { visibility, declaration, access: accessWritten };
 }
 
 /** Whether the space holds all of the authz config, none of it, or some. */
@@ -203,6 +242,7 @@ export function describeRepair(result: GroupRepairResult): string {
 	const written = [
 		wrote.ownerMembership && "owner's membership record",
 		wrote.access && 'access record',
+		wrote.spaceIndex && 'space index',
 		wrote.authz && 'permission config'
 	].filter((part): part is string => typeof part === 'string');
 	const sentences = [
@@ -221,11 +261,14 @@ export function describeRepair(result: GroupRepairResult): string {
 		);
 	}
 	const { host } = result;
-	if (host.declaration) {
+	const aligned = [
+		host.declaration === 'withdrawn' && 'withdrew its declaration',
+		host.declaration === 'declared' && 'published its declaration',
+		host.access && `rewrote its access record to say ${host.visibility}`
+	].filter((part): part is string => typeof part === 'string');
+	if (aligned.length > 0) {
 		sentences.push(
-			`Brought the group in line with its PDS, which reads it as ${host.visibility}: ${
-				host.declaration === 'withdrawn' ? 'withdrew its declaration' : 'published its declaration'
-			}.`
+			`Brought the group in line with its PDS, which reads it as ${host.visibility}: ${joinList(aligned)}.`
 		);
 	}
 	sentences.push("Rebuilt this site's copy of the group from its records.");

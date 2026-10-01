@@ -1,8 +1,9 @@
 // The members space as records: the roster (one `membership` per member, one `access`
-// for the space) and the authz config it resolves against (`role`, `permissions`,
-// `eventPermissions`). A membership is keyed by the member's DID, so `getRecord(did)`
-// answers "is this DID a member" in one call. There is no `status` and no suspension:
-// a grant is revoked by deleting the record that made it.
+// for the space), the authz config it resolves against (`role`, `permissions`,
+// `eventPermissions`), and the index of the group's spaces (`space`). A membership is
+// keyed by the member's DID, so `getRecord(did)` answers "is this DID a member" in one
+// call. There is no `status` and no suspension: a grant is revoked by deleting the
+// record that made it.
 //
 // All but `eventPermissions` are the opensocial.group proposal's records, as in
 // ./about-record.ts. The standard puts a modality's authz in the modality's own
@@ -24,7 +25,9 @@ export const GROUP_ACCESS_COLLECTION = 'group.opensocial.access';
 export const GROUP_ROLE_COLLECTION = 'group.opensocial.role';
 export const GROUP_PERMISSIONS_COLLECTION = 'group.opensocial.permissions';
 export const GROUP_EVENT_PERMISSIONS_COLLECTION = 'net.openmeet.group.eventPermissions';
+export const GROUP_SPACE_COLLECTION = 'group.opensocial.space';
 
+/** Every space's access record is `self`, in that space. */
 export const GROUP_ACCESS_RKEY = 'self';
 
 /** Both binding records are `self`. They are two collections, not one record, so the
@@ -33,6 +36,10 @@ export const GROUP_PERMISSIONS_RKEY = 'self';
 
 /** Every role may read the members space. Derived, so a new role does not lose its read. */
 export const MEMBERS_SPACE_READER_ROLES: readonly GroupRoleName[] = GROUP_ROLES;
+
+/** Every role may read the about space too: a private group's profile and rules are
+ *  for its members, and the space's member list mirrors the whole roster. */
+export const ABOUT_SPACE_READER_ROLES: readonly GroupRoleName[] = GROUP_ROLES;
 
 export class MembershipKeyError extends Error {
 	constructor(readonly did: string) {
@@ -122,15 +129,17 @@ export interface GroupAccessFields {
 	public: boolean;
 }
 
-/** The members space's access record: which roles may read it. It is never public,
- *  and it grants no OAuth scopes, since no authorization server for a group DID
- *  exists yet. It does not carry the group's visibility, which is the about space's
- *  read policy. */
+/** A space's access record: whether anyone may read it, and which roles may. It
+ *  grants no OAuth scopes, since no authorization server for a group DID exists yet.
+ *  A simplespace host enforces the space's read policy and member list, never this
+ *  record, so it is written to agree with them: the members space is never public,
+ *  and the about space is public exactly when its read policy is. */
 export function groupAccessRecord(input: {
 	roles: readonly GroupRoleName[];
+	public: boolean;
 }): Record<string, unknown> {
 	return {
-		public: false,
+		public: input.public,
 		readRoles: [...asRoles(input.roles)],
 		grants: []
 	};
@@ -141,6 +150,29 @@ export function parseGroupAccess(value: unknown): GroupAccessFields | null {
 	const raw = value as Record<string, unknown>;
 	if (!Array.isArray(raw.readRoles)) return null;
 	return { roles: asRoles(raw.readRoles), public: raw.public === true };
+}
+
+/** Whether a read access record says what `isPublic` says. A missing one never does. */
+export function accessSays(access: GroupAccessFields | null, isPublic: boolean): boolean {
+	return access !== null && access.public === isPublic;
+}
+
+/** One entry in the group's index of its own spaces. The standard wants exactly one
+ *  per space, the about and members spaces included. It is keyed by TID, so a put
+ *  cannot land on an existing entry: a writer lists the index and adds only what
+ *  is missing. `createdAt` is the standard's. */
+export function groupSpaceRecord(input: {
+	space: string;
+	createdAt?: string;
+}): Record<string, unknown> {
+	return { space: input.space, createdAt: input.createdAt || new Date().toISOString() };
+}
+
+export function parseGroupSpace(value: unknown): { space: string } | null {
+	if (!value || typeof value !== 'object') return null;
+	const raw = value as Record<string, unknown>;
+	const space = typeof raw.space === 'string' ? raw.space.trim() : '';
+	return space ? { space } : null;
 }
 
 // The authz config. `role` declares that a role exists, so adding one is a record, not

@@ -20,8 +20,13 @@ import {
 	recordGroupSpaces,
 	updateGroup
 } from './repo';
-import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './members-writer';
-import { writeGroupProfile } from './about-writer';
+import {
+	putGroupMembership,
+	writeGroupAccess,
+	writeGroupAuthz,
+	writeGroupSpaceIndex
+} from './members-writer';
+import { writeAboutAccess, writeGroupProfile } from './about-writer';
 import { GroupPermissionError, type GroupRepoWrite, type GroupRepoWriter } from './event-writer';
 import { readGroupMembers, hasAuthzRecords } from './members-read';
 import { describeRepair, repairGroup } from './repair';
@@ -43,7 +48,8 @@ import {
 	GROUP_EVENT_PERMISSIONS_COLLECTION,
 	GROUP_MEMBERSHIP_COLLECTION,
 	GROUP_PERMISSIONS_COLLECTION,
-	GROUP_ROLE_COLLECTION
+	GROUP_ROLE_COLLECTION,
+	GROUP_SPACE_COLLECTION
 } from '../members-record';
 import { spaceUri } from './spaces';
 
@@ -180,19 +186,27 @@ const wroteTo = (collection: string) => writes.filter((w) => w.collection === co
 
 describe('repairGroup', () => {
 	// A create interrupted after the INSERT: a row and an empty members space.
-	it("completes an interrupted create: access, the owner's membership, then the authz config", async () => {
+	it("completes an interrupted create: access, the space index, the owner's membership, then the authz config", async () => {
 		const result = await repair();
 
-		expect(result.wrote).toEqual({ access: true, ownerMembership: true, authz: true });
+		expect(result.wrote).toEqual({
+			access: true,
+			spaceIndex: true,
+			ownerMembership: true,
+			authz: true
+		});
 		expect(result.unrecordedMembers).toEqual([]);
 		expect(result.authzHeldBack).toBeNull();
 		expect(describeRepair(result)).toMatch(
-			/^Wrote the missing owner's membership record, access record and permission config\. /
+			/^Wrote the missing owner's membership record, access record, space index and permission config\. /
 		);
 		// The config goes last: once it exists the gate reads records, so the
 		// owner's record must already be there.
 		const order = writes.map((w) => w.collection);
 		expect(order.indexOf(GROUP_ACCESS_COLLECTION)).toBeLessThan(
+			order.indexOf(GROUP_SPACE_COLLECTION)
+		);
+		expect(order.indexOf(GROUP_SPACE_COLLECTION)).toBeLessThan(
 			order.indexOf(GROUP_MEMBERSHIP_COLLECTION)
 		);
 		expect(order.indexOf(GROUP_MEMBERSHIP_COLLECTION)).toBeLessThan(
@@ -208,7 +222,12 @@ describe('repairGroup', () => {
 		const before = writes.length;
 		const again = await repair();
 		expect(writes).toHaveLength(before);
-		expect(again.wrote).toEqual({ access: false, ownerMembership: false, authz: false });
+		expect(again.wrote).toEqual({
+			access: false,
+			spaceIndex: false,
+			ownerMembership: false,
+			authz: false
+		});
 	});
 
 	// A later member's record exists, the owner's does not, and there is no
@@ -230,7 +249,12 @@ describe('repairGroup', () => {
 
 		const result = await repair();
 
-		expect(result.wrote).toEqual({ access: true, ownerMembership: true, authz: true });
+		expect(result.wrote).toEqual({
+			access: true,
+			spaceIndex: true,
+			ownerMembership: true,
+			authz: true
+		});
 		expect(wroteTo(GROUP_MEMBERSHIP_COLLECTION)).toHaveLength(memberWrites + 1);
 		expect(wroteTo(GROUP_MEMBERSHIP_COLLECTION).at(-1)?.rkey).toBe(OWNER);
 	});
@@ -243,7 +267,12 @@ describe('repairGroup', () => {
 		const result = await repair();
 
 		expect(result.unrecordedMembers).toEqual([MEMBER]);
-		expect(result.wrote).toEqual({ access: true, ownerMembership: true, authz: false });
+		expect(result.wrote).toEqual({
+			access: true,
+			spaceIndex: true,
+			ownerMembership: true,
+			authz: false
+		});
 		expect(result.authzHeldBack).toBe('unrecorded-members');
 		expect(wroteTo(GROUP_MEMBERSHIP_COLLECTION).map((w) => w.rkey)).toEqual([OWNER]);
 		expect(wroteTo(GROUP_PERMISSIONS_COLLECTION)).toHaveLength(0);
@@ -313,6 +342,50 @@ describe('repairGroup', () => {
 		const admin = members.permissions?.bindings.find((b) => b.role === 'admin');
 		expect(admin?.permissions).not.toContain('ASSIGN_ROLES');
 		expect(admin?.permissions).toContain('ADMIT_MEMBERS');
+	});
+
+	// The standard wants exactly one index entry per space. A second entry for a
+	// space, such as two repairs racing would leave, loses to the oldest, and an
+	// entry for a space that is not one of the two is not this repair's.
+	it('keeps one index entry per space: adds what is missing, deletes the younger of two, and leaves other spaces alone', async () => {
+		const index = (rkey: string, space: string) =>
+			writer({
+				repo: GROUP_DID,
+				collection: GROUP_SPACE_COLLECTION,
+				rkey,
+				record: { $type: GROUP_SPACE_COLLECTION, space, createdAt: '2026-09-30T12:00:00.000Z' },
+				intent: 'create',
+				space: MEMBERS
+			});
+		const EVENTS = spaceUri(GROUP_DID, 'group.lexicon.calendar.events', 'self');
+		await index('3m2aaaaaaaaa2', ABOUT);
+		await index('3m2aaaaaaaaa3', ABOUT);
+		await index('3m2aaaaaaaaa4', EVENTS);
+		const before = writes.length;
+
+		const result = await repair();
+
+		const indexWrites = writes.slice(before).filter((w) => w.collection === GROUP_SPACE_COLLECTION);
+		expect(
+			indexWrites.map((w) => [w.intent, w.intent === 'delete' ? w.rkey : w.record.space])
+		).toEqual([
+			['delete', '3m2aaaaaaaaa3'],
+			['create', MEMBERS]
+		]);
+		expect(result.wrote.spaceIndex).toBe(true);
+		const live = (
+			await reader.list({ space: MEMBERS, repo: GROUP_DID, collection: GROUP_SPACE_COLLECTION })
+		).map((r) => [r.rkey, r.value.space]);
+		expect(live).toEqual(
+			expect.arrayContaining([
+				['3m2aaaaaaaaa2', ABOUT],
+				['3m2aaaaaaaaa4', EVENTS]
+			])
+		);
+		expect(live).toHaveLength(3);
+
+		const again = await repair();
+		expect(again.wrote.spaceIndex).toBe(false);
 	});
 
 	it('refuses a caller without MANAGE_GROUP and writes nothing', async () => {
@@ -486,16 +559,22 @@ describe('Repair aligns the declaration to the host', () => {
 		return (await fetch(`${CRED.service}/xrpc/com.atproto.repo.getRecord?${query}`)).ok;
 	}
 
+	const updateSpaceCalls = () =>
+		pds.requests.filter((r) => r.nsid === 'com.atproto.simplespace.updateSpace');
+
 	/** Repair with nothing injected: every read and write goes to the host. */
 	const hostRepair = async () =>
 		repairGroup({ db, env, group: (await getGroupByDid(db, GROUP_DID))!, callerDid: OWNER });
 
-	// A complete group: the owner's membership record, the access record, the
-	// authz config and the owner on the about space's list. So the only thing a
-	// repair can find to change is what the case sets up.
+	// A complete group, as a public create leaves it: the owner's membership
+	// record, both access records, the space index, the authz config and the
+	// owner on the about space's list. So the only thing a repair can find to
+	// change is what the case sets up.
 	beforeEach(async () => {
 		const seed = { db, env, group, callerDid: OWNER };
 		await writeGroupAccess(seed);
+		await writeGroupSpaceIndex({ ...seed, existing: [] });
+		await writeAboutAccess({ ...seed, visibility: 'public' });
 		await putGroupMembership({ ...seed, subject: OWNER, roles: ['owner'], intent: 'admit' });
 		await writeGroupAuthz(seed);
 		await hostList('putMember', ABOUT, OWNER);
@@ -505,13 +584,15 @@ describe('Repair aligns the declaration to the host', () => {
 
 	afterEach(() => vi.restoreAllMocks());
 
+	// The access record was seeded saying public, so a host that reads the group
+	// as private also has it rewritten, after any withdrawal.
 	it.each([
 		[
 			'private',
 			true,
 			false,
-			['repo.deleteRecord'],
-			'Brought the group in line with its PDS, which reads it as private: withdrew its declaration.'
+			['repo.deleteRecord', 'space.putRecord'],
+			'Brought the group in line with its PDS, which reads it as private: withdrew its declaration and rewrote its access record to say private.'
 		],
 		[
 			'public',
@@ -520,7 +601,14 @@ describe('Repair aligns the declaration to the host', () => {
 			['repo.putRecord'],
 			'Brought the group in line with its PDS, which reads it as public: published its declaration.'
 		],
-		['private', false, false, [], null]
+		[
+			'private',
+			false,
+			false,
+			['space.putRecord'],
+			'Brought the group in line with its PDS, which reads it as private: rewrote its access record to say private.'
+		],
+		['public', true, true, [], null]
 	] as const)(
 		'a host reading the group as %s, with the declaration present: %s, ends with the declaration present: %s, and never calls updateSpace',
 		async (host, declaredBefore, declaredAfter, hostWrites, summary) => {
@@ -540,8 +628,9 @@ describe('Repair aligns the declaration to the host', () => {
 
 			const result = await hostRepair();
 
-			// It asked the host, and the only host writes are the declaration's:
-			// no updateSpace, and nothing at all when everything already agreed.
+			// It asked the host, and the only host writes are the declaration's
+			// and the access record's: no updateSpace, and nothing at all when
+			// everything already agreed.
 			expect(
 				pds.requests.some(
 					(r) => r.nsid === 'com.atproto.simplespace.getSpace' && r.params.space === ABOUT
@@ -599,7 +688,7 @@ describe('Repair aligns the declaration to the host', () => {
 		const rowWrites = harness.statements.filter(isRowWrite);
 		expect(rowWrites.length).toBeGreaterThan(0);
 		expect(rowWrites.filter((sql) => /visibility/.test(sql))).toEqual([]);
-		expect(result.host).toEqual({ visibility: 'private', declaration: 'withdrawn' });
+		expect(result.host).toEqual({ visibility: 'private', declaration: 'withdrawn', access: true });
 		const row = (await getGroupByDid(db, GROUP_DID))!;
 		expect(row.require_approval).toBe(0);
 		// The row and the profile both still say open, and the page shows the
@@ -609,7 +698,8 @@ describe('Repair aligns the declaration to the host', () => {
 		expect(groupFace(about.profile, row, result.host.visibility).joinPolicy).toBe('invite');
 		expect(await declared()).toBe(false);
 		expect(pds.writes().map((w) => w.nsid.replace('com.atproto.', ''))).toEqual([
-			'repo.deleteRecord'
+			'repo.deleteRecord',
+			'space.putRecord'
 		]);
 
 		pds.clearLog();
@@ -617,4 +707,96 @@ describe('Repair aligns the declaration to the host', () => {
 		expect(pds.writes()).toEqual([]);
 		expect((await getGroupByDid(db, GROUP_DID))?.require_approval).toBe(0);
 	});
+
+	/** The about space's access record as the host holds it, or null. */
+	async function aboutAccess(): Promise<Record<string, unknown> | null> {
+		const found = await pdsSpaceReader(CRED, GROUP_DID).get({
+			space: ABOUT,
+			repo: GROUP_DID,
+			collection: GROUP_ACCESS_COLLECTION,
+			rkey: 'self'
+		});
+		return found?.value ?? null;
+	}
+
+	// The read policy is the visibility the host enforces, and the access record
+	// only says it. So a disagreement is settled for the policy, whichever way
+	// it runs, and a missing record is written from the policy too.
+	it.each([
+		['public', false],
+		['private', true],
+		['public', null],
+		['private', null]
+	] as const)(
+		'a host reading the group as %s, with an access record that says public: %s, ends with the record saying what the host reads, and never calls updateSpace',
+		async (host, recordSays) => {
+			await hostCall('com.atproto.simplespace.updateSpace', {
+				space: ABOUT,
+				readPolicy: { $type: `com.atproto.simplespace.defs#${policyName(host)}` }
+			});
+			// The declaration agrees with the host, so only the access record is off.
+			if (host === 'private') {
+				await hostCall('com.atproto.repo.deleteRecord', {
+					repo: GROUP_DID,
+					collection: GROUP_DECLARATION_COLLECTION,
+					rkey: GROUP_DECLARATION_RKEY
+				});
+			} else {
+				await hostCall('com.atproto.repo.putRecord', {
+					repo: GROUP_DID,
+					collection: GROUP_DECLARATION_COLLECTION,
+					rkey: GROUP_DECLARATION_RKEY,
+					record: { meta: ABOUT, createdAt: new Date(group.created_at).toISOString() }
+				});
+			}
+			if (recordSays === null) {
+				await hostCall('com.atproto.space.deleteRecord', {
+					space: ABOUT,
+					repo: GROUP_DID,
+					collection: GROUP_ACCESS_COLLECTION,
+					rkey: 'self'
+				});
+			} else {
+				await hostCall('com.atproto.space.putRecord', {
+					space: ABOUT,
+					repo: GROUP_DID,
+					collection: GROUP_ACCESS_COLLECTION,
+					rkey: 'self',
+					record: {
+						$type: GROUP_ACCESS_COLLECTION,
+						public: recordSays,
+						readRoles: ['owner', 'admin', 'member'],
+						grants: []
+					}
+				});
+			}
+			pds.clearLog();
+
+			const result = await hostRepair();
+
+			expect(result.host).toEqual({ visibility: host, declaration: null, access: true });
+			expect(await aboutAccess()).toEqual({
+				$type: GROUP_ACCESS_COLLECTION,
+				public: host === 'public',
+				readRoles: ['owner', 'admin', 'member'],
+				grants: []
+			});
+			expect(
+				pds.writes().map((w) => `${w.nsid.replace('com.atproto.', '')} ${w.body?.collection}`)
+			).toEqual([`space.putRecord ${GROUP_ACCESS_COLLECTION}`]);
+			// The policy is where it was: the record followed it, not the reverse.
+			expect(updateSpaceCalls()).toEqual([]);
+			expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual({
+				$type: `com.atproto.simplespace.defs#${policyName(host)}`
+			});
+			expect(describeRepair(result)).toContain(
+				`which reads it as ${host}: rewrote its access record to say ${host}.`
+			);
+
+			pds.clearLog();
+			const again = await hostRepair();
+			expect(again.host.access).toBe(false);
+			expect(pds.writes()).toEqual([]);
+		}
+	);
 });

@@ -11,6 +11,7 @@
 //      same answer as no record at all.
 import { describe, it, expect } from 'vitest';
 import {
+	ABOUT_SPACE_READER_ROLES,
 	GROUP_ACCESS_COLLECTION,
 	GROUP_EVENT_PERMISSIONS_COLLECTION,
 	GROUP_MEMBERSHIP_COLLECTION,
@@ -18,15 +19,18 @@ import {
 	GROUP_ROLE_COLLECTION,
 	MEMBERS_SPACE_READER_ROLES,
 	MembershipKeyError,
+	accessSays,
 	groupAccessRecord,
 	groupBindingsRecord,
 	groupMembershipRecord,
 	groupRoleRecord,
+	groupSpaceRecord,
 	isMembershipKey,
 	membershipRkey,
 	parseGroupAccess,
 	parseGroupBindings,
 	parseGroupMembership,
+	parseGroupSpace,
 	parseGroupRole
 } from './members-record';
 import { DEFAULT_ROLE_PERMISSIONS } from './permissions';
@@ -118,21 +122,31 @@ describe('parseGroupMembership', () => {
 
 describe('groupAccessRecord', () => {
 	it('names every role as a reader, because the roster is members-only at every visibility', () => {
-		const record = groupAccessRecord({ roles: MEMBERS_SPACE_READER_ROLES });
+		const record = groupAccessRecord({ roles: MEMBERS_SPACE_READER_ROLES, public: false });
 		expect(record.readRoles).toEqual(['owner', 'admin', 'member']);
 	});
 
-	// The members space is never public, whatever the group's visibility.
-	it('is not public', () => {
-		expect(groupAccessRecord({ roles: MEMBERS_SPACE_READER_ROLES }).public).toBe(false);
+	// The about space's readers are the whole roster too: a private group's
+	// profile is for its members.
+	it('names every role as a reader of the about space', () => {
+		expect(ABOUT_SPACE_READER_ROLES).toEqual(['owner', 'admin', 'member']);
+	});
+
+	// The writers decide: the members space is never public, and the about
+	// space is public exactly when the group is.
+	it('says public only when told to', () => {
+		expect(groupAccessRecord({ roles: MEMBERS_SPACE_READER_ROLES, public: false }).public).toBe(
+			false
+		);
+		expect(groupAccessRecord({ roles: ABOUT_SPACE_READER_ROLES, public: true }).public).toBe(true);
 	});
 
 	it('grants no OAuth scopes: no authorization server can issue them yet', () => {
-		expect(groupAccessRecord({ roles: ['owner'] }).grants).toEqual([]);
+		expect(groupAccessRecord({ roles: ['owner'], public: true }).grants).toEqual([]);
 	});
 
 	it('carries nothing but the three fields the standard requires', () => {
-		expect(Object.keys(groupAccessRecord({ roles: ['owner'] })).sort()).toEqual([
+		expect(Object.keys(groupAccessRecord({ roles: ['owner'], public: false })).sort()).toEqual([
 			'grants',
 			'public',
 			'readRoles'
@@ -147,6 +161,40 @@ describe('groupAccessRecord', () => {
 
 	it('is null when there is no readRoles list at all, rather than defaulting to open', () => {
 		expect(parseGroupAccess({ public: false, grants: [] })).toBeNull();
+	});
+});
+
+describe('accessSays', () => {
+	it('is true only for a record whose public matches', () => {
+		const open = parseGroupAccess(groupAccessRecord({ roles: ['owner'], public: true }));
+		const closed = parseGroupAccess(groupAccessRecord({ roles: ['owner'], public: false }));
+		expect(accessSays(open, true)).toBe(true);
+		expect(accessSays(closed, false)).toBe(true);
+		expect(accessSays(open, false)).toBe(false);
+		expect(accessSays(closed, true)).toBe(false);
+	});
+
+	// A missing record says nothing, so a writer that asks writes one.
+	it('is false for a missing record, whatever it is asked', () => {
+		expect(accessSays(null, true)).toBe(false);
+		expect(accessSays(null, false)).toBe(false);
+	});
+});
+
+describe('groupSpaceRecord', () => {
+	const META = 'at://did:plc:group/space/group.opensocial.meta/self';
+
+	it('names the space it indexes and when', () => {
+		expect(groupSpaceRecord({ space: META, createdAt: '2026-09-30T12:00:00.000Z' })).toEqual({
+			space: META,
+			createdAt: '2026-09-30T12:00:00.000Z'
+		});
+	});
+
+	it('parses back to its space, and is null without one', () => {
+		expect(parseGroupSpace(groupSpaceRecord({ space: META }))).toEqual({ space: META });
+		expect(parseGroupSpace({ createdAt: '2026-09-30T12:00:00.000Z' })).toBeNull();
+		expect(parseGroupSpace({ space: 42 })).toBeNull();
 	});
 });
 

@@ -1,5 +1,5 @@
-// Writes a group's profile and rules into its about space, through the event
-// writer's gate and transport. The permission is always MANAGE_GROUP.
+// Writes a group's profile, rules and access record into its about space, through
+// the event writer's gate and transport. The permission is always MANAGE_GROUP.
 //
 // A rule must stay citable by URI, so a moderation action can name the rule it
 // enforced. So rules are matched by text rather than rewritten: an unchanged
@@ -14,6 +14,12 @@ import {
 	joinPolicyFor,
 	type GroupProfileInput
 } from '../about-record';
+import {
+	ABOUT_SPACE_READER_ROLES,
+	GROUP_ACCESS_COLLECTION,
+	GROUP_ACCESS_RKEY,
+	groupAccessRecord
+} from '../members-record';
 import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from '../types';
 import type { CredentialStoreEnv } from './credentials';
 import {
@@ -42,7 +48,7 @@ export interface ProfileWriteResult {
  *  a write must not target a space the PDS has never heard of. A row made before
  *  the space type changed names a space of the old type, and is refused too, so
  *  no record lands where no reader looks. */
-function aboutSpace(group: GroupRow): string {
+export function aboutSpace(group: GroupRow): string {
 	const space = group.about_space_uri;
 	if (!space) {
 		throw new GroupRecordError(
@@ -82,6 +88,36 @@ export async function writeGroupProfile(
 		repo: input.group.group_did,
 		collection: GROUP_PROFILE_COLLECTION,
 		rkey: GROUP_PROFILE_RKEY,
+		record,
+		intent: 'update',
+		space: aboutSpace(input.group)
+	});
+	return { uri: result.uri, cid: result.cid };
+}
+
+/** Puts the about space's `access` record, which says the group's visibility. The
+ *  host enforces the space's read policy, not this record, so the record follows
+ *  the policy and is never read to set it. A group with a declaration must have
+ *  an access record that says public, so this is written before a declaration
+ *  is published and after one is withdrawn. Idempotent, keyed `self`. */
+export async function writeAboutAccess(
+	input: WriteGroupAboutInput & { visibility: GroupVisibility }
+): Promise<{ uri: string; cid: string }> {
+	await requireGroupPermission(input, 'MANAGE_GROUP');
+
+	const record = {
+		...groupAccessRecord({
+			roles: ABOUT_SPACE_READER_ROLES,
+			public: input.visibility === 'public'
+		}),
+		$type: GROUP_ACCESS_COLLECTION
+	};
+
+	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const result = await writer({
+		repo: input.group.group_did,
+		collection: GROUP_ACCESS_COLLECTION,
+		rkey: GROUP_ACCESS_RKEY,
 		record,
 		intent: 'update',
 		space: aboutSpace(input.group)

@@ -14,11 +14,13 @@ import {
 	GROUP_PERMISSIONS_COLLECTION,
 	GROUP_PERMISSIONS_RKEY,
 	GROUP_ROLE_COLLECTION,
+	GROUP_SPACE_COLLECTION,
 	isMembershipKey,
 	parseGroupAccess,
 	parseGroupBindings,
 	parseGroupMembership,
 	parseGroupRole,
+	parseGroupSpace,
 	type GroupAccessFields,
 	type GroupBindingsFields
 } from '../members-record';
@@ -136,6 +138,34 @@ export async function readGroupMembers(
 			: null,
 		access: accessRecord ? parseGroupAccess(accessRecord.value) : null
 	};
+}
+
+/** One entry in the group's index of its spaces. */
+export interface GroupSpaceIndexEntry {
+	rkey: string;
+	space: string;
+}
+
+/** The group's index of its spaces, oldest entry first. Read only by the writer that
+ *  keeps it whole, so it is not one of `readGroupMembers`' reads. */
+export async function readGroupSpaceIndex(
+	reader: GroupSpaceReader,
+	group: Pick<GroupRow, 'group_did' | 'members_space_uri'>
+): Promise<GroupSpaceIndexEntry[]> {
+	const space = group.members_space_uri;
+	if (!space) return [];
+	const entries: GroupSpaceIndexEntry[] = [];
+	for (const record of await reader.list({
+		space,
+		repo: group.group_did,
+		collection: GROUP_SPACE_COLLECTION
+	})) {
+		if (record.collection !== GROUP_SPACE_COLLECTION) continue;
+		const parsed = parseGroupSpace(record.value);
+		if (parsed) entries.push({ rkey: record.rkey, space: parsed.space });
+	}
+	// A TID sorts by time, so the first entry for a space is its oldest.
+	return entries.sort((a, b) => a.rkey.localeCompare(b.rkey));
 }
 
 /**

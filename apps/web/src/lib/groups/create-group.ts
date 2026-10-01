@@ -32,9 +32,14 @@ import {
 	pdsProvisioner,
 	provisionGroupSpaces
 } from './server/spaces';
-import { setGroupRules, writeGroupProfile } from './server/about-writer';
+import { setGroupRules, writeAboutAccess, writeGroupProfile } from './server/about-writer';
 import { reconcileGroupDeclaration } from './server/declaration-writer';
-import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './server/members-writer';
+import {
+	putGroupMembership,
+	writeGroupAccess,
+	writeGroupAuthz,
+	writeGroupSpaceIndex
+} from './server/members-writer';
 import { pdsWriter } from './server/event-writer';
 import { pdsMemberList, putAboutMember } from './server/member-list';
 import { registerGroupIdentity } from './server/events-index';
@@ -328,6 +333,17 @@ async function setUpMintedGroup(
 			});
 		}
 
+		// The about space's access record says what its read policy says. It goes
+		// before the declaration, so a declared group's access always says public.
+		await writeAboutAccess({
+			db: env.DB,
+			env,
+			group: withSpaces,
+			visibility: data.visibility,
+			callerDid,
+			writer
+		});
+
 		// The declaration goes last, so a group whose profile write failed is
 		// never announced with an empty about space. A private group is not
 		// declared. `assumeAbsent` skips the withdrawal check: a new repo has none.
@@ -354,10 +370,21 @@ async function setUpMintedGroup(
 	// The members space, as records. The owner's membership goes before the
 	// authz config: once a config exists the gate resolves from records, and
 	// until then it falls back to the rows, where the owner holds every
-	// permission. A failure here leaves a working group that "Repair this group"
-	// can finish (server/repair.ts).
+	// permission. The index of the two spaces grants nothing, so it can go
+	// anywhere before the config. A failure here leaves a working group that
+	// "Repair this group" can finish (server/repair.ts).
 	try {
 		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer });
+		// A new members space holds no index, so nothing is read.
+		await writeGroupSpaceIndex({
+			db: env.DB,
+			env,
+			group: withSpaces,
+			callerDid,
+			writer,
+			existing: [],
+			createdAt
+		});
 		await putGroupMembership({
 			db: env.DB,
 			env,

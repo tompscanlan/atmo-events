@@ -13,6 +13,12 @@ import {
 	requireApprovalFor,
 	type GroupProfileFields
 } from '../about-record';
+import {
+	GROUP_ACCESS_COLLECTION,
+	GROUP_ACCESS_RKEY,
+	parseGroupAccess,
+	type GroupAccessFields
+} from '../members-record';
 import type { GroupRow } from '../types';
 import type { CredentialStoreEnv } from './credentials';
 import { resolveGroupCredential } from './credentials';
@@ -259,6 +265,23 @@ export async function readGroupAbout(
 			a.rkey.localeCompare(b.rkey)
 	);
 	return { profile, rules };
+}
+
+/** The about space's access record, or null when there is none. Kept out of
+ *  `readGroupAbout`, since only the writers that keep it true read it. */
+export async function readAboutAccess(
+	reader: GroupSpaceReader,
+	group: Pick<GroupRow, 'group_did' | 'about_space_uri'>
+): Promise<GroupAccessFields | null> {
+	const space = group.about_space_uri;
+	if (!space) return null;
+	const found = await reader.get({
+		space,
+		repo: group.group_did,
+		collection: GROUP_ACCESS_COLLECTION,
+		rkey: GROUP_ACCESS_RKEY
+	});
+	return found ? parseGroupAccess(found.value) : null;
 }
 
 /** The columns a profile record owns, ready for `applyGroupCache`. */
