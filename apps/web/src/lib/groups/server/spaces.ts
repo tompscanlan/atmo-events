@@ -119,7 +119,7 @@ export function pdsProvisioner(cred: GroupCredential, groupDid: string): GroupSp
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({
-				type: space.type,
+				spaceType: space.type,
 				skey: space.skey,
 				readPolicy: { $type: space.readPolicy },
 				writePolicy: { $type: POLICY_MEMBER_LIST },

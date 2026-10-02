@@ -611,7 +611,7 @@ describe('the create choice sets the about space’s read policy', () => {
 			const about = requests.filter(
 				(r) =>
 					r.nsid === 'com.atproto.simplespace.createSpace' &&
-					r.body?.type === 'group.opensocial.meta'
+					r.body?.spaceType === 'group.opensocial.meta'
 			);
 			expect(about).toHaveLength(1);
 			expect(about[0].body?.readPolicy).toEqual({
@@ -686,7 +686,7 @@ describe('the members space is member-list read whatever the choice', () => {
 			const members = requests.filter(
 				(r) =>
 					r.nsid === 'com.atproto.simplespace.createSpace' &&
-					r.body?.type === 'group.opensocial.members'
+					r.body?.spaceType === 'group.opensocial.members'
 			);
 			expect(members).toHaveLength(1);
 			expect(members[0].body?.readPolicy).toEqual({
