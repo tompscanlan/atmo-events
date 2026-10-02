@@ -88,18 +88,25 @@ export async function signInGrantAttempts(
 
 /** Runs `authorize` with each grant set in turn until the PDS accepts one. Only
  *  an `invalid_scope` refusal moves on to the next set; any other error, or a
- *  refusal of the last set, is thrown as it came. */
+ *  refusal of the last set, is thrown as it came. Each retry is logged: a member
+ *  whose grant keeps being refused stays unconfirmed, and nothing else says why. */
 export async function firstAcceptedScope<T>(
 	attempts: readonly (readonly string[])[],
 	authorize: (grants: string[]) => Promise<T>
 ): Promise<T> {
 	let refusal: unknown;
-	for (const grants of attempts) {
+	for (const [i, grants] of attempts.entries()) {
 		try {
 			return await authorize([...grants]);
 		} catch (e) {
 			if (!(e instanceof OAuthResponseError && e.error === 'invalid_scope')) throw e;
 			refusal = e;
+			const next = attempts[i + 1];
+			if (next) {
+				console.warn(
+					`[groups] PDS refused ${grants.length} group grants, retrying with ${next.length}: ${e.errorDescription ?? e.error}`
+				);
+			}
 		}
 	}
 	throw refusal;

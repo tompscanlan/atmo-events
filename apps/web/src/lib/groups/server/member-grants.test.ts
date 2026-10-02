@@ -1,7 +1,7 @@
 // The per-group grant a member's sign-in asks for, what the client metadata
 // declares, and the retry when a PDS still holds older metadata. Each case is a
 // rule sign-in trusts: a wrong grant set either fails consent or locks someone out.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OAuthResponseError } from '@atcute/oauth-node-client';
 import { scopes } from '$lib/atproto/settings';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
@@ -189,6 +189,30 @@ describe('firstAcceptedScope', () => {
 			return 'signed-in';
 		});
 		expect(result).toBe('signed-in');
+	});
+
+	it('logs each refusal it retries past, so a member left unconfirmed has a trace', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		await firstAcceptedScope(
+			[[acceptanceGrant(KONA), acceptanceGrant(HILO)], []],
+			async (grants) => {
+				if (grants.length > 0)
+					throw invalidScope('Scope "x" is not declared in the client metadata');
+				return 'signed-in';
+			}
+		);
+		expect(warn).toHaveBeenCalledTimes(1);
+		expect(warn.mock.calls[0].join(' ')).toMatch(
+			/refused 2 group grants, retrying with 0: Scope "x" is not declared/
+		);
+		warn.mockRestore();
+	});
+
+	it('logs nothing when the first grant set is accepted', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		await firstAcceptedScope([[acceptanceGrant(KONA)], []], async () => 'signed-in');
+		expect(warn).not.toHaveBeenCalled();
+		warn.mockRestore();
 	});
 
 	it('does not retry on any other error', async () => {
