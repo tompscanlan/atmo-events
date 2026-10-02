@@ -55,9 +55,12 @@ checks every record builder against them, failing any field they do not declare 
 does not name. Codegen does not read those copies: `@atcute/lex-cli` rejects the proposal's
 `space-ref` format. The declaration index needs the declaration's lexicon, so
 `lexicons/custom/group/opensocial/declaration.json` is the proposal's with `meta` given the format
-`uri`, and nothing else changed. `pnpm generate` rewrites `lex.config.js` and adds
-`group.opensocial.declaration` to its pull list. Take it out again: the NSID does not resolve, so
-there is nothing to pull.
+`uri`, and nothing else changed. Do not edit it: `pnpm generate` writes it from the reference copy
+with `scripts/lexicon-shims.mjs`, then takes `group.opensocial.declaration` back out of the pull
+list contrail-lex generate writes into `lex.config.js`, because the NSID does not resolve.
+`lexicon-shims.test.ts` fails when the committed copy is not the script's output. The copy goes when
+the lexicon tooling reads `space-ref`, and the pull-list step when the NSID resolves. Once both
+hold, delete the copy, the script, its test and its two steps in `pnpm generate`.
 
 A group's visibility is its about space's read policy: public, or the member list for a private
 group. D1 has no column for it. The group pages ask the PDS for it
