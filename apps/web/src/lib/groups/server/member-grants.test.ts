@@ -11,6 +11,7 @@ import {
 	acceptanceGrant,
 	declaredGrants,
 	firstAcceptedScope,
+	reauthorizeForGroup,
 	signInGrantAttempts
 } from './member-grants';
 
@@ -234,5 +235,93 @@ describe('firstAcceptedScope', () => {
 				throw last;
 			})
 		).rejects.toBe(last);
+	});
+});
+
+describe('reauthorizeForGroup', () => {
+	const now = 1_800_000_000_000;
+
+	async function memberRow(groupDid: string, did: string) {
+		return db
+			.prepare(
+				`SELECT m.did FROM memberships m JOIN groups g ON g.id = m.group_id
+				 WHERE g.group_did = ? AND m.did = ?`
+			)
+			.bind(groupDid, did)
+			.first();
+	}
+
+	it("asks for the new group's grant after an open join", async () => {
+		const kona = await group(KONA);
+		await age(KONA, now, METADATA_CACHE_MS);
+		expect(await requestJoin(db, kona, ALICE, null, 'public')).toBe('joined');
+
+		const asked = await reauthorizeForGroup(db, ALICE, KONA, now, async (grants) => grants);
+		expect(asked).toEqual([acceptanceGrant(KONA)]);
+	});
+
+	it("asks for the new group's grant after a join request", async () => {
+		const hilo = await group(HILO, true);
+		await age(HILO, now, METADATA_CACHE_MS);
+		expect(await requestJoin(db, hilo, ALICE, null, 'public')).toBe('pending');
+
+		const asked = await reauthorizeForGroup(db, ALICE, HILO, now, async (grants) => grants);
+		expect(asked).toEqual([acceptanceGrant(HILO)]);
+	});
+
+	it("keeps the member's other groups' grants, since the new session replaces the old", async () => {
+		const kona = await group(KONA);
+		const hilo = await group(HILO);
+		await age(KONA, now, METADATA_CACHE_MS * 3);
+		await age(HILO, now, METADATA_CACHE_MS);
+		await addMember(db, kona.id, ALICE, 'member');
+		expect(await requestJoin(db, hilo, ALICE, null, 'public')).toBe('joined');
+
+		const asked = await reauthorizeForGroup(db, ALICE, HILO, now, async (grants) => grants);
+		expect(asked).toEqual([acceptanceGrant(KONA), acceptanceGrant(HILO)]);
+	});
+
+	it('gives up after one refusal when the new group is younger than the metadata cache', async () => {
+		const kona = await group(KONA);
+		await age(KONA, now, 60_000);
+		await requestJoin(db, kona, ALICE, null, 'public');
+
+		let calls = 0;
+		const asked = await reauthorizeForGroup(db, ALICE, KONA, now, async () => {
+			calls++;
+			throw invalidScope(`Scope "${acceptanceGrant(KONA)}" is not declared in the client metadata`);
+		});
+		// A retry without the new grant would only reissue what the member already holds.
+		expect(asked).toBeNull();
+		expect(calls).toBe(1);
+	});
+
+	it('leaves the join in place when the PDS refuses the grant', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const kona = await group(KONA);
+		await age(KONA, now, METADATA_CACHE_MS);
+		await requestJoin(db, kona, ALICE, null, 'public');
+
+		const asked = await reauthorizeForGroup(db, ALICE, KONA, now, async () => {
+			throw invalidScope('refused');
+		});
+		expect(asked).toBeNull();
+		expect(await memberRow(KONA, ALICE)).not.toBeNull();
+		warn.mockRestore();
+	});
+
+	it('leaves the join in place on any other failure, and logs it', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const kona = await group(KONA);
+		await age(KONA, now, METADATA_CACHE_MS);
+		await requestJoin(db, kona, ALICE, null, 'public');
+
+		const asked = await reauthorizeForGroup(db, ALICE, KONA, now, async () => {
+			throw new Error('PDS unreachable');
+		});
+		expect(asked).toBeNull();
+		expect(await memberRow(KONA, ALICE)).not.toBeNull();
+		expect(warn.mock.calls.flat().join(' ')).toMatch(/PDS unreachable/);
+		warn.mockRestore();
 	});
 });

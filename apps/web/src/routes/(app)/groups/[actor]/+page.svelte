@@ -14,6 +14,7 @@
 	import GroupMonogram from '$lib/groups/components/GroupMonogram.svelte';
 	import PersonLabel from '$lib/groups/components/PersonLabel.svelte';
 	import { resolve } from '$app/paths';
+	import { reauthorize } from '$lib/atproto/auth.svelte';
 
 	let { data } = $props();
 
@@ -52,6 +53,12 @@
 	let joinPending = $derived(
 		joinGroupForm.result?.ok === true && joinGroupForm.result.outcome === 'pending'
 	);
+	// A join or request comes back with an authorize URL when the member's session
+	// should pick up this group's grant. The join already stands either way.
+	$effect(() => {
+		const result = joinGroupForm.result;
+		if (result?.ok === true && result.reauthorize) reauthorize(result.reauthorize);
+	});
 	let leaveError = $derived(groupFormError(leaveGroupForm.result));
 	let settingsError = $derived(groupFormError(updateGroupForm.result));
 	let repairError = $derived(groupFormError(repairGroupForm.result));

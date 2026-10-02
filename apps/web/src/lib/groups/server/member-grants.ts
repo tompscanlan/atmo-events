@@ -111,3 +111,31 @@ export async function firstAcceptedScope<T>(
 	}
 	throw refusal;
 }
+
+/** Runs `authorize` once more after `did` joins or asks to join `groupDid`, so
+ *  the member's session carries that group's grant before the next sign-in. It
+ *  asks for every grant sign-in would, since the new session replaces the old
+ *  one, and only tries the sets that include the new group's grant: a set
+ *  without it would reissue what the member already holds. Returns null when
+ *  the PDS refuses each such set or anything else fails, and never throws,
+ *  because the join already stands and the grant then comes at the next sign-in. */
+export async function reauthorizeForGroup<T>(
+	db: D1Database,
+	did: string,
+	groupDid: string,
+	now: number,
+	authorize: (grants: string[]) => Promise<T>
+): Promise<T | null> {
+	const grant = acceptanceGrant(groupDid);
+	try {
+		const attempts = (await signInGrantAttempts(db, did, now)).filter((a) => a.includes(grant));
+		if (attempts.length === 0) return null;
+		return await firstAcceptedScope(attempts, authorize);
+	} catch (e) {
+		console.warn(
+			`[groups] no re-authorize after joining ${groupDid}; the grant waits for the next sign-in:`,
+			e
+		);
+		return null;
+	}
+}

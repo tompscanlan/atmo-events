@@ -15,10 +15,19 @@ export const user = {
 	}
 };
 
+function writeReturnTo() {
+	document.cookie = `oauth_return_to=${encodeURIComponent(window.location.pathname + window.location.search)};path=/;max-age=600;samesite=lax`;
+}
+
 function saveReturnTo() {
-	if (REDIRECT_TO_LAST_PAGE_ON_LOGIN) {
-		document.cookie = `oauth_return_to=${encodeURIComponent(window.location.pathname + window.location.search)};path=/;max-age=600;samesite=lax`;
-	}
+	if (REDIRECT_TO_LAST_PAGE_ON_LOGIN) writeReturnTo();
+}
+
+/** Sends a signed-in user through authorize again and back to this page, so
+ *  the session picks up a scope it lacks, such as a group's grant after a join. */
+export function reauthorize(url: string) {
+	writeReturnTo();
+	window.location.assign(url);
 }
 
 export async function login(handle: string) {
@@ -56,9 +65,13 @@ export async function signup() {
 	window.location.assign(url);
 
 	await new Promise((_resolve, reject) => {
-		window.addEventListener('pageshow', () => reject(new Error('user aborted the signup request')), {
-			once: true
-		});
+		window.addEventListener(
+			'pageshow',
+			() => reject(new Error('user aborted the signup request')),
+			{
+				once: true
+			}
+		);
 	});
 }
 

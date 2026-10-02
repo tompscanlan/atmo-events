@@ -46,6 +46,10 @@ import {
 	promoteMember
 } from './server/roster';
 import { GroupSpaceError } from './server/spaces';
+import { reauthorizeForGroup } from './server/member-grants';
+import { createOAuthClient, servesClientMetadata } from '$lib/atproto/server/oauth';
+import { scopes } from '$lib/atproto/settings';
+import type { Did } from '@atcute/lexicons';
 
 /** The group key every form posts, and the subject DID on the roster forms.
  *  `context` also accepts a full handle, but the app's forms post the DID. */
@@ -192,18 +196,41 @@ function rosterFailure(e: unknown): GroupFormFailure {
 	return formError(e);
 }
 
+/** Where to send a member who just joined or asked to join, so their session
+ *  carries the group's acceptance grant before their next sign-in (spec FR-208:
+ *  joining or requesting re-authorizes). The PDS shows consent for the new grant
+ *  only. Null when there is no client metadata to grow, or the PDS refused. */
+async function reauthorizeUrl(ctx: GroupRequestContext): Promise<string | null> {
+	if (!servesClientMetadata(ctx.env)) return null;
+	const result = await reauthorizeForGroup(
+		ctx.db,
+		ctx.callerDid,
+		ctx.group.group_did,
+		Date.now(),
+		(grants) =>
+			createOAuthClient(ctx.env, grants).authorize({
+				target: { type: 'account', identifier: ctx.callerDid as Did },
+				scope: [...scopes, ...grants].join(' ')
+			})
+	);
+	return result?.url.toString() ?? null;
+}
+
 export const joinGroupForm = form(
 	v.object({
 		groupDid: didField,
 		message: v.optional(v.pipe(v.string(), v.maxLength(1000)))
 	}),
-	async (data): Promise<GroupFormResult<{ outcome: JoinOutcome }>> => {
+	async (data): Promise<GroupFormResult<{ outcome: JoinOutcome; reauthorize: string | null }>> => {
 		const ctx = await context(data.groupDid);
+		let outcome: JoinOutcome;
 		try {
-			return { ok: true, outcome: await joinGroup(ctx, data.message || null) };
+			outcome = await joinGroup(ctx, data.message || null);
 		} catch (e) {
 			return rosterFailure(e);
 		}
+		const changed = outcome === 'joined' || outcome === 'pending';
+		return { ok: true, outcome, reauthorize: changed ? await reauthorizeUrl(ctx) : null };
 	}
 );
 
