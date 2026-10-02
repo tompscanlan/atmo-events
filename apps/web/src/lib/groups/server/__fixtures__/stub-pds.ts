@@ -180,8 +180,19 @@ export function stubPds(options: StubPdsOptions) {
 				});
 
 			case 'com.atproto.simplespace.createSpace': {
-				const { type, skey, readPolicy, writePolicy, appAccess } = body as Record<string, string>;
-				const uri = `at://${did}/space/${type}/${skey}`;
+				const { spaceType, skey, readPolicy, writePolicy, appAccess } = body as Record<
+					string,
+					string
+				>;
+				// The spaces alpha of 2026-10-01 renamed `type` to `spaceType` and refuses a
+				// body without it, so a caller still sending `type` fails here too.
+				if (!spaceType) {
+					return Response.json(
+						{ error: 'InvalidRequest', message: 'Input must have the property "spaceType"' },
+						{ status: 400 }
+					);
+				}
+				const uri = `at://${did}/space/${spaceType}/${skey}`;
 				if (spaces.has(uri)) {
 					return Response.json(
 						{ error: 'SpaceAlreadyExists', message: `${uri} already exists` },

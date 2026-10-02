@@ -90,9 +90,10 @@ describe('provisionGroupSpaces', () => {
 			]);
 
 			// The about space is the group's face: readable by anyone signed in for a
-			// public group, and only by its member list for a private one.
+			// public group, and only by its member list for a private one. The field is
+			// `spaceType`, not `type`, since the spaces alpha of 2026-10-01.
 			expect(calls[0].body).toEqual({
-				type: ABOUT_SPACE_TYPE,
+				spaceType: ABOUT_SPACE_TYPE,
 				skey: 'self',
 				readPolicy: { $type: `com.atproto.simplespace.defs#${policy}` },
 				writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
@@ -103,7 +104,7 @@ describe('provisionGroupSpaces', () => {
 			// `publicPolicy` here would publish the roster, which is the failure this
 			// assertion exists for.
 			expect(calls[1].body).toEqual({
-				type: MEMBERS_SPACE_TYPE,
+				spaceType: MEMBERS_SPACE_TYPE,
 				skey: 'self',
 				readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
 				writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
@@ -123,7 +124,9 @@ describe('provisionGroupSpaces', () => {
 			}
 			const body = JSON.parse(String(init!.body));
 			call += 1;
-			return Response.json({ uri: `at://${GROUP_DID}/space/${body.type}/${body.skey}#${call}` });
+			return Response.json({
+				uri: `at://${GROUP_DID}/space/${body.spaceType}/${body.skey}#${call}`
+			});
 		});
 
 		const uris = await provisionGroupSpaces(provisioner, 'public');
