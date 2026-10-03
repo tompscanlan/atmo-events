@@ -871,6 +871,21 @@ export async function approveJoinRequest(
 	return { did: request.did };
 }
 
+/** The DID behind a pending request, or null when the group has no such
+ *  pending request. */
+export async function pendingRequestDid(
+	db: D1Database,
+	groupId: string,
+	requestId: string
+): Promise<string | null> {
+	await ensureGroupsSchema(db);
+	const row = await db
+		.prepare(`SELECT did FROM join_requests WHERE id = ? AND group_id = ? AND status = 'pending'`)
+		.bind(requestId, groupId)
+		.first<{ did: string }>();
+	return row?.did ?? null;
+}
+
 export async function decideJoinRequest(
 	db: D1Database,
 	groupId: string,

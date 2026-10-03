@@ -282,8 +282,9 @@ describe('a successful create', () => {
 			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord',
-			// Last, the owner onto the about space's member list: a grant writes
-			// the membership record first and the list after it.
+			// Last, the owner onto both member lists: a grant writes the
+			// membership record first and the lists after it.
+			'com.atproto.simplespace.putMember',
 			'com.atproto.simplespace.putMember'
 		]);
 	});
@@ -625,21 +626,20 @@ describe('the create choice sets the about space’s read policy', () => {
 	);
 });
 
-// The owner is the first member, so the owner is the first DID the about
-// space's member list mirrors, whatever the visibility: under member-list read
-// that entry is what lets the owner read a private group's face at the host
-// from any app, and a public group gets it too, so a later flip needs no
-// backfill. The entry follows the owner's membership record, and the members
-// space's own list is never written.
-describe('the create puts the owner on the about space’s member list', () => {
+// The owner goes on both of the group's member lists. The about space's entry
+// is what lets the owner read a private group's face at the host from any app,
+// and a public group gets it too, so a later flip needs no backfill. The
+// members space's entry is write-only: it makes the host track the acceptance
+// the owner writes (spec 003 FR-206) and grants no read of the roster. Both
+// follow the owner's membership record.
+describe('the create puts the owner on both member lists', () => {
 	const ABOUT = `at://${MINTED_DID}/space/group.opensocial.meta/self`;
 	const MEMBERS = `at://${MINTED_DID}/space/group.opensocial.members/self`;
-	const MEMBER_LIST = /^com\.atproto\.simplespace\.(putMember|removeMember|listMembers)$/;
 
 	it.each(['public', 'private'] as const)(
-		'a %s create puts the owner on the list after the owner’s membership record',
+		'a %s create puts the owner on the lists after the owner’s membership record',
 		async (visibility) => {
-			const { requests, listed } = stubPds();
+			const { requests, listed, members } = stubPds();
 
 			const result = await runCreateGroup(env, OWNER, data({ visibility }));
 
@@ -650,21 +650,16 @@ describe('the create puts the owner on the about space’s member list', () => {
 					r.body?.collection === 'group.opensocial.membership' &&
 					r.body?.rkey === OWNER
 			);
-			const putMember = requests.findIndex((r) => r.nsid === 'com.atproto.simplespace.putMember');
+			const puts = requests.filter((r) => r.nsid === 'com.atproto.simplespace.putMember');
+			const firstPut = requests.findIndex((r) => r.nsid === 'com.atproto.simplespace.putMember');
 			expect(membership).toBeGreaterThan(-1);
-			expect(putMember).toBeGreaterThan(membership);
-			expect(requests[putMember].body).toEqual({
-				space: ABOUT,
-				did: OWNER,
-				read: true,
-				write: false
-			});
+			expect(firstPut).toBeGreaterThan(membership);
+			expect(puts.map((r) => r.body)).toEqual([
+				{ space: MEMBERS, did: OWNER, read: false, write: true },
+				{ space: ABOUT, did: OWNER, read: true, write: false }
+			]);
 			expect(listed(ABOUT)).toEqual([OWNER]);
-			const memberListCalls = requests.filter((r) => MEMBER_LIST.test(r.nsid));
-			expect(memberListCalls.filter((r) => (r.body?.space ?? r.params.space) === MEMBERS)).toEqual(
-				[]
-			);
-			expect(listed(MEMBERS)).toEqual([]);
+			expect(members(MEMBERS)).toEqual([{ did: OWNER, read: false, write: true }]);
 		}
 	);
 });

@@ -4,7 +4,10 @@
 //   1. Write the members-space records the row is certain of, if missing:
 //      `access`, the index of the two spaces, the owner's `membership`, and
 //      the authz config.
-//   2. Make the about space's member list equal the membership records.
+//   2. Make the about space's member list equal the membership records, and
+//      the members space's write-only list equal those plus the pending join
+//      requests. Requests live only in D1 (spec 003 SC-205), so a requester
+//      keeps their entry while D1 holds the request.
 //   3. Make the about space's access record and the declaration agree with
 //      its read policy.
 //   4. Rebuild the cache from the records.
@@ -35,9 +38,10 @@ import { reconcileGroupDeclaration } from './declaration-writer';
 import { GroupRecordError, requireGroupPermission, type GroupRepoWriter } from './event-writer';
 import {
 	alignAboutMembers,
+	alignMemberWriters,
 	groupMemberList,
-	type AboutMemberAlignment,
-	type GroupMemberList
+	type GroupMemberList,
+	type SpaceMemberAlignment
 } from './member-list';
 import { readGroupMembers, readGroupSpaceIndex, type GroupMembers } from './members-read';
 import {
@@ -52,7 +56,7 @@ import {
 	type GroupRebuildResult,
 	type GroupRebuildSources
 } from './rebuild';
-import { listMembers, rolePermissions } from './repo';
+import { listJoinRequests, listMembers, rolePermissions } from './repo';
 import { readGroupVisibility } from './spaces';
 
 export interface RepairGroupInput {
@@ -67,7 +71,7 @@ export interface RepairGroupInput {
 	reader?: GroupSpaceReader | null;
 	/** Overrides where the rebuild reads from, and step 3's declaration probe. */
 	sources?: GroupRebuildSources | null;
-	/** Overrides the about space's member-list transport. */
+	/** Overrides the member-list transport, for both spaces. */
 	memberList?: GroupMemberList;
 }
 
@@ -80,7 +84,9 @@ export interface GroupRepairResult {
 	/** Why the authz config was not written, when it was missing. */
 	authzHeldBack: 'partial' | 'unrecorded-members' | null;
 	/** What step 2 changed on the about space's member list. */
-	memberList: AboutMemberAlignment;
+	memberList: SpaceMemberAlignment;
+	/** What step 2 changed on the members space's write-only list. */
+	writers: SpaceMemberAlignment;
 	/** What step 3 found at the host and changed to match it. */
 	host: HostAlignment;
 	rebuild: GroupRebuildResult;
@@ -160,11 +166,11 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 	// Step 2. `members` was read before step 1, so add the owner if step 1 wrote them.
 	const holders = new Set(recorded);
 	if (wrote.ownerMembership) holders.add(group.owner_did);
-	const memberList = await alignAboutMembers(
-		input.memberList ?? (await groupMemberList(env, db, group)),
-		group,
-		holders
-	);
+	const list = input.memberList ?? (await groupMemberList(env, db, group));
+	const memberList = await alignAboutMembers(list, group, holders);
+	const writers = new Set(holders);
+	for (const request of await listJoinRequests(db, group.id)) writers.add(request.did);
+	const writerList = await alignMemberWriters(list, group, writers);
 
 	const sources =
 		input.sources !== undefined
@@ -180,7 +186,15 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 
 	const rebuild = await rebuildGroup(db, sources, group.group_did);
 
-	return { wrote, unrecordedMembers, authzHeldBack, memberList, host, rebuild };
+	return {
+		wrote,
+		unrecordedMembers,
+		authzHeldBack,
+		memberList,
+		writers: writerList,
+		host,
+		rebuild
+	};
 }
 
 /** Step 3. Writes only on a disagreement, and never to the host or the row. A
@@ -258,6 +272,15 @@ export function describeRepair(result: GroupRepairResult): string {
 		].filter((part): part is string => typeof part === 'string');
 		sentences.push(
 			`Brought the group's member list at its PDS in line with the membership records: ${joinList(changes)}.`
+		);
+	}
+	const writerChanges = [
+		result.writers.added.length > 0 && `added ${countOf(result.writers.added.length)}`,
+		result.writers.removed.length > 0 && `removed ${countOf(result.writers.removed.length)}`
+	].filter((part): part is string => typeof part === 'string');
+	if (writerChanges.length > 0) {
+		sentences.push(
+			`Brought the list of whose writes the group's PDS tracks in line with its members and pending requests: ${joinList(writerChanges)}.`
 		);
 	}
 	const { host } = result;

@@ -23,7 +23,7 @@ import {
 	type GroupVisibility
 } from './types';
 import { searchPeopleByHandle } from './server/people-search';
-import { decideJoinRequest, type JoinOutcome } from './server/repo';
+import type { JoinOutcome } from './server/repo';
 import { groupActorToDid, groupRouteContext } from './server/route-context';
 import {
 	GROUP_EVENT_IMAGE_MAX_BYTES,
@@ -43,7 +43,9 @@ import {
 	ejectMember,
 	joinGroup,
 	leaveGroup,
-	promoteMember
+	promoteMember,
+	rejectJoinRequest,
+	withdrawJoinRequest
 } from './server/roster';
 import { GroupSpaceError } from './server/spaces';
 import { reauthorizeForGroup } from './server/member-grants';
@@ -170,8 +172,10 @@ function rosterFailure(e: unknown): GroupFormFailure {
 			ok: false,
 			error:
 				e.change === 'grant'
-					? `${e.subject} is on the roster, but was not added to the group's member list at its PDS: ${e.message}. "Repair this group" in the group's settings adds them.`
-					: `${e.subject} can no longer read the group at its PDS, but their membership was not removed: ${e.message}. Removing them again finishes it.`
+					? `${e.subject} is on the roster, but was not added to the group's member lists at its PDS: ${e.message}. "Repair this group" in the group's settings adds them.`
+					: e.change === 'request'
+						? `Your request to join was sent, but the group's PDS did not record you as a requester: ${e.message}. An admin's "Repair this group", in the group's settings, records you.`
+						: `${e.subject} can no longer read the group at its PDS, but their membership was not removed: ${e.message}. Removing them again finishes it.`
 		};
 	}
 	if (e instanceof RosterRecordError) {
@@ -243,15 +247,10 @@ export const leaveGroupForm = form(
 	async (data): Promise<GroupFormResult<{ outcome: 'withdrawn' | 'left' }>> => {
 		const ctx = await context(data.groupDid);
 		try {
-			// A pending applicant has no record, so only `join_requests` changes.
+			// A pending applicant has no record: their write-only entry comes off
+			// the members space's list, and the request closes.
 			if (ctx.membership.pendingRequestId) {
-				await decideJoinRequest(
-					ctx.db,
-					ctx.group.id,
-					ctx.membership.pendingRequestId,
-					ctx.callerDid,
-					'withdrawn'
-				);
+				await withdrawJoinRequest(ctx, ctx.membership.pendingRequestId);
 				return { ok: true, outcome: 'withdrawn' };
 			}
 			await leaveGroup(ctx);
@@ -285,16 +284,17 @@ export const approveJoinRequestForm = form(
 export const rejectJoinRequestForm = form(
 	v.object({ groupDid: didField, requestId: idField }),
 	async (data): Promise<GroupFormResult> => {
-		const { db, group, membership, callerDid } = await context(data.groupDid);
-		if (!can(membership.permissions, 'ADMIT_MEMBERS')) {
-			return notAllowed(membership, 'ADMIT_MEMBERS');
+		const ctx = await context(data.groupDid);
+		if (!can(ctx.membership.permissions, 'ADMIT_MEMBERS')) {
+			return notAllowed(ctx.membership, 'ADMIT_MEMBERS');
 		}
 		try {
-			// A rejected request never granted anything, so there is no record.
-			await decideJoinRequest(db, group.id, data.requestId, callerDid, 'rejected');
+			// A rejected request never granted anything, so there is no record,
+			// only the requester's write-only entry and the request itself.
+			await rejectJoinRequest(ctx, data.requestId);
 			return { ok: true };
 		} catch (e) {
-			return formError(e);
+			return rosterFailure(e);
 		}
 	}
 );

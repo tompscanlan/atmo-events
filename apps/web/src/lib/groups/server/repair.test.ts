@@ -18,6 +18,7 @@ import {
 	getGroupByDid,
 	getMemberRow,
 	recordGroupSpaces,
+	requestJoin,
 	updateGroup
 } from './repo';
 import {
@@ -101,14 +102,19 @@ const memberListWrites = () =>
 	memberListCalls().filter((c) => c.nsid !== 'com.atproto.simplespace.listMembers');
 
 /** Changes a space's member list at the host directly, the way the group's
- *  owner could from any client, so a case can set up a list that drifted. */
-async function hostList(method: 'putMember' | 'removeMember', space: string, did: string) {
+ *  owner could from any client, so a case can set up a list that drifted. A
+ *  put gets the access this app gives that space's entries unless the case
+ *  names another. */
+async function hostList(
+	method: 'putMember' | 'removeMember',
+	space: string,
+	did: string,
+	access = space === MEMBERS ? { read: false, write: true } : { read: true, write: false }
+) {
 	const res = await fetch(`${CRED.service}/xrpc/com.atproto.simplespace.${method}`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify(
-			method === 'putMember' ? { space, did, read: true, write: false } : { space, did }
-		)
+		body: JSON.stringify(method === 'putMember' ? { space, did, ...access } : { space, did })
 	});
 	expect(res.ok).toBe(true);
 }
@@ -436,7 +442,10 @@ describe('the about space member list follows the membership records', () => {
 			await putGroupMembership({ ...seed, subject, roles: [role], intent: 'admit' });
 		}
 		await writeGroupAuthz(seed);
-		for (const did of ROSTER) await hostList('putMember', ABOUT, did);
+		for (const did of ROSTER) {
+			await hostList('putMember', ABOUT, did);
+			await hostList('putMember', MEMBERS, did);
+		}
 		pds.clearLog();
 	});
 
@@ -450,8 +459,60 @@ describe('the about space member list follows the membership records', () => {
 
 		expect(pds.listed(ABOUT)).toEqual(ROSTER);
 		expect(pds.members(ABOUT).every((m) => m.read && !m.write)).toBe(true);
-		expect(memberListCalls().filter((c) => c.did === GROUP_DID || c.space !== ABOUT)).toEqual([]);
-		expect(pds.listed(MEMBERS)).toEqual([]);
+		expect(memberListCalls().filter((c) => c.did === GROUP_DID)).toEqual([]);
+		// The members space's list already held the roster, so it is not written.
+		expect(memberListWrites().filter((c) => c.space === MEMBERS)).toEqual([]);
+	});
+
+	// Spec 003 FR-206 and SC-205: the write-only entries are host state, so the
+	// repair re-derives them from the membership records, plus the pending
+	// requests that only D1 holds.
+	it('repair makes the members space list equal the membership records plus pending requests, write-only', async () => {
+		const REQUESTER = 'did:plc:requesteraaaaaaaaaaaaaaaa';
+		await requestJoin(db, group, REQUESTER, null, 'public');
+		await hostList('removeMember', MEMBERS, MEMBER);
+		await hostList('putMember', MEMBERS, STRANGER);
+		// A stray read grant on the roster's own space, set by hand at the host.
+		await hostList('putMember', MEMBERS, ADMIN, { read: true, write: true });
+		pds.clearLog();
+
+		const result = await realRepair();
+
+		expect(pds.listed(MEMBERS)).toEqual([...ROSTER, REQUESTER].sort());
+		expect(pds.members(MEMBERS).every((m) => !m.read && m.write)).toBe(true);
+		expect(result.writers).toEqual({
+			added: [ADMIN, MEMBER, REQUESTER].sort(),
+			removed: [STRANGER]
+		});
+		expect(describeRepair(result)).toContain(
+			"Brought the list of whose writes the group's PDS tracks in line with its members and pending requests: added 3 members and removed 1 member."
+		);
+	});
+
+	// TS ruling A on SC-205: a requester is in D1 only, so the repair must read
+	// join_requests or it would take their entry off while the request stands.
+	it('repair keeps a pending requester on the members space list', async () => {
+		const REQUESTER = 'did:plc:requesteraaaaaaaaaaaaaaaa';
+		await requestJoin(db, group, REQUESTER, null, 'public');
+		await hostList('putMember', MEMBERS, REQUESTER);
+		pds.clearLog();
+
+		const result = await realRepair();
+
+		expect(pds.listed(MEMBERS)).toContain(REQUESTER);
+		expect(result.writers).toEqual({ added: [], removed: [] });
+		expect(memberListWrites()).toEqual([]);
+	});
+
+	// SC-205's gate: the list emptied at the host comes back from the records.
+	it('repair rebuilds an emptied members space list from the membership records', async () => {
+		for (const did of ROSTER) await hostList('removeMember', MEMBERS, did);
+		pds.clearLog();
+
+		await realRepair();
+
+		expect(pds.listed(MEMBERS)).toEqual(ROSTER);
+		expect(pds.listed(ABOUT)).toEqual(ROSTER);
 	});
 
 	it('a second repair makes no member-list write', async () => {
@@ -578,6 +639,7 @@ describe('Repair aligns the declaration to the host', () => {
 		await putGroupMembership({ ...seed, subject: OWNER, roles: ['owner'], intent: 'admit' });
 		await writeGroupAuthz(seed);
 		await hostList('putMember', ABOUT, OWNER);
+		await hostList('putMember', MEMBERS, OWNER);
 		// The withdrawal tells our own index, which has nothing to tell here.
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 	});

@@ -1,5 +1,5 @@
 // A roster act moves a D1 row, writes a `membership` record and, for an entry
-// or an exit, changes the about space's member list (./member-list.ts). The
+// or an exit, changes both of the group's member lists (./member-list.ts). The
 // order follows the direction of the change, so a partial failure always
 // leaves less access than intended:
 //
@@ -8,7 +8,10 @@
 //   * A revocation (leave, eject, demotion) runs its checks, then unlists the
 //     DID, then changes the record, then the row.
 //
-// A role change never touches the list.
+// A role change never touches the lists. A join request is not a roster act,
+// but it follows the same rule: its row goes in before the requester's
+// write-only entry, and the entry comes off before a reject or a withdrawal
+// closes the row.
 import { GROUP_ROLES, type GroupRoleName } from '../permissions';
 import type { GroupRow, GroupVisibility, MemberRow } from '../types';
 import type { CredentialStoreEnv } from './credentials';
@@ -17,13 +20,15 @@ import {
 	addMember,
 	approveJoinRequest,
 	changeMemberRole,
+	decideJoinRequest,
 	getMemberRow,
+	pendingRequestDid,
 	removeMember,
 	requestJoin,
 	type JoinOutcome
 } from './repo';
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
-import type { GroupRepoWriter } from './event-writer';
+import { requireGroupPermission, type GroupRepoWriter } from './event-writer';
 import {
 	GROUP_MEMBERSHIP_COLLECTION,
 	isMembershipKey,
@@ -35,7 +40,15 @@ import {
 	putGroupMembership,
 	type MembershipDrop
 } from './members-writer';
-import { aboutSpace, groupMemberList, putAboutMember, type GroupMemberList } from './member-list';
+import {
+	aboutSpace,
+	groupMemberList,
+	listJoinRequester,
+	listRosterMember,
+	membersSpace,
+	unlistJoinRequester,
+	type GroupMemberList
+} from './member-list';
 import { readGroupVisibility } from './spaces';
 
 /** A grant whose row moved but whose record did not. */
@@ -61,13 +74,15 @@ export class RosterRowError extends Error {
 	}
 }
 
-/** An act whose member-list entry and record disagree. After a `grant` the
+/** An act whose member-list entries and record disagree. After a `grant` the
  *  host grants less than the record until Repair lists the DID. After a
- *  `revoke` the host already denies, and a retry finishes the removal. */
+ *  `revoke` the host already denies reads, and a retry finishes the removal.
+ *  After a `request` the request stands but the host would not track the
+ *  requester's acceptance until Repair lists them. */
 export class RosterListError extends Error {
 	constructor(
 		readonly subject: string,
-		readonly change: 'grant' | 'revoke',
+		readonly change: 'grant' | 'revoke' | 'request',
 		readonly cause: unknown
 	) {
 		super(cause instanceof Error ? cause.message : String(cause));
@@ -118,25 +133,28 @@ function memberListFor(ctx: RosterContext): Promise<GroupMemberList> {
 }
 
 /** An entry's list half, last. The row and record are in, so any failure here
- *  is the list out of step. */
+ *  is the lists out of step. */
 async function listed(ctx: RosterContext, subject: string): Promise<void> {
 	try {
-		await putAboutMember(await memberListFor(ctx), ctx.group, subject);
+		await listRosterMember(await memberListFor(ctx), ctx.group, subject);
 	} catch (e) {
 		throw new RosterListError(subject, 'grant', e);
 	}
 }
 
 /** Leave and eject. Every check, the gate included, runs before the first
- *  write, because the list entry goes first. */
+ *  write, because the list entries go first: read access, then the write-only
+ *  entry. Once the first is gone, any failure leaves the DID unable to read. */
 async function revoke(ctx: RosterContext, subject: string, intent: MembershipDrop): Promise<void> {
 	await changeableRow(ctx, subject);
 	await authorizeMembership({ ...ctx, subject, intent });
-	const space = aboutSpace(ctx.group);
+	const about = aboutSpace(ctx.group);
+	const members = membersSpace(ctx.group);
 	const list = await memberListFor(ctx);
 
-	await list.remove({ space, did: subject });
+	await list.remove({ space: about, did: subject });
 	try {
+		await list.remove({ space: members, did: subject });
 		await dropGroupMembership({ ...ctx, subject, intent });
 	} catch (e) {
 		throw new RosterListError(subject, 'revoke', e);
@@ -197,8 +215,10 @@ async function joinVisibility(ctx: RosterContext): Promise<GroupVisibility | nul
 	return reader ? readGroupVisibility(reader, ctx.group) : null;
 }
 
-/** Self-service join. Only `joined` is published and listed: the draft
- *  community standard models a join request as a method, not a record. */
+/** Self-service join. Only `joined` is published: the groups standard models
+ *  a join request as host state, not a record. A `pending` request still puts
+ *  the requester on the members space's list, write-only, because they write
+ *  their acceptance at request time (spec 003 FR-206). */
 export async function joinGroup(ctx: RosterContext, message: string | null): Promise<JoinOutcome> {
 	const outcome = await requestJoin(
 		ctx.db,
@@ -207,6 +227,14 @@ export async function joinGroup(ctx: RosterContext, message: string | null): Pro
 		message,
 		await joinVisibility(ctx)
 	);
+	if (outcome === 'pending') {
+		try {
+			await listJoinRequester(await memberListFor(ctx), ctx.group, ctx.callerDid);
+		} catch (e) {
+			throw new RosterListError(ctx.callerDid, 'request', e);
+		}
+		return outcome;
+	}
 	if (outcome !== 'joined') return outcome;
 	// The record carries the row's `created_at`, so both copies share one clock.
 	// The row has moved, so a failed read here is the record half failing.
@@ -263,6 +291,36 @@ export async function admitMember(
 		putGroupMembership({ ...ctx, subject: did, roles: [role], createdAt, intent: 'admit' })
 	);
 	await listed(ctx, did);
+}
+
+/** Takes a pending request's write-only entry off, then closes the request.
+ *  The entry goes first, so a failed close leaves a request the host does not
+ *  track, which Repair lists again, rather than a closed one it still does. */
+async function closeRequest(
+	ctx: RosterContext,
+	requestId: string,
+	did: string,
+	status: 'rejected' | 'withdrawn'
+): Promise<void> {
+	await unlistJoinRequester(await memberListFor(ctx), ctx.group, did);
+	await decideJoinRequest(ctx.db, ctx.group.id, requestId, ctx.callerDid, status);
+}
+
+/** Withdraw the caller's own pending request. */
+export async function withdrawJoinRequest(ctx: RosterContext, requestId: string): Promise<void> {
+	const did = await pendingRequestDid(ctx.db, ctx.group.id, requestId);
+	if (did !== ctx.callerDid) {
+		throw new GroupRuleError('not-found', 'No such pending join request');
+	}
+	await closeRequest(ctx, requestId, did, 'withdrawn');
+}
+
+/** Reject a pending request, behind the same permission as approving one. */
+export async function rejectJoinRequest(ctx: RosterContext, requestId: string): Promise<void> {
+	await requireGroupPermission(ctx, 'ADMIT_MEMBERS');
+	const did = await pendingRequestDid(ctx.db, ctx.group.id, requestId);
+	if (!did) throw new GroupRuleError('not-found', 'No such pending join request');
+	await closeRequest(ctx, requestId, did, 'rejected');
 }
 
 /** Eject, behind the same checks as leave. */

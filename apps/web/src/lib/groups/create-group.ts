@@ -41,7 +41,7 @@ import {
 	writeGroupSpaceIndex
 } from './server/members-writer';
 import { pdsWriter } from './server/event-writer';
-import { pdsMemberList, putAboutMember } from './server/member-list';
+import { listRosterMember, pdsMemberList } from './server/member-list';
 import { registerGroupIdentity } from './server/events-index';
 import { approvalRefusal, splitRuleLines } from './about-record';
 import { labelMintRefusal, labelMintRefusalMessage } from './handle-label';
@@ -407,15 +407,15 @@ async function setUpMintedGroup(
 		};
 	}
 
-	// The owner onto the about space's member list, after their membership
-	// record, as for every later member (server/roster.ts). A public group gets
-	// it too, so a later switch to private needs no backfill.
+	// The owner onto both member lists, after their membership record, as for
+	// every later member (server/roster.ts). A public group gets the about
+	// space's entry too, so a later switch to private needs no backfill.
 	try {
-		await putAboutMember(pdsMemberList(minted.credential, minted.did), withSpaces, callerDid);
+		await listRosterMember(pdsMemberList(minted.credential, minted.did), withSpaces, callerDid);
 	} catch (e) {
 		return {
 			ok: false,
-			error: `${minted.handle} was created, but you were not added to its member list at its PDS: ${
+			error: `${minted.handle} was created, but you were not added to its member lists at its PDS: ${
 				e instanceof Error ? e.message : String(e)
 			}. The group works on this site; "Repair this group" in its settings adds you.`,
 			registered

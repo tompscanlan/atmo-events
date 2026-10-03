@@ -815,16 +815,21 @@ async function main() {
 				`${firstIndexWrite.added.length}, the second ${secondIndexWrite.added.length}`
 		);
 
-		// 14. the space's own member list stays empty ------------------------------
-		// A DID on this list could read the whole members space from the PDS with
-		// its own credential, bypassing the app's roster gate.
+		// 14. the space's own member list is write-only --------------------------
+		// An admitted member goes on it so the PDS tracks the acceptance they write
+		// (spec 003 FR-206). A DID that could read this space would see the whole
+		// roster with its own credential, bypassing the app's gate, so every entry
+		// is read:false write:true.
 		const memberList = await spaceMemberList(groupToken, membersSpaceUri);
+		const writeOnly = memberList.members.every((m) => m.read === false && m.write === true);
 		record(
-			memberList.status === 200 && memberList.members.length === 0,
-			'writing membership records leaves the members space’s own member list empty',
-			`listMembers ${memberList.status}: ${memberList.members.length} entr(ies)` +
-				`${memberList.error ? ` (${memberList.error})` : ''}; ` +
-				`the app stays the space's only reader`
+			memberList.status === 200 &&
+				writeOnly &&
+				memberList.members.map((m) => m.did).join(',') === BOB,
+			'an admitted member is on the members space’s own member list, write-only',
+			`listMembers ${memberList.status}: ` +
+				`${memberList.members.map((m) => `${m.did} read:${m.read} write:${m.write}`).join('; ') || 'empty'}` +
+				`${memberList.error ? ` (${memberList.error})` : ''}`
 		);
 
 		// 15. the authz config is records ------------------------------------------
@@ -994,15 +999,19 @@ async function main() {
 			'group.opensocial.membership',
 			BOB
 		);
+		const listAfterEject = await spaceMemberList(groupToken, membersSpaceUri);
 		record(
 			notFound(ejectedRecord) &&
 				afterEject.hasAccess === false &&
 				strangerCheck.hasAccess === false &&
-				afterEject.roster.map((entry) => entry.did).join(',') === ALICE,
+				afterEject.roster.map((entry) => entry.did).join(',') === ALICE &&
+				listAfterEject.status === 200 &&
+				!listAfterEject.members.some((m) => m.did === BOB),
 			'a DID with no membership record has no access, whether ejected or never a member',
 			`${BOB} after eject: record ${ejectedRecord.error ?? ejectedRecord.status}, access ` +
-				`${afterEject.hasAccess}; never-a-member ${MALLORY}: access ${strangerCheck.hasAccess}; ` +
-				`roster ${afterEject.roster.length}`
+				`${afterEject.hasAccess}, on the members space list ` +
+				`${listAfterEject.members.some((m) => m.did === BOB)}; never-a-member ${MALLORY}: access ` +
+				`${strangerCheck.hasAccess}; roster ${afterEject.roster.length}`
 		);
 
 		// 19. the declaration: the record that lets other apps discover the group --

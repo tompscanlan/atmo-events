@@ -1,16 +1,16 @@
 // The roster acts, and the order their two halves run in.
 //
 // Every roster act is a D1 row move plus a `membership` record write, and an
-// entry or an exit also changes the about space's member list at the host. The
+// entry or an exit also changes both of the group's member lists at the host. The
 // gate resolves from records, so the order decides which way a partial failure
 // errs. The rule, by direction of the change:
 //
 //   * a grant (join, admit, promotion) moves the row first, so the schema
 //     decides before anything is published, and a failed record write leaves
 //     the old, smaller grant in the record. An entry then puts the DID on the
-//     member list, last;
+//     member lists, last;
 //   * a revocation (leave, eject, demotion) runs a read-only pre-check, then
-//     takes the DID off the member list (an exit only), then the record, then
+//     takes the DID off the member lists (an exit only), then the record, then
 //     the row, so a failed later write leaves a record or a list that already
 //     grants less.
 //
@@ -41,8 +41,10 @@ import {
 	joinGroup,
 	leaveGroup,
 	promoteMember,
+	rejectJoinRequest,
 	RosterRecordError,
-	RosterRowError
+	RosterRowError,
+	withdrawJoinRequest
 } from './roster';
 import type { GroupRepoWrite, GroupRepoWriter } from './event-writer';
 import { pdsSpaceReader, type GroupSpaceReader } from './about-read';
@@ -83,8 +85,10 @@ let writes: GroupRepoWrite[];
 /** Every half, in the order it ran: `record:<intent>`, `row:<verb>` and
  *  `list:<step>`. */
 let order: string[];
-/** Set by a case to make the host answer this member-list method with a 502. */
+/** Set by a case to make the host answer this member-list method with a 502,
+ *  on `failListSpace` only when that is set too. */
 let failList: string | null;
+let failListSpace: string | null;
 let pds: ReturnType<typeof stubPds>;
 /** Set by a case to make the record half throw for matching writes. */
 let failRecord: ((write: GroupRepoWrite) => boolean) | null;
@@ -160,14 +164,37 @@ function memberListCalls() {
 }
 
 /** Puts `did` on a space's member list at the host, the way the group's owner
- *  would: straight to the XRPC method, whatever transport the app uses. */
+ *  would: straight to the XRPC method, whatever transport the app uses. Each
+ *  space's entry gets the access this app gives it. */
 async function hostPut(space: string, did: string) {
+	const access = space === MEMBERS ? { read: false, write: true } : { read: true, write: false };
 	const res = await fetch(`${CRED.service}/xrpc/com.atproto.simplespace.putMember`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ space, did, read: true, write: false })
+		body: JSON.stringify({ space, did, ...access })
 	});
 	expect(res.ok).toBe(true);
+}
+
+/** The status of `did`'s latest join request, or null when there is none. */
+async function requestStatus(did: string): Promise<string | null> {
+	const row = await harness.db
+		.prepare(
+			`SELECT status FROM join_requests WHERE group_id = ? AND did = ? ORDER BY created_at DESC`
+		)
+		.bind(group.id, did)
+		.first<{ status: string }>();
+	return row?.status ?? null;
+}
+
+/** The id of `did`'s pending join request. */
+async function pendingId(did: string): Promise<string> {
+	const row = await harness.db
+		.prepare(`SELECT id FROM join_requests WHERE group_id = ? AND did = ? AND status = 'pending'`)
+		.bind(group.id, did)
+		.first<{ id: string }>();
+	expect(row).not.toBeNull();
+	return row!.id;
 }
 
 /** Makes the group private where that lives: its about space's read policy at
@@ -207,14 +234,19 @@ beforeEach(async () => {
 	failRecord = null;
 	failRow = null;
 	failList = null;
+	failListSpace = null;
 
 	// The host: both spaces provisioned under the group's stored credential.
 	pds = stubPds({
 		did: GROUP_DID,
 		handle: CRED.identifier,
-		fail: (nsid) => {
+		fail: (nsid, init) => {
 			if (nsid in LIST_STEP) order.push(LIST_STEP[nsid]);
-			return nsid === failList
+			const space =
+				typeof init?.body === 'string'
+					? (JSON.parse(init.body) as { space?: string }).space
+					: undefined;
+			return nsid === failList && (!failListSpace || space === failListSpace)
 				? Response.json({ error: 'UpstreamFailure' }, { status: 502 })
 				: undefined;
 		}
@@ -274,8 +306,11 @@ beforeEach(async () => {
 		await putGroupMembership({ ...seed, subject, roles: [role], intent: 'admit' });
 	}
 	await writeGroupAuthz(seed);
-	// The about space's list already holds the roster.
-	for (const did of [OWNER, ADMIN, MEMBER]) await hostPut(ABOUT, did);
+	// Both lists already hold the roster.
+	for (const did of [OWNER, ADMIN, MEMBER]) {
+		await hostPut(ABOUT, did);
+		await hostPut(MEMBERS, did);
+	}
 	order = [];
 	pds.clearLog();
 	expect(await gate(ADMIN)).toEqual(granted('admin'));
@@ -290,14 +325,14 @@ afterEach(() => {
 describe('a revocation takes the list entry first, then the record', () => {
 	it('ejects list-then-record-then-row', async () => {
 		await ejectMember(ctx(OWNER), ADMIN);
-		expect(order).toEqual(['list:remove', 'record:delete', 'row:delete']);
+		expect(order).toEqual(['list:remove', 'list:remove', 'record:delete', 'row:delete']);
 		expect(await getMemberRow(harness.db, group.id, ADMIN)).toBeNull();
 		expect(await membershipRecord(ADMIN)).toBeNull();
 	});
 
 	it('leaves list-then-record-then-row', async () => {
 		await leaveGroup(ctx(MEMBER));
-		expect(order).toEqual(['list:remove', 'record:delete', 'row:delete']);
+		expect(order).toEqual(['list:remove', 'list:remove', 'record:delete', 'row:delete']);
 		expect(await getMemberRow(harness.db, group.id, MEMBER)).toBeNull();
 	});
 
@@ -312,10 +347,30 @@ describe('a revocation takes the list entry first, then the record', () => {
 		expect(error).toMatchObject({ name: 'RosterListError', subject: ADMIN });
 		expect(error).not.toBeInstanceOf(RosterRecordError);
 		expect(error).not.toBeInstanceOf(RosterRowError);
-		expect(order).toEqual(['list:remove', 'record:delete']);
+		expect(order).toEqual(['list:remove', 'list:remove', 'record:delete']);
 		expect((await getMemberRow(harness.db, group.id, ADMIN))?.role).toBe('admin');
 		expect(await membershipRecord(ADMIN)).not.toBeNull();
 		expect(pds.listed(ABOUT)).not.toContain(ADMIN);
+	});
+
+	// Read access went first, so the DID already cannot read the group, and the
+	// write-only entry, the record and the row are what a retry finishes.
+	it('reports the list out of step when the write-only entry cannot be taken off', async () => {
+		failList = 'com.atproto.simplespace.removeMember';
+		failListSpace = MEMBERS;
+		const error = await ejectMember(ctx(OWNER), ADMIN).catch((e: unknown) => e);
+
+		expect(error).toMatchObject({ name: 'RosterListError', subject: ADMIN, change: 'revoke' });
+		expect(order).toEqual(['list:remove', 'list:remove']);
+		expect(pds.listed(ABOUT)).not.toContain(ADMIN);
+		expect(pds.listed(MEMBERS)).toContain(ADMIN);
+		expect(await membershipRecord(ADMIN)).not.toBeNull();
+		expect((await getMemberRow(harness.db, group.id, ADMIN))?.role).toBe('admin');
+
+		failList = null;
+		await ejectMember(ctx(OWNER), ADMIN);
+		expect(pds.listed(MEMBERS)).not.toContain(ADMIN);
+		expect(await getMemberRow(harness.db, group.id, ADMIN)).toBeNull();
 	});
 
 	it('leaves the ejected DID with NO grant when the row delete fails after the record went', async () => {
@@ -518,17 +573,19 @@ describe('the about space member list mirrors the roster', () => {
 		['a direct add', 'public'],
 		['a direct add', 'private']
 	] as const)(
-		'%s into a %s group puts the newcomer on the list after the membership record',
+		'%s into a %s group puts the newcomer on both lists after the membership record',
 		async (act, visibility) => {
 			if (visibility === 'private') await hostPrivate();
 
 			await entries[act]();
 
-			expect(order).toEqual(['record:update', 'list:put']);
+			expect(order).toEqual(['record:update', 'list:put', 'list:put']);
 			expect(putMembers().map((c) => c.body)).toEqual([
+				{ space: MEMBERS, did: NEWCOMER, read: false, write: true },
 				{ space: ABOUT, did: NEWCOMER, read: true, write: false }
 			]);
 			expect(pds.listed(ABOUT)).toContain(NEWCOMER);
+			expect(pds.listed(MEMBERS)).toContain(NEWCOMER);
 		}
 	);
 
@@ -536,13 +593,17 @@ describe('the about space member list mirrors the roster', () => {
 		['a leave', MEMBER, () => leaveGroup(ctx(MEMBER))],
 		['an eject', ADMIN, () => ejectMember(ctx(OWNER), ADMIN)]
 	] as const)(
-		'%s takes the DID off the list before its membership record',
+		'%s takes the DID off both lists, read access first, before its membership record',
 		async (_act, did, act) => {
 			await act();
 
-			expect(order.slice(0, 2)).toEqual(['list:remove', 'record:delete']);
-			expect(memberListCalls().map((c) => c.body)).toEqual([{ space: ABOUT, did }]);
+			expect(order.slice(0, 3)).toEqual(['list:remove', 'list:remove', 'record:delete']);
+			expect(memberListCalls().map((c) => c.body)).toEqual([
+				{ space: ABOUT, did },
+				{ space: MEMBERS, did }
+			]);
 			expect(pds.listed(ABOUT)).not.toContain(did);
+			expect(pds.listed(MEMBERS)).not.toContain(did);
 		}
 	);
 
@@ -552,6 +613,7 @@ describe('the about space member list mirrors the roster', () => {
 
 		expect(memberListCalls()).toEqual([]);
 		expect(pds.listed(ABOUT)).toEqual([OWNER, ADMIN, MEMBER].sort());
+		expect(pds.listed(MEMBERS)).toEqual([OWNER, ADMIN, MEMBER].sort());
 	});
 
 	// The row and the record are in and only the list is missing, so the error
@@ -594,10 +656,10 @@ describe('the about space member list mirrors the roster', () => {
 		expect(pds.listed(ABOUT)).toContain(OWNER);
 	});
 
-	// A DID on the members space's list could read every membership, role and
-	// permission record straight from the host, so that list stays empty
-	// whatever the roster does.
-	it('the members space list is never written', async () => {
+	// A DID that could read the members space would see every membership, role
+	// and permission record straight from the host, so every entry this app
+	// puts there is write-only (spec 003 FR-206, SC-202).
+	it('the members space list only ever gets write-only entries', async () => {
 		const SECOND = 'did:plc:secondaaaaaaaaaaaaaaaaaa';
 		await setGroup({ require_approval: 0 });
 
@@ -606,11 +668,27 @@ describe('the about space member list mirrors the roster', () => {
 		await leaveGroup(ctx(MEMBER));
 		await ejectMember(ctx(OWNER), ADMIN);
 
-		expect(memberListCalls().filter((c) => c.space !== ABOUT)).toEqual([]);
-		expect(pds.listed(MEMBERS)).toEqual([]);
-		// And the acts did reach the about space's list, so the check above is
-		// not passing on silence.
+		const membersPuts = memberListCalls().filter(
+			(c) => c.space === MEMBERS && c.nsid === 'com.atproto.simplespace.putMember'
+		);
+		expect(membersPuts.map((c) => c.did)).toEqual([NEWCOMER, SECOND]);
+		expect(membersPuts.every((c) => c.body?.read === false && c.body?.write === true)).toBe(true);
+		expect(pds.listed(MEMBERS)).toEqual([OWNER, NEWCOMER, SECOND].sort());
+		expect(pds.members(MEMBERS).every((m) => !m.read && m.write)).toBe(true);
 		expect(pds.listed(ABOUT)).toEqual([OWNER, NEWCOMER, SECOND].sort());
+	});
+
+	// The membership record lives in the members space, so its write fails
+	// first, and neither list is touched.
+	it('a grant into a group with no members space stops before either list', async () => {
+		const error = await admitMember(
+			{ ...ctx(ADMIN), group: { ...group, members_space_uri: null } },
+			NEWCOMER,
+			'member'
+		).catch((e: unknown) => e);
+
+		expect(error).toBeInstanceOf(RosterRecordError);
+		expect(memberListCalls()).toEqual([]);
 	});
 
 	// A group whose about space was never recorded has no list to write. A grant
@@ -640,5 +718,130 @@ describe('the about space member list mirrors the roster', () => {
 		expect(order).toEqual([]);
 		expect(await membershipRecord(ADMIN)).not.toBeNull();
 		expect((await getMemberRow(harness.db, group.id, ADMIN))?.role).toBe('admin');
+	});
+});
+
+// A join requester writes their acceptance at request time (spec 003 FR-206),
+// so the host must track their writes before an admin decides. A request is
+// host state, not a record, so only the members space's list and the
+// `join_requests` row change. The order errs the same way as a roster act: the
+// row goes in before the entry, and the entry comes off before the row closes.
+describe('a join request holds a write-only entry on the members space list', () => {
+	it('a request puts the requester on the members space list only, write-only', async () => {
+		expect(await joinGroup(ctx(NEWCOMER), 'hello')).toBe('pending');
+
+		expect(memberListCalls().map((c) => c.body)).toEqual([
+			{ space: MEMBERS, did: NEWCOMER, read: false, write: true }
+		]);
+		expect(pds.listed(ABOUT)).not.toContain(NEWCOMER);
+		expect(await requestStatus(NEWCOMER)).toBe('pending');
+		expect(order.filter((step) => step.startsWith('record:'))).toEqual([]);
+	});
+
+	// The request stands, so the error says the host is out of step with it.
+	it('a request whose list write fails is reported out of step, and the request stands', async () => {
+		failList = 'com.atproto.simplespace.putMember';
+
+		const error = await joinGroup(ctx(NEWCOMER), null).catch((e: unknown) => e);
+
+		expect(error).toMatchObject({ name: 'RosterListError', subject: NEWCOMER, change: 'request' });
+		expect(await requestStatus(NEWCOMER)).toBe('pending');
+		expect(pds.listed(MEMBERS)).not.toContain(NEWCOMER);
+	});
+
+	it('a request refused by the rules writes nothing to the list', async () => {
+		const outcome = await joinGroup(ctx(MEMBER), null);
+
+		expect(outcome).toBe('already-member');
+		expect(memberListCalls()).toEqual([]);
+	});
+
+	it('withdrawing takes the entry off, then closes the request', async () => {
+		await joinGroup(ctx(NEWCOMER), null);
+		pds.clearLog();
+
+		await withdrawJoinRequest(ctx(NEWCOMER), await pendingId(NEWCOMER));
+
+		expect(memberListCalls().map((c) => c.body)).toEqual([{ space: MEMBERS, did: NEWCOMER }]);
+		expect(pds.listed(MEMBERS)).not.toContain(NEWCOMER);
+		expect(await requestStatus(NEWCOMER)).toBe('withdrawn');
+	});
+
+	// The entry goes first, so its failure is the first write failing.
+	it('a withdrawal whose list removal fails leaves the request pending', async () => {
+		await joinGroup(ctx(NEWCOMER), null);
+		failList = 'com.atproto.simplespace.removeMember';
+
+		const error = await withdrawJoinRequest(ctx(NEWCOMER), await pendingId(NEWCOMER)).catch(
+			(e: unknown) => e
+		);
+
+		expect(error).toBeInstanceOf(Error);
+		expect(await requestStatus(NEWCOMER)).toBe('pending');
+		expect(pds.listed(MEMBERS)).toContain(NEWCOMER);
+	});
+
+	it("withdrawing someone else's request is refused before any write", async () => {
+		await joinGroup(ctx(NEWCOMER), null);
+		pds.clearLog();
+
+		const error = await withdrawJoinRequest(ctx(MEMBER), await pendingId(NEWCOMER)).catch(
+			(e: unknown) => e
+		);
+
+		expect(error).toMatchObject({ name: 'GroupRuleError', reason: 'not-found' });
+		expect(memberListCalls()).toEqual([]);
+		expect(await requestStatus(NEWCOMER)).toBe('pending');
+	});
+
+	it('rejecting takes the entry off, then closes the request', async () => {
+		await joinGroup(ctx(NEWCOMER), null);
+		pds.clearLog();
+
+		await rejectJoinRequest(ctx(ADMIN), await pendingId(NEWCOMER));
+
+		expect(memberListCalls().map((c) => c.body)).toEqual([{ space: MEMBERS, did: NEWCOMER }]);
+		expect(pds.listed(MEMBERS)).not.toContain(NEWCOMER);
+		expect(await requestStatus(NEWCOMER)).toBe('rejected');
+	});
+
+	it('a member without ADMIT_MEMBERS cannot reject, and nothing is written', async () => {
+		await joinGroup(ctx(NEWCOMER), null);
+		pds.clearLog();
+
+		const error = await rejectJoinRequest(ctx(MEMBER), await pendingId(NEWCOMER)).catch(
+			(e: unknown) => e
+		);
+
+		expect(error).toMatchObject({ name: 'GroupPermissionError' });
+		expect(memberListCalls()).toEqual([]);
+		expect(pds.listed(MEMBERS)).toContain(NEWCOMER);
+		expect(await requestStatus(NEWCOMER)).toBe('pending');
+	});
+
+	it('rejecting a request that is no longer pending is refused before any write', async () => {
+		await joinGroup(ctx(NEWCOMER), null);
+		const id = await pendingId(NEWCOMER);
+		await admitFromRequest(ctx(ADMIN), id, 'member');
+		pds.clearLog();
+
+		const error = await rejectJoinRequest(ctx(ADMIN), id).catch((e: unknown) => e);
+
+		expect(error).toMatchObject({ name: 'GroupRuleError', reason: 'not-found' });
+		expect(memberListCalls()).toEqual([]);
+		expect(pds.listed(MEMBERS)).toContain(NEWCOMER);
+	});
+
+	// The admission puts the entry again, an upsert, so a requester whose
+	// request-time put failed is listed once admitted.
+	it('an admission lists the requester on both spaces, whatever the request left', async () => {
+		failList = 'com.atproto.simplespace.putMember';
+		await joinGroup(ctx(NEWCOMER), null).catch(() => {});
+		failList = null;
+
+		await admitFromRequest(ctx(ADMIN), await pendingId(NEWCOMER), 'member');
+
+		expect(pds.members(MEMBERS)).toContainEqual({ did: NEWCOMER, read: false, write: true });
+		expect(pds.listed(ABOUT)).toContain(NEWCOMER);
 	});
 });
