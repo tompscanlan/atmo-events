@@ -198,8 +198,10 @@ function rosterFailure(e: unknown): GroupFormFailure {
 
 /** Where to send a member who just joined or asked to join, so their session
  *  carries the group's acceptance grant before their next sign-in (spec FR-208:
- *  joining or requesting re-authorizes). The PDS shows consent for the new grant
- *  only. Null when there is no client metadata to grow, or the PDS refused. */
+ *  joining or requesting re-authorizes). On a device the PDS remembers, nothing
+ *  shows unless the request holds a grant not approved before. Otherwise the PDS
+ *  asks for the password and consent again, listing every scope. Null when there
+ *  is no client metadata to grow, or the PDS refused. */
 async function reauthorizeUrl(ctx: GroupRequestContext): Promise<string | null> {
 	if (!servesClientMetadata(ctx.env)) return null;
 	const result = await reauthorizeForGroup(
