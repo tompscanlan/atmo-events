@@ -29,7 +29,10 @@ import {
 	groupMembershipRecord,
 	groupRoleRecord,
 	groupSpaceRecord,
-	membershipRkey
+	membershipRkey,
+	GROUP_ACCEPTANCE_COLLECTION,
+	GROUP_ACCEPTANCE_RKEY,
+	groupAcceptanceRecord
 } from './members-record';
 import { DEFAULT_ROLE_PERMISSIONS, GROUP_ROLES } from './permissions';
 import { spaceUri } from './server/spaces';
@@ -57,6 +60,7 @@ const LEXICONS = new Map<string, Lexicon>(
 		'membership',
 		'access',
 		'space',
+		'acceptance',
 		'defs'
 	].map((name) => {
 		const doc = JSON.parse(readFileSync(new URL(`${name}.json`, REFERENCE_DIR), 'utf8')) as Lexicon;
@@ -77,7 +81,8 @@ const EXTRA_FIELDS: Readonly<Record<string, readonly string[]>> = {
 	'group.opensocial.permissions': [],
 	'group.opensocial.membership': [],
 	'group.opensocial.access': [],
-	'group.opensocial.space': []
+	'group.opensocial.space': [],
+	'group.opensocial.acceptance': []
 };
 
 const segmenter = new Intl.Segmenter();
@@ -320,5 +325,14 @@ describe('every record builder matches its group.opensocial lexicon', () => {
 			// The lexicon's own wording: the space's authority must be the group.
 			expect(record.space).toBe(`at://${GROUP_DID}/space/${type}/self`);
 		}
+	});
+
+	// The one record a member writes, not the group, into their own repo.
+	it('acceptance, at the one key the lexicon allows', () => {
+		const record = groupAcceptanceRecord({ createdAt: CREATED_AT });
+		expect(recordViolations(GROUP_ACCEPTANCE_COLLECTION, record)).toEqual([]);
+		expect(LEXICONS.get(GROUP_ACCEPTANCE_COLLECTION)?.defs.main.key).toBe(
+			`literal:${GROUP_ACCEPTANCE_RKEY}`
+		);
 	});
 });

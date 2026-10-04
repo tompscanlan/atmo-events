@@ -13,7 +13,11 @@
 // A call is made only when the member's session holds the group's grant
 // (./member-grants.ts), which is also how a PDS without spaces is skipped.
 import type { OAuthSession } from '@atcute/oauth-node-client';
-import { GROUP_ACCEPTANCE_COLLECTION, GROUP_ACCEPTANCE_RKEY } from '../members-record';
+import {
+	GROUP_ACCEPTANCE_COLLECTION,
+	GROUP_ACCEPTANCE_RKEY,
+	groupAcceptanceRecord
+} from '../members-record';
 import type { GroupRow } from '../types';
 import { holdsAcceptanceGrant } from './member-grants';
 
@@ -68,7 +72,10 @@ export async function writeAcceptance(
 		repo: member.did,
 		collection: GROUP_ACCEPTANCE_COLLECTION,
 		rkey: GROUP_ACCEPTANCE_RKEY,
-		record: { $type: GROUP_ACCEPTANCE_COLLECTION, createdAt: now.toISOString() }
+		record: {
+			$type: GROUP_ACCEPTANCE_COLLECTION,
+			...groupAcceptanceRecord({ createdAt: now.toISOString() })
+		}
 	});
 	if (result.ok) return 'written';
 	if (result.status === 400 && result.error === 'RecordAlreadyExists') return 'present';

@@ -35,6 +35,12 @@ export const GROUP_ACCEPTANCE_COLLECTION = 'group.opensocial.acceptance';
 /** A member has one acceptance per group, at `self`. */
 export const GROUP_ACCEPTANCE_RKEY = 'self';
 
+/** The member's acceptance. `$type` is stamped by the writer, as for the group's
+ *  records (./server/acceptance.ts). */
+export function groupAcceptanceRecord(input: { createdAt?: string } = {}): Record<string, unknown> {
+	return { createdAt: input.createdAt || new Date().toISOString() };
+}
+
 /** Every space's access record is `self`, in that space. */
 export const GROUP_ACCESS_RKEY = 'self';
 
