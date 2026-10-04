@@ -73,7 +73,9 @@ export async function groupRouteContext(
 /** When the members space errors, the caller is off the roster and holds no
  *  permission. The row cannot stand in: after a removal whose row delete failed,
  *  it would let the removed member in. It still supplies what the page shows,
- *  and `unreadable` makes a form say "could not be checked". */
+ *  and `unreadable` makes a form say "could not be checked". When there is no
+ *  reader because the owner has not linked the group, `unlinked` makes a form
+ *  say that instead. */
 export async function readStanding(
 	db: D1Database,
 	group: GroupRow,
@@ -81,7 +83,8 @@ export async function readStanding(
 	reader: GroupSpaceReader | null
 ): Promise<CallerMembership> {
 	try {
-		return await getCallerMembership(db, group, callerDid, reader);
+		const membership = await getCallerMembership(db, group, callerDid, reader);
+		return !reader && group.members_space_uri ? { ...membership, unlinked: true } : membership;
 	} catch (e) {
 		if (!reader) throw e;
 		console.error(

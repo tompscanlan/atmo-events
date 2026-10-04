@@ -194,8 +194,22 @@ describe('readStanding', () => {
 	it('marks the standing as unread, with the read error, so a form can say so', async () => {
 		const member = await readStanding(db, withSpace, MEMBER, down);
 		expect(member.unreadable).toMatch(/getRecord failed: 502|listRecords failed: 502/);
+		// A space that failed is not one nobody linked: "try again later" is the
+		// right answer, and "the owner has to link it" would be a wrong one.
+		expect(member.unlinked).toBeUndefined();
 		const clean = await readStanding(db, group, MEMBER, null);
 		expect(clean.unreadable).toBeUndefined();
+	});
+
+	// Without the owner's link there is no reader at all, so the space is never
+	// asked, and what fixes it is the link, not a retry.
+	it('marks the standing as unlinked when the group has a members space and no reader', async () => {
+		const member = await readStanding(db, withSpace, MEMBER, null);
+		expect(member.unlinked).toBe(true);
+		expect(member.unreadable).toBeUndefined();
+		expect(member.permissions.size).toBe(0);
+		// A group with no members space resolves from its rows, so nothing is unknown.
+		expect((await readStanding(db, group, MEMBER, null)).unlinked).toBeUndefined();
 	});
 });
 

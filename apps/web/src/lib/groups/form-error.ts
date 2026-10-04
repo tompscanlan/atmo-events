@@ -10,6 +10,12 @@ import {
 } from './server/event-writer';
 import { GroupRuleError } from './server/repo';
 
+const NOT_LINKED: GroupFormFailure = {
+	ok: false,
+	error:
+		'This site cannot write as this group yet: its owner has to link the group’s account, from the group page. Nothing was changed.'
+};
+
 /** Permission and credential failures are kept apart: one is the caller's
  *  business, the other is the group owner's. Anything else is rethrown, because an
  *  unrecognized failure must not be flattened into a form message. */
@@ -17,25 +23,23 @@ export function formError(e: unknown): GroupFormFailure {
 	if (e instanceof GroupPermissionError) {
 		return { ok: false, error: `Not allowed: ${e.permission} required` };
 	}
-	if (e instanceof GroupCredentialError) {
-		return {
-			ok: false,
-			error:
-				'This site cannot write as this group yet: its owner has to link the group’s account, from the group page. Nothing was changed.'
-		};
-	}
+	if (e instanceof GroupCredentialError) return { ...NOT_LINKED };
 	if (e instanceof GroupRecordError) return { ok: false, error: e.message };
 	if (e instanceof GroupRuleError) return { ok: false, error: e.message };
 	throw e;
 }
 
 /** The refusal for a caller who lacks `permission`. When the members space
- *  could not be read, their permissions are unknown rather than missing, and
- *  "Not allowed" would send an owner looking for a role they already hold. */
+ *  could not be read, or cannot be because the group is not linked, their
+ *  permissions are unknown rather than missing, and "Not allowed" would send an
+ *  owner looking for a role they already hold. */
 export function notAllowed(
-	membership: Pick<CallerMembership, 'unreadable'>,
+	membership: Pick<CallerMembership, 'unreadable' | 'unlinked'>,
 	permission: GroupPermission
 ): GroupFormFailure {
+	// The same refusal the write gate gives an unlinked group, which these forms
+	// would otherwise never reach.
+	if (membership.unlinked) return { ...NOT_LINKED };
 	if (membership.unreadable) {
 		return {
 			ok: false,

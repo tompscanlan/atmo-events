@@ -26,6 +26,7 @@ import {
 	GROUP_VISIBILITY_UNCHECKED,
 	groupRouteContext
 } from '$lib/groups/server/route-context';
+import { linkGroups, unlinkAllGroups } from '$lib/groups/server/__fixtures__/linked-group';
 import { groupSpaceUris } from '$lib/groups/server/spaces';
 import type { CallerMembership } from '$lib/groups/types';
 
@@ -71,11 +72,11 @@ function hostReading(readPolicy: string | Error): GroupSpaceReader & { asked: st
 	};
 }
 
-async function openAs(did: string | null) {
+async function openAs(did: string | null, env: Record<string, unknown> = {}) {
 	return (await load({
 		params: { actor: GROUP_DID },
 		locals: { did },
-		platform: { env: { DB: harness.db } },
+		platform: { env: { DB: harness.db, ...env } },
 		url: new URL(`https://atmo.test/groups/${GROUP_DID}`)
 	} as unknown as Parameters<typeof load>[0])) as {
 		visibility: string | null;
@@ -85,6 +86,7 @@ async function openAs(did: string | null) {
 		canManageGroup: boolean;
 		canAdmitMembers: boolean;
 		canCreateEvent: boolean;
+		groupLinked: boolean | null;
 	};
 }
 
@@ -279,5 +281,47 @@ describe('a members space that cannot be read', () => {
 
 		vi.mocked(groupSpaceReader).mockResolvedValue(membersDown(PUBLIC));
 		expect((await openAs(STRANGER)).visibility).toBe('public');
+	});
+});
+
+// Until the owner links the group's account, every write as the group fails, so
+// the page puts the link step in front of the owner, and only the owner: nobody
+// else can link it. Unlinked, the deployment holds no session to read the
+// group's spaces with, so the host here has no reader either.
+describe('the link prompt', () => {
+	const PUBLIC = 'com.atproto.simplespace.defs#publicPolicy';
+
+	afterEach(() => unlinkAllGroups());
+
+	it('asks the owner to link a group whose account is not linked, and the forms say the same', async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(null);
+
+		const data = await openAs(OWNER, linkGroups([]));
+
+		expect(data.groupLinked).toBe(false);
+		// The settings stay hidden, and a form posted anyway names the same fix.
+		expect(data.canManageGroup).toBe(false);
+		expect(notAllowed(data.membership, 'MANAGE_GROUP').error).toMatch(
+			/owner has to link the group’s account/
+		);
+	});
+
+	it('shows the owner of a linked group no prompt', async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(hostReading(PUBLIC));
+
+		const data = await openAs(OWNER, linkGroups([GROUP_DID]));
+
+		expect(data.groupLinked).toBe(true);
+	});
+
+	it('answers null for everyone but the owner, linked or not', async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(null);
+		expect((await openAs(MEMBER, linkGroups([]))).groupLinked).toBeNull();
+
+		vi.mocked(groupSpaceReader).mockResolvedValue(hostReading(PUBLIC));
+		const linked = linkGroups([GROUP_DID]);
+		expect((await openAs(MEMBER, linked)).groupLinked).toBeNull();
+		expect((await openAs(STRANGER, linked)).groupLinked).toBeNull();
+		expect((await openAs(null, linked)).groupLinked).toBeNull();
 	});
 });

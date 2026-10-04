@@ -79,6 +79,10 @@ export interface CallerMembership {
 	onRoster: boolean;
 	/** The read error when the members space failed. `permissions` is then unknown. */
 	unreadable?: string;
+	/** Set when the group has a members space and its owner has not linked the
+	 *  group's account, so the space cannot be read. `permissions` is then
+	 *  unknown, and only the owner's link fixes it. */
+	unlinked?: true;
 }
 
 /** A DID as a page shows it. Display only: links and forms keep the DID. A null
