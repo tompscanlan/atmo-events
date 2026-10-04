@@ -53,6 +53,9 @@ export interface RosterEntry {
 	role: GroupRoleName;
 	status: MembershipStatus;
 	created_at: number;
+	/** Whether the member wrote their acceptance: `true` confirmed, `false`
+	 *  unconfirmed, `null` when it was not read. It never changes access. */
+	confirmed: boolean | null;
 }
 
 export interface JoinRequestRow {

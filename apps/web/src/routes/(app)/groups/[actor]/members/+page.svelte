@@ -86,6 +86,21 @@
 						<Badge variant={member.role === 'owner' ? 'primary' : 'secondary'}>
 							{member.role}
 						</Badge>
+						<!-- Whether the member wrote their own acceptance. Access comes from
+						     membership alone, so this is a label, not a gate. Nothing is
+						     shown when it could not be read. -->
+						{#if member.confirmed === true}
+							<span
+								class="text-base-500 dark:text-base-400 shrink-0 text-xs"
+								title="This member accepted the membership from their own account">confirmed</span
+							>
+						{:else if member.confirmed === false}
+							<span
+								class="shrink-0 text-xs text-amber-700 dark:text-amber-400"
+								title="This member has not accepted the membership from their own account yet. They can still read the group."
+								>unconfirmed</span
+							>
+						{/if}
 						{#if member.recordUri}
 							<!-- The membership record itself, in the members space. -->
 							<PdslsLink

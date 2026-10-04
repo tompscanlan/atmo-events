@@ -12,9 +12,32 @@ import {
 	rosterFromRows
 } from '$lib/groups/server/members-read';
 import { loadPeople } from '$lib/groups/server/people';
+import { groupAcceptanceReader } from '$lib/groups/server/space-credential';
 import { groupRouteContext } from '$lib/groups/server/route-context';
 import { listJoinRequests, listMembers, rolePermissions } from '$lib/groups/server/repo';
+import type { GroupRow } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
+
+/** Whether each member wrote their acceptance, read by DID with the group's space
+ *  credential. Null when it cannot be read: the group has no linked session, or
+ *  no credential could be had. The page then shows no state rather than a guess,
+ *  and access is unaffected either way, since it comes from membership alone. */
+async function readConfirmations(
+	env: App.Platform['env'],
+	db: D1Database,
+	group: GroupRow,
+	dids: string[]
+): Promise<Map<string, boolean> | null> {
+	const space = group.members_space_uri;
+	if (!space || dids.length === 0) return null;
+	try {
+		const reader = await groupAcceptanceReader(env, db, group);
+		return reader ? await reader.accepted(space, dids) : null;
+	} catch (e) {
+		console.error(`[groups] ${group.group_did}: acceptances could not be read:`, e);
+		return null;
+	}
+}
 
 /** The roster is `membership` records in the members space, with the
  *  `memberships` rows as a copy. The page reads the records and falls back to
@@ -42,7 +65,15 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 
 	const canAdmitMembers = can(membership.permissions, 'ADMIT_MEMBERS');
 	const roster = fromRecords
-		? rosterFromRecords(members)
+		? rosterFromRecords(
+				members,
+				await readConfirmations(
+					platform!.env,
+					db,
+					group,
+					members.memberships.map((record) => record.subject)
+				)
+			)
 		: rosterFromRows(await listMembers(db, group.id));
 	const pendingRequests = canAdmitMembers ? await listJoinRequests(db, group.id, 'pending') : [];
 	const space = group.members_space_uri;

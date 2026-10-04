@@ -321,9 +321,20 @@ function byRosterOrder(a: RosterEntry, b: RosterEntry): number {
 	return rank(a) - rank(b) || a.created_at - b.created_at || a.did.localeCompare(b.did);
 }
 
-/** The roster as records say it is. A record with no known role grants no
- *  access, so it is dropped rather than shown as a member. */
-export function rosterFromRecords(members: GroupMembers): RosterEntry[] {
+/**
+ * The roster as records say it is. A record with no known role grants no access,
+ * so it is dropped rather than shown as a member.
+ *
+ * The roster is the `membership` records. A member who also wrote an
+ * `acceptance` is confirmed, and one who did not is shown as unconfirmed, not
+ * hidden, because most members' PDSes cannot hold an acceptance yet. An
+ * acceptance with no membership adds no one. With no acceptances read
+ * (`null`), every entry's state is unknown. (Spec: FR-204.)
+ */
+export function rosterFromRecords(
+	members: GroupMembers,
+	acceptances: ReadonlyMap<string, boolean> | null = null
+): RosterEntry[] {
 	const roster: RosterEntry[] = [];
 	for (const record of members.memberships) {
 		const role = primaryRole(record.roles);
@@ -333,19 +344,22 @@ export function rosterFromRecords(members: GroupMembers): RosterEntry[] {
 			role,
 			// A record means access. A revocation deletes the record.
 			status: 'active',
-			created_at: createdAtMs(record.createdAt)
+			created_at: createdAtMs(record.createdAt),
+			confirmed: acceptances ? acceptances.get(record.subject) === true : null
 		});
 	}
 	return roster.sort(byRosterOrder);
 }
 
-/** The same shape from the cache, so a page renders one type either way. */
+/** The same shape from the cache, so a page renders one type either way. The
+ *  cache holds no acceptance, so no entry's state is known. */
 export function rosterFromRows(rows: MemberRow[]): RosterEntry[] {
 	return rows.map((row) => ({
 		did: row.did,
 		role: row.role,
 		status: row.status,
-		created_at: row.created_at
+		created_at: row.created_at,
+		confirmed: null
 	}));
 }
 

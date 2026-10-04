@@ -372,6 +372,65 @@ describe('rosterFromRecords', () => {
 	});
 });
 
+// The roster is the membership records. The acceptance decides only how a member
+// is shown: confirmed with one, unconfirmed without, and never listed on its own.
+describe('the roster, with acceptances', () => {
+	async function twoMembers() {
+		return readGroupMembers(
+			readerOver([
+				membership(OWNER, ['owner'], '2026-09-01T10:00:00.000Z'),
+				membership(MEMBER, ['member'], '2026-09-02T10:00:00.000Z')
+			]),
+			group
+		);
+	}
+
+	it('shows a member with both a membership and an acceptance as confirmed', async () => {
+		const roster = rosterFromRecords(await twoMembers(), new Map([[MEMBER, true]]));
+		expect(roster.find((entry) => entry.did === MEMBER)?.confirmed).toBe(true);
+	});
+
+	it('lists a member with a membership and no acceptance, as unconfirmed', async () => {
+		const roster = rosterFromRecords(
+			await twoMembers(),
+			new Map([
+				[OWNER, false],
+				[MEMBER, true]
+			])
+		);
+		expect(roster.map((entry) => [entry.did, entry.confirmed])).toEqual([
+			[OWNER, false],
+			[MEMBER, true]
+		]);
+	});
+
+	it('does not list a DID that has an acceptance and no membership', async () => {
+		const roster = rosterFromRecords(
+			await twoMembers(),
+			new Map([
+				[MEMBER, true],
+				[STRANGER, true]
+			])
+		);
+		expect(roster.map((entry) => entry.did)).toEqual([OWNER, MEMBER]);
+	});
+
+	it('reads a member the acceptance read left out as unconfirmed', async () => {
+		const roster = rosterFromRecords(await twoMembers(), new Map([[MEMBER, true]]));
+		expect(roster.find((entry) => entry.did === OWNER)?.confirmed).toBe(false);
+	});
+
+	it('knows no one’s state when no acceptance was read, nor from the cache', async () => {
+		expect(rosterFromRecords(await twoMembers()).map((entry) => entry.confirmed)).toEqual([
+			null,
+			null
+		]);
+		expect(
+			rosterFromRows(await listMembers(db, group.id)).every((entry) => entry.confirmed === null)
+		).toBe(true);
+	});
+});
+
 describe('rebuildGroupMembers', () => {
 	const fullSpace = () =>
 		readerOver([

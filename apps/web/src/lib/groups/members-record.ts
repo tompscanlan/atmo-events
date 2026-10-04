@@ -27,6 +27,14 @@ export const GROUP_PERMISSIONS_COLLECTION = 'group.opensocial.permissions';
 export const GROUP_EVENT_PERMISSIONS_COLLECTION = 'net.openmeet.group.eventPermissions';
 export const GROUP_SPACE_COLLECTION = 'group.opensocial.space';
 
+/** The member's side of a membership, written by the member into their own repo in
+ *  the members space. It decides how the roster shows them, never what they may
+ *  read. */
+export const GROUP_ACCEPTANCE_COLLECTION = 'group.opensocial.acceptance';
+
+/** A member has one acceptance per group, at `self`. */
+export const GROUP_ACCEPTANCE_RKEY = 'self';
+
 /** Every space's access record is `self`, in that space. */
 export const GROUP_ACCESS_RKEY = 'self';
 
