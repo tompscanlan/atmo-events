@@ -11,6 +11,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('./__fixtures__/linked-oauth-stub')).linkedOAuthStub
+}));
 
 import { actorToDid } from '$lib/atproto/methods';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
@@ -25,8 +29,7 @@ import {
 	readStanding
 } from './route-context';
 import type { GroupSpaceReader } from './about-read';
-import { storeGroupCredential, type AppPasswordCredential } from './credentials';
-import { clearGroupSessions } from './session';
+import { linkGroups, linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
 import type { GroupRow, GroupVisibility } from '../types';
 
@@ -35,7 +38,7 @@ const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const HANDLE = 'kona.group.stub.test';
-/** No credential key: these groups have no members space, so the gate resolves
+/** No linked sessions: these groups have no members space, so the gate resolves
  *  from the rows and never builds a reader. */
 const NO_ENV = {};
 
@@ -201,14 +204,10 @@ describe('readStanding', () => {
 // other app is held to.
 describe('the page gate reads visibility from the host', () => {
 	const HOSTED = 'did:plc:hostedgroupaaaaaaaaaaaaa';
-	/** 32 bytes, base64: the credential store accepts nothing shorter. */
-	const KEY = btoa('0123456789abcdef0123456789abcdef');
-	const ENV = { GROUP_CREDENTIAL_KEY: KEY };
-	const CRED: AppPasswordCredential = {
-		service: 'https://pds.stub.test',
-		identifier: 'hosted.group.stub.test',
-		password: 'app-pass-1234'
-	};
+	const HOSTED_HANDLE = 'hosted.group.stub.test';
+	const CRED = linkedCredential(HOSTED);
+	/** Set by `hosted`: the sessions store, with the group linked or not. */
+	let env: ReturnType<typeof linkGroups>;
 	const GET_SPACE = 'com.atproto.simplespace.getSpace';
 
 	let pds: ReturnType<typeof stubPds>;
@@ -216,11 +215,10 @@ describe('the page gate reads visibility from the host', () => {
 	let getSpaceFails: boolean;
 
 	beforeEach(() => {
-		clearGroupSessions();
 		getSpaceFails = false;
 		pds = stubPds({
 			did: HOSTED,
-			handle: CRED.identifier,
+			handle: HOSTED_HANDLE,
 			fail: (nsid) =>
 				getSpaceFails && nsid === GET_SPACE
 					? Response.json({ error: 'UpstreamFailure' }, { status: 502 })
@@ -232,13 +230,13 @@ describe('the page gate reads visibility from the host', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
 		vi.restoreAllMocks();
-		clearGroupSessions();
+		unlinkAllGroups();
 	});
 
-	/** A group whose about space the host provisioned for `host`. The
-	 *  credential is stored unless the case says otherwise, and the host's log
+	/** A group whose about space the host provisioned for `host`. Its owner
+	 *  linked its account unless the case says otherwise, and the host's log
 	 *  starts empty. */
-	async function hosted(host: GroupVisibility, { credential = true } = {}): Promise<GroupRow> {
+	async function hosted(host: GroupVisibility, { linked = true } = {}): Promise<GroupRow> {
 		const created = await createGroup(db, {
 			groupDid: HOSTED,
 			ownerDid: OWNER,
@@ -249,7 +247,9 @@ describe('the page gate reads visibility from the host', () => {
 			created.id,
 			await provisionGroupSpaces(pdsProvisioner(CRED, HOSTED), host)
 		);
-		if (credential) await storeGroupCredential(ENV, db, HOSTED, CRED);
+		// Not linked is a sessions store without the group's link in it.
+		if (!linked) unlinkAllGroups();
+		env = linkGroups(linked ? [HOSTED] : []);
 		pds.clearLog();
 		return created;
 	}
@@ -258,7 +258,7 @@ describe('the page gate reads visibility from the host', () => {
 	 *  hands the forms, or the refusal's status and message. */
 	async function open(callerDid: string | null) {
 		try {
-			const ctx = await groupRouteContext(ENV, db, HOSTED, callerDid);
+			const ctx = await groupRouteContext(env, db, HOSTED, callerDid);
 			return { status: 200, visibility: ctx.visibility };
 		} catch (e) {
 			const http = e as { status: number; body: { message: string } };
@@ -293,8 +293,8 @@ describe('the page gate reads visibility from the host', () => {
 		expect(GROUP_VISIBILITY_UNCHECKED).toContain('visibility could not be checked');
 	});
 
-	it('refuses a stranger with the standard 404 when this deployment holds no credential for the group', async () => {
-		await hosted('public', { credential: false });
+	it('refuses a stranger with the standard 404 when the group’s owner has not linked it', async () => {
+		await hosted('public', { linked: false });
 
 		expect(await open(STRANGER)).toEqual({ status: 404, message: GROUP_NOT_FOUND });
 		expect(getSpaceCalls()).toEqual([]);

@@ -1,9 +1,9 @@
 // Applies migrations/ to D1 on every cold isolate, so each statement must be safe to
 // re-run. The files are imported `?raw`, so wrangler and this runner share one copy.
 import groupsSql from '../../../../migrations/0001_groups.sql?raw';
-import credentialsSql from '../../../../migrations/0002_group_credentials.sql?raw';
+import dropCredentialsSql from '../../../../migrations/0003_drop_group_credentials.sql?raw';
 
-const MIGRATIONS: readonly string[] = [groupsSql, credentialsSql];
+const MIGRATIONS: readonly string[] = [groupsSql, dropCredentialsSql];
 
 /** Split on the `-- @statement` marker, never on `;`: the triggers contain `;`. */
 export const GROUPS_SCHEMA_STATEMENTS: readonly string[] = MIGRATIONS.flatMap((sql) =>

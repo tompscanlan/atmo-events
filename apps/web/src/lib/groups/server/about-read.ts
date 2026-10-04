@@ -1,7 +1,7 @@
 // Reads a group's records back out of its spaces.
 //
 // A space refuses anonymous reads even under a public read policy (401
-// AuthMissing), so every read uses the group's own app-password session. An
+// AuthMissing), so every read uses the group's own session (./session.ts). An
 // account can read its own records in a space over Bearer, with no DPoP, space
 // scope or sync engine, and every record here is the group's own.
 import {
@@ -216,7 +216,7 @@ export async function groupSpaceReader(
 	db: D1Database,
 	group: GroupRow
 ): Promise<GroupSpaceReader | null> {
-	const cred = await resolveGroupCredential(env, db, group.group_did);
+	const cred = await resolveGroupCredential(env, group.group_did);
 	if (!cred) return null;
 	return pdsSpaceReader(cred, group.group_did);
 }

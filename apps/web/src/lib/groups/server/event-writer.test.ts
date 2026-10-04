@@ -4,9 +4,15 @@
 // group events under whichever admin clicked, which is the model this feature
 // exists to avoid.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('./__fixtures__/linked-oauth-stub')).linkedOAuthStub
+}));
+
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { storeGroupCredential } from './credentials';
-import { addMember, createGroup } from './repo';
+import { linkGroups, unlinkAllGroups } from './__fixtures__/linked-group';
+import { addMember, createGroup, recordGroupSpaces } from './repo';
 import {
 	GROUP_EVENT_COLLECTION,
 	GroupCredentialError,
@@ -14,6 +20,8 @@ import {
 	GroupRecordError,
 	GROUP_EVENT_IMAGE_MAX_BYTES,
 	deleteGroupEvent,
+	groupBlobUploader,
+	groupWriter,
 	uploadGroupEventImage,
 	writeGroupEvent,
 	type GroupBlobUploader,
@@ -42,8 +50,8 @@ let writer: GroupRepoWriter;
 let notified: string[];
 let notify: GroupEventNotifier;
 
-// The writer takes an env only for GROUP_CREDENTIAL_KEY, and these cases
-// inject their own writer, so it is never consulted.
+// The writer takes an env only to find the group's linked session, and these
+// cases inject their own writer, so it is never consulted.
 const env = {};
 
 function validRecord(name = 'Kona weekly ride') {
@@ -249,20 +257,14 @@ describe('the permission gate', () => {
 
 // A refused write must send nothing to the PDS. Every case above injects
 // `writer`, so all they prove is that the seam was not called. These go
-// through the real one: the group has a stored credential, so `groupWriter`
-// would build a PDS client if it were reached, and `fetch` records every
-// request that leaves.
+// through the real one: the group is linked, so `groupWriter` would build a
+// PDS client if it were reached, and `fetch` records every request that leaves.
 describe('refusal before transport', () => {
-	const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
-	const credentialEnv = { GROUP_CREDENTIAL_KEY: KEY };
+	let credentialEnv: ReturnType<typeof linkGroups>;
 	let requests: string[];
 
-	beforeEach(async () => {
-		await storeGroupCredential(credentialEnv, db, GROUP_DID, {
-			service: 'https://pds.test',
-			identifier: GROUP_DID,
-			password: 'app-password'
-		});
+	beforeEach(() => {
+		credentialEnv = linkGroups([GROUP_DID], 'https://pds.test');
 		requests = [];
 		vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
 			requests.push(input instanceof Request ? input.url : String(input));
@@ -270,7 +272,10 @@ describe('refusal before transport', () => {
 		});
 	});
 
-	afterEach(() => vi.unstubAllGlobals());
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		unlinkAllGroups();
+	});
 
 	// `reader: null` because this group has no members space, so the D1 rows
 	// answer. What the gate reads is not what this case is about; what it
@@ -408,9 +413,10 @@ describe('records from the event editor', () => {
 });
 
 describe('credentials', () => {
-	// A group whose DID the app holds no credential for cannot publish. That is
-	// an operator problem and must be reported as one, not as a 500 from the PDS.
-	it('fails with a credential error when no credential is configured', async () => {
+	// A group whose owner has not linked its account cannot publish. Only the
+	// owner can fix that, so it is reported as its own error, not as a 500 from
+	// the PDS.
+	it('fails with a not-linked error when the owner has not linked the group', async () => {
 		await expect(
 			writeGroupEvent({ db, env, group, callerDid: ADMIN, intent: 'create', record: validRecord() })
 		).rejects.toBeInstanceOf(GroupCredentialError);
@@ -418,7 +424,7 @@ describe('credentials', () => {
 
 	it('checks the permission before the credential', async () => {
 		// Order matters: a member must be told they lack the permission, not that
-		// the deployment is misconfigured.
+		// the group is not linked.
 		await expect(
 			writeGroupEvent({
 				db,
@@ -429,6 +435,91 @@ describe('credentials', () => {
 				record: validRecord()
 			})
 		).rejects.toBeInstanceOf(GroupPermissionError);
+	});
+
+	// No password stands in for a missing link: the writer and the uploader both
+	// refuse before anything leaves for the PDS.
+	describe('for a group nobody has linked', () => {
+		let requests: string[];
+
+		beforeEach(() => {
+			requests = [];
+			vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+				requests.push(input instanceof Request ? input.url : String(input));
+				throw new Error('the PDS was contacted');
+			});
+		});
+
+		afterEach(() => {
+			vi.unstubAllGlobals();
+			unlinkAllGroups();
+		});
+
+		// Another group is linked, so the sessions namespace exists and answers.
+		const unlinked = () => linkGroups(['did:plc:anothergroupaaaaaaaaaaaa']);
+
+		it('refuses to build a writer, and sends nothing', async () => {
+			const refusal = groupWriter(unlinked(), db, group);
+
+			await expect(refusal).rejects.toBeInstanceOf(GroupCredentialError);
+			await expect(refusal).rejects.toThrow(/not linked/);
+			expect(requests).toEqual([]);
+		});
+
+		it('refuses to build an image uploader, and sends nothing', async () => {
+			await expect(groupBlobUploader(unlinked(), db, group)).rejects.toBeInstanceOf(
+				GroupCredentialError
+			);
+			expect(requests).toEqual([]);
+		});
+
+		// A created group always has a members space, and without the link the gate
+		// cannot read it. Even the owner is told the group is not linked rather
+		// than "not allowed", and the injected writer is never reached.
+		it('tells the owner of a group with a members space that it is not linked', async () => {
+			const spaces = {
+				aboutSpaceUri: `at://${GROUP_DID}/space/group.opensocial.meta/self`,
+				membersSpaceUri: `at://${GROUP_DID}/space/group.opensocial.members/self`
+			};
+			await recordGroupSpaces(db, group.id, spaces);
+			const provisioned = {
+				...group,
+				about_space_uri: spaces.aboutSpaceUri,
+				members_space_uri: spaces.membersSpaceUri
+			};
+
+			await expect(
+				writeGroupEvent({
+					db,
+					env: unlinked(),
+					group: provisioned,
+					callerDid: OWNER,
+					intent: 'create',
+					record: validRecord(),
+					writer,
+					notify
+				})
+			).rejects.toBeInstanceOf(GroupCredentialError);
+			expect(writes).toEqual([]);
+			expect(requests).toEqual([]);
+		});
+
+		it('refuses an admin’s event through the real writer, and sends nothing', async () => {
+			await expect(
+				writeGroupEvent({
+					db,
+					env: unlinked(),
+					group,
+					callerDid: ADMIN,
+					intent: 'create',
+					record: validRecord(),
+					reader: null,
+					notify
+				})
+			).rejects.toBeInstanceOf(GroupCredentialError);
+			expect(requests).toEqual([]);
+			expect(notified).toEqual([]);
+		});
 	});
 });
 

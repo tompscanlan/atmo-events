@@ -34,11 +34,11 @@ export class GroupPermissionError extends Error {
 	}
 }
 
-/** The app holds no credential for this group's DID, so it cannot author as the
- *  group. A configuration failure, never a user error. */
+/** The group's owner has not linked its account, so this app cannot author as the
+ *  group. Only the owner can fix it, by linking from the group page. */
 export class GroupCredentialError extends Error {
 	constructor(readonly groupDid: string) {
-		super(`no group credential is configured for ${groupDid}`);
+		super(`${groupDid} is not linked: its owner has not authorized this app to write as it`);
 		this.name = 'GroupCredentialError';
 	}
 }
@@ -185,15 +185,20 @@ export interface GroupGateInput {
 }
 
 /** The gate's permission check. Refuses an anonymous caller before any read.
- *  Otherwise the group's records decide, through `getCallerMembership`. */
+ *  Otherwise the group's records decide, through `getCallerMembership`. A group
+ *  with a members space that its owner has not linked cannot be read, so nobody's
+ *  permission can be checked, and the refusal says what would fix it. */
 export async function requireGroupPermission(
 	input: GroupGateInput,
 	permission: EnforcedGroupPermission
 ): Promise<void> {
 	const { db, group, callerDid } = input;
 	if (!callerDid) throw new GroupPermissionError(permission, group.group_did);
-	const reader =
-		input.reader !== undefined ? input.reader : await groupSpaceReader(input.env, db, group);
+	let reader = input.reader;
+	if (reader === undefined) {
+		reader = await groupSpaceReader(input.env, db, group);
+		if (!reader && group.members_space_uri) throw new GroupCredentialError(group.group_did);
+	}
 	const membership = await getCallerMembership(db, group, callerDid, reader);
 	if (!can(membership.permissions, permission)) {
 		throw new GroupPermissionError(permission, group.group_did);
@@ -328,14 +333,14 @@ function isBlobRef(value: unknown): value is GroupBlobRef {
 	);
 }
 
-/** Uploads into the group's repo with its stored app password. Throws
- *  GroupCredentialError without one. */
+/** Uploads into the group's repo through its linked session. Throws
+ *  GroupCredentialError when the group is not linked. */
 export async function groupBlobUploader(
 	env: CredentialStoreEnv,
 	db: D1Database,
 	group: GroupRow
 ): Promise<GroupBlobUploader> {
-	const cred = await resolveGroupCredential(env, db, group.group_did);
+	const cred = await resolveGroupCredential(env, group.group_did);
 	if (!cred) throw new GroupCredentialError(group.group_did);
 	return async (blob) => {
 		const { handle } = await groupClient(cred, group.group_did);
@@ -353,14 +358,14 @@ export async function groupBlobUploader(
 	};
 }
 
-/** The transport for the group's repo and its spaces, using the app password
- *  stored at create. Throws GroupCredentialError without one. */
+/** The transport for the group's repo and its spaces, through its linked session.
+ *  Throws GroupCredentialError when the group is not linked. */
 export async function groupWriter(
 	env: CredentialStoreEnv,
 	db: D1Database,
 	group: GroupRow
 ): Promise<GroupRepoWriter> {
-	const cred = await resolveGroupCredential(env, db, group.group_did);
+	const cred = await resolveGroupCredential(env, group.group_did);
 	if (!cred) throw new GroupCredentialError(group.group_did);
 	return pdsWriter(cred, group.group_did);
 }

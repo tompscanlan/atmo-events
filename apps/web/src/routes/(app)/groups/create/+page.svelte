@@ -4,6 +4,7 @@
 	import { resolve } from '$app/paths';
 	import { MINTABLE_LABEL_INPUT_PATTERN, labelFromGroupName } from '$lib/groups/handle-label';
 	import { groupFormError } from '$lib/groups/form-result';
+	import { GROUP_PASSWORD_MIN_LENGTH } from '$lib/groups/form-fields';
 	import { resetOnSuccess } from '$lib/groups/form-enhance';
 
 	let { data } = $props();
@@ -39,15 +40,14 @@
 		A group is an account on the network. Creating one registers a new identity. Its address becomes
 		its handle, so the name has to be free.
 	</p>
-	<!-- There is one hosting path for now, so the page names it. The owner gets
-	     the recovery key; the site keeps the writing credential and the account
-	     email. Saying only the first would read as full ownership. -->
+	<!-- Says who holds what, since the creator holds all of it: the login, the
+	     recovery key, and the say over what this site may do as the group. -->
 	<p class="text-base-500 dark:text-base-400 mb-8 text-sm">
-		<strong>This site hosts the group for you.</strong> We hold the credential the group posts with,
-		and its account email is ours, so we can keep it working and help when it breaks. You do not
-		need to know anything about atproto to run a group here. What you get at the end is its
-		<strong>recovery key</strong>: with it you can move the group to a host of your own later, and
-		nobody, including us, can stop you. Owning the group's account outright is not offered yet.
+		<strong>You hold the group's account.</strong> Its login is the email and password you choose
+		below, and this site keeps neither. Once the group exists, you link its account: you sign in as
+		the group and approve this site to post as it, and you can revoke that at the group's PDS. You
+		also get its <strong>recovery key</strong>, with which you can move the group to a host of your
+		own later, and nobody, including us, can stop you.
 	</p>
 
 	{#if !data.mintConfigured}
@@ -58,9 +58,8 @@
 			<p class="mt-1">
 				An administrator needs to set <code class="font-mono">GROUP_PDS_SERVICE</code>,
 				<code class="font-mono">GROUP_HANDLE_DOMAIN</code>,
-				<code class="font-mono">GROUP_PDS_INVITE_CODE</code>,
-				<code class="font-mono">GROUP_ACCOUNT_EMAIL</code> and
-				<code class="font-mono">GROUP_CREDENTIAL_KEY</code> first.
+				<code class="font-mono">GROUP_PDS_INVITE_CODE</code> and
+				<code class="font-mono">OAUTH_PUBLIC_URL</code> first.
 			</p>
 		</div>
 	{/if}
@@ -96,17 +95,35 @@
 				class="rounded-ui bg-base-100 dark:bg-base-900 mt-3 w-full border-0 px-3 py-1.5 font-mono text-xs"
 				value={registered.recoveryKey}
 			></textarea>
+		</div>
+	{/if}
+
+	<!-- The next step, after the key: this site cannot write as the group until
+	     it is linked. A plain post, since the answer is a redirect to the group's
+	     PDS. Leaving this page loses the key, so the copy says save it first. -->
+	{#if created}
+		<form
+			method="POST"
+			action="/oauth/group-link"
+			class="ring-base-200 dark:ring-base-800 mb-8 rounded-2xl p-4 text-sm ring-1"
+		>
+			<input type="hidden" name="groupDid" value={created.groupDid} />
+			<p class="font-semibold">Next: link the group's account.</p>
+			<p class="mt-1">
+				This site cannot post as <strong>{created.handle}</strong> until you do. At the group's PDS, sign
+				in as the group with the email and password you just chose, not as yourself, and approve this
+				site. Save the recovery key above first: this page cannot show it again.
+			</p>
+			<div class="mt-3"><Button type="submit">Link the group's account</Button></div>
 			<!-- The link text is the handle, which the owner just chose and will
 			     recognize. The href carries the DID, because that is the group's
 			     permanent address and a handle can lapse. -->
-			{#if created}
-				<p class="mt-3">
-					<a class="underline" href={resolve('/(app)/groups/[actor]', { actor: created.groupDid })}
-						>Continue to {created.handle}</a
-					>
-				</p>
-			{/if}
-		</div>
+			<p class="mt-3">
+				<a class="underline" href={resolve('/(app)/groups/[actor]', { actor: created.groupDid })}
+					>Or continue to {created.handle}</a
+				> and link it from there.
+			</p>
+		</form>
 	{/if}
 
 	<!-- Once the group exists, the form has nothing left to do, and leaving it
@@ -141,6 +158,43 @@
 					>. Creating the group registers that handle, and it is the address the group is known by
 					from then on: pick it as carefully as a username, because it is not changeable here
 					afterwards.
+				</p>
+			</div>
+
+			<!-- The group account's login. The creator holds it, so reset mail for the
+			     group goes to them, and this site keeps neither field. -->
+			<div class="flex flex-col gap-1.5">
+				<Label for="group-email">Group account email</Label>
+				<Input
+					id="group-email"
+					name="email"
+					type="email"
+					autocomplete="email"
+					required
+					maxlength={254}
+				/>
+				<p class="text-base-500 dark:text-base-400 text-xs">
+					Password reset mail for the group comes here. Each account on the group's PDS needs its
+					own address, so if yours already has one there, add a tag:
+					<span class="font-mono">you+{derivedLabel || 'mygroup'}@example.com</span>.
+				</p>
+			</div>
+
+			<div class="flex flex-col gap-1.5">
+				<Label for="group-password">Group account password</Label>
+				<!-- Underscored so a failed submit never sends it back to the page. -->
+				<Input
+					id="group-password"
+					name="_password"
+					type="password"
+					autocomplete="new-password"
+					required
+					minlength={GROUP_PASSWORD_MIN_LENGTH}
+					maxlength={256}
+				/>
+				<p class="text-base-500 dark:text-base-400 text-xs">
+					At least {GROUP_PASSWORD_MIN_LENGTH} characters. You sign in as the group with it to link the
+					group to this site. This site does not keep it, so keep it in your password manager.
 				</p>
 			</div>
 

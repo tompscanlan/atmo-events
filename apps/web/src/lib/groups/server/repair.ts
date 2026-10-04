@@ -107,9 +107,7 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 	const reader = input.reader !== undefined ? input.reader : await groupSpaceReader(env, db, group);
 	await requireGroupPermission({ ...input, reader }, 'MANAGE_GROUP');
 	if (!reader) {
-		throw new GroupRecordError(
-			`this deployment holds no credential for ${group.group_did}, so its records cannot be read`
-		);
+		throw new GroupRecordError(`${group.group_did} is not linked, so its records cannot be read`);
 	}
 
 	const members = await readGroupMembers(reader, group);

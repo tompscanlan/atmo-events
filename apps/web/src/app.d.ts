@@ -121,10 +121,6 @@ declare global {
 				GROUP_HANDLE_DOMAIN?: string;
 				/** Invite code for the group PDS (set via `wrangler secret put`). */
 				GROUP_PDS_INVITE_CODE?: string;
-				/** Address group accounts are created with; each gets a plus address. */
-				GROUP_ACCOUNT_EMAIL?: string;
-				/** Key that encrypts stored group app passwords (set via `wrangler secret put`). */
-				GROUP_CREDENTIAL_KEY?: string;
 			};
 			/** Cloudflare Worker execution context. Use `ctx.waitUntil(promise)` to
 			 *  let the worker keep a fire-and-forget task alive after the response

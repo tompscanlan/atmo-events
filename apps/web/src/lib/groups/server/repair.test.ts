@@ -10,6 +10,12 @@
 // credential stored, and the host pages its listings small enough that a
 // second page is real.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('./__fixtures__/linked-oauth-stub')).linkedOAuthStub
+}));
+
 import { isRowWrite, sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { stubPds, type StubPdsOptions } from './__fixtures__/stub-pds';
 import {
@@ -34,8 +40,12 @@ import { describeRepair, repairGroup } from './repair';
 import type { GroupRebuildSources } from './rebuild';
 import { pdsSpaceReader, readGroupAbout, type GroupSpaceReader } from './about-read';
 import { groupFace } from '../about-record';
-import { storeGroupCredential, type AppPasswordCredential } from './credentials';
-import { clearGroupSessions } from './session';
+import {
+	STUB_PDS_SERVICE,
+	linkGroups,
+	linkedCredential,
+	unlinkAllGroups
+} from './__fixtures__/linked-group';
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
 import {
 	ABOUT_SPACE_TYPE,
@@ -60,13 +70,8 @@ const MEMBER = 'did:plc:6cz6dldz42itymdbte47ewcv';
 const ABOUT = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self');
 const MEMBERS = spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self');
 
-/** 32 bytes, base64: the credential store accepts nothing shorter. */
-const KEY = btoa('0123456789abcdef0123456789abcdef');
-const CRED: AppPasswordCredential = {
-	service: 'https://pds.stub.test',
-	identifier: 'kona.group.stub.test',
-	password: 'app-pass-1234'
-};
+const HANDLE = 'kona.group.stub.test';
+const CRED = linkedCredential(GROUP_DID);
 
 const MEMBER_LIST_METHODS = new Set([
 	'com.atproto.simplespace.putMember',
@@ -84,7 +89,7 @@ let sources: GroupRebuildSources;
 let pds: ReturnType<typeof stubPds>;
 /** Set by a case to answer one host call its own way. */
 let failHost: StubPdsOptions['fail'] | null;
-const env = { GROUP_CREDENTIAL_KEY: KEY };
+let env: ReturnType<typeof linkGroups>;
 
 /** A member-list call, by the space and the DID it names. A query carries them
  *  as parameters, a procedure in its body. */
@@ -111,7 +116,7 @@ async function hostList(
 	did: string,
 	access = space === MEMBERS ? { read: false, write: true } : { read: true, write: false }
 ) {
-	const res = await fetch(`${CRED.service}/xrpc/com.atproto.simplespace.${method}`, {
+	const res = await fetch(`${STUB_PDS_SERVICE}/xrpc/com.atproto.simplespace.${method}`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify(method === 'putMember' ? { space, did, ...access } : { space, did })
@@ -122,7 +127,7 @@ async function hostList(
 beforeEach(async () => {
 	harness = sqliteD1();
 	db = harness.db;
-	clearGroupSessions();
+	env = linkGroups([GROUP_DID]);
 	group = await createGroup(db, { groupDid: GROUP_DID, ownerDid: OWNER, name: 'Kona' });
 
 	// The host pages two at a time, so any listing of three or more has a second
@@ -130,12 +135,11 @@ beforeEach(async () => {
 	failHost = null;
 	pds = stubPds({
 		did: GROUP_DID,
-		handle: CRED.identifier,
+		handle: HANDLE,
 		recordPageSize: 2,
 		memberPageSize: 2,
 		fail: (nsid, init, query) => failHost?.(nsid, init, query)
 	});
-	await storeGroupCredential(env, db, GROUP_DID, CRED);
 	const uris = await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), 'public');
 	expect(uris).toEqual({ aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS });
 	await recordGroupSpaces(db, group.id, uris);
@@ -181,7 +185,7 @@ beforeEach(async () => {
 
 afterEach(() => {
 	vi.unstubAllGlobals();
-	clearGroupSessions();
+	unlinkAllGroups();
 	harness.close();
 });
 
@@ -603,7 +607,7 @@ describe('Repair aligns the declaration to the host', () => {
 	/** Calls the host directly, the way the group's owner could from any
 	 *  client, so a case can set up a host that drifted from this site. */
 	async function hostCall(nsid: string, body: Record<string, unknown>) {
-		const res = await fetch(`${CRED.service}/xrpc/${nsid}`, {
+		const res = await fetch(`${STUB_PDS_SERVICE}/xrpc/${nsid}`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify(body)
@@ -617,7 +621,7 @@ describe('Repair aligns the declaration to the host', () => {
 			collection: GROUP_DECLARATION_COLLECTION,
 			rkey: GROUP_DECLARATION_RKEY
 		});
-		return (await fetch(`${CRED.service}/xrpc/com.atproto.repo.getRecord?${query}`)).ok;
+		return (await fetch(`${STUB_PDS_SERVICE}/xrpc/com.atproto.repo.getRecord?${query}`)).ok;
 	}
 
 	const updateSpaceCalls = () =>

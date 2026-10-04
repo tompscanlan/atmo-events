@@ -25,7 +25,7 @@ import {
 	recordGroupSpaces
 } from './repo';
 import { pdsSpaceReader, type GroupSpaceReader } from './about-read';
-import { clearGroupSessions } from './session';
+import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import {
 	NO_MEMBER_RECORDS,
 	effectivePermissions,
@@ -676,22 +676,17 @@ describe('the gate, from records', () => {
 	// would find no config and hand the decision to the row: an admin's
 	// permissions for a caller the records may have removed.
 	it('fails closed when the PDS refuses a space read with a 400', async () => {
-		clearGroupSessions();
-		vi.stubGlobal('fetch', async (input: URL | string) =>
-			String(input).includes('com.atproto.server.createSession')
-				? Response.json({ did: GROUP_DID, accessJwt: 'jwt', refreshJwt: 'refresh' })
-				: Response.json({ error: 'SpaceNotFound', message: 'Space not found' }, { status: 400 })
+		vi.stubGlobal('fetch', async () =>
+			Response.json({ error: 'SpaceNotFound', message: 'Space not found' }, { status: 400 })
 		);
 		try {
-			const reader = pdsSpaceReader(
-				{ service: 'https://pds.stub.test', identifier: 'g.stub.test', password: 'p' },
-				GROUP_DID
-			);
+			const reader = pdsSpaceReader(linkedCredential(GROUP_DID), GROUP_DID);
 			await expect(getCallerMembership(db, group, ADMIN, reader)).rejects.toThrow(
 				/failed: 400 SpaceNotFound/
 			);
 		} finally {
 			vi.unstubAllGlobals();
+			unlinkAllGroups();
 		}
 	});
 

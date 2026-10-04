@@ -53,8 +53,8 @@ import {
 	readGroupAbout,
 	rebuildGroupCache
 } from '../src/lib/groups/server/about-read';
-import { resolveGroupCredential, storeGroupCredential } from '../src/lib/groups/server/credentials';
-import { ensureGroupsSchema } from '../src/lib/groups/server/schema';
+import { resolveGroupCredential } from '../src/lib/groups/server/credentials';
+import { GROUP_SESSION_PREFIX } from '../src/lib/groups/server/linked-session';
 import {
 	pdsProvisioner,
 	provisionGroupSpaces,
@@ -90,8 +90,12 @@ import {
 
 interface Env {
 	DB: D1Database;
-	/** AES-GCM key for the group's app password in D1, as in production. */
-	GROUP_CREDENTIAL_KEY?: string;
+	/** Where the app looks for the group's linked session, as in production. */
+	OAUTH_SESSIONS: KVNamespace;
+	/** The stand-in session's login (./groups-e2e.oauth.ts). */
+	E2E_GROUP_SERVICE: string;
+	E2E_GROUP_IDENTIFIER: string;
+	E2E_GROUP_PASSWORD: string;
 }
 
 type AssignableRole = Exclude<GroupRoleName, 'owner'>;
@@ -133,16 +137,11 @@ async function spaceReader(env: Env, group: GroupRow) {
 const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	createGroup: (env, args) => createGroup(env.DB, args as never),
 
-	/** Stores the credential as a mint would. It runs before `createGroup`, so it
-	 *  builds the schema itself. */
-	storeCredential: async (env, args) => {
-		await ensureGroupsSchema(env.DB);
-		await storeGroupCredential(env, env.DB, String(args.groupDid), {
-			service: String(args.service),
-			identifier: String(args.identifier),
-			password: String(args.password)
-		});
-		return { stored: args.groupDid };
+	/** Marks the group linked, as its owner's link would. The app finds a linked
+	 *  session by this key; restoring it is the stand-in's (./groups-e2e.oauth.ts). */
+	linkGroup: async (env, args) => {
+		await env.OAUTH_SESSIONS.put(GROUP_SESSION_PREFIX + String(args.groupDid), '{}');
+		return { linked: args.groupDid };
 	},
 
 	/** Stored bundles, as rows: the seeded data, not the constant it came from. */
@@ -265,7 +264,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	/** The about space and the members space, as a create makes them. Idempotent. */
 	provisionSpaces: async (env, args) => {
 		const group = await groupById(env, args.groupId);
-		const cred = await resolveGroupCredential(env, env.DB, group.group_did);
+		const cred = await resolveGroupCredential(env, group.group_did);
 		if (!cred) throw new Error(`no credential for ${group.group_did}`);
 		const uris = await provisionGroupSpaces(
 			pdsProvisioner(cred, group.group_did),
@@ -608,8 +607,8 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	},
 
 	/** Deletes the group row and, by cascade, its roles, bundles, roster and join
-	 *  requests. `group_credentials` is keyed by DID and survives. A rebuild starts
-	 *  from it. */
+	 *  requests. The linked session is kept outside D1 and survives. A rebuild
+	 *  starts from it. */
 	dropGroupRows: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		await env.DB.prepare(`DELETE FROM groups WHERE id = ?`).bind(group.id).run();

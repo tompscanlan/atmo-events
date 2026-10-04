@@ -129,7 +129,7 @@ export async function groupMemberList(
 	db: D1Database,
 	group: GroupRow
 ): Promise<GroupMemberList> {
-	const cred = await resolveGroupCredential(env, db, group.group_did);
+	const cred = await resolveGroupCredential(env, group.group_did);
 	if (!cred) throw new GroupCredentialError(group.group_did);
 	return pdsMemberList(cred, group.group_did);
 }

@@ -14,10 +14,10 @@ group's PDS. D1 holds a cache of them that the app can query.
 | profile, rules, access                              | the about space, of type `group.opensocial.meta`        | the group's visibility |
 | roles, permissions, membership, access, space index | the members space, of type `group.opensocial.members`   | member list            |
 | a cache of the records above                        | D1, `migrations/0001_groups.sql`                        | the app                |
-| the group's writing credential                      | D1, encrypted, `migrations/0002_group_credentials.sql`  | the app                |
+| the session the owner linked                        | the sessions KV namespace, under `group:session:`       | the app                |
 
-The app reads both spaces as the group, with the group's own credential. A space needs a login
-whatever its read policy.
+The app reads both spaces as the group, through the session the group's owner linked. A space needs
+a login whatever its read policy.
 
 ## The records
 
@@ -67,8 +67,8 @@ group. D1 has no column for it. The group pages ask the PDS for it
 (`com.atproto.simplespace.getSpace`), so every app sees the same answer. A member on the roster is
 let in without the question, and the page then asks only to show the visibility. When the members
 space errors, nobody is on the roster for that read, whatever the D1 rows say, so until the space
-answers a member is treated like anyone else. Anyone else gets the ordinary 404 when the deployment
-holds no credential for the group, since then the PDS cannot be asked, and a 503 rather than a guess
+answers a member is treated like anyone else. Anyone else gets the ordinary 404 when the group's
+owner has not linked it, since then the PDS cannot be asked, and a 503 rather than a guess
 when the PDS is asked and does not answer. Browse shows it from placement instead, with no PDS read
 per group: a group the declaration index lists is public, and one the caller sees only through their
 own groups is private. So browse's badge says whether the group is declared and the page's badge
@@ -133,15 +133,19 @@ A pending join request is not published as a record.
 
 ## Hosting
 
-Creating a group creates a new `did:plc` account on a PDS the deployment chooses. The app keeps an
-app password for that account (never the account password) so it can write as the group. The owner
-receives the account's first PLC rotation key, so they can move the group to another host without
-the app. Owning the account outright from the start is not offered yet.
+Creating a group creates a new `did:plc` account on a PDS the deployment chooses. The creator holds
+the account: they type its email and password on the create form, and the app passes the password
+to the PDS once and keeps neither. Password reset mail for the group goes to the creator. A PDS holds
+one account per email, so a creator with several groups plus-addresses their own address. The owner
+also receives the account's first PLC rotation key, so they can move the group to another host
+without the app.
 
-The app password is stored encrypted under a Worker secret. The alternatives were worse: in plain
-text, one D1 read lets anyone write as every group; the account password would make one read an
-account takeover; and passwords derived from a key break every group on a handle change or a key
-rotation.
+The app writes as the group only through an OAuth session the owner grants: they sign in at the
+group's PDS as the group and approve this app (`server/group-link.ts`), and can revoke it there.
+The session asks only for the group's public-repo records, its own spaces and image uploads
+(`server/linked-session.ts`). Until the owner links, every write as the group fails and the group
+page asks the owner to link. The one exception is the create itself: it sets the new group up with
+the session `createAccount` returns, inside that request, and keeps nothing.
 
 The create flow (`create-group.ts`) refuses everything it can before it creates the DID, because a
 DID is permanent. The handle registration is the name reservation, so a taken name fails before
@@ -157,23 +161,19 @@ Set on the web Worker. With `GROUP_PDS_SERVICE` unset, the app hides its groups 
 not, and it cannot be told apart from one that does until a create has made the account. On such a
 host the create stops after the account exists and says the PDS does not support Spaces.
 
-| name                    | kind   | meaning                                                             |
-| ----------------------- | ------ | ------------------------------------------------------------------- |
-| `GROUP_PDS_SERVICE`     | var    | PDS that new group accounts are created on                          |
-| `GROUP_HANDLE_DOMAIN`   | var    | handle suffix for groups, e.g. `groups.example.com`                 |
-| `GROUP_ACCOUNT_EMAIL`   | var    | email the accounts are created with; each group gets a plus address |
-| `GROUP_PDS_INVITE_CODE` | secret | invite code, when the PDS requires one                              |
-| `GROUP_CREDENTIAL_KEY`  | secret | base64 32-byte AES-GCM key that encrypts the stored app passwords   |
+| name                    | kind   | meaning                                             |
+| ----------------------- | ------ | --------------------------------------------------- |
+| `GROUP_PDS_SERVICE`     | var    | PDS that new group accounts are created on          |
+| `GROUP_HANDLE_DOMAIN`   | var    | handle suffix for groups, e.g. `groups.example.com` |
+| `GROUP_PDS_INVITE_CODE` | secret | invite code, when the PDS requires one              |
+
+Linking also needs the deployment's own OAuth client metadata (`OAUTH_PUBLIC_URL` and
+`CLIENT_ASSERTION_KEY`), so the create page counts a deployment without them as not configured.
 
 - Groups get their own handle domain, so a group handle never competes with a person's handle on
   the same PDS.
-- `GROUP_ACCOUNT_EMAIL` is the deployment's address, not the owner's, so password reset stays with
-  the deployment. The PDS requires an email and matches it exactly, so each group gets a plus
-  address, `groups+<label>@example.com`.
 - Accounts that share an invite code share its use count, and deleting an account does not give a
   use back.
-- Losing `GROUP_CREDENTIAL_KEY` loses the stored app passwords, which a PDS admin can issue again. It
-  never loses a group, because the owner holds its first rotation key.
 
 `apps/web/.dev.vars.example` lists the secrets for local runs.
 
@@ -196,10 +196,15 @@ is missing:
 | `E2E_PDS`            | PDS that hosts the group account; it must serve Spaces   |
 | `E2E_GROUP_DID`      | an existing group account's DID                          |
 | `E2E_GROUP_HANDLE`   | that account's handle                                    |
-| `E2E_GROUP_PASSWORD` | its app password                                         |
+| `E2E_GROUP_PASSWORD` | a password for it (an app password works)                |
 | `E2E_CREDENTIALS`    | instead of `E2E_GROUP_PASSWORD`, an env file that has it |
 | `E2E_OWNER_DID`      | the person who owns the group                            |
 | `E2E_ADMIN_DID`      | a person who joins and is promoted to admin              |
 | `E2E_OUTSIDER_DID`   | a person who is never a member                           |
+
+The e2e cannot hold a real linked session, which needs the deployment's OAuth client key, so it
+links the group with a stand-in (`scripts/groups-e2e.oauth.ts`) whose session logs in with
+`E2E_GROUP_PASSWORD`. Every write still goes through the app's linked branch; the scope a real link
+carries is checked by a walk through a deployed site with a linked group instead.
 
 The other two scripts are read-only and need no credentials.

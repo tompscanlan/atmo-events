@@ -27,6 +27,12 @@
 // (./server/__fixtures__/stub-pds.ts), reached through the real transports, so
 // the bodies asserted here are the bodies a PDS would receive.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('./server/__fixtures__/linked-oauth-stub')).linkedOAuthStub
+}));
+
 import { isRowWrite, sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { stubPds, type StubPdsOptions } from './server/__fixtures__/stub-pds';
 import {
@@ -37,9 +43,13 @@ import {
 } from './members-record';
 import { pdsWriter } from './server/event-writer';
 import { pdsSpaceReader } from './server/about-read';
-import { storeGroupCredential, type AppPasswordCredential } from './server/credentials';
+import {
+	STUB_PDS_SERVICE,
+	linkGroups,
+	linkedCredential,
+	unlinkAllGroups
+} from './server/__fixtures__/linked-group';
 import { createGroup, getGroupByDid, recordGroupSpaces } from './server/repo';
-import { clearGroupSessions } from './server/session';
 import { pdsProvisioner, provisionGroupSpaces } from './server/spaces';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow, type GroupVisibility } from './types';
 import { runUpdateGroup, type UpdateGroupData } from './update-group';
@@ -47,13 +57,7 @@ import { runUpdateGroup, type UpdateGroupData } from './update-group';
 const OWNER = 'did:plc:owner';
 const GROUP_DID = 'did:plc:settingsgroupaaaaaaaaaaa';
 const HANDLE = 'kona.group.stub.test';
-/** 32 bytes, base64: the credential store accepts nothing shorter. */
-const KEY = btoa('0123456789abcdef0123456789abcdef');
-const CRED: AppPasswordCredential = {
-	service: 'https://pds.stub.test',
-	identifier: HANDLE,
-	password: 'app-pass-1234'
-};
+const CRED = linkedCredential(GROUP_DID);
 const ABOUT = `at://${GROUP_DID}/space/${ABOUT_SPACE_TYPE}/self`;
 const MEMBERS = `at://${GROUP_DID}/space/${MEMBERS_SPACE_TYPE}/self`;
 
@@ -61,16 +65,16 @@ const policy = (name: string) => ({ $type: `com.atproto.simplespace.defs#${name}
 const pdsDown = () => Response.json({ error: 'InternalServerError' }, { status: 500 });
 
 let harness: SqliteD1;
-const env = { GROUP_CREDENTIAL_KEY: KEY };
+let env: ReturnType<typeof linkGroups>;
 
 beforeEach(() => {
 	harness = sqliteD1();
-	clearGroupSessions();
+	env = linkGroups([GROUP_DID]);
 });
 
 afterEach(() => {
 	vi.unstubAllGlobals();
-	clearGroupSessions();
+	unlinkAllGroups();
 	harness.close();
 });
 
@@ -80,8 +84,8 @@ function host(fail?: StubPdsOptions['fail']): Host {
 	return stubPds({ did: GROUP_DID, handle: HANDLE, fail });
 }
 
-/** The background and the scenario's "given": a group whose credential is
- *  stored, whose two spaces the host provisioned for `visibility`, the choice
+/** The background and the scenario's "given": a group whose owner linked its
+ *  account, whose two spaces the host provisioned for `visibility`, the choice
  *  made at create, and whose about space's access record says that choice, as
  *  a create leaves it. The host's log is cleared afterwards, so a case asserts
  *  on the save alone. */
@@ -96,7 +100,6 @@ async function givenGroup(
 		name: 'Kona Trail Runners',
 		requireApproval
 	});
-	await storeGroupCredential(env, harness.db, GROUP_DID, CRED);
 	const uris = await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), visibility);
 	await recordGroupSpaces(harness.db, row.id, uris);
 	const group = {
@@ -150,7 +153,7 @@ async function declaredNow(): Promise<boolean> {
 		collection: 'group.opensocial.declaration',
 		rkey: 'self'
 	});
-	return (await fetch(`${CRED.service}/xrpc/com.atproto.repo.getRecord?${q}`)).ok;
+	return (await fetch(`${STUB_PDS_SERVICE}/xrpc/com.atproto.repo.getRecord?${q}`)).ok;
 }
 
 /** The about space's access record as the host holds it, read with the group's
@@ -168,7 +171,7 @@ async function aboutAccessNow(): Promise<Record<string, unknown> | null> {
 /** Moves the about space's read policy at the host, the way another client, or
  *  a save that failed after its host write, leaves it. */
 async function hostSays(visibility: GroupVisibility, pds: Host) {
-	const res = await fetch(`${CRED.service}/xrpc/com.atproto.simplespace.updateSpace`, {
+	const res = await fetch(`${STUB_PDS_SERVICE}/xrpc/com.atproto.simplespace.updateSpace`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({
@@ -967,7 +970,6 @@ describe('a stale form and the approval setting', () => {
 	function startOver(): Host {
 		harness.close();
 		harness = sqliteD1();
-		clearGroupSessions();
 		vi.unstubAllGlobals();
 		return host();
 	}

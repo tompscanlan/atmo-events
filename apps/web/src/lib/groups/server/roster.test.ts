@@ -23,6 +23,12 @@
 // (./__fixtures__/stub-pds.ts), so these cases hold however the list's
 // transport is wired.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('./__fixtures__/linked-oauth-stub')).linkedOAuthStub
+}));
+
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { stubPds } from './__fixtures__/stub-pds';
 import {
@@ -48,8 +54,12 @@ import {
 } from './roster';
 import type { GroupRepoWrite, GroupRepoWriter } from './event-writer';
 import { pdsSpaceReader, type GroupSpaceReader } from './about-read';
-import { storeGroupCredential, type AppPasswordCredential } from './credentials';
-import { clearGroupSessions } from './session';
+import {
+	STUB_PDS_SERVICE,
+	linkGroups,
+	linkedCredential,
+	unlinkAllGroups
+} from './__fixtures__/linked-group';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import { GROUP_MEMBERSHIP_COLLECTION } from '../members-record';
 import { DEFAULT_ROLE_PERMISSIONS, type GroupRoleName } from '../permissions';
@@ -64,13 +74,8 @@ const NEWCOMER = 'did:plc:newcomeraaaaaaaaaaaaaaaaa';
 const ABOUT = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self');
 const MEMBERS = spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self');
 
-/** 32 bytes, base64: the credential store accepts nothing shorter. */
-const KEY = btoa('0123456789abcdef0123456789abcdef');
-const CRED: AppPasswordCredential = {
-	service: 'https://pds.stub.test',
-	identifier: 'kona.group.stub.test',
-	password: 'app-pass-1234'
-};
+const HANDLE = 'kona.group.stub.test';
+const CRED = linkedCredential(GROUP_DID);
 
 /** The member-list methods, as the step each one adds to `order`. */
 const LIST_STEP: Record<string, string> = {
@@ -97,7 +102,7 @@ let failRow: RegExp | null;
 let writer: GroupRepoWriter;
 let reader: GroupSpaceReader;
 
-const env = { GROUP_CREDENTIAL_KEY: KEY };
+let env: ReturnType<typeof linkGroups>;
 
 /** The harness's D1, with the roster's own row writes observable and, when a
  *  case asks, failing. Reads always pass, so the pre-check and the gate see the
@@ -168,7 +173,7 @@ function memberListCalls() {
  *  space's entry gets the access this app gives it. */
 async function hostPut(space: string, did: string) {
 	const access = space === MEMBERS ? { read: false, write: true } : { read: true, write: false };
-	const res = await fetch(`${CRED.service}/xrpc/com.atproto.simplespace.putMember`, {
+	const res = await fetch(`${STUB_PDS_SERVICE}/xrpc/com.atproto.simplespace.putMember`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({ space, did, ...access })
@@ -200,7 +205,7 @@ async function pendingId(did: string): Promise<string> {
 /** Makes the group private where that lives: its about space's read policy at
  *  the host. */
 async function hostPrivate() {
-	const res = await fetch(`${CRED.service}/xrpc/com.atproto.simplespace.updateSpace`, {
+	const res = await fetch(`${STUB_PDS_SERVICE}/xrpc/com.atproto.simplespace.updateSpace`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({
@@ -223,7 +228,7 @@ async function setGroup(changes: { require_approval?: 0 }) {
 
 beforeEach(async () => {
 	harness = sqliteD1();
-	clearGroupSessions();
+	env = linkGroups([GROUP_DID]);
 	const db = harness.db;
 	group = await createGroup(db, { groupDid: GROUP_DID, ownerDid: OWNER, name: 'Kona' });
 	await addMember(db, group.id, ADMIN, 'admin');
@@ -236,10 +241,10 @@ beforeEach(async () => {
 	failList = null;
 	failListSpace = null;
 
-	// The host: both spaces provisioned under the group's stored credential.
+	// The host: both spaces provisioned through the group's linked session.
 	pds = stubPds({
 		did: GROUP_DID,
-		handle: CRED.identifier,
+		handle: HANDLE,
 		fail: (nsid, init) => {
 			if (nsid in LIST_STEP) order.push(LIST_STEP[nsid]);
 			const space =
@@ -251,7 +256,6 @@ beforeEach(async () => {
 				: undefined;
 		}
 	});
-	await storeGroupCredential(env, db, GROUP_DID, CRED);
 	const uris = await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), 'public');
 	expect(uris).toEqual({ aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS });
 	await recordGroupSpaces(db, group.id, uris);
@@ -318,7 +322,7 @@ beforeEach(async () => {
 
 afterEach(() => {
 	vi.unstubAllGlobals();
-	clearGroupSessions();
+	unlinkAllGroups();
 	harness.close();
 });
 

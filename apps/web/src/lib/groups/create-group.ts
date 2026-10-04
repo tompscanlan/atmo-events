@@ -3,16 +3,14 @@
 //
 // A did:plc is permanent, so every refusal comes before the mint:
 //
-//   refuse -> rehearse the INSERT -> mint -> store -> INSERT -> provision
+//   refuse -> rehearse the INSERT -> mint -> INSERT -> provision
 //
 // The handle registration is the name reservation, so a taken name fails at
-// the mint and leaves nothing behind.
+// the mint and leaves nothing behind. The creator types the account's email and
+// password, and nothing here keeps or logs either: the setup writes go through
+// the session the mint returns, and later writes wait for the owner to link the
+// group's account (./server/group-link.ts).
 import type { CredentialStoreEnv } from './server/credentials';
-import {
-	GroupCredentialKeyError,
-	canStoreMintedCredentials,
-	storeGroupCredential
-} from './server/credentials';
 import {
 	GroupMintError,
 	mintGroupAccount,
@@ -41,6 +39,7 @@ import {
 	writeGroupSpaceIndex
 } from './server/members-writer';
 import { pdsWriter } from './server/event-writer';
+import { pdsSpaceReader } from './server/about-read';
 import { listRosterMember, pdsMemberList } from './server/member-list';
 import { registerGroupIdentity } from './server/events-index';
 import { approvalRefusal, splitRuleLines } from './about-record';
@@ -48,6 +47,7 @@ import { labelMintRefusal, labelMintRefusalMessage } from './handle-label';
 import { formError } from './form-error';
 import type { GroupFormFailure, GroupFormResult, GroupFormSuccess } from './form-result';
 import type { GroupVisibility } from './types';
+import { GROUP_PASSWORD_MIN_LENGTH } from './form-fields';
 
 /** Structural rather than `App.Platform['env']`, so a test can supply only
  *  what a create reads. */
@@ -56,7 +56,6 @@ export interface CreateGroupEnv extends CredentialStoreEnv {
 	GROUP_PDS_SERVICE?: string;
 	GROUP_HANDLE_DOMAIN?: string;
 	GROUP_PDS_INVITE_CODE?: string;
-	GROUP_ACCOUNT_EMAIL?: string;
 }
 
 export interface CreateGroupData {
@@ -70,6 +69,10 @@ export interface CreateGroupData {
 	locationName?: string;
 	/** One rule per non-empty line. Stored only as about-space records. */
 	rules?: string;
+	/** The group account's email, the creator's. Never stored. */
+	email: string;
+	/** The group account's password. Sent to the PDS once; never stored or logged. */
+	password: string;
 }
 
 /** The account a create registered. `recoveryKey` is the owner's rotation key,
@@ -86,15 +89,14 @@ export type CreateGroupOutcome = GroupFormResult<RegisteredGroup> | AfterMintFai
 
 type AfterMintFailure = GroupFormFailure & { registered: RegisteredGroup };
 
-/** The mint target, or null unless all four values are set. A partial
+/** The mint target, or null unless all three values are set. A partial
  *  configuration must fail before the mint, not after a did:plc exists. */
 export function mintConfig(env: CreateGroupEnv): MintConfig | null {
 	const service = env.GROUP_PDS_SERVICE?.trim();
 	const handleDomain = env.GROUP_HANDLE_DOMAIN?.trim();
 	const inviteCode = env.GROUP_PDS_INVITE_CODE?.trim();
-	const accountEmail = env.GROUP_ACCOUNT_EMAIL?.trim();
-	if (!service || !handleDomain || !inviteCode || !accountEmail) return null;
-	return { service, handleDomain, inviteCode, accountEmail };
+	if (!service || !handleDomain || !inviteCode) return null;
+	return { service, handleDomain, inviteCode };
 }
 
 /** What a failed mint says to the person filling in the form. The operator's
@@ -113,12 +115,36 @@ export function mintErrorMessage(
 			return `The group PDS refused “${label}” as an address. Choose another one.`;
 		case 'rotation-key-unverified':
 			return `“${label}” was registered, but we could not confirm that you hold its recovery key, so it has not been set up as your group. Tell an administrator before creating it again. (${e.message})`;
+		case 'email-rejected':
+			return 'The group PDS would not take that email. Each account there needs its own address, so if you already used it, add a tag to your address (you+mygroup@example.com) or use another one.';
+		case 'password-rejected':
+			return 'The group PDS would not take that password. Choose a longer or different one.';
 		case 'invite-missing':
 		case 'invite-unavailable':
-		case 'email-rejected':
 		case 'pds-unreachable':
 			return operatorAlert;
 	}
+}
+
+/** Refusals that are the creator's to fix, so not logged for the operator. */
+const CREATOR_FAILURES: ReadonlySet<MintFailure> = new Set([
+	'handle-taken',
+	'handle-invalid',
+	'email-rejected',
+	'password-rejected'
+]);
+
+/** Why the typed login cannot be sent to the PDS, or null. Only a shape check:
+ *  whether the PDS takes the address is known only when it answers. */
+function loginRefusal(data: Pick<CreateGroupData, 'email' | 'password'>): string | null {
+	const at = data.email.lastIndexOf('@');
+	if (at <= 0 || at === data.email.length - 1 || /\s/.test(data.email)) {
+		return 'Enter the email the group account should use. Password reset mail for the group goes there.';
+	}
+	if (data.password.length < GROUP_PASSWORD_MIN_LENGTH) {
+		return `The group account's password needs at least ${GROUP_PASSWORD_MIN_LENGTH} characters.`;
+	}
+	return null;
 }
 
 export async function runCreateGroup(
@@ -135,21 +161,18 @@ export async function runCreateGroup(
 	const refusal = labelMintRefusal(data.label);
 	if (refusal) return { ok: false, error: labelMintRefusalMessage(refusal, data.label) };
 
-	// 3. The deployment must be able to store the credential, which the mint
-	//    returns only once.
+	// 3. The account's login must be one the PDS can take, so the refusal lands on
+	//    the fields rather than after a did:plc exists.
+	const login = loginRefusal(data);
+	if (login) return { ok: false, error: login };
+
+	// 4. The deployment must be able to mint.
 	const mint = mintConfig(env);
 	if (!mint) {
 		return {
 			ok: false,
 			error:
-				'Group creation is unavailable on this deployment: the group PDS is not configured. An administrator needs to set GROUP_PDS_SERVICE, GROUP_HANDLE_DOMAIN, GROUP_PDS_INVITE_CODE and GROUP_ACCOUNT_EMAIL.'
-		};
-	}
-	if (!(await canStoreMintedCredentials(env))) {
-		return {
-			ok: false,
-			error:
-				'Group creation is unavailable on this deployment: there is nowhere to keep the new group’s credential. An administrator needs to set GROUP_CREDENTIAL_KEY.'
+				'Group creation is unavailable on this deployment: the group PDS is not configured. An administrator needs to set GROUP_PDS_SERVICE, GROUP_HANDLE_DOMAIN and GROUP_PDS_INVITE_CODE.'
 		};
 	}
 
@@ -162,7 +185,7 @@ export async function runCreateGroup(
 		locationName: data.locationName || null
 	};
 
-	// 4. The groups tables must accept the row. Rehearsing the INSERT catches
+	// 5. The groups tables must accept the row. Rehearsing the INSERT catches
 	//    schema drift, which cannot be listed in advance.
 	try {
 		await rehearseCreateGroup(env.DB, row);
@@ -177,12 +200,15 @@ export async function runCreateGroup(
 
 	let minted;
 	try {
-		minted = await mintGroupAccount(mint, data.label);
+		minted = await mintGroupAccount(mint, data.label, {
+			email: data.email,
+			password: data.password
+		});
 	} catch (e) {
 		if (!(e instanceof GroupMintError)) throw e;
 		// Deployment failures are logged for the operator: the failure class only,
-		// never the invite code, the email or the PDS's message.
-		if (e.failure !== 'handle-taken' && e.failure !== 'handle-invalid') {
+		// never the invite code, the login or the PDS's message.
+		if (!CREATOR_FAILURES.has(e.failure)) {
 			console.error({
 				event: 'groups.mint-failed',
 				failure: e.failure,
@@ -236,21 +262,8 @@ async function setUpMintedGroup(
 	minted: MintedGroup,
 	registered: RegisteredGroup
 ): Promise<GroupFormSuccess<RegisteredGroup> | AfterMintFailure> {
-	// The app password is returned only once, so it is stored before the row. A
-	// row without it would be a group this app can never write as.
-	try {
-		await storeGroupCredential(env, env.DB, minted.did, minted.credential);
-	} catch (e) {
-		if (e instanceof GroupCredentialKeyError) {
-			return {
-				ok: false,
-				error: `${minted.handle} was registered, but its credential could not be stored (${e.message}), so the group was not created. An administrator must fix GROUP_CREDENTIAL_KEY.`,
-				registered
-			};
-		}
-		throw e;
-	}
-
+	// Every write below goes through the session the mint returned. None is kept:
+	// after this request the group writes only through a session its owner links.
 	let group;
 	try {
 		group = await createGroup(env.DB, { ...row, groupDid: minted.did });
@@ -297,13 +310,15 @@ async function setUpMintedGroup(
 
 	// The group's public face, as records. After the INSERT, because
 	// `requireGroupPermission` reads the owner's membership row, and a failure
-	// here leaves a working group that a settings save can finish. The writer
-	// uses the credential in scope rather than decrypting the stored copy.
+	// here leaves a working group that a settings save can finish once linked.
 	const withSpaces = { ...group, about_space_uri: aboutUri, members_space_uri: membersUri };
 	// Every dated record takes the row's creation instant, so a rebuild from the
 	// records restores the same date.
 	const createdAt = new Date(group.created_at).toISOString();
 	const writer = pdsWriter(minted.credential, minted.did);
+	// The gate reads the members space too. The group is not linked yet, so it
+	// reads with the same session; left to find its own, it would find none.
+	const reader = pdsSpaceReader(minted.credential, minted.did);
 	try {
 		await writeGroupProfile({
 			db: env.DB,
@@ -312,6 +327,7 @@ async function setUpMintedGroup(
 			visibility: data.visibility,
 			callerDid,
 			writer,
+			reader,
 			profile: {
 				name: data.name,
 				description: data.description || null,
@@ -327,6 +343,7 @@ async function setUpMintedGroup(
 				group: withSpaces,
 				callerDid,
 				writer,
+				reader,
 				desired: rules,
 				// A new group has no rule records, so no read is needed.
 				existing: []
@@ -341,7 +358,8 @@ async function setUpMintedGroup(
 			group: withSpaces,
 			visibility: data.visibility,
 			callerDid,
-			writer
+			writer,
+			reader
 		});
 
 		// The declaration goes last, so a group whose profile write failed is
@@ -354,6 +372,7 @@ async function setUpMintedGroup(
 			visibility: data.visibility,
 			callerDid,
 			writer,
+			reader,
 			createdAt,
 			assumeAbsent: true
 		});
@@ -362,7 +381,7 @@ async function setUpMintedGroup(
 			ok: false,
 			error: `${minted.handle} was created, but its profile records were not written: ${
 				e instanceof Error ? e.message : String(e)
-			}. Saving the group's settings writes them. Then "Repair this group" in its settings writes the members-space records this create skipped.`,
+			}. Link the group's account from its page, then save its settings to write them, and run "Repair this group" in its settings for the members-space records this create skipped.`,
 			registered
 		};
 	}
@@ -374,7 +393,7 @@ async function setUpMintedGroup(
 	// anywhere before the config. A failure here leaves a working group that
 	// "Repair this group" can finish (server/repair.ts).
 	try {
-		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer });
+		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer, reader });
 		// A new members space holds no index, so nothing is read.
 		await writeGroupSpaceIndex({
 			db: env.DB,
@@ -382,6 +401,7 @@ async function setUpMintedGroup(
 			group: withSpaces,
 			callerDid,
 			writer,
+			reader,
 			existing: [],
 			createdAt
 		});
@@ -391,18 +411,27 @@ async function setUpMintedGroup(
 			group: withSpaces,
 			callerDid,
 			writer,
+			reader,
 			subject: callerDid,
 			roles: ['owner'],
 			intent: 'admit',
 			createdAt
 		});
-		await writeGroupAuthz({ db: env.DB, env, group: withSpaces, callerDid, writer, createdAt });
+		await writeGroupAuthz({
+			db: env.DB,
+			env,
+			group: withSpaces,
+			callerDid,
+			writer,
+			reader,
+			createdAt
+		});
 	} catch (e) {
 		return {
 			ok: false,
 			error: `${minted.handle} was created, but its members-space records were not written: ${
 				e instanceof Error ? e.message : String(e)
-			}. The group works and its roster reads from this site's database; "Repair this group" in its settings writes the missing records.`,
+			}. Link the group's account from its page, then "Repair this group" in its settings writes the missing records.`,
 			registered
 		};
 	}
@@ -417,7 +446,7 @@ async function setUpMintedGroup(
 			ok: false,
 			error: `${minted.handle} was created, but you were not added to its member lists at its PDS: ${
 				e instanceof Error ? e.message : String(e)
-			}. The group works on this site; "Repair this group" in its settings adds you.`,
+			}. Link the group's account from its page, then "Repair this group" in its settings adds you.`,
 			registered
 		};
 	}

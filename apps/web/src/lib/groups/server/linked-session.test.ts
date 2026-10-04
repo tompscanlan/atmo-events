@@ -1,9 +1,9 @@
 // Which credential the seam writes with. A group whose owner linked its account
-// writes through that session, never through the app password kept at create,
-// and the log names which credential served each write without the token.
+// writes through that session and nothing else; a group nobody linked has no
+// credential at all. The log names which credential served each write.
 //
 // Restoring a session talks to the group's PDS, so the OAuth client is the stub
-// here. The store lookup, the preference and the transport are the real code.
+// here. The store lookup and the transport are the real code.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 let sessionDid: string;
@@ -25,17 +25,14 @@ vi.mock('$lib/atproto/server/oauth', () => ({
 	}))
 }));
 
-import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { resolveGroupCredential, storeGroupCredential } from './credentials';
+import { resolveGroupCredential } from './credentials';
 import { GROUP_EVENT_COLLECTION, pdsWriter } from './event-writer';
-import { GROUP_SESSION_PREFIX, GROUP_SESSION_SCOPES, hasLinkedSession } from './linked-session';
-import { clearGroupSessions, groupClient } from './session';
+import { GROUP_SESSION_PREFIX, groupSessionScopes, hasLinkedSession } from './linked-session';
+import { groupClient } from './session';
 import { GROUP_DECLARATION_COLLECTION } from '../declaration-record';
 
 const GROUP = 'did:plc:linkedgroupaaaaaaaaaaaaa';
 const OTHER = 'did:plc:someoneelseaaaaaaaaaaaaa';
-const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
-const ACCESS_TOKEN = 'app-password-access-token';
 
 function fakeKv(entries: Record<string, string>): KVNamespace {
 	const map = new Map(Object.entries(entries));
@@ -44,34 +41,22 @@ function fakeKv(entries: Record<string, string>): KVNamespace {
 	} as unknown as KVNamespace;
 }
 
-let harness: SqliteD1;
 let fetched: string[];
 let logged: string[];
 
-beforeEach(async () => {
-	harness = sqliteD1();
+beforeEach(() => {
 	sessionDid = GROUP;
 	handled = [];
 	restored.length = 0;
 	fetched = [];
 	logged = [];
-	clearGroupSessions();
-	// The app-password path's PDS: a password login, then the write.
+	// Anything that leaves through the global fetch went around the session.
 	vi.stubGlobal('fetch', async (input: URL | string) => {
-		const url = new URL(String(input));
-		fetched.push(url.pathname);
-		if (url.pathname.endsWith('com.atproto.server.createSession')) {
-			return Response.json({ did: GROUP, accessJwt: ACCESS_TOKEN, refreshJwt: 'r' });
-		}
-		return Response.json({ uri: `at://${GROUP}/c/r1`, cid: 'bafypassword' });
+		fetched.push(new URL(String(input)).pathname);
+		return Response.json({ error: 'NotExpected' }, { status: 500 });
 	});
 	vi.spyOn(console, 'info').mockImplementation((line: string) => {
 		logged.push(line);
-	});
-	await storeGroupCredential({ GROUP_CREDENTIAL_KEY: KEY }, harness.db, GROUP, {
-		service: 'https://pds.stub.test',
-		identifier: 'kona.group.stub.test',
-		password: 'app-password'
 	});
 });
 
@@ -89,12 +74,9 @@ const write = {
 };
 
 describe('the session seam', () => {
-	it('writes through the linked session when the group has one, and never logs in with the app password', async () => {
-		const env = {
-			GROUP_CREDENTIAL_KEY: KEY,
-			OAUTH_SESSIONS: fakeKv({ [GROUP_SESSION_PREFIX + GROUP]: '{}' })
-		};
-		const cred = await resolveGroupCredential(env, harness.db, GROUP);
+	it('writes through the linked session when the group has one, and nothing else', async () => {
+		const env = { OAUTH_SESSIONS: fakeKv({ [GROUP_SESSION_PREFIX + GROUP]: '{}' }) };
+		const cred = await resolveGroupCredential(env, GROUP);
 		expect(cred?.kind).toBe('linked');
 
 		const result = await pdsWriter(cred!, GROUP)(write);
@@ -107,31 +89,21 @@ describe('the session seam', () => {
 		]);
 	});
 
-	it('uses the app password when the group is not linked, and a sign-in as the group is not a link', async () => {
+	it('has no credential for a group that is not linked, and a sign-in as the group is not a link', async () => {
 		// A sign-in session sits under the bare DID. It lacks the group's scope,
 		// so it must not stand in for a link.
-		const env = { GROUP_CREDENTIAL_KEY: KEY, OAUTH_SESSIONS: fakeKv({ [GROUP]: '{}' }) };
+		const env = { OAUTH_SESSIONS: fakeKv({ [GROUP]: '{}' }) };
 		expect(await hasLinkedSession(env as unknown as App.Platform['env'], GROUP)).toBe(false);
 
-		const cred = await resolveGroupCredential(env, harness.db, GROUP);
-		expect(cred?.kind).not.toBe('linked');
-		const result = await pdsWriter(cred!, GROUP)(write);
-
-		expect(result.cid).toBe('bafypassword');
+		await expect(resolveGroupCredential(env, GROUP)).resolves.toBeNull();
 		expect(restored).toEqual([]);
-		expect(logged).toEqual([
-			`[group-session] ${GROUP} com.atproto.repo.createRecord via app-password: 200`
-		]);
-		expect(logged.join('\n')).not.toContain(ACCESS_TOKEN);
+		expect(fetched).toEqual([]);
 	});
 
 	it('refuses a linked session that authenticates another account', async () => {
 		sessionDid = OTHER;
-		const env = {
-			GROUP_CREDENTIAL_KEY: KEY,
-			OAUTH_SESSIONS: fakeKv({ [GROUP_SESSION_PREFIX + GROUP]: '{}' })
-		};
-		const cred = await resolveGroupCredential(env, harness.db, GROUP);
+		const env = { OAUTH_SESSIONS: fakeKv({ [GROUP_SESSION_PREFIX + GROUP]: '{}' }) };
+		const cred = await resolveGroupCredential(env, GROUP);
 		await expect(groupClient(cred!, GROUP)).rejects.toThrow(/authenticates .*someoneelse/);
 		expect(handled).toEqual([]);
 	});
@@ -139,10 +111,11 @@ describe('the session seam', () => {
 
 describe('the scope a link asks for', () => {
 	it('covers every public-repo collection the group writes, and only the group’s own spaces', () => {
-		const repo = GROUP_SESSION_SCOPES.find((s) => s.startsWith('repo'));
+		const scopes = groupSessionScopes();
+		const repo = scopes.find((s) => s.startsWith('repo'));
 		expect(repo).toContain(GROUP_EVENT_COLLECTION);
 		expect(repo).toContain(GROUP_DECLARATION_COLLECTION);
-		const spaces = GROUP_SESSION_SCOPES.filter((s) => s.startsWith('space:'));
+		const spaces = scopes.filter((s) => s.startsWith('space:'));
 		expect(spaces.length).toBeGreaterThan(0);
 		for (const s of spaces) expect(s).toContain('authority=self');
 	});

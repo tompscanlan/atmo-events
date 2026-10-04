@@ -21,7 +21,7 @@ import {
 	splitRecordUri,
 	type GroupSpaceReader
 } from './about-read';
-import { clearGroupSessions } from './session';
+import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import {
 	GROUP_PROFILE_COLLECTION,
 	GROUP_RULE_COLLECTION,
@@ -244,23 +244,15 @@ describe('rebuildGroupCache: cache repair', () => {
 // group with three rules as a group with none, silently, with a 200 on the
 // wire. These cases pin both shapes.
 describe('pdsSpaceReader: the live wire shapes', () => {
-	const cred = { service: 'https://pds.stub.test', identifier: 'g.stub.test', password: 'p' };
+	const cred = linkedCredential(GROUP_DID);
 	const SPACE = `at://${GROUP_DID}/space/${ABOUT_SPACE_TYPE}/self`;
 	let requested: string[];
 
 	beforeEach(() => {
 		requested = [];
-		clearGroupSessions();
+		linkedCredential(GROUP_DID);
 		vi.stubGlobal('fetch', async (input: URL | string) => {
 			const url = String(input);
-			if (url.includes('com.atproto.server.createSession')) {
-				return Response.json({
-					did: GROUP_DID,
-					handle: 'g.stub.test',
-					accessJwt: 'jwt',
-					refreshJwt: 'refresh'
-				});
-			}
 			requested.push(url);
 			if (url.includes('com.atproto.space.listRecords')) {
 				// The live shape: no `uri` anywhere in it.
@@ -283,7 +275,10 @@ describe('pdsSpaceReader: the live wire shapes', () => {
 		});
 	});
 
-	afterEach(() => vi.unstubAllGlobals());
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		unlinkAllGroups();
+	});
 
 	it('reads a listed record that carries no uri, and rebuilds the citable one', async () => {
 		const reader = pdsSpaceReader(cred, GROUP_DID);
@@ -313,11 +308,7 @@ describe('pdsSpaceReader: the live wire shapes', () => {
 	// the gate depends on it throwing: a refused read that came back as "no
 	// records" would send the gate to the rows.
 	it('reads a 400 RecordNotFound as absent', async () => {
-		vi.stubGlobal('fetch', async (input: URL | string) =>
-			String(input).includes('createSession')
-				? Response.json({ did: GROUP_DID, accessJwt: 'jwt', refreshJwt: 'refresh' })
-				: Response.json({ error: 'RecordNotFound' }, { status: 400 })
-		);
+		vi.stubGlobal('fetch', async () => Response.json({ error: 'RecordNotFound' }, { status: 400 }));
 		const reader = pdsSpaceReader(cred, GROUP_DID);
 		const query = { space: SPACE, repo: GROUP_DID, collection: GROUP_PROFILE_COLLECTION };
 		expect(await reader.get({ ...query, rkey: 'self' })).toBeNull();
@@ -326,11 +317,7 @@ describe('pdsSpaceReader: the live wire shapes', () => {
 	it.each(['SpaceNotFound', 'RepoTakendown', 'InvalidRequest', undefined])(
 		'throws on any other 400 (%s), for get and list alike',
 		async (error) => {
-			vi.stubGlobal('fetch', async (input: URL | string) =>
-				String(input).includes('createSession')
-					? Response.json({ did: GROUP_DID, accessJwt: 'jwt', refreshJwt: 'refresh' })
-					: Response.json(error ? { error } : {}, { status: 400 })
-			);
+			vi.stubGlobal('fetch', async () => Response.json(error ? { error } : {}, { status: 400 }));
 			const reader = pdsSpaceReader(cred, GROUP_DID);
 			const query = { space: SPACE, repo: GROUP_DID, collection: GROUP_PROFILE_COLLECTION };
 			await expect(reader.get({ ...query, rkey: 'self' })).rejects.toThrow(/getRecord failed: 400/);
@@ -344,9 +331,6 @@ describe('pdsSpaceReader: the live wire shapes', () => {
 		const pages: (string | null)[] = [];
 		vi.stubGlobal('fetch', async (input: URL | string) => {
 			const url = new URL(String(input));
-			if (url.pathname.endsWith('createSession')) {
-				return Response.json({ did: GROUP_DID, accessJwt: 'jwt', refreshJwt: 'refresh' });
-			}
 			const cursor = url.searchParams.get('cursor');
 			pages.push(cursor);
 			const rkey = cursor ? 'second' : 'first';

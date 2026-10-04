@@ -40,8 +40,8 @@ let getRecordCalls: string[] = [];
 let harness: SqliteD1;
 let db: D1Database;
 
-// The writer takes an env only for GROUP_CREDENTIAL_KEY, and these cases inject
-// their own writer, so it is never consulted.
+// The writer takes an env only to find the group's linked session, and these
+// cases inject their own writer, so it is never consulted.
 const env = {};
 
 function declarationUri(groupDid: string): string {

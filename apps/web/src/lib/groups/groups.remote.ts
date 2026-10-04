@@ -102,14 +102,19 @@ export const createGroupForm = form(
 		visibility: v.picklist(GROUP_VISIBILITIES),
 		requireApproval: checkboxField,
 		locationName: v.optional(v.pipe(v.string(), v.maxLength(200))),
-		rules: v.optional(v.pipe(v.string(), v.maxLength(8000)))
+		rules: v.optional(v.pipe(v.string(), v.maxLength(8000))),
+		/** The group account's login. Length and shape are checked by
+		 *  `runCreateGroup`, so its refusal reads as a sentence. */
+		email: v.pipe(v.string(), v.trim(), v.maxLength(254)),
+		/** Underscored so SvelteKit never echoes it back with a failed form. */
+		_password: v.pipe(v.string(), v.maxLength(256))
 	}),
-	async (data): Promise<CreateGroupOutcome> => {
+	async ({ _password: password, ...data }): Promise<CreateGroupOutcome> => {
 		const { locals, platform } = getRequestEvent();
 		if (!locals.did) error(401, 'Sign in to create a group');
 		// No redirect: the result carries the owner's rotation key, which is shown
 		// once and stored nowhere, so a 303 would lose it.
-		return runCreateGroup(platform!.env, locals.did, data);
+		return runCreateGroup(platform!.env, locals.did, { ...data, password });
 	}
 );
 

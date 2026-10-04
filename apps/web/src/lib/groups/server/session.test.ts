@@ -1,125 +1,134 @@
-// When the group session renews its token.
+// The two transports behind the one seam.
 //
-// A PDS reports a bad access token as 400, not 401: an expired JWT is
-// `400 ExpiredToken` and a malformed or unverifiable one is `400 InvalidToken`
-// (the reference PDS throws both as InvalidRequestError). Only a request with
-// no token at all is a 401. The session is cached per isolate with no expiry of
-// its own, so a transport that renewed only on 401 would keep sending the dead
-// token for as long as the isolate lived, and every group write and space read
-// would fail. A 400 that is not about the token must come back untouched, or a
-// missing record would cost a refresh round trip every time.
+// The session `createAccount` returns serves only the create request that minted
+// the account. It is sent as it is: there is no password to log in again with
+// and no refresh to attempt, so a rejected token is the PDS's answer and comes
+// back untouched. A linked session renews its own tokens inside the OAuth client,
+// so the seam only checks whose session it is and reports each write.
+//
+// Every write logs which credential served it, never the token.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { clearGroupSessions, groupClient } from './session';
+import type { LinkedGroupCredential, MintSessionCredential } from './credentials';
+import { groupClient } from './session';
 
 const DID = 'did:plc:sessiontestgroup0000000';
-const cred = { service: 'https://pds.stub.test', identifier: 'g.stub.test', password: 'p' };
+const OTHER = 'did:plc:someoneelseaaaaaaaaaaaaa';
+const TOKEN = 'mint-access-token';
 const PATH = '/xrpc/com.atproto.space.getRecord?space=s&repo=r';
+const WRITE = '/xrpc/com.atproto.repo.createRecord';
 
-let calls: { nsid: string; token: string | null }[];
-let reply: (token: string | null) => Response;
+const minted: MintSessionCredential = {
+	kind: 'mint-session',
+	service: 'https://pds.stub.test',
+	did: DID,
+	accessJwt: TOKEN
+};
+
+let calls: { url: URL; token: string | null }[];
+let reply: () => Response;
+let logged: string[];
 
 beforeEach(() => {
 	calls = [];
-	clearGroupSessions();
+	logged = [];
+	reply = () => Response.json({ ok: true });
 	vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
 		const url = new URL(String(input));
-		const nsid = url.pathname.replace('/xrpc/', '');
 		const token = new Headers(init?.headers).get('authorization')?.replace('Bearer ', '') ?? null;
-		calls.push({ nsid, token });
-		if (nsid === 'com.atproto.server.createSession') {
-			return Response.json({ did: DID, accessJwt: 'access-1', refreshJwt: 'refresh-1' });
-		}
-		if (nsid === 'com.atproto.server.refreshSession') {
-			// refreshSession takes no input, and the PDS refuses a body outright
-			// (measured: a `{}` body gets this exact 400).
-			if (init?.body != null) {
-				return Response.json(
-					{
-						error: 'InvalidRequest',
-						message: 'A request body was provided when none was expected'
-					},
-					{ status: 400 }
-				);
-			}
-			return Response.json({ did: DID, accessJwt: 'access-2', refreshJwt: 'refresh-2' });
-		}
-		return reply(token);
+		calls.push({ url, token });
+		return reply();
+	});
+	vi.spyOn(console, 'info').mockImplementation((line: string) => {
+		logged.push(line);
 	});
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
+});
 
-/** The PDS rejects the first access token with `status`/`error`, and accepts
- *  the renewed one. */
-function rejectFirstToken(status: number, error: string) {
-	reply = (token) =>
-		token === 'access-1'
-			? Response.json({ error, message: 'rejected' }, { status })
-			: Response.json({ ok: true });
-}
-
-const refreshes = () => calls.filter((c) => c.nsid === 'com.atproto.server.refreshSession');
-const logins = () => calls.filter((c) => c.nsid === 'com.atproto.server.createSession');
-
-describe('groupClient: renewing the access token', () => {
-	it.each([
-		[400, 'ExpiredToken'],
-		[400, 'InvalidToken'],
-		[401, 'AuthMissing']
-	])('renews and retries once on %i %s', async (status, error) => {
-		rejectFirstToken(status, error);
-		const { handle } = await groupClient(cred, DID);
+describe('groupClient: the minted session', () => {
+	it('sends its access token to the service it was minted on', async () => {
+		const { handle } = await groupClient(minted, DID);
 
 		const res = await handle(PATH, { method: 'GET' });
 
 		expect(res.status).toBe(200);
-		expect(refreshes()).toHaveLength(1);
-		expect(refreshes()[0].token).toBe('refresh-1');
-		// Renewed with the refresh token, not by logging in again: createSession
-		// is rate-limited per account, so a password login on every expiry
-		// would lock the group out under load.
-		expect(logins()).toHaveLength(1);
-		expect(calls.at(-1)).toMatchObject({ nsid: 'com.atproto.space.getRecord', token: 'access-2' });
+		expect(calls).toHaveLength(1);
+		expect(calls[0].url.origin).toBe('https://pds.stub.test');
+		expect(calls[0].url.pathname).toBe('/xrpc/com.atproto.space.getRecord');
+		expect(calls[0].token).toBe(TOKEN);
 	});
 
-	it('keeps the renewed token for later calls', async () => {
-		rejectFirstToken(400, 'ExpiredToken');
-		await (await groupClient(cred, DID)).handle(PATH, { method: 'GET' });
-
-		const { handle } = await groupClient(cred, DID);
-		await handle(PATH, { method: 'GET' });
-
-		expect(calls.at(-1)).toMatchObject({ token: 'access-2' });
-		expect(refreshes()).toHaveLength(1);
-	});
-
-	// The gate reads four records at once, so one expiry reaches the PDS as
-	// several rejected calls together. They must share one renewal.
-	it('renews once for concurrent calls that all hold the expired token', async () => {
-		rejectFirstToken(400, 'ExpiredToken');
-		const { handle } = await groupClient(cred, DID);
-
-		const results = await Promise.all(
-			Array.from({ length: 5 }, () => handle(PATH, { method: 'GET' }))
+	it('refuses a session minted for another account, before any request', async () => {
+		await expect(groupClient({ ...minted, did: OTHER }, DID)).rejects.toThrow(
+			/authenticates .*someoneelse/
 		);
-
-		expect(results.map((r) => r.status)).toEqual([200, 200, 200, 200, 200]);
-		expect(refreshes()).toHaveLength(1);
-		expect(logins()).toHaveLength(1);
+		expect(calls).toEqual([]);
 	});
 
+	// No refreshSession and no createSession: nothing here can renew it.
 	it.each([
-		[400, 'RecordNotFound'],
-		[400, 'InvalidRequest'],
-		[400, undefined]
-	])('returns %i %s untouched, without renewing', async (status, error) => {
-		reply = () => Response.json(error ? { error } : {}, { status });
-		const { handle } = await groupClient(cred, DID);
+		[400, 'ExpiredToken'],
+		[400, 'InvalidToken'],
+		[401, 'AuthMissing'],
+		[400, 'RecordNotFound']
+	])('returns %i %s untouched, with no retry and no login', async (status, error) => {
+		reply = () => Response.json({ error }, { status });
+		const { handle } = await groupClient(minted, DID);
 
 		const res = await handle(PATH, { method: 'GET' });
 
 		expect(res.status).toBe(status);
-		if (error) expect(((await res.json()) as { error: string }).error).toBe(error);
-		expect(refreshes()).toHaveLength(0);
+		expect(((await res.json()) as { error: string }).error).toBe(error);
+		expect(calls.map((c) => c.url.pathname)).toEqual(['/xrpc/com.atproto.space.getRecord']);
+	});
+
+	it('logs each write as served by the minted session, never the token, and no read', async () => {
+		const { handle } = await groupClient(minted, DID);
+
+		await handle(PATH, { method: 'GET' });
+		await handle(WRITE, { method: 'POST', body: '{}' });
+
+		expect(logged).toEqual([
+			`[group-session] ${DID} com.atproto.repo.createRecord via mint-session: 200`
+		]);
+		expect(logged.join('\n')).not.toContain(TOKEN);
+	});
+});
+
+describe('groupClient: the linked session', () => {
+	function linked(did: string): LinkedGroupCredential {
+		return {
+			kind: 'linked',
+			session: {
+				did: did as LinkedGroupCredential['session']['did'],
+				handle: async (pathname: string, init?: RequestInit) => {
+					calls.push({ url: new URL(pathname, 'https://pds.stub.test'), token: null });
+					return Response.json({ ok: true }, { status: init?.method === 'POST' ? 201 : 200 });
+				}
+			}
+		};
+	}
+
+	it('sends through the session and logs each write as served by it', async () => {
+		const { handle } = await groupClient(linked(DID), DID);
+
+		await handle(PATH, { method: 'GET' });
+		await handle(WRITE, { method: 'POST', body: '{}' });
+
+		expect(calls.map((c) => c.url.pathname)).toEqual([
+			'/xrpc/com.atproto.space.getRecord',
+			'/xrpc/com.atproto.repo.createRecord'
+		]);
+		expect(logged).toEqual([
+			`[group-session] ${DID} com.atproto.repo.createRecord via linked: 201`
+		]);
+	});
+
+	it('refuses a session that authenticates another account, before any request', async () => {
+		await expect(groupClient(linked(OTHER), DID)).rejects.toThrow(/authenticates .*someoneelse/);
+		expect(calls).toEqual([]);
 	});
 });

@@ -4,15 +4,18 @@ import {
 	GroupMintError,
 	assertOwnerHoldsRotationKey,
 	mintGroupAccount,
+	type GroupLogin,
 	type MintConfig
 } from './mint';
 
 const CFG: MintConfig = {
 	service: 'https://pds.example.net',
 	handleDomain: 'group.example.net',
-	inviteCode: 'example-net-aaaaa-bbbbb',
-	accountEmail: 'groups@example.com'
+	inviteCode: 'example-net-aaaaa-bbbbb'
 };
+
+/** The login the creator typed. */
+const LOGIN: GroupLogin = { email: 'alice+kona@example.com', password: 'correct horse battery' };
 
 const DID = 'did:plc:mintedgroupaaaaaaaaaaaaa';
 
@@ -22,8 +25,9 @@ interface Call {
 	auth: string | undefined;
 }
 
-/** Records every XRPC call and answers createAccount + createAppPassword. */
-function stubPds(overrides: { account?: Response; appPassword?: Response } = {}) {
+/** Records every XRPC call and answers createAccount. Any other call throws, so a
+ *  call the mint should not make fails the case. */
+function stubPds(overrides: { account?: Response } = {}) {
 	const calls: Call[] = [];
 	vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
 		const url = String(input);
@@ -38,9 +42,6 @@ function stubPds(overrides: { account?: Response; appPassword?: Response } = {})
 				Response.json({ did: DID, handle: 'kona.group.example.net', accessJwt: 'master-jwt' })
 			);
 		}
-		if (url.includes('createAppPassword')) {
-			return overrides.appPassword ?? Response.json({ password: 'app-pass-1234' });
-		}
 		throw new Error(`unexpected call to ${url}`);
 	});
 	return calls;
@@ -49,15 +50,29 @@ function stubPds(overrides: { account?: Response; appPassword?: Response } = {})
 afterEach(() => vi.unstubAllGlobals());
 
 describe('mintGroupAccount', () => {
-	it('registers the handle under the group domain and plus-addresses the email', async () => {
+	it('registers the handle under the group domain with the login the creator typed', async () => {
 		const calls = stubPds();
-		const minted = await mintGroupAccount(CFG, 'kona', async () => {});
+		const minted = await mintGroupAccount(CFG, 'kona', LOGIN, async () => {});
 
 		const account = calls.find((c) => c.url.includes('createAccount'));
 		expect(account?.body.handle).toBe('kona.group.example.net');
-		expect(account?.body.email).toBe('groups+kona@example.com');
+		// Exactly as typed: no plus address of ours, no generated password.
+		expect(account?.body.email).toBe(LOGIN.email);
+		expect(account?.body.password).toBe(LOGIN.password);
 		expect(account?.body.inviteCode).toBe(CFG.inviteCode);
 		expect(minted.did).toBe(DID);
+	});
+
+	// The creator holds the account's login, so the mint makes nothing this app
+	// would have to keep: createAccount is its one call to the PDS.
+	it('makes no app password', async () => {
+		const calls = stubPds();
+		await mintGroupAccount(CFG, 'kona', LOGIN, async () => {});
+
+		expect(calls.map((c) => new URL(c.url).pathname)).toEqual([
+			'/xrpc/com.atproto.server.createAccount'
+		]);
+		expect(calls.some((c) => c.url.includes('createAppPassword'))).toBe(false);
 	});
 
 	// The owner's key must be in the genesis operation, so it has to go on the
@@ -65,7 +80,7 @@ describe('mintGroupAccount', () => {
 	// without a key we do not have.
 	it('sends the owner rotation key as recoveryKey at mint', async () => {
 		const calls = stubPds();
-		const minted = await mintGroupAccount(CFG, 'kona', async () => {});
+		const minted = await mintGroupAccount(CFG, 'kona', LOGIN, async () => {});
 
 		const account = calls.find((c) => c.url.includes('createAccount'));
 		expect(account?.body.recoveryKey).toBe(minted.ownerRotationKey);
@@ -75,26 +90,30 @@ describe('mintGroupAccount', () => {
 		expect(minted.ownerRotationSecret).not.toBe(minted.ownerRotationKey);
 	});
 
-	// What we keep must be the app password, not the account password. The
-	// account password could change the password or delete the account, and a D1
-	// read or backup must never give account takeover.
-	it('keeps the app password and never returns the master', async () => {
-		const calls = stubPds();
-		const minted = await mintGroupAccount(CFG, 'kona', async () => {});
+	// The create request sets the group up with the session createAccount
+	// returned. The password the creator typed goes no further than the PDS: it
+	// is not in what the mint hands back, so nothing downstream can keep it.
+	it('returns the session createAccount issued, and never the password', async () => {
+		stubPds();
+		const minted = await mintGroupAccount(CFG, 'kona', LOGIN, async () => {});
 
-		const account = calls.find((c) => c.url.includes('createAccount'));
-		const issued = calls.find((c) => c.url.includes('createAppPassword'));
-		expect(issued?.auth).toBe('Bearer master-jwt');
-		expect(minted.credential.password).toBe('app-pass-1234');
-		expect(minted.credential.password).not.toBe(account?.body.password);
-		expect(JSON.stringify(minted)).not.toContain(String(account?.body.password));
+		expect(minted.credential).toEqual({
+			kind: 'mint-session',
+			service: CFG.service,
+			did: DID,
+			accessJwt: 'master-jwt'
+		});
+		expect(JSON.stringify(minted)).not.toContain(LOGIN.password);
+		expect(JSON.stringify(minted)).not.toContain(LOGIN.email);
 	});
 
 	it('refuses before any call when the deployment holds no invite code', async () => {
 		const calls = stubPds();
-		await expect(mintGroupAccount({ ...CFG, inviteCode: '' }, 'kona')).rejects.toMatchObject({
-			failure: 'invite-missing'
-		});
+		await expect(mintGroupAccount({ ...CFG, inviteCode: '' }, 'kona', LOGIN)).rejects.toMatchObject(
+			{
+				failure: 'invite-missing'
+			}
+		);
 		expect(calls).toHaveLength(0);
 	});
 
@@ -115,18 +134,23 @@ describe('mintGroupAccount', () => {
 		['InvalidHandle', 'Handle too long', 'handle-invalid'],
 		['InvalidInviteCode', 'No invite code provided', 'invite-missing'],
 		['InvalidInviteCode', 'Provided invite code not available', 'invite-unavailable'],
-		['InvalidRequest', 'Email already taken: groups+kona@example.com', 'email-rejected'],
-		['InvalidRequest', 'Email is required', 'email-rejected']
+		['InvalidRequest', 'Email already taken', 'email-rejected'],
+		['InvalidRequest', 'Email already taken: alice+kona@example.com', 'email-rejected'],
+		['InvalidRequest', 'Email is required', 'email-rejected'],
+		['InvalidRequest', 'Password is too short', 'password-rejected'],
+		['InvalidPassword', 'That password is not allowed', 'password-rejected']
 	])('maps %s/%s to %s', async (error, message, failure) => {
 		stubPds({ account: Response.json({ error, message }, { status: 400 }) });
-		await expect(mintGroupAccount(CFG, 'kona', async () => {})).rejects.toMatchObject({ failure });
+		await expect(mintGroupAccount(CFG, 'kona', LOGIN, async () => {})).rejects.toMatchObject({
+			failure
+		});
 	});
 
 	it('reports an unreachable PDS rather than throwing a transport error', async () => {
 		vi.stubGlobal('fetch', async () => {
 			throw new TypeError('network down');
 		});
-		await expect(mintGroupAccount(CFG, 'kona', async () => {})).rejects.toMatchObject({
+		await expect(mintGroupAccount(CFG, 'kona', LOGIN, async () => {})).rejects.toMatchObject({
 			failure: 'pds-unreachable'
 		});
 	});
@@ -136,7 +160,7 @@ describe('mintGroupAccount', () => {
 	it('fails when the rotation-key read-back does not confirm the owner', async () => {
 		stubPds();
 		await expect(
-			mintGroupAccount(CFG, 'kona', async () => {
+			mintGroupAccount(CFG, 'kona', LOGIN, async () => {
 				throw new GroupMintError('rotation-key-unverified', 'rotationKeys[0] is ours');
 			})
 		).rejects.toMatchObject({ failure: 'rotation-key-unverified' });
@@ -156,9 +180,11 @@ async function publicKeyOf(secret: string): Promise<string> {
 describe('mintGroupAccount: a failure after the account exists', () => {
 	it.each([
 		[
-			'the app password is refused',
+			'createAccount returns no access token',
 			() =>
-				stubPds({ appPassword: Response.json({ error: 'InternalServerError' }, { status: 500 }) }),
+				stubPds({
+					account: Response.json({ did: DID, handle: 'kona.group.example.net' })
+				}),
 			async () => {}
 		],
 		[
@@ -171,7 +197,7 @@ describe('mintGroupAccount: a failure after the account exists', () => {
 	])('hands back the DID, the handle and the key when %s', async (_why, arrange, verify) => {
 		const calls = arrange();
 
-		const error = await mintGroupAccount(CFG, 'kona', verify).catch((e: unknown) => e);
+		const error = await mintGroupAccount(CFG, 'kona', LOGIN, verify).catch((e: unknown) => e);
 
 		expect(error).toBeInstanceOf(GroupMintError);
 		const { registered } = error as GroupMintError;
@@ -183,7 +209,9 @@ describe('mintGroupAccount: a failure after the account exists', () => {
 
 	it('hands back nothing when the account was never created', async () => {
 		stubPds({ account: Response.json({ error: 'HandleNotAvailable' }, { status: 400 }) });
-		const error = await mintGroupAccount(CFG, 'kona', async () => {}).catch((e: unknown) => e);
+		const error = await mintGroupAccount(CFG, 'kona', LOGIN, async () => {}).catch(
+			(e: unknown) => e
+		);
 		expect(error).toBeInstanceOf(GroupMintError);
 		expect((error as GroupMintError).registered).toBeUndefined();
 	});

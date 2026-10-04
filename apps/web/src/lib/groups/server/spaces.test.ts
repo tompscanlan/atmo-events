@@ -12,7 +12,7 @@
 // injected provisioner would only assert the test's own fixture.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from '../types';
-import { clearGroupSessions } from './session';
+import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import { pdsWriter } from './event-writer';
 import {
 	GroupSpaceError,
@@ -23,11 +23,7 @@ import {
 } from './spaces';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
-const CRED = {
-	service: 'https://pds.example.com',
-	identifier: 'kona.example.com',
-	password: 'app-password'
-};
+const CRED = linkedCredential(GROUP_DID, 'https://pds.example.com');
 
 interface Sent {
 	nsid: string;
@@ -40,7 +36,7 @@ let sent: Sent[];
 let replies: Record<string, { status: number; body: unknown }>;
 
 beforeEach(() => {
-	clearGroupSessions();
+	linkedCredential(GROUP_DID, 'https://pds.example.com');
 	sent = [];
 	replies = {};
 	vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
@@ -49,9 +45,6 @@ beforeEach(() => {
 		const body = init?.body ? JSON.parse(String(init.body)) : {};
 		sent.push({ nsid, body });
 
-		if (nsid === 'com.atproto.server.createSession') {
-			return Response.json({ did: GROUP_DID, accessJwt: 'access', refreshJwt: 'refresh' });
-		}
 		const reply = replies[nsid];
 		if (reply) {
 			return Response.json(reply.body, { status: reply.status });
@@ -62,7 +55,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.unstubAllGlobals();
-	clearGroupSessions();
+	unlinkAllGroups();
 });
 
 const writes = () => sent.filter((s) => !s.nsid.startsWith('com.atproto.server.'));
@@ -125,10 +118,6 @@ describe('provisionGroupSpaces', () => {
 		let call = 0;
 		replies['com.atproto.simplespace.createSpace'] = { status: 200, body: {} };
 		vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
-			const nsid = new URL(String(input)).pathname.replace('/xrpc/', '');
-			if (nsid === 'com.atproto.server.createSession') {
-				return Response.json({ did: GROUP_DID, accessJwt: 'a', refreshJwt: 'r' });
-			}
 			const body = JSON.parse(String(init!.body));
 			call += 1;
 			return Response.json({

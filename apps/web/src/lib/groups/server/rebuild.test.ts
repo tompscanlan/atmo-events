@@ -177,8 +177,8 @@ const count = async (table: string) =>
 	(await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>())!.n;
 
 /** Deletes every row the group has: the cascade takes its roles, bundles and
- *  roster with it. The credential table is keyed by DID and is not touched, so
- *  this leaves every row but the credential, as a rebuild expects. */
+ *  roster with it. The group's linked session is kept by DID outside D1, so it
+ *  survives, as a rebuild expects. */
 async function dropGroupRows(groupId: string) {
 	await db.prepare(`DELETE FROM groups WHERE id = ?`).bind(groupId).run();
 }

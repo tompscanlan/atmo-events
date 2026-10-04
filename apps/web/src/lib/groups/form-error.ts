@@ -10,8 +10,8 @@ import {
 } from './server/event-writer';
 import { GroupRuleError } from './server/repo';
 
-/** Permission and credential failures are kept apart: one is the user's
- *  business, the other is the operator's. Anything else is rethrown, because an
+/** Permission and credential failures are kept apart: one is the caller's
+ *  business, the other is the group owner's. Anything else is rethrown, because an
  *  unrecognized failure must not be flattened into a form message. */
 export function formError(e: unknown): GroupFormFailure {
 	if (e instanceof GroupPermissionError) {
@@ -21,7 +21,7 @@ export function formError(e: unknown): GroupFormFailure {
 		return {
 			ok: false,
 			error:
-				'This group has no signing credential configured on this deployment, so it cannot publish events.'
+				'This site cannot write as this group yet: its owner has to link the group’s account, from the group page. Nothing was changed.'
 		};
 	}
 	if (e instanceof GroupRecordError) return { ok: false, error: e.message };

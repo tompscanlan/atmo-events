@@ -191,8 +191,8 @@ export type GroupSpaceUpdater = (update: {
 }) => Promise<void>;
 
 /** The host replaces only the fields it is sent, so the write policy and app
- *  access stay as provisioned. `updateSpace` needs the owner's credential, which
- *  the group's app password is. */
+ *  access stay as provisioned. `updateSpace` needs the space owner's session,
+ *  which the group's own session is. */
 export function pdsSpaceUpdater(cred: GroupCredential, groupDid: string): GroupSpaceUpdater {
 	return async ({ space, readPolicy }) => {
 		const { handle } = await groupClient(cred, groupDid);
@@ -229,7 +229,7 @@ export async function setAboutSpaceReadPolicy(input: SetAboutSpaceReadPolicyInpu
 	}
 	let updater = input.updater;
 	if (!updater) {
-		const cred = await resolveGroupCredential(input.env, input.db, input.group.group_did);
+		const cred = await resolveGroupCredential(input.env, input.group.group_did);
 		if (!cred) throw new GroupCredentialError(input.group.group_did);
 		updater = pdsSpaceUpdater(cred, input.group.group_did);
 	}

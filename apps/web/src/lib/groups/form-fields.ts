@@ -3,6 +3,10 @@ import * as v from 'valibot';
 import { isDid, isHandle } from '@atcute/lexicons/syntax';
 import { GROUP_VISIBILITIES } from './types';
 
+/** The shortest group account password the create form takes. A floor of this
+ *  app's choosing: the creator, not this app, guards the account from then on. */
+export const GROUP_PASSWORD_MIN_LENGTH = 8;
+
 /** An HTML checkbox sends `on` when ticked and nothing when not. The `''` default is
  *  required: without it valibot skips a missing key, the transform never runs, and an
  *  unticked box parses to `undefined` ("not supplied") instead of `false`. */

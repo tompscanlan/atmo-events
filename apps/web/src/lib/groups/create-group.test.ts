@@ -1,12 +1,15 @@
 // The order of group creation, tested against a stub PDS and the real schema:
 // a create that fails must leave nothing durable behind.
 //
-// `mint.test.ts` covers how a PDS refusal maps to a `MintFailure`, and
-// `credentials.test.ts` covers the encrypted round trip. These tests cover the
-// sequence (rehearse -> mint -> store -> INSERT -> provision). A `did:plc` is
+// `mint.test.ts` covers how a PDS refusal maps to a `MintFailure`. These tests
+// cover the sequence (rehearse -> mint -> INSERT -> provision). A `did:plc` is
 // permanent, so after a name collision nothing durable may exist. The cases
-// check what exists afterwards (group row, credential row, space), not only
-// which calls were made.
+// check what exists afterwards (group row, space), not only which calls were
+// made.
+//
+// The creator types the group account's email and password. Neither is stored
+// or logged: the create writes through the session `createAccount` returned,
+// and the group stays unlinked until its owner links it.
 //
 // The stub stands in for `GROUP_PDS_SERVICE`. It records every XRPC call in
 // order, so "did not happen" can be asserted rather than assumed. It is the
@@ -14,15 +17,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isRowWrite, sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { ensureGroupsSchema } from './server/schema';
-import { clearGroupSessions } from './server/session';
 import { stubPds as stubGroupPds, type StubPdsOptions } from './server/__fixtures__/stub-pds';
+import { resolveGroupCredential } from './server/credentials';
+import { GroupCredentialError, groupWriter } from './server/event-writer';
+import { getGroupByDid } from './server/repo';
+import { GROUP_PASSWORD_MIN_LENGTH } from './form-fields';
 import { runCreateGroup, type CreateGroupData, type CreateGroupEnv } from './create-group';
 
 const OWNER = 'did:plc:owner';
 const MINTED_DID = 'did:plc:mintedgroupaaaaaaaaaaaaa';
 const SERVICE = 'https://pds.stub.test';
-/** 32 bytes, base64: `canStoreMintedCredentials` accepts nothing shorter. */
-const KEY = btoa('0123456789abcdef0123456789abcdef');
+/** The login the creator types. Distinctive, so a test can look for it anywhere. */
+const EMAIL = 'alice+kona@example.com';
+const PASSWORD = 'correct-horse-battery-staple';
 
 let harness: SqliteD1;
 let env: CreateGroupEnv;
@@ -35,6 +42,8 @@ function data(overrides: Partial<CreateGroupData> = {}): CreateGroupData {
 		label: 'kona',
 		visibility: 'public',
 		requireApproval: true,
+		email: EMAIL,
+		password: PASSWORD,
 		...overrides
 	};
 }
@@ -46,21 +55,33 @@ function stubPds(overrides: Pick<StubPdsOptions, 'account' | 'fail'> = {}) {
 	return stubGroupPds({ did: MINTED_DID, handle: 'konatrail.group.stub.test', ...overrides });
 }
 
-async function rows(table: 'groups' | 'group_credentials') {
+async function rows(table: 'groups') {
 	const result = await harness.db.prepare(`SELECT * FROM ${table}`).all();
 	return result.results ?? [];
 }
 
+/** Every row of every table, as one string: what a D1 read or backup would yield. */
+function everyStoredRow(): string {
+	const tables = harness.raw
+		.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
+		.all() as { name: string }[];
+	return JSON.stringify(
+		tables.map(({ name }) => harness.raw.prepare(`SELECT * FROM "${name}"`).all())
+	);
+}
+
+/** The sessions store of a deployment that links groups, holding no link. */
+const noLinks = {
+	OAUTH_SESSIONS: { get: async () => null } as unknown as KVNamespace
+};
+
 beforeEach(() => {
 	harness = sqliteD1();
-	clearGroupSessions();
 	env = {
 		DB: harness.db,
 		GROUP_PDS_SERVICE: SERVICE,
 		GROUP_HANDLE_DOMAIN: 'group.stub.test',
-		GROUP_PDS_INVITE_CODE: 'stub-aaaaa-bbbbb',
-		GROUP_ACCOUNT_EMAIL: 'groups@example.com',
-		GROUP_CREDENTIAL_KEY: KEY
+		GROUP_PDS_INVITE_CODE: 'stub-aaaaa-bbbbb'
 	};
 });
 
@@ -72,7 +93,7 @@ afterEach(() => {
 describe('a name the PDS refuses', () => {
 	// The handle registration is the reservation, so this is the whole collision
 	// path: it must cost nothing that cannot be taken back.
-	it('leaves no DID, no group row, no credential and no space', async () => {
+	it('leaves no DID, no group row and no space', async () => {
 		const { calls } = stubPds({
 			account: () =>
 				Response.json(
@@ -88,8 +109,7 @@ describe('a name the PDS refuses', () => {
 		// they can change: a collision is not a deployment fault.
 		expect(!result.ok && result.error).toContain('kona');
 		expect(await rows('groups')).toEqual([]);
-		expect(await rows('group_credentials')).toEqual([]);
-		// Nothing past the mint ran: no session, and above all no space, which
+		// Nothing past the mint ran: no record, and above all no space, which
 		// would otherwise be an artifact under a DID we never recorded.
 		expect(calls).toEqual(['com.atproto.server.createAccount']);
 	});
@@ -128,8 +148,8 @@ describe('a mint failure that is the deployment’s, not the user’s', () => {
 		});
 		const line = JSON.stringify(logged.mock.calls);
 		expect(line).not.toContain(env.GROUP_PDS_INVITE_CODE);
-		expect(line).not.toContain(env.GROUP_CREDENTIAL_KEY);
-		expect(line).not.toContain(env.GROUP_ACCOUNT_EMAIL);
+		expect(line).not.toContain(EMAIL);
+		expect(line).not.toContain(PASSWORD);
 	});
 
 	it('logs nothing for a name the user can change', async () => {
@@ -149,18 +169,86 @@ describe('a mint failure that is the deployment’s, not the user’s', () => {
 	});
 });
 
+// The creator's login is refused by the PDS at createAccount, before a did:plc
+// exists. It is the creator's to fix, on the fields they typed, so the form says
+// what to change and the operator's log stays quiet.
+describe('a login the PDS refuses', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it.each([
+		['Email already taken', 'you+mygroup@example.com'],
+		['Password is too short', 'Choose a longer or different one']
+	])(
+		'returns the creator-facing message for “%s”, with no key and no log line',
+		async (message, says) => {
+			const { calls } = stubPds({
+				account: () => Response.json({ error: 'InvalidRequest', message }, { status: 400 })
+			});
+			const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const result = await runCreateGroup(env, OWNER, data());
+
+			expect(result.ok).toBe(false);
+			expect(!result.ok && result.error).toContain(says);
+			// Refused before the account existed, so there is no key to hand back.
+			expect(result).not.toHaveProperty('registered');
+			expect(logged).not.toHaveBeenCalled();
+			expect(calls).toEqual(['com.atproto.server.createAccount']);
+			expect(await rows('groups')).toEqual([]);
+		}
+	);
+});
+
 describe('refusing before the irreversible step', () => {
-	// A deployment that cannot keep the credential must not mint: the app
-	// password is shown exactly once, so minting first strands the account.
-	it('makes no PDS call at all when GROUP_CREDENTIAL_KEY is missing', async () => {
+	// A partial configuration found after createAccount would already have
+	// minted, so it has to refuse before any call.
+	it('makes no PDS call at all when the group PDS is not fully configured', async () => {
 		const { calls } = stubPds();
-		delete env.GROUP_CREDENTIAL_KEY;
+		delete env.GROUP_PDS_INVITE_CODE;
 
 		const result = await runCreateGroup(env, OWNER, data());
 
 		expect(result.ok).toBe(false);
+		expect(!result.ok && result.error).toContain('GROUP_PDS_INVITE_CODE');
 		expect(calls).toEqual([]);
 		expect(await rows('groups')).toEqual([]);
+	});
+
+	// A login the PDS cannot take would fail at createAccount anyway, but on
+	// the PDS's wording. Checking its shape first puts the refusal on the
+	// fields, with no PDS call.
+	it.each([
+		['an email with no @', { email: 'alice.example.com' }, 'email'],
+		['an email with nothing after the @', { email: 'alice@' }, 'email'],
+		['an email with a space', { email: 'alice smith@example.com' }, 'email'],
+		[
+			`a password under ${GROUP_PASSWORD_MIN_LENGTH} characters`,
+			{ password: 'x'.repeat(GROUP_PASSWORD_MIN_LENGTH - 1) },
+			`at least ${GROUP_PASSWORD_MIN_LENGTH} characters`
+		]
+	])('makes no PDS call for %s', async (_case, login, says) => {
+		const { calls } = stubPds();
+
+		const result = await runCreateGroup(env, OWNER, data(login));
+
+		expect(result.ok).toBe(false);
+		expect(!result.ok && result.error).toContain(says);
+		expect(calls).toEqual([]);
+		expect(await rows('groups')).toEqual([]);
+	});
+
+	it('takes a password of exactly the shortest length', async () => {
+		stubPds();
+
+		const result = await runCreateGroup(
+			env,
+			OWNER,
+			data({ password: 'x'.repeat(GROUP_PASSWORD_MIN_LENGTH) })
+		);
+
+		expect(result.ok).toBe(true);
 	});
 
 	// The label field accepts more than the PDS's handle rules do. A label the
@@ -198,7 +286,6 @@ describe('refusing before the irreversible step', () => {
 		expect(calls).toEqual([]);
 		expect(harness.statements.filter(isRowWrite)).toEqual([]);
 		expect(await rows('groups')).toEqual([]);
-		expect(await rows('group_credentials')).toEqual([]);
 	});
 
 	// Schema drift: a column the INSERT does not know about that refuses NULL.
@@ -217,7 +304,6 @@ describe('refusing before the irreversible step', () => {
 		expect(!result.ok && result.error).toContain('slug');
 		expect(calls).toEqual([]);
 		expect(await rows('groups')).toEqual([]);
-		expect(await rows('group_credentials')).toEqual([]);
 	});
 
 	// Drift that raises nothing. Without the trigger that seeds the owner role,
@@ -240,10 +326,14 @@ describe('refusing before the irreversible step', () => {
 });
 
 describe('a successful create', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	// The PLC read sits between the mint and the first durable write: if the
 	// owner's key did not land at index 0 the group is portable in name only, so
 	// that has to be found out before anyone is told the group exists.
-	it('mints, verifies the rotation key, then stores, inserts, provisions and writes its records', async () => {
+	it('mints, verifies the rotation key, then inserts, provisions and writes its records', async () => {
 		const { calls } = stubPds();
 
 		const result = await runCreateGroup(env, OWNER, data());
@@ -254,9 +344,7 @@ describe('a successful create', () => {
 		const writes = calls.filter((c) => !c.includes('.getRecord') && !c.includes('.listRecords'));
 		expect(writes).toEqual([
 			'com.atproto.server.createAccount',
-			'com.atproto.server.createAppPassword',
 			'plc.directory/data',
-			'com.atproto.server.createSession',
 			'com.atproto.simplespace.createSpace',
 			'com.atproto.simplespace.createSpace',
 			// The records land after both spaces exist, since there is nowhere to
@@ -287,6 +375,91 @@ describe('a successful create', () => {
 			'com.atproto.simplespace.putMember',
 			'com.atproto.simplespace.putMember'
 		]);
+	});
+
+	// The creator holds the login, so the create neither makes an app password
+	// to keep nor logs in again: createAccount's session serves every write.
+	it('makes no app password and no password login', async () => {
+		const { calls } = stubPds();
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		expect(result.ok).toBe(true);
+		expect(calls).not.toContain('com.atproto.server.createAppPassword');
+		expect(calls).not.toContain('com.atproto.server.createSession');
+	});
+
+	it('serves every write through the session the mint returned', async () => {
+		stubPds();
+		const logged: string[] = [];
+		vi.spyOn(console, 'info').mockImplementation((line: string) => {
+			logged.push(line);
+		});
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		expect(result.ok).toBe(true);
+		const writes = logged.filter((line) => line.startsWith('[group-session]'));
+		// Every kind of write a create makes: spaces, space records, the
+		// declaration in the public repo, and the member lists.
+		expect(writes.map((line) => line.split(' ')[2])).toEqual(
+			expect.arrayContaining([
+				'com.atproto.simplespace.createSpace',
+				'com.atproto.space.putRecord',
+				'com.atproto.repo.putRecord',
+				'com.atproto.simplespace.putMember'
+			])
+		);
+		for (const line of writes) {
+			expect(line).toMatch(
+				new RegExp(`^\\[group-session\\] ${MINTED_DID} \\S+ via mint-session: 200$`)
+			);
+		}
+	});
+
+	// The creator's login reaches the PDS and nowhere else: not a log line, not
+	// a row. Reset mail goes to the creator, and this site keeps no address.
+	it('puts the typed email and password in no console line and no stored row', async () => {
+		const { requests } = stubPds();
+		const lines: unknown[] = [];
+		for (const level of ['error', 'warn', 'info', 'log'] as const) {
+			vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+				lines.push(args);
+			});
+		}
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		expect(result.ok).toBe(true);
+		// The PDS did get them, once, on createAccount.
+		const sent = requests.filter((r) => JSON.stringify(r.body ?? {}).includes(PASSWORD));
+		expect(sent.map((r) => r.nsid)).toEqual(['com.atproto.server.createAccount']);
+		expect(sent[0].body).toMatchObject({ email: EMAIL, password: PASSWORD });
+
+		const logged = JSON.stringify(lines);
+		expect(logged).not.toContain(PASSWORD);
+		expect(logged).not.toContain(EMAIL);
+		const stored = everyStoredRow();
+		expect(stored).not.toContain(PASSWORD);
+		expect(stored).not.toContain(EMAIL);
+		expect(JSON.stringify(result)).not.toContain(PASSWORD);
+	});
+
+	// The mint's session dies with the create request. After it, writing as the
+	// group waits for the owner to link its account, and a write tried before
+	// then is refused rather than served by anything this site kept.
+	it('leaves the group unlinked, so a later write as the group is refused', async () => {
+		stubPds();
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		expect(result.ok).toBe(true);
+		expect(await resolveGroupCredential(noLinks, MINTED_DID)).toBeNull();
+		const group = await getGroupByDid(harness.db, MINTED_DID);
+		expect(group).not.toBeNull();
+		await expect(groupWriter(noLinks, harness.db, group!)).rejects.toBeInstanceOf(
+			GroupCredentialError
+		);
 	});
 
 	// The only record a stranger can read, and the only one in the public repo.
@@ -525,7 +698,7 @@ describe('a successful create', () => {
 	// handle the PDS registered, never the submitted label, because the PDS
 	// decided the name. No column stores another name, so a caller that wants to
 	// address this group has the DID and a handle it must resolve.
-	it('returns the minted DID and the registered handle, and keys every row on the DID', async () => {
+	it('returns the minted DID and the registered handle, keys the row on the DID, and stores no credential', async () => {
 		stubPds();
 
 		const result = await runCreateGroup(env, OWNER, data({ label: 'kona' }));
@@ -537,10 +710,13 @@ describe('a successful create', () => {
 		});
 		const [group] = (await rows('groups')) as { group_did: string }[];
 		expect(group.group_did).toBe(MINTED_DID);
-		const [cred] = (await rows('group_credentials')) as { group_did: string; secret: string }[];
-		expect(cred.group_did).toBe(MINTED_DID);
-		// Never in the clear, even though the row is ours.
-		expect(cred.secret).not.toContain('app-pass-1234');
+		// No table for credentials exists any more, and the session token the
+		// create wrote with is in no row.
+		const tables = harness.raw
+			.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
+			.all() as { name: string }[];
+		expect(tables.map((t) => t.name)).not.toContain('group_credentials');
+		expect(everyStoredRow()).not.toContain('master-jwt');
 	});
 
 	// A rebuild restores the group's creation date from its profile and the
@@ -708,7 +884,7 @@ describe('a create that fails after the mint', () => {
 			: undefined;
 	/** Fails the named table's INSERT for the minted DID only, so the rehearsal,
 	 *  which inserts under its own DID, still passes. */
-	const refuseInsert = async (table: 'groups' | 'group_credentials') => {
+	const refuseInsert = async (table: 'groups') => {
 		await ensureGroupsSchema(harness.db);
 		await harness.db
 			.prepare(
@@ -720,7 +896,6 @@ describe('a create that fails after the mint', () => {
 	};
 
 	it.each([
-		['storing the credential', () => refuseInsert('group_credentials'), {}],
 		['inserting the group row', () => refuseInsert('groups'), {}],
 		[
 			'provisioning the spaces',
@@ -741,11 +916,12 @@ describe('a create that fails after the mint', () => {
 			}
 		],
 		[
-			'issuing the app password',
+			// Inside the mint, after createAccount: the account exists, and a
+			// response with no session is the PDS's failure, not the creator's.
+			'reading the session createAccount returned',
 			async () => {},
 			{
-				fail: (nsid: string) =>
-					nsid.startsWith('com.atproto.server.createAppPassword') ? pdsDown() : undefined
+				account: () => Response.json({ did: MINTED_DID, handle: 'konatrail.group.stub.test' })
 			}
 		]
 	])('hands back the recovery key when %s fails', async (_step, arrange, stub) => {
@@ -793,9 +969,13 @@ describe('a create that fails after the mint', () => {
 		const result = await runCreateGroup(env, OWNER, data());
 
 		// The members-space step never ran, and a settings save does not write it.
+		// Both need a linked group, since the mint's session is gone by then.
 		expect(result.ok).toBe(false);
 		expect(result).toMatchObject({
-			error: expect.stringContaining("Saving the group's settings writes them")
+			error: expect.stringContaining("Link the group's account from its page")
+		});
+		expect(result).toMatchObject({
+			error: expect.stringContaining('save its settings to write them')
 		});
 		expect(result).toMatchObject({ error: expect.stringContaining('"Repair this group"') });
 	});

@@ -168,17 +168,6 @@ export function stubPds(options: StubPdsOptions) {
 				({ recoveryKey } = (body ?? {}) as { recoveryKey?: string });
 				return options.account?.() ?? Response.json({ did, handle, accessJwt: 'master-jwt' });
 
-			case 'com.atproto.server.createAppPassword':
-				return Response.json({ password: 'app-pass-1234' });
-
-			case 'com.atproto.server.createSession':
-				return Response.json({
-					did,
-					handle,
-					accessJwt: 'group-jwt',
-					refreshJwt: 'group-refresh'
-				});
-
 			case 'com.atproto.simplespace.createSpace': {
 				const { spaceType, skey, readPolicy, writePolicy, appAccess } = body as Record<
 					string,

@@ -1,165 +1,59 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import {
-	GroupCredentialKeyError,
-	canStoreMintedCredentials,
-	resolveGroupCredential,
-	storeGroupCredential
-} from './credentials';
+// Where the right to write as a group comes from: only the session its owner
+// linked. The store is read for real; the OAuth client that restores a session
+// is the fixture's (./__fixtures__/linked-group.ts).
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('./__fixtures__/linked-oauth-stub')).linkedOAuthStub
+}));
+
+import { linkGroups, unlinkAllGroups } from './__fixtures__/linked-group';
+import { resolveGroupCredential } from './credentials';
+import { GROUP_SESSION_PREFIX } from './linked-session';
 
 const DID = 'did:plc:mintedgroupaaaaaaaaaaaaa';
-const APP_PASSWORD = 'app-pass-never-at-rest';
-const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+const OTHER = 'did:plc:someoneelseaaaaaaaaaaaaa';
 
-let harness: SqliteD1;
+/** A sessions namespace holding exactly `keys`. */
+function kv(keys: string[]): KVNamespace {
+	return {
+		get: async (key: string) => (keys.includes(key) ? '{}' : null)
+	} as unknown as KVNamespace;
+}
 
-beforeEach(() => {
-	harness = sqliteD1();
-});
+afterEach(() => unlinkAllGroups());
 
-describe('minted credential storage', () => {
-	it('round-trips a stored credential', async () => {
-		const env = { GROUP_CREDENTIAL_KEY: KEY };
-		await storeGroupCredential(env, harness.db, DID, {
-			service: 'https://pds.example.net',
-			identifier: 'kona.group.example.net',
-			password: APP_PASSWORD
-		});
+describe('resolveGroupCredential', () => {
+	it('is the linked session when the store holds one for the group', async () => {
+		const env = linkGroups([DID]);
 
-		const resolved = await resolveGroupCredential(env, harness.db, DID);
-		expect(resolved).toEqual({
-			service: 'https://pds.example.net',
-			identifier: 'kona.group.example.net',
-			password: APP_PASSWORD
-		});
+		const cred = await resolveGroupCredential(env, DID);
+
+		expect(cred?.kind).toBe('linked');
+		expect(cred?.kind === 'linked' && cred.session.did).toBe(DID);
 	});
 
-	// The table is designed so that a D1 read, a backup or
-	// `wrangler d1 execute` does not yield a working credential.
-	it('never writes the credential in the clear', async () => {
-		await storeGroupCredential({ GROUP_CREDENTIAL_KEY: KEY }, harness.db, DID, {
-			service: 'https://pds.example.net',
-			identifier: 'kona.group.example.net',
-			password: APP_PASSWORD
-		});
-
-		const row = harness.raw.prepare('SELECT * FROM group_credentials').get() as Record<
-			string,
-			unknown
-		>;
-		expect(JSON.stringify(row)).not.toContain(APP_PASSWORD);
-		expect(row.secret).toBeTruthy();
-		expect(row.iv).toBeTruthy();
+	// Nothing else stands in: no stored password, no deployment-wide account.
+	it('is null for a group whose owner has not linked it', async () => {
+		await expect(resolveGroupCredential(linkGroups([OTHER]), DID)).resolves.toBeNull();
 	});
 
-	it('gives each write its own nonce', async () => {
-		const env = { GROUP_CREDENTIAL_KEY: KEY };
-		const cred = {
-			service: 'https://pds.example.net',
-			identifier: 'kona.group.example.net',
-			password: APP_PASSWORD
-		};
-		await storeGroupCredential(env, harness.db, DID, cred);
-		const first = harness.raw.prepare('SELECT iv, secret FROM group_credentials').get() as {
-			iv: string;
-			secret: string;
-		};
-		await storeGroupCredential(env, harness.db, DID, cred);
-		const second = harness.raw.prepare('SELECT iv, secret FROM group_credentials').get() as {
-			iv: string;
-			secret: string;
-		};
-
-		expect(second.iv).not.toBe(first.iv);
-		expect(second.secret).not.toBe(first.secret);
-		// One row per DID, replaced. Not an audit log.
-		expect(harness.raw.prepare('SELECT COUNT(*) AS n FROM group_credentials').get()).toMatchObject({
-			n: 1
-		});
+	it('is null on a deployment with no sessions namespace', async () => {
+		await expect(resolveGroupCredential({}, DID)).resolves.toBeNull();
 	});
 
-	// The row is the only source of a group's credential, so a rotation only
-	// has to replace the row.
-	it('serves the newest row after a rotation, with nothing able to override it', async () => {
-		const env = { GROUP_CREDENTIAL_KEY: KEY };
-		await storeGroupCredential(env, harness.db, DID, {
-			service: 'https://pds.example.net',
-			identifier: 'kona.group.example.net',
-			password: APP_PASSWORD
-		});
-		await storeGroupCredential(env, harness.db, DID, {
-			service: 'https://moved.example.net',
-			identifier: 'kona.group.example.net',
-			password: 'rotated-app-pass'
-		});
-
-		await expect(resolveGroupCredential(env, harness.db, DID)).resolves.toEqual({
-			service: 'https://moved.example.net',
-			identifier: 'kona.group.example.net',
-			password: 'rotated-app-pass'
-		});
+	// A sign-in as the group is stored under the bare DID. It lacks the group's
+	// scope, so it must not count as a link. The fixture's client throws for a
+	// group no test linked, so a restore attempt would fail this case too.
+	it('does not take a sign-in session under the bare DID for a link', async () => {
+		await expect(resolveGroupCredential({ OAUTH_SESSIONS: kv([DID]) }, DID)).resolves.toBeNull();
 	});
 
-	it('resolves to null for a group this deployment holds nothing for', async () => {
-		await expect(
-			resolveGroupCredential({ GROUP_CREDENTIAL_KEY: KEY }, harness.db, 'did:plc:unknown')
-		).resolves.toBeNull();
-	});
+	// The owner linked it, so a silent "not linked" would hide a broken session.
+	it('fails, rather than answering null, when a stored link cannot be restored', async () => {
+		const env = { OAUTH_SESSIONS: kv([GROUP_SESSION_PREFIX + DID]) };
 
-	// A rebuild can reach the credential before any other groups call in the
-	// isolate, so these two must create the tables themselves, like every
-	// accessor in repo.ts does.
-	it.each(['read', 'write'] as const)(
-		'creates the tables before a %s on a database no groups code has touched',
-		async (op) => {
-			const bare = sqliteD1(false);
-			try {
-				// A fresh module is a fresh isolate: `ensureGroupsSchema` memoizes per
-				// module, and an earlier test in this file has already run it.
-				vi.resetModules();
-				const fresh = await import('./credentials');
-				const env = { GROUP_CREDENTIAL_KEY: KEY };
-				if (op === 'read') {
-					await expect(fresh.resolveGroupCredential(env, bare.db, DID)).resolves.toBeNull();
-				} else {
-					await fresh.storeGroupCredential(env, bare.db, DID, {
-						service: 'https://pds.example.net',
-						identifier: 'kona.group.example.net',
-						password: APP_PASSWORD
-					});
-					expect(bare.raw.prepare('SELECT count(*) AS n FROM group_credentials').get()).toEqual({
-						n: 1
-					});
-				}
-			} finally {
-				bare.close();
-			}
-		}
-	);
-});
-
-describe('mint readiness', () => {
-	// The create flow asks this before minting: a deployment that cannot store
-	// the credential would otherwise leave behind a permanent did:plc.
-	it.each([
-		['unset', undefined],
-		['not base64', '!!!not-base64!!!'],
-		['the wrong length', btoa('short')]
-	])('reports it cannot mint when the key is %s', async (_label, value) => {
-		await expect(canStoreMintedCredentials({ GROUP_CREDENTIAL_KEY: value })).resolves.toBe(false);
-	});
-
-	it('reports it can mint with a 32-byte key', async () => {
-		await expect(canStoreMintedCredentials({ GROUP_CREDENTIAL_KEY: KEY })).resolves.toBe(true);
-	});
-
-	it('refuses to store without a usable key', async () => {
-		await expect(
-			storeGroupCredential({}, harness.db, DID, {
-				service: 'https://pds.example.net',
-				identifier: 'kona.group.example.net',
-				password: APP_PASSWORD
-			})
-		).rejects.toThrow(GroupCredentialKeyError);
+		await expect(resolveGroupCredential(env, DID)).rejects.toThrow(/no linked session/);
 	});
 });

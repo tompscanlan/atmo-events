@@ -11,12 +11,18 @@
 //      new key. Only a refusal saying the credential is spent replaces it early: a
 //      PDS with no spaces support refuses every space call, and must not cost a
 //      new credential on every page.
-//   4. A group with no linked session has no reader, since an app password cannot
-//      get a delegation token.
+//   4. A group with no linked session has no reader, since the linked session is
+//      the only credential this app keeps for a group; a linked one reads through it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('./__fixtures__/linked-oauth-stub')).linkedOAuthStub
+}));
+
 import { P256PrivateKeyExportable } from '@atcute/crypto';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { storeGroupCredential } from './credentials';
+import { LINKED_TEST_TOKEN, linkGroups, unlinkAllGroups } from './__fixtures__/linked-group';
 import {
 	clearSpaceCredentials,
 	credentialAcceptanceReader,
@@ -176,6 +182,8 @@ function network(options: {
 	const exchanges: { headers: Headers; body: unknown }[] = [];
 	const reads: { url: URL; headers: Headers }[] = [];
 	const others: string[] = [];
+	/** The `authorization` each delegation request carried over the global fetch. */
+	const delegationAuth: (string | null)[] = [];
 
 	const handle: GroupHandle = async (pathname) => {
 		delegations.push(pathname);
@@ -185,6 +193,11 @@ function network(options: {
 	vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
 		const url = new URL(String(input));
 		const headers = new Headers(init?.headers);
+		// A linked session reaches the group's PDS over the global fetch.
+		if (url.pathname === '/xrpc/com.atproto.space.getDelegationToken') {
+			delegationAuth.push(headers.get('authorization'));
+			return handle(`${url.pathname}${url.search}`, init ?? {});
+		}
 		if (url.pathname === '/xrpc/com.atproto.space.getSpaceCredential') {
 			exchanges.push({ headers, body: JSON.parse(String(init?.body)) });
 			issued++;
@@ -210,7 +223,15 @@ function network(options: {
 		return json(404, { error: 'NotFound' });
 	});
 
-	return { handle, delegations, exchanges, reads, others, issuedCount: () => issued };
+	return {
+		handle,
+		delegations,
+		delegationAuth,
+		exchanges,
+		reads,
+		others,
+		issuedCount: () => issued
+	};
 }
 
 beforeEach(() => clearSpaceCredentials());
@@ -383,24 +404,31 @@ describe('groupAcceptanceReader', () => {
 	beforeEach(() => {
 		harness = sqliteD1();
 	});
-	afterEach(() => harness.close());
+	afterEach(() => {
+		harness.close();
+		unlinkAllGroups();
+	});
 
 	it('has no reader for a group with no credential', async () => {
 		expect(await groupAcceptanceReader({}, harness.db, { group_did: GROUP_DID }, hosts)).toBeNull();
 	});
 
-	it('has no reader for a group still on an app password', async () => {
-		const env = { GROUP_CREDENTIAL_KEY: btoa(String.fromCharCode(...new Uint8Array(32).fill(7))) };
-		await storeGroupCredential(env, harness.db, GROUP_DID, {
-			service: GROUP_HOST,
-			identifier: 'kona.group.pds.test',
-			password: 'app-pass-never-at-rest'
-		});
+	it('has no reader, and asks nothing, for a group whose owner has not linked it', async () => {
+		const env = linkGroups(['did:plc:anothergroupaaaaaaaaaaaa'], GROUP_HOST);
 		const fetched = vi.fn();
 		vi.stubGlobal('fetch', fetched);
 		expect(
 			await groupAcceptanceReader(env, harness.db, { group_did: GROUP_DID }, hosts)
 		).toBeNull();
 		expect(fetched).not.toHaveBeenCalled();
+	});
+
+	it('reads through the linked session for a linked group', async () => {
+		const env = linkGroups([GROUP_DID], GROUP_HOST);
+		const net = network({ accepted: new Set([BOB]) });
+		const reader = await groupAcceptanceReader(env, harness.db, { group_did: GROUP_DID }, hosts);
+
+		expect((await reader!.accepted(MEMBERS, [BOB])).get(BOB)).toBe(true);
+		expect(net.delegationAuth).toEqual([`Bearer ${LINKED_TEST_TOKEN}`]);
 	});
 });

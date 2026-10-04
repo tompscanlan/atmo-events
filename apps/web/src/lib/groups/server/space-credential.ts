@@ -10,9 +10,9 @@
 //
 // A credential lasts 600 s unless the host says otherwise. It is kept per isolate
 // until shortly before its `exp`, then replaced with a new key and a new delegation
-// token: a credential is never refreshed. An app-password session cannot get a
-// delegation token, since the PDS requires a full-access or OAuth session, so only
-// a group with a linked session (./linked-session.ts) gets one.
+// token: a credential is never refreshed. The PDS issues a delegation token only
+// to a full-access or OAuth session, and the one this app keeps for a group is the
+// linked session (./linked-session.ts), so an unlinked group gets none.
 import { P256PrivateKeyExportable, type P256PrivateKey } from '@atcute/crypto';
 import {
 	CompositeDidDocumentResolver,
@@ -319,17 +319,15 @@ export const didSpaceHosts: SpaceHosts = {
 	spaceHost: (did) => serviceEndpoint(did, ['#atproto_space_host', '#atproto_pds'])
 };
 
-/** The acceptance reader for a group, or null when this deployment holds no
- *  linked session for it. An app password cannot get a delegation token, so a
- *  group still on one has no reader rather than one that always fails. */
+/** The acceptance reader for a group, or null when its owner has not linked it. */
 export async function groupAcceptanceReader(
 	env: CredentialStoreEnv,
 	db: D1Database,
 	group: Pick<GroupRow, 'group_did'>,
 	hosts: SpaceHosts = didSpaceHosts
 ): Promise<AcceptanceReader | null> {
-	const cred = await resolveGroupCredential(env, db, group.group_did);
-	if (cred?.kind !== 'linked') return null;
+	const cred = await resolveGroupCredential(env, group.group_did);
+	if (!cred) return null;
 	const { handle } = await groupClient(cred, group.group_did);
 	return credentialAcceptanceReader(handle, group.group_did, hosts);
 }

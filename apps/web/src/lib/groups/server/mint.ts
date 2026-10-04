@@ -1,11 +1,13 @@
-// Minting a group: a did:plc, a handle, a writing credential, and a rotation key the
-// owner holds. Registering the handle is the name reservation, so a duplicate name
-// fails here, before a did:plc, a row or a space exists. The owner's key is
-// rotationKeys[0], so they can move the DID without us. We keep only an app password.
+// Minting a group: a did:plc, a handle, and a rotation key the owner holds.
+// Registering the handle is the name reservation, so a duplicate name fails here,
+// before a did:plc, a row or a space exists. The owner's key is rotationKeys[0], so
+// they can move the DID without us. The account's login is the creator's: they type
+// its email and password, and we pass the password to the PDS once and keep nothing.
+// The session the PDS returns sets the group up in the same request, and then goes.
 import { Secp256k1PrivateKeyExportable } from '@atcute/crypto';
-import type { AppPasswordCredential } from './credentials';
+import type { MintSessionCredential } from './credentials';
 
-/** All four are required. The create flow checks them before a step that cannot be undone. */
+/** All three are required. The create flow checks them before a step that cannot be undone. */
 export interface MintConfig {
 	/** PDS base URL (`GROUP_PDS_SERVICE`). */
 	service: string;
@@ -14,9 +16,14 @@ export interface MintConfig {
 	handleDomain: string;
 	/** `GROUP_PDS_INVITE_CODE`, so the PDS can keep requiring invites. */
 	inviteCode: string;
-	/** `GROUP_ACCOUNT_EMAIL`, plus-addressed per group. The address is ours, not the
-	 *  owner's, so password reset mail comes to us. */
-	accountEmail: string;
+}
+
+/** The group account's login, as its creator typed it. Never logged or stored. */
+export interface GroupLogin {
+	/** The account's email. Password reset mail goes here, so to the creator. A PDS
+	 *  holds one account per address. */
+	email: string;
+	password: string;
 }
 
 /** Why a mint did not happen, in terms the create form can explain. */
@@ -30,8 +37,10 @@ export type MintFailure =
 	/** Used up, missing, disabled or taken down. The PDS gives one message for all four,
 	 *  and telling them apart needs admin credentials the create path must not hold. */
 	| 'invite-unavailable'
-	/** Invalid, disposable, or already used. */
+	/** Invalid, disposable, or already used by another account on the PDS. */
 	| 'email-rejected'
+	/** The PDS would not take the password. */
+	| 'password-rejected'
 	/** The PDS did not answer, or answered in a shape we do not understand. */
 	| 'pds-unreachable'
 	/** The owner's key is not rotationKeys[0], so the group is not portable. */
@@ -60,33 +69,12 @@ export class GroupMintError extends Error {
 export interface MintedGroup {
 	did: string;
 	handle: string;
-	/** The app password, ready to store. The account password is already gone. */
-	credential: AppPasswordCredential;
+	/** The session `createAccount` returned, for setting the group up in this request. */
+	credential: MintSessionCredential;
 	/** `did:key:…`, the public half. */
 	ownerRotationKey: string;
 	/** The owner's private key, multibase. Show it once; never store it. */
 	ownerRotationSecret: string;
-}
-
-/** Lives only for the two calls it takes to create an app password. */
-function randomPassword(): string {
-	const bytes = crypto.getRandomValues(new Uint8Array(32));
-	let raw = '';
-	for (const byte of bytes) raw += String.fromCharCode(byte);
-	return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-/** `groups@example.com` + `hiking` -> `groups+hiking@example.com`. The PDS matches
- *  emails exactly, so a shared address would fail the second mint. */
-function accountEmailFor(template: string, label: string): string {
-	const at = template.lastIndexOf('@');
-	if (at <= 0) {
-		throw new GroupMintError(
-			'email-rejected',
-			`GROUP_ACCOUNT_EMAIL ${JSON.stringify(template)} is not an address`
-		);
-	}
-	return `${template.slice(0, at)}+${label}@${template.slice(at + 1)}`;
 }
 
 async function xrpc(
@@ -121,6 +109,7 @@ function mintFailureFor(error: string | null, message: string | null): MintFailu
 		return message?.includes('No invite code provided') ? 'invite-missing' : 'invite-unavailable';
 	}
 	if (message && /email/i.test(message)) return 'email-rejected';
+	if (message && /password/i.test(message)) return 'password-rejected';
 	return 'pds-unreachable';
 }
 
@@ -135,7 +124,8 @@ async function refusal(res: Response): Promise<GroupMintError> {
 		// A non-JSON body from a PDS is itself the diagnosis; keep the status.
 	}
 	const failure = mintFailureFor(error, message);
-	// The PDS never echoes a password, so `message` is safe to keep.
+	// The PDS never echoes a password, so `message` is safe to keep. It is still
+	// never logged: it may name the email.
 	return new GroupMintError(
 		failure,
 		`${res.status} ${error ?? 'error'}: ${message ?? 'no detail'}`
@@ -177,33 +167,30 @@ export async function assertOwnerHoldsRotationKey(
 	}
 }
 
-/** Mints the account for `<label>.<handleDomain>`. It does not touch D1 or create
- *  spaces: the caller orders those, since only it knows what a failure leaves behind.
- *  Tests replace `verifyRotationKey`; the live path always checks. */
+/** Mints the account for `<label>.<handleDomain>` with the creator's login. It does
+ *  not touch D1 or create spaces: the caller orders those, since only it knows what a
+ *  failure leaves behind. Tests replace `verifyRotationKey`; the live path always
+ *  checks. */
 export async function mintGroupAccount(
 	cfg: MintConfig,
 	label: string,
+	login: GroupLogin,
 	verifyRotationKey: (did: string, key: string) => Promise<void> = assertOwnerHoldsRotationKey
 ): Promise<MintedGroup> {
 	if (!cfg.inviteCode) {
 		throw new GroupMintError('invite-missing', 'this deployment has no GROUP_PDS_INVITE_CODE');
 	}
 	const handle = `${label}.${cfg.handleDomain}`;
-	const email = accountEmailFor(cfg.accountEmail, label);
 
 	// The owner's key goes into the genesis operation, so it comes first.
 	const ownerKey = await Secp256k1PrivateKeyExportable.createKeypair();
 	const ownerRotationKey = await ownerKey.exportPublicKey('did');
 	const ownerRotationSecret = await ownerKey.exportPrivateKey('multikey');
 
-	// Discarded before return. It exists only because createAppPassword requires
-	// ACCESS_FULL, which an app password never has.
-	const master = randomPassword();
-
 	const created = await xrpc(cfg.service, 'com.atproto.server.createAccount', {
 		handle,
-		email,
-		password: master,
+		email: login.email,
+		password: login.password,
 		inviteCode: cfg.inviteCode,
 		recoveryKey: ownerRotationKey
 	});
@@ -222,25 +209,10 @@ export async function mintGroupAccount(
 		handle: session.handle ?? handle,
 		recoveryKey: ownerRotationSecret
 	};
-	let appPassword: string;
 	try {
-		// Named so an operator reading listAppPasswords can tell what holds it.
-		const issued = await xrpc(
-			cfg.service,
-			'com.atproto.server.createAppPassword',
-			{ name: 'group-writer' },
-			session.accessJwt
-		);
-		if (!issued.ok) throw await refusal(issued);
-		try {
-			({ password: appPassword } = (await issued.json()) as { password: string });
-		} catch (e) {
-			throw new GroupMintError(
-				'pds-unreachable',
-				`createAppPassword returned no password: ${String(e)}`
-			);
+		if (!session.accessJwt) {
+			throw new GroupMintError('pds-unreachable', 'createAccount returned no access token');
 		}
-
 		// Before the caller is told the group exists: an identity only we can move is
 		// not portable.
 		await verifyRotationKey(session.did, ownerRotationKey);
@@ -253,9 +225,10 @@ export async function mintGroupAccount(
 		did: session.did,
 		handle: session.handle ?? handle,
 		credential: {
+			kind: 'mint-session',
 			service: cfg.service,
-			identifier: session.handle ?? handle,
-			password: appPassword
+			did: session.did,
+			accessJwt: session.accessJwt
 		},
 		ownerRotationKey,
 		ownerRotationSecret

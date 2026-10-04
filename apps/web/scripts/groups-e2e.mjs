@@ -34,14 +34,19 @@
  *   E2E_PDS            PDS that hosts the group account
  *   E2E_GROUP_DID      the group account's DID
  *   E2E_GROUP_HANDLE   its handle
- *   E2E_GROUP_PASSWORD the group's app password, or
+ *   E2E_GROUP_PASSWORD a password for the group account (an app password works), or
  *   E2E_CREDENTIALS    an env file that holds E2E_GROUP_PASSWORD
  *   E2E_OWNER_DID      the person who owns the group
  *   E2E_ADMIN_DID      a person who joins and is promoted to admin
  *   E2E_OUTSIDER_DID   a person who is never a member
- * The password goes into the temporary D1 through the app's own
- * `storeGroupCredential` and is never printed. A 401 from createSession means it
- * is stale.
+ * The app writes as a group only through the session its owner linked, and a
+ * real link needs the deployment's OAuth client key. So the run links the group
+ * with a stand-in (scripts/groups-e2e.oauth.ts, aliased over the OAuth client):
+ * its session logs in with this password, and every write still goes through the
+ * app's linked branch. The password lives only in the Worker's bindings and is
+ * never printed. A 401 from createSession means it is stale. The scope a real
+ * link carries is not exercised here; a walk through a deployed site with a
+ * linked group covers it.
  *
  * Cleanup runs in the `finally`. It deletes the events, withdraws the
  * declaration, and removes the rules, the authz config and the owner's
@@ -49,7 +54,6 @@
  * profile and both `access` records stay at fixed keys that the next run
  * overwrites, and the space index stays until the next run resets it.
  */
-import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -189,7 +193,7 @@ async function must(op, args = {}) {
 
 /** Bundles the Worker with Vite, like the app's server build, so the modules
  *  compile the way they ship and the `?raw` migration import in schema.ts works. */
-async function startWorker(stateDir, credentialKey) {
+async function startWorker(stateDir, password) {
 	const started = Date.now();
 	const outDir = join(stateDir, 'bundle');
 	await build({
@@ -198,7 +202,17 @@ async function startWorker(stateDir, credentialKey) {
 		logLevel: 'error',
 		ssr: { target: 'webworker', noExternal: true },
 		resolve: {
-			alias: { '$app/environment': join(WEB_DIR, 'scripts/groups-e2e.app-environment.js') }
+			alias: [
+				{
+					find: '$app/environment',
+					replacement: join(WEB_DIR, 'scripts/groups-e2e.app-environment.js')
+				},
+				// Exactly this module: the stand-in for the group's linked session.
+				{
+					find: /^\$lib\/atproto\/server\/oauth$/,
+					replacement: join(WEB_DIR, 'scripts/groups-e2e.oauth.ts')
+				}
+			]
 		},
 		build: {
 			ssr: WORKER_ENTRY,
@@ -221,7 +235,12 @@ async function startWorker(stateDir, credentialKey) {
 		compatibilityDate: COMPATIBILITY_DATE,
 		compatibilityFlags: ['nodejs_compat'],
 		d1Databases: { DB: 'groups-e2e' },
-		bindings: { GROUP_CREDENTIAL_KEY: credentialKey },
+		kvNamespaces: ['OAUTH_SESSIONS'],
+		bindings: {
+			E2E_GROUP_SERVICE: PDS,
+			E2E_GROUP_IDENTIFIER: GROUP_HANDLE,
+			E2E_GROUP_PASSWORD: password
+		},
 		defaultPersistRoot: stateDir
 	});
 	// Start now, so a startup failure is reported here and not on the first request.
@@ -353,9 +372,6 @@ async function main() {
 	note(`fixture credentials loaded from ${path}`);
 	const groupToken = await checkGroupAccount(password);
 	note(`${GROUP_HANDLE} authenticates as ${GROUP_DID}`);
-	// A per-run key that lives only in this process, so nothing that outlives the
-	// run can decrypt the credential row.
-	const credentialKey = Buffer.from(randomBytes(32)).toString('base64');
 
 	const stateDir = await mkdtemp(join(tmpdir(), 'groups-e2e-'));
 	let worker;
@@ -370,16 +386,12 @@ async function main() {
 	/** Set while the about space may be private, so the `finally` makes it public. */
 	let hostPrivate = false;
 	try {
-		worker = await startWorker(stateDir, credentialKey);
+		worker = await startWorker(stateDir, password);
 		note(`worker bundled and ready in ${worker.seconds}s (workerd, empty D1 under ${stateDir})`);
 		console.log('');
 
-		await must('storeCredential', {
-			groupDid: GROUP_DID,
-			service: PDS,
-			identifier: GROUP_HANDLE,
-			password
-		});
+		await must('linkGroup', { groupDid: GROUP_DID });
+		note(`${GROUP_DID} linked through the stand-in session`);
 		// A mint records where the group's repo lives, and the index looks there
 		// first. This run does not mint, so it records it here.
 		await must('registerIdentity', { groupDid: GROUP_DID, handle: GROUP_HANDLE, pds: PDS });

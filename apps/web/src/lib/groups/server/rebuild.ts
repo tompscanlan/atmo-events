@@ -79,7 +79,7 @@ export async function groupRebuildSources(
 	db: D1Database,
 	groupDid: string
 ): Promise<GroupRebuildSources | null> {
-	const cred = await resolveGroupCredential(env, db, groupDid);
+	const cred = await resolveGroupCredential(env, groupDid);
 	if (!cred) return null;
 	return {
 		reader: pdsSpaceReader(cred, groupDid),

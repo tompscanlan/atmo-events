@@ -331,6 +331,25 @@
 		{/if}
 	</details>
 
+	<!-- Outside the settings toggle: until the owner links, every write as the
+	     group fails, so the one step that fixes it is not left folded away. -->
+	{#if data.groupLinked === false}
+		<form
+			method="POST"
+			action="/oauth/group-link"
+			class="mt-10 rounded-2xl p-4 text-sm ring-1 ring-amber-500/40"
+		>
+			<input type="hidden" name="groupDid" value={group.group_did} />
+			<p class="font-semibold">Link this group's account</p>
+			<p class="mt-1">
+				This site cannot write as the group until you do, so its events, settings and member changes
+				wait on it. At the group's PDS you sign in as the group, not as yourself, with the email and
+				password you chose when you created it, and approve this site.
+			</p>
+			<div class="mt-3"><Button type="submit">Link the group's account</Button></div>
+		</form>
+	{/if}
+
 	{#if data.canManageGroup}
 		<section class="mt-10">
 			<button
@@ -477,9 +496,10 @@
 					<div><Button type="submit" variant="secondary">Repair this group</Button></div>
 				</form>
 
-				{#if data.groupLinked !== null}
+				{#if data.groupLinked}
 					<!-- A plain post, not a remote form: the answer is a redirect to the
-					     group's PDS. Only the owner sees it, and only the owner may link. -->
+					     group's PDS. Only the owner sees it, and only the owner may link. An
+					     unlinked group's prompt sits above the settings. -->
 					<form
 						method="POST"
 						action="/oauth/group-link"
@@ -488,19 +508,11 @@
 						<input type="hidden" name="groupDid" value={group.group_did} />
 						<h3 class="text-sm font-semibold">This group's account</h3>
 						<p class="text-base-500 dark:text-base-400 text-xs">
-							{#if data.groupLinked}
-								This site writes as the group through a session you authorized at the group's PDS.
-								Reconnect if you revoked it there or it stopped working.
-							{:else}
-								This site writes as the group with the app password it kept when the group was
-								created. Link the group's account to replace it: you sign in at the group's PDS as
-								the group, not as yourself, and approve this site.
-							{/if}
+							This site writes as the group through a session you authorized at the group's PDS.
+							Reconnect if you revoked it there or it stopped working.
 						</p>
 						<div>
-							<Button type="submit" variant="secondary"
-								>{data.groupLinked ? 'Reconnect' : 'Link'} the group's account</Button
-							>
+							<Button type="submit" variant="secondary">Reconnect the group's account</Button>
 						</div>
 					</form>
 				{/if}
