@@ -75,7 +75,8 @@ async function openAs(did: string | null) {
 	return (await load({
 		params: { actor: GROUP_DID },
 		locals: { did },
-		platform: { env: { DB: harness.db } }
+		platform: { env: { DB: harness.db } },
+		url: new URL(`https://atmo.test/groups/${GROUP_DID}`)
 	} as unknown as Parameters<typeof load>[0])) as {
 		visibility: string | null;
 		about: { name: string; joinPolicy: string };

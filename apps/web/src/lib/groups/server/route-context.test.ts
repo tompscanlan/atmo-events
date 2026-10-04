@@ -25,7 +25,7 @@ import {
 	readStanding
 } from './route-context';
 import type { GroupSpaceReader } from './about-read';
-import { storeGroupCredential, type GroupCredential } from './credentials';
+import { storeGroupCredential, type AppPasswordCredential } from './credentials';
 import { clearGroupSessions } from './session';
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
 import type { GroupRow, GroupVisibility } from '../types';
@@ -204,7 +204,7 @@ describe('the page gate reads visibility from the host', () => {
 	/** 32 bytes, base64: the credential store accepts nothing shorter. */
 	const KEY = btoa('0123456789abcdef0123456789abcdef');
 	const ENV = { GROUP_CREDENTIAL_KEY: KEY };
-	const CRED: GroupCredential = {
+	const CRED: AppPasswordCredential = {
 		service: 'https://pds.stub.test',
 		identifier: 'hosted.group.stub.test',
 		password: 'app-pass-1234'

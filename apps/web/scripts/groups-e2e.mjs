@@ -197,6 +197,9 @@ async function startWorker(stateDir, credentialKey) {
 		root: WEB_DIR,
 		logLevel: 'error',
 		ssr: { target: 'webworker', noExternal: true },
+		resolve: {
+			alias: { '$app/environment': join(WEB_DIR, 'scripts/groups-e2e.app-environment.js') }
+		},
 		build: {
 			ssr: WORKER_ENTRY,
 			outDir,

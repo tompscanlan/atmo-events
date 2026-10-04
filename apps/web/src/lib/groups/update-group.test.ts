@@ -37,7 +37,7 @@ import {
 } from './members-record';
 import { pdsWriter } from './server/event-writer';
 import { pdsSpaceReader } from './server/about-read';
-import { storeGroupCredential, type GroupCredential } from './server/credentials';
+import { storeGroupCredential, type AppPasswordCredential } from './server/credentials';
 import { createGroup, getGroupByDid, recordGroupSpaces } from './server/repo';
 import { clearGroupSessions } from './server/session';
 import { pdsProvisioner, provisionGroupSpaces } from './server/spaces';
@@ -49,7 +49,7 @@ const GROUP_DID = 'did:plc:settingsgroupaaaaaaaaaaa';
 const HANDLE = 'kona.group.stub.test';
 /** 32 bytes, base64: the credential store accepts nothing shorter. */
 const KEY = btoa('0123456789abcdef0123456789abcdef');
-const CRED: GroupCredential = {
+const CRED: AppPasswordCredential = {
 	service: 'https://pds.stub.test',
 	identifier: HANDLE,
 	password: 'app-pass-1234'

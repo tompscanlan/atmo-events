@@ -18,7 +18,7 @@ import {
 	WellKnownHandleResolver
 } from '@atcute/identity-resolver';
 import { KVStore } from './kv-store';
-import { DOH_RESOLVER, REDIRECT_PATH, scopes } from '../settings';
+import { DOH_RESOLVER, GROUP_LINK_REDIRECT_PATH, REDIRECT_PATH, scopes } from '../settings';
 import { DEV_PORT } from '../port';
 import { dev } from '$app/environment';
 
@@ -68,6 +68,12 @@ function sharedParts(env?: App.Platform['env']) {
 	return { actorResolver: sharedResolver(), stores: cachedStores };
 }
 
+/** The store every client keeps its pending authorizations in, for a callback
+ *  that must check who started a flow before the client finishes it. */
+export function oauthStates(env?: App.Platform['env']): OAuthClientStores['states'] {
+	return sharedParts(env).stores.states;
+}
+
 /** Resolves a handle or DID to its DID, with the resolver sign-in uses. */
 export async function resolveActorDid(identifier: ActorIdentifier): Promise<Did> {
 	return (await sharedResolver().resolve(identifier)).did;
@@ -105,6 +111,18 @@ export function createOAuthClient(
 		return cachedClient;
 	}
 
+	const client = confidentialClient(env, extras, stores);
+	if (extras.length === 0) cachedClient = client;
+	return client;
+}
+
+/** The deployment's confidential client. Every client it builds declares the same
+ *  redirect URIs, so the served metadata lists each path a flow can return to. */
+function confidentialClient(
+	env: App.Platform['env'] | undefined,
+	extras: readonly string[],
+	stores: OAuthClientStores
+): OAuthClient {
 	if (!env?.OAUTH_PUBLIC_URL) {
 		throw new Error('OAUTH_PUBLIC_URL is not set');
 	}
@@ -114,18 +132,59 @@ export function createOAuthClient(
 	const site = env.OAUTH_PUBLIC_URL;
 	const key: ClientAssertionPrivateJwk = JSON.parse(env.CLIENT_ASSERTION_KEY);
 
-	const client = new OAuthClient({
+	return new OAuthClient({
 		metadata: {
 			client_id: site + '/oauth-client-metadata.json',
-			redirect_uris: [site + REDIRECT_PATH],
-			scope: [...scopes, ...extras],
+			redirect_uris: [site + REDIRECT_PATH, site + GROUP_LINK_REDIRECT_PATH],
+			// An extra may repeat a base scope; the metadata lists each once.
+			scope: [...new Set([...scopes, ...extras])],
 			jwks_uri: site + '/oauth/jwks.json'
 		},
 		keyset: [key],
-		actorResolver,
+		actorResolver: sharedResolver(),
 		stores
 	});
-	if (extras.length === 0) cachedClient = client;
+}
+
+const memorySessions = new Map<string, MemoryStore<Did, StoredSession>>();
+const clientsFor = new Map<string, OAuthClient>();
+
+/** A client for sessions that are not sign-ins: the same client_id, metadata and
+ *  state store as every other client, with its sessions kept under
+ *  `sessionPrefix`. A session it holds is never the one a `did` cookie restores,
+ *  and a sign-in under the same DID never overwrites it. Needs this deployment's
+ *  own client metadata (see `servesClientMetadata`). */
+export function createOAuthClientFor(
+	env: App.Platform['env'] | undefined,
+	extraScopes: readonly string[],
+	sessionPrefix: string
+): OAuthClient {
+	if (!servesClientMetadata(env)) {
+		throw new Error(
+			'this deployment serves no client metadata, so it holds no session but a sign-in'
+		);
+	}
+	// Kept per isolate like the sign-in client, so its metadata and DPoP nonce
+	// caches survive between requests instead of costing round trips each time.
+	const cacheKey = `${sessionPrefix}|${extraScopes.join(' ')}`;
+	const cached = clientsFor.get(cacheKey);
+	if (cached) return cached;
+	let sessions: OAuthClientStores['sessions'];
+	if (env?.OAUTH_SESSIONS) {
+		sessions = new KVStore<Did, StoredSession>(env.OAUTH_SESSIONS, { prefix: sessionPrefix });
+	} else {
+		let memory = memorySessions.get(sessionPrefix);
+		if (!memory) {
+			memory = new MemoryStore<Did, StoredSession>();
+			memorySessions.set(sessionPrefix, memory);
+		}
+		sessions = memory;
+	}
+	const client = confidentialClient(env, extraScopes, {
+		sessions,
+		states: sharedParts(env).stores.states
+	});
+	clientsFor.set(cacheKey, client);
 	return client;
 }
 

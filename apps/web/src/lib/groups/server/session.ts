@@ -1,9 +1,10 @@
-// A password session for a group's account. The human's OAuth session would author
-// under the human's DID, and a repo write needs repo === the authenticated DID.
+// The session every write as a group goes through. The human's OAuth session would
+// author under the human's DID, and a repo write needs repo === the authenticated DID.
+// A linked session (./linked-session.ts) manages its own tokens. For the app password,
 // @atcute/client has no credential manager, so the lifecycle is here: createSession,
 // a cache per isolate, refreshSession on expiry, one retry.
 import { Client } from '@atcute/client';
-import type { GroupCredential } from './credentials';
+import type { AppPasswordCredential, GroupCredential, LinkedGroupCredential } from './credentials';
 
 interface CachedSession {
 	did: string;
@@ -33,7 +34,7 @@ async function postJson(service: string, nsid: string, body: unknown) {
 	});
 }
 
-async function createSession(cred: GroupCredential): Promise<CachedSession> {
+async function createSession(cred: AppPasswordCredential): Promise<CachedSession> {
 	const res = await postJson(cred.service, 'com.atproto.server.createSession', {
 		identifier: cred.identifier,
 		password: cred.password
@@ -48,7 +49,10 @@ async function createSession(cred: GroupCredential): Promise<CachedSession> {
 	return { did: data.did, accessJwt: data.accessJwt, refreshJwt: data.refreshJwt };
 }
 
-async function refresh(cred: GroupCredential, session: CachedSession): Promise<CachedSession> {
+async function refresh(
+	cred: AppPasswordCredential,
+	session: CachedSession
+): Promise<CachedSession> {
 	// No body, not even `{}`: a PDS refuses one on refreshSession, which would turn
 	// every renewal into a password login.
 	const res = await fetch(new URL('/xrpc/com.atproto.server.refreshSession', cred.service), {
@@ -74,7 +78,11 @@ const TOKEN_ERRORS: Record<string, true> = { ExpiredToken: true, InvalidToken: t
 
 /** One renewal per key at a time. A call whose token was already replaced takes the
  *  new session. */
-function renew(key: string, cred: GroupCredential, stale: CachedSession): Promise<CachedSession> {
+function renew(
+	key: string,
+	cred: AppPasswordCredential,
+	stale: CachedSession
+): Promise<CachedSession> {
 	const cached = sessions.get(key);
 	if (cached && cached.accessJwt !== stale.accessJwt) return Promise.resolve(cached);
 	let pending = renewing.get(key);
@@ -99,20 +107,59 @@ async function tokenRejected(res: Response): Promise<boolean> {
 	return false;
 }
 
-/** The authed transport for one group account: a typed `Client` and the raw `handle`
- *  it is built on. `expectDid` is checked against the session the PDS returns, so a
- *  credential stored under the wrong group fails loudly. `handle` is exported because
- *  `com.atproto.space.*` and `com.atproto.simplespace.*` are not in this app's
- *  generated lexicon set. A rejected token is retried once after a refresh, which is
- *  safe because every body sent here is re-readable. */
-export async function groupClient(
-	cred: GroupCredential,
-	expectDid: string
-): Promise<{
+type GroupTransport = {
 	client: Client;
 	handle: (pathname: string, init: RequestInit) => Promise<Response>;
 	did: string;
-}> {
+};
+
+/** Which credential served a write as the group: one line per write, never the
+ *  token. Reads are not logged; there are many, and custody is about writes. */
+function reportWrite(
+	via: 'linked' | 'app-password',
+	did: string,
+	pathname: string,
+	init: RequestInit,
+	status: number
+) {
+	if ((init.method ?? 'GET').toUpperCase() === 'GET') return;
+	const nsid = pathname.replace(/^\/xrpc\//, '').split('?')[0];
+	console.info(`[group-session] ${did} ${nsid} via ${via}: ${status}`);
+}
+
+/** The authed transport for one group account: a typed `Client` and the raw `handle`
+ *  it is built on. A linked session is used when the group has one, else the app
+ *  password (`resolveGroupCredential` decides). `expectDid` is checked against the
+ *  session, so a credential stored under the wrong group fails loudly. `handle` is
+ *  exported because `com.atproto.space.*` and `com.atproto.simplespace.*` are not in
+ *  this app's generated lexicon set. */
+export async function groupClient(
+	cred: GroupCredential,
+	expectDid: string
+): Promise<GroupTransport> {
+	return cred.kind === 'linked' ? linkedClient(cred, expectDid) : passwordClient(cred, expectDid);
+}
+
+/** The linked session refreshes its own token and retries once on a rejected one. */
+function linkedClient(cred: LinkedGroupCredential, expectDid: string): GroupTransport {
+	const { session } = cred;
+	if (session.did !== expectDid) {
+		throw new Error(`linked group session authenticates ${session.did}, not ${expectDid}`);
+	}
+	const handle = async (pathname: string, init: RequestInit): Promise<Response> => {
+		const res = await session.handle(pathname, init);
+		reportWrite('linked', expectDid, pathname, init, res.status);
+		return res;
+	};
+	return { client: new Client({ handler: handle }), handle, did: session.did };
+}
+
+/** A rejected token is retried once after a refresh, which is safe because every
+ *  body sent here is re-readable. */
+async function passwordClient(
+	cred: AppPasswordCredential,
+	expectDid: string
+): Promise<GroupTransport> {
 	const key = `${cred.service}|${cred.identifier}`;
 	let session = sessions.get(key);
 	if (!session) {
@@ -135,7 +182,10 @@ export async function groupClient(
 		};
 
 		const first = await send(current.accessJwt);
-		if (!(await tokenRejected(first))) return first;
+		if (!(await tokenRejected(first))) {
+			reportWrite('app-password', expectDid, pathname, init, first.status);
+			return first;
+		}
 
 		const renewed = await renew(key, cred, current);
 		if (renewed.did !== expectDid) {
@@ -143,7 +193,9 @@ export async function groupClient(
 			throw new Error(`refreshed group session authenticates ${renewed.did}, not ${expectDid}`);
 		}
 		sessions.set(key, renewed);
-		return send(renewed.accessJwt);
+		const retried = await send(renewed.accessJwt);
+		reportWrite('app-password', expectDid, pathname, init, retried.status);
+		return retried;
 	};
 
 	return { client: new Client({ handler: handle }), handle, did: session.did };

@@ -34,7 +34,7 @@ import { describeRepair, repairGroup } from './repair';
 import type { GroupRebuildSources } from './rebuild';
 import { pdsSpaceReader, readGroupAbout, type GroupSpaceReader } from './about-read';
 import { groupFace } from '../about-record';
-import { storeGroupCredential, type GroupCredential } from './credentials';
+import { storeGroupCredential, type AppPasswordCredential } from './credentials';
 import { clearGroupSessions } from './session';
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
 import {
@@ -62,7 +62,7 @@ const MEMBERS = spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self');
 
 /** 32 bytes, base64: the credential store accepts nothing shorter. */
 const KEY = btoa('0123456789abcdef0123456789abcdef');
-const CRED: GroupCredential = {
+const CRED: AppPasswordCredential = {
 	service: 'https://pds.stub.test',
 	identifier: 'kona.group.stub.test',
 	password: 'app-pass-1234'

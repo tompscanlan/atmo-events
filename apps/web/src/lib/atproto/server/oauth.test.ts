@@ -31,6 +31,17 @@ describe('createOAuthClient', () => {
 		expect(createOAuthClient(env).metadata.scope).toBe(scopes.join(' '));
 	});
 
+	it('lists the sign-in callback first, so a sign-in returns there, then the group-link callback', () => {
+		expect(createOAuthClient(env).metadata.redirect_uris).toEqual([
+			'https://atmo.example.com/oauth/callback',
+			'https://atmo.example.com/oauth/group-link/callback'
+		]);
+	});
+
+	it('lists a scope once when an extra repeats a base scope', () => {
+		expect(createOAuthClient(env, [scopes[1]]).metadata.scope).toBe(scopes.join(' '));
+	});
+
 	it('refuses to request a grant its own metadata does not declare', async () => {
 		await expect(
 			createOAuthClient(env).authorize({

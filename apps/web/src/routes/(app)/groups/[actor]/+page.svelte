@@ -344,6 +344,17 @@
 				{showSettings ? 'Hide' : 'Show'} group settings
 			</button>
 
+			{#if data.linkOutcome === 'linked'}
+				<p class="text-base-500 dark:text-base-400 mt-3 text-sm">
+					Linked. This site now writes as the group through the session you authorized.
+				</p>
+			{:else if data.linkOutcome === 'failed'}
+				<p class="mt-3 text-sm text-red-600 dark:text-red-400">
+					The link did not complete, and nothing changed. At the group's PDS, sign in as the group
+					itself, not as yourself, and approve the request.
+				</p>
+			{/if}
+
 			{#if showSettings}
 				<form {...resetOnSuccess(updateGroupForm)} class="mt-4 flex flex-col gap-4">
 					<input type="hidden" name="groupDid" value={group.group_did} />
@@ -465,6 +476,34 @@
 					{/if}
 					<div><Button type="submit" variant="secondary">Repair this group</Button></div>
 				</form>
+
+				{#if data.groupLinked !== null}
+					<!-- A plain post, not a remote form: the answer is a redirect to the
+					     group's PDS. Only the owner sees it, and only the owner may link. -->
+					<form
+						method="POST"
+						action="/oauth/group-link"
+						class="border-base-200 dark:border-base-800 mt-8 flex flex-col gap-2 border-t pt-6"
+					>
+						<input type="hidden" name="groupDid" value={group.group_did} />
+						<h3 class="text-sm font-semibold">This group's account</h3>
+						<p class="text-base-500 dark:text-base-400 text-xs">
+							{#if data.groupLinked}
+								This site writes as the group through a session you authorized at the group's PDS.
+								Reconnect if you revoked it there or it stopped working.
+							{:else}
+								This site writes as the group with the app password it kept when the group was
+								created. Link the group's account to replace it: you sign in at the group's PDS as
+								the group, not as yourself, and approve this site.
+							{/if}
+						</p>
+						<div>
+							<Button type="submit" variant="secondary"
+								>{data.groupLinked ? 'Reconnect' : 'Link'} the group's account</Button
+							>
+						</div>
+					</form>
+				{/if}
 			{/if}
 		</section>
 	{/if}

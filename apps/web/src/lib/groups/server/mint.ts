@@ -3,7 +3,7 @@
 // fails here, before a did:plc, a row or a space exists. The owner's key is
 // rotationKeys[0], so they can move the DID without us. We keep only an app password.
 import { Secp256k1PrivateKeyExportable } from '@atcute/crypto';
-import type { GroupCredential } from './credentials';
+import type { AppPasswordCredential } from './credentials';
 
 /** All four are required. The create flow checks them before a step that cannot be undone. */
 export interface MintConfig {
@@ -61,7 +61,7 @@ export interface MintedGroup {
 	did: string;
 	handle: string;
 	/** The app password, ready to store. The account password is already gone. */
-	credential: GroupCredential;
+	credential: AppPasswordCredential;
 	/** `did:key:…`, the public half. */
 	ownerRotationKey: string;
 	/** The owner's private key, multibase. Show it once; never store it. */

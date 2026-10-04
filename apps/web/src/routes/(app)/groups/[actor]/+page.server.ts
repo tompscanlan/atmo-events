@@ -14,6 +14,7 @@ import {
 	rosterFromRows
 } from '$lib/groups/server/members-read';
 import { loadPeople } from '$lib/groups/server/people';
+import { hasLinkedSession } from '$lib/groups/server/linked-session';
 import { groupRouteContext } from '$lib/groups/server/route-context';
 import { countActiveMembers, listJoinRequests, listMembers } from '$lib/groups/server/repo';
 import { readGroupVisibility } from '$lib/groups/server/spaces';
@@ -62,7 +63,7 @@ async function rosterPreview(
 	}
 }
 
-export const load: PageServerLoad = async ({ params, locals, platform }) => {
+export const load: PageServerLoad = async ({ params, locals, platform, url }) => {
 	const db = platform!.env.DB;
 	// Takes a DID or a full handle, and refuses with the same 404 a form gets.
 	const {
@@ -91,6 +92,8 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		? (roster?.find((entry) => entry.role === 'owner')?.did ?? group.owner_did)
 		: null;
 	const preview = roster?.slice(0, ROSTER_PREVIEW) ?? [];
+	const link = url.searchParams.get('link');
+	const linkOutcome = link === 'linked' || link === 'failed' ? link : null;
 
 	return {
 		group,
@@ -120,6 +123,15 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 			...pendingRequests.map((request) => request.did)
 		]),
 		canManageGroup: can(membership.permissions, 'MANAGE_GROUP'),
+		/** For the owner only, who alone may link the group's account: whether
+		 *  this site writes as the group through a session the owner linked.
+		 *  Null for anyone else. */
+		groupLinked:
+			locals.did && locals.did === group.owner_did
+				? await hasLinkedSession(platform!.env, group.group_did)
+				: null,
+		/** How a link the owner just ran ended, from the link callback. */
+		linkOutcome,
 		canAdmitMembers,
 		canSeeMembers: showRoster,
 		canCreateEvent: can(membership.permissions, 'CREATE_EVENT')
