@@ -91,8 +91,15 @@ The about space's member list mirrors the roster. Joining or being admitted puts
 and leaving or being removed takes them off, always on the side of less access: the membership
 record is written before the list entry and removed after it (`server/roster.ts`). Under a
 member-list read policy that list is what lets a member read the group's face with their own
-credential, from any app. The members space's own list stays empty, because a DID on it could read
-the whole roster from the PDS.
+credential, from any app. The members space's own list holds each member and join requester
+write-only, so the PDS tracks the acceptance they write there and still will not let them read the
+roster.
+
+A member's acceptance is their own half of the membership: a record they write from their own
+session into their repo in the members space, at a join or a join request, or at a later sign-in
+that carries the group's grant (`server/acceptance.ts`). Leaving, or withdrawing a request, deletes
+it. It decides only whether the roster shows them confirmed. Access comes from the membership record
+alone, so a member whose PDS serves no spaces can read the group and stays unconfirmed.
 
 Both spaces use a member-list write policy and `open` app access. The write policy governs only
 other users' writes, and the group always writes as the space owner. `open` leaves for later the
@@ -183,7 +190,7 @@ Unit tests run with `vitest` and need no network. The e2e script runs the real c
 PDS and deletes what it writes. The two probes only read a running deployment:
 
 ```bash
-node apps/web/scripts/groups-e2e.mjs            # the group flow, 28 checks
+node apps/web/scripts/groups-e2e.mjs            # the group flow, 31 checks
 node apps/web/scripts/group-declaration.mjs <origin>   # every public group is declared, no private one is
 node apps/web/scripts/inherited-surface.mjs <origin>   # the app's existing pages still answer
 ```
@@ -191,20 +198,23 @@ node apps/web/scripts/inherited-surface.mjs <origin>   # the app's existing page
 The e2e script reads its accounts from the environment, and stops before any network call when one
 is missing:
 
-| name                 | meaning                                                  |
-| -------------------- | -------------------------------------------------------- |
-| `E2E_PDS`            | PDS that hosts the group account; it must serve Spaces   |
-| `E2E_GROUP_DID`      | an existing group account's DID                          |
-| `E2E_GROUP_HANDLE`   | that account's handle                                    |
-| `E2E_GROUP_PASSWORD` | a password for it (an app password works)                |
-| `E2E_CREDENTIALS`    | instead of `E2E_GROUP_PASSWORD`, an env file that has it |
-| `E2E_OWNER_DID`      | the person who owns the group                            |
-| `E2E_ADMIN_DID`      | a person who joins and is promoted to admin              |
-| `E2E_OUTSIDER_DID`   | a person who is never a member                           |
+| name                 | meaning                                                   |
+| -------------------- | --------------------------------------------------------- |
+| `E2E_PDS`            | PDS that hosts the group account; it must serve Spaces    |
+| `E2E_GROUP_DID`      | an existing group account's DID                           |
+| `E2E_GROUP_HANDLE`   | that account's handle                                     |
+| `E2E_GROUP_PASSWORD` | a password for it (an app password works)                 |
+| `E2E_CREDENTIALS`    | instead of the two passwords, an env file that has them   |
+| `E2E_OWNER_DID`      | the person who owns the group                             |
+| `E2E_ADMIN_DID`      | a person who joins and is promoted to admin, on `E2E_PDS` |
+| `E2E_ADMIN_PASSWORD` | their password, for the acceptance they write and delete  |
+| `E2E_OUTSIDER_DID`   | a person who is never a member                            |
 
 The e2e cannot hold a real linked session, which needs the deployment's OAuth client key, so it
 links the group with a stand-in (`scripts/groups-e2e.oauth.ts`) whose session logs in with
 `E2E_GROUP_PASSWORD`. Every write still goes through the app's linked branch; the scope a real link
-carries is checked by a walk through a deployed site with a linked group instead.
+carries is checked by a walk through a deployed site with a linked group instead. The admin's
+acceptance is written the same way, through a stand-in for their own session that logs in with
+`E2E_ADMIN_PASSWORD`, so the consent a real sign-in shows is also left to the walk.
 
 The other two scripts are read-only and need no credentials.

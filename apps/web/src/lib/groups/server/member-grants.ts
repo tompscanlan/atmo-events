@@ -26,6 +26,27 @@ export function acceptanceGrant(groupDid: string): string {
 	return `space:*?authority=${groupDid}&collection=${ACCEPTANCE_COLLECTION}&action=create&action=update&action=delete`;
 }
 
+/** Whether a granted scope lets its holder `action` their acceptance in
+ *  `groupDid`'s spaces. Read by parameter, not compared as a string, so a PDS
+ *  that reorders the grant's parameters still counts. A stock PDS drops a space
+ *  grant it does not know, so a missing grant also means the member's PDS serves
+ *  no spaces. */
+export function holdsAcceptanceGrant(
+	scope: string,
+	groupDid: string,
+	action: 'create' | 'delete'
+): boolean {
+	return scope.split(' ').some((token) => {
+		if (!token.startsWith('space:*?')) return false;
+		const params = new URLSearchParams(token.slice('space:*?'.length));
+		return (
+			params.get('authority') === groupDid &&
+			params.getAll('collection').includes(ACCEPTANCE_COLLECTION) &&
+			params.getAll('action').includes(action)
+		);
+	});
+}
+
 /** One grant per group in D1, for the client metadata. A failed read declares
  *  none: the metadata still serves the base scopes, and sign-in falls back to
  *  them. It does not create the groups tables, because a deployment that never

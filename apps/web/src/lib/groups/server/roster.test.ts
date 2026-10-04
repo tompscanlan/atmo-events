@@ -64,6 +64,8 @@ import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import { GROUP_MEMBERSHIP_COLLECTION } from '../members-record';
 import { DEFAULT_ROLE_PERMISSIONS, type GroupRoleName } from '../permissions';
 import { pdsProvisioner, provisionGroupSpaces, spaceUri } from './spaces';
+import { acceptanceGrant } from './member-grants';
+import type { MemberSession } from './acceptance';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
@@ -847,5 +849,114 @@ describe('a join request holds a write-only entry on the members space list', ()
 
 		expect(pds.members(MEMBERS)).toContainEqual({ did: NEWCOMER, read: false, write: true });
 		expect(pds.listed(ABOUT)).toContain(NEWCOMER);
+	});
+});
+
+// The caller's own acceptance (spec FR-205, FR-209). The member is on the
+// members space's list, write-only, before they write it, so the host tracks the
+// write (FR-206). At leave and withdrawal it is deleted before that entry comes
+// off, because a host that has already dropped the writer refuses the notice
+// of the delete, and its writer set would keep the old state. Neither half can
+// stop the act: the acceptance decides how the roster shows a member, never
+// what they may do.
+describe('the member writes and deletes their own acceptance', () => {
+	/** The caller's session at their own PDS, holding the group's grant. Each
+	 *  acceptance call adds a step to `order`, and fails when `fail` is set. */
+	function memberSession(did: string, { fail = false } = {}): MemberSession {
+		return {
+			did,
+			scope: acceptanceGrant(GROUP_DID),
+			async handle(pathname) {
+				const create = pathname === '/xrpc/com.atproto.space.createRecord';
+				order.push(create ? 'acceptance:create' : 'acceptance:delete');
+				if (fail) return Response.json({ error: 'InternalServerError' }, { status: 500 });
+				return Response.json(create ? { uri: `${MEMBERS}/${did}/x/self`, cid: 'bafy' } : {});
+			}
+		};
+	}
+
+	const acceptanceSteps = () => order.filter((step) => step.startsWith('acceptance:'));
+
+	it('an open join lists the member write-only, then they write their acceptance', async () => {
+		await setGroup({ require_approval: 0 });
+
+		const outcome = await joinGroup({ ...ctx(NEWCOMER), member: memberSession(NEWCOMER) }, null);
+
+		expect(outcome).toBe('joined');
+		expect(order.at(-1)).toBe('acceptance:create');
+		expect(order.lastIndexOf('list:put')).toBeGreaterThan(-1);
+		expect(acceptanceSteps()).toEqual(['acceptance:create']);
+	});
+
+	it('a request lists the requester write-only, then they write their acceptance', async () => {
+		const outcome = await joinGroup({ ...ctx(NEWCOMER), member: memberSession(NEWCOMER) }, null);
+
+		expect(outcome).toBe('pending');
+		expect(order).toEqual(['list:put', 'acceptance:create']);
+	});
+
+	it('leaving deletes the acceptance before either list entry comes off', async () => {
+		await leaveGroup({ ...ctx(MEMBER), member: memberSession(MEMBER) });
+
+		expect(order).toEqual([
+			'acceptance:delete',
+			'list:remove',
+			'list:remove',
+			'record:delete',
+			'row:delete'
+		]);
+	});
+
+	it('withdrawing deletes the acceptance before the write-only entry comes off', async () => {
+		await joinGroup({ ...ctx(NEWCOMER), member: memberSession(NEWCOMER) }, null);
+		order = [];
+
+		await withdrawJoinRequest(
+			{ ...ctx(NEWCOMER), member: memberSession(NEWCOMER) },
+			await pendingId(NEWCOMER)
+		);
+
+		expect(order).toEqual(['acceptance:delete', 'list:remove']);
+		expect(await requestStatus(NEWCOMER)).toBe('withdrawn');
+	});
+
+	it('a refused acceptance write leaves the request standing', async () => {
+		const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		const outcome = await joinGroup(
+			{ ...ctx(NEWCOMER), member: memberSession(NEWCOMER, { fail: true }) },
+			null
+		);
+
+		expect(outcome).toBe('pending');
+		expect(await requestStatus(NEWCOMER)).toBe('pending');
+		expect(pds.members(MEMBERS)).toContainEqual({ did: NEWCOMER, read: false, write: true });
+		expect(warned).toHaveBeenCalled();
+		warned.mockRestore();
+	});
+
+	it('a refused acceptance delete does not stop the leave', async () => {
+		const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		await leaveGroup({ ...ctx(MEMBER), member: memberSession(MEMBER, { fail: true }) });
+
+		expect(await getMemberRow(harness.db, group.id, MEMBER)).toBeNull();
+		expect(pds.listed(MEMBERS)).not.toContain(MEMBER);
+		warned.mockRestore();
+	});
+
+	// The session is the caller's, and only their own acts touch it: an admin's
+	// eject or reject must not delete the admin's own acceptance. A refused
+	// leave stops before it, as before any other write.
+	it('an eject, a reject or a refused leave touches no acceptance', async () => {
+		await ejectMember({ ...ctx(OWNER), member: memberSession(OWNER) }, ADMIN);
+		await joinGroup(ctx(NEWCOMER), null);
+		await rejectJoinRequest(
+			{ ...ctx(OWNER), member: memberSession(OWNER) },
+			await pendingId(NEWCOMER)
+		);
+		await leaveGroup({ ...ctx(OWNER), member: memberSession(OWNER) }).catch(() => {});
+
+		expect(acceptanceSteps()).toEqual([]);
 	});
 });

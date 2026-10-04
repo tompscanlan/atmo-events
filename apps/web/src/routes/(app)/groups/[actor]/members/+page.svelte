@@ -207,7 +207,8 @@
 
 			<h2 class="mt-8 mb-1 text-xl font-semibold">Add a member directly</h2>
 			<p class="text-base-500 dark:text-base-400 mb-3 text-sm">
-				They join at once, with the role you pick. No request or acceptance is involved.
+				They join at once, with the role you pick, and show as unconfirmed until they next sign in,
+				if their account's server supports it.
 			</p>
 			<form {...resetOnSuccess(addMemberForm)} class="flex flex-wrap items-end gap-2">
 				<input type="hidden" name="groupDid" value={group.group_did} />

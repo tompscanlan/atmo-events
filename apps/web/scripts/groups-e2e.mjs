@@ -4,14 +4,16 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 28 numbered checks (1 to 23, plus 10b, 13b, 15b, 20b and 20c), prints
- * one PASS or FAIL line each, and a clean run ends with `SUMMARY: 28 passed, 0
- * failed`. Setup steps print as notes and are not counted. In order: create and
- * the seeded roles (1), join, approval and promotion (2-3), events written as
- * the group DID and the edit gate (4-6), leaving (7-8), a cover image uploaded
- * into the group's repo (9), the profile, rules and access record in the about
- * space (10-12), the roster, the index of the group's spaces and the authz
- * config as records in the members space (13-18), the discovery declaration and
+ * It runs 31 numbered checks (1 to 23, plus 10b, 13b, 15b, 18b, 18c, 18d, 20b
+ * and 20c), prints one PASS or FAIL line each, and a clean run ends with
+ * `SUMMARY: 31 passed, 0 failed`. Setup steps print as notes and are not
+ * counted. In order: create and the seeded roles (1), join, approval and
+ * promotion (2-3), events written as the group DID and the edit gate (4-6),
+ * leaving (7-8), a cover image uploaded into the group's repo (9), the profile,
+ * rules and access record in the about space (10-12), the roster, the index of
+ * the group's spaces and the authz config as records in the members space
+ * (13-18), the member's own acceptance at a join request, at leave and at a
+ * sign-in after a direct add (18b-18d), the discovery declaration and
  * visibility at the host (19-20c), the events index (21-22), and a rebuild of
  * the whole group from its DID (23).
  *
@@ -35,9 +37,10 @@
  *   E2E_GROUP_DID      the group account's DID
  *   E2E_GROUP_HANDLE   its handle
  *   E2E_GROUP_PASSWORD a password for the group account (an app password works), or
- *   E2E_CREDENTIALS    an env file that holds E2E_GROUP_PASSWORD
+ *   E2E_CREDENTIALS    an env file that holds E2E_GROUP_PASSWORD and E2E_ADMIN_PASSWORD
  *   E2E_OWNER_DID      the person who owns the group
- *   E2E_ADMIN_DID      a person who joins and is promoted to admin
+ *   E2E_ADMIN_DID      a person who joins and is promoted to admin, on E2E_PDS
+ *   E2E_ADMIN_PASSWORD their password, for their acceptance (checks 18b-18d)
  *   E2E_OUTSIDER_DID   a person who is never a member
  * The app writes as a group only through the session its owner linked, and a
  * real link needs the deployment's OAuth client key. So the run links the group
@@ -46,11 +49,12 @@
  * app's linked branch. The password lives only in the Worker's bindings and is
  * never printed. A 401 from createSession means it is stale. The scope a real
  * link carries is not exercised here; a walk through a deployed site with a
- * linked group covers it.
+ * linked group covers it. The admin's acceptance is written the same way, through
+ * a stand-in for their own session that logs in with E2E_ADMIN_PASSWORD.
  *
  * Cleanup runs in the `finally`. It deletes the events, withdraws the
- * declaration, and removes the rules, the authz config and the owner's
- * membership. Then it re-reads each one and prints WARN for anything left. The
+ * declaration, deletes the admin's acceptance, and removes the rules, the authz
+ * config and the owner's membership. Then it re-reads each one and prints WARN for anything left. The
  * profile and both `access` records stay at fixed keys that the next run
  * overwrites, and the space index stays until the next run resets it.
  */
@@ -77,8 +81,9 @@ const PDS = required('E2E_PDS');
  *  `runCreateGroup` would leave a new, permanent did:plc behind on every run. */
 const GROUP_DID = required('E2E_GROUP_DID');
 const GROUP_HANDLE = required('E2E_GROUP_HANDLE');
-/** The owner, a member promoted to admin, and a non-member. The run never writes
- *  to their repos. */
+/** The owner, a member promoted to admin, and a non-member. The run writes to one
+ *  of their repos only: the admin's acceptance, in the members space, which it
+ *  deletes again. */
 const ALICE = required('E2E_OWNER_DID');
 const BOB = required('E2E_ADMIN_DID');
 const MALLORY = required('E2E_OUTSIDER_DID');
@@ -128,17 +133,18 @@ function note(text) {
 	console.log(`      ${text}`);
 }
 
-async function loadGroupPassword() {
-	const direct = process.env.E2E_GROUP_PASSWORD?.trim();
-	if (direct) return { path: 'E2E_GROUP_PASSWORD', password: direct };
-	if (!CREDENTIALS_PATH)
-		throw new Error('set E2E_GROUP_PASSWORD, or E2E_CREDENTIALS to a file that holds it');
+/** A password from the environment, else from the E2E_CREDENTIALS file. */
+async function loadPassword(name) {
+	const direct = process.env[name]?.trim();
+	if (direct) return { path: name, password: direct };
+	if (!CREDENTIALS_PATH) throw new Error(`set ${name}, or E2E_CREDENTIALS to a file that holds it`);
 	const text = await readFile(CREDENTIALS_PATH, 'utf8').catch(() => '');
+	const pattern = new RegExp(`^${name}=['"]?([^'"\\s]+)['"]?$`);
 	for (const line of text.split('\n')) {
-		const match = /^E2E_GROUP_PASSWORD=['"]?([^'"\s]+)['"]?$/.exec(line.trim());
+		const match = pattern.exec(line.trim());
 		if (match) return { path: CREDENTIALS_PATH, password: match[1] };
 	}
-	throw new Error(`no E2E_GROUP_PASSWORD in ${CREDENTIALS_PATH}`);
+	throw new Error(`no ${name} in ${CREDENTIALS_PATH}`);
 }
 
 /**
@@ -162,6 +168,23 @@ async function checkGroupAccount(password) {
 	if (body.did !== GROUP_DID) {
 		throw new Error(`${GROUP_HANDLE} resolves to ${body.did}, not the fixture group ${GROUP_DID}`);
 	}
+	return body.accessJwt;
+}
+
+/** Fails early if the admin's password is stale. Returns their session token,
+ *  for reading and resetting their own acceptance without the app's code. */
+async function checkAdminAccount(password) {
+	const response = await fetch(`${PDS}/xrpc/com.atproto.server.createSession`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ identifier: BOB, password })
+	});
+	const body = await response.json().catch(() => ({}));
+	if (!response.ok) {
+		const hint = response.status === 401 ? ' (the fixture password is stale)' : '';
+		throw new Error(`createSession ${BOB} failed: ${response.status} ${body.error ?? ''}${hint}`);
+	}
+	if (body.did !== BOB) throw new Error(`the admin login is ${body.did}, not ${BOB}`);
 	return body.accessJwt;
 }
 
@@ -193,7 +216,7 @@ async function must(op, args = {}) {
 
 /** Bundles the Worker with Vite, like the app's server build, so the modules
  *  compile the way they ship and the `?raw` migration import in schema.ts works. */
-async function startWorker(stateDir, password) {
+async function startWorker(stateDir, password, adminPassword) {
 	const started = Date.now();
 	const outDir = join(stateDir, 'bundle');
 	await build({
@@ -239,7 +262,8 @@ async function startWorker(stateDir, password) {
 		bindings: {
 			E2E_GROUP_SERVICE: PDS,
 			E2E_GROUP_IDENTIFIER: GROUP_HANDLE,
-			E2E_GROUP_PASSWORD: password
+			E2E_GROUP_PASSWORD: password,
+			E2E_ADMIN_PASSWORD: adminPassword
 		},
 		defaultPersistRoot: stateDir
 	});
@@ -306,6 +330,32 @@ async function spaceRecords(token, space, collection) {
 	return { status: response.status, records: body.records ?? [], cursor: body.cursor };
 }
 
+const ACCEPTANCE_COLLECTION = 'group.opensocial.acceptance';
+
+/** The admin's own acceptance in the members space, read with their own session,
+ *  so the check shares no code with the app's writer or its reader. */
+async function ownAcceptance(token, space) {
+	const url = new URL('/xrpc/com.atproto.space.getRecord', PDS);
+	url.searchParams.set('space', space);
+	url.searchParams.set('repo', BOB);
+	url.searchParams.set('collection', ACCEPTANCE_COLLECTION);
+	url.searchParams.set('rkey', 'self');
+	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+	const body = await response.json().catch(() => ({}));
+	return { status: response.status, ...body };
+}
+
+/** Deletes the admin's acceptance with their own session: a leftover from an
+ *  earlier run would make checks 18b and 18d pass on stale data. */
+async function deleteOwnAcceptance(token, space) {
+	const response = await fetch(new URL('/xrpc/com.atproto.space.deleteRecord', PDS), {
+		method: 'POST',
+		headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+		body: JSON.stringify({ space, repo: BOB, collection: ACCEPTANCE_COLLECTION, rkey: 'self' })
+	});
+	return response.status;
+}
+
 /** A space's read policy as the host reports it. */
 async function spaceReadPolicy(token, space) {
 	const url = new URL('/xrpc/com.atproto.simplespace.getSpace', PDS);
@@ -368,10 +418,13 @@ async function main() {
 	console.log(`  humans  owner ${ALICE}, admin ${BOB}, non-member ${MALLORY}`);
 	console.log('');
 
-	const { path, password } = await loadGroupPassword();
+	const { path, password } = await loadPassword('E2E_GROUP_PASSWORD');
 	note(`fixture credentials loaded from ${path}`);
 	const groupToken = await checkGroupAccount(password);
 	note(`${GROUP_HANDLE} authenticates as ${GROUP_DID}`);
+	const { password: adminPassword } = await loadPassword('E2E_ADMIN_PASSWORD');
+	const bobToken = await checkAdminAccount(adminPassword);
+	note(`${BOB} authenticates for their own acceptance`);
 
 	const stateDir = await mkdtemp(join(tmpdir(), 'groups-e2e-'));
 	let worker;
@@ -385,8 +438,10 @@ async function main() {
 	let declared = false;
 	/** Set while the about space may be private, so the `finally` makes it public. */
 	let hostPrivate = false;
+	/** Set once the admin's acceptance may exist, so the `finally` deletes it. */
+	let acceptanceWritten = false;
 	try {
-		worker = await startWorker(stateDir, password);
+		worker = await startWorker(stateDir, password, adminPassword);
 		note(`worker bundled and ready in ${worker.seconds}s (workerd, empty D1 under ${stateDir})`);
 		console.log('');
 
@@ -1029,6 +1084,96 @@ async function main() {
 				`${strangerCheck.hasAccess}; roster ${afterEject.roster.length}`
 		);
 
+		// 18b. a join request writes the requester's acceptance --------------------
+		// The member's own half of a membership, written from their own session
+		// into their repo in the members space, at request time, after the group
+		// has listed them there write-only. Approval adds the group's half, and the
+		// roster, which reads acceptances by DID with the group's credential, then
+		// shows them confirmed.
+		const reset = await deleteOwnAcceptance(bobToken, membersSpaceUri);
+		note(`reset ${BOB}'s acceptance before the acceptance checks (deleteRecord ${reset})`);
+		acceptanceWritten = true;
+		const asked = await must('joinGroup', {
+			groupId: group.id,
+			callerDid: BOB,
+			asMember: true,
+			message: 'back again'
+		});
+		const atRequest = await ownAcceptance(bobToken, membersSpaceUri);
+		const listAtRequest = await spaceMemberList(groupToken, membersSpaceUri);
+		const pendingAgain = await must('listJoinRequests', { groupId: group.id });
+		const bobsRequest = pendingAgain.find((request) => request.did === BOB);
+		await must('admitFromRequest', {
+			groupId: group.id,
+			callerDid: ALICE,
+			requestId: bobsRequest?.id,
+			role: 'member'
+		});
+		const approvedRoster = await must('confirmedRoster', { groupId: group.id });
+		const bobApproved = approvedRoster.roster.find((entry) => entry.did === BOB);
+		record(
+			asked.outcome === 'pending' &&
+				atRequest.status === 200 &&
+				typeof atRequest.value?.createdAt === 'string' &&
+				listAtRequest.members.some((m) => m.did === BOB && m.read === false && m.write === true) &&
+				bobApproved?.confirmed === true,
+			"a join request writes the requester's acceptance from their own session, and once approved the roster shows them confirmed",
+			`request ${asked.outcome}; acceptance at request ${atRequest.error ?? atRequest.status} ` +
+				`(createdAt ${atRequest.value?.createdAt}); members list entry ` +
+				`${JSON.stringify(listAtRequest.members.find((m) => m.did === BOB) ?? null)}; ` +
+				`approved: ${bobApproved?.role ?? 'not on the roster'}, confirmed ${bobApproved?.confirmed}`
+		);
+
+		// 18c. leaving deletes it ---------------------------------------------------
+		// From the member's session, before the group takes them off the members
+		// list, so the host still accepts the notice of the delete.
+		const beforeLeaving = await ownAcceptance(bobToken, membersSpaceUri);
+		await must('leaveGroup', { groupId: group.id, callerDid: BOB, asMember: true });
+		const afterLeaving = await ownAcceptance(bobToken, membersSpaceUri);
+		const rosterAfterLeaving = await must('confirmedRoster', { groupId: group.id });
+		const listAfterLeaving = await spaceMemberList(groupToken, membersSpaceUri);
+		record(
+			beforeLeaving.status === 200 &&
+				notFound(afterLeaving) &&
+				!rosterAfterLeaving.roster.some((entry) => entry.did === BOB) &&
+				listAfterLeaving.status === 200 &&
+				!listAfterLeaving.members.some((m) => m.did === BOB),
+			"leaving deletes the member's acceptance, and takes them off the roster and the members list",
+			`acceptance before leave ${beforeLeaving.error ?? beforeLeaving.status}, after ` +
+				`${afterLeaving.error ?? afterLeaving.status}; on the roster ` +
+				`${rosterAfterLeaving.roster.some((entry) => entry.did === BOB)}; on the members list ` +
+				`${listAfterLeaving.members.some((m) => m.did === BOB)}`
+		);
+
+		// 18d. a direct add is unconfirmed until the member's next sign-in -----------
+		// The member was not there to write an acceptance. They can still read,
+		// because access comes from membership alone, and the roster shows them,
+		// unconfirmed. The sign-in callback's write then confirms them.
+		await must('admitMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'member' });
+		const addedRoster = await must('confirmedRoster', { groupId: group.id });
+		const bobAdded = addedRoster.roster.find((entry) => entry.did === BOB);
+		const addedGate = await must('gate', { groupId: group.id, did: BOB });
+		const beforeSignIn = await ownAcceptance(bobToken, membersSpaceUri);
+		await must('signInAcceptances', { groupId: group.id, did: BOB });
+		const afterSignIn = await ownAcceptance(bobToken, membersSpaceUri);
+		const signedInRoster = await must('confirmedRoster', { groupId: group.id });
+		const bobSignedIn = signedInRoster.roster.find((entry) => entry.did === BOB);
+		record(
+			bobAdded?.confirmed === false &&
+				addedGate.onRoster === true &&
+				addedGate.canSee === true &&
+				notFound(beforeSignIn) &&
+				afterSignIn.status === 200 &&
+				bobSignedIn?.confirmed === true,
+			'a member added directly can read and shows as unconfirmed, and their next sign-in writes the acceptance that confirms them',
+			`added: confirmed ${bobAdded?.confirmed}, on the roster ${addedGate.onRoster}, can see ` +
+				`${addedGate.canSee}; acceptance before sign-in ${beforeSignIn.error ?? beforeSignIn.status}, ` +
+				`after ${afterSignIn.error ?? afterSignIn.status}; confirmed after ${bobSignedIn?.confirmed}`
+		);
+		// Back out the same way, so checks 19-23 see the roster check 18 left.
+		await must('leaveGroup', { groupId: group.id, callerDid: BOB, asMember: true });
+		note(`${BOB} left again (acceptance deleted, roster back to the owner alone)`);
+
 		// 19. the declaration: the record that lets other apps discover the group --
 		// Asserted on the raw JSON an anonymous peer app gets, not through our parser.
 		await must('reconcileDeclaration', {
@@ -1296,6 +1441,19 @@ async function main() {
 				}
 			} catch (error) {
 				console.log(`WARN  could not reset the about space read policy: ${error.message}`);
+			}
+		}
+		if (spacesProvisioned && acceptanceWritten) {
+			// The admin's membership record too, should a check have stopped before
+			// they left.
+			try {
+				await call('dropMembership', { groupId: group.id, callerDid: BOB, did: BOB });
+				await deleteOwnAcceptance(bobToken, membersSpaceUri);
+				const after = await ownAcceptance(bobToken, membersSpaceUri);
+				if (notFound(after)) note(`deleted ${BOB}'s acceptance (${after.error})`);
+				else console.log(`WARN  ${BOB}'s acceptance may be left: ${after.error ?? after.status}`);
+			} catch (error) {
+				console.log(`WARN  could not clean up ${BOB}'s acceptance: ${error.message}`);
 			}
 		}
 		if (spacesProvisioned) {

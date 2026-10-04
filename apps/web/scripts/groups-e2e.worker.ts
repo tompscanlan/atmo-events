@@ -81,12 +81,17 @@ import {
 	writeGroupSpaceIndex
 } from '../src/lib/groups/server/members-writer';
 import {
+	admitFromRequest,
 	admitMember,
 	joinGroup,
 	ejectMember,
+	leaveGroup,
 	promoteMember,
 	type RosterContext
 } from '../src/lib/groups/server/roster';
+import { writeMissingAcceptances, type MemberSession } from '../src/lib/groups/server/acceptance';
+import { acceptanceGrant } from '../src/lib/groups/server/member-grants';
+import { groupAcceptanceReader } from '../src/lib/groups/server/space-credential';
 
 interface Env {
 	DB: D1Database;
@@ -96,6 +101,8 @@ interface Env {
 	E2E_GROUP_SERVICE: string;
 	E2E_GROUP_IDENTIFIER: string;
 	E2E_GROUP_PASSWORD: string;
+	/** The admin's login, for the stand-in of their own session (`adminSession`). */
+	E2E_ADMIN_PASSWORD: string;
 }
 
 type AssignableRole = Exclude<GroupRoleName, 'owner'>;
@@ -116,13 +123,55 @@ async function groupById(env: Env, groupId: unknown): Promise<GroupRow> {
 	return row;
 }
 
-/** A roster act's context. The driver names the caller on every call. */
+// One admin login per isolate, as the group's stand-in does.
+let adminLogin: Promise<{ did: string; accessJwt: string }> | null = null;
+
+/** The stand-in for the admin's own session, for their acceptance. A sign-in
+ *  would carry the group's grant in its scope; a password session needs none at
+ *  the PDS, so the scope here is that grant, written out. What it cannot show is
+ *  a real sign-in's consent; a walk through a deployed site covers that. */
+async function adminSession(env: Env, did: string, group: GroupRow): Promise<MemberSession> {
+	adminLogin ??= (async () => {
+		const res = await fetch(
+			new URL('/xrpc/com.atproto.server.createSession', env.E2E_GROUP_SERVICE),
+			{
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ identifier: did, password: env.E2E_ADMIN_PASSWORD })
+			}
+		);
+		// The DID is safe to name; the password never is.
+		if (!res.ok) throw new Error(`stand-in login for ${did} was refused (${res.status})`);
+		return (await res.json()) as { did: string; accessJwt: string };
+	})().catch((e) => {
+		adminLogin = null;
+		throw e;
+	});
+	const { did: loggedIn, accessJwt } = await adminLogin;
+	if (loggedIn !== did) throw new Error(`the admin login is ${loggedIn}, not ${did}`);
+	return {
+		did,
+		scope: acceptanceGrant(group.group_did),
+		handle: (pathname, init) => {
+			const headers = new Headers(init.headers);
+			headers.set('authorization', `Bearer ${accessJwt}`);
+			return fetch(new URL(pathname, env.E2E_GROUP_SERVICE), { ...init, headers });
+		}
+	};
+}
+
+/** A roster act's context. The driver names the caller on every call, and
+ *  `asMember` hands the act the caller's own session, as the join and leave
+ *  forms do. */
 async function rosterCtx(env: Env, args: Args): Promise<RosterContext> {
+	const group = await groupById(env, args.groupId);
+	const callerDid = String(args.callerDid);
 	return {
 		db: env.DB,
 		env,
-		group: await groupById(env, args.groupId),
-		callerDid: String(args.callerDid)
+		group,
+		callerDid,
+		member: args.asMember ? await adminSession(env, callerDid, group) : null
 	};
 }
 
@@ -337,6 +386,48 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	joinGroup: async (env, args) => ({
 		outcome: await joinGroup(await rosterCtx(env, args), (args.message as string | null) ?? null)
 	}),
+
+	/** The leave form's roster act. */
+	leaveGroup: async (env, args) => {
+		await leaveGroup(await rosterCtx(env, args));
+		return { left: args.callerDid };
+	},
+
+	/** The approve button's roster act: row, record and both member lists. */
+	admitFromRequest: async (env, args) =>
+		admitFromRequest(
+			await rosterCtx(env, args),
+			String(args.requestId),
+			(args.role as AssignableRole) ?? 'member'
+		),
+
+	/** What the sign-in callback runs for the caller (acceptOnSignIn, without the
+	 *  OAuth session it reads the scope from). */
+	signInAcceptances: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		await writeMissingAcceptances(env.DB, await adminSession(env, String(args.did), group));
+		return { signedIn: args.did };
+	},
+
+	/** The roster as the members page shows it: the records, each entry marked
+	 *  confirmed or not from the acceptances read by DID with the group's
+	 *  credential. `confirmed` is null when they could not be read. */
+	confirmedRoster: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const members = await readGroupMembers(await spaceReader(env, group), group);
+		const dids = members.memberships.map((record) => record.subject);
+		const acceptances = await groupAcceptanceReader(env, env.DB, group);
+		const space = group.members_space_uri;
+		const accepted =
+			acceptances && space && dids.length > 0 ? await acceptances.accepted(space, dids) : null;
+		return {
+			roster: rosterFromRecords(members, accepted).map((entry) => ({
+				did: entry.did,
+				role: entry.role,
+				confirmed: entry.confirmed
+			}))
+		};
+	},
 
 	/** The page gate's predicate for one caller. The route module itself cannot be
 	 *  bundled here: it pulls in the app's identity resolver, a Svelte module. */

@@ -49,6 +49,7 @@ import {
 } from './server/roster';
 import { GroupSpaceError } from './server/spaces';
 import { reauthorizeForGroup } from './server/member-grants';
+import { memberSession, type MemberSession } from './server/acceptance';
 import { createOAuthClient, servesClientMetadata } from '$lib/atproto/server/oauth';
 import { scopes } from '$lib/atproto/settings';
 import type { Did } from '@atcute/lexicons';
@@ -205,6 +206,19 @@ function rosterFailure(e: unknown): GroupFormFailure {
 	return formError(e);
 }
 
+/** The caller's own session, for their acceptance (./server/acceptance.ts). Null
+ *  when there is none to read, and then no acceptance is touched. */
+async function callerMember(): Promise<MemberSession | null> {
+	const { locals } = getRequestEvent();
+	if (!locals.session) return null;
+	try {
+		return await memberSession(locals.session);
+	} catch (e) {
+		console.warn('[groups] no member session for the acceptance:', e);
+		return null;
+	}
+}
+
 /** Where to send a member who just joined or asked to join, so their session
  *  carries the group's acceptance grant before their next sign-in (spec FR-208:
  *  joining or requesting re-authorizes). On a device the PDS remembers, nothing
@@ -236,7 +250,7 @@ export const joinGroupForm = form(
 		const ctx = await context(data.groupDid);
 		let outcome: JoinOutcome;
 		try {
-			outcome = await joinGroup(ctx, data.message || null);
+			outcome = await joinGroup({ ...ctx, member: await callerMember() }, data.message || null);
 		} catch (e) {
 			return rosterFailure(e);
 		}
@@ -250,7 +264,7 @@ export const joinGroupForm = form(
 export const leaveGroupForm = form(
 	v.object({ groupDid: didField }),
 	async (data): Promise<GroupFormResult<{ outcome: 'withdrawn' | 'left' }>> => {
-		const ctx = await context(data.groupDid);
+		const ctx = { ...(await context(data.groupDid)), member: await callerMember() };
 		try {
 			// A pending applicant has no record: their write-only entry comes off
 			// the members space's list, and the request closes.

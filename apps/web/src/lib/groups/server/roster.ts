@@ -12,6 +12,12 @@
 // but it follows the same rule: its row goes in before the requester's
 // write-only entry, and the entry comes off before a reject or a withdrawal
 // closes the row.
+//
+// The caller's own acts (join, request, leave, withdraw) also write or delete
+// their acceptance, from their own session (./acceptance.ts). It goes in after
+// their write-only entry, so the host tracks the write, and comes out before
+// that entry does, so the host still accepts the notice of the delete. It never
+// stops the act: it decides how the roster shows a member, not what they may do.
 import { GROUP_ROLES, type GroupRoleName } from '../permissions';
 import type { GroupRow, GroupVisibility, MemberRow } from '../types';
 import type { CredentialStoreEnv } from './credentials';
@@ -50,6 +56,7 @@ import {
 	type GroupMemberList
 } from './member-list';
 import { readGroupVisibility } from './spaces';
+import { deleteAcceptance, writeAcceptance, type MemberSession } from './acceptance';
 
 /** A grant whose row moved but whose record did not. */
 export class RosterRecordError extends Error {
@@ -104,6 +111,9 @@ export interface RosterContext {
 	/** The visibility the route read from the host, or `null` if it did not ask.
 	 *  When absent, a join asks the host itself. */
 	visibility?: GroupVisibility | null;
+	/** The caller's own session at their PDS, for their acceptance. Absent, or
+	 *  someone else's, and no acceptance is touched. */
+	member?: MemberSession | null;
 }
 
 type AssignableRole = Exclude<GroupRoleName, 'owner'>;
@@ -142,9 +152,39 @@ async function listed(ctx: RosterContext, subject: string): Promise<void> {
 	}
 }
 
+/** The session, when it is the caller's own. */
+function callerSession(ctx: RosterContext): MemberSession | null {
+	return ctx.member && ctx.member.did === ctx.callerDid ? ctx.member : null;
+}
+
+/** The caller writes their acceptance. A failure is logged, and a sign-in that
+ *  holds the grant writes it later. */
+async function accept(ctx: RosterContext): Promise<void> {
+	const member = callerSession(ctx);
+	if (!member) return;
+	try {
+		await writeAcceptance(member, ctx.group);
+	} catch (e) {
+		console.warn(`[groups] ${member.did} wrote no acceptance in ${ctx.group.group_did}:`, e);
+	}
+}
+
+/** The caller deletes their acceptance. A failure is logged and the act goes on:
+ *  an acceptance with no membership never reaches the roster. */
+async function unaccept(ctx: RosterContext): Promise<void> {
+	const member = callerSession(ctx);
+	if (!member) return;
+	try {
+		await deleteAcceptance(member, ctx.group);
+	} catch (e) {
+		console.warn(`[groups] ${member.did}'s acceptance in ${ctx.group.group_did} stays:`, e);
+	}
+}
+
 /** Leave and eject. Every check, the gate included, runs before the first
  *  write, because the list entries go first: read access, then the write-only
- *  entry. Once the first is gone, any failure leaves the DID unable to read. */
+ *  entry. Once the first is gone, any failure leaves the DID unable to read.
+ *  A leave deletes the caller's acceptance before either. */
 async function revoke(ctx: RosterContext, subject: string, intent: MembershipDrop): Promise<void> {
 	await changeableRow(ctx, subject);
 	await authorizeMembership({ ...ctx, subject, intent });
@@ -152,6 +192,7 @@ async function revoke(ctx: RosterContext, subject: string, intent: MembershipDro
 	const members = membersSpace(ctx.group);
 	const list = await memberListFor(ctx);
 
+	if (intent === 'leave') await unaccept(ctx);
 	await list.remove({ space: about, did: subject });
 	try {
 		await list.remove({ space: members, did: subject });
@@ -218,7 +259,8 @@ async function joinVisibility(ctx: RosterContext): Promise<GroupVisibility | nul
 /** Self-service join. Only `joined` is published: the groups standard models
  *  a join request as host state, not a record. A `pending` request still puts
  *  the requester on the members space's list, write-only, because they write
- *  their acceptance at request time (spec 003 FR-206). */
+ *  their acceptance at request time (spec 003 FR-206). Either way the caller
+ *  then writes it, when their session holds the group's grant. */
 export async function joinGroup(ctx: RosterContext, message: string | null): Promise<JoinOutcome> {
 	const outcome = await requestJoin(
 		ctx.db,
@@ -233,6 +275,7 @@ export async function joinGroup(ctx: RosterContext, message: string | null): Pro
 		} catch (e) {
 			throw new RosterListError(ctx.callerDid, 'request', e);
 		}
+		await accept(ctx);
 		return outcome;
 	}
 	if (outcome !== 'joined') return outcome;
@@ -249,6 +292,7 @@ export async function joinGroup(ctx: RosterContext, message: string | null): Pro
 		})
 	);
 	await listed(ctx, ctx.callerDid);
+	await accept(ctx);
 	return outcome;
 }
 
@@ -295,14 +339,17 @@ export async function admitMember(
 
 /** Takes a pending request's write-only entry off, then closes the request.
  *  The entry goes first, so a failed close leaves a request the host does not
- *  track, which Repair lists again, rather than a closed one it still does. */
+ *  track, which Repair lists again, rather than a closed one it still does. A
+ *  withdrawal deletes the requester's acceptance before the entry. */
 async function closeRequest(
 	ctx: RosterContext,
 	requestId: string,
 	did: string,
 	status: 'rejected' | 'withdrawn'
 ): Promise<void> {
-	await unlistJoinRequester(await memberListFor(ctx), ctx.group, did);
+	const list = await memberListFor(ctx);
+	if (status === 'withdrawn') await unaccept(ctx);
+	await unlistJoinRequester(list, ctx.group, did);
 	await decideJoinRequest(ctx.db, ctx.group.id, requestId, ctx.callerDid, status);
 }
 
