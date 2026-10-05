@@ -45,6 +45,8 @@
  *   E2E_OUTSIDER_DID   a person who is never a member
  *   E2E_NOSPACES_DID   a person on a PDS that serves no spaces (bsky.social), for
  *                      check 18e; no password, because nothing is written to their repo
+ *   E2E_PLC_URL        optional: a sandbox's PLC directory (atproto-devnet's), asked
+ *                      before plc.directory, for a network no relay crawls
  * The app writes as a group only through the session its owner linked, and a
  * real link needs the deployment's OAuth client key. So the run links the group
  * with a stand-in (scripts/groups-e2e.oauth.ts, aliased over the OAuth client):
@@ -81,6 +83,9 @@ function required(name) {
 }
 
 const PDS = required('E2E_PDS');
+/** A sandbox's own PLC directory. Unset, the app resolves at plc.directory as it
+ *  ships; set, scripts/groups-e2e.identity-resolver.ts asks here first. */
+const PLC_URL = process.env.E2E_PLC_URL?.trim() || null;
 
 /** An existing group account, bound through `createGroup`. Minting one with
  *  `runCreateGroup` would leave a new, permanent did:plc behind on every run. */
@@ -241,9 +246,19 @@ async function startWorker(stateDir, password, adminPassword) {
 				{
 					find: /^\$lib\/atproto\/server\/oauth$/,
 					replacement: join(WEB_DIR, 'scripts/groups-e2e.oauth.ts')
-				}
+				},
+				// A sandbox's PLC directory, asked before plc.directory.
+				...(PLC_URL
+					? [
+							{
+								find: /^@atcute\/identity-resolver$/,
+								replacement: join(WEB_DIR, 'scripts/groups-e2e.identity-resolver.ts')
+							}
+						]
+					: [])
 			]
 		},
+		define: PLC_URL ? { __E2E_PLC_URL__: JSON.stringify(PLC_URL) } : {},
 		build: {
 			ssr: WORKER_ENTRY,
 			outDir,
@@ -430,6 +445,7 @@ function eventRecord(name, { country, createdAt, image } = {}) {
 async function main() {
 	console.log('groups e2e');
 	console.log(`  pds     ${PDS}`);
+	if (PLC_URL) console.log(`  plc     ${PLC_URL}, then plc.directory`);
 	console.log(`  group   ${GROUP_HANDLE} (${GROUP_DID})`);
 	console.log(`  humans  owner ${ALICE}, admin ${BOB}, non-member ${MALLORY}`);
 	console.log(`          no-spaces member ${CAROL}`);

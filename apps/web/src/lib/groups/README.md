@@ -220,4 +220,8 @@ acceptance is written the same way, through a stand-in for their own session tha
 member needs no password: their stand-in answers the scope a PDS without spaces grants and refuses
 every request, so the run writes nothing to their repo and can show the app sent nothing there.
 
+Set `E2E_PLC_URL` to run against a sandbox with its own PLC directory, such as atproto-devnet's.
+The build then swaps in `scripts/groups-e2e.identity-resolver.ts`, which resolves each did:plc
+there first and at plc.directory for a DID the sandbox does not know.
+
 The other two scripts are read-only and need no credentials.
