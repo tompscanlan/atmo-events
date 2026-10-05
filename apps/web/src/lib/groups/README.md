@@ -190,7 +190,7 @@ Unit tests run with `vitest` and need no network. The e2e script runs the real c
 PDS and deletes what it writes. The two probes only read a running deployment:
 
 ```bash
-node apps/web/scripts/groups-e2e.mjs            # the group flow, 31 checks
+node apps/web/scripts/groups-e2e.mjs            # the group flow, 32 checks
 node apps/web/scripts/group-declaration.mjs <origin>   # every public group is declared, no private one is
 node apps/web/scripts/inherited-surface.mjs <origin>   # the app's existing pages still answer
 ```
@@ -198,23 +198,26 @@ node apps/web/scripts/inherited-surface.mjs <origin>   # the app's existing page
 The e2e script reads its accounts from the environment, and stops before any network call when one
 is missing:
 
-| name                 | meaning                                                   |
-| -------------------- | --------------------------------------------------------- |
-| `E2E_PDS`            | PDS that hosts the group account; it must serve Spaces    |
-| `E2E_GROUP_DID`      | an existing group account's DID                           |
-| `E2E_GROUP_HANDLE`   | that account's handle                                     |
-| `E2E_GROUP_PASSWORD` | a password for it (an app password works)                 |
-| `E2E_CREDENTIALS`    | instead of the two passwords, an env file that has them   |
-| `E2E_OWNER_DID`      | the person who owns the group                             |
-| `E2E_ADMIN_DID`      | a person who joins and is promoted to admin, on `E2E_PDS` |
-| `E2E_ADMIN_PASSWORD` | their password, for the acceptance they write and delete  |
-| `E2E_OUTSIDER_DID`   | a person who is never a member                            |
+| name                 | meaning                                                      |
+| -------------------- | ------------------------------------------------------------ |
+| `E2E_PDS`            | PDS that hosts the group account; it must serve Spaces       |
+| `E2E_GROUP_DID`      | an existing group account's DID                              |
+| `E2E_GROUP_HANDLE`   | that account's handle                                        |
+| `E2E_GROUP_PASSWORD` | a password for it (an app password works)                    |
+| `E2E_CREDENTIALS`    | instead of the two passwords, an env file that has them      |
+| `E2E_OWNER_DID`      | the person who owns the group                                |
+| `E2E_ADMIN_DID`      | a person who joins and is promoted to admin, on `E2E_PDS`    |
+| `E2E_ADMIN_PASSWORD` | their password, for the acceptance they write and delete     |
+| `E2E_OUTSIDER_DID`   | a person who is never a member                               |
+| `E2E_NOSPACES_DID`   | a person on a PDS that serves no spaces, such as bsky.social |
 
 The e2e cannot hold a real linked session, which needs the deployment's OAuth client key, so it
 links the group with a stand-in (`scripts/groups-e2e.oauth.ts`) whose session logs in with
 `E2E_GROUP_PASSWORD`. Every write still goes through the app's linked branch; the scope a real link
 carries is checked by a walk through a deployed site with a linked group instead. The admin's
 acceptance is written the same way, through a stand-in for their own session that logs in with
-`E2E_ADMIN_PASSWORD`, so the consent a real sign-in shows is also left to the walk.
+`E2E_ADMIN_PASSWORD`, so the consent a real sign-in shows is also left to the walk. The no-spaces
+member needs no password: their stand-in answers the scope a PDS without spaces grants and refuses
+every request, so the run writes nothing to their repo and can show the app sent nothing there.
 
 The other two scripts are read-only and need no credentials.

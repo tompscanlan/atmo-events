@@ -4,16 +4,17 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 31 numbered checks (1 to 23, plus 10b, 13b, 15b, 18b, 18c, 18d, 20b
- * and 20c), prints one PASS or FAIL line each, and a clean run ends with
- * `SUMMARY: 31 passed, 0 failed`. Setup steps print as notes and are not
+ * It runs 32 numbered checks (1 to 23, plus 10b, 13b, 15b, 18b, 18c, 18d, 18e,
+ * 20b and 20c), prints one PASS or FAIL line each, and a clean run ends with
+ * `SUMMARY: 32 passed, 0 failed`. Setup steps print as notes and are not
  * counted. In order: create and the seeded roles (1), join, approval and
  * promotion (2-3), events written as the group DID and the edit gate (4-6),
  * leaving (7-8), a cover image uploaded into the group's repo (9), the profile,
  * rules and access record in the about space (10-12), the roster, the index of
  * the group's spaces and the authz config as records in the members space
  * (13-18), the member's own acceptance at a join request, at leave and at a
- * sign-in after a direct add (18b-18d), the discovery declaration and
+ * sign-in after a direct add (18b-18d), a member whose PDS serves no spaces
+ * (18e), the discovery declaration and
  * visibility at the host (19-20c), the events index (21-22), and a rebuild of
  * the whole group from its DID (23).
  *
@@ -42,6 +43,8 @@
  *   E2E_ADMIN_DID      a person who joins and is promoted to admin, on E2E_PDS
  *   E2E_ADMIN_PASSWORD their password, for their acceptance (checks 18b-18d)
  *   E2E_OUTSIDER_DID   a person who is never a member
+ *   E2E_NOSPACES_DID   a person on a PDS that serves no spaces (bsky.social), for
+ *                      check 18e; no password, because nothing is written to their repo
  * The app writes as a group only through the session its owner linked, and a
  * real link needs the deployment's OAuth client key. So the run links the group
  * with a stand-in (scripts/groups-e2e.oauth.ts, aliased over the OAuth client):
@@ -50,7 +53,9 @@
  * never printed. A 401 from createSession means it is stale. The scope a real
  * link carries is not exercised here; a walk through a deployed site with a
  * linked group covers it. The admin's acceptance is written the same way, through
- * a stand-in for their own session that logs in with E2E_ADMIN_PASSWORD.
+ * a stand-in for their own session that logs in with E2E_ADMIN_PASSWORD. The
+ * no-spaces member's stand-in never logs in: it answers the scope a stock PDS
+ * grants and refuses any request, so check 18e can show the app sent none.
  *
  * Cleanup runs in the `finally`. It deletes the events, withdraws the
  * declaration, deletes the admin's acceptance, and removes the rules, the authz
@@ -87,6 +92,8 @@ const GROUP_HANDLE = required('E2E_GROUP_HANDLE');
 const ALICE = required('E2E_OWNER_DID');
 const BOB = required('E2E_ADMIN_DID');
 const MALLORY = required('E2E_OUTSIDER_DID');
+/** Use case step 4's member, on a PDS that serves no spaces. */
+const CAROL = required('E2E_NOSPACES_DID');
 /** Check 1's create, reused by check 23 if its rebuild fails. */
 const CREATE_ARGS = {
 	groupDid: GROUP_DID,
@@ -283,6 +290,15 @@ function notFound(read) {
 	return read.error === 'RecordNotFound';
 }
 
+/** A PDS that serves no spaces refuses a space read itself: a 4xx, or 501 for
+ *  a method it lacks. A RecordNotFound, or a credential it calls expired or
+ *  revoked, comes from a PDS that serves spaces, and a 5xx says nothing. */
+function refusesSpaceRead(read) {
+	const spacesAnswer = ['RecordNotFound', 'JwtExpired', 'CredentialRevoked'];
+	const refused = read.status === 501 || (read.status >= 400 && read.status < 500);
+	return refused && !spacesAnswer.includes(read.error);
+}
+
 /** Unauthenticated read straight from the PDS. */
 async function getRecord(repo, rkey, collection = EVENT_COLLECTION) {
 	const url = new URL('/xrpc/com.atproto.repo.getRecord', PDS);
@@ -416,6 +432,7 @@ async function main() {
 	console.log(`  pds     ${PDS}`);
 	console.log(`  group   ${GROUP_HANDLE} (${GROUP_DID})`);
 	console.log(`  humans  owner ${ALICE}, admin ${BOB}, non-member ${MALLORY}`);
+	console.log(`          no-spaces member ${CAROL}`);
 	console.log('');
 
 	const { path, password } = await loadPassword('E2E_GROUP_PASSWORD');
@@ -440,6 +457,8 @@ async function main() {
 	let hostPrivate = false;
 	/** Set once the admin's acceptance may exist, so the `finally` deletes it. */
 	let acceptanceWritten = false;
+	/** Set while the no-spaces member may be on the roster, so the `finally` removes them. */
+	let noSpacesJoined = false;
 	try {
 		worker = await startWorker(stateDir, password, adminPassword);
 		note(`worker bundled and ready in ${worker.seconds}s (workerd, empty D1 under ${stateDir})`);
@@ -1174,6 +1193,58 @@ async function main() {
 		await must('leaveGroup', { groupId: group.id, callerDid: BOB, asMember: true });
 		note(`${BOB} left again (acceptance deleted, roster back to the owner alone)`);
 
+		// 18e. a member whose PDS serves no spaces ---------------------------------
+		// Use case step 4. Their PDS drops the group's grant at sign-in, so they can
+		// never write an acceptance: they show unconfirmed, still read the group,
+		// and their sign-in still works. The premise is checked first-hand: their
+		// PDS must refuse the group's space read itself, since a RecordNotFound
+		// would mean it serves spaces and the check proves nothing about step 4.
+		noSpacesJoined = true;
+		const carolAsked = await must('joinGroup', {
+			groupId: group.id,
+			callerDid: CAROL,
+			asMember: true,
+			session: 'no-spaces',
+			message: null
+		});
+		const carolsRequest = (await must('listJoinRequests', { groupId: group.id })).find(
+			(request) => request.did === CAROL
+		);
+		await must('admitFromRequest', {
+			groupId: group.id,
+			callerDid: ALICE,
+			requestId: carolsRequest?.id,
+			role: 'member'
+		});
+		await must('signInCallback', { groupId: group.id, did: CAROL });
+		const carolRoster = await must('confirmedRoster', { groupId: group.id });
+		const carolEntry = carolRoster.roster.find((entry) => entry.did === CAROL);
+		const carolGate = await must('gate', { groupId: group.id, did: CAROL });
+		const carolRead = await must('spaceReadAt', { groupId: group.id, did: CAROL });
+		const carolCalls = await must('noSpacesCalls');
+		record(
+			refusesSpaceRead(carolRead) &&
+				carolAsked.outcome === 'pending' &&
+				carolEntry?.confirmed === false &&
+				carolGate.onRoster === true &&
+				carolGate.canSee === true &&
+				carolCalls.length === 0,
+			'a member whose PDS serves no spaces is approved, shows as unconfirmed, can read the group, and signs in with nothing sent from their session',
+			`their PDS ${carolRead.host} answers the group's space read ${carolRead.status} ` +
+				`${carolRead.error}; request ${carolAsked.outcome}; confirmed ` +
+				`${carolEntry ? carolEntry.confirmed : 'not on the roster'}; on the roster ` +
+				`${carolGate.onRoster}, can see ${carolGate.canSee}; sent from their session ` +
+				`${carolCalls.length > 0 ? carolCalls.join(', ') : 'nothing'}`
+		);
+		await must('leaveGroup', {
+			groupId: group.id,
+			callerDid: CAROL,
+			asMember: true,
+			session: 'no-spaces'
+		});
+		noSpacesJoined = false;
+		note(`${CAROL} left (roster back to the owner alone)`);
+
 		// 19. the declaration: the record that lets other apps discover the group --
 		// Asserted on the raw JSON an anonymous peer app gets, not through our parser.
 		await must('reconcileDeclaration', {
@@ -1454,6 +1525,27 @@ async function main() {
 				else console.log(`WARN  ${BOB}'s acceptance may be left: ${after.error ?? after.status}`);
 			} catch (error) {
 				console.log(`WARN  could not clean up ${BOB}'s acceptance: ${error.message}`);
+			}
+		}
+		if (spacesProvisioned && noSpacesJoined) {
+			// Leaving takes them off both member lists; the record is dropped directly
+			// too, should they have stopped short of membership.
+			try {
+				await call('leaveGroup', {
+					groupId: group.id,
+					callerDid: CAROL,
+					asMember: true,
+					session: 'no-spaces'
+				});
+				await call('dropMembership', { groupId: group.id, callerDid: CAROL, did: CAROL });
+				const after = await call('recordedRoster', { groupId: group.id });
+				if (after.ok && !after.value.memberships.some((m) => m.subject === CAROL)) {
+					note(`took ${CAROL} off the roster`);
+				} else {
+					console.log(`WARN  ${CAROL} may be left on the roster`);
+				}
+			} catch (error) {
+				console.log(`WARN  could not take ${CAROL} off the roster: ${error.message}`);
 			}
 		}
 		if (spacesProvisioned) {

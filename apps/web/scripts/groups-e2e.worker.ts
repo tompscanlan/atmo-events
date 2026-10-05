@@ -89,9 +89,24 @@ import {
 	promoteMember,
 	type RosterContext
 } from '../src/lib/groups/server/roster';
-import { writeMissingAcceptances, type MemberSession } from '../src/lib/groups/server/acceptance';
+import {
+	acceptOnSignIn,
+	writeMissingAcceptances,
+	type MemberSession
+} from '../src/lib/groups/server/acceptance';
 import { acceptanceGrant } from '../src/lib/groups/server/member-grants';
-import { groupAcceptanceReader } from '../src/lib/groups/server/space-credential';
+import {
+	didSpaceHosts,
+	groupAcceptanceReader,
+	spaceCredential,
+	spaceSigHeaders
+} from '../src/lib/groups/server/space-credential';
+import { groupClient } from '../src/lib/groups/server/session';
+import {
+	GROUP_ACCEPTANCE_COLLECTION,
+	GROUP_ACCEPTANCE_RKEY
+} from '../src/lib/groups/members-record';
+import { scopes } from '../src/lib/atproto/settings';
 
 interface Env {
 	DB: D1Database;
@@ -160,19 +175,40 @@ async function adminSession(env: Env, did: string, group: GroupRow): Promise<Mem
 	};
 }
 
+// Every request the app sent through a no-spaces member's session. The driver
+// expects none.
+const noSpacesCalls: string[] = [];
+
+/** The stand-in for the session of a member whose PDS serves no spaces. Its
+ *  scope is what atmo asks for with the group's space grant dropped, as a stock
+ *  PDS drops a space grant it does not know. It never logs in, because the run
+ *  writes nothing to their repo: a request sent through it is recorded and
+ *  refused, so none reaches their PDS. */
+function noSpacesSession(did: string): MemberSession {
+	return {
+		did,
+		scope: scopes.join(' '),
+		handle: async (pathname) => {
+			noSpacesCalls.push(pathname);
+			throw new Error(`the no-spaces member's session was asked for ${pathname}`);
+		}
+	};
+}
+
 /** A roster act's context. The driver names the caller on every call, and
  *  `asMember` hands the act the caller's own session, as the join and leave
- *  forms do. */
+ *  forms do: the admin's, or with `session: 'no-spaces'` the no-spaces member's. */
 async function rosterCtx(env: Env, args: Args): Promise<RosterContext> {
 	const group = await groupById(env, args.groupId);
 	const callerDid = String(args.callerDid);
-	return {
-		db: env.DB,
-		env,
-		group,
-		callerDid,
-		member: args.asMember ? await adminSession(env, callerDid, group) : null
-	};
+	let member: MemberSession | null = null;
+	if (args.asMember) {
+		member =
+			args.session === 'no-spaces'
+				? noSpacesSession(callerDid)
+				: await adminSession(env, callerDid, group);
+	}
+	return { db: env.DB, env, group, callerDid, member };
 }
 
 /** The group's own space reader. The members space is readable only with the
@@ -407,6 +443,53 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		const group = await groupById(env, args.groupId);
 		await writeMissingAcceptances(env.DB, await adminSession(env, String(args.did), group));
 		return { signedIn: args.did };
+	},
+
+	/** The sign-in callback's own call, for the no-spaces member: acceptOnSignIn
+	 *  with a session that answers the scope their PDS granted. Only the groups
+	 *  half of a sign-in runs here; the token exchange needs a real consent. */
+	signInCallback: async (env, args) => {
+		const member = noSpacesSession(String(args.did));
+		const session = {
+			did: member.did,
+			getTokenInfo: async () => ({ scope: member.scope }),
+			handle: member.handle
+		} as unknown as Parameters<typeof acceptOnSignIn>[1];
+		await acceptOnSignIn(env.DB, session);
+		return { signedIn: args.did };
+	},
+
+	/** What the app sent through no-spaces members' sessions so far. */
+	noSpacesCalls: async () => [...noSpacesCalls],
+
+	/** The roster's read of one member's acceptance, made here without the app's
+	 *  reader so the driver sees the host's own answer, which the reader folds
+	 *  into absent: the group's space credential, signed, at the member's PDS. */
+	spaceReadAt: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const space = group.members_space_uri;
+		if (!space) throw new Error(`${group.group_did} has no members space`);
+		const cred = await resolveGroupCredential(env, group.group_did);
+		if (!cred) throw new Error(`no credential for ${group.group_did}`);
+		const { handle } = await groupClient(cred, group.group_did);
+		const credential = await spaceCredential(
+			handle,
+			space,
+			await didSpaceHosts.spaceHost(group.group_did)
+		);
+		const did = String(args.did);
+		const host = await didSpaceHosts.repoHost(did);
+		const query = new URLSearchParams({
+			space,
+			repo: did,
+			collection: GROUP_ACCEPTANCE_COLLECTION,
+			rkey: GROUP_ACCEPTANCE_RKEY
+		});
+		const res = await fetch(new URL(`/xrpc/com.atproto.space.getRecord?${query}`, host), {
+			headers: await spaceSigHeaders(credential.signer, `Atproto-Space ${credential.token}`, did)
+		});
+		const body = (await res.json().catch(() => ({}))) as { error?: string };
+		return { host, status: res.status, error: body.error ?? null };
 	},
 
 	/** The roster as the members page shows it: the records, each entry marked
