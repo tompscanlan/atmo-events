@@ -619,6 +619,7 @@ async function main() {
 		const created = await must('writeGroupEvent', {
 			groupId: group.id,
 			callerDid: ALICE,
+			space: null,
 			intent: 'create',
 			record: eventRecord('e2e sunrise paddle', { country: 'US' })
 		});
@@ -645,6 +646,7 @@ async function main() {
 		const edited = await must('writeGroupEvent', {
 			groupId: group.id,
 			callerDid: BOB,
+			space: null,
 			intent: 'update',
 			rkey: created.rkey,
 			record: eventRecord(editedName, { country: 'US', createdAt: asPersisted.value?.createdAt })
@@ -675,6 +677,7 @@ async function main() {
 		const refused = await call('writeGroupEvent', {
 			groupId: group.id,
 			callerDid: MALLORY,
+			space: null,
 			intent: 'update',
 			rkey: created.rkey,
 			record: eventRecord('e2e sunrise paddle (hijacked)', { country: 'US' })
@@ -732,6 +735,7 @@ async function main() {
 		const withImage = await must('writeGroupEvent', {
 			groupId: group.id,
 			callerDid: ALICE,
+			space: null,
 			intent: 'create',
 			record: eventRecord('e2e paddle, with a cover image', { country: 'US', image })
 		});
@@ -1651,6 +1655,7 @@ async function main() {
 		const afterBackfill = await must('writeGroupEvent', {
 			groupId: group.id,
 			callerDid: ALICE,
+			space: null,
 			intent: 'create',
 			record: eventRecord('e2e paddle, written after the index had caught up')
 		});
@@ -1659,6 +1664,7 @@ async function main() {
 		await must('deleteGroupEvent', {
 			groupId: group.id,
 			callerDid: ALICE,
+			space: null,
 			rkey: afterBackfill.rkey
 		});
 		const afterDelete = await must('listGroupEvents', { groupId: group.id });
@@ -1728,6 +1734,7 @@ async function main() {
 				const deleted = await call('deleteGroupEvent', {
 					groupId: group.id,
 					callerDid: ALICE,
+					space: null,
 					rkey
 				});
 				if (!deleted.ok) refusal = `${deleted.error.name}: ${deleted.error.message}`;

@@ -11,8 +11,10 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 }));
 
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { linkGroups, unlinkAllGroups } from './__fixtures__/linked-group';
+import { linkGroups, linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
+import { stubPds, type StubPdsOptions } from './__fixtures__/stub-pds';
 import { addMember, createGroup, recordGroupSpaces } from './repo';
+import { pdsProvisioner, provisionGroupSpaces } from './spaces';
 import {
 	GROUP_EVENT_COLLECTION,
 	GroupCredentialError,
@@ -25,8 +27,10 @@ import {
 	uploadGroupEventImage,
 	writeGroupEvent,
 	type GroupBlobUploader,
+	type GroupEventLocator,
 	type GroupRepoWrite,
-	type GroupRepoWriter
+	type GroupRepoWriter,
+	type WriteGroupEventInput
 } from './event-writer';
 import type { GroupEventNotifier } from './events-index';
 import type { GroupRow } from '../types';
@@ -53,6 +57,16 @@ let notify: GroupEventNotifier;
 // The writer takes an env only to find the group's linked session, and these
 // cases inject their own writer, so it is never consulted.
 const env = {};
+
+/** For the cases that inject a writer: every event an edit or a delete names is
+ *  in the group's public repo, where a public edit expects it. The cases about
+ *  placement run against the stub PDS instead (`members-only placement`). */
+const inPublicRepo: GroupEventLocator = {
+	getSpace: async () => {
+		throw new Error('a public write asked for the calendar space');
+	},
+	has: async (space) => space === null
+};
 
 function validRecord(name = 'Kona weekly ride') {
 	return {
@@ -98,6 +112,7 @@ describe('authorship', () => {
 			env,
 			group,
 			callerDid: OWNER,
+			space: null,
 			intent: 'create',
 			record: validRecord(),
 			writer,
@@ -110,6 +125,7 @@ describe('authorship', () => {
 			env,
 			group,
 			callerDid: ADMIN,
+			space: null,
 			intent: 'update',
 			rkey: created.rkey,
 			record: {
@@ -117,6 +133,7 @@ describe('authorship', () => {
 				startsAt: '2026-09-21T18:00:00.000Z'
 			},
 			writer,
+			locator: inPublicRepo,
 			notify
 		});
 
@@ -137,6 +154,7 @@ describe('authorship', () => {
 			env,
 			group,
 			callerDid: ADMIN,
+			space: null,
 			intent: 'create',
 			record: validRecord(),
 			writer,
@@ -151,9 +169,11 @@ describe('authorship', () => {
 				env,
 				group,
 				callerDid: ADMIN,
+				space: null,
 				intent: 'update',
 				record: validRecord(),
 				writer,
+				locator: inPublicRepo,
 				notify
 			})
 		).rejects.toBeInstanceOf(GroupRecordError);
@@ -170,6 +190,7 @@ describe('authorship', () => {
 				env,
 				group,
 				callerDid: ADMIN,
+				space: null,
 				intent: 'create',
 				record: validRecord(),
 				writer: async () => ({ uri: `at://${ADMIN}/${GROUP_EVENT_COLLECTION}/abc`, cid: 'x' }),
@@ -188,6 +209,7 @@ describe('the permission gate', () => {
 				env,
 				group,
 				callerDid: MEMBER,
+				space: null,
 				intent: 'create',
 				record: validRecord(),
 				writer,
@@ -200,10 +222,12 @@ describe('the permission gate', () => {
 				env,
 				group,
 				callerDid: MEMBER,
+				space: null,
 				intent: 'update',
 				rkey: '3abc',
 				record: validRecord(),
 				writer,
+				locator: inPublicRepo,
 				notify
 			})
 		).rejects.toMatchObject({ permission: 'MANAGE_EVENTS' });
@@ -218,6 +242,7 @@ describe('the permission gate', () => {
 					env,
 					group,
 					callerDid,
+					space: null,
 					intent: 'create',
 					record: validRecord(),
 					writer,
@@ -230,7 +255,17 @@ describe('the permission gate', () => {
 
 	it('gates deletion on MANAGE_EVENTS and deletes from the group repo', async () => {
 		await expect(
-			deleteGroupEvent({ db, env, group, callerDid: MEMBER, rkey: '3abc', writer, notify })
+			deleteGroupEvent({
+				db,
+				env,
+				group,
+				callerDid: MEMBER,
+				space: null,
+				rkey: '3abc',
+				writer,
+				locator: inPublicRepo,
+				notify
+			})
 		).rejects.toMatchObject({ permission: 'MANAGE_EVENTS' });
 
 		const deleted = await deleteGroupEvent({
@@ -238,8 +273,10 @@ describe('the permission gate', () => {
 			env,
 			group,
 			callerDid: ADMIN,
+			space: null,
 			rkey: '3abc',
 			writer,
+			locator: inPublicRepo,
 			notify
 		});
 		expect(deleted.repo).toBe(GROUP_DID);
@@ -287,6 +324,7 @@ describe('refusal before transport', () => {
 				env: credentialEnv,
 				group,
 				callerDid: STRANGER,
+				space: null,
 				intent: 'update',
 				rkey: '3abc',
 				record: validRecord(),
@@ -300,6 +338,7 @@ describe('refusal before transport', () => {
 				env: credentialEnv,
 				group,
 				callerDid: STRANGER,
+				space: null,
 				rkey: '3abc',
 				reader: null,
 				notify
@@ -316,6 +355,7 @@ describe('refusal before transport', () => {
 				env: credentialEnv,
 				group,
 				callerDid: ADMIN,
+				space: null,
 				intent: 'update',
 				rkey: '3abc',
 				record: validRecord(),
@@ -335,6 +375,7 @@ describe('record validation', () => {
 				env,
 				group,
 				callerDid: ADMIN,
+				space: null,
 				intent: 'create',
 				// No `name`, which the lexicon requires.
 				record: { createdAt: '2026-09-01T12:00:00.000Z' },
@@ -351,6 +392,7 @@ describe('record validation', () => {
 			env,
 			group,
 			callerDid: ADMIN,
+			space: null,
 			intent: 'create',
 			record: { ...validRecord(), $type: 'app.bsky.feed.post' },
 			writer,
@@ -400,6 +442,7 @@ describe('records from the event editor', () => {
 			env,
 			group,
 			callerDid: ADMIN,
+			space: null,
 			intent: 'create',
 			rkey: '3mwqnkcuf7cnp',
 			record: editorRecord,
@@ -418,7 +461,15 @@ describe('credentials', () => {
 	// the PDS.
 	it('fails with a not-linked error when the owner has not linked the group', async () => {
 		await expect(
-			writeGroupEvent({ db, env, group, callerDid: ADMIN, intent: 'create', record: validRecord() })
+			writeGroupEvent({
+				db,
+				env,
+				group,
+				callerDid: ADMIN,
+				space: null,
+				intent: 'create',
+				record: validRecord()
+			})
 		).rejects.toBeInstanceOf(GroupCredentialError);
 	});
 
@@ -431,6 +482,7 @@ describe('credentials', () => {
 				env,
 				group,
 				callerDid: MEMBER,
+				space: null,
 				intent: 'create',
 				record: validRecord()
 			})
@@ -494,6 +546,7 @@ describe('credentials', () => {
 					env: unlinked(),
 					group: provisioned,
 					callerDid: OWNER,
+					space: null,
 					intent: 'create',
 					record: validRecord(),
 					writer,
@@ -511,6 +564,7 @@ describe('credentials', () => {
 					env: unlinked(),
 					group,
 					callerDid: ADMIN,
+					space: null,
 					intent: 'create',
 					record: validRecord(),
 					reader: null,
@@ -535,6 +589,7 @@ describe('telling the index', () => {
 			env,
 			group,
 			callerDid: OWNER,
+			space: null,
 			intent: 'create',
 			record: validRecord(),
 			writer,
@@ -545,10 +600,12 @@ describe('telling the index', () => {
 			env,
 			group,
 			callerDid: ADMIN,
+			space: null,
 			intent: 'update',
 			rkey: created.rkey,
 			record: validRecord('Weekly ride, new time'),
 			writer,
+			locator: inPublicRepo,
 			notify
 		});
 		await deleteGroupEvent({
@@ -556,8 +613,10 @@ describe('telling the index', () => {
 			env,
 			group,
 			callerDid: ADMIN,
+			space: null,
 			rkey: created.rkey,
 			writer,
+			locator: inPublicRepo,
 			notify
 		});
 
@@ -573,6 +632,7 @@ describe('telling the index', () => {
 			env,
 			group,
 			callerDid: OWNER,
+			space: null,
 			intent: 'create',
 			record: validRecord(),
 			writer,
@@ -673,4 +733,537 @@ describe('event images', () => {
 		).rejects.toBeInstanceOf(GroupRecordError);
 		expect(uploaded).toEqual([]);
 	});
+});
+
+// Where an event is written. A members-only event is the same record as a public
+// one, placed in the group's calendar space instead of its public repo, and the
+// container is the only thing that keeps it from anonymous readers. So these
+// cases run the real transports against a fake host and read what it was sent:
+// an injected writer would only prove the seam was called. The gate reads D1 rows
+// (no members space, `reader: null`), so every call the host logs is the write
+// path's own.
+describe('members-only placement', () => {
+	/** Written out, not taken from the app, so a wrong type or key in the app's
+	 *  constant fails here. */
+	const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
+	const PUBLIC_POLICY = 'com.atproto.simplespace.defs#publicPolicy';
+
+	// The refusals' copy, as approved for the form.
+	const NO_CALENDAR_SPACE =
+		'This group has no calendar space for members-only events, because it was made before they existed. Re-create the group to post members-only events. Nothing was saved.';
+	const READABLE_CALENDAR_SPACE =
+		"This group's calendar space can be read by more than its members, so the members-only event was not saved.";
+	const UNCHECKED_CALENDAR_SPACE =
+		"The group's calendar space could not be checked, so the members-only event was not saved. Try again later.";
+	const PLACEMENT_CHANGE =
+		"This event can't be moved between public and members-only yet. Nothing was saved.";
+
+	let pds: ReturnType<typeof stubPds>;
+	let linkedEnv: ReturnType<typeof linkGroups>;
+
+	/** The group, linked, on a host holding its three spaces as a create leaves
+	 *  them. The log starts empty. */
+	async function onHost(options: Partial<StubPdsOptions> = {}) {
+		pds = stubPds({ did: GROUP_DID, handle: 'kona.stub.test', ...options });
+		linkedEnv = linkGroups([GROUP_DID]);
+		await provisionGroupSpaces(pdsProvisioner(linkedCredential(GROUP_DID), GROUP_DID), 'public');
+		pds.clearLog();
+	}
+
+	beforeEach(async () => {
+		// One line per write as the group (session.ts), which is noise here.
+		vi.spyOn(console, 'info').mockImplementation(() => {});
+		await onHost();
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		unlinkAllGroups();
+	});
+
+	/** A write by the admin through the real writer. */
+	const write = (
+		input: Partial<WriteGroupEventInput> & Pick<WriteGroupEventInput, 'intent' | 'space'>
+	) =>
+		writeGroupEvent({
+			db,
+			env: linkedEnv,
+			group,
+			callerDid: ADMIN,
+			record: validRecord(),
+			reader: null,
+			notify,
+			...input
+		});
+
+	const remove = (
+		rkey: string,
+		space: string | null,
+		input: Partial<Parameters<typeof deleteGroupEvent>[0]> = {}
+	) =>
+		deleteGroupEvent({
+			db,
+			env: linkedEnv,
+			group,
+			callerDid: ADMIN,
+			rkey,
+			space,
+			reader: null,
+			notify,
+			...input
+		});
+
+	/** The methods the host was asked for, in order. */
+	const nsids = () => pds.requests.map((r) => r.nsid);
+	const repoCalls = () => nsids().filter((nsid) => nsid.startsWith('com.atproto.repo.'));
+
+	/** Whether the host holds the event, asked straight from the stub and not
+	 *  through the app's reader: in the calendar space, or in the public repo for
+	 *  null. The log is left as it was. */
+	async function hostHas(space: string | null, rkey: string): Promise<boolean> {
+		const [requests, calls] = [pds.requests.length, pds.calls.length];
+		const query = new URLSearchParams({
+			...(space ? { space } : {}),
+			repo: GROUP_DID,
+			collection: GROUP_EVENT_COLLECTION,
+			rkey
+		});
+		const method = space ? 'com.atproto.space.getRecord' : 'com.atproto.repo.getRecord';
+		const res = await fetch(`https://pds.stub.test/xrpc/${method}?${query}`);
+		pds.requests.splice(requests);
+		pds.calls.splice(calls);
+		return res.ok;
+	}
+
+	it('a members-only create goes to space.createRecord and never to a repo method', async () => {
+		const created = await write({ intent: 'create', space: CALENDAR });
+
+		// One check that the space is there and member-list, then the write.
+		expect(nsids()).toEqual(['com.atproto.simplespace.getSpace', 'com.atproto.space.createRecord']);
+		expect(pds.requests[0].params).toEqual({ space: CALENDAR });
+		expect(pds.requests[1].body).toMatchObject({
+			space: CALENDAR,
+			repo: GROUP_DID,
+			collection: GROUP_EVENT_COLLECTION,
+			rkey: created.rkey
+		});
+		expect(created.uri).toBe(`${CALENDAR}/${GROUP_DID}/${GROUP_EVENT_COLLECTION}/${created.rkey}`);
+		expect(await hostHas(CALENDAR, created.rkey)).toBe(true);
+		expect(await hostHas(null, created.rkey)).toBe(false);
+	});
+
+	it('a members-only edit goes to space.putRecord in the calendar space', async () => {
+		const created = await write({ intent: 'create', space: CALENDAR });
+		pds.clearLog();
+
+		const edited = await write({
+			intent: 'update',
+			space: CALENDAR,
+			rkey: created.rkey,
+			record: validRecord('Kona weekly ride, new time')
+		});
+
+		// The space check, the read that finds the event where the page says, the put.
+		expect(nsids()).toEqual([
+			'com.atproto.simplespace.getSpace',
+			'com.atproto.space.getRecord',
+			'com.atproto.space.putRecord'
+		]);
+		expect(pds.requests[1].params).toMatchObject({ space: CALENDAR, rkey: created.rkey });
+		expect(pds.requests[2].body).toMatchObject({
+			space: CALENDAR,
+			rkey: created.rkey,
+			record: { name: 'Kona weekly ride, new time' }
+		});
+		expect(edited.uri).toBe(created.uri);
+		expect(await hostHas(null, created.rkey)).toBe(false);
+	});
+
+	it('a members-only delete goes to space.deleteRecord and never to repo.deleteRecord', async () => {
+		const created = await write({ intent: 'create', space: CALENDAR });
+		pds.clearLog();
+
+		await remove(created.rkey, CALENDAR);
+
+		expect(nsids()).toEqual(['com.atproto.space.getRecord', 'com.atproto.space.deleteRecord']);
+		expect(pds.requests[1].body).toEqual({
+			space: CALENDAR,
+			repo: GROUP_DID,
+			collection: GROUP_EVENT_COLLECTION,
+			rkey: created.rkey
+		});
+		expect(await hostHas(CALENDAR, created.rkey)).toBe(false);
+	});
+
+	it('a members-only write and delete never notify the index', async () => {
+		const created = await write({ intent: 'create', space: CALENDAR });
+		await write({ intent: 'update', space: CALENDAR, rkey: created.rkey });
+		const deleted = await remove(created.rkey, CALENDAR);
+
+		// A space delete answers with the plain URI, the same shape as a public
+		// one, so the skip cannot be told from the URI.
+		expect(deleted.uri).toBe(`at://${GROUP_DID}/${GROUP_EVENT_COLLECTION}/${created.rkey}`);
+		expect(notified).toEqual([]);
+
+		// The same three steps in the public repo tell the index once each.
+		const shown = await write({ intent: 'create', space: null });
+		await write({ intent: 'update', space: null, rkey: shown.rkey });
+		await remove(shown.rkey, null);
+		const uri = `at://${GROUP_DID}/${GROUP_EVENT_COLLECTION}/${shown.rkey}`;
+		expect(notified).toEqual([uri, uri, uri]);
+	});
+
+	// A put creates the record when none is there, in either container, so an
+	// edit sent to the other container would silently copy the event across.
+	it('an edit that changes placement is refused with no write', async () => {
+		const membersOnly = await write({ intent: 'create', space: CALENDAR });
+		const shown = await write({ intent: 'create', space: null });
+		pds.clearLog();
+
+		await expect(
+			write({ intent: 'update', space: null, rkey: membersOnly.rkey })
+		).rejects.toMatchObject({ name: 'GroupRecordError', message: PLACEMENT_CHANGE });
+		await expect(
+			write({ intent: 'update', space: CALENDAR, rkey: shown.rkey })
+		).rejects.toMatchObject({ name: 'GroupRecordError', message: PLACEMENT_CHANGE });
+
+		expect(pds.writes()).toEqual([]);
+		expect(await hostHas(null, membersOnly.rkey)).toBe(false);
+		expect(await hostHas(CALENDAR, membersOnly.rkey)).toBe(true);
+		expect(await hostHas(CALENDAR, shown.rkey)).toBe(false);
+		expect(await hostHas(null, shown.rkey)).toBe(true);
+		expect(notified).toHaveLength(1);
+	});
+
+	// A delete of a missing record succeeds in either container, so a delete sent
+	// to the wrong one would report success and leave the event where it is.
+	it('a delete at the wrong placement is refused with no write', async () => {
+		const membersOnly = await write({ intent: 'create', space: CALENDAR });
+		const shown = await write({ intent: 'create', space: null });
+		pds.clearLog();
+
+		await expect(remove(membersOnly.rkey, null)).rejects.toMatchObject({
+			name: 'GroupRecordError',
+			message: PLACEMENT_CHANGE
+		});
+		await expect(remove(shown.rkey, CALENDAR)).rejects.toMatchObject({
+			name: 'GroupRecordError',
+			message: PLACEMENT_CHANGE
+		});
+
+		expect(pds.writes()).toEqual([]);
+		expect(await hostHas(CALENDAR, membersOnly.rkey)).toBe(true);
+		expect(await hostHas(null, shown.rkey)).toBe(true);
+	});
+
+	it('an edit or delete of an event in neither container acts where it was sent, as before', async () => {
+		await write({ intent: 'update', space: null, rkey: '3publicmissing' });
+		expect(nsids()).toEqual([
+			'com.atproto.repo.getRecord',
+			'com.atproto.space.getRecord',
+			'com.atproto.repo.putRecord'
+		]);
+		pds.clearLog();
+		await write({ intent: 'update', space: CALENDAR, rkey: '3membersmissing' });
+		expect(nsids()).toEqual([
+			'com.atproto.simplespace.getSpace',
+			'com.atproto.space.getRecord',
+			'com.atproto.repo.getRecord',
+			'com.atproto.space.putRecord'
+		]);
+		pds.clearLog();
+		await remove('3gonealready', null);
+		await remove('3gonealready', CALENDAR);
+		expect(nsids()).toEqual([
+			'com.atproto.repo.getRecord',
+			'com.atproto.space.getRecord',
+			'com.atproto.repo.deleteRecord',
+			'com.atproto.space.getRecord',
+			'com.atproto.repo.getRecord',
+			'com.atproto.space.deleteRecord'
+		]);
+	});
+
+	it('a members-only write to a group with no calendar space is refused with no write', async () => {
+		// A group made before the calendar space existed. The host would take the
+		// write anyway and make the space as it went, so the refusal is the app's.
+		pds.spaces.delete(CALENDAR);
+
+		await expect(write({ intent: 'create', space: CALENDAR })).rejects.toMatchObject({
+			name: 'GroupRecordError',
+			message: NO_CALENDAR_SPACE
+		});
+		await expect(write({ intent: 'update', space: CALENDAR, rkey: '3abc' })).rejects.toMatchObject({
+			name: 'GroupRecordError',
+			message: NO_CALENDAR_SPACE
+		});
+
+		// The space check is the only call each time: nothing written anywhere, and
+		// nothing in the public repo instead.
+		expect(nsids()).toEqual([
+			'com.atproto.simplespace.getSpace',
+			'com.atproto.simplespace.getSpace'
+		]);
+		expect(notified).toEqual([]);
+	});
+
+	it('a members-only write into a calendar space that is not member-list is refused with no write', async () => {
+		const config = pds.spaces.get(CALENDAR)!;
+		pds.spaces.set(CALENDAR, { ...config, readPolicy: { $type: PUBLIC_POLICY } });
+
+		await expect(write({ intent: 'create', space: CALENDAR })).rejects.toMatchObject({
+			name: 'GroupRecordError',
+			message: READABLE_CALENDAR_SPACE
+		});
+		await expect(write({ intent: 'update', space: CALENDAR, rkey: '3abc' })).rejects.toMatchObject({
+			name: 'GroupRecordError',
+			message: READABLE_CALENDAR_SPACE
+		});
+
+		expect(pds.writes()).toEqual([]);
+		expect(repoCalls()).toEqual([]);
+	});
+
+	it('a members-only write is refused when the calendar space cannot be checked', async () => {
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const answers: (() => Response)[] = [
+			() => Response.json({ error: 'InternalServerError' }, { status: 500 }),
+			// A 200 with no read policy says nothing about who can read the space.
+			() => Response.json({ uri: CALENDAR }),
+			() => {
+				throw new TypeError('fetch failed');
+			}
+		];
+		for (const answer of answers) {
+			await onHost({
+				fail: (nsid) => (nsid === 'com.atproto.simplespace.getSpace' ? answer() : undefined)
+			});
+			await expect(write({ intent: 'create', space: CALENDAR })).rejects.toMatchObject({
+				name: 'GroupRecordError',
+				message: UNCHECKED_CALENDAR_SPACE
+			});
+			expect(pds.writes()).toEqual([]);
+			expect(repoCalls()).toEqual([]);
+		}
+		expect(logged).toHaveBeenCalledTimes(answers.length);
+	});
+
+	// A read that fails says nothing about where the event is, so the write
+	// does not guess.
+	it('a placement read the host cannot answer refuses the edit and the delete, and writes nothing', async () => {
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		await onHost({
+			fail: (nsid) =>
+				nsid === 'com.atproto.repo.getRecord' || nsid === 'com.atproto.space.getRecord'
+					? Response.json({ error: 'InternalServerError' }, { status: 500 })
+					: undefined
+		});
+
+		for (const space of [null, CALENDAR]) {
+			await expect(write({ intent: 'update', space, rkey: '3abc' })).rejects.toBeInstanceOf(
+				GroupRecordError
+			);
+			await expect(remove('3abc', space)).rejects.toBeInstanceOf(GroupRecordError);
+		}
+		expect(pds.writes()).toEqual([]);
+		expect(notified).toEqual([]);
+	});
+
+	it('a write with no placement is refused before any PDS call', async () => {
+		// A group with a members space, so the gate itself would read the host if
+		// the refusal came after it.
+		const provisioned = await provisionedGroup();
+		const missing = [{}, { space: undefined }];
+		for (const placement of missing) {
+			for (const intent of ['create', 'update'] as const) {
+				const input = {
+					db,
+					env: linkedEnv,
+					group: provisioned,
+					callerDid: ADMIN,
+					intent,
+					rkey: '3abc',
+					record: validRecord(),
+					notify,
+					...placement
+				} as unknown as WriteGroupEventInput;
+				await expect(writeGroupEvent(input)).rejects.toBeInstanceOf(GroupRecordError);
+			}
+			const input = {
+				db,
+				env: linkedEnv,
+				group: provisioned,
+				callerDid: ADMIN,
+				rkey: '3abc',
+				notify,
+				...placement
+			} as unknown as Parameters<typeof deleteGroupEvent>[0];
+			await expect(deleteGroupEvent(input)).rejects.toBeInstanceOf(GroupRecordError);
+		}
+		expect(pds.calls).toEqual([]);
+		expect(notified).toEqual([]);
+	});
+
+	it('the writer refuses a space other than the group’s calendar space before the gate reads anything', async () => {
+		const provisioned = await provisionedGroup();
+		const foreign = [
+			`at://${GROUP_DID}/space/group.opensocial.meta/self`,
+			`at://${GROUP_DID}/space/group.opensocial.members/self`,
+			`at://${GROUP_DID}/space/net.openmeet.space.calendar/other`,
+			'at://did:plc:anothergroupaaaaaaaaaaaa/space/net.openmeet.space.calendar/self'
+		];
+		for (const space of foreign) {
+			for (const intent of ['create', 'update'] as const) {
+				await expect(
+					writeGroupEvent({
+						db,
+						env: linkedEnv,
+						group: provisioned,
+						callerDid: ADMIN,
+						intent,
+						rkey: '3abc',
+						space,
+						record: validRecord(),
+						notify
+					})
+				).rejects.toBeInstanceOf(GroupRecordError);
+			}
+			await expect(
+				deleteGroupEvent({
+					db,
+					env: linkedEnv,
+					group: provisioned,
+					callerDid: ADMIN,
+					rkey: '3abc',
+					space,
+					notify
+				})
+			).rejects.toBeInstanceOf(GroupRecordError);
+		}
+		expect(pds.calls).toEqual([]);
+	});
+
+	it('a public write sends the same request as before', async () => {
+		const record = validRecord();
+		const created = await write({ intent: 'create', space: null, record });
+		const sent = {
+			repo: GROUP_DID,
+			collection: GROUP_EVENT_COLLECTION,
+			rkey: created.rkey,
+			record: { ...record, $type: GROUP_EVENT_COLLECTION }
+		};
+		const read = {
+			nsid: 'com.atproto.repo.getRecord',
+			body: null,
+			params: { repo: GROUP_DID, collection: GROUP_EVENT_COLLECTION, rkey: created.rkey }
+		};
+
+		// A create is exactly the one call it was.
+		expect(pds.requests).toEqual([
+			{ nsid: 'com.atproto.repo.createRecord', body: sent, params: {} }
+		]);
+		pds.clearLog();
+
+		// An edit and a delete send the same write, after one read that finds the
+		// event in the public repo.
+		await write({ intent: 'update', space: null, rkey: created.rkey, record });
+		expect(pds.requests).toEqual([
+			read,
+			{ nsid: 'com.atproto.repo.putRecord', body: sent, params: {} }
+		]);
+		pds.clearLog();
+
+		await remove(created.rkey, null);
+		expect(pds.requests).toEqual([
+			read,
+			{
+				nsid: 'com.atproto.repo.deleteRecord',
+				body: { repo: GROUP_DID, collection: GROUP_EVENT_COLLECTION, rkey: created.rkey },
+				params: {}
+			}
+		]);
+
+		const uri = `at://${GROUP_DID}/${GROUP_EVENT_COLLECTION}/${created.rkey}`;
+		expect(notified).toEqual([uri, uri, uri]);
+	});
+
+	it('the event record is the same in either container', async () => {
+		const record = validRecord();
+		await write({ intent: 'create', space: null, record });
+		await write({ intent: 'create', space: CALENDAR, record });
+
+		const sentTo = (nsid: string) => pds.requests.find((r) => r.nsid === nsid)?.body?.record;
+		const shown = sentTo('com.atproto.repo.createRecord');
+		const membersOnly = sentTo('com.atproto.space.createRecord');
+
+		// Placement is the only difference: no field says who may read it.
+		expect(membersOnly).toStrictEqual(shown);
+		for (const key of ['visibility', 'privacy', 'private', 'audience', 'isPrivate']) {
+			expect(membersOnly).not.toHaveProperty(key);
+		}
+	});
+
+	it('a members-only event keeps its image inside the calendar space', async () => {
+		// Uploaded as a public event's image is; the record that cites it is in the
+		// space, and no record in the public repo does.
+		const media = [
+			{
+				role: 'thumbnail',
+				content: {
+					$type: 'blob',
+					ref: { $link: 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku' },
+					mimeType: 'image/webp',
+					size: 12345
+				},
+				aspect_ratio: { width: 1200, height: 630 }
+			}
+		];
+		const created = await write({
+			intent: 'create',
+			space: CALENDAR,
+			record: { ...validRecord(), media }
+		});
+
+		const sent = pds.requests.find((r) => r.nsid === 'com.atproto.space.createRecord')?.body;
+		expect(sent).toMatchObject({ space: CALENDAR, rkey: created.rkey });
+		expect((sent?.record as { media?: unknown }).media).toStrictEqual(media);
+		expect(repoCalls()).toEqual([]);
+	});
+
+	it('a caller without the permission is refused before any PDS read or write', async () => {
+		// MEMBER holds neither event permission, STRANGER is off the roster, and
+		// null is anonymous. The gate answers from D1 here, so any call the host
+		// logs would be a placement read or a write made before the gate.
+		for (const callerDid of [MEMBER, STRANGER, null]) {
+			for (const space of [CALENDAR, null]) {
+				await expect(write({ callerDid, intent: 'create', space })).rejects.toBeInstanceOf(
+					GroupPermissionError
+				);
+				await expect(
+					write({ callerDid, intent: 'update', space, rkey: '3abc' })
+				).rejects.toBeInstanceOf(GroupPermissionError);
+				await expect(remove('3abc', space, { callerDid })).rejects.toBeInstanceOf(
+					GroupPermissionError
+				);
+			}
+		}
+		expect(pds.calls).toEqual([]);
+		expect(notified).toEqual([]);
+	});
+
+	/** The fixture group with its spaces recorded, so the gate reads its members
+	 *  space through the host rather than answering from D1. */
+	async function provisionedGroup(): Promise<GroupRow> {
+		const spaces = {
+			aboutSpaceUri: `at://${GROUP_DID}/space/group.opensocial.meta/self`,
+			membersSpaceUri: `at://${GROUP_DID}/space/group.opensocial.members/self`
+		};
+		await recordGroupSpaces(db, group.id, spaces);
+		return {
+			...group,
+			about_space_uri: spaces.aboutSpaceUri,
+			members_space_uri: spaces.membersSpaceUri
+		};
+	}
 });

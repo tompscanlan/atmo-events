@@ -13,8 +13,14 @@
 		handle: data.handle ?? undefined,
 		displayName: data.groupName
 	});
+	// Public: this page offers no members-only choice yet.
 	let adapter = $derived(
-		createGroupEditorAdapter({ groupDid: data.groupDid, editingRkey: null, canDelete: false })
+		createGroupEditorAdapter({
+			groupDid: data.groupDid,
+			editingRkey: null,
+			canDelete: false,
+			space: null
+		})
 	);
 </script>
 

@@ -23,8 +23,12 @@ export function createGroupEditorAdapter(opts: {
 	 *  other rkey, such as a recurrence, is a create. */
 	editingRkey: string | null;
 	canDelete: boolean;
+	/** Where the event is: the group's calendar space for a members-only event,
+	 *  or null for its public repo. Required and passed on every save and delete,
+	 *  so none of them can fall back to public. (Spec: FR-116.) */
+	space: string | null;
 }): EditorAdapter {
-	const { groupDid, editingRkey } = opts;
+	const { groupDid, editingRkey, space } = opts;
 	const intentFor = (rkey: string) => (rkey === editingRkey ? 'update' : 'create');
 	const eventsTab = resolve('/(app)/groups/[actor]/events', { actor: groupDid });
 
@@ -32,7 +36,9 @@ export function createGroupEditorAdapter(opts: {
 		// No private mode: members-only group events need a space of their own.
 		features: { delete: opts.canDelete, recurring: true, privateMode: false },
 		async putRecord({ rkey, record }) {
-			return unwrap(await putGroupEvent({ groupDid, rkey, intent: intentFor(rkey), record }));
+			return unwrap(
+				await putGroupEvent({ groupDid, rkey, intent: intentFor(rkey), space, record })
+			);
 		},
 		async createRecord() {
 			// The editor writes public events with putRecord; only its private
@@ -40,7 +46,7 @@ export function createGroupEditorAdapter(opts: {
 			throw new Error('a group event is written with putRecord');
 		},
 		async deleteRecord({ rkey }) {
-			unwrap(await removeGroupEvent({ groupDid, rkey }));
+			unwrap(await removeGroupEvent({ groupDid, rkey, space }));
 		},
 		async uploadBlob(blob) {
 			const { blob: ref } = unwrap(

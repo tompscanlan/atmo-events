@@ -27,6 +27,7 @@ import type { JoinOutcome } from './server/repo';
 import { groupActorToDid, groupRouteContext } from './server/route-context';
 import {
 	GROUP_EVENT_IMAGE_MAX_BYTES,
+	checkEventSpace,
 	deleteGroupEvent,
 	uploadGroupEventImage,
 	writeGroupEvent,
@@ -399,6 +400,13 @@ const eventIntentField = v.picklist(['create', 'update'] as const);
 // builds the record; these write it as the group. The writer checks the
 // permission from a fresh membership read (CREATE_EVENT for a create,
 // MANAGE_EVENTS otherwise) and the record against the event lexicon.
+//
+// Both take the event's placement as `space`: the group's calendar space for a
+// members-only event, null for a public one. It is nullable and never optional,
+// so a page that forgets it is refused rather than written in public, and it is
+// checked against the group's own calendar space before the caller's standing is
+// read, so a space the page should never name costs the host nothing.
+// (Spec: FR-116.)
 
 /** Create or edit a group event, authored by the group DID. */
 export const putGroupEvent = command(
@@ -406,9 +414,16 @@ export const putGroupEvent = command(
 		groupDid: didField,
 		rkey: rkeyField,
 		intent: eventIntentField,
+		space: v.nullable(v.string()),
 		record: v.record(v.string(), v.unknown())
 	}),
 	async (data): Promise<GroupFormResult<{ uri: string }>> => {
+		let space: string | null;
+		try {
+			space = checkEventSpace(data.groupDid, data.space);
+		} catch (e) {
+			return formError(e);
+		}
 		const { db, env, group, callerDid } = await context(data.groupDid);
 		try {
 			const result = await writeGroupEvent({
@@ -418,6 +433,7 @@ export const putGroupEvent = command(
 				callerDid,
 				intent: data.intent,
 				rkey: data.rkey,
+				space,
 				record: data.record
 			});
 			return { ok: true, uri: result.uri };
@@ -428,11 +444,17 @@ export const putGroupEvent = command(
 );
 
 export const removeGroupEvent = command(
-	v.object({ groupDid: didField, rkey: rkeyField }),
+	v.object({ groupDid: didField, rkey: rkeyField, space: v.nullable(v.string()) }),
 	async (data): Promise<GroupFormResult<{ uri: string }>> => {
+		let space: string | null;
+		try {
+			space = checkEventSpace(data.groupDid, data.space);
+		} catch (e) {
+			return formError(e);
+		}
 		const { db, env, group, callerDid } = await context(data.groupDid);
 		try {
-			const result = await deleteGroupEvent({ db, env, group, callerDid, rkey: data.rkey });
+			const result = await deleteGroupEvent({ db, env, group, callerDid, rkey: data.rkey, space });
 			return { ok: true, uri: result.uri };
 		} catch (e) {
 			return formError(e);

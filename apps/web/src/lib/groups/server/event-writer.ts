@@ -16,10 +16,16 @@ import {
 	type CredentialStoreEnv,
 	type GroupCredential
 } from './credentials';
-import { groupSpaceReader, type GroupSpaceReader } from './about-read';
+import {
+	groupSpaceReader,
+	pdsSpaceReader,
+	type GroupSpaceConfig,
+	type GroupSpaceReader
+} from './about-read';
 import { getCallerMembership } from './repo';
 import { groupClient } from './session';
 import { contrailNotifier, type GroupEventNotifier } from './events-index';
+import { POLICY_MEMBER_LIST, groupSpaceUris } from './space-uris';
 
 export const GROUP_EVENT_COLLECTION = 'community.lexicon.calendar.event';
 
@@ -154,9 +160,16 @@ export interface WriteGroupEventInput {
 	/** Required for `update`. Minted as a TID for `create` if the page has not. */
 	rkey?: string;
 	record: Record<string, unknown>;
+	/** Where the event is: the group's calendar space URI for a members-only
+	 *  event, or null for the group's public repo. Required, with no default: a
+	 *  put creates the record when none is there, so an edit that left it out
+	 *  would make a public copy of a members-only event. (Spec: FR-116.) */
+	space: string | null;
 	/** Overrides the PDS transport, built from the group's credential when absent. */
 	writer?: GroupRepoWriter;
 	reader?: GroupSpaceReader | null;
+	/** Overrides the reads that check placement, built like `writer`. */
+	locator?: GroupEventLocator;
 	/** For tests only: a caller that supplies its own notifier can forget it. */
 	notify?: GroupEventNotifier;
 }
@@ -227,8 +240,166 @@ async function notifyIndex(
 	}
 }
 
-/** Authorizes the caller, then writes an event into the group's public repo. */
+// ---- placement ----------------------------------------------------------------
+//
+// A members-only event is the same record as a public one, written into the
+// group's calendar space instead of its public repo. Nothing on the record says
+// which, so the writer decides where each write goes, and these checks keep a
+// write from landing anywhere else. The container is the fact, because the host
+// enforces it for every reader, and a field would be a second answer that a peer
+// app could read while the container said otherwise. (Spec: FR-104.)
+
+/** The refusals' copy. Each one says that nothing was saved, because nothing was. */
+const NO_PLACEMENT =
+	'This event was sent without saying whether it is public or members-only, so nothing was saved.';
+const NOT_THE_CALENDAR_SPACE =
+	"A members-only event can only go in this group's calendar space, so nothing was saved.";
+const NO_CALENDAR_SPACE =
+	'This group has no calendar space for members-only events, because it was made before they existed. Re-create the group to post members-only events. Nothing was saved.';
+const READABLE_CALENDAR_SPACE =
+	"This group's calendar space can be read by more than its members, so the members-only event was not saved.";
+const UNCHECKED_CALENDAR_SPACE =
+	"The group's calendar space could not be checked, so the members-only event was not saved. Try again later.";
+const PLACEMENT_CHANGE =
+	"This event can't be moved between public and members-only yet. Nothing was saved.";
+const UNCHECKED_PLACEMENT =
+	'Whether this event is public or members-only could not be checked, so nothing was saved. Try again later.';
+
+/** The host's own error code for a space it never created, as the reader names
+ *  it in what it throws. */
+const NO_SUCH_SPACE = /\bSpaceNotFound\b/;
+
+/**
+ * The placement a group event write may name: null for the group's public repo,
+ * or the group's own calendar space. The URI is computed from the group's DID and
+ * compared, never taken on trust: otherwise a CREATE_EVENT holder could aim an
+ * event at the about space, which a public group lets anyone read. A missing
+ * value is refused, never read as public. Makes no call, so a caller can run it
+ * before anything else. (Spec: FR-116.)
+ */
+export function checkEventSpace(groupDid: string, space: unknown): string | null {
+	if (space === null) return null;
+	if (typeof space !== 'string') throw new GroupRecordError(NO_PLACEMENT);
+	if (space !== groupSpaceUris(groupDid).calendarSpaceUri) {
+		throw new GroupRecordError(NOT_THE_CALENDAR_SPACE);
+	}
+	return space;
+}
+
+/** The reads that tell where an event is, made before a write. Injectable, like
+ *  `GroupRepoWriter`, and built from the group's credential when absent. */
+export interface GroupEventLocator {
+	/** The space's configuration. Throws on every failure, `SpaceNotFound`
+	 *  included, so a failed read never passes for either answer. */
+	getSpace(space: string): Promise<GroupSpaceConfig>;
+	/** Whether the group's event `rkey` is in `space`, or in the public repo for
+	 *  null. A missing record is false; any other answer throws. */
+	has(space: string | null, rkey: string): Promise<boolean>;
+}
+
+/** Reads with the group's own session, the one its writes use. */
+export function pdsEventLocator(cred: GroupCredential, groupDid: string): GroupEventLocator {
+	const spaces = pdsSpaceReader(cred, groupDid);
+	return {
+		getSpace: (space) => spaces.getSpace(space),
+		async has(space, rkey) {
+			if (space !== null) {
+				const found = await spaces.get({
+					space,
+					repo: groupDid,
+					collection: GROUP_EVENT_COLLECTION,
+					rkey
+				});
+				return found !== null;
+			}
+			const { handle } = await groupClient(cred, groupDid);
+			const query = new URLSearchParams({
+				repo: groupDid,
+				collection: GROUP_EVENT_COLLECTION,
+				rkey
+			});
+			const res = await handle(`/xrpc/com.atproto.repo.getRecord?${query}`, { method: 'GET' });
+			if (res.ok) return true;
+			const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+			if (res.status === 400 && body?.error === 'RecordNotFound') return false;
+			throw new Error(
+				`com.atproto.repo.getRecord failed: ${res.status} ${String(body?.error ?? '')}`
+			);
+		}
+	};
+}
+
+/** The locator for a group's events. Throws GroupCredentialError when the group
+ *  is not linked, as `groupWriter` does. */
+export async function groupEventLocator(
+	env: CredentialStoreEnv,
+	db: D1Database,
+	group: GroupRow
+): Promise<GroupEventLocator> {
+	const cred = await resolveGroupCredential(env, group.group_did);
+	if (!cred) throw new GroupCredentialError(group.group_did);
+	return pdsEventLocator(cred, group.group_did);
+}
+
+/**
+ * Before a members-only create or update: the calendar space must exist, and only
+ * its members may read it. The host checks neither. A space write into a space
+ * that was never created succeeds anyway, so a group made before the calendar
+ * space would take members-only events into a space this app never set up, with
+ * no read policy or access record of its choosing. And a space whose read policy
+ * was changed out of band would hand the event to whoever it now lets in. One
+ * `getSpace` answers both, and a group without the space is re-created, never
+ * written to in public instead. (Spec: FR-101a.)
+ */
+export async function checkCalendarSpace(locator: GroupEventLocator, space: string): Promise<void> {
+	let readPolicy: string;
+	try {
+		({ readPolicy } = await locator.getSpace(space));
+	} catch (e) {
+		if (e instanceof Error && NO_SUCH_SPACE.test(e.message)) {
+			throw new GroupRecordError(NO_CALENDAR_SPACE);
+		}
+		console.error(`[groups] ${space} could not be checked; a members-only write was refused:`, e);
+		throw new GroupRecordError(UNCHECKED_CALENDAR_SPACE);
+	}
+	if (readPolicy !== POLICY_MEMBER_LIST) throw new GroupRecordError(READABLE_CALENDAR_SPACE);
+}
+
+/**
+ * Before an update or a delete: the event must be where the page says it is.
+ * Both containers create a record on a put and take a delete of a missing record
+ * as done, so a write sent to the wrong one would silently copy the event across,
+ * or report a delete that left it where it was. And a move cannot be allowed
+ * anyway: a space record's URI is not a repo record's, so moving an event changes
+ * its identity and strands every RSVP that names the old one. So the event is
+ * looked up where the page says, and then in the other container. Found only
+ * there, the write is refused. Found in neither, the write goes where it was
+ * sent, as it always has. (Spec: FR-107.)
+ */
+async function checkPlacement(
+	locator: GroupEventLocator,
+	groupDid: string,
+	space: string | null,
+	rkey: string
+): Promise<void> {
+	const has = async (at: string | null) => {
+		try {
+			return await locator.has(at, rkey);
+		} catch (e) {
+			console.error(`[groups] ${groupDid}: could not tell where event ${rkey} is:`, e);
+			throw new GroupRecordError(UNCHECKED_PLACEMENT);
+		}
+	};
+	if (await has(space)) return;
+	const other = space === null ? groupSpaceUris(groupDid).calendarSpaceUri : null;
+	if (await has(other)) throw new GroupRecordError(PLACEMENT_CHANGE);
+}
+
+/** Authorizes the caller, then writes an event where `space` says: the group's
+ *  calendar space for a members-only event, its public repo otherwise. */
 export async function writeGroupEvent(input: WriteGroupEventInput): Promise<GroupEventWriteResult> {
+	// No call is made for a placement the page should never send.
+	const space = checkEventSpace(input.group.group_did, input.space);
 	await authorize(input, input.intent);
 
 	if (input.intent === 'update' && !input.rkey) {
@@ -246,39 +417,57 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 		);
 	}
 
+	// A public create reads nothing first, as before.
+	if (space !== null || input.intent === 'update') {
+		const locator = input.locator ?? (await groupEventLocator(input.env, input.db, input.group));
+		if (space !== null) await checkCalendarSpace(locator, space);
+		if (input.intent === 'update') {
+			await checkPlacement(locator, input.group.group_did, space, rkey);
+		}
+	}
+
 	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
 		rkey,
 		record,
-		intent: input.intent
+		intent: input.intent,
+		space: space ?? undefined
 	});
 
 	assertAuthoredByGroup(result.uri, input.group.group_did);
 
 	// The events tab reads our index, not the PDS. This is the one function that
-	// writes a group event, so the index is told here.
-	await notifyIndex(input, result.uri);
+	// writes a group event, so the index is told here. Never about a members-only
+	// event, which the index would publish. The test is the placement the write
+	// was sent to, not the URI that came back. (Spec: FR-111a.)
+	if (space === null) await notifyIndex(input, result.uri);
 	return { uri: result.uri, cid: result.cid, rkey, repo: input.group.group_did };
 }
 
 export async function deleteGroupEvent(
 	input: Omit<WriteGroupEventInput, 'intent' | 'record'> & { rkey: string }
 ): Promise<{ uri: string; repo: string }> {
+	const space = checkEventSpace(input.group.group_did, input.space);
 	await authorize(input, 'delete');
+	const locator = input.locator ?? (await groupEventLocator(input.env, input.db, input.group));
+	await checkPlacement(locator, input.group.group_did, space, input.rkey);
 	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
 		rkey: input.rkey,
 		record: {},
-		intent: 'delete'
+		intent: 'delete',
+		space: space ?? undefined
 	});
 	assertAuthoredByGroup(result.uri, input.group.group_did);
 
-	// The index re-fetches the URI, finds nothing, and drops the row.
-	await notifyIndex(input, result.uri);
+	// The index re-fetches the URI, finds nothing, and drops the row. A space
+	// delete answers with the plain URI too, so here as well the skip keys on
+	// where the delete was sent. (Spec: FR-111a.)
+	if (space === null) await notifyIndex(input, result.uri);
 	return { uri: result.uri, repo: input.group.group_did };
 }
 

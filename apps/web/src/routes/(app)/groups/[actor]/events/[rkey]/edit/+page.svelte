@@ -12,11 +12,14 @@
 		handle: data.handle ?? undefined,
 		displayName: data.groupName
 	});
+	// Public: the loader finds the event in the index, which holds public events
+	// only.
 	let adapter = $derived(
 		createGroupEditorAdapter({
 			groupDid: data.groupDid,
 			editingRkey: data.rkey,
-			canDelete: data.canDelete
+			canDelete: data.canDelete,
+			space: null
 		})
 	);
 </script>
