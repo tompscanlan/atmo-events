@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# verify.sh for the members-only slice read, phase 3: the events list reads the group's calendar
-# space for roster members only, unions it with the public slice, and costs a non-member nothing
-# (spec 002 T208-T211, T227). Frozen at fire.
+# verify.sh for members-only events on the write path, phase 2 unit A: placement is a required
+# input at every hop, a members-only event is written, edited and deleted only in the group's
+# calendar space after a check that the space exists and is member-list, a placement change is
+# refused, and public events behave exactly as before (spec 002 T204, T206, T207, T220). Frozen at
+# fire.
 # Run from anywhere; it cds into the worktree. Every check prints a positive artifact line and the
 # last line is the tally. The e2e runs against the local atproto-devnet only (SKIP_E2E=1 skips it,
 # and then the run cannot pass).
@@ -10,13 +12,15 @@ set -uo pipefail
 unset -f grep sed awk 2>/dev/null || true
 # Plain output for the parsers below: no color codes around vitest's summary.
 export NO_COLOR=1
-WT=/workspaces/scratch/wt-atmo-events-mrimm4
+WT=/workspaces/scratch/wt-atmo-events-mrimm3
 WEB=$WT/apps/web
 LIB=src/lib/groups
-BASE=0d2e000
-MOD=$LIB/server/calendar-read.ts
-LOADER='src/routes/(app)/groups/[actor]/events/+page.server.ts'
-VITEST_BASELINE=658
+BASE=80bb19a
+WRITER=$LIB/server/event-writer.ts
+REMOTE=$LIB/groups.remote.ts
+ADAPTER=$LIB/editor-adapter.ts
+VITEST_BASELINE=697
+E2E_BASE_PASSED=36
 pass=0; fail=0
 ok() { echo "PASS $1"; pass=$((pass+1)); }
 no() { echo "FAIL $1"; fail=$((fail+1)); }
@@ -30,115 +34,142 @@ cd "$WEB" || { echo "ABORT no apps/web"; exit 2; }
 
 # Lines of a file that are code, not comment: drops //, /* and * lines.
 code_lines() { grep -nvE '^[[:space:]]*(//|/\*|\*)' "$1"; }
+# The body of a top-level `export async function NAME` in a file, as numbered code lines.
+fn_body() { awk -v n="$2" '$0 ~ "^export async function " n "\\(" {on=1} on {print NR": "$0} on && /^}/ {exit}' "$1" \
+  | grep -vE '^[0-9]+: [[:space:]]*(//|/\*|\*)'; }
 
-# 1. The slice is read only through reader.list: the files under src (tests aside) that hold the
-#    literal com.atproto.space.listRecords are exactly about-read.ts and the stub PDS fixture, as at
-#    the base.
-want1=$'src/lib/groups/server/__fixtures__/stub-pds.ts\nsrc/lib/groups/server/about-read.ts'
-got1=$(git grep -lF --untracked 'com.atproto.space.listRecords' -- src ':!**/*.test.*' | LC_ALL=C sort)
-[ "$got1" = "$want1" ] && ok "1 listRecords literal in 2 non-test files: $(echo "$got1" | tr '\n' ' ')" \
-  || no "1 listRecords literal in $(echo "$got1" | grep -c .) non-test file(s): $(echo "$got1" | tr '\n' ' ') (want about-read.ts and __fixtures__/stub-pds.ts)"
+# 1. One writer: the non-test files under src that name a space write NSID are exactly the three
+#    they were at the base, and the event writer names each of the six write NSIDs exactly once, so
+#    placement is a choice at the call site and not a second transport. (Spec: FR-103.)
+want1=$'src/lib/groups/server/__fixtures__/stub-pds.ts\nsrc/lib/groups/server/acceptance.ts\nsrc/lib/groups/server/event-writer.ts'
+got1=$(git grep -lE --untracked 'com\.atproto\.space\.(createRecord|putRecord|deleteRecord)' -- src ':!**/*.test.*' | LC_ALL=C sort)
+counts=""; bad1=0
+for n in space.createRecord space.putRecord space.deleteRecord repo.createRecord repo.putRecord repo.deleteRecord; do
+  c=$(grep -cF "com.atproto.$n" "$WRITER"); counts="$counts $n=$c"; [ "$c" -eq 1 ] || bad1=1
+done
+[ "$got1" = "$want1" ] && [ "$bad1" -eq 0 ] \
+  && ok "1 space write NSIDs in the 3 base files ($(echo "$got1" | tr '\n' ' ')); event-writer.ts:$counts" \
+  || no "1 space write NSIDs in: $(echo "$got1" | tr '\n' ' ') (want stub-pds, acceptance, event-writer); event-writer.ts:$counts (want each 1)"
 
-# 2. The new module exists, and its only importer under src (tests aside) is the events loader, so
-#    no other route can reach the slice. (Spec: FR-117.)
-if [ -s "$MOD" ]; then
-  imp=$(git grep -lE --untracked "['\"][^'\"]*/calendar-read(\.(ts|js))?['\"]" -- src ':!**/*.test.*' ":!$MOD" | LC_ALL=C sort)
-  [ "$imp" = "$LOADER" ] && ok "2 $MOD exists ($(wc -l <"$MOD") lines); its 1 non-test importer: $imp" \
-    || no "2 $MOD importers outside tests: $(echo "$imp" | grep -c .) [$(echo "$imp" | tr '\n' ' ')] (want exactly the events loader)"
-else no "2 $MOD does not exist (not built yet)"; fi
+# 2. The gate comes first: in writeGroupEvent and in deleteGroupEvent the first awaited call is
+#    `await authorize(`, so no space check, record read or write can run before the permission
+#    check. Placement validation that makes no call may sit above it. (Constitution IV.)
+r2=""; bad2=0
+for f in writeGroupEvent deleteGroupEvent; do
+  body=$(fn_body "$WRITER" "$f")
+  first=$(printf '%s\n' "$body" | grep -E '\bawait\b' | head -1)
+  auth=$(printf '%s\n' "$body" | grep -E 'await authorize\(' | head -1 | cut -d: -f1)
+  if [ -n "$auth" ] && [ "$(echo "$first" | cut -d: -f1)" = "$auth" ]; then r2="$r2 $f: authorize at line $auth is the first await;"
+  else r2="$r2 $f: first await '$(echo "$first" | sed 's/^[0-9]*: *//' | cut -c1-60)' at line $(echo "$first" | cut -d: -f1), authorize at ${auth:-none};"; bad2=1; fi
+done
+[ "$bad2" -eq 0 ] && ok "2$r2" || no "2$r2 (want authorize first in both)"
 
-# 3. The gate comes before the read: in the new module, the first code line that calls
-#    canSeeMembers( sits above the first code line that calls the reader (list, get or getSpace).
-if [ -s "$MOD" ]; then
-  g=$(code_lines "$MOD" | grep -vE '^[0-9]+:[[:space:]]*import\b' | grep -E 'canSeeMembers\(' | head -1 | cut -d: -f1)
-  r=$(code_lines "$MOD" | grep -E '[Rr]eader[?!]?\.(list|get|getSpace)\(' | head -1 | cut -d: -f1)
-  if [ -n "$g" ] && [ -n "$r" ] && [ "$g" -lt "$r" ]; then ok "3 first canSeeMembers( call at line $g, first reader call at line $r"
-  else no "3 first canSeeMembers( call at line ${g:-none}, first reader call at line ${r:-none} (want both, gate first)"; fi
-else no "3 $MOD does not exist (not built yet)"; fi
+# 3. Placement is required, never optional, at every hop: the two remote commands take
+#    `space: v.nullable(` (2x) and no optional or nullish space; the writer keeps exactly the one
+#    optional `space?:` it had (GroupRepoWrite, the transport's own field) and gains a required
+#    `space: string | null`; the editor adapter takes no optional space. (Spec: FR-116.)
+rn=$(grep -cE 'space: v\.nullable\(' "$REMOTE"); ro=$(grep -cE 'space: v\.(optional|nullish|exactOptional)\(' "$REMOTE")
+wo=$(grep -cE '\bspace\?:' "$WRITER"); wr=$(grep -cE '\bspace: string \| null\b' "$WRITER")
+ao=$(grep -cE '\bspace\?:' "$ADAPTER"); ar=$(grep -cE '\bspace: string \| null\b' "$ADAPTER")
+[ "$rn" -eq 2 ] && [ "$ro" -eq 0 ] && [ "$wo" -eq 1 ] && [ "$wr" -ge 1 ] && [ "$ao" -eq 0 ] && [ "$ar" -ge 1 ] \
+  && ok "3 groups.remote.ts: space v.nullable ${rn}x, optional ${ro}x; event-writer.ts: space?: ${wo}x, space: string | null ${wr}x; editor-adapter.ts: space?: ${ao}x, space: string | null ${ar}x" \
+  || no "3 groups.remote.ts: space v.nullable ${rn}x (want 2), optional/nullish ${ro}x (want 0); event-writer.ts: space?: ${wo}x (want 1), space: string | null ${wr}x (want >=1); editor-adapter.ts: space?: ${ao}x (want 0), space: string | null ${ar}x (want >=1)"
 
-# 4. No cache: zero matches in the new module and the events loader, and caches.default is still
-#    used in exactly the 2 files it was at the base. (Spec: FR-117.) A missing module is V2's failure,
-#    so this check scans the files that exist and names them.
-scan=("$LOADER"); [ -f "$MOD" ] && scan+=("$MOD")
-if [ -s "$LOADER" ]; then
-  nc=$(cat "${scan[@]}" | grep -cEi 'caches|cachedRead|edge-cache|cache-control|setHeaders')
-  want4=$'src/lib/server/edge-cache.ts\nsrc/routes/(app)/p/[actor]/e/[rkey]/+page.server.ts'
-  cd4=$(git grep -lF --untracked 'caches.default' -- src | LC_ALL=C sort)
-  [ "$nc" -eq 0 ] && [ "$cd4" = "$want4" ] \
-    && ok "4 cache matches 0 in ${#scan[@]} file(s) [${scan[*]}]; caches.default in 2 files: $(echo "$cd4" | tr '\n' ' ')" \
-    || { no "4 cache matches $nc in [${scan[*]}]; caches.default in $(echo "$cd4" | grep -c .) file(s): $(echo "$cd4" | tr '\n' ' ') (want 0, and the 2 base files)"
-         cat "${scan[@]}" | grep -nEi 'caches|cachedRead|edge-cache|cache-control|setHeaders' | head -5; }
-else no "4 the events loader is missing"; fi
+# 4. No visibility field on the record: the lexicon types are untouched, and no added non-test line
+#    under the groups lib assigns a visibility, privacy or audience key. (Spec: FR-104.)
+lt=$(git diff --numstat $BASE -- src/lexicon-types | awk '{s+=$1+$2} END {print s+0}')
+vk=$(git diff $BASE -- $LIB ':!**/*.test.*' | grep -E '^\+' | grep -vE '^\+\+\+ ' | grep -cE '\b(visibility|privacy|audience|isPrivate)\s*[:=]')
+[ "$lt" -eq 0 ] && [ "$vk" -eq 0 ] && ok "4 src/lexicon-types numstat vs $BASE: $lt lines; added visibility/privacy/audience keys under $LIB: $vk" \
+  || no "4 src/lexicon-types numstat $lt (want 0); added visibility/privacy/audience keys $vk (want 0)"
 
-# 5. Never through contrail: of the new module's import specifiers, none names contrail or
-#    events-index. (Spec: FR-117.)
-if [ -s "$MOD" ]; then
-  specs=$(code_lines "$MOD" | grep -oE "(from|import)[[:space:]]*\(?[[:space:]]*['\"][^'\"]+['\"]" | grep -oE "['\"][^'\"]+['\"]" | tr -d "'\"")
-  ns=$(echo "$specs" | grep -c .); bad=$(echo "$specs" | grep -cE 'contrail|events-index')
-  [ "$ns" -ge 1 ] && [ "$bad" -eq 0 ] && ok "5 $ns import specifier(s) in the module, 0 from contrail or events-index: $(echo "$specs" | tr '\n' ' ')" \
-    || no "5 $ns import specifier(s), $bad from contrail or events-index: $(echo "$specs" | tr '\n' ' ') (want >=1 and 0)"
-else no "5 $MOD does not exist (not built yet)"; fi
-
-# 6. Unchanged against the base: the eleven paths of AC 11. Each must still exist, and the
+# 5. Unchanged against the base: the fourteen paths of AC 13. Each must still exist, and the
 #    numstat over all of them totals 0 lines.
-keep=($LIB/server/about-read.ts $LIB/server/spaces.ts $LIB/server/members-writer.ts
-      $LIB/server/event-writer.ts $LIB/create-group.ts $LIB/server/route-context.ts $LIB/access.ts
-      $LIB/server/repo.ts $LIB/server/events-index.ts migrations ../../packages/ui)
+keep=($LIB/server/about-read.ts $LIB/server/calendar-read.ts $LIB/server/events-index.ts
+      $LIB/server/route-context.ts $LIB/access.ts $LIB/server/repo.ts $LIB/server/members-writer.ts
+      $LIB/create-group.ts migrations ../../packages/ui src/lexicon-types
+      'src/routes/(app)/groups/[actor]/events/+page.svelte'
+      'src/routes/(app)/groups/[actor]/events/+page.server.ts'
+      'src/routes/(app)/groups/[actor]/events/[rkey]/edit/+page.server.ts')
 present=0; for p in "${keep[@]}"; do [ -n "$(git ls-files -- "$p" | head -1)" ] && present=$((present+1)); done
 tot=$(git diff --numstat $BASE -- "${keep[@]}" | awk '{s+=$1+$2} END {print s+0}')
-[ "$present" -eq 11 ] && [ "$tot" -eq 0 ] && ok "6 all 11 AC-11 paths present; numstat vs $BASE totals $tot lines" \
-  || { no "6 $present of 11 AC-11 paths present; numstat vs $BASE totals $tot lines (want 11 and 0)"; git diff --numstat $BASE -- "${keep[@]}" | head; }
+[ "$present" -eq 14 ] && [ "$tot" -eq 0 ] && ok "5 all 14 AC-13 paths present; numstat vs $BASE totals $tot lines" \
+  || { no "5 $present of 14 AC-13 paths present; numstat vs $BASE totals $tot lines (want 14 and 0)"; git diff --numstat $BASE -- "${keep[@]}" | head; }
 
-# 7. The groups suites, lib plus routes: more tests than the 658 baseline, all passing, and each of
-#    the two fixed AC-12 titles passes exactly once in a test file of the events route.
+# 6. The groups suites, lib plus routes: more tests than the 697 baseline, all passing, and each
+#    fixed AC-14 title passes exactly once.
+titles=(
+  "a members-only create goes to space.createRecord and never to a repo method"
+  "a members-only edit goes to space.putRecord in the calendar space"
+  "a members-only delete goes to space.deleteRecord and never to repo.deleteRecord"
+  "a members-only write and delete never notify the index"
+  "an edit that changes placement is refused with no write"
+  "a delete at the wrong placement is refused with no write"
+  "a members-only write to a group with no calendar space is refused with no write"
+  "a members-only write into a calendar space that is not member-list is refused with no write"
+  "a members-only write is refused when the calendar space cannot be checked"
+  "a space other than the group's calendar space is refused before any PDS call"
+  "a write with no placement is refused before any PDS call"
+  "a public write sends the same request as before"
+  "the event record is the same in either container"
+  "a members-only event keeps its image inside the calendar space"
+  "a caller without the permission is refused before any PDS read or write"
+  "each placement refusal reaches the form as a message, not a 500"
+)
 out=$(npx vitest run --reporter=verbose $LIB 'src/routes/(app)/groups' 2>&1)
 line=$(printf '%s\n' "$out" | grep -E '^\s+Tests\s' | tail -1)
 files=$(printf '%s\n' "$out" | grep -E '^\s+Test Files\s' | tail -1)
 n=$(printf '%s\n' "$line" | sed -nE 's/^\s+Tests\s+([0-9]+) passed \(([0-9]+)\)$/\1 \2/p')
-t1="no space read for an anonymous viewer"; t2="no space read for a signed-in non-member"
-EVT='src/routes/.*/groups/.*/events/[^ >]*\.test\.ts > (.* > )?'
-c1=$(printf '%s\n' "$out" | grep -cE "^\s+✓ $EVT$t1( [0-9.]+m?s)?$")
-c2=$(printf '%s\n' "$out" | grep -cE "^\s+✓ $EVT$t2( [0-9.]+m?s)?$")
+tc=""; tbad=0
+for t in "${titles[@]}"; do
+  esc=$(printf '%s' "$t" | sed 's/[.[\*^$()+?{|]/\\&/g')
+  c=$(printf '%s\n' "$out" | grep -cE "^\s+✓ .* > ${esc}( [0-9.]+m?s)?$")
+  tc="$tc $c"; [ "$c" -eq 1 ] || tbad=$((tbad+1))
+done
 set -- $n
-if [ -n "$n" ] && [ "$1" -eq "$2" ] && [ "$1" -gt $VITEST_BASELINE ] && [ "$c1" -eq 1 ] && [ "$c2" -eq 1 ] \
+if [ -n "$n" ] && [ "$1" -eq "$2" ] && [ "$1" -gt $VITEST_BASELINE ] && [ "$tbad" -eq 0 ] \
    && printf '%s\n' "$files" | grep -qE '^\s+Test Files\s+([0-9]+) passed \(\1\)$'; then
-  ok "7 vitest:$(echo "$line" | sed 's/^ *Tests//'),$(echo "$files" | sed 's/^ *Test Files//') files (baseline $VITEST_BASELINE); '$t1' 1x, '$t2' 1x"
+  ok "6 vitest:$(echo "$line" | sed 's/^ *Tests//'),$(echo "$files" | sed 's/^ *Test Files//') files (baseline $VITEST_BASELINE); ${#titles[@]} fixed titles each passed 1x"
 else
-  no "7 vitest: '${line:-no Tests line}' / '${files:-no Test Files line}' (want all passed and > $VITEST_BASELINE); '$t1' passed ${c1}x, '$t2' passed ${c2}x (want 1, 1)"
+  no "6 vitest: '${line:-no Tests line}' / '${files:-no Test Files line}' (want all passed and > $VITEST_BASELINE); fixed titles passed [${tc# }] ($tbad of ${#titles[@]} not exactly 1x)"
   printf '%s\n' "$out" | grep -E '^\s+(×|✗)|FAIL ' | head -10
 fi
 
-# 8. Type check: 0 errors, warnings no worse than the 7 stamped at the base.
+# 7. Type check: 0 errors, warnings no worse than the 7 stamped at the base.
 sc=$(npx svelte-check --tsconfig ./tsconfig.json --output machine 2>&1 | grep -E ' COMPLETED ' | tail -1)
 e=$(echo "$sc" | grep -oE '[0-9]+ ERRORS' | grep -oE '[0-9]+'); w=$(echo "$sc" | grep -oE '[0-9]+ WARNINGS' | grep -oE '[0-9]+')
-[ -n "$e" ] && [ "$e" -eq 0 ] && [ -n "$w" ] && [ "$w" -le 7 ] && ok "8 svelte-check: $e errors, $w warnings (baseline 0, 7)" \
-  || no "8 svelte-check: '${sc:-no COMPLETED line}' (want 0 errors, <=7 warnings)"
+[ -n "$e" ] && [ "$e" -eq 0 ] && [ -n "$w" ] && [ "$w" -le 7 ] && ok "7 svelte-check: $e errors, $w warnings (baseline 0, 7)" \
+  || no "7 svelte-check: '${sc:-no COMPLETED line}' (want 0 errors, <=7 warnings)"
 
-# 9. Formatting: prettier --check over every .ts/.mjs/.js/.svelte file this branch changed or added
-#    under apps/web, plus the touch-set files that exist, so the check always has files to read
-#    (prettier was clean on all of them at the base).
+# 8. Formatting: prettier --check over every .ts/.mjs/.js/.svelte file this branch changed or added
+#    under apps/web, plus the touch-set files that exist, so the check always has files to read.
 changed=$( { git diff --name-only --diff-filter=d --relative $BASE -- . ; git ls-files --others --exclude-standard -- . ; } | grep -E '\.(ts|mjs|js|svelte)$')
-touch=$(for f in $LIB/types.ts "$LOADER" 'src/routes/(app)/groups/[actor]/events/+page.svelte' \
-          scripts/groups-e2e.mjs scripts/groups-e2e.worker.ts scripts/groups-e2e.oauth.ts; do [ -f "$f" ] && echo "$f"; done)
+touch=$(for f in "$WRITER" "$REMOTE" "$ADAPTER" $LIB/server/spaces.ts \
+          'src/routes/(app)/groups/[actor]/events/new/+page.svelte' \
+          'src/routes/(app)/groups/[actor]/events/[rkey]/edit/+page.svelte' \
+          scripts/groups-e2e.mjs scripts/groups-e2e.worker.ts; do [ -f "$f" ] && echo "$f"; done)
 mapfile -t pf < <(printf '%s\n%s\n' "$changed" "$touch" | grep . | sort -u)
 pout=$(npx prettier --check "${pf[@]}" 2>&1)
 if printf '%s\n' "$pout" | grep -qx 'All matched files use Prettier code style!'; then
-  ok "9 prettier clean on ${#pf[@]} file(s), $(echo "$changed" | grep -c .) of them changed vs $BASE"
-else no "9 prettier on ${#pf[@]} file(s): $(printf '%s\n' "$pout" | grep -E '^\[warn\]' | tr '\n' ' ')"; fi
+  ok "8 prettier clean on ${#pf[@]} file(s), $(echo "$changed" | grep -c .) of them changed vs $BASE"
+else no "8 prettier on ${#pf[@]} file(s): $(printf '%s\n' "$pout" | grep -E '^\[warn\]' | tr '\n' ' ')"; fi
 
-# 10. The groups e2e on atproto-devnet. Baseline at the base: 31 passed, 2 failed, and the two
-#     failures are the events index (checks 21-22), which cannot resolve devnet's http PDS. After
-#     this change: k >= 3 new PASS lines labeled "the members-only slice ...", passed = 31 + k,
-#     failed = 2 and exactly the two events-index labels, and a line reporting the seed created or
-#     found.
+# 9. The groups e2e on atproto-devnet. Baseline at the base: 36 passed, 2 failed, and the two
+#    failures are the events index (checks 21-22), which cannot resolve devnet's http PDS. After
+#    this change: k >= 8 new PASS lines whose label starts "a members-only event", passed = 36 + k,
+#    failed = 2 and exactly the two events-index labels, checks 4, 5, 6 and 9 still pass once each
+#    (public writes unchanged), and no WARN line about a members-only event or the calendar space.
 L21="the events tab reads the group.s events from the index, edits included"
 L22="an event written after the backfill is indexed at once, and a deletion drops it"
+P4="owner.s event is authored by the GROUP DID, not by the owner"
+P5="admin edits an event they did not create; the author is still the GROUP DID"
+P6="non-member.s identical edit is refused"
+P9="an event.s cover image is uploaded into the GROUP repo, and its record cites it"
 CRED=/workspaces/scratch/atproto-devnet/data/accounts.env
-if [ "${SKIP_E2E:-0}" = 1 ]; then no "10 e2e skipped (SKIP_E2E=1)"
-elif [ ! -s "$CRED" ]; then no "10 no fixture credentials file at $CRED"
+if [ "${SKIP_E2E:-0}" = 1 ]; then no "9 e2e skipped (SKIP_E2E=1)"
+elif [ ! -s "$CRED" ]; then no "9 no fixture credentials file at $CRED"
 else
   h=$(curl -s -m 5 http://localhost:3010/xrpc/_health)
-  if ! echo "$h" | grep -q '"version"'; then no "10 devnet alpha PDS not answering on :3010 ($h)"; else
+  if ! echo "$h" | grep -q '"version"'; then no "9 devnet alpha PDS not answering on :3010 ($h)"; else
     log=$(mktemp -t groups-e2e.XXXXXX)
     E2E_PDS=http://localhost:3010 E2E_PLC_URL=http://localhost:2592 \
     E2E_GROUP_DID=did:plc:yaqibeok2ndjg3msydda7hew E2E_GROUP_HANDLE=groups-e2e.devnet.test \
@@ -148,21 +179,24 @@ else
       timeout 900 node scripts/groups-e2e.mjs >"$log" 2>&1
     sum=$(grep -E '^SUMMARY: [0-9]+ passed, [0-9]+ failed$' "$log" | tail -1)
     p=$(echo "$sum" | sed -nE 's/^SUMMARY: ([0-9]+) passed.*/\1/p'); f=$(echo "$sum" | sed -nE 's/.* ([0-9]+) failed$/\1/p')
-    k=$(grep -cE '^PASS +the members-only slice ' "$log")
+    k=$(grep -cE '^PASS +a members-only event\b' "$log")
     nfail=$(grep -cE '^FAIL ' "$log")
     f21=$(grep -cE "^FAIL +${L21}(: |$)" "$log"); f22=$(grep -cE "^FAIL +${L22}(: |$)" "$log")
-    seed=$(grep -iE '\bseed' "$log" | grep -iE '\b(created|found)\b' | head -1 | sed 's/^ *//')
-    if [ -n "$sum" ] && [ "$k" -ge 3 ] && [ "$p" -eq $((31 + k)) ] && [ "$f" -eq 2 ] \
-       && [ "$nfail" -eq 2 ] && [ "$f21" -eq 1 ] && [ "$f22" -eq 1 ] && [ -n "$seed" ]; then
-      ok "10 devnet e2e $sum = 31 + k with k=$k members-only slice checks; the 2 FAILs are checks 21-22; seed: $seed"
+    c4=$(grep -cE "^PASS +${P4}(: |$)" "$log"); c5=$(grep -cE "^PASS +${P5}(: |$)" "$log")
+    c6=$(grep -cE "^PASS +${P6}(: |$)" "$log"); c9=$(grep -cE "^PASS +${P9}(: |$)" "$log")
+    warn=$(grep -E '^WARN ' "$log" | grep -ciE 'members-only|calendar')
+    if [ -n "$sum" ] && [ "$k" -ge 8 ] && [ "$p" -eq $((E2E_BASE_PASSED + k)) ] && [ "$f" -eq 2 ] \
+       && [ "$nfail" -eq 2 ] && [ "$f21" -eq 1 ] && [ "$f22" -eq 1 ] \
+       && [ "$c4" -eq 1 ] && [ "$c5" -eq 1 ] && [ "$c6" -eq 1 ] && [ "$c9" -eq 1 ] && [ "$warn" -eq 0 ]; then
+      ok "9 devnet e2e $sum = $E2E_BASE_PASSED + k with k=$k members-only event checks; the 2 FAILs are checks 21-22; checks 4, 5, 6, 9 PASS 1x each; 0 members-only WARN lines"
     else
-      no "10 devnet e2e '${sum:-no SUMMARY}': k=$k members-only slice PASS (want >=3, passed = 31 + k), FAIL lines $nfail (21: $f21, 22: $f22; want 2, 1, 1), seed line: '${seed:-none}' (log $log)"
-      grep -E '^(FAIL|SUMMARY)' "$log" | cut -c1-200
+      no "9 devnet e2e '${sum:-no SUMMARY}': k=$k members-only event PASS (want >=8, passed = $E2E_BASE_PASSED + k), FAIL lines $nfail (21: $f21, 22: $f22; want 2, 1, 1), checks 4/5/6/9 PASS $c4/$c5/$c6/$c9 (want 1 each), members-only WARN lines $warn (want 0) (log $log)"
+      grep -E '^(FAIL|WARN|SUMMARY)' "$log" | cut -c1-200
     fi
   fi
 fi
 
-# 11. Hygiene over $BASE..HEAD: commit messages and added lines (this script aside) carry no bead id
+# 10. Hygiene over $BASE..HEAD: commit messages and added lines (this script aside) carry no bead id
 #     and no Co-Authored-By, and every added line that names an FR- or SC- id names it only in a
 #     trailing "(Spec: ...)" parenthetical.
 cd "$WT"
@@ -177,9 +211,9 @@ specl=$(printf '%s\n' "$added" | grep -E '\b(FR|SC)-[0-9]+')
 nspec=$(printf '%s' "$specl" | grep -c .)
 offform=$(printf '%s\n' "$specl" | sed -E 's/\(Spec: [^()]*\)[[:space:]]*(\*\/)?[[:space:]]*$//' | grep -cE '\b(FR|SC)-[0-9]+')
 if [ "$ncommits" -ge 1 ] && [ "$bm" -eq 0 ] && [ "$ba" -eq 0 ] && [ "$cm" -eq 0 ] && [ "$ca" -eq 0 ] && [ "$offform" -eq 0 ]; then
-  ok "11 $ncommits commit(s), $nadded added line(s) scanned: 0 bead ids, 0 Co-Authored-By; $nspec spec-id line(s), all in the trailing (Spec: ...) form"
+  ok "10 $ncommits commit(s), $nadded added line(s) scanned: 0 bead ids, 0 Co-Authored-By; $nspec spec-id line(s), all in the trailing (Spec: ...) form"
 else
-  no "11 $ncommits commit(s), $nadded added line(s): bead ids $bm in messages, $ba in lines; Co-Authored-By $cm, $ca; $offform of $nspec spec-id line(s) not in the trailing (Spec: ...) form (want >=1 commit, then all 0)"
+  no "10 $ncommits commit(s), $nadded added line(s): bead ids $bm in messages, $ba in lines; Co-Authored-By $cm, $ca; $offform of $nspec spec-id line(s) not in the trailing (Spec: ...) form (want >=1 commit, then all 0)"
   printf '%s\n' "$added" | grep -E "$BEAD|[Cc]o-[Aa]uthored-[Bb]y" | head -5
   printf '%s\n' "$specl" | sed -E 's/\(Spec: [^()]*\)[[:space:]]*(\*\/)?[[:space:]]*$//' | grep -E '\b(FR|SC)-[0-9]+' | head -5
 fi
