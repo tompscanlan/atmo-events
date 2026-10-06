@@ -4,15 +4,16 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 32 numbered checks (1 to 23, plus 10b, 13b, 15b, 18b, 18c, 18d, 18e,
- * 20b and 20c), prints one PASS or FAIL line each, and a clean run ends with
- * `SUMMARY: 32 passed, 0 failed`. Setup steps print as notes and are not
+ * It runs 33 numbered checks (1 to 23, plus 10b, 13b, 13c, 15b, 18b, 18c, 18d,
+ * 18e, 20b and 20c), prints one PASS or FAIL line each, and a clean run ends
+ * with `SUMMARY: 33 passed, 0 failed`. Setup steps print as notes and are not
  * counted. In order: create and the seeded roles (1), join, approval and
  * promotion (2-3), events written as the group DID and the edit gate (4-6),
  * leaving (7-8), a cover image uploaded into the group's repo (9), the profile,
  * rules and access record in the about space (10-12), the roster, the index of
- * the group's spaces and the authz config as records in the members space
- * (13-18), the member's own acceptance at a join request, at leave and at a
+ * the group's three spaces and the authz config as records in the members
+ * space, with the calendar space's read policy, access record and empty member
+ * list (13-18), the member's own acceptance at a join request, at leave and at a
  * sign-in after a direct add (18b-18d), a member whose PDS serves no spaces
  * (18e), the discovery declaration and
  * visibility at the host (19-20c), the events index (21-22), and a rebuild of
@@ -62,8 +63,10 @@
  * Cleanup runs in the `finally`. It deletes the events, withdraws the
  * declaration, deletes the admin's acceptance, and removes the rules, the authz
  * config and the owner's membership. Then it re-reads each one and prints WARN for anything left. The
- * profile and both `access` records stay at fixed keys that the next run
- * overwrites, and the space index stays until the next run resets it.
+ * profile and the three `access` records stay at fixed keys that the next run
+ * overwrites, and the space index stays until the next run resets it. The
+ * spaces themselves stay, so a run after the first finds the calendar space
+ * rather than creating it, and keeps whatever read policy it was created with.
  */
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -118,6 +121,10 @@ const READ_POLICY = {
 /** The visibility chosen at create. D1 does not store it, so each step that
  *  needs it is passed it. */
 const CREATE_VISIBILITY = 'public';
+
+/** The calendar space, written out like READ_POLICY rather than taken from the
+ *  app, so a wrong type or key in the app's constant fails check 13c. */
+const CALENDAR_SPACE_URI = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
 
 const EVENT_COLLECTION = 'community.lexicon.calendar.event';
 /** The record in the group's public repo that lets other apps find it. */
@@ -467,6 +474,7 @@ async function main() {
 	let spacesProvisioned = false;
 	let membersSpaceUri;
 	let aboutSpaceUri;
+	let calendarSpaceUri;
 	/** Set once the group is declared, so the `finally` withdraws it. */
 	let declared = false;
 	/** Set while the about space may be private, so the `finally` makes it public. */
@@ -702,17 +710,28 @@ async function main() {
 		);
 
 		// 10. the group's public face, as records --------------------------------
-		// `createGroup` provisions nothing, so both spaces are made here. Only a live
-		// PDS can prove the profile and rules read back, because the PDS defines the
-		// com.atproto.space.* parameters and the space URI form.
+		// `createGroup` provisions nothing, so the three spaces are made here. Only a
+		// live PDS can prove the profile and rules read back, because the PDS defines
+		// the com.atproto.space.* parameters and the space URI form.
+		//
+		// The group persists across runs, and createSpace keeps an existing space's
+		// read policy, so whether this run creates the calendar space or finds one is
+		// read first, and check 13c says which it read the policy of.
+		const calendarBefore = await spaceReadPolicy(groupToken, CALENDAR_SPACE_URI);
+		const calendarOrigin =
+			calendarBefore.status === 200
+				? `found from an earlier run, read policy ${calendarBefore.readPolicy}`
+				: `created by this run (getSpace before: ${calendarBefore.error ?? calendarBefore.status})`;
 		const spaces = await must('provisionSpaces', {
 			groupId: group.id,
 			visibility: CREATE_VISIBILITY
 		});
-		note(`about space   ${spaces.aboutSpaceUri}`);
-		note(`members space ${spaces.membersSpaceUri}`);
+		note(`about space    ${spaces.aboutSpaceUri}`);
+		note(`members space  ${spaces.membersSpaceUri}`);
+		note(`calendar space ${spaces.calendarSpaceUri}, ${calendarOrigin}`);
 		membersSpaceUri = spaces.membersSpaceUri;
 		aboutSpaceUri = spaces.aboutSpaceUri;
+		calendarSpaceUri = spaces.calendarSpaceUri;
 		spacesProvisioned = true;
 		// Drop any authz config a previous run left (see dropAuthz in the worker).
 		const stale = await must('dropAuthz', { groupId: group.id });
@@ -892,32 +911,90 @@ async function main() {
 				`public ${accessRecord.value?.public}`
 		);
 
-		// 13b. the members space indexes both spaces -------------------------------
-		// One entry per space, the two well-known ones included. The key is a TID,
-		// so a writer that did not list the index first would add a second entry
-		// on every write: the second write here must add nothing.
+		// 13b. the members space indexes all three spaces ----------------------------
+		// One entry per space, the two well-known ones included, and the calendar
+		// space passed as a create passes it. The key is a TID, so a writer that did
+		// not list the index first would add a second entry on every write: the
+		// second write here must add nothing.
 		const staleIndex = await must('dropSpaceIndex', { groupId: group.id });
 		if (staleIndex.dropped.length) {
 			note(`reset ${staleIndex.dropped.length} leftover space index entr(ies)`);
 		}
-		const firstIndexWrite = await must('writeSpaceIndex', { groupId: group.id, callerDid: ALICE });
+		const firstIndexWrite = await must('writeSpaceIndex', {
+			groupId: group.id,
+			callerDid: ALICE,
+			calendarSpaceUri
+		});
 		const secondIndexWrite = await must('writeSpaceIndex', {
 			groupId: group.id,
-			callerDid: ALICE
+			callerDid: ALICE,
+			calendarSpaceUri
 		});
 		const spaceIndex = await spaceRecords(groupToken, membersSpaceUri, 'group.opensocial.space');
 		const indexedSpaces = spaceIndex.records.map((entry) => entry.value?.space).sort();
 		record(
 			spaceIndex.status === 200 &&
-				spaceIndex.records.length === 2 &&
-				JSON.stringify(indexedSpaces) === JSON.stringify([aboutSpaceUri, membersSpaceUri].sort()) &&
-				firstIndexWrite.added.length === 2 &&
+				spaceIndex.records.length === 3 &&
+				JSON.stringify(indexedSpaces) ===
+					JSON.stringify([aboutSpaceUri, membersSpaceUri, CALENDAR_SPACE_URI].sort()) &&
+				firstIndexWrite.added.length === 3 &&
 				secondIndexWrite.added.length === 0 &&
 				secondIndexWrite.removed.length === 0,
-			'the members space indexes both spaces, one entry each',
+			'the members space indexes all three spaces, one entry each',
 			`listRecords ${spaceIndex.status}: ${spaceIndex.records.length} group.opensocial.space ` +
-				`record(s) for ${indexedSpaces.join(' and ')}; the first write added ` +
+				`record(s) for ${indexedSpaces.join(', ')}; the first write added ` +
 				`${firstIndexWrite.added.length}, the second ${secondIndexWrite.added.length}`
+		);
+
+		// 13c. the calendar space is the members' alone ------------------------------
+		// It will hold members-only events, so its read policy is the member list even
+		// for this public group: the about space's policy here would let any signed-in
+		// account read them. The policy is read from the host, not taken from what
+		// provisioning sent. Its access record is deleted first, so a record left by an
+		// earlier run cannot pass for this run's write, and its member list stays
+		// empty, since the app reads the space as the group.
+		await must('dropCalendarAccess', { groupId: group.id, space: calendarSpaceUri });
+		const calendarAccessBefore = await spaceRecord(
+			groupToken,
+			calendarSpaceUri,
+			'group.opensocial.access',
+			'self'
+		);
+		await must('writeGroupAccess', {
+			groupId: group.id,
+			callerDid: ALICE,
+			space: calendarSpaceUri
+		});
+		const calendarPolicy = await spaceReadPolicy(groupToken, calendarSpaceUri);
+		const calendarAccess = await spaceRecord(
+			groupToken,
+			calendarSpaceUri,
+			'group.opensocial.access',
+			'self'
+		);
+		const calendarMembers = await spaceMemberList(groupToken, calendarSpaceUri);
+		record(
+			calendarSpaceUri === CALENDAR_SPACE_URI &&
+				CREATE_VISIBILITY === 'public' &&
+				calendarPolicy.status === 200 &&
+				calendarPolicy.readPolicy === READ_POLICY.private &&
+				notFound(calendarAccessBefore) &&
+				calendarAccess.status === 200 &&
+				calendarAccess.value?.public === false &&
+				JSON.stringify(calendarAccess.value?.readRoles) ===
+					JSON.stringify(['owner', 'admin', 'member']) &&
+				JSON.stringify(calendarAccess.value?.grants) === '[]' &&
+				calendarMembers.status === 200 &&
+				calendarMembers.members.length === 0,
+			'the calendar space is member-list read for a public group, holds access/self not ' +
+				'public, and lists no members',
+			`${calendarSpaceUri} (${calendarOrigin}); getSpace ${calendarPolicy.status} read policy ` +
+				`${calendarPolicy.readPolicy ?? calendarPolicy.error}; access/self before the write ` +
+				`${calendarAccessBefore.error ?? calendarAccessBefore.status}, after ` +
+				`${calendarAccess.status} public ${calendarAccess.value?.public} readRoles ` +
+				`${JSON.stringify(calendarAccess.value?.readRoles)}; listMembers ${calendarMembers.status}: ` +
+				`${calendarMembers.members.length} member(s)` +
+				`${calendarMembers.error ? ` (${calendarMembers.error})` : ''}`
 		);
 
 		// 14. the space's own member list is write-only --------------------------

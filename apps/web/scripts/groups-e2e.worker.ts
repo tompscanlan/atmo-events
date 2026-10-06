@@ -34,6 +34,8 @@ import {
 	writeGroupEvent
 } from '../src/lib/groups/server/event-writer';
 import {
+	GROUP_ACCESS_COLLECTION,
+	GROUP_ACCESS_RKEY,
 	GROUP_EVENT_PERMISSIONS_COLLECTION,
 	GROUP_PERMISSIONS_COLLECTION,
 	GROUP_PERMISSIONS_RKEY,
@@ -346,7 +348,8 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	/** The events tab's list, from the app's index and not from the PDS. */
 	listGroupEvents: async (env, args) => listGroupEvents(env.DB, await groupById(env, args.groupId)),
 
-	/** The about space and the members space, as a create makes them. Idempotent. */
+	/** The about, members and calendar spaces, as a create makes them. Idempotent.
+	 *  Returns all three URIs; only the first two are recorded, as at create. */
 	provisionSpaces: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		const cred = await resolveGroupCredential(env, group.group_did);
@@ -542,14 +545,34 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	// ---- the roster, as records ---------------------------------------------
 
-	/** The members space's `access` record: who may read the space. */
+	/** A members-read space's `access` record: who may read the space. The members
+	 *  space, or the calendar space when the driver passes it as `space`, as the
+	 *  create does. */
 	writeGroupAccess: async (env, args) =>
 		writeGroupAccess({
 			db: env.DB,
 			env,
 			group: await groupById(env, args.groupId),
-			callerDid: args.callerDid == null ? null : String(args.callerDid)
+			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			space: args.space == null ? undefined : String(args.space)
 		}),
+
+	/** Deletes the calendar space's `access` record through the group's writer. No
+	 *  app path does this, but the e2e reuses one DID across runs, and a record left
+	 *  by an earlier run would let check 13c pass without this run's write. */
+	dropCalendarAccess: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const writer = await groupWriter(env, env.DB, group);
+		await writer({
+			repo: group.group_did,
+			collection: GROUP_ACCESS_COLLECTION,
+			rkey: GROUP_ACCESS_RKEY,
+			record: {},
+			intent: 'delete',
+			space: String(args.space)
+		});
+		return { space: String(args.space) };
+	},
 
 	/** The about space's `access` record, saying the visibility the driver passes,
 	 *  as create and the settings save write it. */
@@ -562,7 +585,9 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			visibility: chosenVisibility(args)
 		}),
 
-	/** The index of the group's two spaces, read first as the repair reads it. */
+	/** The index of the group's spaces, read first as the repair reads it. The
+	 *  calendar space joins it when the driver passes `calendarSpaceUri`, as the
+	 *  create does; without it, as the repair does, the index is the two spaces. */
 	writeSpaceIndex: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		return writeGroupSpaceIndex({
@@ -570,7 +595,8 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			env,
 			group,
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
-			existing: await readGroupSpaceIndex(await spaceReader(env, group), group)
+			existing: await readGroupSpaceIndex(await spaceReader(env, group), group),
+			calendarSpace: args.calendarSpaceUri == null ? undefined : String(args.calendarSpaceUri)
 		});
 	},
 
