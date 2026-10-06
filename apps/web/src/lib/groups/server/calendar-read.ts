@@ -80,13 +80,20 @@ export async function readMembersOnlyEvents(
 		// The space also holds its access record. The host was asked for events
 		// only, and each record is checked again in case it ignored the filter.
 		if (record.collection !== GROUP_EVENT_COLLECTION) continue;
+		// Images are wanted on every event. Leaving a members-only event's image
+		// out is interim, until members-only images are served to members through
+		// atmo's own route: the card would build a cdn.bsky.app URL from it, which
+		// hands a third party the group's DID and the image's CID. Only what the
+		// page reads loses it; the stored record keeps its image. (Spec: FR-119.)
+		const value = { ...record.value };
+		delete value.media;
 		// The URI stays the space form the reader built, since that is the
 		// event's identity wherever it is cited. (Spec: FR-120.)
 		events.push({
 			uri: record.uri,
 			cid: record.cid,
 			rkey: record.rkey,
-			value: record.value,
+			value,
 			space
 		});
 	}

@@ -38,6 +38,16 @@ const MEETING_VALUE = {
 };
 const ACCESS_VALUE = { public: false, readRoles: ['owner', 'admin', 'member'], grants: [] };
 
+/** An image as the event editor stores it: a blob in the group's repo, cited
+ *  by its CID. */
+function image(role: string, cid: string) {
+	return {
+		role,
+		alt: 'The committee',
+		content: { $type: 'blob', ref: { $link: cid }, mimeType: 'image/webp', size: 41250 }
+	};
+}
+
 /** The calendar space as the reader returns it: an event and the space's own
  *  access record, each at its space-form URI. */
 const CALENDAR_RECORDS: GroupSpaceRecord[] = [
@@ -238,6 +248,37 @@ describe('readMembersOnlyEvents: through the real reader', () => {
 		vi.unstubAllGlobals();
 		unlinkAllGroups();
 		logged.mockRestore();
+	});
+
+	// The card builds a cdn.bsky.app URL from an event's image, and that URL
+	// carries the group's DID and the image's CID to a third party. Only the
+	// image goes: the event's identity and every other field arrive as stored.
+	it('a members-only event is read without its image', async () => {
+		const stored = {
+			...MEETING_VALUE,
+			media: [image('thumbnail', 'bafkreithumb'), image('header', 'bafkreiheader')]
+		};
+		const reader = hostAnswering(() =>
+			Response.json({
+				records: [{ collection: EVENT, rkey: '3lmeeting', cid: 'bafymeeting', value: stored }]
+			})
+		);
+
+		const slice = await readMembersOnlyEvents(viewer(true), reader, GROUP);
+
+		expect(slice).toStrictEqual({
+			events: [
+				{
+					uri: spaceForm(EVENT, '3lmeeting'),
+					cid: 'bafymeeting',
+					rkey: '3lmeeting',
+					value: MEETING_VALUE,
+					space: CALENDAR
+				}
+			],
+			notice: null
+		});
+		expect('media' in slice!.events[0].value).toBe(false);
 	});
 
 	it('reads a listRecords body that carries no uri, and rebuilds the space-form one', async () => {

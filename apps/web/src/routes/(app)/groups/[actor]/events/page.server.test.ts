@@ -267,6 +267,40 @@ describe('/groups/[actor]/events load: a member sees both slices', () => {
 		expect(listGroupEvents).toHaveBeenCalledTimes(1);
 	});
 
+	// The card builds a cdn.bsky.app URL from an event's image. A public event's
+	// is public anyway; a members-only event's would hand a third party the
+	// group's DID and the image's CID, so it reaches the page without one.
+	it("a member's page drops a members-only event's image and keeps a public event's", async () => {
+		const image = {
+			role: 'thumbnail',
+			content: {
+				$type: 'blob',
+				ref: { $link: 'bafkreithumb' },
+				mimeType: 'image/webp',
+				size: 41250
+			}
+		};
+		const publicWithImage: GroupEventRecord = {
+			...PUBLIC_PADDLE,
+			value: { ...PUBLIC_PADDLE.value, media: [image] }
+		};
+		const stored: GroupSpaceRecord = { ...MEETING, value: { ...MEETING.value, media: [image] } };
+		publicSlice = [publicWithImage];
+		vi.mocked(groupSpaceReader).mockResolvedValue(publicHost([stored]));
+
+		const data = await openAs(MEMBER);
+
+		expect(data.events.map((e) => e.rkey)).toEqual(['3lmeeting', '3lpaddle']);
+		// The members-only event: every field as stored but the image.
+		expect(data.events[0].value).toStrictEqual(MEETING.value);
+		expect('media' in data.events[0].value).toBe(false);
+		// The public event: the index's own object, image and all.
+		expect(data.events[1]).toBe(publicWithImage);
+		expect(data.events[1].value.media).toStrictEqual([image]);
+		// What the host holds is untouched.
+		expect(stored.value.media).toStrictEqual([image]);
+	});
+
 	it('the owner, who is on the roster, sees the members-only event too', async () => {
 		vi.mocked(groupSpaceReader).mockResolvedValue(FULL_CALENDAR());
 
