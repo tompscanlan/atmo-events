@@ -4,9 +4,9 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 46 numbered checks (1 to 23, plus 10b, 13b to 13p, 15b, 18b, 18c,
+ * It runs 47 numbered checks (1 to 23, plus 10b, 13b to 13q, 15b, 18b, 18c,
  * 18d, 18e, 20b and 20c), prints one PASS or FAIL line each, and a clean run
- * ends with `SUMMARY: 46 passed, 0 failed`. Setup steps print as notes and are
+ * ends with `SUMMARY: 47 passed, 0 failed`. Setup steps print as notes and are
  * not counted. In order: create and the seeded roles (1), join, approval and
  * promotion (2-3), events written as the group DID and the edit gate (4-6),
  * leaving (7-8), a cover image uploaded into the group's repo (9), the profile,
@@ -18,8 +18,9 @@
  * (13d-13h), members-only events written by the app: into the calendar space and
  * nowhere else, edited and deleted there, never moved to or from the public
  * repo, refused for a group without the space, with no field saying who may
- * read them, and with an image kept in the space (13i-13p), the member's own
- * acceptance at a join request, at leave and at a
+ * read them, and with an image kept in the space (13i-13p), that event in a
+ * member's slice without its image while the stored record keeps it (13q), the
+ * member's own acceptance at a join request, at leave and at a
  * sign-in after a direct add (18b-18d), a member whose PDS serves no spaces
  * (18e), the discovery declaration and
  * visibility at the host (19-20c), the events index (21-22), and a rebuild of
@@ -1596,6 +1597,35 @@ async function main() {
 				`${moImage?.ref?.$link}; writes sent: [${imageWrites.join(', ')}]; anonymous ` +
 				`sync.getBlob ${imageAnonymous.status} ${imageAnonymous.error ?? ''}; the group's ` +
 				`space.getBlob ${imageAsGroup.status}${imageAsGroup.bytes ? `, ${imageAsGroup.bytes.equals(moImageBytes) ? 'bytes match' : 'BYTES DIFFER'}` : ` ${imageAsGroup.error ?? ''}`}`
+		);
+
+		// 13q. a member's slice shows it without the image ------------------------
+		// The card would build a cdn.bsky.app URL from the image, which hands a
+		// third party the group's DID and the image's CID, so the members-only
+		// read leaves it out until members get it through atmo's own route. The
+		// event itself is read as written, and the stored record keeps its image.
+		const imageRkey = moWithImage.ok ? moWithImage.value.rkey : null;
+		const imageSlice = await must('membersOnlySlice', { groupId: group.id, did: BOB });
+		const imageRead = (imageSlice.slice?.events ?? []).filter((e) => e.rkey === imageRkey);
+		const imageValue = imageRead[0]?.value ?? {};
+		record(
+			imageRkey !== null &&
+				imageSlice.onRoster === true &&
+				imageSlice.slice?.notice === null &&
+				imageRead.length === 1 &&
+				imageRead[0].uri ===
+					`${CALENDAR_SPACE_URI}/${GROUP_DID}/${EVENT_COLLECTION}/${imageRkey}` &&
+				imageRead[0].space === CALENDAR_SPACE_URI &&
+				imageValue.name === `${membersOnlyName}, with an image` &&
+				!('media' in imageValue) &&
+				moCited !== undefined &&
+				moCited === moImage?.ref?.$link,
+			"a members-only event reaches a member's slice without its image, and the stored record keeps it",
+			`${BOB} on the roster ${imageSlice.onRoster}; notice ${imageSlice.slice?.notice}; ` +
+				`${imageRead.length} event(s) at key ${imageRkey}, ${imageRead[0]?.uri} (space ` +
+				`${imageRead[0]?.space}), named ${JSON.stringify(imageValue.name)}, media ` +
+				`${'media' in imageValue ? `PRESENT (${JSON.stringify(imageValue.media)})` : 'absent'}; ` +
+				`the stored record cites ${moCited}, uploaded ${moImage?.ref?.$link}`
 		);
 		if (moWithImage.ok) {
 			await must('deleteGroupEvent', {
