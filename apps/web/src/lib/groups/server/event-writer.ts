@@ -264,6 +264,8 @@ const PLACEMENT_REFUSALS = {
 		"The group's calendar space could not be checked, so the members-only event was not saved. Try again later.",
 	'placement-change':
 		"This event can't be moved between public and members-only yet. Nothing was saved.",
+	'wrong-placement-delete':
+		"This event wasn't deleted, because the page had it as public when it's members-only, or the other way round. Reload and try again.",
 	'placement-unchecked':
 		'Whether this event is public or members-only could not be checked, so nothing was saved. Try again later.'
 } as const;
@@ -385,14 +387,16 @@ export async function checkCalendarSpace(locator: GroupEventLocator, space: stri
  * anyway: a space record's URI is not a repo record's, so moving an event changes
  * its identity and strands every RSVP that names the old one. So the event is
  * looked up where the page says, and then in the other container. Found only
- * there, the write is refused. Found in neither, the write goes where it was
- * sent, as it always has. (Spec: FR-107.)
+ * there, the write is refused: an edit as a move, a delete as a page that had the
+ * event in the wrong place. Found in neither, the write goes where it was sent,
+ * as it always has. (Spec: FR-107.)
  */
 async function checkPlacement(
 	locator: GroupEventLocator,
 	groupDid: string,
 	space: string | null,
-	rkey: string
+	rkey: string,
+	intent: 'update' | 'delete'
 ): Promise<void> {
 	const has = async (at: string | null) => {
 		try {
@@ -404,7 +408,11 @@ async function checkPlacement(
 	};
 	if (await has(space)) return;
 	const other = space === null ? groupSpaceUris(groupDid).calendarSpaceUri : null;
-	if (await has(other)) throw new GroupPlacementError('placement-change');
+	if (await has(other)) {
+		throw new GroupPlacementError(
+			intent === 'delete' ? 'wrong-placement-delete' : 'placement-change'
+		);
+	}
 }
 
 /** Authorizes the caller, then writes an event where `space` says: the group's
@@ -434,7 +442,7 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 		const locator = input.locator ?? (await groupEventLocator(input.env, input.db, input.group));
 		if (space !== null) await checkCalendarSpace(locator, space);
 		if (input.intent === 'update') {
-			await checkPlacement(locator, input.group.group_did, space, rkey);
+			await checkPlacement(locator, input.group.group_did, space, rkey, 'update');
 		}
 	}
 
@@ -464,7 +472,7 @@ export async function deleteGroupEvent(
 	const space = checkEventSpace(input.group.group_did, input.space);
 	await authorize(input, 'delete');
 	const locator = input.locator ?? (await groupEventLocator(input.env, input.db, input.group));
-	await checkPlacement(locator, input.group.group_did, space, input.rkey);
+	await checkPlacement(locator, input.group.group_did, space, input.rkey, 'delete');
 	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
 	const result = await writer({
 		repo: input.group.group_did,

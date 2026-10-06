@@ -1510,7 +1510,7 @@ async function main() {
 		record(
 			wrongDelete.ok === false &&
 				wrongDelete.error.name === 'GroupPlacementError' &&
-				wrongDelete.error.reason === 'placement-change' &&
+				wrongDelete.error.reason === 'wrong-placement-delete' &&
 				writesIn(wrongDelete.calls).length === 0 &&
 				afterWrongDelete.status === 200 &&
 				moDelete.ok === true &&

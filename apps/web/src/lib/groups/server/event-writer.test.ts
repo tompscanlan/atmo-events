@@ -757,6 +757,8 @@ describe('members-only placement', () => {
 		"The group's calendar space could not be checked, so the members-only event was not saved. Try again later.";
 	const PLACEMENT_CHANGE =
 		"This event can't be moved between public and members-only yet. Nothing was saved.";
+	const WRONG_PLACEMENT_DELETE =
+		"This event wasn't deleted, because the page had it as public when it's members-only, or the other way round. Reload and try again.";
 
 	let pds: ReturnType<typeof stubPds>;
 	let linkedEnv: ReturnType<typeof linkGroups>;
@@ -953,13 +955,13 @@ describe('members-only placement', () => {
 
 		await expect(remove(membersOnly.rkey, null)).rejects.toMatchObject({
 			name: 'GroupPlacementError',
-			reason: 'placement-change',
-			message: PLACEMENT_CHANGE
+			reason: 'wrong-placement-delete',
+			message: WRONG_PLACEMENT_DELETE
 		});
 		await expect(remove(shown.rkey, CALENDAR)).rejects.toMatchObject({
 			name: 'GroupPlacementError',
-			reason: 'placement-change',
-			message: PLACEMENT_CHANGE
+			reason: 'wrong-placement-delete',
+			message: WRONG_PLACEMENT_DELETE
 		});
 
 		expect(pds.writes()).toEqual([]);

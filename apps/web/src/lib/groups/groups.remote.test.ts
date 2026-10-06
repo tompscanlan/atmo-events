@@ -188,6 +188,8 @@ describe('placement on the event commands', () => {
 		"The group's calendar space could not be checked, so the members-only event was not saved. Try again later.";
 	const PLACEMENT_CHANGE =
 		"This event can't be moved between public and members-only yet. Nothing was saved.";
+	const WRONG_PLACEMENT_DELETE =
+		"This event wasn't deleted, because the page had it as public when it's members-only, or the other way round. Reload and try again.";
 	const UNCHECKED_PLACEMENT =
 		'Whether this event is public or members-only could not be checked, so nothing was saved. Try again later.';
 
@@ -344,13 +346,13 @@ describe('placement on the event commands', () => {
 				'a public delete of a members-only event',
 				() => {},
 				() => remove({ groupDid: LINKED, rkey: '3members', space: null }),
-				PLACEMENT_CHANGE
+				WRONG_PLACEMENT_DELETE
 			],
 			[
 				'a members-only delete of a public event',
 				() => {},
 				() => remove({ groupDid: LINKED, rkey: '3public', space: CALENDAR }),
-				PLACEMENT_CHANGE
+				WRONG_PLACEMENT_DELETE
 			],
 			[
 				'a placement read that failed',
