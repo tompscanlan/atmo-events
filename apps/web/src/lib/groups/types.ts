@@ -102,10 +102,16 @@ export interface Person {
 	avatar: string | null;
 }
 
-/** An event read from the group DID's public repo, so `uri`'s authority is that DID. */
+/** One of the group's events. A public event is read from the group DID's public
+ *  repo, so `uri` is the plain form under that DID. A members-only event is read
+ *  from the group's calendar space, so `uri` is the space form and `space` names
+ *  the calendar space. */
 export interface GroupEventRecord {
 	uri: string;
 	cid: string;
 	rkey: string;
 	value: Record<string, unknown>;
+	/** The space the event was read from, or absent for the public repo. Its
+	 *  presence is what makes an event members-only. */
+	space?: string;
 }
