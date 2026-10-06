@@ -1,0 +1,357 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The events tab shows two slices of a public group's events: the public slice
+// from the app's index, which every visitor gets, and the members-only slice
+// from the group's calendar space, which only a roster member may cause to be
+// read. The index read is stubbed at its module boundary, since what is under
+// test is the union and the gate, not the index. The space reader is a fake
+// host that logs every call, so "made no space read" is a count, not a reading
+// of the page.
+vi.mock('$lib/groups/server/about-read', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/groups/server/about-read')>()),
+	groupSpaceReader: vi.fn()
+}));
+vi.mock('$lib/groups/server/events-index', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/groups/server/events-index')>()),
+	listGroupEvents: vi.fn()
+}));
+vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
+
+import { load } from './+page.server';
+import {
+	groupSpaceReader,
+	type GroupSpaceReader,
+	type GroupSpaceRecord
+} from '$lib/groups/server/about-read';
+import { listGroupEvents } from '$lib/groups/server/events-index';
+import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
+import { addMember, createGroup, getGroupByDid, recordGroupSpaces } from '$lib/groups/server/repo';
+import { groupSpaceUris } from '$lib/groups/server/spaces';
+import type { CallerMembership, GroupEventRecord, GroupRow } from '$lib/groups/types';
+
+const OWNER = 'did:plc:owner';
+const MEMBER = 'did:plc:member';
+const STRANGER = 'did:plc:stranger';
+const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
+const { aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS } = groupSpaceUris(GROUP_DID);
+// Written out, so a wrong type or key in the app's constant fails here.
+const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
+const EVENT = 'community.lexicon.calendar.event';
+const PUBLIC_POLICY = 'com.atproto.simplespace.defs#publicPolicy';
+
+/** The public slice, as the index hands it over. */
+const PUBLIC_PADDLE: GroupEventRecord = {
+	uri: `at://${GROUP_DID}/${EVENT}/3lpaddle`,
+	cid: 'bafypaddle',
+	rkey: '3lpaddle',
+	value: { name: 'Sunrise paddle', createdAt: '2026-10-01T09:00:00.000Z' }
+};
+
+/** The calendar space: one members-only event, and the space's access record,
+ *  which is not an event and must never show as one. */
+const MEETING: GroupSpaceRecord = {
+	uri: `${CALENDAR}/${GROUP_DID}/${EVENT}/3lmeeting`,
+	cid: 'bafymeeting',
+	collection: EVENT,
+	rkey: '3lmeeting',
+	value: { name: 'Committee call', createdAt: '2026-10-02T09:00:00.000Z' }
+};
+const ACCESS_SELF: GroupSpaceRecord = {
+	uri: `${CALENDAR}/${GROUP_DID}/group.opensocial.access/self`,
+	cid: 'bafyaccess',
+	collection: 'group.opensocial.access',
+	rkey: 'self',
+	value: { public: false, readRoles: ['owner', 'admin', 'member'], grants: [] }
+};
+
+let harness: SqliteD1;
+let row: GroupRow;
+/** A fresh array per test, so `toBe` can tell the index's own list from a copy. */
+let publicSlice: GroupEventRecord[];
+
+beforeEach(async () => {
+	harness = sqliteD1();
+	const created = await createGroup(harness.db, {
+		groupDid: GROUP_DID,
+		ownerDid: OWNER,
+		name: 'Kona'
+	});
+	await recordGroupSpaces(harness.db, created.id, groupSpaceUris(GROUP_DID));
+	await addMember(harness.db, created.id, MEMBER, 'member');
+	row = (await getGroupByDid(harness.db, GROUP_DID))!;
+	publicSlice = [PUBLIC_PADDLE];
+	vi.mocked(listGroupEvents).mockImplementation(async () => publicSlice);
+});
+
+afterEach(() => {
+	harness.close();
+	vi.clearAllMocks();
+});
+
+type Host = GroupSpaceReader & { calls: string[] };
+
+/** A public group's host. Its about and members spaces hold no records, so a
+ *  roster caller's standing comes from the rows. `calendar` is what the
+ *  calendar space holds, or the error every read of it fails with. The host
+ *  honors the collection filter unless `ignoresFilter`. */
+function publicHost(calendar: GroupSpaceRecord[] | Error, { ignoresFilter = false } = {}): Host {
+	const calls: string[] = [];
+	return {
+		calls,
+		async get(q) {
+			calls.push(`get ${q.space} ${q.collection} ${q.rkey}`);
+			if (q.space === CALENDAR) throw new Error('the calendar space is listed, never fetched');
+			return null;
+		},
+		async list(q) {
+			calls.push(`list ${q.space} ${q.collection ?? '(no collection)'}`);
+			if (q.space !== CALENDAR) return [];
+			if (calendar instanceof Error) throw calendar;
+			return ignoresFilter ? calendar : calendar.filter((r) => r.collection === q.collection);
+		},
+		async getSpace(space) {
+			calls.push(`getSpace ${space}`);
+			if (space === CALENDAR) throw new Error('the calendar space is never asked its policy');
+			return { readPolicy: PUBLIC_POLICY };
+		}
+	};
+}
+
+const FULL_CALENDAR = () => publicHost([ACCESS_SELF, MEETING]);
+const EMPTY_CALENDAR = () => publicHost([]);
+
+async function openAs(did: string | null) {
+	return (await load({
+		params: { actor: GROUP_DID },
+		locals: { did },
+		platform: { env: { DB: harness.db } },
+		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events`)
+	} as unknown as Parameters<typeof load>[0])) as Record<string, unknown> & {
+		events: GroupEventRecord[];
+		membership: CallerMembership;
+		membersOnlyNotice?: string;
+	};
+}
+
+function calendarCalls(host: Host): string[] {
+	return host.calls.filter((call) => call.includes(CALENDAR));
+}
+
+/** The reads a page load made before the members-only slice existed, written
+ *  out: the gate's (the caller's standing, then the host's visibility for a
+ *  caller off the roster), then the profile and rules for the name. */
+const ABOUT_READS = [
+	`getSpace ${ABOUT}`,
+	`get ${ABOUT} group.opensocial.profile self`,
+	`list ${ABOUT} group.opensocial.rule`
+];
+function standingReads(did: string): string[] {
+	return [
+		`get ${MEMBERS} group.opensocial.membership ${did}`,
+		`get ${MEMBERS} group.opensocial.permissions self`,
+		`get ${MEMBERS} net.openmeet.group.eventPermissions self`,
+		`list ${MEMBERS} group.opensocial.role`
+	];
+}
+
+/** What the loader returned before the members-only slice existed, written
+ *  out: the index's own list, and these seven keys and no other. */
+function asBefore(membership: CallerMembership) {
+	return {
+		group: row,
+		membership,
+		groupName: 'Kona',
+		handle: null,
+		events: publicSlice,
+		canCreateEvent: false,
+		canManageEvents: false
+	};
+}
+
+const ANONYMOUS: CallerMembership = {
+	did: null,
+	role: null,
+	status: null,
+	pendingRequestId: null,
+	permissions: new Set(),
+	onRoster: false
+};
+const STRANGER_MEMBERSHIP: CallerMembership = { ...ANONYMOUS, did: STRANGER };
+
+describe('/groups/[actor]/events load: a viewer off the roster costs nothing', () => {
+	it('no space read for an anonymous viewer', async () => {
+		for (const host of [FULL_CALENDAR(), EMPTY_CALENDAR()]) {
+			vi.mocked(groupSpaceReader).mockResolvedValue(host);
+
+			const data = await openAs(null);
+
+			expect(calendarCalls(host)).toEqual([]);
+			expect(host.calls).toEqual(ABOUT_READS);
+			expect(data).toStrictEqual(asBefore(ANONYMOUS));
+			expect(data.events).toBe(publicSlice);
+		}
+	});
+
+	it('no space read for a signed-in non-member', async () => {
+		for (const host of [FULL_CALENDAR(), EMPTY_CALENDAR()]) {
+			vi.mocked(groupSpaceReader).mockResolvedValue(host);
+
+			const data = await openAs(STRANGER);
+
+			expect(calendarCalls(host)).toEqual([]);
+			expect(host.calls.sort()).toEqual([...standingReads(STRANGER), ...ABOUT_READS].sort());
+			expect(data).toStrictEqual(asBefore(STRANGER_MEMBERSHIP));
+			expect(data.events).toBe(publicSlice);
+		}
+	});
+
+	// A members space that errors puts even a member off the roster for the
+	// read, so the slice is not read for them either, and no notice appears.
+	it('a member whose roster cannot be read is a non-member here, with no notice', async () => {
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const host = FULL_CALENDAR();
+		const membersDown: GroupSpaceReader = {
+			...host,
+			async get(q) {
+				if (q.space === MEMBERS) throw new Error('com.atproto.space.getRecord failed: 502');
+				return host.get(q);
+			}
+		};
+		vi.mocked(groupSpaceReader).mockResolvedValue(membersDown);
+
+		const data = await openAs(MEMBER);
+
+		expect(data.membership.onRoster).toBe(false);
+		expect(calendarCalls(host)).toEqual([]);
+		expect('membersOnlyNotice' in data).toBe(false);
+		expect(data.events).toBe(publicSlice);
+		logged.mockRestore();
+	});
+});
+
+describe('/groups/[actor]/events load: a member sees both slices', () => {
+	it('three viewers, one page: 2 events for a member, 1 for a signed-in non-member, 1 anonymous', async () => {
+		const counts: Record<string, number> = {};
+		for (const [who, did] of [
+			['member', MEMBER],
+			['non-member', STRANGER],
+			['anonymous', null]
+		] as const) {
+			vi.mocked(groupSpaceReader).mockResolvedValue(FULL_CALENDAR());
+			counts[who] = (await openAs(did)).events.length;
+		}
+
+		expect(counts).toEqual({ member: 2, 'non-member': 1, anonymous: 1 });
+	});
+
+	it("a member's page is the union, newest first, at one listing of the calendar space", async () => {
+		const host = FULL_CALENDAR();
+		vi.mocked(groupSpaceReader).mockResolvedValue(host);
+
+		const data = await openAs(MEMBER);
+
+		expect(calendarCalls(host)).toEqual([`list ${CALENDAR} ${EVENT}`]);
+		expect(data.events).toStrictEqual([
+			{
+				uri: `at://${GROUP_DID}/space/net.openmeet.space.calendar/self/${GROUP_DID}/${EVENT}/3lmeeting`,
+				cid: 'bafymeeting',
+				rkey: '3lmeeting',
+				value: MEETING.value,
+				space: CALENDAR
+			},
+			PUBLIC_PADDLE
+		]);
+		// The public record is the index's own object, with no key added.
+		expect(data.events[1]).toBe(PUBLIC_PADDLE);
+		expect('membersOnlyNotice' in data).toBe(false);
+		expect(listGroupEvents).toHaveBeenCalledTimes(1);
+	});
+
+	it('the owner, who is on the roster, sees the members-only event too', async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(FULL_CALENDAR());
+
+		const data = await openAs(OWNER);
+
+		expect(data.events.map((e) => e.rkey)).toEqual(['3lmeeting', '3lpaddle']);
+	});
+
+	it('the access record never shows as an event, even from a host that ignores the filter', async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(
+			publicHost([ACCESS_SELF, MEETING], { ignoresFilter: true })
+		);
+
+		const data = await openAs(MEMBER);
+
+		expect(data.events.map((e) => e.uri)).toEqual([MEETING.uri, PUBLIC_PADDLE.uri]);
+	});
+
+	it('a members-only event that shares an rkey with a public one is still its own entry', async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(
+			publicHost([
+				{ ...MEETING, rkey: '3lpaddle', uri: `${CALENDAR}/${GROUP_DID}/${EVENT}/3lpaddle` }
+			])
+		);
+
+		const data = await openAs(MEMBER);
+
+		expect(data.events.map((e) => e.rkey)).toEqual(['3lpaddle', '3lpaddle']);
+		expect(new Set(data.events.map((e) => e.uri)).size).toBe(2);
+	});
+});
+
+describe('/groups/[actor]/events load: when the members-only slice cannot be read', () => {
+	let logged: ReturnType<typeof vi.spyOn>;
+
+	beforeEach(() => {
+		logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+	});
+
+	afterEach(() => logged.mockRestore());
+
+	it('an unlinked group shows a member the public slice and says an organizer has to relink', async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(null);
+
+		const data = await openAs(MEMBER);
+
+		expect(data.membership.unlinked).toBe(true);
+		expect(data.events).toStrictEqual([PUBLIC_PADDLE]);
+		expect(data.membersOnlyNotice).toMatch(
+			/^members-only events can't be shown until an organizer relinks the group\.$/i
+		);
+	});
+
+	it('a calendar read that fails shows the public slice with a notice, and logs it', async () => {
+		const host = publicHost(new Error('com.atproto.space.listRecords failed: 502'));
+		vi.mocked(groupSpaceReader).mockResolvedValue(host);
+
+		const data = await openAs(MEMBER);
+
+		expect(data.events).toStrictEqual([PUBLIC_PADDLE]);
+		expect(data.membersOnlyNotice).toMatch(/^members-only events couldn't be loaded right now\.$/i);
+		expect(logged).toHaveBeenCalled();
+		// One attempt at the space and no other read in its place.
+		expect(calendarCalls(host)).toEqual([`list ${CALENDAR} ${EVENT}`]);
+		expect(listGroupEvents).toHaveBeenCalledTimes(1);
+	});
+
+	it('an empty calendar space shows a member the public slice and no notice', async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(EMPTY_CALENDAR());
+
+		const data = await openAs(MEMBER);
+
+		expect(data.events).toStrictEqual([PUBLIC_PADDLE]);
+		expect('membersOnlyNotice' in data).toBe(false);
+		expect(logged).not.toHaveBeenCalled();
+	});
+
+	it('a failed index read still leaves a member the members-only slice', async () => {
+		vi.mocked(listGroupEvents).mockRejectedValue(new Error('index down'));
+		vi.mocked(groupSpaceReader).mockResolvedValue(FULL_CALENDAR());
+
+		const member = await openAs(MEMBER);
+		const anonymous = await openAs(null);
+
+		expect(member.events.map((e) => e.rkey)).toEqual(['3lmeeting']);
+		expect(anonymous.events).toEqual([]);
+	});
+});

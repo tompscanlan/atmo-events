@@ -53,13 +53,25 @@
 		>. The group is the author, not whoever pressed the button.
 	</p>
 
+	{#if data.membersOnlyNotice}
+		<!-- Only a roster member's data carries this: the public slice is all they
+		     see until the members-only events can be read again. -->
+		<p
+			class="border-base-200 dark:border-base-800 text-base-600 dark:text-base-300 mb-6 rounded-lg border px-4 py-3 text-sm"
+			role="status"
+		>
+			{data.membersOnlyNotice}
+		</p>
+	{/if}
+
 	{#if data.events.length === 0}
 		<div class="py-16 text-center">
 			<p class="text-base-500 dark:text-base-400 text-lg">This group has no public events yet.</p>
 		</div>
 	{:else}
 		<div class="flex flex-col gap-6">
-			{#each data.events as event (event.rkey)}
+			<!-- Keyed by URI: a public and a members-only event can share an rkey. -->
+			{#each data.events as event (event.uri)}
 				<div>
 					<EventCard event={toCard(event)} actor={group.group_did} />
 					<div class="mt-2 flex items-center gap-3">
@@ -74,11 +86,17 @@
 								class="text-base-500 dark:text-base-400 text-sm hover:underline">Edit</a
 							>
 						{/if}
-						<PdslsLink
-							to={event.uri}
-							title="This event's record on pds.ls"
-							class="text-base-400 dark:text-base-500 text-xs hover:underline">record ↗</PdslsLink
-						>
+						{#if event.space}
+							<!-- No outside link: pds.ls is a third party, and the link would
+							     hand it the calendar space's URI. -->
+							<span class="text-base-400 dark:text-base-500 text-xs">members-only</span>
+						{:else}
+							<PdslsLink
+								to={event.uri}
+								title="This event's record on pds.ls"
+								class="text-base-400 dark:text-base-500 text-xs hover:underline">record ↗</PdslsLink
+							>
+						{/if}
 					</div>
 				</div>
 			{/each}
