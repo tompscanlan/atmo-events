@@ -28,7 +28,9 @@ import {
 	updateGroup
 } from '../src/lib/groups/server/repo';
 import {
+	checkCalendarSpace,
 	deleteGroupEvent,
+	groupEventLocator,
 	groupWriter,
 	uploadGroupEventImage,
 	writeGroupEvent
@@ -343,6 +345,29 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			rkey: String(args.rkey),
 			space: args.space as string | null
 		}),
+
+	/** How many requests the app has sent through the group's session, and with
+	 *  `from`, the ones since then, so the driver can count what one op sent. */
+	groupCalls: async (_env, args) => ({
+		total: standInCalls.length,
+		calls: args.from == null ? [] : standInCalls.slice(Number(args.from))
+	}),
+
+	/** The calendar space check a members-only write makes first, run alone on
+	 *  `space` through the app's own reader. Read-only: it never writes, so a
+	 *  space it is pointed at that does not exist still does not exist after.
+	 *  Answers with the refusal, if any, and every request it sent. */
+	calendarSpaceCheck: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const from = standInCalls.length;
+		let refusal: ReturnType<typeof serializeError> | null = null;
+		try {
+			await checkCalendarSpace(await groupEventLocator(env, env.DB, group), String(args.space));
+		} catch (error) {
+			refusal = serializeError(error);
+		}
+		return { refusal, calls: standInCalls.slice(from) };
+	},
 
 	/** The index row a mint writes: where the group's repo lives. */
 	registerIdentity: async (env, args) =>

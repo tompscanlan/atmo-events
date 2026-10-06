@@ -4,9 +4,9 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 38 numbered checks (1 to 23, plus 10b, 13b to 13h, 15b, 18b, 18c,
+ * It runs 46 numbered checks (1 to 23, plus 10b, 13b to 13p, 15b, 18b, 18c,
  * 18d, 18e, 20b and 20c), prints one PASS or FAIL line each, and a clean run
- * ends with `SUMMARY: 38 passed, 0 failed`. Setup steps print as notes and are
+ * ends with `SUMMARY: 46 passed, 0 failed`. Setup steps print as notes and are
  * not counted. In order: create and the seeded roles (1), join, approval and
  * promotion (2-3), events written as the group DID and the edit gate (4-6),
  * leaving (7-8), a cover image uploaded into the group's repo (9), the profile,
@@ -15,7 +15,11 @@
  * space, with the calendar space's read policy, access record and empty member
  * list (13-18), the members-only slice the events tab reads from the calendar
  * space for a member, a non-member, an anonymous visitor and an unlinked group
- * (13d-13h), the member's own acceptance at a join request, at leave and at a
+ * (13d-13h), members-only events written by the app: into the calendar space and
+ * nowhere else, edited and deleted there, never moved to or from the public
+ * repo, refused for a group without the space, with no field saying who may
+ * read them, and with an image kept in the space (13i-13p), the member's own
+ * acceptance at a join request, at leave and at a
  * sign-in after a direct add (18b-18d), a member whose PDS serves no spaces
  * (18e), the discovery declaration and
  * visibility at the host (19-20c), the events index (21-22), and a rebuild of
@@ -62,9 +66,11 @@
  * no-spaces member's stand-in never logs in: it answers the scope a stock PDS
  * grants and refuses any request, so check 18e can show the app sent none.
  *
- * Cleanup runs in the `finally`. It deletes the events, withdraws the
- * declaration, deletes the admin's acceptance, and removes the rules, the authz
- * config and the owner's membership. Then it re-reads each one and prints WARN for anything left. The
+ * Cleanup runs in the `finally`. It deletes the events, the members-only ones
+ * from the calendar space, withdraws the declaration, deletes the admin's
+ * acceptance, and removes the rules, the authz config and the owner's
+ * membership. Then it re-reads each one, a members-only event with the group's
+ * own space read, and prints WARN for anything left. The
  * profile and the three `access` records stay at fixed keys that the next run
  * overwrites, and the space index stays until the next run resets it. The
  * members-only seed event stays in the calendar space at its fixed key, where
@@ -72,11 +78,13 @@
  * spaces themselves stay, so a run after the first finds the calendar space
  * rather than creating it, and keeps whatever read policy it was created with.
  */
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { crc32, deflateSync } from 'node:zlib';
 import { build } from 'vite';
 
 const WEB_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -142,6 +150,14 @@ const SEED_NAME = 'e2e members-only meeting (seed)';
 const SEED_URI = `${CALENDAR_SPACE_URI}/${GROUP_DID}/${EVENT_COLLECTION}/${SEED_RKEY}`;
 /** What the app tells a member of an unlinked group, written out. */
 const RELINK_NOTICE = "Members-only events can't be shown until an organizer relinks the group.";
+
+/** A calendar space under the group's DID that nothing ever creates: the check
+ *  that reads it writes nothing, so the host never makes it. */
+const NEVER_CREATED_SPACE = `at://${GROUP_DID}/space/net.openmeet.space.calendar/e2enevercreated`;
+
+/** Keys a record would carry if it said who may read it. Placement says that,
+ *  so neither container's copy of an event may carry one. */
+const AUDIENCE_KEYS = ['visibility', 'privacy', 'private', 'audience', 'isPrivate'];
 /** The record in the group's public repo that lets other apps find it. */
 const DECLARATION_COLLECTION = 'group.opensocial.declaration';
 
@@ -461,6 +477,109 @@ function authorityOf(uri) {
 	return String(uri).slice('at://'.length).split('/')[0];
 }
 
+/** A space listing with no credential at all, as any stranger would ask. */
+async function anonymousSpaceList(space) {
+	const url = new URL('/xrpc/com.atproto.space.listRecords', PDS);
+	url.searchParams.set('space', space);
+	url.searchParams.set('repo', GROUP_DID);
+	url.searchParams.set('collection', EVENT_COLLECTION);
+	const response = await fetch(url);
+	const body = await response.json().catch(() => ({}));
+	return { status: response.status, error: body.error, records: body.records ?? [] };
+}
+
+/** Runs a worker op and adds every request it sent through the group's session,
+ *  so "nothing was written" is a count of what was sent. */
+async function traced(op, args) {
+	const { total: from } = await must('groupCalls', {});
+	const result = await call(op, args);
+	const { calls } = await must('groupCalls', { from });
+	return { ...result, calls };
+}
+
+/** The record writes among a trace's requests, by method. */
+function writesIn(calls) {
+	return calls
+		.map((path) => path.split('?')[0].replace(/^\/xrpc\//, ''))
+		.filter((nsid) =>
+			/^com\.atproto\.(repo|space)\.(createRecord|putRecord|deleteRecord|applyWrites)$/.test(nsid)
+		);
+}
+
+/** A value with every object's keys sorted, so two records compare by content
+ *  and not by the key order a host stores them in. */
+function canonical(value) {
+	if (Array.isArray(value)) return value.map(canonical);
+	if (value && typeof value === 'object') {
+		return Object.fromEntries(
+			Object.keys(value)
+				.sort()
+				.map((key) => [key, canonical(value[key])])
+		);
+	}
+	return value;
+}
+
+/** Every key at any depth of a record. */
+function keysDeep(value) {
+	if (Array.isArray(value)) return value.flatMap(keysDeep);
+	if (value && typeof value === 'object') {
+		return Object.entries(value).flatMap(([key, inner]) => [key, ...keysDeep(inner)]);
+	}
+	return [];
+}
+
+/** One PNG chunk: length, type, data and the CRC over type and data. */
+function pngChunk(type, data) {
+	const length = Buffer.alloc(4);
+	length.writeUInt32BE(data.length);
+	const typed = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+	const crc = Buffer.alloc(4);
+	crc.writeUInt32BE(crc32(typed));
+	return Buffer.concat([length, typed, crc]);
+}
+
+/** A 1x1 PNG in a colour picked per run, so its CID is new each run and no
+ *  public record, from this run or an earlier one, cites the same bytes. */
+function runPng() {
+	const [r, g, b] = randomBytes(3);
+	const header = Buffer.alloc(13);
+	header.writeUInt32BE(1, 0);
+	header.writeUInt32BE(1, 4);
+	header[8] = 8; // bits per channel
+	header[9] = 2; // RGB
+	return Buffer.concat([
+		Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+		pngChunk('IHDR', header),
+		pngChunk('IDAT', deflateSync(Buffer.from([0, r, g, b]))),
+		pngChunk('IEND', Buffer.alloc(0))
+	]);
+}
+
+/** A blob read anonymously, the way any CDN or stranger would fetch it. */
+async function anonymousBlob(cid) {
+	const url = new URL('/xrpc/com.atproto.sync.getBlob', PDS);
+	url.searchParams.set('did', GROUP_DID);
+	url.searchParams.set('cid', String(cid));
+	const response = await fetch(url);
+	const body = response.ok ? {} : await response.json().catch(() => ({}));
+	return { status: response.status, error: body.error };
+}
+
+/** A blob read from one of the group's spaces with the group's session. */
+async function spaceBlob(token, space, cid) {
+	const url = new URL('/xrpc/com.atproto.space.getBlob', PDS);
+	url.searchParams.set('space', space);
+	url.searchParams.set('repo', GROUP_DID);
+	url.searchParams.set('cid', String(cid));
+	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+	if (!response.ok) {
+		const body = await response.json().catch(() => ({}));
+		return { status: response.status, error: body.error, bytes: null };
+	}
+	return { status: response.status, bytes: Buffer.from(await response.arrayBuffer()) };
+}
+
 /** A 1x1 PNG, the smallest image the upload takes. */
 const PNG_1PX = [
 	137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0,
@@ -513,6 +632,8 @@ async function main() {
 	let worker;
 	let group;
 	const written = [];
+	/** The run's members-only events, which cleanup deletes from the calendar space. */
+	const writtenMembersOnly = [];
 	/** Set once the spaces exist, so the `finally` knows to empty them. */
 	let spacesProvisioned = false;
 	let membersSpaceUri;
@@ -1178,6 +1299,313 @@ async function main() {
 				`linked again after: ${relinked.linked}`
 		);
 
+		// 13i-13p. members-only events, written by the app ---------------------------
+		// The app's writer puts a members-only event in the calendar space and
+		// nowhere else, keeps it there through an edit, refuses to move it, and
+		// deletes it there. Every result is read back from the host, never taken from
+		// what the writer returned: anonymously from the public repo and the space,
+		// and as the group from the space. Each write op also comes back with every
+		// request it sent through the group's session, so "nothing was written" is a
+		// count. The owner acts throughout.
+		const membersOnlyName = 'e2e members-only workshop';
+		const membersOnlyAt = '2026-10-06T18:00:00.000Z';
+		const membersOnlyRecord = eventRecord(membersOnlyName, { createdAt: membersOnlyAt });
+
+		// 13i. it is written into the calendar space, and only there ---------------
+		const moCreate = await traced('writeGroupEvent', {
+			groupId: group.id,
+			callerDid: ALICE,
+			intent: 'create',
+			space: CALENDAR_SPACE_URI,
+			record: membersOnlyRecord
+		});
+		if (!moCreate.ok) {
+			throw new Error(
+				`the members-only create failed: ${moCreate.error.name}: ${moCreate.error.message}`
+			);
+		}
+		const moRkey = moCreate.value.rkey;
+		writtenMembersOnly.push(moRkey);
+		const moUri = `${CALENDAR_SPACE_URI}/${GROUP_DID}/${EVENT_COLLECTION}/${moRkey}`;
+		const moRead = await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, moRkey);
+		const moAsWritten =
+			JSON.stringify(canonical(moRead.value)) ===
+			JSON.stringify(canonical({ ...membersOnlyRecord, $type: EVENT_COLLECTION }));
+		const moInRepo = await getRecord(GROUP_DID, moRkey);
+		const repoNow = await listRecords(GROUP_DID);
+		const repoCopies = repoNow.records.filter(
+			(r) => String(r.uri).endsWith(`/${moRkey}`) || r.value?.name === membersOnlyName
+		);
+		const anonymousListing = await anonymousSpaceList(CALENDAR_SPACE_URI);
+		const createWrites = writesIn(moCreate.calls);
+		record(
+			moRead.status === 200 &&
+				moRead.uri === moUri &&
+				moAsWritten &&
+				JSON.stringify(createWrites) === JSON.stringify(['com.atproto.space.createRecord']) &&
+				notFound(moInRepo) &&
+				repoNow.status === 200 &&
+				repoCopies.length === 0 &&
+				anonymousListing.status === 401 &&
+				anonymousListing.error === 'AuthMissing',
+			'a members-only event is written into the calendar space: anonymous repo reads miss it, an anonymous space listing is refused, and the group reads it back as written',
+			`the group reads ${moRead.uri ?? moRead.error} (cid ${moRead.cid}), value ` +
+				`${moAsWritten ? 'as written' : 'NOT as written'}; writes sent: [${createWrites.join(', ')}]; ` +
+				`anonymous repo getRecord ${moInRepo.error ?? moInRepo.status}, listRecords ` +
+				`${repoCopies.length} of ${repoNow.records.length} record(s) name it; anonymous space ` +
+				`listRecords ${anonymousListing.status} ${anonymousListing.error ?? ''}`
+		);
+
+		// 13j. an edit stays in the space ------------------------------------------
+		const moEditedName = `${membersOnlyName} (moved to the evening)`;
+		const moEdit = await traced('writeGroupEvent', {
+			groupId: group.id,
+			callerDid: ALICE,
+			intent: 'update',
+			rkey: moRkey,
+			space: CALENDAR_SPACE_URI,
+			record: eventRecord(moEditedName, { createdAt: membersOnlyAt })
+		});
+		const moAfterEdit = await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, moRkey);
+		const moRepoAfterEdit = await getRecord(GROUP_DID, moRkey);
+		const repoAfterEdit = await listRecords(GROUP_DID);
+		const editWrites = writesIn(moEdit.calls);
+		record(
+			moEdit.ok === true &&
+				moAfterEdit.status === 200 &&
+				moAfterEdit.value?.name === moEditedName &&
+				moAfterEdit.cid !== moRead.cid &&
+				JSON.stringify(editWrites) === JSON.stringify(['com.atproto.space.putRecord']) &&
+				notFound(moRepoAfterEdit) &&
+				!repoAfterEdit.records.some(
+					(r) => String(r.uri).endsWith(`/${moRkey}`) || r.value?.name === moEditedName
+				),
+			'a members-only event edit stays in the calendar space, and the public repo still misses it',
+			`${moEdit.ok ? 'edited' : `REFUSED ${moEdit.error?.name}(${moEdit.error?.reason})`}; the space ` +
+				`holds "${moAfterEdit.value?.name}" (cid ${moRead.cid} -> ${moAfterEdit.cid}); writes sent: ` +
+				`[${editWrites.join(', ')}]; anonymous repo getRecord ${moRepoAfterEdit.error ?? moRepoAfterEdit.status}`
+		);
+
+		// 13k. a flip to public is refused ----------------------------------------
+		// A put creates a record where none is, so without the refusal this edit
+		// would publish a copy of the event under the same key.
+		const flip = await traced('writeGroupEvent', {
+			groupId: group.id,
+			callerDid: ALICE,
+			intent: 'update',
+			rkey: moRkey,
+			space: null,
+			record: eventRecord(`${membersOnlyName} (made public)`, { createdAt: membersOnlyAt })
+		});
+		const flipInRepo = await getRecord(GROUP_DID, moRkey);
+		const flipInSpace = await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, moRkey);
+		const flipWrites = writesIn(flip.calls);
+		record(
+			flip.ok === false &&
+				flip.error.name === 'GroupPlacementError' &&
+				flip.error.reason === 'placement-change' &&
+				flipWrites.length === 0 &&
+				notFound(flipInRepo) &&
+				flipInSpace.status === 200 &&
+				flipInSpace.cid === moAfterEdit.cid,
+			'a members-only event cannot be flipped to public: the edit is refused, and nothing appears in the public repo',
+			`${flip.error?.name}(${flip.error?.reason}): ${flip.error?.message}; writes sent: ` +
+				`[${flipWrites.join(', ')}]; anonymous repo getRecord ${flipInRepo.error ?? flipInRepo.status}; ` +
+				`the space copy ${flipInSpace.cid === moAfterEdit.cid ? 'unchanged' : `CHANGED to ${flipInSpace.cid}`}`
+		);
+
+		// 13l. a public event is not made members-only by an edit either ---------
+		const publicName = 'e2e public talk';
+		const shown = await must('writeGroupEvent', {
+			groupId: group.id,
+			callerDid: ALICE,
+			intent: 'create',
+			space: null,
+			record: eventRecord(publicName)
+		});
+		written.push(shown.rkey);
+		const shownBefore = await getRecord(GROUP_DID, shown.rkey);
+		const promote = await traced('writeGroupEvent', {
+			groupId: group.id,
+			callerDid: ALICE,
+			intent: 'update',
+			rkey: shown.rkey,
+			space: CALENDAR_SPACE_URI,
+			record: eventRecord(`${publicName} (members only)`)
+		});
+		const promotedInSpace = await spaceRecord(
+			groupToken,
+			CALENDAR_SPACE_URI,
+			EVENT_COLLECTION,
+			shown.rkey
+		);
+		const shownAfter = await getRecord(GROUP_DID, shown.rkey);
+		const promoteWrites = writesIn(promote.calls);
+		record(
+			promote.ok === false &&
+				promote.error.name === 'GroupPlacementError' &&
+				promote.error.reason === 'placement-change' &&
+				promoteWrites.length === 0 &&
+				notFound(promotedInSpace) &&
+				shownBefore.status === 200 &&
+				shownAfter.cid === shownBefore.cid,
+			'a members-only event cannot be made from a public one: the edit sent with the calendar space is refused, and no space record appears',
+			`${promote.error?.name}(${promote.error?.reason}): ${promote.error?.message}; writes sent: ` +
+				`[${promoteWrites.join(', ')}]; the space at ${shown.rkey}: ` +
+				`${promotedInSpace.error ?? promotedInSpace.status}; the public record ` +
+				`${shownAfter.cid === shownBefore.cid ? 'unchanged' : `CHANGED to ${shownAfter.cid}`}`
+		);
+
+		// 13m. no field says who may read it, in either container -----------------
+		const moKeys = keysDeep(moAfterEdit.value);
+		const shownKeys = keysDeep(shownBefore.value);
+		const flagged = [...moKeys, ...shownKeys].filter((key) => AUDIENCE_KEYS.includes(key));
+		const topKeys = (value) => JSON.stringify(Object.keys(value ?? {}).sort());
+		record(
+			moAfterEdit.status === 200 &&
+				shownBefore.status === 200 &&
+				flagged.length === 0 &&
+				topKeys(moAfterEdit.value) === topKeys(shownBefore.value),
+			'a members-only event carries no visibility, privacy or audience key, and has the same fields as a public one',
+			`calendar space copy ${topKeys(moAfterEdit.value)}; public repo copy ` +
+				`${topKeys(shownBefore.value)}; audience keys found: ${flagged.length ? flagged.join(', ') : 'none'}`
+		);
+		await must('deleteGroupEvent', {
+			groupId: group.id,
+			callerDid: ALICE,
+			rkey: shown.rkey,
+			space: null
+		});
+
+		// 13n. it is deleted from the space, and only from the space -------------
+		// A delete of a missing record succeeds in either container, so one sent to
+		// the public repo would report success and leave the event in place.
+		const wrongDelete = await traced('deleteGroupEvent', {
+			groupId: group.id,
+			callerDid: ALICE,
+			rkey: moRkey,
+			space: null
+		});
+		const afterWrongDelete = await spaceRecord(
+			groupToken,
+			CALENDAR_SPACE_URI,
+			EVENT_COLLECTION,
+			moRkey
+		);
+		const moDelete = await traced('deleteGroupEvent', {
+			groupId: group.id,
+			callerDid: ALICE,
+			rkey: moRkey,
+			space: CALENDAR_SPACE_URI
+		});
+		const moAfterDelete = await spaceRecord(
+			groupToken,
+			CALENDAR_SPACE_URI,
+			EVENT_COLLECTION,
+			moRkey
+		);
+		const ownerSlice = await must('membersOnlySlice', { groupId: group.id, did: ALICE });
+		const stillListed = (ownerSlice.slice?.events ?? []).some((e) => e.rkey === moRkey);
+		const deleteWrites = writesIn(moDelete.calls);
+		record(
+			wrongDelete.ok === false &&
+				wrongDelete.error.name === 'GroupPlacementError' &&
+				wrongDelete.error.reason === 'placement-change' &&
+				writesIn(wrongDelete.calls).length === 0 &&
+				afterWrongDelete.status === 200 &&
+				moDelete.ok === true &&
+				JSON.stringify(deleteWrites) === JSON.stringify(['com.atproto.space.deleteRecord']) &&
+				notFound(moAfterDelete) &&
+				ownerSlice.slice?.notice === null &&
+				!stillListed,
+			'a members-only event is deleted from the calendar space: a delete sent to the public repo is refused, and after the real one the group no longer finds it',
+			`public-repo delete: ${wrongDelete.error?.name}(${wrongDelete.error?.reason}), the event ` +
+				`${afterWrongDelete.status === 200 ? 'still there' : `GONE (${afterWrongDelete.error})`}; ` +
+				`calendar delete ${moDelete.ok ? 'done' : `REFUSED ${moDelete.error?.name}`}, writes sent: ` +
+				`[${deleteWrites.join(', ')}]; the group's getRecord ${moAfterDelete.error ?? moAfterDelete.status}; ` +
+				`the owner's slice lists it: ${stillListed}`
+		);
+
+		// 13o. a group without the space is refused, by the host's own answer ------
+		// The writer refuses a members-only write when the host says the calendar
+		// space does not exist. The check is run alone here on a calendar space
+		// that was never created, through the app's own reader: it reads and
+		// never writes, because a write would make the host create the space.
+		const neverBefore = await spaceReadPolicy(groupToken, NEVER_CREATED_SPACE);
+		const spaceProbe = await must('calendarSpaceCheck', {
+			groupId: group.id,
+			space: NEVER_CREATED_SPACE
+		});
+		const neverAfter = await spaceReadPolicy(groupToken, NEVER_CREATED_SPACE);
+		record(
+			neverBefore.status === 400 &&
+				neverBefore.error === 'SpaceNotFound' &&
+				spaceProbe.refusal?.name === 'GroupPlacementError' &&
+				spaceProbe.refusal?.reason === 'no-calendar-space' &&
+				spaceProbe.calls.length === 1 &&
+				spaceProbe.calls[0].startsWith('/xrpc/com.atproto.simplespace.getSpace?') &&
+				neverAfter.status === 400 &&
+				neverAfter.error === 'SpaceNotFound',
+			'a members-only event has nowhere to go in a group without a calendar space: the host answers SpaceNotFound through the app reader, and the app refuses',
+			`getSpace before ${neverBefore.error ?? neverBefore.status}; the check: ` +
+				`${spaceProbe.refusal ? `${spaceProbe.refusal.name}(${spaceProbe.refusal.reason})` : 'NO REFUSAL'} after ` +
+				`${spaceProbe.calls.length} request(s) (${spaceProbe.calls.map((c) => c.split('?')[0]).join(', ')}); ` +
+				`getSpace after ${neverAfter.error ?? neverAfter.status}`
+		);
+
+		// 13p. its image stays in the space ---------------------------------------
+		// Uploaded as check 9's is, into the group's repo, then cited only from a
+		// space record. The host serves a blob anonymously only while a public
+		// record cites it, so anonymous getBlob must miss it while the group reads
+		// it back through the space. The image is new each run, so no public record
+		// cites the same bytes.
+		const moImageBytes = runPng();
+		const moImage = await must('uploadGroupEventImage', {
+			groupId: group.id,
+			callerDid: ALICE,
+			intent: 'create',
+			bytes: [...moImageBytes],
+			mimeType: 'image/png'
+		});
+		const moWithImage = await traced('writeGroupEvent', {
+			groupId: group.id,
+			callerDid: ALICE,
+			intent: 'create',
+			space: CALENDAR_SPACE_URI,
+			record: eventRecord(`${membersOnlyName}, with an image`, { image: moImage })
+		});
+		if (moWithImage.ok) writtenMembersOnly.push(moWithImage.value.rkey);
+		const moImageRead = moWithImage.ok
+			? await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, moWithImage.value.rkey)
+			: {};
+		const moCited = moImageRead.value?.media?.[0]?.content?.ref?.$link;
+		const imageAnonymous = await anonymousBlob(moImage?.ref?.$link);
+		const imageAsGroup = await spaceBlob(groupToken, CALENDAR_SPACE_URI, moImage?.ref?.$link);
+		const imageWrites = writesIn(moWithImage.calls);
+		record(
+			moWithImage.ok === true &&
+				JSON.stringify(imageWrites) === JSON.stringify(['com.atproto.space.createRecord']) &&
+				moImageRead.status === 200 &&
+				moCited === moImage?.ref?.$link &&
+				imageAnonymous.status === 400 &&
+				imageAnonymous.error === 'BlobNotFound' &&
+				imageAsGroup.status === 200 &&
+				imageAsGroup.bytes?.equals(moImageBytes) === true,
+			'a members-only event keeps its image in the calendar space: anonymous sync.getBlob answers BlobNotFound, and the group reads it back with space.getBlob',
+			`${moImageRead.uri ?? moWithImage.error?.name} cites ${moCited}; uploaded ` +
+				`${moImage?.ref?.$link}; writes sent: [${imageWrites.join(', ')}]; anonymous ` +
+				`sync.getBlob ${imageAnonymous.status} ${imageAnonymous.error ?? ''}; the group's ` +
+				`space.getBlob ${imageAsGroup.status}${imageAsGroup.bytes ? `, ${imageAsGroup.bytes.equals(moImageBytes) ? 'bytes match' : 'BYTES DIFFER'}` : ` ${imageAsGroup.error ?? ''}`}`
+		);
+		if (moWithImage.ok) {
+			await must('deleteGroupEvent', {
+				groupId: group.id,
+				callerDid: ALICE,
+				rkey: moWithImage.value.rkey,
+				space: CALENDAR_SPACE_URI
+			});
+		}
+
 		// 14. the space's own member list is write-only --------------------------
 		// An admitted member goes on it so the PDS tracks the acceptance they write
 		// (spec 003 FR-206). A DID that could read this space would see the whole
@@ -1747,6 +2175,32 @@ async function main() {
 			} else {
 				console.log(
 					`WARN  could not confirm ${uri} is gone: ${refusal ?? after.error ?? after.status}`
+				);
+			}
+		}
+		// A members-only event is deleted where it is, and confirmed gone with the
+		// group's own space read: an anonymous read misses it whether or not it is
+		// still there, so it could not tell.
+		for (const rkey of writtenMembersOnly) {
+			const uri = `${CALENDAR_SPACE_URI}/${GROUP_DID}/${EVENT_COLLECTION}/${rkey}`;
+			let refusal;
+			try {
+				const deleted = await call('deleteGroupEvent', {
+					groupId: group.id,
+					callerDid: ALICE,
+					rkey,
+					space: CALENDAR_SPACE_URI
+				});
+				if (!deleted.ok) refusal = `${deleted.error.name}: ${deleted.error.message}`;
+			} catch (error) {
+				refusal = error.message;
+			}
+			const after = await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, rkey);
+			if (notFound(after)) {
+				note(`cleaned up ${uri} (${after.error}, read as the group)`);
+			} else {
+				console.log(
+					`WARN  could not confirm members-only ${uri} is gone: ${refusal ?? after.error ?? after.status}`
 				);
 			}
 		}
