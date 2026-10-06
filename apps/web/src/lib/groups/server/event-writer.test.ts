@@ -923,10 +923,18 @@ describe('members-only placement', () => {
 
 		await expect(
 			write({ intent: 'update', space: null, rkey: membersOnly.rkey })
-		).rejects.toMatchObject({ name: 'GroupRecordError', message: PLACEMENT_CHANGE });
+		).rejects.toMatchObject({
+			name: 'GroupPlacementError',
+			reason: 'placement-change',
+			message: PLACEMENT_CHANGE
+		});
 		await expect(
 			write({ intent: 'update', space: CALENDAR, rkey: shown.rkey })
-		).rejects.toMatchObject({ name: 'GroupRecordError', message: PLACEMENT_CHANGE });
+		).rejects.toMatchObject({
+			name: 'GroupPlacementError',
+			reason: 'placement-change',
+			message: PLACEMENT_CHANGE
+		});
 
 		expect(pds.writes()).toEqual([]);
 		expect(await hostHas(null, membersOnly.rkey)).toBe(false);
@@ -944,11 +952,13 @@ describe('members-only placement', () => {
 		pds.clearLog();
 
 		await expect(remove(membersOnly.rkey, null)).rejects.toMatchObject({
-			name: 'GroupRecordError',
+			name: 'GroupPlacementError',
+			reason: 'placement-change',
 			message: PLACEMENT_CHANGE
 		});
 		await expect(remove(shown.rkey, CALENDAR)).rejects.toMatchObject({
-			name: 'GroupRecordError',
+			name: 'GroupPlacementError',
+			reason: 'placement-change',
 			message: PLACEMENT_CHANGE
 		});
 
@@ -991,11 +1001,13 @@ describe('members-only placement', () => {
 		pds.spaces.delete(CALENDAR);
 
 		await expect(write({ intent: 'create', space: CALENDAR })).rejects.toMatchObject({
-			name: 'GroupRecordError',
+			name: 'GroupPlacementError',
+			reason: 'no-calendar-space',
 			message: NO_CALENDAR_SPACE
 		});
 		await expect(write({ intent: 'update', space: CALENDAR, rkey: '3abc' })).rejects.toMatchObject({
-			name: 'GroupRecordError',
+			name: 'GroupPlacementError',
+			reason: 'no-calendar-space',
 			message: NO_CALENDAR_SPACE
 		});
 
@@ -1013,11 +1025,13 @@ describe('members-only placement', () => {
 		pds.spaces.set(CALENDAR, { ...config, readPolicy: { $type: PUBLIC_POLICY } });
 
 		await expect(write({ intent: 'create', space: CALENDAR })).rejects.toMatchObject({
-			name: 'GroupRecordError',
+			name: 'GroupPlacementError',
+			reason: 'calendar-space-readable',
 			message: READABLE_CALENDAR_SPACE
 		});
 		await expect(write({ intent: 'update', space: CALENDAR, rkey: '3abc' })).rejects.toMatchObject({
-			name: 'GroupRecordError',
+			name: 'GroupPlacementError',
+			reason: 'calendar-space-readable',
 			message: READABLE_CALENDAR_SPACE
 		});
 
@@ -1040,7 +1054,8 @@ describe('members-only placement', () => {
 				fail: (nsid) => (nsid === 'com.atproto.simplespace.getSpace' ? answer() : undefined)
 			});
 			await expect(write({ intent: 'create', space: CALENDAR })).rejects.toMatchObject({
-				name: 'GroupRecordError',
+				name: 'GroupPlacementError',
+				reason: 'calendar-space-unchecked',
 				message: UNCHECKED_CALENDAR_SPACE
 			});
 			expect(pds.writes()).toEqual([]);
@@ -1061,10 +1076,14 @@ describe('members-only placement', () => {
 		});
 
 		for (const space of [null, CALENDAR]) {
-			await expect(write({ intent: 'update', space, rkey: '3abc' })).rejects.toBeInstanceOf(
-				GroupRecordError
-			);
-			await expect(remove('3abc', space)).rejects.toBeInstanceOf(GroupRecordError);
+			await expect(write({ intent: 'update', space, rkey: '3abc' })).rejects.toMatchObject({
+				name: 'GroupPlacementError',
+				reason: 'placement-unchecked'
+			});
+			await expect(remove('3abc', space)).rejects.toMatchObject({
+				name: 'GroupPlacementError',
+				reason: 'placement-unchecked'
+			});
 		}
 		expect(pds.writes()).toEqual([]);
 		expect(notified).toEqual([]);
@@ -1088,7 +1107,10 @@ describe('members-only placement', () => {
 					notify,
 					...placement
 				} as unknown as WriteGroupEventInput;
-				await expect(writeGroupEvent(input)).rejects.toBeInstanceOf(GroupRecordError);
+				await expect(writeGroupEvent(input)).rejects.toMatchObject({
+					name: 'GroupPlacementError',
+					reason: 'no-placement'
+				});
 			}
 			const input = {
 				db,
@@ -1099,7 +1121,10 @@ describe('members-only placement', () => {
 				notify,
 				...placement
 			} as unknown as Parameters<typeof deleteGroupEvent>[0];
-			await expect(deleteGroupEvent(input)).rejects.toBeInstanceOf(GroupRecordError);
+			await expect(deleteGroupEvent(input)).rejects.toMatchObject({
+				name: 'GroupPlacementError',
+				reason: 'no-placement'
+			});
 		}
 		expect(pds.calls).toEqual([]);
 		expect(notified).toEqual([]);
@@ -1127,7 +1152,7 @@ describe('members-only placement', () => {
 						record: validRecord(),
 						notify
 					})
-				).rejects.toBeInstanceOf(GroupRecordError);
+				).rejects.toMatchObject({ name: 'GroupPlacementError', reason: 'not-the-calendar-space' });
 			}
 			await expect(
 				deleteGroupEvent({
@@ -1139,7 +1164,7 @@ describe('members-only placement', () => {
 					space,
 					notify
 				})
-			).rejects.toBeInstanceOf(GroupRecordError);
+			).rejects.toMatchObject({ name: 'GroupPlacementError', reason: 'not-the-calendar-space' });
 		}
 		expect(pds.calls).toEqual([]);
 	});

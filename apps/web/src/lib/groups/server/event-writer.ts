@@ -249,21 +249,33 @@ async function notifyIndex(
 // enforces it for every reader, and a field would be a second answer that a peer
 // app could read while the container said otherwise. (Spec: FR-104.)
 
-/** The refusals' copy. Each one says that nothing was saved, because nothing was. */
-const NO_PLACEMENT =
-	'This event was sent without saying whether it is public or members-only, so nothing was saved.';
-const NOT_THE_CALENDAR_SPACE =
-	"A members-only event can only go in this group's calendar space, so nothing was saved.";
-const NO_CALENDAR_SPACE =
-	'This group has no calendar space for members-only events, because it was made before they existed. Re-create the group to post members-only events. Nothing was saved.';
-const READABLE_CALENDAR_SPACE =
-	"This group's calendar space can be read by more than its members, so the members-only event was not saved.";
-const UNCHECKED_CALENDAR_SPACE =
-	"The group's calendar space could not be checked, so the members-only event was not saved. Try again later.";
-const PLACEMENT_CHANGE =
-	"This event can't be moved between public and members-only yet. Nothing was saved.";
-const UNCHECKED_PLACEMENT =
-	'Whether this event is public or members-only could not be checked, so nothing was saved. Try again later.';
+/** Each placement refusal's copy, by its tag. Each says that nothing was saved,
+ *  because nothing was. */
+const PLACEMENT_REFUSALS = {
+	'no-placement':
+		'This event was sent without saying whether it is public or members-only, so nothing was saved.',
+	'not-the-calendar-space':
+		"A members-only event can only go in this group's calendar space, so nothing was saved.",
+	'no-calendar-space':
+		'This group has no calendar space for members-only events, because it was made before they existed. Re-create the group to post members-only events. Nothing was saved.',
+	'calendar-space-readable':
+		"This group's calendar space can be read by more than its members, so the members-only event was not saved.",
+	'calendar-space-unchecked':
+		"The group's calendar space could not be checked, so the members-only event was not saved. Try again later.",
+	'placement-change':
+		"This event can't be moved between public and members-only yet. Nothing was saved.",
+	'placement-unchecked':
+		'Whether this event is public or members-only could not be checked, so nothing was saved. Try again later.'
+} as const;
+
+/** A write refused because of where it would land. A GroupRecordError, so a form
+ *  shows its message. `reason` is a stable machine tag, as on GroupRuleError. */
+export class GroupPlacementError extends GroupRecordError {
+	constructor(readonly reason: keyof typeof PLACEMENT_REFUSALS) {
+		super(PLACEMENT_REFUSALS[reason]);
+		this.name = 'GroupPlacementError';
+	}
+}
 
 /** The host's own error code for a space it never created, as the reader names
  *  it in what it throws. */
@@ -279,9 +291,9 @@ const NO_SUCH_SPACE = /\bSpaceNotFound\b/;
  */
 export function checkEventSpace(groupDid: string, space: unknown): string | null {
 	if (space === null) return null;
-	if (typeof space !== 'string') throw new GroupRecordError(NO_PLACEMENT);
+	if (typeof space !== 'string') throw new GroupPlacementError('no-placement');
 	if (space !== groupSpaceUris(groupDid).calendarSpaceUri) {
-		throw new GroupRecordError(NOT_THE_CALENDAR_SPACE);
+		throw new GroupPlacementError('not-the-calendar-space');
 	}
 	return space;
 }
@@ -357,12 +369,12 @@ export async function checkCalendarSpace(locator: GroupEventLocator, space: stri
 		({ readPolicy } = await locator.getSpace(space));
 	} catch (e) {
 		if (e instanceof Error && NO_SUCH_SPACE.test(e.message)) {
-			throw new GroupRecordError(NO_CALENDAR_SPACE);
+			throw new GroupPlacementError('no-calendar-space');
 		}
 		console.error(`[groups] ${space} could not be checked; a members-only write was refused:`, e);
-		throw new GroupRecordError(UNCHECKED_CALENDAR_SPACE);
+		throw new GroupPlacementError('calendar-space-unchecked');
 	}
-	if (readPolicy !== POLICY_MEMBER_LIST) throw new GroupRecordError(READABLE_CALENDAR_SPACE);
+	if (readPolicy !== POLICY_MEMBER_LIST) throw new GroupPlacementError('calendar-space-readable');
 }
 
 /**
@@ -387,12 +399,12 @@ async function checkPlacement(
 			return await locator.has(at, rkey);
 		} catch (e) {
 			console.error(`[groups] ${groupDid}: could not tell where event ${rkey} is:`, e);
-			throw new GroupRecordError(UNCHECKED_PLACEMENT);
+			throw new GroupPlacementError('placement-unchecked');
 		}
 	};
 	if (await has(space)) return;
 	const other = space === null ? groupSpaceUris(groupDid).calendarSpaceUri : null;
-	if (await has(other)) throw new GroupRecordError(PLACEMENT_CHANGE);
+	if (await has(other)) throw new GroupPlacementError('placement-change');
 }
 
 /** Authorizes the caller, then writes an event where `space` says: the group's
