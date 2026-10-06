@@ -22,9 +22,16 @@ import type { GroupSpaceReader } from './about-read';
 import { resolveGroupCredential, type GroupCredential } from './credentials';
 import { GroupCredentialError, requireGroupPermission, type GroupGateInput } from './event-writer';
 import { groupClient } from './session';
+import {
+	POLICY_MEMBER_LIST,
+	POLICY_PUBLIC,
+	SPACE_SKEY,
+	spaceUri,
+	type GroupSpaceUris
+} from './space-uris';
 
-const POLICY_PUBLIC = 'com.atproto.simplespace.defs#publicPolicy';
-const POLICY_MEMBER_LIST = 'com.atproto.simplespace.defs#memberListPolicy';
+export { groupSpaceUris, spaceUri, type GroupSpaceUris } from './space-uris';
+
 const APP_ACCESS_OPEN = 'com.atproto.simplespace.defs#open';
 
 export type SpaceReadPolicy = typeof POLICY_PUBLIC | typeof POLICY_MEMBER_LIST;
@@ -57,11 +64,6 @@ export async function readGroupVisibility(
 	const { readPolicy } = await reader.getSpace(space);
 	return visibilityFromReadPolicy(readPolicy);
 }
-
-/** Every space is keyed `self`, the atproto singleton convention. A group owns
- *  one space of each type, so its space URIs follow from the DID alone. Never key
- *  a space on a user-chosen name, which can change or collide. */
-const SPACE_SKEY = 'self';
 
 /** The space host refused to create the space. Distinct from a record error so
  *  a half-provisioned group is not reported as a bad record. */
@@ -106,12 +108,6 @@ export interface SpaceProvision {
 /** Injectable, like `GroupRepoWriter`, so provisioning can be tested without a PDS. */
 export type GroupSpaceProvisioner = (space: SpaceProvision) => Promise<{ uri: string }>;
 
-/** The PDS builds a space URI from owner, type and skey with no lookup. So an
- *  existing space's URI can be computed, which makes provisioning idempotent. */
-export function spaceUri(ownerDid: string, type: string, skey: string): string {
-	return `at://${ownerDid}/space/${type}/${skey}`;
-}
-
 /** `SpaceAlreadyExists` counts as success, so a create that failed after the
  *  first space can be retried. The existing space's read policy is not checked:
  *  the visibility cannot change between an attempt and its retry. */
@@ -151,24 +147,6 @@ export function pdsProvisioner(cred: GroupCredential, groupDid: string): GroupSp
 			throw new GroupSpaceError(`createSpace returned no space uri for ${space.type}`, space.type);
 		}
 		return { uri: body.uri };
-	};
-}
-
-export interface GroupSpaceUris {
-	aboutSpaceUri: string;
-	membersSpaceUri: string;
-	/** No column holds it: it follows from the DID, like the other two, so a
-	 *  group made before the calendar space existed needs no migration.
-	 *  (Spec: FR-101a.) */
-	calendarSpaceUri: string;
-}
-
-/** Every space URI from the DID alone, for a cache rebuild. */
-export function groupSpaceUris(groupDid: string): GroupSpaceUris {
-	return {
-		aboutSpaceUri: spaceUri(groupDid, ABOUT_SPACE_TYPE, SPACE_SKEY),
-		membersSpaceUri: spaceUri(groupDid, MEMBERS_SPACE_TYPE, SPACE_SKEY),
-		calendarSpaceUri: spaceUri(groupDid, CALENDAR_SPACE_TYPE, SPACE_SKEY)
 	};
 }
 
