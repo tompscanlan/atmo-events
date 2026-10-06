@@ -259,7 +259,8 @@ beforeEach(async () => {
 		}
 	});
 	const uris = await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), 'public');
-	expect(uris).toEqual({ aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS });
+	// The calendar space is provisioned too, and the roster never touches it.
+	expect(uris).toMatchObject({ aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS });
 	await recordGroupSpaces(db, group.id, uris);
 	group = { ...group, about_space_uri: ABOUT, members_space_uri: MEMBERS };
 

@@ -49,6 +49,7 @@ import {
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
 import {
 	ABOUT_SPACE_TYPE,
+	CALENDAR_SPACE_TYPE,
 	MEMBERS_SPACE_TYPE,
 	type GroupRow,
 	type GroupVisibility
@@ -69,6 +70,7 @@ const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:6cz6dldz42itymdbte47ewcv';
 const ABOUT = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self');
 const MEMBERS = spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self');
+const CALENDAR = spaceUri(GROUP_DID, CALENDAR_SPACE_TYPE, 'self');
 
 const HANDLE = 'kona.group.stub.test';
 const CRED = linkedCredential(GROUP_DID);
@@ -141,7 +143,11 @@ beforeEach(async () => {
 		fail: (nsid, init, query) => failHost?.(nsid, init, query)
 	});
 	const uris = await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), 'public');
-	expect(uris).toEqual({ aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS });
+	expect(uris).toEqual({
+		aboutSpaceUri: ABOUT,
+		membersSpaceUri: MEMBERS,
+		calendarSpaceUri: CALENDAR
+	});
 	await recordGroupSpaces(db, group.id, uris);
 	group = { ...group, about_space_uri: ABOUT, members_space_uri: MEMBERS };
 	pds.clearLog();
@@ -396,6 +402,23 @@ describe('repairGroup', () => {
 
 		const again = await repair();
 		expect(again.wrote.spaceIndex).toBe(false);
+	});
+
+	// Repair is create-only for the calendar space. A group made before it existed
+	// has no calendar space at its host, so an access record or index entry for one
+	// would describe a space that is not there. Repair writes neither, and leaves
+	// any calendar entry a later create wrote as it found it.
+	it('writes nothing into the calendar space and indexes only the about and members spaces', async () => {
+		const result = await repair();
+
+		expect(result.wrote.access).toBe(true);
+		expect(writes.filter((w) => w.space === CALENDAR)).toEqual([]);
+		expect(wroteTo(GROUP_SPACE_COLLECTION).map((w) => w.record.space)).toEqual([ABOUT, MEMBERS]);
+		// Nor does it provision the space or list anyone on it at the host.
+		expect(pds.requests.filter((r) => r.nsid === 'com.atproto.simplespace.createSpace')).toEqual(
+			[]
+		);
+		expect(memberListCalls().filter((c) => c.space === CALENDAR)).toEqual([]);
 	});
 
 	it('refuses a caller without MANAGE_GROUP and writes nothing', async () => {

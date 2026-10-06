@@ -9,7 +9,8 @@
 // happens to pass for admins.
 //
 // The other cases check where the records go (the members space, authored by
-// the group).
+// the group), and that the calendar space gets its access record and index entry
+// only from a caller that names it: create does, repair does not.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { addMember, createGroup, recordGroupSpaces } from './repo';
@@ -17,7 +18,8 @@ import {
 	dropGroupMembership,
 	putGroupMembership,
 	writeGroupAccess,
-	writeGroupAuthz
+	writeGroupAuthz,
+	writeGroupSpaceIndex
 } from './members-writer';
 import {
 	GroupPermissionError,
@@ -25,14 +27,15 @@ import {
 	type GroupRepoWrite,
 	type GroupRepoWriter
 } from './event-writer';
-import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
+import { ABOUT_SPACE_TYPE, CALENDAR_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import {
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
 	GROUP_EVENT_PERMISSIONS_COLLECTION,
 	GROUP_MEMBERSHIP_COLLECTION,
 	GROUP_PERMISSIONS_COLLECTION,
-	GROUP_ROLE_COLLECTION
+	GROUP_ROLE_COLLECTION,
+	GROUP_SPACE_COLLECTION
 } from '../members-record';
 import type { GroupSpaceReader } from './about-read';
 import { spaceUri } from './spaces';
@@ -45,6 +48,8 @@ const STRANGER = 'did:plc:ib2wrjcp4ulwqu35a7rtlckv';
 
 const ABOUT = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self');
 const MEMBERS = spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self');
+/** Written out, so a wrong type in the constant cannot pass by agreeing with itself. */
+const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
 
 let harness: SqliteD1;
 let db: D1Database;
@@ -369,6 +374,187 @@ describe('writeGroupAccess', () => {
 		await expect(
 			writeGroupAccess({ db, env, group, callerDid: MEMBER, writer, reader })
 		).rejects.toThrow(GroupPermissionError);
+	});
+
+	// The calendar space's access record says what the members space's says:
+	// not public, read by the members' roles. Only the target changes.
+	it('writes the same access record into the calendar space when the caller names it', async () => {
+		expect(spaceUri(GROUP_DID, CALENDAR_SPACE_TYPE, 'self')).toBe(CALENDAR);
+
+		await writeGroupAccess({ db, env, group, callerDid: OWNER, writer, reader, space: CALENDAR });
+
+		expect(writes).toHaveLength(1);
+		expect(writes[0]).toMatchObject({
+			space: CALENDAR,
+			repo: GROUP_DID,
+			collection: GROUP_ACCESS_COLLECTION,
+			rkey: GROUP_ACCESS_RKEY,
+			intent: 'update'
+		});
+		expect(writes[0].record).toEqual({
+			$type: GROUP_ACCESS_COLLECTION,
+			public: false,
+			readRoles: ['owner', 'admin', 'member'],
+			grants: []
+		});
+	});
+
+	// `public: false` written into the about space of a public group would
+	// contradict its read policy. That record is writeAboutAccess's alone.
+	it.each([
+		['the about space', ABOUT],
+		["another group's calendar space", 'at://did:plc:other/space/net.openmeet.space.calendar/self'],
+		['a space of another type', `at://${GROUP_DID}/space/com.example.other/self`]
+	])('refuses to write it into %s', async (_case, space) => {
+		await expect(
+			writeGroupAccess({ db, env, group, callerDid: OWNER, writer, reader, space })
+		).rejects.toThrow(GroupRecordError);
+		expect(writes).toHaveLength(0);
+	});
+
+	it('needs MANAGE_GROUP for the calendar space too', async () => {
+		await expect(
+			writeGroupAccess({ db, env, group, callerDid: MEMBER, writer, reader, space: CALENDAR })
+		).rejects.toThrow(GroupPermissionError);
+		expect(writes).toHaveLength(0);
+	});
+});
+
+describe('writeGroupSpaceIndex', () => {
+	const indexWrites = () => writes.filter((w) => w.collection === GROUP_SPACE_COLLECTION);
+	const entry = (rkey: string, space: string) => ({ rkey, space });
+
+	// Repair's call. Repair leaves the calendar space to the first members-only
+	// write, so without the calendar space the index is the two spaces it always was.
+	it('indexes the about and members spaces only when no calendar space is passed', async () => {
+		const result = await writeGroupSpaceIndex({
+			db,
+			env,
+			group,
+			callerDid: OWNER,
+			writer,
+			reader,
+			existing: []
+		});
+
+		expect(result).toEqual({ added: [ABOUT, MEMBERS], removed: [] });
+		expect(indexWrites().map((w) => w.record.space)).toEqual([ABOUT, MEMBERS]);
+		expect(writes.some((w) => w.space === CALENDAR)).toBe(false);
+	});
+
+	// Create's call: three spaces, one entry each, all in the members space.
+	it('indexes the calendar space as a third entry when the caller passes it', async () => {
+		const result = await writeGroupSpaceIndex({
+			db,
+			env,
+			group,
+			callerDid: OWNER,
+			writer,
+			reader,
+			existing: [],
+			calendarSpace: CALENDAR,
+			createdAt: '2026-10-06T12:00:00.000Z'
+		});
+
+		expect(result).toEqual({ added: [ABOUT, MEMBERS, CALENDAR], removed: [] });
+		expect(indexWrites()).toHaveLength(3);
+		for (const write of indexWrites()) {
+			expect(write).toMatchObject({ space: MEMBERS, repo: GROUP_DID, intent: 'create' });
+		}
+		expect(indexWrites()[2].record).toEqual({
+			$type: GROUP_SPACE_COLLECTION,
+			space: CALENDAR,
+			createdAt: '2026-10-06T12:00:00.000Z'
+		});
+		expect(new Set(indexWrites().map((w) => w.rkey)).size).toBe(3);
+	});
+
+	it('adds nothing when each of the three spaces already has its entry', async () => {
+		const result = await writeGroupSpaceIndex({
+			db,
+			env,
+			group,
+			callerDid: OWNER,
+			writer,
+			reader,
+			existing: [
+				entry('3m2aaaaaaaaa2', ABOUT),
+				entry('3m2aaaaaaaaa3', MEMBERS),
+				entry('3m2aaaaaaaaa4', CALENDAR)
+			],
+			calendarSpace: CALENDAR
+		});
+
+		expect(result).toEqual({ added: [], removed: [] });
+		expect(writes).toEqual([]);
+	});
+
+	// The keep-oldest rule holds per space, the calendar space included, so two
+	// creates racing leave one entry each.
+	it('keeps the oldest calendar entry and deletes the younger ones', async () => {
+		const result = await writeGroupSpaceIndex({
+			db,
+			env,
+			group,
+			callerDid: OWNER,
+			writer,
+			reader,
+			existing: [
+				entry('3m2aaaaaaaaa7', CALENDAR),
+				entry('3m2aaaaaaaaa2', ABOUT),
+				entry('3m2aaaaaaaaa3', MEMBERS),
+				entry('3m2aaaaaaaaa4', CALENDAR),
+				entry('3m2aaaaaaaaa5', CALENDAR)
+			],
+			calendarSpace: CALENDAR
+		});
+
+		expect(result).toEqual({ added: [], removed: ['3m2aaaaaaaaa5', '3m2aaaaaaaaa7'] });
+		expect(indexWrites().map((w) => [w.intent, w.rkey])).toEqual([
+			['delete', '3m2aaaaaaaaa5'],
+			['delete', '3m2aaaaaaaaa7']
+		]);
+	});
+
+	// Repair on a group made after this build: its calendar entries are another
+	// space's as far as repair is concerned, so even duplicates stay.
+	it('leaves calendar entries alone when the caller does not pass the calendar space', async () => {
+		const result = await writeGroupSpaceIndex({
+			db,
+			env,
+			group,
+			callerDid: OWNER,
+			writer,
+			reader,
+			existing: [
+				entry('3m2aaaaaaaaa2', ABOUT),
+				entry('3m2aaaaaaaaa3', MEMBERS),
+				entry('3m2aaaaaaaaa4', CALENDAR),
+				entry('3m2aaaaaaaaa5', CALENDAR)
+			]
+		});
+
+		expect(result).toEqual({ added: [], removed: [] });
+		expect(writes).toEqual([]);
+	});
+
+	it.each([
+		['the about space', ABOUT],
+		["another group's calendar space", 'at://did:plc:other/space/net.openmeet.space.calendar/self']
+	])('refuses %s as the calendar space, before any write', async (_case, calendarSpace) => {
+		await expect(
+			writeGroupSpaceIndex({
+				db,
+				env,
+				group,
+				callerDid: OWNER,
+				writer,
+				reader,
+				existing: [],
+				calendarSpace
+			})
+		).rejects.toThrow(GroupRecordError);
+		expect(writes).toHaveLength(0);
 	});
 });
 

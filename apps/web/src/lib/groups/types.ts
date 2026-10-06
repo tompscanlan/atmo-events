@@ -19,6 +19,14 @@ export type JoinRequestStatus = (typeof JOIN_REQUEST_STATUSES)[number];
  *  rules. The D1 column keeps the name `about_space_uri`. */
 export const ABOUT_SPACE_TYPE = 'group.opensocial.meta';
 export const MEMBERS_SPACE_TYPE = 'group.opensocial.members';
+/** The group's third space, ours rather than the standard's: it holds the group's
+ *  members-only calendar records. A members-only event is the same event record
+ *  as a public one, placed here instead of the public repo, so this adds a
+ *  container and no record type. The name is provisional, for devnet only until
+ *  it is settled. It is part of every URI in the space, so a rename strands what
+ *  was written under the old one, and it lives in this one constant so that a
+ *  rename is one line. (Spec: FR-102.) */
+export const CALENDAR_SPACE_TYPE = 'net.openmeet.space.calendar';
 
 /** A `groups` row as D1 returns it. No `visibility`: see `GroupVisibility`. */
 export interface GroupRow {

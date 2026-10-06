@@ -1,16 +1,19 @@
-// A group's two spaces, owned by the group's DID. A space has one read policy,
-// so a group needs two:
+// A group's three spaces, owned by the group's DID. A space has one read policy,
+// so a group needs one space per audience:
 //
-//   about    by visibility      profile and rules: public read for a public
-//                               group, member-list read for a private one
-//   members  member-list read   roles, membership and access
+//   about     by visibility      profile and rules: public read for a public
+//                                group, member-list read for a private one
+//   members   member-list read   roles, membership and access
+//   calendar  member-list read   members-only events, whatever the visibility
 //
 // The about space's read policy is the group's visibility, and the host enforces
-// it for every app. The app always acts as the group, the space owner, whom no
-// policy governs. So the write policy is member-list on both spaces: the
-// vocabulary has no owner-only policy, and none is needed.
+// it for every app. The other two never follow it. The app always acts as the
+// group, the space owner, whom no policy governs. So the write policy is
+// member-list on every space: the vocabulary has no owner-only policy, and none
+// is needed.
 import {
 	ABOUT_SPACE_TYPE,
+	CALENDAR_SPACE_TYPE,
 	MEMBERS_SPACE_TYPE,
 	type GroupRow,
 	type GroupVisibility
@@ -154,19 +157,24 @@ export function pdsProvisioner(cred: GroupCredential, groupDid: string): GroupSp
 export interface GroupSpaceUris {
 	aboutSpaceUri: string;
 	membersSpaceUri: string;
+	/** No column holds it: it follows from the DID, like the other two, so a
+	 *  group made before the calendar space existed needs no migration.
+	 *  (Spec: FR-101a.) */
+	calendarSpaceUri: string;
 }
 
-/** Both space URIs from the DID alone, for a cache rebuild. */
+/** Every space URI from the DID alone, for a cache rebuild. */
 export function groupSpaceUris(groupDid: string): GroupSpaceUris {
 	return {
 		aboutSpaceUri: spaceUri(groupDid, ABOUT_SPACE_TYPE, SPACE_SKEY),
-		membersSpaceUri: spaceUri(groupDid, MEMBERS_SPACE_TYPE, SPACE_SKEY)
+		membersSpaceUri: spaceUri(groupDid, MEMBERS_SPACE_TYPE, SPACE_SKEY),
+		calendarSpaceUri: spaceUri(groupDid, CALENDAR_SPACE_TYPE, SPACE_SKEY)
 	};
 }
 
-/** Creates both spaces in sequence: they share one cached session, and the
- *  second must not run if the first fails. `visibility` sets only the about
- *  space's read policy. */
+/** Creates the three spaces in sequence: they share one cached session, and a
+ *  later one must not run if an earlier one fails. `visibility` sets only the
+ *  about space's read policy. */
 export async function provisionGroupSpaces(
 	provisioner: GroupSpaceProvisioner,
 	visibility: GroupVisibility
@@ -181,7 +189,19 @@ export async function provisionGroupSpaces(
 		skey: SPACE_SKEY,
 		readPolicy: POLICY_MEMBER_LIST
 	});
-	return { aboutSpaceUri: about.uri, membersSpaceUri: members.uri };
+	// Member-list read whatever the visibility, never the about space's policy:
+	// for a public group that policy is public, which would let any signed-in
+	// account read every members-only event. (Spec: FR-101.)
+	const calendar = await provisioner({
+		type: CALENDAR_SPACE_TYPE,
+		skey: SPACE_SKEY,
+		readPolicy: POLICY_MEMBER_LIST
+	});
+	return {
+		aboutSpaceUri: about.uri,
+		membersSpaceUri: members.uri,
+		calendarSpaceUri: calendar.uri
+	};
 }
 
 /** A read-policy change on an existing space. Injectable, like the provisioner. */

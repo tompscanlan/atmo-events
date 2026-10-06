@@ -11,15 +11,17 @@
 // because the policy triple and the method choice are made inside them. An
 // injected provisioner would only assert the test's own fixture.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from '../types';
+import { ABOUT_SPACE_TYPE, CALENDAR_SPACE_TYPE, MEMBERS_SPACE_TYPE } from '../types';
 import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import { pdsWriter } from './event-writer';
 import {
 	GroupSpaceError,
 	SpacesUnsupportedError,
+	groupSpaceUris,
 	pdsProvisioner,
 	provisionGroupSpaces,
-	spaceUri
+	spaceUri,
+	type SpaceProvision
 } from './spaces';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -68,13 +70,20 @@ describe('provisionGroupSpaces', () => {
 		expect(MEMBERS_SPACE_TYPE).toBe('group.opensocial.members');
 	});
 
+	// The third type is ours, not the standard's, and devnet-only until its name is
+	// settled: a calendar space URI carries it, so a rename strands every record
+	// already written under the old one. Written out for the same reason as above.
+	it('provisions the calendar space under net.openmeet.space.calendar', () => {
+		expect(CALENDAR_SPACE_TYPE).toBe('net.openmeet.space.calendar');
+	});
+
 	// The about space's read policy is the group's visibility, as the host
 	// enforces it. The members space's is not a choice at all.
 	it.each([
 		['public', 'publicPolicy'],
 		['private', 'memberListPolicy']
 	] as const)(
-		'creates about with the read policy a %s group names (%s) and members as member-list-read, both app-open, under the group DID',
+		'creates about with the read policy a %s group names (%s), and members and calendar as member-list-read, all app-open, under the group DID',
 		async (visibility, policy) => {
 			replies['com.atproto.simplespace.createSpace'] = {
 				status: 200,
@@ -85,6 +94,7 @@ describe('provisionGroupSpaces', () => {
 
 			const calls = writes();
 			expect(calls.map((c) => c.nsid)).toEqual([
+				'com.atproto.simplespace.createSpace',
 				'com.atproto.simplespace.createSpace',
 				'com.atproto.simplespace.createSpace'
 			]);
@@ -110,10 +120,51 @@ describe('provisionGroupSpaces', () => {
 				writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
 				appAccess: { $type: 'com.atproto.simplespace.defs#open' }
 			});
+
+			// The calendar space holds members-only events, so it is member-list read
+			// whatever the visibility. `publicPolicy` here, the about space's policy
+			// copied for a public group, would let any signed-in account read every
+			// members-only event.
+			expect(calls[2].body).toEqual({
+				spaceType: 'net.openmeet.space.calendar',
+				skey: 'self',
+				readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
+				writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
+				appAccess: { $type: 'com.atproto.simplespace.defs#open' }
+			});
 		}
 	);
 
-	it('returns the two URIs the host confirmed, keyed by space', async () => {
+	// The same pin through the seam: what provisioning asks for, before any
+	// transport. A public group is the case a copied about-space policy breaks.
+	it('asks for three spaces, the calendar one member-list read even for a public group', async () => {
+		const asked: SpaceProvision[] = [];
+		const uris = await provisionGroupSpaces(async (space) => {
+			asked.push(space);
+			return { uri: spaceUri(GROUP_DID, space.type, space.skey) };
+		}, 'public');
+
+		expect(asked).toEqual([
+			{
+				type: ABOUT_SPACE_TYPE,
+				skey: 'self',
+				readPolicy: 'com.atproto.simplespace.defs#publicPolicy'
+			},
+			{
+				type: MEMBERS_SPACE_TYPE,
+				skey: 'self',
+				readPolicy: 'com.atproto.simplespace.defs#memberListPolicy'
+			},
+			{
+				type: 'net.openmeet.space.calendar',
+				skey: 'self',
+				readPolicy: 'com.atproto.simplespace.defs#memberListPolicy'
+			}
+		]);
+		expect(uris.calendarSpaceUri).toBe(`at://${GROUP_DID}/space/net.openmeet.space.calendar/self`);
+	});
+
+	it('returns the three URIs the host confirmed, keyed by space', async () => {
 		const provisioner = pdsProvisioner(CRED, GROUP_DID);
 		let call = 0;
 		replies['com.atproto.simplespace.createSpace'] = { status: 200, body: {} };
@@ -129,7 +180,8 @@ describe('provisionGroupSpaces', () => {
 
 		expect(uris).toEqual({
 			aboutSpaceUri: `at://${GROUP_DID}/space/${ABOUT_SPACE_TYPE}/self#1`,
-			membersSpaceUri: `at://${GROUP_DID}/space/${MEMBERS_SPACE_TYPE}/self#2`
+			membersSpaceUri: `at://${GROUP_DID}/space/${MEMBERS_SPACE_TYPE}/self#2`,
+			calendarSpaceUri: `at://${GROUP_DID}/space/${CALENDAR_SPACE_TYPE}/self#3`
 		});
 	});
 
@@ -146,6 +198,10 @@ describe('provisionGroupSpaces', () => {
 		// alone: nothing the caller supplies can move a group's space URI.
 		expect(uris.aboutSpaceUri).toBe(spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self'));
 		expect(uris.membersSpaceUri).toBe(spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self'));
+		expect(uris.calendarSpaceUri).toBe(spaceUri(GROUP_DID, CALENDAR_SPACE_TYPE, 'self'));
+		// And the same three a cache rebuild computes from the DID alone, which is
+		// why the calendar space needs no column.
+		expect(uris).toEqual(groupSpaceUris(GROUP_DID));
 	});
 
 	it('does not attempt the members space when the about space fails', async () => {
@@ -158,6 +214,22 @@ describe('provisionGroupSpaces', () => {
 			GroupSpaceError
 		);
 		expect(writes()).toHaveLength(1);
+	});
+
+	it('does not attempt the calendar space when the members space fails', async () => {
+		vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
+			const body = init?.body ? JSON.parse(String(init.body)) : {};
+			sent.push({ nsid: new URL(String(input)).pathname.replace('/xrpc/', ''), body });
+			if (body.spaceType === MEMBERS_SPACE_TYPE) {
+				return Response.json({ error: 'UnsupportedPolicy', message: 'no' }, { status: 400 });
+			}
+			return Response.json({ uri: `at://${GROUP_DID}/space/${body.spaceType}/${body.skey}` });
+		});
+
+		await expect(provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID), 'public')).rejects.toThrow(
+			GroupSpaceError
+		);
+		expect(writes().map((w) => w.body.spaceType)).toEqual([ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE]);
 	});
 
 	// The three answers a stock PDS gives, measured against pds:0.4.
@@ -189,6 +261,18 @@ describe('provisionGroupSpaces', () => {
 
 		await expect(failure).rejects.toThrow(GroupSpaceError);
 		await expect(failure).rejects.not.toThrow(SpacesUnsupportedError);
+	});
+});
+
+describe('groupSpaceUris', () => {
+	// A cache rebuild has only the DID. The calendar space URI is computed the same
+	// way, so it needs no column and no migration. (Spec: FR-101a.)
+	it('computes all three space URIs from the DID alone', () => {
+		expect(groupSpaceUris(GROUP_DID)).toEqual({
+			aboutSpaceUri: `at://${GROUP_DID}/space/group.opensocial.meta/self`,
+			membersSpaceUri: `at://${GROUP_DID}/space/group.opensocial.members/self`,
+			calendarSpaceUri: `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`
+		});
 	});
 });
 

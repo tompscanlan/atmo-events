@@ -281,9 +281,11 @@ async function setUpMintedGroup(
 	});
 
 	// The visibility becomes the about space's read policy, so a private group is
-	// closed to strangers at the host from its first moment.
+	// closed to strangers at the host from its first moment. The calendar space's
+	// URI is not recorded: it follows from the DID. (Spec: FR-101a.)
 	let aboutUri: string;
 	let membersUri: string;
+	let calendarUri: string;
 	try {
 		const uris = await provisionGroupSpaces(
 			pdsProvisioner(minted.credential, minted.did),
@@ -292,6 +294,7 @@ async function setUpMintedGroup(
 		await recordGroupSpaces(env.DB, group.id, uris);
 		aboutUri = uris.aboutSpaceUri;
 		membersUri = uris.membersSpaceUri;
+		calendarUri = uris.calendarSpaceUri;
 	} catch (e) {
 		if (e instanceof SpacesUnsupportedError) {
 			return {
@@ -389,11 +392,25 @@ async function setUpMintedGroup(
 	// The members space, as records. The owner's membership goes before the
 	// authz config: once a config exists the gate resolves from records, and
 	// until then it falls back to the rows, where the owner holds every
-	// permission. The index of the two spaces grants nothing, so it can go
-	// anywhere before the config. A failure here leaves a working group that
-	// "Repair this group" can finish (server/repair.ts).
+	// permission. The index of the spaces grants nothing, so it can go anywhere
+	// before the config. A failure here leaves a working group that "Repair this
+	// group" can finish (server/repair.ts), except for the calendar space's two
+	// records, which repair leaves alone.
+	//
+	// The calendar space gets its access record and its index entry here, and
+	// only here: repair does not pass it. Its member list stays empty, since the
+	// app reads it as the group. (Spec: FR-101b.)
 	try {
 		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer, reader });
+		await writeGroupAccess({
+			db: env.DB,
+			env,
+			group: withSpaces,
+			callerDid,
+			writer,
+			reader,
+			space: calendarUri
+		});
 		// A new members space holds no index, so nothing is read.
 		await writeGroupSpaceIndex({
 			db: env.DB,
@@ -403,6 +420,7 @@ async function setUpMintedGroup(
 			writer,
 			reader,
 			existing: [],
+			calendarSpace: calendarUri,
 			createdAt
 		});
 		await putGroupMembership({

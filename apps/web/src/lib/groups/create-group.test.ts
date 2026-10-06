@@ -345,23 +345,27 @@ describe('a successful create', () => {
 		expect(writes).toEqual([
 			'com.atproto.server.createAccount',
 			'plc.directory/data',
+			// About, members, then the calendar space.
 			'com.atproto.simplespace.createSpace',
 			'com.atproto.simplespace.createSpace',
-			// The records land after both spaces exist, since there is nowhere to
+			'com.atproto.simplespace.createSpace',
+			// The records land after the spaces exist, since there is nowhere to
 			// put them before. The about space first: the profile, then the access
 			// record. Then the declaration in the public repo, which points at the
 			// about space and so cannot come before it, and which a reader may
 			// only find while the access record says public. Then the members
-			// space: the access record, one index entry per space, the owner's
-			// membership, and last the authz config (three roles and the two
-			// binding records). The membership comes first because once a config
-			// exists the gate resolves from it, and an owner with no membership
-			// record could not admit themselves. That order is asserted on
-			// `spaceWrites` in the members-space test below.
+			// space's access record and the calendar space's, one index entry per
+			// space, the owner's membership, and last the authz config (three
+			// roles and the two binding records). The membership comes first
+			// because once a config exists the gate resolves from it, and an
+			// owner with no membership record could not admit themselves. That
+			// order is asserted on `spaceWrites` in the members-space test below.
 			'com.atproto.space.putRecord',
 			'com.atproto.space.putRecord',
 			'com.atproto.repo.putRecord',
 			'com.atproto.space.putRecord',
+			'com.atproto.space.putRecord',
+			'com.atproto.space.createRecord',
 			'com.atproto.space.createRecord',
 			'com.atproto.space.createRecord',
 			'com.atproto.space.putRecord',
@@ -601,8 +605,8 @@ describe('a successful create', () => {
 	);
 
 	// The standard indexes every space in members/self, the two well-known ones
-	// included, exactly once each.
-	it('indexes both spaces in the members space, one entry each', async () => {
+	// included, exactly once each. The calendar space is one of them from create.
+	it('indexes all three spaces in the members space, one entry each', async () => {
 		const { spaceWrites } = stubPds();
 
 		await runCreateGroup(env, OWNER, data());
@@ -612,7 +616,8 @@ describe('a successful create', () => {
 		const index = spaceWrites.filter((w) => w.collection === 'group.opensocial.space');
 		expect(index.map((w) => w.record.space)).toEqual([
 			`at://${MINTED_DID}/space/group.opensocial.meta/self`,
-			members
+			members,
+			`at://${MINTED_DID}/space/net.openmeet.space.calendar/self`
 		]);
 		for (const entry of index) {
 			expect(entry.space).toBe(members);
@@ -623,7 +628,7 @@ describe('a successful create', () => {
 				createdAt: new Date(group.created_at).toISOString()
 			});
 		}
-		expect(new Set(index.map((w) => w.rkey)).size).toBe(2);
+		expect(new Set(index.map((w) => w.rkey)).size).toBe(3);
 	});
 
 	it('writes one role record per seeded role and both binding records', async () => {
@@ -870,6 +875,88 @@ describe('the members space is member-list read whatever the choice', () => {
 	);
 });
 
+// The calendar space holds members-only events. A space has one read policy, and
+// this one must be the member list whatever the group's visibility: the about
+// space's policy copied over would make a public group's members-only events
+// readable by any signed-in account. (Spec: FR-101, FR-101b.)
+describe('the create makes the calendar space, closed to everyone but the group', () => {
+	const CALENDAR = `at://${MINTED_DID}/space/net.openmeet.space.calendar/self`;
+
+	it.each(['public', 'private'] as const)(
+		'a %s create provisions the calendar space with memberListPolicy',
+		async (visibility) => {
+			const { requests, spaces } = stubPds();
+
+			const result = await runCreateGroup(env, OWNER, data({ visibility }));
+
+			expect(result.ok).toBe(true);
+			const calendar = requests.filter(
+				(r) =>
+					r.nsid === 'com.atproto.simplespace.createSpace' &&
+					r.body?.spaceType === 'net.openmeet.space.calendar'
+			);
+			expect(calendar).toHaveLength(1);
+			expect(calendar[0].body).toEqual({
+				spaceType: 'net.openmeet.space.calendar',
+				skey: 'self',
+				readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
+				writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
+				appAccess: { $type: 'com.atproto.simplespace.defs#open' }
+			});
+			expect(spaces.get(CALENDAR)?.readPolicy).toEqual({
+				$type: 'com.atproto.simplespace.defs#memberListPolicy'
+			});
+		}
+	);
+
+	it.each(['public', 'private'] as const)(
+		'a %s create writes access/self into the calendar space, not public, read by the members’ roles',
+		async (visibility) => {
+			const { spaceWrites } = stubPds();
+
+			await runCreateGroup(env, OWNER, data({ visibility }));
+
+			const inCalendar = spaceWrites.filter((w) => w.space === CALENDAR);
+			// The access record is the only record a create puts there: no event
+			// and no RSVP is written into the space yet.
+			expect(inCalendar).toHaveLength(1);
+			expect(inCalendar[0]).toMatchObject({ collection: 'group.opensocial.access', rkey: 'self' });
+			expect(inCalendar[0].record).toEqual({
+				$type: 'group.opensocial.access',
+				public: false,
+				readRoles: ['owner', 'admin', 'member'],
+				grants: []
+			});
+		}
+	);
+
+	// atmo reads the space as the group, so nobody is listed. A listed DID could
+	// read every members-only event from its own app, around the app's gate.
+	it('puts nobody on the calendar space’s member list, the owner included', async () => {
+		const { requests, members } = stubPds();
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		expect(result.ok).toBe(true);
+		const puts = requests.filter((r) => r.nsid === 'com.atproto.simplespace.putMember');
+		expect(puts.length).toBeGreaterThan(0);
+		expect(puts.filter((r) => r.body?.space === CALENDAR)).toEqual([]);
+		expect(members(CALENDAR)).toEqual([]);
+	});
+
+	// The URI follows from the DID, so the row gains no column. (Spec: FR-101a.)
+	it('stores the calendar space URI in no row', async () => {
+		stubPds();
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		expect(result.ok).toBe(true);
+		const [group] = await rows('groups');
+		expect(Object.keys(group).filter((column) => /calendar|events_space/.test(column))).toEqual([]);
+		expect(everyStoredRow()).not.toContain('net.openmeet.space.calendar');
+	});
+});
+
 // The owner's rotation key exists in one place: the response to this create.
 // Once the did:plc is minted, every way the create can end has to carry it, or
 // the owner is left holding a group (or a registered address) with no key of
@@ -907,6 +994,18 @@ describe('a create that fails after the mint', () => {
 		],
 		['writing the profile', async () => {}, { fail: writing('group.opensocial.profile') }],
 		['writing the members space', async () => {}, { fail: writing('group.opensocial.access') }],
+		[
+			'writing the calendar space’s access record',
+			async () => {},
+			{
+				fail: (nsid: string, init?: RequestInit) =>
+					nsid.startsWith('com.atproto.space.putRecord') &&
+					(JSON.parse(String(init?.body)) as { space: string }).space ===
+						`at://${MINTED_DID}/space/net.openmeet.space.calendar/self`
+						? pdsDown()
+						: undefined
+			}
+		],
 		[
 			'adding the owner to the member list',
 			async () => {},
