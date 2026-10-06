@@ -4,16 +4,18 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 33 numbered checks (1 to 23, plus 10b, 13b, 13c, 15b, 18b, 18c, 18d,
- * 18e, 20b and 20c), prints one PASS or FAIL line each, and a clean run ends
- * with `SUMMARY: 33 passed, 0 failed`. Setup steps print as notes and are not
- * counted. In order: create and the seeded roles (1), join, approval and
+ * It runs 38 numbered checks (1 to 23, plus 10b, 13b to 13h, 15b, 18b, 18c,
+ * 18d, 18e, 20b and 20c), prints one PASS or FAIL line each, and a clean run
+ * ends with `SUMMARY: 38 passed, 0 failed`. Setup steps print as notes and are
+ * not counted. In order: create and the seeded roles (1), join, approval and
  * promotion (2-3), events written as the group DID and the edit gate (4-6),
  * leaving (7-8), a cover image uploaded into the group's repo (9), the profile,
  * rules and access record in the about space (10-12), the roster, the index of
  * the group's three spaces and the authz config as records in the members
  * space, with the calendar space's read policy, access record and empty member
- * list (13-18), the member's own acceptance at a join request, at leave and at a
+ * list (13-18), the members-only slice the events tab reads from the calendar
+ * space for a member, a non-member, an anonymous visitor and an unlinked group
+ * (13d-13h), the member's own acceptance at a join request, at leave and at a
  * sign-in after a direct add (18b-18d), a member whose PDS serves no spaces
  * (18e), the discovery declaration and
  * visibility at the host (19-20c), the events index (21-22), and a rebuild of
@@ -65,6 +67,8 @@
  * config and the owner's membership. Then it re-reads each one and prints WARN for anything left. The
  * profile and the three `access` records stay at fixed keys that the next run
  * overwrites, and the space index stays until the next run resets it. The
+ * members-only seed event stays in the calendar space at its fixed key, where
+ * the next run finds it. The
  * spaces themselves stay, so a run after the first finds the calendar space
  * rather than creating it, and keeps whatever read policy it was created with.
  */
@@ -127,6 +131,17 @@ const CREATE_VISIBILITY = 'public';
 const CALENDAR_SPACE_URI = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
 
 const EVENT_COLLECTION = 'community.lexicon.calendar.event';
+const ACCESS_COLLECTION = 'group.opensocial.access';
+
+/** One members-only event, written straight into the calendar space by this
+ *  driver and kept across runs at a fixed key, so a re-run finds it rather than
+ *  adding another. The key is a valid TID, in case a host checks its format. */
+const SEED_RKEY = '3me2emembersx';
+const SEED_NAME = 'e2e members-only meeting (seed)';
+/** Its space-form URI, written out like CALENDAR_SPACE_URI. */
+const SEED_URI = `${CALENDAR_SPACE_URI}/${GROUP_DID}/${EVENT_COLLECTION}/${SEED_RKEY}`;
+/** What the app tells a member of an unlinked group, written out. */
+const RELINK_NOTICE = "Members-only events can't be shown until an organizer relinks the group.";
 /** The record in the group's public repo that lets other apps find it. */
 const DECLARATION_COLLECTION = 'group.opensocial.declaration';
 
@@ -366,6 +381,34 @@ async function spaceRecords(token, space, collection) {
 	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
 	const body = await response.json().catch(() => ({}));
 	return { status: response.status, records: body.records ?? [], cursor: body.cursor };
+}
+
+/** Writes a record into one of the group's spaces with the group's session,
+ *  with no app code: the seed of the members-only slice. */
+async function putSpaceRecord(token, space, collection, rkey, record) {
+	const response = await fetch(new URL('/xrpc/com.atproto.space.putRecord', PDS), {
+		method: 'POST',
+		headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+		body: JSON.stringify({ space, repo: GROUP_DID, collection, rkey, record })
+	});
+	const body = await response.json().catch(() => ({}));
+	return { status: response.status, ...body };
+}
+
+/** The requests in a worker op's log that named the calendar space. A write
+ *  carries the space in its body, and nothing here writes, so the query is
+ *  where a read names it. */
+function calendarCalls(calls) {
+	return calls.filter(
+		(path) => new URL(path, ORIGIN).searchParams.get('space') === CALENDAR_SPACE_URI
+	);
+}
+
+/** The calendar listings among them: the one read the slice is allowed. */
+function calendarListings(calls) {
+	return calendarCalls(calls).filter((path) =>
+		path.startsWith('/xrpc/com.atproto.space.listRecords?')
+	);
 }
 
 const ACCEPTANCE_COLLECTION = 'group.opensocial.acceptance';
@@ -995,6 +1038,140 @@ async function main() {
 				`${JSON.stringify(calendarAccess.value?.readRoles)}; listMembers ${calendarMembers.status}: ` +
 				`${calendarMembers.members.length} member(s)` +
 				`${calendarMembers.error ? ` (${calendarMembers.error})` : ''}`
+		);
+
+		// 13d-13h. the members-only slice --------------------------------------------
+		// What the events tab reads from the calendar space, viewer by viewer. One
+		// members-only event is seeded first, by a raw putRecord as the group with no
+		// app code, at a fixed key that a re-run finds. Each read is the app's own,
+		// behind its own roster check, and comes back with every request it sent
+		// through the group's session, so "no read" is a count. A seed left by an
+		// earlier run cannot stand in for this run's read: the member's slice must
+		// match what the PDS lists now, cid included, and must have sent a listing.
+		const seedBefore = await spaceRecord(
+			groupToken,
+			CALENDAR_SPACE_URI,
+			EVENT_COLLECTION,
+			SEED_RKEY
+		);
+		let seedOrigin = 'found from an earlier run';
+		if (!(seedBefore.status === 200 && seedBefore.value?.name === SEED_NAME)) {
+			const put = await putSpaceRecord(
+				groupToken,
+				CALENDAR_SPACE_URI,
+				EVENT_COLLECTION,
+				SEED_RKEY,
+				{
+					$type: EVENT_COLLECTION,
+					...eventRecord(SEED_NAME, { createdAt: '2026-10-06T12:00:00.000Z' }),
+					description:
+						'Members-only seed for apps/web/scripts/groups-e2e.mjs. Kept across runs at a fixed key.'
+				}
+			);
+			if (put.status !== 200) {
+				throw new Error(`seeding ${SEED_URI} failed: ${put.status} ${put.error ?? ''}`);
+			}
+			seedOrigin = `created by this run (getRecord before: ${seedBefore.error ?? seedBefore.status})`;
+		}
+		note(`members-only seed ${SEED_URI}: ${seedOrigin}`);
+		const seed = await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, SEED_RKEY);
+		const listedEvents = await spaceRecords(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION);
+		// The live listing carries the key and no uri; a uri is read too, in case.
+		const listedKeys = listedEvents.records
+			.map((r) => r.rkey ?? String(r.uri).split('/').pop())
+			.sort();
+
+		// 13d. a member reads it ---------------------------------------------------
+		const memberSlice = await must('membersOnlySlice', { groupId: group.id, did: BOB });
+		const memberEvents = memberSlice.slice?.events ?? [];
+		const seedRead = memberEvents.filter((e) => e.rkey === SEED_RKEY);
+		const memberListings = calendarListings(memberSlice.sliceCalls);
+		record(
+			memberSlice.onRoster === true &&
+				seed.status === 200 &&
+				listedEvents.status === 200 &&
+				memberSlice.slice?.notice === null &&
+				seedRead.length === 1 &&
+				seedRead[0].uri === SEED_URI &&
+				seedRead[0].space === CALENDAR_SPACE_URI &&
+				seedRead[0].cid === seed.cid &&
+				seedRead[0].value?.name === SEED_NAME &&
+				JSON.stringify(memberEvents.map((e) => e.rkey).sort()) === JSON.stringify(listedKeys) &&
+				memberListings.length >= 1 &&
+				memberSlice.sliceCalls.length === memberListings.length,
+			'the members-only slice of a roster member holds the seed at its space-form URI, read live from the calendar space',
+			`${BOB} on the roster ${memberSlice.onRoster}; ${memberEvents.length} event(s), the seed at ` +
+				`${seedRead[0]?.uri} (space ${seedRead[0]?.space}; cid ` +
+				`${seedRead[0]?.cid === seed.cid ? 'as the PDS has it' : `${seedRead[0]?.cid}, the PDS has ${seed.cid}`}); ` +
+				`the PDS lists ${listedKeys.length} event(s) there; the read sent ` +
+				`${memberSlice.sliceCalls.length} request(s), ${memberListings.length} of them a calendar listRecords`
+		);
+
+		// 13e. a signed-in non-member causes no read ----------------------------
+		// The viewer's standing is read from the members space as for any page; the
+		// calendar space must not be named once, in the standing or the slice.
+		const strangerSlice = await must('membersOnlySlice', { groupId: group.id, did: MALLORY });
+		record(
+			strangerSlice.onRoster === false &&
+				strangerSlice.slice === null &&
+				strangerSlice.sliceCalls.length === 0 &&
+				calendarCalls(strangerSlice.calls).length === 0,
+			'the members-only slice of a signed-in non-member holds nothing, and no calendar space call was made',
+			`${MALLORY} on the roster ${strangerSlice.onRoster}; slice ${JSON.stringify(strangerSlice.slice)}; ` +
+				`${strangerSlice.sliceCalls.length} request(s) sent for the slice, ` +
+				`${calendarCalls(strangerSlice.calls).length} to the calendar space of ` +
+				`${strangerSlice.calls.length} in the whole read`
+		);
+
+		// 13f. and neither does an anonymous visitor -------------------------------
+		const anonymousSlice = await must('membersOnlySlice', { groupId: group.id, did: null });
+		record(
+			anonymousSlice.onRoster === false &&
+				anonymousSlice.slice === null &&
+				anonymousSlice.sliceCalls.length === 0 &&
+				calendarCalls(anonymousSlice.calls).length === 0,
+			'the members-only slice of an anonymous visitor holds nothing, and no calendar space call was made',
+			`slice ${JSON.stringify(anonymousSlice.slice)}; ${anonymousSlice.sliceCalls.length} request(s) ` +
+				`sent for the slice, ${calendarCalls(anonymousSlice.calls).length} to the calendar space of ` +
+				`${anonymousSlice.calls.length} in the whole read`
+		);
+
+		// 13g. the space's access record is never an event ----------------------
+		// Check 13c wrote access/self into this same space, so the slice is shown
+		// to leave out a record that is really there.
+		const accessNow = await spaceRecord(groupToken, CALENDAR_SPACE_URI, ACCESS_COLLECTION, 'self');
+		const sliced = [memberSlice, strangerSlice, anonymousSlice].flatMap(
+			(s) => s.slice?.events ?? []
+		);
+		const notEvents = sliced.filter((e) => !String(e.uri).includes(`/${EVENT_COLLECTION}/`));
+		record(
+			accessNow.status === 200 && memberEvents.length >= 1 && notEvents.length === 0,
+			'the members-only slice never holds the calendar space’s access record, though the space does',
+			`access/self in the calendar space: ${accessNow.error ?? accessNow.status}; ` +
+				`${sliced.length} record(s) across the three slices, ${notEvents.length} not an event` +
+				`${notEvents.length ? `: ${notEvents.map((e) => e.uri).join(', ')}` : ''}`
+		);
+
+		// 13h. an unlinked group tells a member why, and reads nothing ------------
+		// The op takes the group's stored session away for the read, as a lapsed link
+		// leaves it, and puts it back; the next op shows the link is back.
+		const unlinkedSlice = await must('membersOnlySlice', {
+			groupId: group.id,
+			did: BOB,
+			unlinked: true
+		});
+		const relinked = await must('linked', { groupId: group.id });
+		record(
+			unlinkedSlice.linked === false &&
+				unlinkedSlice.onRoster === true &&
+				JSON.stringify(unlinkedSlice.slice?.events) === '[]' &&
+				unlinkedSlice.slice?.notice === RELINK_NOTICE &&
+				unlinkedSlice.calls.length === 0 &&
+				relinked.linked === true,
+			'the members-only slice of a member of an unlinked group is empty, says an organizer has to relink, and sends nothing',
+			`linked ${unlinkedSlice.linked}; ${BOB} on the roster ${unlinkedSlice.onRoster} (from the row); ` +
+				`notice "${unlinkedSlice.slice?.notice}"; ${unlinkedSlice.calls.length} request(s) sent; ` +
+				`linked again after: ${relinked.linked}`
 		);
 
 		// 14. the space's own member list is write-only --------------------------

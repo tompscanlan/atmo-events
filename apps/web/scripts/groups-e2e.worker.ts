@@ -104,6 +104,8 @@ import {
 	spaceSigHeaders
 } from '../src/lib/groups/server/space-credential';
 import { groupClient } from '../src/lib/groups/server/session';
+import { readMembersOnlyEvents } from '../src/lib/groups/server/calendar-read';
+import { standInCalls } from './groups-e2e.oauth';
 import {
 	GROUP_ACCEPTANCE_COLLECTION,
 	GROUP_ACCEPTANCE_RKEY
@@ -529,6 +531,44 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			onRoster: membership.onRoster,
 			canSee: canSeeGroup(visibility, membership)
 		};
+	},
+
+	/** The events tab's members-only slice for one viewer, or null for a viewer
+	 *  off the roster. The route module cannot be bundled here (see `gate`), so
+	 *  this takes the viewer's standing the way the gate does and calls the same
+	 *  $lib function the loader calls. It returns every request sent through the
+	 *  group's session: `calls` for the whole op, standing included, and
+	 *  `sliceCalls` for the slice read alone. With `unlinked`, the group's stored
+	 *  session is taken away for the read, as a lapsed link leaves it, and put
+	 *  back before the op returns. */
+	membersOnlySlice: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const did = args.did == null ? null : String(args.did);
+		const key = GROUP_SESSION_PREFIX + group.group_did;
+		const stored = args.unlinked ? await env.OAUTH_SESSIONS.get(key) : null;
+		if (args.unlinked) await env.OAUTH_SESSIONS.delete(key);
+		try {
+			const from = standInCalls.length;
+			const reader = await groupSpaceReader(env, env.DB, group);
+			const membership = await getCallerMembership(env.DB, group, did, reader);
+			const sliceFrom = standInCalls.length;
+			const slice = await readMembersOnlyEvents(membership, reader, group);
+			return {
+				linked: reader !== null,
+				onRoster: membership.onRoster,
+				slice,
+				calls: standInCalls.slice(from),
+				sliceCalls: standInCalls.slice(sliceFrom)
+			};
+		} finally {
+			if (args.unlinked && stored !== null) await env.OAUTH_SESSIONS.put(key, stored);
+		}
+	},
+
+	/** Whether the app finds the group's stored session, as the pages do. */
+	linked: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		return { linked: (await resolveGroupCredential(env, group.group_did)) !== null };
 	},
 
 	/** Overwrites the profile's columns through the app's own updater, not raw

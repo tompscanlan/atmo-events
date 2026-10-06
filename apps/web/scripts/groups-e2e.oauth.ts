@@ -24,6 +24,12 @@ interface Login {
 // One login per isolate. A run is far shorter than the token's lifetime.
 let login: Promise<Login> | null = null;
 
+/** Every request the app sent through the group's linked session, in order, as
+ *  its path and query. A worker op hands the driver the slice it caused, so a
+ *  "no read" is a count of requests sent, not an inference from a result. The
+ *  login is not in it: it is the stand-in's own, and goes out on `fetch`. */
+export const standInCalls: string[] = [];
+
 async function logIn(service: string, identifier: string, password: string): Promise<Login> {
 	const res = await fetch(new URL('/xrpc/com.atproto.server.createSession', service), {
 		method: 'POST',
@@ -56,6 +62,7 @@ export function createOAuthClientFor(env: StandInEnv | undefined) {
 			return {
 				did,
 				handle: (pathname: string, init?: RequestInit) => {
+					standInCalls.push(pathname);
 					const headers = new Headers(init?.headers);
 					headers.set('authorization', `Bearer ${accessJwt}`);
 					return fetch(new URL(pathname, service), { ...init, headers });
