@@ -230,6 +230,7 @@ describe('readMembersOnlyEvents: failing gracefully, for a member', () => {
 describe('readMembersOnlyEvents: through the real reader', () => {
 	let requested: URL[];
 	let logged: ReturnType<typeof vi.spyOn>;
+	let warned: ReturnType<typeof vi.spyOn>;
 
 	function hostAnswering(answer: () => Response) {
 		requested = [];
@@ -242,12 +243,14 @@ describe('readMembersOnlyEvents: through the real reader', () => {
 
 	beforeEach(() => {
 		logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
 	});
 
 	afterEach(() => {
 		vi.unstubAllGlobals();
 		unlinkAllGroups();
 		logged.mockRestore();
+		warned.mockRestore();
 	});
 
 	// The card builds a cdn.bsky.app URL from an event's image, and that URL
@@ -333,6 +336,35 @@ describe('readMembersOnlyEvents: through the real reader', () => {
 			const slice = await readMembersOnlyEvents(viewer(true), hostAnswering(answer), GROUP);
 			expect(slice).toStrictEqual({ events: [], notice: null });
 		}
+		expect(logged).not.toHaveBeenCalled();
+	});
+
+	// A host that answered a refused read with SpaceNotFound would leave a member
+	// looking at no members-only events and no notice, so the log has to say it.
+	// The line names the group and not its calendar space, as the error line does.
+	it('a calendar space the host says does not exist is a warning in the log, not a notice', async () => {
+		const reader = hostAnswering(() => Response.json({ error: 'SpaceNotFound' }, { status: 400 }));
+
+		const slice = await readMembersOnlyEvents(viewer(true), reader, GROUP);
+
+		expect(slice).toStrictEqual({ events: [], notice: null });
+		expect(warned).toHaveBeenCalledTimes(1);
+		expect(warned).toHaveBeenCalledWith(
+			expect.stringContaining(GROUP_DID),
+			expect.objectContaining({ message: expect.stringMatching(/\bSpaceNotFound\b/) })
+		);
+		expect(warned.mock.calls[0][0]).not.toContain(CALENDAR);
+		expect(warned.mock.calls[0][1]).toBeInstanceOf(Error);
+		expect(logged).not.toHaveBeenCalled();
+	});
+
+	it('an empty calendar space is no warning', async () => {
+		const reader = hostAnswering(() => Response.json({ records: [] }));
+
+		const slice = await readMembersOnlyEvents(viewer(true), reader, GROUP);
+
+		expect(slice).toStrictEqual({ events: [], notice: null });
+		expect(warned).not.toHaveBeenCalled();
 		expect(logged).not.toHaveBeenCalled();
 	});
 

@@ -67,7 +67,16 @@ export async function readMembersOnlyEvents(
 			collection: GROUP_EVENT_COLLECTION
 		});
 	} catch (e) {
-		if (e instanceof Error && NO_SUCH_SPACE.test(e.message)) return { events: [], notice: null };
+		// No notice for a space the host never created, but a host that answered a
+		// refused read the same way would leave a member silently seeing nothing,
+		// so the log still says it happened.
+		if (e instanceof Error && NO_SUCH_SPACE.test(e.message)) {
+			console.warn(
+				`[groups] ${group.group_did}: the host answered SpaceNotFound for the calendar space; the slice is shown empty, with no notice:`,
+				e
+			);
+			return { events: [], notice: null };
+		}
 		console.error(
 			`[groups] ${group.group_did}: the calendar space could not be read; members-only events are left out:`,
 			e
