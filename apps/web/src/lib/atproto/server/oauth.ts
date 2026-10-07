@@ -18,11 +18,17 @@ import {
 	WellKnownHandleResolver
 } from '@atcute/identity-resolver';
 import { KVStore } from './kv-store';
+import * as devnet from './devnet';
 import { DOH_RESOLVER, GROUP_LINK_REDIRECT_PATH, REDIRECT_PATH, scopes } from '../settings';
 import { DEV_PORT } from '../port';
 import { dev } from '$app/environment';
 
+// The import.meta.env flag the branches below test is true only in a build for a local atproto
+// sandbox network. Every other build defines it false and drops them (see the module above).
+if (import.meta.env.DEVNET === true) devnet.logStartup(devnet.urls());
+
 function createActorResolver() {
+	if (import.meta.env.DEVNET === true) return devnet.actorResolver(devnet.urls());
 	return new LocalActorResolver({
 		handleResolver: new CompositeHandleResolver({
 			methods: {
@@ -64,6 +70,7 @@ function sharedResolver(): LocalActorResolver {
 
 /** Shared by every client, so a sign-in started by one client can finish in another. */
 function sharedParts(env?: App.Platform['env']) {
+	if (import.meta.env.DEVNET === true) devnet.refuseHttpsPublicUrl(env?.OAUTH_PUBLIC_URL);
 	cachedStores ??= createStores(env);
 	return { actorResolver: sharedResolver(), stores: cachedStores };
 }
@@ -108,6 +115,7 @@ export function createOAuthClient(
 			actorResolver,
 			stores
 		});
+		if (import.meta.env.DEVNET === true) devnet.allowHttpOnResolvers(cachedClient);
 		return cachedClient;
 	}
 

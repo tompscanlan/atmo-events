@@ -51,6 +51,13 @@ interface Blento {
 }
 
 declare global {
+	interface ImportMetaEnv {
+		/** True only in a `--mode devnet` build (see vite.config.ts), false in every other. */
+		readonly DEVNET: boolean;
+		/** The devnet's PLC directory and PDS, defined only in a devnet build. */
+		readonly DEVNET_PLC_URL: string;
+		readonly DEVNET_PDS_URL: string;
+	}
 	interface Window {
 		Blento?: Blento;
 	}
