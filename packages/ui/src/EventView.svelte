@@ -253,8 +253,10 @@
 							/>
 						</div>
 					{/if}
+					{#if isOwner || data.editHref}
+						<Button href={data.editHref ?? `./${rkey}/edit`} class="mt-9 w-full">Edit Event</Button>
+					{/if}
 					{#if isOwner}
-						<Button href="./{rkey}/edit" class="mt-9 w-full">Edit Event</Button>
 						{#if isConference && !data.spaceUri}
 							<Button href="./{rkey}/talks" variant="secondary" class="mt-2 w-full">
 								Manage talks
