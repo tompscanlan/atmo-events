@@ -89,6 +89,12 @@ export type CreateGroupOutcome = GroupFormResult<RegisteredGroup> | AfterMintFai
 
 type AfterMintFailure = GroupFormFailure & { registered: RegisteredGroup };
 
+/** Added to a create failure that stopped before the calendar space's access
+ *  record and index entry. Only a create writes them, so nothing later can
+ *  finish them, and the remedy is a new group. (Spec: FR-101a.) */
+const CALENDAR_NOT_REPAIRED =
+	' "Repair this group" does not write the calendar space\'s access record or its entry in the space index, so for members-only events, create the group again with a new handle.';
+
 /** The mint target, or null unless all three values are set. A partial
  *  configuration must fail before the mint, not after a did:plc exists. */
 export function mintConfig(env: CreateGroupEnv): MintConfig | null {
@@ -384,7 +390,7 @@ async function setUpMintedGroup(
 			ok: false,
 			error: `${minted.handle} was created, but its profile records were not written: ${
 				e instanceof Error ? e.message : String(e)
-			}. Link the group's account from its page, then save its settings to write them, and run "Repair this group" in its settings for the members-space records this create skipped.`,
+			}. Link the group's account from its page, then save its settings to write them, and run "Repair this group" in its settings for the members-space records and member lists this create skipped.${CALENDAR_NOT_REPAIRED}`,
 			registered
 		};
 	}
@@ -395,11 +401,13 @@ async function setUpMintedGroup(
 	// permission. The index of the spaces grants nothing, so it can go anywhere
 	// before the config. A failure here leaves a working group that "Repair this
 	// group" can finish (server/repair.ts), except for the calendar space's two
-	// records, which repair leaves alone.
+	// records, which repair leaves alone, so the message says so when they are
+	// missing.
 	//
 	// The calendar space gets its access record and its index entry here, and
 	// only here: repair does not pass it. Its member list stays empty, since the
 	// app reads it as the group. (Spec: FR-101b.)
+	let calendarWritten = false;
 	try {
 		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer, reader });
 		await writeGroupAccess({
@@ -423,6 +431,7 @@ async function setUpMintedGroup(
 			calendarSpace: calendarUri,
 			createdAt
 		});
+		calendarWritten = true;
 		await putGroupMembership({
 			db: env.DB,
 			env,
@@ -447,9 +456,11 @@ async function setUpMintedGroup(
 	} catch (e) {
 		return {
 			ok: false,
-			error: `${minted.handle} was created, but its members-space records were not written: ${
+			error: `${minted.handle} was created, but not all of its member and calendar records were written: ${
 				e instanceof Error ? e.message : String(e)
-			}. Link the group's account from its page, then "Repair this group" in its settings writes the missing records.`,
+			}. Link the group's account from its page, then "Repair this group" in its settings writes the missing members-space records.${
+				calendarWritten ? '' : CALENDAR_NOT_REPAIRED
+			}`,
 			registered
 		};
 	}
