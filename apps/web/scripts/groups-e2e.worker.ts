@@ -45,6 +45,7 @@ import {
 	GROUP_SPACE_COLLECTION
 } from '../src/lib/groups/members-record';
 import { listGroupEvents, registerGroupIdentity } from '../src/lib/groups/server/events-index';
+import { ensureInit } from '../src/lib/contrail/index';
 import { splitRuleLines } from '../src/lib/groups/about-record';
 import { reconcileGroupDeclaration } from '../src/lib/groups/server/declaration-writer';
 import {
@@ -369,13 +370,17 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		return { refusal, calls: standInCalls.slice(from) };
 	},
 
-	/** The index row a mint writes: where the group's repo lives. */
-	registerIdentity: async (env, args) =>
-		registerGroupIdentity(env.DB, {
+	/** The index row a mint writes: where the group's repo lives. The index creates
+	 *  its `identities` table on its first call, and this D1 starts empty, so it is
+	 *  initialized first; otherwise the insert fails and the false is the only sign. */
+	registerIdentity: async (env, args) => {
+		await ensureInit(env.DB);
+		return registerGroupIdentity(env.DB, {
 			did: String(args.groupDid),
 			handle: args.handle == null ? null : String(args.handle),
 			pds: String(args.pds)
-		}),
+		});
+	},
 
 	/** The events tab's list, from the app's index and not from the PDS. */
 	listGroupEvents: async (env, args) => listGroupEvents(env.DB, await groupById(env, args.groupId)),

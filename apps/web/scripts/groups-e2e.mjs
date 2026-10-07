@@ -656,8 +656,14 @@ async function main() {
 		await must('linkGroup', { groupDid: GROUP_DID });
 		note(`${GROUP_DID} linked through the stand-in session`);
 		// A mint records where the group's repo lives, and the index looks there
-		// first. This run does not mint, so it records it here.
-		await must('registerIdentity', { groupDid: GROUP_DID, handle: GROUP_HANDLE, pds: PDS });
+		// first. This run does not mint, so it records it here. Without the row, the
+		// index resolves the DID itself and refuses an http PDS, so stop here.
+		const registered = await must('registerIdentity', {
+			groupDid: GROUP_DID,
+			handle: GROUP_HANDLE,
+			pds: PDS
+		});
+		if (!registered) throw new Error(`the index did not record ${GROUP_DID}'s PDS`);
 		note(`${GROUP_DID} registered with the index as a repo on ${PDS}`);
 		// 1. create ------------------------------------------------------------
 		group = await must('createGroup', CREATE_ARGS);
