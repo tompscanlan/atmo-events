@@ -4,9 +4,9 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 49 numbered checks (1 to 23, plus 10b, 13b to 13s, 15b, 18b, 18c,
+ * It runs 50 numbered checks (1 to 24, plus 10b, 13b to 13s, 15b, 18b, 18c,
  * 18d, 18e, 20b and 20c), prints one PASS or FAIL line each, and a clean run
- * ends with `SUMMARY: 49 passed, 0 failed`. Setup steps print as notes and are
+ * ends with `SUMMARY: 50 passed, 0 failed`. Setup steps print as notes and are
  * not counted. In order: create and the seeded roles (1), join, approval and
  * promotion (2-3), events written as the group DID and the edit gate (4-6),
  * leaving (7-8), a cover image uploaded into the group's repo (9), the profile,
@@ -28,8 +28,9 @@
  * member's own acceptance at a join request, at leave and at a
  * sign-in after a direct add (18b-18d), a member whose PDS serves no spaces
  * (18e), the discovery declaration and
- * visibility at the host (19-20c), the events index (21-22), and a rebuild of
- * the whole group from its DID (23).
+ * visibility at the host (19-20c), the events index (21-22), a rebuild of the
+ * whole group from its DID (23), and, once cleanup is done, that no request
+ * left this machine (24).
  *
  * Not covered: a member reading a private group's profile with their own
  * credential. This run holds only the group's credential.
@@ -47,7 +48,7 @@
  * group's own session.
  *
  * Environment:
- *   E2E_PDS            PDS that hosts the group account
+ *   E2E_PDS            the devnet PDS that serves spaces and hosts the group account
  *   E2E_GROUP_DID      the group account's DID
  *   E2E_GROUP_HANDLE   its handle
  *   E2E_GROUP_PASSWORD a password for the group account (an app password works), or
@@ -56,10 +57,18 @@
  *   E2E_ADMIN_DID      a person who joins and is promoted to admin, on E2E_PDS
  *   E2E_ADMIN_PASSWORD their password, for their acceptance (checks 18b-18d)
  *   E2E_OUTSIDER_DID   a person who is never a member
- *   E2E_NOSPACES_DID   a person on a PDS that serves no spaces (bsky.social), for
+ *   E2E_NOSPACES_DID   a person on a devnet PDS that serves no spaces (not E2E_PDS), for
  *                      check 18e; no password, because nothing is written to their repo
- *   E2E_PLC_URL        optional: a sandbox's PLC directory (atproto-devnet's), asked
- *                      before plc.directory, for a network no relay crawls
+ *   E2E_PLC_URL        required: devnet's PLC directory, the only place a DID is
+ *                      resolved, for a network no relay crawls
+ * The run is for devnet only, and no request leaves this machine. E2E_PDS and
+ * E2E_PLC_URL must be loopback URLs, and before any login the run asks devnet's
+ * PLC for every fixture DID and stops on one it lacks or one hosted off this
+ * machine, printing a REFUSED line for each. Then every request is counted: the
+ * worker's pass a Miniflare outboundService and this driver's own fetch is
+ * wrapped. A loopback request goes through; any other is refused, never sent,
+ * and printed as `REFUSED <driver|worker> <METHOD> <URL without its query>`.
+ * Check 24 reports the count.
  * The app writes as a group only through the session its owner linked, and a
  * real link needs the deployment's OAuth client key. So the run links the group
  * with a stand-in (scripts/groups-e2e.oauth.ts, aliased over the OAuth client):
@@ -92,9 +101,25 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 import { build } from 'vite';
+import {
+	createLedger,
+	fixtureCheck,
+	guardFetch,
+	outboundHandler,
+	settingRefusals
+} from './groups-e2e.network.mjs';
 
 const WEB_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKER_ENTRY = join(WEB_DIR, 'scripts/groups-e2e.worker.ts');
+
+/** Every request the run sends, from this driver and from the worker, for check 24. */
+const ledger = createLedger();
+const nodeFetch = globalThis.fetch;
+// Wrapped before the first request. A redirect comes back as an answer instead
+// of being followed out of the ledger's sight.
+globalThis.fetch = guardFetch(ledger, (input, init) =>
+	nodeFetch(input, { ...init, redirect: 'manual' })
+);
 
 /** Read a required fixture setting, or stop before anything is written. */
 function required(name) {
@@ -104,9 +129,9 @@ function required(name) {
 }
 
 const PDS = required('E2E_PDS');
-/** A sandbox's own PLC directory. Unset, the app resolves at plc.directory as it
- *  ships; set, scripts/groups-e2e.identity-resolver.ts asks here first. */
-const PLC_URL = process.env.E2E_PLC_URL?.trim() || null;
+/** Devnet's PLC directory. scripts/groups-e2e.identity-resolver.ts asks it and
+ *  nothing else, so a DID it lacks fails to resolve. */
+const PLC_URL = required('E2E_PLC_URL');
 
 /** An existing group account, bound through `createGroup`. Minting one with
  *  `runCreateGroup` would leave a new, permanent did:plc behind on every run. */
@@ -294,18 +319,14 @@ async function startWorker(stateDir, password, adminPassword) {
 					find: /^\$lib\/atproto\/server\/oauth$/,
 					replacement: join(WEB_DIR, 'scripts/groups-e2e.oauth.ts')
 				},
-				// A sandbox's PLC directory, asked before plc.directory.
-				...(PLC_URL
-					? [
-							{
-								find: /^@atcute\/identity-resolver$/,
-								replacement: join(WEB_DIR, 'scripts/groups-e2e.identity-resolver.ts')
-							}
-						]
-					: [])
+				// Devnet's PLC directory, the only one asked.
+				{
+					find: /^@atcute\/identity-resolver$/,
+					replacement: join(WEB_DIR, 'scripts/groups-e2e.identity-resolver.ts')
+				}
 			]
 		},
-		define: PLC_URL ? { __E2E_PLC_URL__: JSON.stringify(PLC_URL) } : {},
+		define: { __E2E_PLC_URL__: JSON.stringify(PLC_URL) },
 		build: {
 			ssr: WORKER_ENTRY,
 			outDir,
@@ -319,8 +340,19 @@ async function startWorker(stateDir, password, adminPassword) {
 	// miniflare is not a direct dependency. It is resolved through wrangler, which
 	// ships it, so it is not pinned twice.
 	const req = createRequire(join(WEB_DIR, 'package.json'));
-	const { Miniflare } = await import(createRequire(req.resolve('wrangler')).resolve('miniflare'));
+	const { Miniflare, fetch: miniflareFetch } = await import(
+		createRequire(req.resolve('wrangler')).resolve('miniflare')
+	);
 	miniflare = new Miniflare({
+		// Every subrequest the worker sends comes here first. A loopback one goes
+		// out through Miniflare's own fetch, a redirect coming back as an answer so
+		// its next hop passes here too; any other is refused.
+		outboundService: outboundHandler(ledger, (request) =>
+			miniflareFetch(request, { redirect: 'manual' })
+		),
+		// The built-in placeholder for `request.cf`. Left unset, Miniflare fetches
+		// it from workers.cloudflare.com whenever its cache file is missing or old.
+		cf: false,
 		modules: true,
 		modulesRoot: outDir,
 		scriptPath: join(outDir, 'worker.js'),
@@ -620,14 +652,43 @@ function eventRecord(name, { country, createdAt, image } = {}) {
 	};
 }
 
+/** Stops the run before any login, with nothing yet to clean up, when a setting
+ *  or a fixture is off this machine. Otherwise notes where the fixtures live. */
+async function refuseOffMachine() {
+	let refusals = settingRefusals({ E2E_PDS: PDS, E2E_PLC_URL: PLC_URL });
+	if (refusals.length === 0) {
+		const fixtures = await fixtureCheck({
+			plcUrl: PLC_URL,
+			spacesPds: PDS,
+			fixtures: [
+				['E2E_GROUP_DID', GROUP_DID],
+				['E2E_OWNER_DID', ALICE],
+				['E2E_ADMIN_DID', BOB],
+				['E2E_OUTSIDER_DID', MALLORY],
+				['E2E_NOSPACES_DID', CAROL]
+			],
+			fetch
+		});
+		refusals = fixtures.refusals;
+		if (fixtures.note) note(fixtures.note);
+	}
+	if (refusals.length === 0) return;
+	for (const line of refusals) console.log(line);
+	console.log('');
+	console.log('refused before any login: nothing was written, and nothing left this machine');
+	process.exit(2);
+}
+
 async function main() {
 	console.log('groups e2e');
 	console.log(`  pds     ${PDS}`);
-	if (PLC_URL) console.log(`  plc     ${PLC_URL}, then plc.directory`);
+	console.log(`  plc     ${PLC_URL} (devnet only)`);
 	console.log(`  group   ${GROUP_HANDLE} (${GROUP_DID})`);
 	console.log(`  humans  owner ${ALICE}, admin ${BOB}, non-member ${MALLORY}`);
 	console.log(`          no-spaces member ${CAROL}`);
 	console.log('');
+
+	await refuseOffMachine();
 
 	const { path, password } = await loadPassword('E2E_GROUP_PASSWORD');
 	note(`fixture credentials loaded from ${path}`);
@@ -2547,6 +2608,13 @@ try {
 	failure = error;
 	record(false, 'e2e aborted', error.message);
 }
+
+// 24. no request left this machine --------------------------------------------
+// Recorded once main() has returned, so cleanup's requests are counted too. It
+// needs no public request, and at least one local request from the driver and
+// one from the worker, so a ledger that saw nothing cannot pass.
+const network = ledger.verdict();
+record(network.ok, 'no request left this machine', network.detail);
 
 const passed = results.filter((entry) => entry.ok).length;
 const failed = results.length - passed;
