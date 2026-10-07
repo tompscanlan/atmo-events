@@ -1062,13 +1062,14 @@ describe('a create that fails after the mint', () => {
 		});
 	});
 
-	it('names both halves of the fix when the profile write fails', async () => {
+	it('names every part of the fix when the profile write fails', async () => {
 		stubPds({ fail: writing('group.opensocial.profile') });
 
 		const result = await runCreateGroup(env, OWNER, data());
 
 		// The members-space step never ran, and a settings save does not write it.
-		// Both need a linked group, since the mint's session is gone by then.
+		// Both need a linked group, since the mint's session is gone by then. The
+		// calendar space's records never ran either, and nothing later writes them.
 		expect(result.ok).toBe(false);
 		expect(result).toMatchObject({
 			error: expect.stringContaining("Link the group's account from its page")
@@ -1077,6 +1078,51 @@ describe('a create that fails after the mint', () => {
 			error: expect.stringContaining('save its settings to write them')
 		});
 		expect(result).toMatchObject({ error: expect.stringContaining('"Repair this group"') });
+		expect(result).toMatchObject({ error: expect.stringContaining('create the group again') });
+	});
+
+	// Repair writes the members space's records but never the calendar space's
+	// two (spec FR-101a), so only a create that stopped before those says to
+	// create the group again. The about space has an access record too, so the
+	// access rows match on the space, not the collection.
+	const writingAccessIn = (space: string) => (nsid: string, init?: RequestInit) => {
+		if (!nsid.startsWith('com.atproto.space.putRecord')) return undefined;
+		const body = JSON.parse(String(init?.body)) as { space: string; collection: string };
+		return body.space === space && body.collection === 'group.opensocial.access'
+			? pdsDown()
+			: undefined;
+	};
+	it.each([
+		[
+			'the members space’s access record',
+			true,
+			writingAccessIn(`at://${MINTED_DID}/space/group.opensocial.members/self`)
+		],
+		[
+			'the calendar space’s access record',
+			true,
+			writingAccessIn(`at://${MINTED_DID}/space/net.openmeet.space.calendar/self`)
+		],
+		['the index of the spaces', true, writing('group.opensocial.space')],
+		['the owner’s membership', false, writing('group.opensocial.membership')]
+	])('when writing %s fails, says to re-create the group: %s', async (_step, recreate, fail) => {
+		stubPds({ fail });
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		// The failure is in the members-space step, past the profile.
+		expect(result.ok).toBe(false);
+		expect(result).toMatchObject({
+			error: expect.stringContaining('not all of its member and calendar records were written')
+		});
+		expect(result).toMatchObject({ error: expect.stringContaining('"Repair this group"') });
+		if (recreate) {
+			expect(result).toMatchObject({ error: expect.stringContaining('create the group again') });
+		} else {
+			expect(result).toMatchObject({
+				error: expect.not.stringContaining('create the group again')
+			});
+		}
 	});
 
 	it('carries no key when the create fails before the mint', async () => {
