@@ -43,10 +43,13 @@ export const PLACEMENT_FIXED = "This can't be changed after the event is publish
  * The space a save under this answer sends: null for the group's repo, or the
  * calendar space URI the page's loader computed from the group's DID. The
  * server accepts null from anyone, so any other answer throws rather than fall
- * through to public.
+ * through to public, and so does Members only with no URI to send.
  */
 export function placementSpace(choice: EventPlacement, calendarSpaceUri: string): string | null {
-	if (choice === 'members') return calendarSpaceUri;
+	if (choice === 'members') {
+		if (!calendarSpaceUri) throw new Error('no calendar space URI for a members-only event');
+		return calendarSpaceUri;
+	}
 	if (choice === 'everyone') return null;
 	throw new Error(`not an answer to "${PLACEMENT_QUESTION}": ${String(choice)}`);
 }

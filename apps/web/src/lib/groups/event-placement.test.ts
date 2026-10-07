@@ -34,6 +34,14 @@ describe('who can see a group event', () => {
 		}
 	});
 
+	// The loader always computes one, so an empty URI is a bug upstream. Sent,
+	// the server would refuse it rather than publish it; it is refused here so
+	// the module keeps its own promise.
+	it('Members only with no calendar space URI is refused, never sent', () => {
+		expect(() => placementSpace('members', '')).toThrow();
+		expect(() => placementSpace('members', undefined as unknown as string)).toThrow();
+	});
+
 	it('the words are the agreed copy, and none of them calls the event private', () => {
 		expect(PLACEMENT_QUESTION).toBe('Who can see this event');
 		expect(PLACEMENT_OPTIONS).toEqual([
