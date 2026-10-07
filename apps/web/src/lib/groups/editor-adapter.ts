@@ -39,8 +39,14 @@ export function createGroupEditorAdapter(opts: {
 	 *  this the reason, such as a group that has to be re-created, reaches only
 	 *  the console. */
 	onRefusal: (message: string) => void;
+	/** Called when a save is over, with whether it was written: when the write
+	 *  settles, or when the image upload before it fails, which stops the
+	 *  editor's save. Not when a mention's handle fails to resolve, since the
+	 *  editor drops that mention and goes on to the write. The new-event page
+	 *  unlocks its choice here. */
+	onSaveEnd?: (saved: boolean) => void;
 }): EditorAdapter {
-	const { groupDid, editingRkey, space, onRefusal } = opts;
+	const { groupDid, editingRkey, space, onRefusal, onSaveEnd } = opts;
 	const intentFor = (rkey: string) => (rkey === editingRkey ? 'update' : 'create');
 	const eventsTab = resolve('/(app)/groups/[actor]/events', { actor: groupDid });
 
@@ -52,10 +58,17 @@ export function createGroupEditorAdapter(opts: {
 		// through `space`, not through the editor's own mode.
 		features: { delete: opts.canDelete, recurring: space === null, privateMode: false },
 		async putRecord({ rkey, record }) {
-			return unwrap(
-				await putGroupEvent({ groupDid, rkey, intent: intentFor(rkey), space, record }),
-				onRefusal
-			);
+			let saved = false;
+			try {
+				const result = unwrap(
+					await putGroupEvent({ groupDid, rkey, intent: intentFor(rkey), space, record }),
+					onRefusal
+				);
+				saved = true;
+				return result;
+			} finally {
+				onSaveEnd?.(saved);
+			}
 		},
 		async createRecord() {
 			// The editor writes public events with putRecord; only its private
@@ -66,16 +79,22 @@ export function createGroupEditorAdapter(opts: {
 			unwrap(await removeGroupEvent({ groupDid, rkey, space }), onRefusal);
 		},
 		async uploadBlob(blob) {
-			const { blob: ref } = unwrap(
-				await putGroupEventImage({
-					groupDid,
-					intent: editingRkey ? 'update' : 'create',
-					bytes: Array.from(new Uint8Array(await blob.arrayBuffer())),
-					mimeType: blob.type || 'application/octet-stream'
-				}),
-				onRefusal
-			);
-			return ref as EditorBlobRef;
+			try {
+				const { blob: ref } = unwrap(
+					await putGroupEventImage({
+						groupDid,
+						intent: editingRkey ? 'update' : 'create',
+						bytes: Array.from(new Uint8Array(await blob.arrayBuffer())),
+						mimeType: blob.type || 'application/octet-stream'
+					}),
+					onRefusal
+				);
+				return ref as EditorBlobRef;
+			} catch (e) {
+				// The editor's save stops here, before any write.
+				onSaveEnd?.(false);
+				throw e;
+			}
 		},
 		async getRecord({ did, collection, rkey }) {
 			const fresh = await getRecord({

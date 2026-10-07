@@ -1,7 +1,8 @@
 // The group editor adapter, called as the shared editor calls it. The group's
 // commands are stubbed at their module boundary, along with the SvelteKit and
 // login imports the adapter only passes through: what is under test is what it
-// sends the commands for each placement, and what it does with a refusal.
+// sends the commands for each placement, what it does with a refusal, and when
+// it tells the page a save is over.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const remote = vi.hoisted(() => ({
@@ -11,7 +12,8 @@ const remote = vi.hoisted(() => ({
 }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$app/paths', () => ({ resolve: (path: string) => path }));
-vi.mock('$lib/atproto/methods', () => ({ getRecord: vi.fn(), resolveHandle: vi.fn() }));
+const methods = vi.hoisted(() => ({ getRecord: vi.fn(), resolveHandle: vi.fn() }));
+vi.mock('$lib/atproto/methods', () => methods);
 vi.mock('$lib/components/LoginModal.svelte', () => ({
 	atProtoLoginModalState: { show: vi.fn() }
 }));
@@ -38,14 +40,16 @@ const record = (name: string) => ({ $type: EVENT, name, startsAt: '2026-11-01T18
 /** The adapter the new-event page (no rkey) or the edit page (its rkey) builds. */
 function adapterFor(space: string | null, editingRkey: string | null = null) {
 	const onRefusal = vi.fn();
+	const onSaveEnd = vi.fn();
 	const adapter = createGroupEditorAdapter({
 		groupDid: GROUP_DID,
 		editingRkey,
 		canDelete: true,
 		space,
-		onRefusal
+		onRefusal,
+		onSaveEnd
 	});
-	return { adapter, onRefusal };
+	return { adapter, onRefusal, onSaveEnd };
 }
 
 function succeed() {
@@ -203,7 +207,7 @@ describe('the group editor adapter: refusals', () => {
 
 	// Only a refusal carries words meant for the person. A failed request's
 	// error is left to the editor's own line.
-	it('a save that succeeds, or fails without a refusal, tells the page nothing', async () => {
+	it('a save that succeeds, or fails without a refusal, shows no refusal', async () => {
 		succeed();
 		const { adapter, onRefusal } = adapterFor(CALENDAR);
 		await adapter.putRecord({ collection: EVENT, rkey: '3new', record: record('A') });
@@ -212,5 +216,51 @@ describe('the group editor adapter: refusals', () => {
 			adapter.putRecord({ collection: EVENT, rkey: '3new', record: record('A') })
 		).rejects.toThrow('fetch failed');
 		expect(onRefusal).not.toHaveBeenCalled();
+	});
+});
+
+// The new-event page locks its choice from Publish until the save is over, so
+// the adapter has to say when that is. The editor's save ends at the write, or
+// earlier when the image upload before it fails.
+describe('the group editor adapter: the end of a save', () => {
+	const image = () => new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' });
+
+	it('a save ends when its write succeeds, is refused or fails', async () => {
+		succeed();
+		const { adapter, onSaveEnd } = adapterFor(CALENDAR);
+		await adapter.putRecord({ collection: EVENT, rkey: '3new', record: record('A') });
+		expect(onSaveEnd.mock.calls).toEqual([[true]]);
+
+		remote.putGroupEvent.mockResolvedValueOnce({ ok: false, error: NO_CALENDAR_SPACE });
+		await expect(
+			adapter.putRecord({ collection: EVENT, rkey: '3new', record: record('A') })
+		).rejects.toThrow(NO_CALENDAR_SPACE);
+		remote.putGroupEvent.mockRejectedValueOnce(new Error('fetch failed'));
+		await expect(
+			adapter.putRecord({ collection: EVENT, rkey: '3new', record: record('A') })
+		).rejects.toThrow('fetch failed');
+		expect(onSaveEnd.mock.calls).toEqual([[true], [false], [false]]);
+	});
+
+	it('a failed image upload ends the save, and one that succeeds does not', async () => {
+		succeed();
+		const { adapter, onSaveEnd } = adapterFor(CALENDAR);
+		expect(await adapter.uploadBlob(image())).toEqual(BLOB_REF);
+		expect(onSaveEnd).not.toHaveBeenCalled();
+
+		remote.putGroupEventImage.mockResolvedValueOnce({ ok: false, error: 'Upload refused.' });
+		await expect(adapter.uploadBlob(image())).rejects.toThrow('Upload refused.');
+		remote.putGroupEventImage.mockRejectedValueOnce(new Error('fetch failed'));
+		await expect(adapter.uploadBlob(image())).rejects.toThrow('fetch failed');
+		expect(onSaveEnd.mock.calls).toEqual([[false], [false]]);
+	});
+
+	// The editor drops a mention it can't resolve and goes on to the write, so
+	// ending the save there would unlock the choice before the write is sent.
+	it("a mention that can't be resolved does not end the save", async () => {
+		methods.resolveHandle.mockRejectedValue(new Error('handle not found'));
+		const { adapter, onSaveEnd } = adapterFor(CALENDAR);
+		await expect(adapter.resolveHandle('nobody.example.com')).rejects.toThrow('handle not found');
+		expect(onSaveEnd).not.toHaveBeenCalled();
 	});
 });
