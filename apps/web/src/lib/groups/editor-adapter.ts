@@ -11,9 +11,16 @@ import type { EditorAdapter, EditorBlobRef } from '$lib/components/editor/adapte
 import type { GroupFormResult } from './form-result';
 import { putGroupEvent, putGroupEventImage, removeGroupEvent } from './groups.remote';
 
-/** A refusal becomes a throw, which the editor reports as a failed save. */
-function unwrap<T extends object>(result: GroupFormResult<T>): T {
-	if (!result.ok) throw new Error(result.error);
+/** A refusal goes to the page in its own words, then becomes a throw, which the
+ *  editor reports as a failed save. */
+function unwrap<T extends object>(
+	result: GroupFormResult<T>,
+	onRefusal: (message: string) => void
+): T {
+	if (!result.ok) {
+		onRefusal(result.error);
+		throw new Error(result.error);
+	}
 	return result;
 }
 
@@ -27,17 +34,27 @@ export function createGroupEditorAdapter(opts: {
 	 *  or null for its public repo. Required and passed on every save and delete,
 	 *  so none of them can fall back to public. (Spec: FR-116.) */
 	space: string | null;
+	/** Called with a refusal's message before the save, delete or upload fails.
+	 *  The editor shows its own "Please try again" for every failure, so without
+	 *  this the reason, such as a group that has to be re-created, reaches only
+	 *  the console. */
+	onRefusal: (message: string) => void;
 }): EditorAdapter {
-	const { groupDid, editingRkey, space } = opts;
+	const { groupDid, editingRkey, space, onRefusal } = opts;
 	const intentFor = (rkey: string) => (rkey === editingRkey ? 'update' : 'create');
 	const eventsTab = resolve('/(app)/groups/[actor]/events', { actor: groupDid });
 
 	return {
-		// No private mode: members-only group events need a space of their own.
-		features: { delete: opts.canDelete, recurring: true, privateMode: false },
+		// Recurring copies are off for a members-only event for now, until a copy
+		// can cite its original by the original's members-only URI: the editor
+		// cites it by a URI in the group's repo, where a members-only event isn't.
+		// privateMode stays off: a members-only event goes in the calendar space
+		// through `space`, not through the editor's own mode.
+		features: { delete: opts.canDelete, recurring: space === null, privateMode: false },
 		async putRecord({ rkey, record }) {
 			return unwrap(
-				await putGroupEvent({ groupDid, rkey, intent: intentFor(rkey), space, record })
+				await putGroupEvent({ groupDid, rkey, intent: intentFor(rkey), space, record }),
+				onRefusal
 			);
 		},
 		async createRecord() {
@@ -46,7 +63,7 @@ export function createGroupEditorAdapter(opts: {
 			throw new Error('a group event is written with putRecord');
 		},
 		async deleteRecord({ rkey }) {
-			unwrap(await removeGroupEvent({ groupDid, rkey, space }));
+			unwrap(await removeGroupEvent({ groupDid, rkey, space }), onRefusal);
 		},
 		async uploadBlob(blob) {
 			const { blob: ref } = unwrap(
@@ -55,7 +72,8 @@ export function createGroupEditorAdapter(opts: {
 					intent: editingRkey ? 'update' : 'create',
 					bytes: Array.from(new Uint8Array(await blob.arrayBuffer())),
 					mimeType: blob.type || 'application/octet-stream'
-				})
+				}),
+				onRefusal
 			);
 			return ref as EditorBlobRef;
 		},
