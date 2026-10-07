@@ -202,9 +202,9 @@ describe('devnet mode', () => {
 
 describe('every other build', () => {
 	it('outside devnet mode, the OAuth client keeps allowHttp off and its confidential metadata unchanged', async () => {
-		// vite.config.ts defines the flag false in every mode but devnet, this test run included
-		// (vitest hands it over as a string, which oauth.ts's `=== true` reads as off).
-		expect(String(import.meta.env.DEVNET)).toBe('false');
+		// vite.config.ts defines the flag only in devnet mode, so it is undefined here, as in a
+		// production build.
+		expect(import.meta.env.DEVNET).toBeUndefined();
 
 		const site = 'https://atmo.example.com';
 		const env = {

@@ -24,7 +24,7 @@ import { DEV_PORT } from '../port';
 import { dev } from '$app/environment';
 
 // The import.meta.env flag the branches below test is true only in a build for a local atproto
-// sandbox network. Every other build defines it false and drops them (see the module above).
+// sandbox network. Every other build leaves it undefined and drops them (see the module above).
 if (import.meta.env.DEVNET === true) devnet.logStartup(devnet.urls());
 
 function createActorResolver() {

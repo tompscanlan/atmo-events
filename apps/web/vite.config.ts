@@ -5,10 +5,11 @@ import { DEV_PORT } from './src/lib/atproto/port';
 import { sveltekitOG } from '@ethercorps/sveltekit-og/plugin';
 
 /** `--mode devnet` (pnpm dev:devnet) runs atmo against a local atproto devnet (see
- *  src/lib/atproto/server/devnet.ts). Every other mode defines DEVNET false, which drops each
- *  devnet branch from the build. The devnet's URLs have no default: a devnet run names them. */
+ *  src/lib/atproto/server/devnet.ts). Every other mode defines nothing, so DEVNET is undefined
+ *  there and each devnet branch is dropped from the build. (Defined false, it would show up in
+ *  every bare import.meta.env a build inlines.) The devnet's URLs have no default. */
 function devnetDefines(mode: string, command: string): Record<string, string> {
-	if (mode !== 'devnet') return { 'import.meta.env.DEVNET': 'false' };
+	if (mode !== 'devnet') return {};
 	if (command === 'serve' && !process.env.DEVNET_BINDINGS) {
 		throw new Error('run `pnpm dev:devnet`, which also points the dev bindings at the devnet');
 	}

@@ -1,9 +1,10 @@
 // Devnet mode: atmo against a local atproto devnet, signed in through atproto's loopback OAuth
 // client. `vite dev --mode devnet` (pnpm dev:devnet) defines import.meta.env.DEVNET true, and
-// every other build defines it false, so the branches in oauth.ts that call into this module are
-// dropped from those builds, and this module with them. Nothing here runs on import. Those
-// branches test `import.meta.env.DEVNET === true`, not the bare flag, because vitest hands a
-// define to the code as a string, and the string 'false' is truthy.
+// every other build leaves it undefined, so the branches in oauth.ts that call into this module
+// are dropped from those builds, and this module with them. Nothing here runs on import. Those
+// branches test `import.meta.env.DEVNET === true`, not the bare flag, so only that build-time
+// boolean turns them on: vitest reads import.meta.env from process.env, where a value is a
+// string, and the string 'false' is truthy.
 import {
 	CompositeDidDocumentResolver,
 	LocalActorResolver,
