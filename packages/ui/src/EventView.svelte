@@ -145,7 +145,7 @@
 		buildDescriptionHtml(eventData.description, eventData.facets)
 	);
 
-	let eventUri = $derived(`at://${did}/community.lexicon.calendar.event/${rkey}`);
+	let eventUri = $derived(data.eventUri ?? `at://${did}/community.lexicon.calendar.event/${rkey}`);
 
 	let ogImageUrl = $derived(data.ogImage ?? `${pageUrl.origin}${pageUrl.pathname}/og.png`);
 
@@ -260,7 +260,7 @@
 								Manage talks
 							</Button>
 						{/if}
-						{#if data.spaceUri}
+						{#if data.spaceUri && data.spaceKey}
 							<InviteShareFlow
 								spaceUri={data.spaceUri}
 								spaceKey={data.spaceKey}
