@@ -3,11 +3,13 @@ import { canSeeMembers } from '$lib/groups/access';
 import { can } from '$lib/groups/permissions';
 import { groupSpaceReader, readGroupAbout } from '$lib/groups/server/about-read';
 import { membersOnlyEventForDisplay, readMembersOnlyEvent } from '$lib/groups/server/calendar-read';
-import { groupRouteContext } from '$lib/groups/server/route-context';
+import { groupPath, groupRouteContext } from '$lib/groups/server/route-context';
 import type { PageServerLoad } from './$types';
 
-/** Every caller who may not see the event, and every key the calendar space
- *  does not hold, gets this, byte for byte. */
+/** Every caller off the roster of a group they can see, and every key the
+ *  calendar space does not hold, gets this, byte for byte. A caller off the
+ *  roster of a group hidden from them gets the route context's 'Group not
+ *  found' first, the same for every key. */
 const EVENT_NOT_FOUND = 'Event not found';
 
 /**
@@ -60,6 +62,7 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		}
 	}
 
+	const canManageEvents = can(membership.permissions, 'MANAGE_EVENTS');
 	return {
 		eventData: {
 			...shown.value,
@@ -80,6 +83,13 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		viewerRsvpStatus: null,
 		viewerRsvpRkey: null,
 		hostProfile: hostName ? { did: group.group_did, displayName: hostName } : null,
-		canManageEvents: can(membership.permissions, 'MANAGE_EVENTS')
+		canManageEvents,
+		// EventView's Edit button, for whoever may manage the group's events. The
+		// link names the placement, since a public event can share this key and
+		// the edit page reads the index unless told otherwise. Absent for anyone
+		// else, so the page offers them no Edit link.
+		...(canManageEvents
+			? { editHref: `${groupPath(group, 'events')}/${shown.rkey}/edit?placement=members` }
+			: {})
 	};
 };

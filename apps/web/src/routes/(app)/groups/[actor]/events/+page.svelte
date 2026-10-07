@@ -13,15 +13,40 @@
 	let groupName = $derived(data.groupName);
 
 	/** The group's records as the cards the rest of the app uses. `did` is the
-	 *  group's, so the card links to the group's event page, not an admin's. */
+	 *  group's, so the card links to the group's event page, not an admin's. A
+	 *  members-only event keeps its space, so its card shows the lock. */
 	function toCard(event: GroupEventRecord): FlatEventRecord {
 		return {
 			...(event.value as unknown as FlatEventRecord),
 			did: group.group_did,
 			rkey: event.rkey,
 			uri: event.uri,
-			cid: event.cid || null
+			cid: event.cid || null,
+			...(event.space ? { space: event.space } : {})
 		};
+	}
+
+	/** The edit page of one of the group's events. A members-only event's link
+	 *  names its placement, because a public event can share its key and the
+	 *  edit page reads the index unless told otherwise. */
+	function editPage(event: GroupEventRecord): string {
+		const path = resolve('/(app)/groups/[actor]/events/[rkey]/edit', {
+			actor: group.group_did,
+			rkey: event.rkey
+		});
+		return event.space ? `${path}?placement=members` : path;
+	}
+
+	/** A members-only event's own page, at its key under the group. The card's
+	 *  default link is the public event page, which reads the index, and the
+	 *  index never holds a members-only event. Undefined for a public event, so
+	 *  its card links as every other card does. */
+	function membersOnlyPage(event: GroupEventRecord): string | undefined {
+		if (!event.space) return undefined;
+		return resolve('/(app)/groups/[actor]/events/[rkey]', {
+			actor: group.group_did,
+			rkey: event.rkey
+		});
 	}
 </script>
 
@@ -73,18 +98,25 @@
 			<!-- Keyed by URI: a public and a members-only event can share an rkey. -->
 			{#each data.events as event (event.uri)}
 				<div>
-					<EventCard event={toCard(event)} actor={group.group_did} />
+					<!-- The lock shows only on a members-only card, and in the app's own
+					     words: contrail's label is for its own spaces. (Spec: FR-108.) -->
+					<EventCard
+						event={toCard(event)}
+						actor={group.group_did}
+						href={membersOnlyPage(event)}
+						lockLabel="Members only"
+					/>
 					<div class="mt-2 flex items-center gap-3">
 						<!-- Any MANAGE_EVENTS holder edits any event here: they are all the
 						     group's records, not each admin's. -->
 						{#if data.canManageEvents}
+							<!-- editPage resolves the path; a query string cannot go through resolve(). -->
+							<!-- eslint-disable svelte/no-navigation-without-resolve -->
 							<a
-								href={resolve('/(app)/groups/[actor]/events/[rkey]/edit', {
-									actor: group.group_did,
-									rkey: event.rkey
-								})}
+								href={editPage(event)}
 								class="text-base-500 dark:text-base-400 text-sm hover:underline">Edit</a
 							>
+							<!-- eslint-enable svelte/no-navigation-without-resolve -->
 						{/if}
 						{#if event.space}
 							<!-- No outside link: pds.ls is a third party, and the link would

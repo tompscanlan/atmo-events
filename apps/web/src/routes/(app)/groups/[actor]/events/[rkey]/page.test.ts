@@ -96,6 +96,7 @@ beforeEach(async () => {
 	await recordGroupSpaces(harness.db, created.id, groupSpaceUris(GROUP_DID));
 	await addMember(harness.db, created.id, MEMBER, 'member');
 	rsvp.renders.length = 0;
+	signedIn.user.did = MEMBER;
 });
 
 afterEach(() => {
@@ -177,6 +178,11 @@ function renderPage(data: PageData) {
 			viewer: EditorViewer;
 		}
 	};
+}
+
+/** The href of every link to an edit page, in page order. */
+function editLinksIn(body: string): string[] {
+	return [...body.matchAll(/href="([^"]*\/edit\b[^"]*)"/g)].map((m) => m[1]);
 }
 
 describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
@@ -273,5 +279,34 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 		// The page's adapter is the module's own, as built for any caller.
 		const built = createMembersOnlyEventAdapter();
 		expect(Object.keys(built).sort()).toEqual(Object.keys(adapter).sort());
+	});
+
+	// The edit page reads a members-only event only when its link says so, since
+	// a public event can share the key, so the page's own Edit link carries the
+	// placement. Only someone who may manage the group's events is offered it.
+	it('the members-only event page offers its Edit link to a manager only, with the placement', async () => {
+		const editHref = `/groups/${GROUP_DID}/events/3lmeeting/edit?placement=members`;
+
+		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		const managed = await openAs(OWNER);
+		expect(managed.canManageEvents).toBe(true);
+		expect(managed.editHref).toBe(editHref);
+		signedIn.user.did = OWNER;
+		const asManager = renderPage(managed);
+		expect(editLinksIn(asManager.body)).toEqual([editHref]);
+		expect(asManager.body.match(/Edit Event/g)).toHaveLength(1);
+		// Talks and the invite flow stay the group account's own.
+		expect(asManager.body).not.toContain('Manage talks');
+		expect(asManager.body).not.toContain('/talks');
+
+		rsvp.renders.length = 0;
+		signedIn.user.did = MEMBER;
+		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		const plain = await openAs(MEMBER);
+		expect(plain.canManageEvents).toBe(false);
+		expect('editHref' in plain).toBe(false);
+		const asMember = renderPage(plain);
+		expect(editLinksIn(asMember.body)).toEqual([]);
+		expect(asMember.body).not.toContain('Edit Event');
 	});
 });
