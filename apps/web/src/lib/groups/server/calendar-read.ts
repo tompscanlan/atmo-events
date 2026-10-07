@@ -14,6 +14,7 @@
 // requests, so one member's read can never be served to anyone else.
 // (Spec: FR-105.)
 import { isRecordKey } from '@atcute/lexicons/syntax';
+import type { FlatEventRecord } from '$lib/contrail';
 import { canSeeMembers } from '../access';
 import type { CallerMembership, GroupEventRecord, GroupRow } from '../types';
 import { spaceRecordUri, type GroupSpaceReader, type GroupSpaceRecord } from './about-read';
@@ -117,7 +118,8 @@ export async function readMembersOnlyEvents(
  *  - `absent`: the calendar space holds no event at that key, or the group has
  *    no calendar space at all.
  *  - `unreadable`: the read failed, and the error went to the log.
- *  - `found`: the event, whole, at its space-form URI.
+ *  - `found`: the event, whole, at its space-form URI, naming the space it was
+ *    read from.
  *
  *  A page answers `hidden` and `absent` alike, so a caller off the roster
  *  cannot tell an event that exists from one that does not. */
@@ -126,7 +128,7 @@ export type MembersOnlyEventRead =
 	| { status: 'unlinked'; notice: string }
 	| { status: 'absent' }
 	| { status: 'unreadable'; notice: string }
-	| { status: 'found'; event: GroupEventRecord };
+	| { status: 'found'; event: GroupEventRecord & { space: string } };
 
 /**
  * One members-only event by its key, read from the calendar space as the group,
@@ -210,7 +212,8 @@ export async function readMembersOnlyEvent(
  * the group's DID and the image's CID. That is interim, until members get the
  * image through atmo's own route. (Spec: FR-119.)
  *
- * The event it is given keeps its image, and the copy shares no value with it.
+ * The copy is shallow: only its top-level image key is dropped, so the event it
+ * is given keeps its image, and every nested value is shared between the two.
  * Only the event's page calls this: the edit page saves what it loads, so
  * dropping the image there would delete it.
  */
@@ -218,6 +221,33 @@ export function membersOnlyEventForDisplay(event: GroupEventRecord): GroupEventR
 	const value = { ...event.value };
 	delete value.media;
 	return { ...event, value };
+}
+
+/**
+ * A members-only event as the edit page hands it to the editor: the record
+ * whole, image included, with the event's cid, the group's DID, its key and
+ * its space-form URI beside it, as the index's events carry them. Null for a
+ * record with no start, which the editor cannot open.
+ *
+ * The editor saves what it loads: it spreads this into the record it writes
+ * and deletes only what the index adds to an event (the cid, DID, key, URI and
+ * RSVP counts). So nothing may be left out, or the next save deletes it, and
+ * nothing may be added. In particular the calendar space is not set here: a
+ * key naming the container would be written into the event, and placement is
+ * the container itself, never a field. (Spec: FR-104, FR-119.)
+ */
+export function membersOnlyEventForEditing(
+	event: GroupEventRecord,
+	group: Pick<GroupRow, 'group_did'>
+): FlatEventRecord | null {
+	if (typeof event.value.startsAt !== 'string') return null;
+	return {
+		...(event.value as unknown as FlatEventRecord),
+		cid: event.cid,
+		did: group.group_did,
+		rkey: event.rkey,
+		uri: event.uri
+	};
 }
 
 /** A record's own `createdAt` in milliseconds, or -Infinity when it has none

@@ -23,6 +23,10 @@ export async function groupEditorPage(
 	const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };
 	return {
 		group,
+		/** For a page that goes on to read a members-only event: the caller's
+		 *  standing and the group's reader, so it reads neither again. */
+		membership,
+		reader,
 		groupDid: group.group_did,
 		/** The editor shows the group as the host, by the profile record's name. */
 		groupName: about.profile?.name ?? group.name,

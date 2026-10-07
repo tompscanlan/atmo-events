@@ -7,7 +7,7 @@ vi.mock('$lib/groups/server/editor-page', () => ({ groupEditorPage: vi.fn() }));
 
 import { load } from './+page.server';
 import { groupEditorPage } from '$lib/groups/server/editor-page';
-import type { GroupRow } from '$lib/groups/types';
+import type { CallerMembership, GroupRow } from '$lib/groups/types';
 
 const OWNER = 'did:plc:owner';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -25,6 +25,8 @@ describe('/groups/[actor]/events/new load', () => {
 	it("the new-event page loader hands the page the group's calendar space, computed from its DID", async () => {
 		vi.mocked(groupEditorPage).mockResolvedValue({
 			group: { group_did: GROUP_DID } as GroupRow,
+			membership: {} as CallerMembership,
+			reader: null,
 			groupDid: GROUP_DID,
 			groupName: 'Kona',
 			handle: HANDLE,

@@ -13,9 +13,17 @@
 		handle: data.handle ?? undefined,
 		displayName: data.groupName
 	});
-	// Public: the loader finds the event in the index, which holds public events
-	// only. The adapter and the line above the editor both read this one value.
-	const space: string | null = null;
+	// Where the event is, as the loader read it: the group's calendar space for a
+	// members-only event, null for its public repo. Taken as given, with no
+	// default, so no save or delete can fall back to public. The adapter and the
+	// line above the editor both read this one value. (Spec: FR-116.)
+	let space = $derived(data.space);
+	// The editor previews an image the event already has from cdn.bsky.app, which
+	// would hand a third party the group's DID and the image's CID. A members-only
+	// event gets no preview until members get its image through atmo's own route;
+	// the save still keeps the image. A public event's preview is the editor's
+	// own. (Spec: FR-119.)
+	let storedImageUrl = $derived(space === null ? undefined : () => null);
 	// The server's own words when it refuses a save, a delete or an upload, as
 	// on the new-event page, cleared when the next save starts.
 	let refusal = $state<string>();
@@ -53,5 +61,6 @@
 		rkey={data.rkey}
 		{adapter}
 		{viewer}
+		{storedImageUrl}
 	/>
 </div>
