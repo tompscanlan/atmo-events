@@ -108,6 +108,7 @@ import {
 } from '../src/lib/groups/server/space-credential';
 import { groupClient } from '../src/lib/groups/server/session';
 import {
+	membersOnlyEventForEditing,
 	readMembersOnlyEvent,
 	readMembersOnlyEvents
 } from '../src/lib/groups/server/calendar-read';
@@ -621,6 +622,35 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			linked: reader !== null,
 			onRoster: membership.onRoster,
 			read,
+			calls: standInCalls.slice(from),
+			readCalls: standInCalls.slice(readFrom)
+		};
+	},
+
+	/** The edit page's read of one members-only event for one caller. The route
+	 *  module cannot be bundled here (see `gate`), so this takes the caller's
+	 *  standing the way the gate does, makes the editor gate's MANAGE_EVENTS
+	 *  check, and only for a caller who passes it calls the same $lib read and
+	 *  edit copy the loader calls. `allowed` is false for a caller the editor
+	 *  gate refuses. It returns every request sent through the group's session:
+	 *  `calls` for the whole op, standing included, and `readCalls` for what
+	 *  came after standing. */
+	membersOnlyEditRead: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const did = args.did == null ? null : String(args.did);
+		const from = standInCalls.length;
+		const reader = await groupSpaceReader(env, env.DB, group);
+		const membership = await getCallerMembership(env.DB, group, did, reader);
+		const readFrom = standInCalls.length;
+		const allowed = can(membership.permissions, 'MANAGE_EVENTS');
+		const read = allowed
+			? await readMembersOnlyEvent(membership, reader, group, String(args.rkey))
+			: null;
+		return {
+			onRoster: membership.onRoster,
+			allowed,
+			read,
+			eventData: read?.status === 'found' ? membersOnlyEventForEditing(read.event, group) : null,
 			calls: standInCalls.slice(from),
 			readCalls: standInCalls.slice(readFrom)
 		};

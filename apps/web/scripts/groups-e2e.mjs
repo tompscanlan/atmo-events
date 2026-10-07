@@ -4,9 +4,9 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 48 numbered checks (1 to 23, plus 10b, 13b to 13r, 15b, 18b, 18c,
+ * It runs 49 numbered checks (1 to 23, plus 10b, 13b to 13s, 15b, 18b, 18c,
  * 18d, 18e, 20b and 20c), prints one PASS or FAIL line each, and a clean run
- * ends with `SUMMARY: 48 passed, 0 failed`. Setup steps print as notes and are
+ * ends with `SUMMARY: 49 passed, 0 failed`. Setup steps print as notes and are
  * not counted. In order: create and the seeded roles (1), join, approval and
  * promotion (2-3), events written as the group DID and the edit gate (4-6),
  * leaving (7-8), a cover image uploaded into the group's repo (9), the profile,
@@ -21,7 +21,10 @@
  * read them, and with an image kept in the space (13i-13p), that event in a
  * member's slice without its image while the stored record keeps it (13q), the
  * same event read by its key as its page reads it, whole for a member and not
- * at all for a non-member or an anonymous visitor (13r), the
+ * at all for a non-member or an anonymous visitor (13r), the same event as its
+ * edit page reads it for a manager, whole and with no key naming the space,
+ * saved back into the space with its image and no field added, and refused
+ * before any read for a member who may not edit and a non-member (13s), the
  * member's own acceptance at a join request, at leave and at a
  * sign-in after a direct add (18b-18d), a member whose PDS serves no spaces
  * (18e), the discovery declaration and
@@ -1644,8 +1647,8 @@ async function main() {
 		// page saves what it loads and only the page drops the image, for display.
 		// A non-member and an anonymous visitor are refused before the read, so the
 		// requests the event read alone sent are counted, and must be none. A key
-		// the space does not hold is absent, after one read. Run before 13q's event
-		// is deleted, so the image is really there to keep.
+		// the space does not hold is absent, after one read. Run before the image
+		// event 13p wrote is deleted, so the image is really there to keep.
 		const moKey = imageRkey ?? SEED_RKEY;
 		const oneForMember = await must('membersOnlyEvent', {
 			groupId: group.id,
@@ -1707,6 +1710,114 @@ async function main() {
 				`anonymous: ${oneForAnonymous.read?.status}, ${oneForAnonymous.readCalls.length} request(s) for the read, ` +
 				`${calendarCalls(oneForAnonymous.calls).length} to the calendar space of ${oneForAnonymous.calls.length}; ` +
 				`${BOB} at ${MADE_UP_RKEY}: ${oneMadeUp.read?.status} after ${oneMadeUp.readCalls.length} request(s)`
+		);
+		// 13s. the edit page's read, saved back ----------------------------------
+		// What the edit page reads for a manager: the same event, whole, as the
+		// editor gets it, with no key naming the space, since the editor writes back
+		// what it loads. Saved back as the editor saves it (without the cid, DID,
+		// key and URI the read puts beside the record, and renamed), it stays in the
+		// space with its image and gains no field. A roster member who may not edit,
+		// a non-member and an anonymous caller are refused by the editor gate with
+		// nothing sent past their standing. BOB is an admin by now, so he is a plain
+		// member for his refusal and promoted back after it, as check 17 does. Run
+		// before the image event 13p wrote is deleted.
+		const editRead = await must('membersOnlyEditRead', {
+			groupId: group.id,
+			did: ALICE,
+			rkey: moKey
+		});
+		const editCopy = editRead.eventData;
+		const editImage = editCopy?.media?.[0]?.content?.ref?.$link;
+		const renamedWithImage = `${membersOnlyName}, with an image (renamed)`;
+		let editSave = { ok: false, calls: [] };
+		if (editCopy) {
+			// The editor's own save drops these, which the read puts beside the record.
+			const kept = { ...editCopy };
+			for (const key of ['cid', 'did', 'rkey', 'uri']) delete kept[key];
+			editSave = await traced('writeGroupEvent', {
+				groupId: group.id,
+				callerDid: ALICE,
+				intent: 'update',
+				rkey: moKey,
+				space: CALENDAR_SPACE_URI,
+				record: { ...kept, name: renamedWithImage }
+			});
+		}
+		const editAfter = await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, moKey);
+		const editAfterValue = editAfter.value ?? {};
+		const keysBefore = Object.keys(moImageRead.value ?? {})
+			.sort()
+			.join(', ');
+		const keysAfter = Object.keys(editAfterValue).sort().join(', ');
+		const editSaveWrites = writesIn(editSave.calls);
+		const editBlobAnonymous = await anonymousBlob(moImage?.ref?.$link);
+		const editInRepo = await getRecord(GROUP_DID, moKey);
+		await must('promoteMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'member' });
+		let editForMember;
+		try {
+			editForMember = await must('membersOnlyEditRead', {
+				groupId: group.id,
+				did: BOB,
+				rkey: moKey
+			});
+		} finally {
+			await must('promoteMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'admin' });
+		}
+		const editForStranger = await must('membersOnlyEditRead', {
+			groupId: group.id,
+			did: MALLORY,
+			rkey: moKey
+		});
+		const editForAnonymous = await must('membersOnlyEditRead', {
+			groupId: group.id,
+			did: null,
+			rkey: moKey
+		});
+		const refusedByGate = (op, onRoster) =>
+			op.allowed === false &&
+			op.onRoster === onRoster &&
+			op.read === null &&
+			op.readCalls.length === 0 &&
+			calendarCalls(op.calls).length === 0;
+		const refusalDetail = (who, op) =>
+			`${who}: ${op.allowed ? 'ALLOWED' : 'refused'} (on the roster ${op.onRoster}), ` +
+			`${op.readCalls.length} request(s) past standing, ${calendarCalls(op.calls).length} to the calendar space`;
+		record(
+			imageRkey !== null &&
+				editRead.allowed === true &&
+				editRead.read?.status === 'found' &&
+				editCopy !== null &&
+				!('space' in editCopy) &&
+				editCopy.uri === `${CALENDAR_SPACE_URI}/${GROUP_DID}/${EVENT_COLLECTION}/${imageRkey}` &&
+				editImage === moImage?.ref?.$link &&
+				editRead.readCalls.length === 1 &&
+				editSave.ok === true &&
+				JSON.stringify(editSaveWrites) === JSON.stringify(['com.atproto.space.putRecord']) &&
+				editAfter.status === 200 &&
+				editAfterValue.name === renamedWithImage &&
+				editAfter.cid !== moImageRead.cid &&
+				editAfterValue.media?.[0]?.content?.ref?.$link === moImage?.ref?.$link &&
+				keysAfter === keysBefore &&
+				!('space' in editAfterValue) &&
+				editBlobAnonymous.status === 400 &&
+				editBlobAnonymous.error === 'BlobNotFound' &&
+				notFound(editInRepo) &&
+				refusedByGate(editForMember, true) &&
+				refusedByGate(editForStranger, false) &&
+				refusedByGate(editForAnonymous, false),
+			"a manager's edit read of a members-only event keeps its image, and saving it back keeps the image in the space with no field added",
+			`${ALICE}: ${editRead.read?.status} after ${editRead.readCalls.length} request(s), image ` +
+				`${editImage === undefined ? 'MISSING' : editImage === moImage?.ref?.$link ? 'kept' : editImage}, ` +
+				`space key on the edit copy ${editCopy && 'space' in editCopy ? 'PRESENT' : 'absent'}; ` +
+				`saved: ${editSave.ok ? 'ok' : `REFUSED ${editSave.error?.name}(${editSave.error?.reason})`}, ` +
+				`writes sent: [${editSaveWrites.join(', ')}]; the space holds "${editAfterValue.name}" ` +
+				`(cid ${moImageRead.cid} -> ${editAfter.cid}), image ` +
+				`${editAfterValue.media?.[0]?.content?.ref?.$link === moImage?.ref?.$link ? 'kept' : 'CHANGED'}, ` +
+				`keys ${keysAfter === keysBefore ? 'as before' : `[${keysAfter}], were [${keysBefore}]`}; ` +
+				`anonymous sync.getBlob ${editBlobAnonymous.status} ${editBlobAnonymous.error ?? ''}, ` +
+				`anonymous repo getRecord ${editInRepo.error ?? editInRepo.status}; ` +
+				`${refusalDetail(`${BOB} as a plain member`, editForMember)}; ` +
+				`${refusalDetail(MALLORY, editForStranger)}; ${refusalDetail('anonymous', editForAnonymous)}`
 		);
 		if (moWithImage.ok) {
 			await must('deleteGroupEvent', {
