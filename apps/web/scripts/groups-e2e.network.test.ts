@@ -79,8 +79,7 @@ describe('outboundHandler, which every worker subrequest passes', () => {
 		expect(response.ok).toBe(false);
 		// A 4xx or a 501 is what a PDS that serves no spaces answers (check 18e),
 		// and a 500 is what Miniflare makes of a thrown error.
-		expect(response.status >= 400 && response.status < 500).toBe(false);
-		expect([500, 501]).not.toContain(response.status);
+		expect(response.status).toBe(599);
 		expect(await response.text()).toContain('woodtuft.us-west.host.bsky.network');
 		expect(lines).toEqual([
 			'REFUSED worker GET https://woodtuft.us-west.host.bsky.network/xrpc/com.atproto.space.getRecord'
@@ -163,6 +162,22 @@ describe('the ledger behind check 24', () => {
 				'public 1; local 3 (driver 1, worker 2) to localhost:2592, localhost:3010, localhost:3020'
 		});
 	});
+
+	it('does not let the startup lookups alone meet the driver floor', () => {
+		const { ledger } = quietLedger();
+		for (const did of ['a', 'b', 'c', 'd', 'e']) {
+			ledger.admit('driver', 'GET', `http://localhost:2592/did:plc:${did}`);
+		}
+		ledger.startRun();
+		ledger.admit('worker', 'GET', 'http://localhost:3010/xrpc/a');
+		expect(ledger.verdict().ok).toBe(false);
+
+		ledger.admit('driver', 'POST', 'http://localhost:3010/xrpc/com.atproto.server.createSession');
+		expect(ledger.verdict()).toEqual({
+			ok: true,
+			detail: 'public 0; local 7 (driver 6, worker 1) to localhost:2592, localhost:3010'
+		});
+	});
 });
 
 describe('settingRefusals', () => {
@@ -179,6 +194,12 @@ describe('settingRefusals', () => {
 			'REFUSED E2E_PDS https://e2e-refusal.invalid: not on this machine',
 			'REFUSED E2E_PLC_URL https://plc.directory: not on this machine'
 		]);
+	});
+
+	it('names a refused setting without the user or password it carries', () => {
+		const refusals = settingRefusals({ E2E_PDS: 'https://someone:hunter2@pds.example.com/' });
+		expect(refusals).toEqual(['REFUSED E2E_PDS https://pds.example.com/: not on this machine']);
+		expect(refusals.join('')).not.toContain('hunter2');
 	});
 });
 

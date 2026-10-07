@@ -689,6 +689,7 @@ async function main() {
 	console.log('');
 
 	await refuseOffMachine();
+	ledger.startRun();
 
 	const { path, password } = await loadPassword('E2E_GROUP_PASSWORD');
 	note(`fixture credentials loaded from ${path}`);
@@ -2611,8 +2612,9 @@ try {
 
 // 24. no request left this machine --------------------------------------------
 // Recorded once main() has returned, so cleanup's requests are counted too. It
-// needs no public request, and at least one local request from the driver and
-// one from the worker, so a ledger that saw nothing cannot pass.
+// needs no public request, and at least one local request from the worker and
+// one from the driver after its startup checks, so a ledger that saw nothing
+// cannot pass.
 const network = ledger.verdict();
 record(network.ok, 'no request left this machine', network.detail);
 

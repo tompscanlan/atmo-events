@@ -55,6 +55,7 @@ function target(method, url) {
  */
 export function createLedger(log = console.log) {
 	const local = { driver: 0, worker: 0 };
+	let driverAtStart = 0;
 	/** @type {Set<string>} */
 	const hosts = new Set();
 	/** @type {string[]} */
@@ -77,13 +78,18 @@ export function createLedger(log = console.log) {
 			log(line);
 			return false;
 		},
-		/** Check 24: no public request, and both the driver and the worker were seen,
-		 *  so a ledger that counted nothing cannot pass. */
+		/** Marks the end of the startup checks, whose lookups do not count toward
+		 *  the driver's floor in the verdict. */
+		startRun() {
+			driverAtStart = local.driver;
+		},
+		/** Check 24: no public request, and both the worker and the driver past its
+		 *  startup checks were seen, so a ledger that counted nothing cannot pass. */
 		verdict() {
 			const total = local.driver + local.worker;
 			const to = [...hosts].sort().join(', ') || 'no host';
 			return {
-				ok: refused.length === 0 && local.driver >= 1 && local.worker >= 1,
+				ok: refused.length === 0 && local.driver > driverAtStart && local.worker >= 1,
 				detail: `public ${refused.length}; local ${total} (driver ${local.driver}, worker ${local.worker}) to ${to}`
 			};
 		}
@@ -130,13 +136,25 @@ export function guardFetch(ledger, real) {
 }
 
 /**
+ * A setting as a refusal names it, without any user or password it carries.
+ * @param {string} url
+ */
+function shown(url) {
+	const parsed = parse(url);
+	if (!parsed || (!parsed.username && !parsed.password)) return url;
+	parsed.username = '';
+	parsed.password = '';
+	return parsed.href;
+}
+
+/**
  * Refusals for a PDS or PLC directory setting off this machine.
  * @param {Record<string, string>} settings name to URL
  */
 export function settingRefusals(settings) {
 	return Object.entries(settings)
 		.filter(([, url]) => !isLoopback(url))
-		.map(([name, url]) => `REFUSED ${name} ${url}: not on this machine`);
+		.map(([name, url]) => `REFUSED ${name} ${shown(url)}: not on this machine`);
 }
 
 /**
