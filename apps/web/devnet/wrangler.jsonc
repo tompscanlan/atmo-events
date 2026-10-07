@@ -1,0 +1,33 @@
+// Devnet mode's bindings and vars: `pnpm dev:devnet` has vite dev emulate these instead of
+// ./wrangler.jsonc's (see svelte.config.js), with local state under .wrangler/devnet. Local
+// only: the name is not a deployed one, there are no routes, and the ids are placeholders that
+// bind to nothing, so a deploy from this file fails. It deliberately sets no public site URL,
+// which keeps sign-in on atproto's loopback client.
+{
+	"$schema": "../node_modules/wrangler/config-schema.json",
+	"name": "atmo-devnet-local",
+	"compatibility_date": "2025-12-25",
+	"compatibility_flags": ["nodejs_compat_v2"],
+	"vars": {
+		// New groups are created on the devnet's spaces PDS, under its handle domain.
+		"GROUP_PDS_SERVICE": "http://localhost:3010",
+		"GROUP_HANDLE_DOMAIN": "devnet.test"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "atmo-devnet-local",
+			"database_id": "00000000-0000-0000-0000-000000000000"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "OAUTH_SESSIONS",
+			"id": "00000000000000000000000000000001"
+		},
+		{
+			"binding": "OAUTH_STATES",
+			"id": "00000000000000000000000000000002"
+		}
+	]
+}

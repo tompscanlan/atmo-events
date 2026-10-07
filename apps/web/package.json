@@ -5,6 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
+		"dev:devnet": "DEVNET_BINDINGS=1 vite dev --mode devnet",
 		"build": "vite build && contrail append-scheduled",
 		"generate": "node scripts/lexicon-shims.mjs write && contrail-lex generate && node scripts/lexicon-shims.mjs unpull",
 		"generate:pull": "contrail-lex all",
