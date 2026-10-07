@@ -107,7 +107,10 @@ import {
 	spaceSigHeaders
 } from '../src/lib/groups/server/space-credential';
 import { groupClient } from '../src/lib/groups/server/session';
-import { readMembersOnlyEvents } from '../src/lib/groups/server/calendar-read';
+import {
+	readMembersOnlyEvent,
+	readMembersOnlyEvents
+} from '../src/lib/groups/server/calendar-read';
 import { standInCalls } from './groups-e2e.oauth';
 import {
 	GROUP_ACCEPTANCE_COLLECTION,
@@ -598,6 +601,29 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		} finally {
 			if (args.unlinked && stored !== null) await env.OAUTH_SESSIONS.put(key, stored);
 		}
+	},
+
+	/** One members-only event by its key for one viewer, as its page reads it.
+	 *  The route module cannot be bundled here (see `gate`), so this takes the
+	 *  viewer's standing the way the gate does and calls the same $lib function
+	 *  the loader calls. It returns every request sent through the group's
+	 *  session: `calls` for the whole op, standing included, and `readCalls` for
+	 *  the event read alone. */
+	membersOnlyEvent: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		const did = args.did == null ? null : String(args.did);
+		const from = standInCalls.length;
+		const reader = await groupSpaceReader(env, env.DB, group);
+		const membership = await getCallerMembership(env.DB, group, did, reader);
+		const readFrom = standInCalls.length;
+		const read = await readMembersOnlyEvent(membership, reader, group, String(args.rkey));
+		return {
+			linked: reader !== null,
+			onRoster: membership.onRoster,
+			read,
+			calls: standInCalls.slice(from),
+			readCalls: standInCalls.slice(readFrom)
+		};
 	},
 
 	/** Whether the app finds the group's stored session, as the pages do. */

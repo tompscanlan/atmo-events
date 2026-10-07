@@ -4,9 +4,9 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 47 numbered checks (1 to 23, plus 10b, 13b to 13q, 15b, 18b, 18c,
+ * It runs 48 numbered checks (1 to 23, plus 10b, 13b to 13r, 15b, 18b, 18c,
  * 18d, 18e, 20b and 20c), prints one PASS or FAIL line each, and a clean run
- * ends with `SUMMARY: 47 passed, 0 failed`. Setup steps print as notes and are
+ * ends with `SUMMARY: 48 passed, 0 failed`. Setup steps print as notes and are
  * not counted. In order: create and the seeded roles (1), join, approval and
  * promotion (2-3), events written as the group DID and the edit gate (4-6),
  * leaving (7-8), a cover image uploaded into the group's repo (9), the profile,
@@ -20,6 +20,8 @@
  * repo, refused for a group without the space, with no field saying who may
  * read them, and with an image kept in the space (13i-13p), that event in a
  * member's slice without its image while the stored record keeps it (13q), the
+ * same event read by its key as its page reads it, whole for a member and not
+ * at all for a non-member or an anonymous visitor (13r), the
  * member's own acceptance at a join request, at leave and at a
  * sign-in after a direct add (18b-18d), a member whose PDS serves no spaces
  * (18e), the discovery declaration and
@@ -149,6 +151,9 @@ const SEED_RKEY = '3me2emembersx';
 const SEED_NAME = 'e2e members-only meeting (seed)';
 /** Its space-form URI, written out like CALENDAR_SPACE_URI. */
 const SEED_URI = `${CALENDAR_SPACE_URI}/${GROUP_DID}/${EVENT_COLLECTION}/${SEED_RKEY}`;
+/** A valid key that nothing writes into the calendar space, for a read that
+ *  must come back absent. */
+const MADE_UP_RKEY = '3me2enothere';
 /** What the app tells a member of an unlinked group, written out. */
 const RELINK_NOTICE = "Members-only events can't be shown until an organizer relinks the group.";
 
@@ -1632,6 +1637,76 @@ async function main() {
 				`${imageRead[0]?.space}), named ${JSON.stringify(imageValue.name)}, media ` +
 				`${'media' in imageValue ? `PRESENT (${JSON.stringify(imageValue.media)})` : 'absent'}; ` +
 				`the stored record cites ${moCited}, uploaded ${moImage?.ref?.$link}`
+		);
+		// 13r. one members-only event, by its key -------------------------------
+		// What the event's page reads: one event from the calendar space, as the
+		// group, by its key. A member gets it whole, image included, since the edit
+		// page saves what it loads and only the page drops the image, for display.
+		// A non-member and an anonymous visitor are refused before the read, so the
+		// requests the event read alone sent are counted, and must be none. A key
+		// the space does not hold is absent, after one read. Run before 13q's event
+		// is deleted, so the image is really there to keep.
+		const moKey = imageRkey ?? SEED_RKEY;
+		const oneForMember = await must('membersOnlyEvent', {
+			groupId: group.id,
+			did: BOB,
+			rkey: moKey
+		});
+		const oneForStranger = await must('membersOnlyEvent', {
+			groupId: group.id,
+			did: MALLORY,
+			rkey: moKey
+		});
+		const oneForAnonymous = await must('membersOnlyEvent', {
+			groupId: group.id,
+			did: null,
+			rkey: moKey
+		});
+		const oneMadeUp = await must('membersOnlyEvent', {
+			groupId: group.id,
+			did: BOB,
+			rkey: MADE_UP_RKEY
+		});
+		const oneEvent = oneForMember.read?.status === 'found' ? oneForMember.read.event : null;
+		const oneImage = oneEvent?.value?.media?.[0]?.content?.ref?.$link;
+		const oneGets = (op) =>
+			calendarCalls(op.readCalls).filter((path) =>
+				path.startsWith('/xrpc/com.atproto.space.getRecord?')
+			);
+		const refusedUnread = (op) =>
+			op.onRoster === false &&
+			op.read?.status === 'hidden' &&
+			op.readCalls.length === 0 &&
+			calendarCalls(op.calls).length === 0;
+		record(
+			imageRkey !== null &&
+				oneForMember.onRoster === true &&
+				oneEvent !== null &&
+				oneEvent.uri === `${CALENDAR_SPACE_URI}/${GROUP_DID}/${EVENT_COLLECTION}/${imageRkey}` &&
+				oneEvent.rkey === imageRkey &&
+				oneEvent.space === CALENDAR_SPACE_URI &&
+				oneEvent.cid === moImageRead.cid &&
+				oneEvent.value?.name === `${membersOnlyName}, with an image` &&
+				oneImage !== undefined &&
+				oneImage === moImage?.ref?.$link &&
+				oneForMember.readCalls.length === 1 &&
+				oneGets(oneForMember).length === 1 &&
+				refusedUnread(oneForStranger) &&
+				refusedUnread(oneForAnonymous) &&
+				oneMadeUp.onRoster === true &&
+				oneMadeUp.read?.status === 'absent' &&
+				oneMadeUp.readCalls.length === 1 &&
+				oneGets(oneMadeUp).length === 1,
+			'one members-only event is read by its rkey for a member, image kept, and a non-member and an anonymous caller send no read',
+			`${BOB}: ${oneForMember.read?.status} at ${oneEvent?.uri} (space ${oneEvent?.space}; cid ` +
+				`${oneEvent?.cid === moImageRead.cid ? 'as the PDS has it' : `${oneEvent?.cid}, the PDS has ${moImageRead.cid}`}), ` +
+				`image ${oneImage === undefined ? 'MISSING' : oneImage === moImage?.ref?.$link ? 'kept' : `${oneImage}, uploaded ${moImage?.ref?.$link}`}, ` +
+				`${oneForMember.readCalls.length} request(s) for the read, ${oneGets(oneForMember).length} a calendar getRecord; ` +
+				`${MALLORY}: ${oneForStranger.read?.status}, ${oneForStranger.readCalls.length} request(s) for the read, ` +
+				`${calendarCalls(oneForStranger.calls).length} to the calendar space of ${oneForStranger.calls.length}; ` +
+				`anonymous: ${oneForAnonymous.read?.status}, ${oneForAnonymous.readCalls.length} request(s) for the read, ` +
+				`${calendarCalls(oneForAnonymous.calls).length} to the calendar space of ${oneForAnonymous.calls.length}; ` +
+				`${BOB} at ${MADE_UP_RKEY}: ${oneMadeUp.read?.status} after ${oneMadeUp.readCalls.length} request(s)`
 		);
 		if (moWithImage.ok) {
 			await must('deleteGroupEvent', {
