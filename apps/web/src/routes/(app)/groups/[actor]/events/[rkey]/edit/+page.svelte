@@ -17,7 +17,7 @@
 	// only. The adapter and the line above the editor both read this one value.
 	const space: string | null = null;
 	// The server's own words when it refuses a save, a delete or an upload, as
-	// on the new-event page.
+	// on the new-event page, cleared when the next save starts.
 	let refusal = $state<string>();
 	let adapter = $derived(
 		createGroupEditorAdapter({
@@ -46,10 +46,12 @@
 	{/if}
 </div>
 
-<EventEditor
-	eventData={data.eventData}
-	actorDid={data.groupDid}
-	rkey={data.rkey}
-	{adapter}
-	{viewer}
-/>
+<div onsubmit={() => (refusal = undefined)}>
+	<EventEditor
+		eventData={data.eventData}
+		actorDid={data.groupDid}
+		rkey={data.rkey}
+		{adapter}
+		{viewer}
+	/>
+</div>

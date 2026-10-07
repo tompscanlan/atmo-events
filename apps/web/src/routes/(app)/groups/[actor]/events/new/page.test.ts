@@ -64,9 +64,23 @@ describe('/groups/[actor]/events/new', () => {
 		expect(text).toContain(
 			"Members only Only the group's members can see it. It can't be switched to Everyone later. For now it has no recurring copies and its image isn't shown. The Public / Unlisted setting below doesn't apply."
 		);
-		// Two answers, and neither is picked for the person.
+		// Two answers, neither picked for the person, and neither locked yet.
 		expect(body.match(/type="radio"/g)).toHaveLength(2);
 		expect(body).not.toMatch(/\bchecked\b/);
+		expect(body).not.toMatch(/\bdisabled\b/);
 		expect(text).not.toMatch(/\bprivate\b/i);
+		// Each answer is described by its own help line, apart from its label.
+		const described = [...body.matchAll(/aria-describedby="([^"]+)"/g)].map(([, id]) =>
+			textOf(
+				body
+					.slice(body.indexOf(`id="${id}"`))
+					.split('</p>')[0]
+					.replace(/^[^>]*>/, '')
+			)
+		);
+		expect(described).toEqual([
+			'Anyone can see it, including people outside the group.',
+			"Only the group's members can see it. It can't be switched to Everyone later. For now it has no recurring copies and its image isn't shown. The Public / Unlisted setting below doesn't apply."
+		]);
 	});
 });
