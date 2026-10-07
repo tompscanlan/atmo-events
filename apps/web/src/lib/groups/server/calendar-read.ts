@@ -13,9 +13,10 @@
 // through the index, which cannot see a space, and nothing is kept between
 // requests, so one member's read can never be served to anyone else.
 // (Spec: FR-105.)
+import { isRecordKey } from '@atcute/lexicons/syntax';
 import { canSeeMembers } from '../access';
 import type { CallerMembership, GroupEventRecord, GroupRow } from '../types';
-import type { GroupSpaceReader, GroupSpaceRecord } from './about-read';
+import { spaceRecordUri, type GroupSpaceReader, type GroupSpaceRecord } from './about-read';
 import { GROUP_EVENT_COLLECTION } from './event-writer';
 import { groupSpaceUris } from './spaces';
 
@@ -107,6 +108,116 @@ export async function readMembersOnlyEvents(
 		});
 	}
 	return { events, notice: null };
+}
+
+/** What one members-only event's read comes to, for its page and its edit page.
+ *
+ *  - `hidden`: the caller is off the roster, and nothing was read.
+ *  - `unlinked`: a member, but the group's session is gone, so nothing could be.
+ *  - `absent`: the calendar space holds no event at that key, or the group has
+ *    no calendar space at all.
+ *  - `unreadable`: the read failed, and the error went to the log.
+ *  - `found`: the event, whole, at its space-form URI.
+ *
+ *  A page answers `hidden` and `absent` alike, so a caller off the roster
+ *  cannot tell an event that exists from one that does not. */
+export type MembersOnlyEventRead =
+	| { status: 'hidden' }
+	| { status: 'unlinked'; notice: string }
+	| { status: 'absent' }
+	| { status: 'unreadable'; notice: string }
+	| { status: 'found'; event: GroupEventRecord };
+
+/**
+ * One members-only event by its key, read from the calendar space as the group,
+ * for a roster member only.
+ *
+ * The roster check is the first thing it does, before the reader is touched, as
+ * for the whole slice: a caller who may not see the event costs the group's PDS
+ * nothing, and a check moved after the read could be dropped by the next
+ * refactor. (Spec: FR-106, FR-117.)
+ *
+ * The record comes back exactly as stored. The edit page saves what it loads,
+ * so a read that left a field out would delete it on the next save; a page that
+ * must not show a field drops it from its own copy (`membersOnlyEventForDisplay`).
+ * Nothing is kept between requests and nothing falls back to another source, so
+ * one member's read can never be served to anyone else.
+ */
+export async function readMembersOnlyEvent(
+	membership: CallerMembership,
+	reader: GroupSpaceReader | null,
+	group: Pick<GroupRow, 'group_did'>,
+	rkey: string
+): Promise<MembersOnlyEventRead> {
+	if (!canSeeMembers(membership)) return { status: 'hidden' };
+
+	if (!reader) return { status: 'unlinked', notice: MEMBERS_ONLY_UNLINKED };
+
+	// A key no record can have names nothing, so the host is not asked.
+	if (!isRecordKey(rkey)) return { status: 'absent' };
+
+	const space = groupSpaceUris(group.group_did).calendarSpaceUri;
+	let found: GroupSpaceRecord | null;
+	try {
+		found = await reader.get({
+			space,
+			repo: group.group_did,
+			collection: GROUP_EVENT_COLLECTION,
+			rkey
+		});
+	} catch (e) {
+		// A group made before the calendar space existed has no members-only
+		// events, which is not a failure. The log still says it happened, as the
+		// slice's does, naming the group and not its calendar space.
+		if (e instanceof Error && NO_SUCH_SPACE.test(e.message)) {
+			console.warn(
+				`[groups] ${group.group_did}: the host answered SpaceNotFound for the calendar space; the event is absent:`,
+				e
+			);
+			return { status: 'absent' };
+		}
+		console.error(
+			`[groups] ${group.group_did}: a members-only event could not be read from the calendar space:`,
+			e
+		);
+		return { status: 'unreadable', notice: MEMBERS_ONLY_UNREADABLE };
+	}
+
+	// The host was asked for one event by its key. A record it hands back under
+	// any other collection or key is not that event.
+	if (!found || found.collection !== GROUP_EVENT_COLLECTION || found.rkey !== rkey) {
+		return { status: 'absent' };
+	}
+
+	// The URI is the space form, built as the slice builds it, so the event's
+	// page and the events tab name it the same way. That form is the event's
+	// identity wherever it is cited. (Spec: FR-120.)
+	return {
+		status: 'found',
+		event: {
+			uri: spaceRecordUri(space, group.group_did, GROUP_EVENT_COLLECTION, rkey),
+			cid: found.cid,
+			rkey,
+			value: found.value,
+			space
+		}
+	};
+}
+
+/**
+ * A copy of a members-only event for a page to show, without its image. The
+ * page would build a cdn.bsky.app URL from the image, which hands a third party
+ * the group's DID and the image's CID. That is interim, until members get the
+ * image through atmo's own route. (Spec: FR-119.)
+ *
+ * The event it is given keeps its image, and the copy shares no value with it.
+ * Only the event's page calls this: the edit page saves what it loads, so
+ * dropping the image there would delete it.
+ */
+export function membersOnlyEventForDisplay(event: GroupEventRecord): GroupEventRecord {
+	const value = { ...event.value };
+	delete value.media;
+	return { ...event, value };
 }
 
 /** A record's own `createdAt` in milliseconds, or -Infinity when it has none

@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	MEMBERS_ONLY_UNLINKED,
 	MEMBERS_ONLY_UNREADABLE,
+	membersOnlyEventForDisplay,
+	readMembersOnlyEvent,
 	readMembersOnlyEvents,
 	unionGroupEvents
 } from './calendar-read';
@@ -455,5 +457,250 @@ describe('unionGroupEvents', () => {
 		expect(only).toBe(pub);
 		expect(JSON.stringify(only)).toBe(before);
 		expect('space' in only).toBe(false);
+	});
+});
+
+// One members-only event, read by its key for its own page. The same gate as the
+// slice, ahead of the same reader, but a getRecord instead of a listing, and the
+// record comes back whole: the edit path saves what it loads, so a read that
+// dropped the image would delete it on the next save. Dropping it for display is
+// a separate step that only the page takes.
+describe('readMembersOnlyEvent', () => {
+	const STORED_IMAGE = [image('thumbnail', 'bafkreithumb'), image('header', 'bafkreiheader')];
+	const STORED_VALUE = { ...MEETING_VALUE, media: STORED_IMAGE };
+	const STORED_MEETING: GroupSpaceRecord = {
+		uri: spaceForm(EVENT, '3lmeeting'),
+		cid: 'bafymeeting',
+		collection: EVENT,
+		rkey: '3lmeeting',
+		value: STORED_VALUE
+	};
+
+	/** A calendar space read one record at a time. A listing or a space lookup
+	 *  fails loudly, since one event is fetched by its key and nothing else. */
+	function keyedReader(records: GroupSpaceRecord[] | Error): RecordingReader {
+		const calls: string[] = [];
+		return {
+			calls,
+			async get(q) {
+				calls.push(`get ${q.space} ${q.repo} ${q.collection} ${q.rkey}`);
+				if (records instanceof Error) throw records;
+				return records.find((r) => r.collection === q.collection && r.rkey === q.rkey) ?? null;
+			},
+			async list(q) {
+				calls.push(`list ${q.space} ${q.repo} ${q.collection ?? '(no collection)'}`);
+				throw new Error('one event is read by its key, never by a listing');
+			},
+			async getSpace(space) {
+				calls.push(`getSpace ${space}`);
+				throw new Error('one event never asks for a space configuration');
+			}
+		};
+	}
+
+	let requested: URL[];
+	let logged: ReturnType<typeof vi.spyOn>;
+	let warned: ReturnType<typeof vi.spyOn>;
+
+	/** The real reader on the group's linked session, to a stubbed host. */
+	function hostAnswering(answer: () => Response) {
+		requested = [];
+		vi.stubGlobal('fetch', async (input: URL | string) => {
+			requested.push(new URL(String(input)));
+			return answer();
+		});
+		return pdsSpaceReader(linkedCredential(GROUP_DID), GROUP_DID);
+	}
+
+	beforeEach(() => {
+		requested = [];
+		logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		unlinkAllGroups();
+		logged.mockRestore();
+		warned.mockRestore();
+	});
+
+	it('one members-only event: a roster member reads it at its space-form URI with its image', async () => {
+		const reader = keyedReader([CALENDAR_RECORDS[0], STORED_MEETING]);
+
+		const read = await readMembersOnlyEvent(viewer(true), reader, GROUP, '3lmeeting');
+
+		expect(read).toStrictEqual({
+			status: 'found',
+			event: {
+				uri: `at://${GROUP_DID}/space/net.openmeet.space.calendar/self/${GROUP_DID}/${EVENT}/3lmeeting`,
+				cid: 'bafymeeting',
+				rkey: '3lmeeting',
+				value: STORED_VALUE,
+				space: CALENDAR
+			}
+		});
+		// Both images, as stored: this read is the one the edit path will share.
+		expect(read.status === 'found' && read.event.value.media).toStrictEqual(STORED_IMAGE);
+		// One getRecord in the calendar space, in the group's own repo, by the key.
+		expect(reader.calls).toEqual([`get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmeeting`]);
+		expect(logged).not.toHaveBeenCalled();
+	});
+
+	it('reads it through the real reader with one getRecord, in the shape the host answers', async () => {
+		const reader = hostAnswering(() =>
+			Response.json({ uri: spaceForm(EVENT, '3lmeeting'), cid: 'bafymeeting', value: STORED_VALUE })
+		);
+
+		const read = await readMembersOnlyEvent(viewer(true), reader, GROUP, '3lmeeting');
+
+		expect(read).toStrictEqual({
+			status: 'found',
+			event: {
+				uri: spaceForm(EVENT, '3lmeeting'),
+				cid: 'bafymeeting',
+				rkey: '3lmeeting',
+				value: STORED_VALUE,
+				space: CALENDAR
+			}
+		});
+		expect(requested).toHaveLength(1);
+		expect(requested[0].pathname).toBe('/xrpc/com.atproto.space.getRecord');
+		expect(Object.fromEntries(requested[0].searchParams)).toStrictEqual({
+			space: CALENDAR,
+			repo: GROUP_DID,
+			collection: EVENT,
+			rkey: '3lmeeting'
+		});
+	});
+
+	it('one members-only event: a caller off the roster causes no space read', async () => {
+		for (const [, who] of OFF_THE_ROSTER) {
+			const reader = keyedReader([STORED_MEETING]);
+			expect(await readMembersOnlyEvent(who, reader, GROUP, '3lmeeting')).toStrictEqual({
+				status: 'hidden'
+			});
+			expect(reader.calls).toEqual([]);
+			// No reader is not a notice for them either: they learn nothing at all.
+			expect(await readMembersOnlyEvent(who, null, GROUP, '3lmeeting')).toStrictEqual({
+				status: 'hidden'
+			});
+			// A made-up key is the same answer, so the key tells them nothing.
+			expect(await readMembersOnlyEvent(who, reader, GROUP, '3lmadeup')).toStrictEqual({
+				status: 'hidden'
+			});
+		}
+
+		// And at the wire: the host is sent nothing.
+		const host = hostAnswering(() => Response.json({}));
+		for (const [, who] of OFF_THE_ROSTER) {
+			expect((await readMembersOnlyEvent(who, host, GROUP, '3lmeeting')).status).toBe('hidden');
+		}
+		expect(requested).toEqual([]);
+		expect(logged).not.toHaveBeenCalled();
+		expect(warned).not.toHaveBeenCalled();
+	});
+
+	it('one members-only event: a missing record is absent, and a failed read is unreadable', async () => {
+		// A key the space does not hold: one read, and absent.
+		const empty = keyedReader([STORED_MEETING]);
+		expect(await readMembersOnlyEvent(viewer(true), empty, GROUP, '3lmadeup')).toStrictEqual({
+			status: 'absent'
+		});
+		expect(empty.calls).toEqual([`get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmadeup`]);
+
+		// The host's own word for a missing record, through the real reader.
+		const notFound = hostAnswering(() =>
+			Response.json({ error: 'RecordNotFound' }, { status: 400 })
+		);
+		expect(await readMembersOnlyEvent(viewer(true), notFound, GROUP, '3lmadeup')).toStrictEqual({
+			status: 'absent'
+		});
+
+		// A key no record can have names nothing, so nothing is asked.
+		for (const key of ['', '..', 'not a key', 'a/b']) {
+			const reader = keyedReader([STORED_MEETING]);
+			expect(await readMembersOnlyEvent(viewer(true), reader, GROUP, key)).toStrictEqual({
+				status: 'absent'
+			});
+			expect(reader.calls).toEqual([]);
+		}
+
+		// A host that hands back some other record has not found this one.
+		const other: GroupSpaceReader = {
+			...keyedReader([]),
+			async get() {
+				return { ...STORED_MEETING, rkey: '3lother', uri: spaceForm(EVENT, '3lother') };
+			}
+		};
+		expect(await readMembersOnlyEvent(viewer(true), other, GROUP, '3lmeeting')).toStrictEqual({
+			status: 'absent'
+		});
+		expect(logged).not.toHaveBeenCalled();
+
+		// A group made before the calendar space existed has no such event. The
+		// log says so, naming the group and not its calendar space.
+		const noSpace = hostAnswering(() => Response.json({ error: 'SpaceNotFound' }, { status: 400 }));
+		expect(await readMembersOnlyEvent(viewer(true), noSpace, GROUP, '3lmeeting')).toStrictEqual({
+			status: 'absent'
+		});
+		expect(warned).toHaveBeenCalledTimes(1);
+		expect(warned.mock.calls[0][0]).toContain(GROUP_DID);
+		expect(warned.mock.calls[0][0]).not.toContain(CALENDAR);
+		expect(logged).not.toHaveBeenCalled();
+
+		// Every other failure is unreadable, with the events tab's notice, one
+		// attempt and nothing read in its place.
+		const failure = new Error('com.atproto.space.getRecord failed: 502');
+		const down = keyedReader(failure);
+		expect(await readMembersOnlyEvent(viewer(true), down, GROUP, '3lmeeting')).toStrictEqual({
+			status: 'unreadable',
+			notice: MEMBERS_ONLY_UNREADABLE
+		});
+		expect(down.calls).toEqual([`get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmeeting`]);
+		expect(logged).toHaveBeenCalledTimes(1);
+		expect(logged).toHaveBeenCalledWith(
+			expect.stringMatching(`^\\[groups\\] ${GROUP_DID}: `),
+			failure
+		);
+		expect(logged.mock.calls[0][0]).not.toContain(CALENDAR);
+
+		for (const [status, error] of [
+			[401, 'AuthMissing'],
+			[400, 'InvalidRequest'],
+			[502, undefined]
+		] as const) {
+			const refused = hostAnswering(() => Response.json(error ? { error } : {}, { status }));
+			expect(await readMembersOnlyEvent(viewer(true), refused, GROUP, '3lmeeting')).toStrictEqual({
+				status: 'unreadable',
+				notice: MEMBERS_ONLY_UNREADABLE
+			});
+		}
+
+		// With no reader, the group is unlinked, and a member is told why.
+		expect(
+			await readMembersOnlyEvent(viewer(true, { unlinked: true }), null, GROUP, '3lmeeting')
+		).toStrictEqual({ status: 'unlinked', notice: MEMBERS_ONLY_UNLINKED });
+	});
+
+	it("the display copy of a members-only event drops its image and leaves the record's", () => {
+		const event: GroupEventRecord = {
+			uri: spaceForm(EVENT, '3lmeeting'),
+			cid: 'bafymeeting',
+			rkey: '3lmeeting',
+			value: { ...STORED_VALUE },
+			space: CALENDAR
+		};
+		const before = structuredClone(event);
+
+		const shown = membersOnlyEventForDisplay(event);
+
+		// Every field as stored but the image.
+		expect(shown).toStrictEqual({ ...before, value: MEETING_VALUE });
+		expect('media' in shown.value).toBe(false);
+		// The record it was given still holds both images, in a value it does not share.
+		expect(event).toStrictEqual(before);
+		expect(event.value.media).toStrictEqual(STORED_IMAGE);
+		expect(shown.value).not.toBe(event.value);
 	});
 });
