@@ -101,6 +101,13 @@ import {
 } from '../src/lib/groups/server/acceptance';
 import { acceptanceGrant } from '../src/lib/groups/server/member-grants';
 import {
+	deleteMembersOnlyRsvp,
+	putMembersOnlyRsvp,
+	readOwnMembersOnlyRsvp,
+	type MembersOnlyRsvpStatus
+} from '../src/lib/groups/server/member-rsvp';
+import { groupSpaceUris } from '../src/lib/groups/server/space-uris';
+import {
 	didSpaceHosts,
 	groupAcceptanceReader,
 	spaceCredential,
@@ -152,10 +159,12 @@ async function groupById(env: Env, groupId: unknown): Promise<GroupRow> {
 // One admin login per isolate, as the group's stand-in does.
 let adminLogin: Promise<{ did: string; accessJwt: string }> | null = null;
 
-/** The stand-in for the admin's own session, for their acceptance. A sign-in
- *  would carry the group's grant in its scope; a password session needs none at
- *  the PDS, so the scope here is that grant, written out. What it cannot show is
- *  a real sign-in's consent; a walk through a deployed site covers that. */
+/** The stand-in for the admin's own session, for their acceptance and their
+ *  RSVP. A sign-in would carry the group's grant in its scope; a password
+ *  session needs none at the PDS, so the scope here is that grant, as the app
+ *  builds it. What it cannot show is a real sign-in's consent, or the PDS
+ *  holding an OAuth session to that grant; a walk through a deployed site
+ *  covers that. */
 async function adminSession(env: Env, did: string, group: GroupRow): Promise<MemberSession> {
 	adminLogin ??= (async () => {
 		const res = await fetch(
@@ -203,6 +212,70 @@ function noSpacesSession(did: string): MemberSession {
 			noSpacesCalls.push(pathname);
 			throw new Error(`the no-spaces member's session was asked for ${pathname}`);
 		}
+	};
+}
+
+/** The stand-in for a non-member's session: it holds the group's grant, so only
+ *  the roster gate can stop a request, and it records and refuses any request,
+ *  so none reaches their PDS. */
+function outsiderSession(did: string, group: GroupRow, calls: string[]): MemberSession {
+	return {
+		did,
+		scope: acceptanceGrant(group.group_did),
+		handle: async (pathname) => {
+			calls.push(pathname);
+			throw new Error(`the outsider's session was asked for ${pathname}`);
+		}
+	};
+}
+
+/** `member`, with every request it is asked for recorded in `calls`. */
+function recorded(member: MemberSession, calls: string[]): MemberSession {
+	return {
+		...member,
+		handle: (pathname, init) => {
+			calls.push(pathname);
+			return member.handle(pathname, init);
+		}
+	};
+}
+
+/** One of a member's records in one of the group's spaces, read the way the
+ *  roster reads an acceptance: the group's space credential, signed, at the
+ *  member's PDS, by DID. Made here without the app's reader so the driver sees
+ *  the host's own answer, which the reader folds into absent. */
+async function groupReadAt(
+	env: Env,
+	group: GroupRow,
+	space: string,
+	did: string,
+	collection: string,
+	rkey: string
+) {
+	const cred = await resolveGroupCredential(env, group.group_did);
+	if (!cred) throw new Error(`no credential for ${group.group_did}`);
+	const { handle } = await groupClient(cred, group.group_did);
+	const credential = await spaceCredential(
+		handle,
+		space,
+		await didSpaceHosts.spaceHost(group.group_did)
+	);
+	const host = await didSpaceHosts.repoHost(did);
+	const query = new URLSearchParams({ space, repo: did, collection, rkey });
+	const res = await fetch(new URL(`/xrpc/com.atproto.space.getRecord?${query}`, host), {
+		headers: await spaceSigHeaders(credential.signer, `Atproto-Space ${credential.token}`, did)
+	});
+	const body = (await res.json().catch(() => ({}))) as {
+		error?: string;
+		uri?: string;
+		value?: unknown;
+	};
+	return {
+		host,
+		status: res.status,
+		error: body.error ?? null,
+		uri: body.uri ?? null,
+		value: body.value ?? null
 	};
 }
 
@@ -506,34 +579,85 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	/** What the app sent through no-spaces members' sessions so far. */
 	noSpacesCalls: async () => [...noSpacesCalls],
 
-	/** The roster's read of one member's acceptance, made here without the app's
-	 *  reader so the driver sees the host's own answer, which the reader folds
-	 *  into absent: the group's space credential, signed, at the member's PDS. */
+	/** The roster's read of one member's acceptance in the members space
+	 *  (`groupReadAt`). */
 	spaceReadAt: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		const space = group.members_space_uri;
 		if (!space) throw new Error(`${group.group_did} has no members space`);
-		const cred = await resolveGroupCredential(env, group.group_did);
-		if (!cred) throw new Error(`no credential for ${group.group_did}`);
-		const { handle } = await groupClient(cred, group.group_did);
-		const credential = await spaceCredential(
-			handle,
+		const { host, status, error } = await groupReadAt(
+			env,
+			group,
 			space,
-			await didSpaceHosts.spaceHost(group.group_did)
+			String(args.did),
+			GROUP_ACCEPTANCE_COLLECTION,
+			GROUP_ACCEPTANCE_RKEY
 		);
+		return { host, status, error };
+	},
+
+	/** The group's own read of one member's RSVP in the calendar space, at the
+	 *  event's key (`groupReadAt`): what the attendee list will read. */
+	calendarReadAt: async (env, args) => {
+		const group = await groupById(env, args.groupId);
+		return groupReadAt(
+			env,
+			group,
+			groupSpaceUris(group.group_did).calendarSpaceUri,
+			String(args.did),
+			'community.lexicon.calendar.rsvp',
+			String(args.rkey)
+		);
+	},
+
+	/** A member's RSVP to a members-only event, run through the module the RSVP
+	 *  commands and the event page call: `action` 'put', 'delete' or 'read' (the
+	 *  page's read-back) for the caller `did`. The route modules cannot be bundled
+	 *  here (see `gate`), so this takes the caller's standing the way the gate
+	 *  does. The session is the admin's stand-in, or with `session: 'no-spaces'`
+	 *  the no-spaces member's, or with `session: 'outsider'` one that holds the
+	 *  grant and refuses any request. reauthorize() is a stand-in that answers
+	 *  `reauthorizeUrl` (null when absent) and is never followed. Returns the
+	 *  module's answer, every request sent through the caller's session, and how
+	 *  many times reauthorize() was called. */
+	membersOnlyRsvp: async (env, args) => {
+		const group = await groupById(env, args.groupId);
 		const did = String(args.did);
-		const host = await didSpaceHosts.repoHost(did);
-		const query = new URLSearchParams({
-			space,
-			repo: did,
-			collection: GROUP_ACCEPTANCE_COLLECTION,
-			rkey: GROUP_ACCEPTANCE_RKEY
-		});
-		const res = await fetch(new URL(`/xrpc/com.atproto.space.getRecord?${query}`, host), {
-			headers: await spaceSigHeaders(credential.signer, `Atproto-Space ${credential.token}`, did)
-		});
-		const body = (await res.json().catch(() => ({}))) as { error?: string };
-		return { host, status: res.status, error: body.error ?? null };
+		const reader = await groupSpaceReader(env, env.DB, group);
+		const membership = await getCallerMembership(env.DB, group, did, reader);
+		const calls: string[] = [];
+		const member =
+			args.session === 'no-spaces'
+				? recorded(noSpacesSession(did), calls)
+				: args.session === 'outsider'
+					? outsiderSession(did, group, calls)
+					: recorded(await adminSession(env, did, group), calls);
+		let reauthorized = 0;
+		const target = {
+			membership,
+			group,
+			member,
+			rkey: String(args.rkey),
+			asked: args.asked === true,
+			reauthorize: async () => {
+				reauthorized++;
+				return args.reauthorizeUrl == null ? null : String(args.reauthorizeUrl);
+			}
+		};
+		let result: unknown;
+		if (args.action === 'put') {
+			result = await putMembersOnlyRsvp({
+				...target,
+				status: args.status as MembersOnlyRsvpStatus
+			});
+		} else if (args.action === 'delete') {
+			result = await deleteMembersOnlyRsvp(target);
+		} else if (args.action === 'read') {
+			result = await readOwnMembersOnlyRsvp(membership, group, member, target.rkey);
+		} else {
+			throw new Error(`unknown RSVP action ${String(args.action)}`);
+		}
+		return { onRoster: membership.onRoster, result, calls, reauthorized };
 	},
 
 	/** The roster as the members page shows it: the records, each entry marked

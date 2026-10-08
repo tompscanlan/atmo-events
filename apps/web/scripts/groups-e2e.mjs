@@ -4,9 +4,9 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 50 numbered checks (1 to 24, plus 10b, 13b to 13s, 15b, 18b, 18c,
+ * It runs 52 numbered checks (1 to 24, plus 10b, 13b to 13u, 15b, 18b, 18c,
  * 18d, 18e, 20b and 20c), prints one PASS or FAIL line each, and a clean run
- * ends with `SUMMARY: 50 passed, 0 failed`. Setup steps print as notes and are
+ * ends with `SUMMARY: 52 passed, 0 failed`. Setup steps print as notes and are
  * not counted. In order: create and the seeded roles (1), join, approval and
  * promotion (2-3), events written as the group DID and the edit gate (4-6),
  * leaving (7-8), a cover image uploaded into the group's repo (9), the profile,
@@ -24,8 +24,12 @@
  * at all for a non-member or an anonymous visitor (13r), the same event as its
  * edit page reads it for a manager, whole and with no key naming the space,
  * saved back into the space with its image and no field added, and refused
- * before any read for a member who may not edit and a non-member (13s), the
- * member's own acceptance at a join request, at leave and at a
+ * before any read for a member who may not edit and a non-member (13s), a
+ * member's RSVP to that seed written from their own session into the calendar
+ * space at the event's key, read back by them and by the group, and cancelled
+ * (13t), no RSVP request from a non-member or from a member whose PDS serves no
+ * spaces, who is sent to re-authorize and told only after asking that their PDS
+ * can't do it (13u), the member's own acceptance at a join request, at leave and at a
  * sign-in after a direct add (18b-18d), a member whose PDS serves no spaces
  * (18e), the discovery declaration and
  * visibility at the host (19-20c), the events index (21-22), a rebuild of the
@@ -58,7 +62,8 @@
  *   E2E_ADMIN_PASSWORD their password, for their acceptance (checks 18b-18d)
  *   E2E_OUTSIDER_DID   a person who is never a member
  *   E2E_NOSPACES_DID   a person on a devnet PDS that serves no spaces (not E2E_PDS), for
- *                      check 18e; no password, because nothing is written to their repo
+ *                      checks 13u and 18e; no password, because nothing is written to
+ *                      their repo
  *   E2E_PLC_URL        required: devnet's PLC directory, the only place a DID is
  *                      resolved, for a network no relay crawls
  * The run is for devnet only, and no request leaves this machine. E2E_PDS and
@@ -76,13 +81,14 @@
  * app's linked branch. The password lives only in the Worker's bindings and is
  * never printed. A 401 from createSession means it is stale. The scope a real
  * link carries is not exercised here; a walk through a deployed site with a
- * linked group covers it. The admin's acceptance is written the same way, through
- * a stand-in for their own session that logs in with E2E_ADMIN_PASSWORD. The
+ * linked group covers it. The admin's acceptance and RSVP are written the same way,
+ * through a stand-in for their own session that logs in with E2E_ADMIN_PASSWORD. The
  * no-spaces member's stand-in never logs in: it answers the scope a stock PDS
  * grants and refuses any request, so check 18e can show the app sent none.
  *
  * Cleanup runs in the `finally`. It deletes the events, the members-only ones
- * from the calendar space, withdraws the declaration, deletes the admin's
+ * from the calendar space, the admin's RSVP to the seed should 13t stop before
+ * its cancel, withdraws the declaration, deletes the admin's
  * acceptance, and removes the rules, the authz config and the owner's
  * membership. Then it re-reads each one, a members-only event with the group's
  * own space read, and prints WARN for anything left. The
@@ -182,6 +188,14 @@ const SEED_URI = `${CALENDAR_SPACE_URI}/${GROUP_DID}/${EVENT_COLLECTION}/${SEED_
 /** A valid key that nothing writes into the calendar space, for a read that
  *  must come back absent. */
 const MADE_UP_RKEY = '3me2enothere';
+/** A member's RSVP, as the app writes it into the calendar space. */
+const RSVP_COLLECTION = 'community.lexicon.calendar.rsvp';
+/** What the app tells a member whose PDS can't RSVP to a members-only event,
+ *  written out. */
+const RSVP_NO_SPACES = "Your PDS can't RSVP to members-only events yet, so nothing was saved.";
+/** The URL a stand-in reauthorize() answers. Never fetched. */
+const REAUTHORIZE_STAND_IN = 'http://groups-e2e.invalid/oauth/authorize?request_uri=e2e';
+
 /** What the app tells a member of an unlinked group, written out. */
 const RELINK_NOTICE = "Members-only events can't be shown until an organizer relinks the group.";
 
@@ -494,6 +508,29 @@ async function deleteOwnAcceptance(token, space) {
 	return response.status;
 }
 
+/** Deletes the admin's RSVP to the members-only seed with their own session,
+ *  for cleanup, and reads it back the same way. */
+async function deleteOwnRsvp(token) {
+	await fetch(new URL('/xrpc/com.atproto.space.deleteRecord', PDS), {
+		method: 'POST',
+		headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+		body: JSON.stringify({
+			space: CALENDAR_SPACE_URI,
+			repo: BOB,
+			collection: RSVP_COLLECTION,
+			rkey: SEED_RKEY
+		})
+	});
+	const url = new URL('/xrpc/com.atproto.space.getRecord', PDS);
+	url.searchParams.set('space', CALENDAR_SPACE_URI);
+	url.searchParams.set('repo', BOB);
+	url.searchParams.set('collection', RSVP_COLLECTION);
+	url.searchParams.set('rkey', SEED_RKEY);
+	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+	const body = await response.json().catch(() => ({}));
+	return { status: response.status, ...body };
+}
+
 /** A space's read policy as the host reports it. */
 async function spaceReadPolicy(token, space) {
 	const url = new URL('/xrpc/com.atproto.simplespace.getSpace', PDS);
@@ -716,6 +753,8 @@ async function main() {
 	let hostPrivate = false;
 	/** Set once the admin's acceptance may exist, so the `finally` deletes it. */
 	let acceptanceWritten = false;
+	/** Set while the admin's RSVP to the seed may exist, so the `finally` deletes it. */
+	let rsvpWritten = false;
 	/** Set while the no-spaces member may be on the roster, so the `finally` removes them. */
 	let noSpacesJoined = false;
 	try {
@@ -1890,6 +1929,171 @@ async function main() {
 			});
 		}
 
+		// 13t. a member's RSVP to a members-only event ---------------------------
+		// What the event page's RSVP button and its read-back run, through the module
+		// the RSVP commands call: the admin, a roster member, RSVPs going to the seed
+		// from their own session. That session is the password stand-in, whose scope
+		// is the app's member grant, so the PDS's check of a real OAuth grant is not
+		// shown here. The RSVP lands in the admin's repo in the calendar space at the
+		// seed's key, naming the seed's space-form URI. The admin reads it back, and
+		// so does the group, with its space credential at the admin's PDS. Nothing is
+		// in the admin's public repo, and nothing the session sent names
+		// com.atproto.repo. A cancel deletes it, and both reads then find nothing.
+		const rsvpOp = (action, extra = {}) =>
+			must('membersOnlyRsvp', {
+				groupId: group.id,
+				did: BOB,
+				rkey: SEED_RKEY,
+				action,
+				asked: false,
+				reauthorizeUrl: REAUTHORIZE_STAND_IN,
+				...extra
+			});
+		const nsidsOf = (op) => op.calls.map((path) => path.split('?')[0].replace(/^\/xrpc\//, ''));
+		rsvpWritten = true;
+		const rsvpGoing = await rsvpOp('put', { status: 'going' });
+		const rsvpOwn = await rsvpOp('read');
+		const rsvpAsGroup = await must('calendarReadAt', {
+			groupId: group.id,
+			did: BOB,
+			rkey: SEED_RKEY
+		});
+		const rsvpInRepo = await getRecord(BOB, SEED_RKEY, RSVP_COLLECTION);
+		const rsvpCancel = await rsvpOp('delete');
+		if (rsvpCancel.result?.ok === true) rsvpWritten = false;
+		const ownAfterCancel = await rsvpOp('read');
+		const groupAfterCancel = await must('calendarReadAt', {
+			groupId: group.id,
+			did: BOB,
+			rkey: SEED_RKEY
+		});
+		const rsvpOps = [rsvpGoing, rsvpOwn, rsvpCancel, ownAfterCancel];
+		const repoCalls = rsvpOps
+			.flatMap(nsidsOf)
+			.filter((nsid) => nsid.startsWith('com.atproto.repo.'));
+		const rsvpUri = `${CALENDAR_SPACE_URI}/${BOB}/${RSVP_COLLECTION}/${SEED_RKEY}`;
+		record(
+			rsvpGoing.onRoster === true &&
+				rsvpGoing.result?.ok === true &&
+				rsvpGoing.result.uri === rsvpUri &&
+				JSON.stringify(nsidsOf(rsvpGoing)) === JSON.stringify(['com.atproto.space.putRecord']) &&
+				rsvpOwn.result?.status === 'going' &&
+				rsvpOwn.result?.rkey === SEED_RKEY &&
+				JSON.stringify(nsidsOf(rsvpOwn)) === JSON.stringify(['com.atproto.space.getRecord']) &&
+				rsvpAsGroup.status === 200 &&
+				rsvpAsGroup.uri === rsvpUri &&
+				rsvpAsGroup.value?.subject?.uri === SEED_URI &&
+				rsvpAsGroup.value?.status === `${RSVP_COLLECTION}#going` &&
+				notFound(rsvpInRepo) &&
+				rsvpCancel.result?.ok === true &&
+				JSON.stringify(nsidsOf(rsvpCancel)) ===
+					JSON.stringify(['com.atproto.space.deleteRecord']) &&
+				ownAfterCancel.result === null &&
+				notFound(groupAfterCancel) &&
+				repoCalls.length === 0 &&
+				rsvpOps.every((op) => op.reauthorized === 0),
+			"a member's RSVP to a members-only event is written into the calendar space at the event's key from their own session, reads back for them and for the group, and a cancel removes it, with no repo call",
+			`${BOB} on the roster ${rsvpGoing.onRoster}: put ${rsvpGoing.result?.ok ? `at ${rsvpGoing.result.uri}` : JSON.stringify(rsvpGoing.result)} ` +
+				`sending [${nsidsOf(rsvpGoing).join(', ')}]; their read ${JSON.stringify(rsvpOwn.result)} ` +
+				`sending [${nsidsOf(rsvpOwn).join(', ')}]; the group's read at ${rsvpAsGroup.host} ` +
+				`${rsvpAsGroup.status}${rsvpAsGroup.error ? ` ${rsvpAsGroup.error}` : ''}, ${rsvpAsGroup.value?.status} ` +
+				`naming ${rsvpAsGroup.value?.subject?.uri === SEED_URI ? "the seed's space-form URI" : rsvpAsGroup.value?.subject?.uri}; ` +
+				`public repo getRecord ${rsvpInRepo.error ?? rsvpInRepo.status}; cancel ` +
+				`${rsvpCancel.result?.ok ? 'ok' : JSON.stringify(rsvpCancel.result)} sending [${nsidsOf(rsvpCancel).join(', ')}]; ` +
+				`after it their read ${JSON.stringify(ownAfterCancel.result)}, the group's ` +
+				`${groupAfterCancel.error ?? groupAfterCancel.status}; com.atproto.repo calls ${repoCalls.length}`
+		);
+
+		// 13u. who sends no RSVP request -----------------------------------------
+		// The roster gate comes before the grant: a non-member, whose stand-in
+		// session holds the grant and refuses any request, is turned away with
+		// nothing sent and no re-authorization. A member whose PDS serves no spaces
+		// holds no grant. Their first RSVP is sent to re-authorize (a stand-in URL,
+		// never followed), and only once the page says a re-authorization asked for
+		// the grant are they told their PDS can't do it. Neither sends a request
+		// through their session. They are admitted for this check and leave right
+		// after, off the rows, the records and both member lists, so 18e's join
+		// still comes back pending.
+		const outsiderOp = (action, extra = {}) =>
+			must('membersOnlyRsvp', {
+				groupId: group.id,
+				did: MALLORY,
+				rkey: SEED_RKEY,
+				action,
+				asked: false,
+				session: 'outsider',
+				reauthorizeUrl: REAUTHORIZE_STAND_IN,
+				...extra
+			});
+		const outsiderPut = await outsiderOp('put', { status: 'going' });
+		const outsiderCancel = await outsiderOp('delete');
+		const outsiderRead = await outsiderOp('read');
+		const noSpacesBefore = await must('noSpacesCalls');
+		noSpacesJoined = true;
+		await must('admitMember', { groupId: group.id, callerDid: ALICE, did: CAROL, role: 'member' });
+		const carolOp = (asked) =>
+			must('membersOnlyRsvp', {
+				groupId: group.id,
+				did: CAROL,
+				rkey: SEED_RKEY,
+				action: 'put',
+				status: 'going',
+				asked,
+				session: 'no-spaces',
+				reauthorizeUrl: REAUTHORIZE_STAND_IN
+			});
+		const carolFirst = await carolOp(false);
+		const carolAfterAsking = await carolOp(true);
+		const noSpacesAfter = await must('noSpacesCalls');
+		await must('leaveGroup', {
+			groupId: group.id,
+			callerDid: CAROL,
+			asMember: true,
+			session: 'no-spaces'
+		});
+		const carolRecords = await must('recordedRoster', { groupId: group.id });
+		const carolRows = await must('listMembers', { groupId: group.id });
+		const carolLists = await Promise.all(
+			[membersSpaceUri, aboutSpaceUri].map((space) => spaceMemberList(groupToken, space))
+		);
+		const carolLeft =
+			!carolRecords.memberships.some((m) => m.subject === CAROL) &&
+			!carolRows.some((m) => m.did === CAROL) &&
+			carolLists.every((list) => list.status === 200 && !list.members.some((m) => m.did === CAROL));
+		if (carolLeft) noSpacesJoined = false;
+		const outsiderOps = [outsiderPut, outsiderCancel, outsiderRead];
+		record(
+			outsiderOps.every(
+				(op) => op.onRoster === false && op.calls.length === 0 && op.reauthorized === 0
+			) &&
+				outsiderPut.result?.ok === false &&
+				outsiderPut.result.reason === 'not-member' &&
+				outsiderCancel.result?.ok === false &&
+				outsiderCancel.result.reason === 'not-member' &&
+				outsiderRead.result === null &&
+				carolFirst.onRoster === true &&
+				carolFirst.result?.reason === 'reauthorize' &&
+				carolFirst.result.url === REAUTHORIZE_STAND_IN &&
+				carolFirst.reauthorized === 1 &&
+				carolFirst.calls.length === 0 &&
+				carolAfterAsking.onRoster === true &&
+				carolAfterAsking.result?.reason === 'no-spaces' &&
+				carolAfterAsking.result.message === RSVP_NO_SPACES &&
+				carolAfterAsking.reauthorized === 0 &&
+				carolAfterAsking.calls.length === 0 &&
+				noSpacesAfter.length === noSpacesBefore.length &&
+				carolLeft,
+			'a caller off the roster and a member whose PDS serves no spaces send no RSVP request, and only the member asked before gets the no-spaces message',
+			`${MALLORY}: put ${outsiderPut.result?.reason}, cancel ${outsiderCancel.result?.reason}, read ` +
+				`${JSON.stringify(outsiderRead.result)}, ${outsiderOps.reduce((n, op) => n + op.calls.length, 0)} request(s), ` +
+				`${outsiderOps.reduce((n, op) => n + op.reauthorized, 0)} re-authorization(s); ${CAROL} on the roster ` +
+				`${carolFirst.onRoster}: first ${carolFirst.result?.reason} (${carolFirst.reauthorized} re-authorization, ` +
+				`${carolFirst.calls.length} request(s)), after asking ${carolAfterAsking.result?.reason} ` +
+				`${JSON.stringify(carolAfterAsking.result?.message)} (${carolAfterAsking.reauthorized} re-authorization, ` +
+				`${carolAfterAsking.calls.length} request(s)); sent from their session ${noSpacesAfter.length - noSpacesBefore.length}; ` +
+				`after leaving: ${carolLeft ? 'off the records, the rows and both member lists' : 'STILL LISTED'}`
+		);
+
 		// 14. the space's own member list is write-only --------------------------
 		// An admitted member goes on it so the PDS tracks the acceptance they write
 		// (spec 003 FR-206). A DID that could read this space would see the whole
@@ -2486,6 +2690,20 @@ async function main() {
 				console.log(
 					`WARN  could not confirm members-only ${uri} is gone: ${refusal ?? after.error ?? after.status}`
 				);
+			}
+		}
+		// The admin's RSVP to the seed, with their own session: should 13t have
+		// stopped before its cancel, it would be in the calendar space.
+		if (rsvpWritten) {
+			try {
+				const after = await deleteOwnRsvp(bobToken);
+				if (notFound(after)) note(`deleted ${BOB}'s RSVP to the seed (${after.error})`);
+				else
+					console.log(
+						`WARN  ${BOB}'s RSVP to the seed may be left: ${after.error ?? after.status}`
+					);
+			} catch (error) {
+				console.log(`WARN  could not delete ${BOB}'s RSVP to the seed: ${error.message}`);
 			}
 		}
 		// A leftover declaration would keep announcing a test group to the network.
