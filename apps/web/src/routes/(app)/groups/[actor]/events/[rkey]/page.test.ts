@@ -9,7 +9,8 @@ import { render } from 'svelte/server';
 // whether it was opened; and the two media players are stubbed, since they
 // import a stylesheet the test runner cannot load. The space reader is a fake
 // host, as in the loader's tests, and the two RSVP commands are stand-ins that
-// record what the adapter sent them.
+// record what the adapter sent them. SvelteKit's replaceState is a stand-in
+// that records each address the page asked for.
 vi.mock('$lib/groups/server/about-read', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/groups/server/about-read')>()),
 	groupSpaceReader: vi.fn()
@@ -27,8 +28,12 @@ vi.mock('$lib/atproto/auth.svelte', () => signedIn);
 const login = vi.hoisted(() => ({ atProtoLoginModalState: { show: vi.fn() } }));
 vi.mock('$lib/components/LoginModal.svelte', () => login);
 const PAGE_URL = 'https://atmo.test/groups/did:plc:jcwgw6fcnb5vyoid7nz7sl26/events/3lmeeting';
-const appState = vi.hoisted(() => ({ page: { url: new URL('https://atmo.test/') } }));
+const appState = vi.hoisted(() => ({
+	page: { url: new URL('https://atmo.test/'), state: {} as Record<string, unknown> }
+}));
 vi.mock('$app/state', () => appState);
+const navigation = vi.hoisted(() => ({ replaceState: vi.fn() }));
+vi.mock('$app/navigation', () => navigation);
 const commands = vi.hoisted(() => ({
 	rsvpToMembersOnlyEvent: vi.fn(),
 	cancelMembersOnlyRsvp: vi.fn()
@@ -83,6 +88,11 @@ const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
 const EVENT = 'community.lexicon.calendar.event';
 const RSVP = 'community.lexicon.calendar.rsvp';
 const MEETING_URI = `${CALENDAR}/${GROUP_DID}/${EVENT}/3lmeeting`;
+/** The meeting's cid as the group's host holds it. */
+const MEETING_CID = 'bafymeeting';
+/** What the server hands the page to carry through consent and back. The page
+ *  never reads it, only carries it. */
+const MARKER = `${MEMBER}~1791000000000`;
 
 /** An RSVP record as EventRsvp builds it, naming `subject` (by default the
  *  meeting's space-form URI). */
@@ -91,7 +101,7 @@ function rsvpRecord(status: 'going' | 'interested', subject = MEETING_URI) {
 		$type: RSVP,
 		createdWith: 'https://atmo.rsvp',
 		status: `${RSVP}#${status}`,
-		subject: { uri: subject, cid: 'bafymeeting' },
+		subject: { uri: subject, cid: MEETING_CID },
 		createdAt: '2026-10-08T12:00:00.000Z'
 	};
 }
@@ -138,6 +148,14 @@ beforeEach(async () => {
 	share.opened.length = 0;
 	signedIn.user.did = MEMBER;
 	appState.page.url = new URL(PAGE_URL);
+	appState.page.state = {};
+	// The page changes its address through SvelteKit only, never directly.
+	vi.stubGlobal('history', {
+		state: null,
+		replaceState: () => {
+			throw new Error('history.replaceState was called directly');
+		}
+	});
 });
 
 afterEach(() => {
@@ -306,10 +324,11 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 				record: rsvpRecord('going')
 			})
 		).toEqual({ ok: true });
-		// The command names the event and the status, and nothing else: the
-		// server picks the space, the collection, the key and the subject.
+		// The command names the event, the status and the version of the event
+		// the page showed, and nothing else: the server picks the space, the
+		// collection, the key and the subject.
 		expect(commands.rsvpToMembersOnlyEvent.mock.calls).toEqual([
-			[{ groupDid: GROUP_DID, rkey: '3lmeeting', status: 'going', asked: false }]
+			[{ groupDid: GROUP_DID, rkey: '3lmeeting', status: 'going', cid: MEETING_CID, asked: null }]
 		]);
 
 		commands.cancelMembersOnlyRsvp.mockResolvedValue({ ok: true });
@@ -317,11 +336,14 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 			adapter.deleteSpaceRecord!({ spaceUri: CALENDAR, collection: RSVP, rkey: '3lfreshtid' })
 		).resolves.toBeUndefined();
 		expect(commands.cancelMembersOnlyRsvp.mock.calls).toEqual([
-			[{ groupDid: GROUP_DID, rkey: '3lmeeting', asked: false }]
+			[{ groupDid: GROUP_DID, rkey: '3lmeeting', asked: null }]
 		]);
 
-		// Back from a re-authorization that asked for the grant, the page says so.
-		appState.page.url = new URL(`${PAGE_URL}?rsvp-grant=asked`);
+		// Back from a re-authorization that asked for the grant, the page hands
+		// the server the marker it carried.
+		const marked = new URL(PAGE_URL);
+		marked.searchParams.set('rsvp-grant', MARKER);
+		appState.page.url = marked;
 		const { rsvp: again } = renderPage(await openAs(MEMBER), 1);
 		await again.adapter.putSpaceRecord!({
 			spaceUri: CALENDAR,
@@ -330,7 +352,13 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 			record: rsvpRecord('interested')
 		});
 		expect(commands.rsvpToMembersOnlyEvent.mock.calls.at(-1)).toEqual([
-			{ groupDid: GROUP_DID, rkey: '3lmeeting', status: 'interested', asked: true }
+			{
+				groupDid: GROUP_DID,
+				rkey: '3lmeeting',
+				status: 'interested',
+				cid: MEETING_CID,
+				asked: MARKER
+			}
 		]);
 
 		// No other way to reach a space, or to tell the index about a record.
@@ -359,7 +387,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 			groupDid: GROUP_DID,
 			rkey: '3lmeeting',
 			calendarSpaceUri: CALENDAR,
-			asked: false,
+			asked: null,
 			onNotice: () => {}
 		});
 		expect(Object.keys(built).sort()).toEqual(Object.keys(adapter).sort());
@@ -466,7 +494,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 			groupDid: GROUP_DID,
 			rkey: '3lmeeting',
 			calendarSpaceUri: CALENDAR,
-			asked: false,
+			asked: null,
 			onNotice: (message) => notices.push(message)
 		});
 		const put = () =>
@@ -484,7 +512,8 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 		const failures = [
 			{ ok: false, reason: 'no-spaces', message: 'no spaces here' },
 			{ ok: false, reason: 'retry-later', message: 'try again shortly' },
-			{ ok: false, reason: 'refused', message: 'the PDS said no' }
+			{ ok: false, reason: 'refused', message: 'the PDS said no' },
+			{ ok: false, reason: 'changed', message: 'the event changed, reload' }
 		];
 		for (const failure of failures) {
 			commands.rsvpToMembersOnlyEvent.mockResolvedValueOnce(failure);
@@ -516,32 +545,94 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 		expect(await put()).toEqual({ ok: true });
 		expect(notices).toEqual([null]);
 
-		// Sent to re-authorize: the page URL is marked as having asked, then the
-		// browser goes to consent, once. Nothing is resubmitted.
-		const replaced: string[] = [];
-		vi.stubGlobal('window', { location: { href: PAGE_URL } });
-		vi.stubGlobal('history', {
-			state: { kept: true },
-			replaceState: (_state: unknown, _unused: string, url: string | URL) =>
-				replaced.push(String(url))
-		});
+		// Sent to re-authorize: the server's marker goes into the page's address,
+		// through SvelteKit, with the page's state kept, then the browser goes to
+		// consent, once. Nothing is resubmitted.
+		appState.page.state = { kept: true };
 		const consent = 'https://pds.test/oauth/authorize?request_uri=urn:x';
 		commands.rsvpToMembersOnlyEvent.mockResolvedValueOnce({
 			ok: false,
 			reason: 'reauthorize',
-			url: consent
+			url: consent,
+			marker: MARKER
 		});
 		expect(await put()).toEqual({ ok: false });
-		expect(replaced).toEqual([`${PAGE_URL}?rsvp-grant=asked`]);
+		expect(navigation.replaceState).toHaveBeenCalledTimes(1);
+		const [address, state] = navigation.replaceState.mock.calls[0] as [URL, unknown];
+		expect(`${address.origin}${address.pathname}`).toBe(PAGE_URL);
+		expect([...address.searchParams]).toEqual([['rsvp-grant', MARKER]]);
+		expect(state).toEqual({ kept: true });
 		expect(signedIn.reauthorize.mock.calls).toEqual([[consent]]);
 		commands.cancelMembersOnlyRsvp.mockResolvedValueOnce({
 			ok: false,
 			reason: 'reauthorize',
-			url: consent
+			url: consent,
+			marker: MARKER
 		});
 		await expect(cancel()).rejects.toThrow();
 		expect(signedIn.reauthorize).toHaveBeenCalledTimes(2);
 		expect(commands.rsvpToMembersOnlyEvent).toHaveBeenCalledTimes(failures.length + 4);
+	});
+
+	// The marker a re-authorization carried back stays in the address only until
+	// the RSVP it was for is saved, so a link copied afterwards carries none, and
+	// the next press from the same page sends none. (Spec: FR-114.)
+	it('the asked marker leaves the address after a successful RSVP or cancel', async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		const data = await openAs(MEMBER);
+		const marked = new URL(`${PAGE_URL}?from=calendar`);
+		marked.searchParams.set('rsvp-grant', MARKER);
+		const unmarked = `${PAGE_URL}?from=calendar`;
+		const addresses = () => navigation.replaceState.mock.calls.map(([url]) => String(url));
+		const going = {
+			spaceUri: CALENDAR,
+			collection: RSVP,
+			rkey: '3lmeeting',
+			record: rsvpRecord('going')
+		};
+
+		// An RSVP that saved: the marker went to the server, then left the address.
+		appState.page.url = new URL(marked);
+		const { adapter } = renderPage(data).rsvp;
+		commands.rsvpToMembersOnlyEvent.mockResolvedValue({
+			ok: true,
+			uri: `${CALENDAR}/${MEMBER}/${RSVP}/3lmeeting`
+		});
+		expect(await adapter.putSpaceRecord!(going)).toEqual({ ok: true });
+		expect(commands.rsvpToMembersOnlyEvent.mock.calls[0][0]).toMatchObject({ asked: MARKER });
+		expect(addresses()).toEqual([unmarked]);
+		// The next press from this page sends no marker, and there is none to remove.
+		expect(await adapter.putSpaceRecord!({ ...going, record: rsvpRecord('interested') })).toEqual({
+			ok: true
+		});
+		expect(commands.rsvpToMembersOnlyEvent.mock.calls[1][0]).toMatchObject({ asked: null });
+		expect(addresses()).toEqual([unmarked]);
+
+		// A cancel that went through, from a page reached back the same way.
+		navigation.replaceState.mockClear();
+		appState.page.url = new URL(marked);
+		const { adapter: cancelling } = renderPage(data, 1).rsvp;
+		commands.cancelMembersOnlyRsvp.mockResolvedValue({ ok: true });
+		await expect(
+			cancelling.deleteSpaceRecord!({ spaceUri: CALENDAR, collection: RSVP, rkey: '3lmeeting' })
+		).resolves.toBeUndefined();
+		expect(commands.cancelMembersOnlyRsvp.mock.calls[0][0]).toMatchObject({ asked: MARKER });
+		expect(addresses()).toEqual([unmarked]);
+
+		// A press that did not save keeps it, so the next press still sends it.
+		navigation.replaceState.mockClear();
+		appState.page.url = new URL(marked);
+		const { adapter: refused } = renderPage(data, 2).rsvp;
+		commands.rsvpToMembersOnlyEvent.mockResolvedValueOnce({
+			ok: false,
+			reason: 'no-spaces',
+			message: 'no spaces here'
+		});
+		expect(await refused.putSpaceRecord!(going)).toEqual({ ok: false });
+		expect(navigation.replaceState).not.toHaveBeenCalled();
+		await refused.putSpaceRecord!(going);
+		expect(commands.rsvpToMembersOnlyEvent.mock.calls.at(-1)![0]).toMatchObject({ asked: MARKER });
+		expect(addresses()).toEqual([unmarked]);
 	});
 
 	// A members-only event offers no share prompt after an RSVP of going, since
@@ -555,7 +646,8 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 		// The server renders on the first read of the output.
 		expect(render(Page, { props: { data } as never }).body).toContain('Committee call');
 		expect(rsvp.renders).toHaveLength(1);
-		expect(share.opened).toContain(false);
+		// The prompt rendered, once, and stayed shut.
+		expect(share.opened).toHaveLength(1);
 		expect(share.opened).not.toContain(true);
 
 		// The same view for a public event, as the person-style page hands it: an
@@ -579,7 +671,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 					groupDid: GROUP_DID,
 					rkey: '3lpublic',
 					calendarSpaceUri: CALENDAR,
-					asked: false,
+					asked: null,
 					onNotice: () => {}
 				}),
 				viewer,

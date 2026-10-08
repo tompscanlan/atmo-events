@@ -2,7 +2,7 @@
 	import { EventView } from '@atmo-dev/events-ui';
 	import { page } from '$app/state';
 	import { user } from '$lib/atproto/auth.svelte';
-	import { createMembersOnlyEventAdapter, rsvpGrantAsked } from '$lib/groups/event-page-adapter';
+	import { createMembersOnlyEventAdapter, rsvpGrantMarker } from '$lib/groups/event-page-adapter';
 
 	let { data } = $props();
 
@@ -23,7 +23,7 @@
 			groupDid: data.actorDid,
 			rkey: data.rkey,
 			calendarSpaceUri: data.spaceUri ?? null,
-			asked: rsvpGrantAsked(page.url),
+			asked: rsvpGrantMarker(page.url),
 			onNotice: (message) => (notice = message)
 		})
 	);

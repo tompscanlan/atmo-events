@@ -420,20 +420,35 @@ describe('placement on the event commands', () => {
 });
 
 // The two members-only RSVP commands, run through their real handlers: the
-// route gate, the standing read and the grant check are the app's own. The
-// group's host is the fake one; the member's PDS is a session that records what
-// it was asked. (Spec: FR-113, FR-114, FR-120.)
+// route gate, the standing read, the grant check and the event read as the
+// group are the app's own. The group's host is the fake one; the member's PDS
+// is a session that records what it was asked. (Spec: FR-113, FR-114, FR-120.)
 describe('the members-only RSVP commands', () => {
 	const LINKED = 'did:plc:linkedgroupaaaaaaaaaaaaa';
 	const MEMBER = 'did:plc:rsvpmemberaaaaaaaaaaaaaa';
+	const OTHER = 'did:plc:rsvpotheraaaaaaaaaaaaaaa';
 	/** Written out, not taken from the app. */
 	const CALENDAR = `at://${LINKED}/space/net.openmeet.space.calendar/self`;
 	const RSVP = 'community.lexicon.calendar.rsvp';
-	const MEETING_URI = `${CALENDAR}/${LINKED}/community.lexicon.calendar.event/3lmeeting`;
+	const EVENT = 'community.lexicon.calendar.event';
+	const MEETING_URI = `${CALENDAR}/${LINKED}/${EVENT}/3lmeeting`;
+	/** The cid the fake host gives every record it holds. */
+	const MEETING_CID = 'bafycreate';
 	/** What a sign-in granted before RSVPs joined the grant, written out. */
 	const ACCEPTANCE_ONLY = `atproto space:*?authority=${LINKED}&collection=group.opensocial.acceptance&action=create&action=update&action=delete`;
+	/** When the member's token expires, before a re-authorization and after it. */
+	const SESSION = Date.parse('2026-10-08T14:00:00.000Z');
+	const NEXT_SESSION = Date.parse('2026-10-08T15:00:00.000Z');
+	const CONSENT = 'https://pds.stub.test/oauth/authorize?request_uri=urn:x';
 
-	type RsvpResult = { ok: boolean; reason?: string; message?: string; url?: string; uri?: string };
+	type RsvpResult = {
+		ok: boolean;
+		reason?: string;
+		message?: string;
+		url?: string;
+		uri?: string;
+		marker?: string;
+	};
 	const rsvp = rsvpToMembersOnlyEvent as unknown as (
 		data: Record<string, unknown>
 	) => Promise<RsvpResult>;
@@ -444,23 +459,50 @@ describe('the members-only RSVP commands', () => {
 		(command as { schema: v.GenericSchema<unknown, Record<string, unknown>> }).schema;
 
 	let asked: { pathname: string; body: Record<string, unknown> | null }[];
+	/** Every token read the commands made, by its refresh argument. */
+	let tokenReads: unknown[];
 	let uris: Awaited<ReturnType<typeof provisionGroupSpaces>>;
 
-	function signInAs(scope: string) {
+	/** Signs `did` in with a session granted `scope`, whose token expires at
+	 *  `expiresAt` (none when absent). */
+	function signInAs(
+		scope: string,
+		{ did = MEMBER, expiresAt }: { did?: string; expiresAt?: number } = {}
+	) {
 		const session = {
-			did: MEMBER,
-			getTokenInfo: async () => ({ scope }),
+			did,
+			getTokenInfo: async (refresh?: unknown) => {
+				tokenReads.push(refresh);
+				return { scope, ...(expiresAt === undefined ? {} : { expiresAt: new Date(expiresAt) }) };
+			},
 			handle: async (pathname: string, init: RequestInit) => {
 				const body = init.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
 				asked.push({ pathname, body });
-				return Response.json({ uri: `${CALENDAR}/${MEMBER}/${RSVP}/3lmeeting`, cid: 'bafy' });
+				return Response.json({ uri: `${CALENDAR}/${did}/${RSVP}/3lmeeting`, cid: 'bafy' });
 			}
 		};
-		request.locals = { did: MEMBER, session } as typeof request.locals;
+		request.locals = { did, session } as typeof request.locals;
+	}
+
+	/** Writes the meeting into the calendar space, as the group's host holds it. */
+	async function seedMeeting() {
+		const res = await fetch('https://linked.group.stub.test/xrpc/com.atproto.space.putRecord', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				space: CALENDAR,
+				repo: LINKED,
+				collection: EVENT,
+				rkey: '3lmeeting',
+				record: { $type: EVENT, name: 'Committee call', startsAt: '2030-11-02T18:00:00.000Z' }
+			})
+		});
+		expect(res.ok).toBe(true);
 	}
 
 	beforeEach(async () => {
 		asked = [];
+		tokenReads = [];
 		stubPds({ did: LINKED, handle: 'linked.group.stub.test' });
 		const row = await createGroup(harness.db, {
 			groupDid: LINKED,
@@ -470,6 +512,8 @@ describe('the members-only RSVP commands', () => {
 		uris = await provisionGroupSpaces(pdsProvisioner(linkedCredential(LINKED), LINKED), 'public');
 		await recordGroupSpaces(harness.db, row.id, uris);
 		await addMember(harness.db, row.id, MEMBER, 'member');
+		await addMember(harness.db, row.id, OTHER, 'member');
+		await seedMeeting();
 		// A deployment that serves client metadata, so a re-authorization is asked for.
 		request.platform.env = {
 			DB: harness.db,
@@ -480,7 +524,7 @@ describe('the members-only RSVP commands', () => {
 
 	it("a members-only RSVP names the event's space-form URI, whatever the browser sent", async () => {
 		signInAs(`atproto ${acceptanceGrant(LINKED)}`);
-		// What a page could add beside the four inputs: none of it is read.
+		// What a page could add beside the five inputs: none of it is read.
 		const forged = {
 			space: uris.membersSpaceUri,
 			spaceUri: uris.aboutSpaceUri,
@@ -490,13 +534,19 @@ describe('the members-only RSVP commands', () => {
 			record: { $type: RSVP, subject: { uri: 'at://did:plc:elsewhere/x/y' } },
 			uri: 'at://did:plc:elsewhere/x/y'
 		};
-		const sent = { groupDid: LINKED, rkey: '3lmeeting', status: 'going', asked: false };
+		const sent = {
+			groupDid: LINKED,
+			rkey: '3lmeeting',
+			status: 'going',
+			cid: MEETING_CID,
+			asked: null
+		};
 
 		expect(await rsvp({ ...sent, ...forged })).toEqual({
 			ok: true,
 			uri: `${CALENDAR}/${MEMBER}/${RSVP}/3lmeeting`
 		});
-		expect(await cancel({ groupDid: LINKED, rkey: '3lmeeting', asked: false, ...forged })).toEqual({
+		expect(await cancel({ groupDid: LINKED, rkey: '3lmeeting', asked: null, ...forged })).toEqual({
 			ok: true
 		});
 
@@ -511,7 +561,7 @@ describe('the members-only RSVP commands', () => {
 					record: {
 						$type: RSVP,
 						status: `${RSVP}#going`,
-						subject: { uri: MEETING_URI },
+						subject: { uri: MEETING_URI, cid: MEETING_CID },
 						createdAt: expect.any(String)
 					}
 				}
@@ -525,13 +575,13 @@ describe('the members-only RSVP commands', () => {
 		// record or subject reaches the handler from a real request either.
 		expect(
 			Object.keys(v.parse(schemaOf(rsvpToMembersOnlyEvent), { ...sent, ...forged })).sort()
-		).toEqual(['asked', 'groupDid', 'rkey', 'status']);
+		).toEqual(['asked', 'cid', 'groupDid', 'rkey', 'status']);
 		expect(
 			Object.keys(
 				v.parse(schemaOf(cancelMembersOnlyRsvp), {
 					groupDid: LINKED,
 					rkey: '3lmeeting',
-					asked: false,
+					asked: null,
 					...forged
 				})
 			).sort()
@@ -556,9 +606,10 @@ describe('the members-only RSVP commands', () => {
 				`Scope "${acceptanceGrant(LINKED)}" is not declared in the client metadata`
 			);
 		};
+		const press = { groupDid: LINKED, rkey: '3lmeeting', asked: null };
 
-		const put = await rsvp({ groupDid: LINKED, rkey: '3lmeeting', status: 'going', asked: false });
-		const del = await cancel({ groupDid: LINKED, rkey: '3lmeeting', asked: false });
+		const put = await rsvp({ ...press, status: 'going', cid: MEETING_CID });
+		const del = await cancel(press);
 
 		for (const result of [put, del]) {
 			expect(result).toEqual({ ok: false, reason: 'retry-later', message: RSVP_RETRY_LATER });
@@ -572,16 +623,134 @@ describe('the members-only RSVP commands', () => {
 		expect(asked).toEqual([]);
 
 		// The same press with a PDS that accepts the grant is sent to consent.
-		signIn.authorize = async () => ({
-			url: new URL('https://pds.stub.test/oauth/authorize?request_uri=urn:x')
-		});
-		expect(
-			await rsvp({ groupDid: LINKED, rkey: '3lmeeting', status: 'going', asked: false })
-		).toEqual({
+		signIn.authorize = async () => ({ url: new URL(CONSENT) });
+		expect(await rsvp({ ...press, status: 'going', cid: MEETING_CID })).toEqual({
 			ok: false,
 			reason: 'reauthorize',
-			url: 'https://pds.stub.test/oauth/authorize?request_uri=urn:x'
+			url: CONSENT,
+			marker: expect.any(String)
 		});
+		expect(asked).toEqual([]);
+	});
+
+	// The page carries a marker through consent and back, so the server can tell
+	// a member who went through a re-authorization that asked for the grant from
+	// one who has not yet. It counts only for the member it was made for, and
+	// only once a new session has been issued since, so a link someone shared,
+	// or Back from the consent screen, is sent through re-authorization again
+	// rather than told their PDS can't do this. (Spec: FR-114.)
+	it('an asked marker naming another member, or the session it was issued under, re-authorizes instead of the no-spaces message', async () => {
+		let consents = 0;
+		signIn.authorize = async () => {
+			consents++;
+			return { url: new URL(CONSENT) };
+		};
+		const press = { groupDid: LINKED, rkey: '3lmeeting' };
+		const going = { ...press, status: 'going', cid: MEETING_CID };
+
+		// The first press, from a session that predates the grant.
+		signInAs(ACCEPTANCE_ONLY, { expiresAt: SESSION });
+		const first = await rsvp({ ...going, asked: null });
+		expect(first).toEqual({
+			ok: false,
+			reason: 'reauthorize',
+			url: CONSENT,
+			marker: expect.any(String)
+		});
+		const marker = first.marker!;
+		expect(marker.length).toBeGreaterThan(0);
+
+		// Back from the consent screen without signing in: the same session, so
+		// both buttons re-authorize again, with the same marker.
+		for (const result of [
+			await rsvp({ ...going, asked: marker }),
+			await cancel({ ...press, asked: marker })
+		]) {
+			expect(result).toEqual({ ok: false, reason: 'reauthorize', url: CONSENT, marker });
+		}
+
+		// Another member opens the link the first one shared, from a session of
+		// their own that also predates the grant.
+		signInAs(ACCEPTANCE_ONLY, { did: OTHER, expiresAt: NEXT_SESSION });
+		const shared = await rsvp({ ...going, asked: marker });
+		expect(shared).toEqual({
+			ok: false,
+			reason: 'reauthorize',
+			url: CONSENT,
+			marker: expect.any(String)
+		});
+		expect(shared.marker).not.toBe(marker);
+
+		// A marker that is not one the server made counts as none.
+		signInAs(ACCEPTANCE_ONLY, { expiresAt: NEXT_SESSION });
+		for (const malformed of ['asked', `${marker}0x`, marker.toUpperCase(), '']) {
+			expect(await rsvp({ ...going, asked: malformed })).toEqual({
+				ok: false,
+				reason: 'reauthorize',
+				url: CONSENT,
+				marker: expect.any(String)
+			});
+		}
+
+		// Only the member it was made for, under a session issued since, is told
+		// their PDS can't do it, and is not sent through consent again.
+		const before = consents;
+		expect(await rsvp({ ...going, asked: marker })).toEqual({
+			ok: false,
+			reason: 'no-spaces',
+			message: RSVP_NO_SPACES
+		});
+		expect(await cancel({ ...press, asked: marker })).toEqual({
+			ok: false,
+			reason: 'no-spaces',
+			message: RSVP_NO_SPACES
+		});
+		expect(consents).toBe(before);
+		// One consent per press that re-authorized, nothing sent from a member's
+		// session, and the session's stamp read without a token refresh.
+		expect(consents).toBe(1 + 2 + 1 + 4);
+		expect(asked).toEqual([]);
+		expect(tokenReads.length).toBeGreaterThan(0);
+		expect(tokenReads.every((refresh) => refresh === false)).toBe(true);
+	});
+
+	it('an asked marker with no member session says to try again, never the no-spaces message', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		let consents = 0;
+		signIn.authorize = async () => {
+			consents++;
+			return { url: new URL(CONSENT) };
+		};
+		const press = { groupDid: LINKED, rkey: '3lmeeting' };
+		const going = { ...press, status: 'going', cid: MEETING_CID };
+		signInAs(ACCEPTANCE_ONLY, { expiresAt: SESSION });
+		const { marker } = await rsvp({ ...going, asked: null });
+		expect(marker).toEqual(expect.any(String));
+
+		// Back from consent, but the session can't be read just now, or there is
+		// no session object at all: what the session holds is unknown, so the
+		// member is told to try again, not that their PDS can't do it.
+		const unreadable = {
+			did: MEMBER,
+			getTokenInfo: async () => {
+				throw new Error('the session store did not answer');
+			},
+			handle: async () => {
+				throw new Error('nothing may be sent without a session');
+			}
+		};
+		for (const session of [unreadable, null]) {
+			request.locals = { did: MEMBER, session } as unknown as typeof request.locals;
+			for (const result of [
+				await rsvp({ ...going, asked: marker }),
+				await cancel({ ...press, asked: marker })
+			]) {
+				expect(result).toEqual({ ok: false, reason: 'retry-later', message: RSVP_RETRY_LATER });
+				expect(result.message).not.toBe(RSVP_NO_SPACES);
+			}
+		}
+		// Only the first press went through consent, and nothing was sent.
+		expect(consents).toBe(1);
 		expect(asked).toEqual([]);
 	});
 });

@@ -49,6 +49,7 @@ import {
 	withdrawJoinRequest
 } from './server/roster';
 import { GroupSpaceError } from './server/spaces';
+import { groupSpaceReader } from './server/about-read';
 import { reauthorizeForGroup } from './server/member-grants';
 import { memberSession, type MemberSession } from './server/acceptance';
 // ./server/member-rsvp.ts is shared with the e2e harness, as ./server/roster.ts is.
@@ -499,41 +500,73 @@ export const putGroupEventImage = command(
 );
 
 // A member's RSVP to a members-only event, and its cancel. The page names the
-// event and the answer, and nothing else: the space, the collection, the key
-// and the subject are the server's to choose (./server/member-rsvp.ts), so no
-// input here takes any of them. Each resolves the group and the caller's
-// standing as every handler does, and the roster gate comes first in the
-// module. A session that lacks the grant gets the re-authorize URL back, which
-// the page follows. (Spec: FR-113, FR-114, FR-120.)
+// event, the answer and the version of the event it showed, and nothing else:
+// the space, the collection, the key and the subject are the server's to choose
+// (./server/member-rsvp.ts), so no input here takes any of them, and the cid is
+// only compared. Each resolves the group and the caller's standing as every
+// handler does, and the roster gate comes first in the module. A session that
+// lacks the grant gets the re-authorize URL back, which the page follows, with
+// a marker the page carries back as `asked`. (Spec: FR-113, FR-114, FR-120.)
 const rsvpStatusField = v.picklist(['going', 'interested', 'notgoing'] as const);
+/** Shape only: the module reads a marker it did not make as none. */
+const askedField = v.nullable(v.pipe(v.string(), v.maxLength(2100)));
 
-export const rsvpToMembersOnlyEvent = command(
-	v.object({ groupDid: didField, rkey: rkeyField, status: rsvpStatusField, asked: v.boolean() }),
-	async (data): Promise<MembersOnlyRsvpPut> => {
-		const ctx = await context(data.groupDid);
-		return putMembersOnlyRsvp({
+/** A stamp of the caller's session: when its token expires, in milliseconds,
+ *  read without a refresh, or 0 when there is no session or it can't be read.
+ *  A new sign-in issues a new token, which is how an asked marker tells a
+ *  member back from consent from one who never left. */
+async function sessionStamp(): Promise<number> {
+	const { locals } = getRequestEvent();
+	if (!locals.session) return 0;
+	try {
+		const { expiresAt } = await locals.session.getTokenInfo(false);
+		return expiresAt?.getTime() ?? 0;
+	} catch {
+		return 0;
+	}
+}
+
+/** What both commands hand the module about who is asking. */
+async function rsvpCaller(groupDid: string, asked: string | null) {
+	const ctx = await context(groupDid);
+	return {
+		ctx,
+		target: {
 			membership: ctx.membership,
 			group: ctx.group,
 			member: await callerMember(),
+			callerDid: ctx.callerDid,
+			stamp: await sessionStamp(),
+			asked,
+			reauthorize: () => reauthorizeUrl(ctx)
+		}
+	};
+}
+
+export const rsvpToMembersOnlyEvent = command(
+	v.object({
+		groupDid: didField,
+		rkey: rkeyField,
+		status: rsvpStatusField,
+		cid: v.nullable(v.pipe(v.string(), v.maxLength(200))),
+		asked: askedField
+	}),
+	async (data): Promise<MembersOnlyRsvpPut> => {
+		const { ctx, target } = await rsvpCaller(data.groupDid, data.asked);
+		return putMembersOnlyRsvp({
+			...target,
 			rkey: data.rkey,
 			status: data.status,
-			asked: data.asked,
-			reauthorize: () => reauthorizeUrl(ctx)
+			cid: data.cid,
+			groupReader: () => groupSpaceReader(ctx.env, ctx.db, ctx.group)
 		});
 	}
 );
 
 export const cancelMembersOnlyRsvp = command(
-	v.object({ groupDid: didField, rkey: rkeyField, asked: v.boolean() }),
+	v.object({ groupDid: didField, rkey: rkeyField, asked: askedField }),
 	async (data): Promise<MembersOnlyRsvpCancel> => {
-		const ctx = await context(data.groupDid);
-		return deleteMembersOnlyRsvp({
-			membership: ctx.membership,
-			group: ctx.group,
-			member: await callerMember(),
-			rkey: data.rkey,
-			asked: data.asked,
-			reauthorize: () => reauthorizeUrl(ctx)
-		});
+		const { target } = await rsvpCaller(data.groupDid, data.asked);
+		return deleteMembersOnlyRsvp({ ...target, rkey: data.rkey });
 	}
 );

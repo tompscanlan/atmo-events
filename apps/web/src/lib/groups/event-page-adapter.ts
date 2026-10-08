@@ -10,17 +10,25 @@
 // going. The in-app adapter's space write goes to a different service, which is
 // why that adapter is not used here. (Spec: FR-113, FR-116.)
 //
-// A session without the grant comes back with a re-authorize URL. The page URL
-// is marked first, so that when the member returns, the next RSVP tells the
-// server a re-authorization asked for the grant: only then may it say the
-// member's PDS can't do this. Every other failure is shown through `onNotice`.
-// A failed cancel throws, so the RSVP button keeps showing the RSVP that is
-// still there. (Spec: FR-114.)
+// An RSVP also sends the cid of the event as the page showed it, which the
+// server compares with the event's current one: when the event has changed
+// since, nothing is saved and the member is told to reload. (Spec: FR-120.)
+//
+// A session without the grant comes back with a re-authorize URL and a marker
+// the server made for this member and their session. The marker goes into the
+// page's address first, so that when the member returns, the next RSVP hands it
+// back: only a marker made for them under an earlier session lets the server say
+// their PDS can't do this. Once an RSVP or a cancel saves, the marker leaves the
+// address, so a link copied afterwards carries none. Every other failure is
+// shown through `onNotice`. A failed cancel throws, so the RSVP button keeps
+// showing the RSVP that is still there. (Spec: FR-114.)
 //
 // Each public write refuses as well. No public record may cite a members-only
 // event, and the share flow EventView can open would post one. Nothing tells
 // the index about a record either, since the index must never learn a
 // members-only event's URI. (Spec: FR-111a.)
+import { replaceState } from '$app/navigation';
+import { page as appPage } from '$app/state';
 import { atProtoLoginModalState } from '$lib/components/LoginModal.svelte';
 import type { EditorAdapter } from '$lib/components/editor/adapter';
 import { reauthorize } from '$lib/atproto/auth.svelte';
@@ -33,20 +41,19 @@ const EVENT_COLLECTION = 'community.lexicon.calendar.event';
 const STATUSES = ['going', 'interested', 'notgoing'] as const;
 type RsvpStatus = (typeof STATUSES)[number];
 
-/** The query parameter that marks a page reached back from a re-authorization
- *  that asked for the RSVP grant. */
+/** The query parameter that carries the server's marker through a
+ *  re-authorization that asked for the RSVP grant, and back. */
 const GRANT_PARAM = 'rsvp-grant';
-const GRANT_ASKED = 'asked';
 
 /** Shown when a command could not be reached at all. */
 const UNSENT = "Your RSVP couldn't be sent. Check your connection and try again.";
 /** Shown to a caller the server no longer finds on the roster. */
 const NOT_A_MEMBER = "Only the group's members can RSVP to this event, so nothing was saved.";
 
-/** Whether `url` is the page reached back from a re-authorization that asked
- *  for the RSVP grant. */
-export function rsvpGrantAsked(url: URL): boolean {
-	return url.searchParams.get(GRANT_PARAM) === GRANT_ASKED;
+/** The marker `url` carries back from a re-authorization that asked for the
+ *  RSVP grant, exactly as the server made it, or null. */
+export function rsvpGrantMarker(url: URL): string | null {
+	return url.searchParams.get(GRANT_PARAM);
 }
 
 export interface MembersOnlyEventPage {
@@ -57,9 +64,9 @@ export interface MembersOnlyEventPage {
 	/** The group's calendar space, where the event is. Null refuses every space
 	 *  write. */
 	calendarSpaceUri: string | null;
-	/** Whether this page was reached back from a re-authorization that asked
-	 *  for the RSVP grant (`rsvpGrantAsked`). */
-	asked: boolean;
+	/** The marker this page carries back from a re-authorization that asked
+	 *  for the RSVP grant (`rsvpGrantMarker`), or null. */
+	asked: string | null;
 	/** Shows a message about the last RSVP, or clears it with null. */
 	onNotice(message: string | null): void;
 }
@@ -68,7 +75,9 @@ export interface MembersOnlyEventPage {
 type CommandResult = MembersOnlyRsvpPut | MembersOnlyRsvpCancel;
 
 export function createMembersOnlyEventAdapter(page: MembersOnlyEventPage): EditorAdapter {
-	const { groupDid, rkey, calendarSpaceUri, asked, onNotice } = page;
+	const { groupDid, rkey, calendarSpaceUri, onNotice } = page;
+	/** The marker still to send, until an RSVP or a cancel saves. */
+	let asked = page.asked;
 	/** The event's space-form URI, which an RSVP to it names. (Spec: FR-120.) */
 	const eventUri =
 		calendarSpaceUri && `${calendarSpaceUri}/${groupDid}/${EVENT_COLLECTION}/${rkey}`;
@@ -88,6 +97,26 @@ export function createMembersOnlyEventAdapter(page: MembersOnlyEventPage): Edito
 		return STATUSES.find((s) => record.status === `${RSVP_COLLECTION}#${s}`) ?? null;
 	}
 
+	/** The cid an RSVP record names, which is the version of the event the page
+	 *  showed, or null. */
+	function cidOf(record: Record<string, unknown>): string | null {
+		const subject = record.subject as { cid?: unknown } | undefined;
+		return typeof subject?.cid === 'string' ? subject.cid : null;
+	}
+
+	/** Sets the marker in the page's address, or with null takes it out, through
+	 *  SvelteKit so its router keeps track of the entry. The page's state is kept. */
+	function markAddress(marker: string | null) {
+		const url = new URL(appPage.url);
+		if (marker === null) url.searchParams.delete(GRANT_PARAM);
+		else url.searchParams.set(GRANT_PARAM, marker);
+		try {
+			replaceState(url, appPage.state);
+		} catch (e) {
+			console.error('[groups] the RSVP marker could not be written to the address:', e);
+		}
+	}
+
 	/** Runs a command and acts on its answer. True when it saved. */
 	async function settle(run: () => Promise<CommandResult>): Promise<boolean> {
 		let result: CommandResult;
@@ -100,13 +129,16 @@ export function createMembersOnlyEventAdapter(page: MembersOnlyEventPage): Edito
 		}
 		if (result.ok) {
 			onNotice(null);
+			// The marker did its work, so it leaves the address and is not sent again.
+			if (asked !== null) {
+				asked = null;
+				markAddress(null);
+			}
 			return true;
 		}
 		if (result.reason === 'reauthorize') {
-			// Marked first, so the page the member comes back to says it asked.
-			const url = new URL(window.location.href);
-			url.searchParams.set(GRANT_PARAM, GRANT_ASKED);
-			history.replaceState(history.state, '', url);
+			// Marked first, so the page the member comes back to hands it back.
+			markAddress(result.marker);
 			reauthorize(result.url);
 			return false;
 		}
@@ -132,7 +164,7 @@ export function createMembersOnlyEventAdapter(page: MembersOnlyEventPage): Edito
 			if (!status) return { ok: false };
 			const saved = await settle(async () => {
 				const { rsvpToMembersOnlyEvent } = await import('./groups.remote');
-				return rsvpToMembersOnlyEvent({ groupDid, rkey, status, asked });
+				return rsvpToMembersOnlyEvent({ groupDid, rkey, status, cid: cidOf(record), asked });
 			});
 			return { ok: saved };
 		},
