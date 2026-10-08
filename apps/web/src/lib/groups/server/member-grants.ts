@@ -1,12 +1,17 @@
-// The OAuth grant that lets a member write their own acceptance into a group's
-// space, how sign-in asks for it, and what the client metadata declares.
+// The OAuth grant that lets a member write their own records into a group's
+// spaces (their acceptance, and their RSVPs to members-only events), how sign-in
+// asks for it, and what the client metadata declares.
 //
 // The grant names the group as authority, so consent shows no "every space on
-// the network" warning, and only the acceptance collection, so it cannot touch
-// anything else in the group's spaces. It says `space:*` rather than the members
-// space type, because the PDS resolves every type a scope names and the
+// the network" warning, and only those two collections, so it cannot touch
+// anything else in the group's spaces. It says `space:*` rather than a space
+// type, because the PDS resolves every type a scope names and the
 // group.opensocial lexicons do not resolve yet, so a typed scope fails consent.
-// (Spec: FR-208.)
+// Like any `space:*` grant, it covers every space of the group. (Spec: FR-208.)
+//
+// It carries `read_self` so the member's own session can read their RSVP back
+// for the event page: a grant with only create, update and delete cannot read
+// its own record. (Spec: FR-113.)
 //
 // A PDS refuses any requested scope that is not written verbatim in the client
 // metadata, so the metadata declares one grant per group this deployment holds.
@@ -16,14 +21,17 @@
 import { OAuthResponseError } from '@atcute/oauth-node-client';
 
 const ACCEPTANCE_COLLECTION = 'group.opensocial.acceptance';
+const RSVP_COLLECTION = 'community.lexicon.calendar.rsvp';
 
 /** How long a PDS may keep serving client metadata it fetched earlier. */
 export const METADATA_CACHE_MS = 10 * 60 * 1000;
 
-/** The scope a member needs to create, update and delete their acceptance in
- *  `groupDid`'s spaces, and nothing else there. */
+/** The scope a member needs in `groupDid`'s spaces: to create, update and
+ *  delete their acceptance, and to write, delete and read back their own RSVP
+ *  to a members-only event there, and nothing else. One token per group, so a
+ *  session never holds half of it. */
 export function acceptanceGrant(groupDid: string): string {
-	return `space:*?authority=${groupDid}&collection=${ACCEPTANCE_COLLECTION}&action=create&action=update&action=delete`;
+	return `space:*?authority=${groupDid}&collection=${ACCEPTANCE_COLLECTION}&collection=${RSVP_COLLECTION}&action=read_self&action=create&action=update&action=delete`;
 }
 
 /** Whether a granted scope lets its holder `action` their acceptance in
@@ -45,6 +53,43 @@ export function holdsAcceptanceGrant(
 			params.getAll('action').includes(action)
 		);
 	});
+}
+
+/** The parameters of each `space:*` grant in `scope` whose authority is
+ *  `groupDid`. */
+function groupSpaceGrants(scope: string, groupDid: string): URLSearchParams[] {
+	return scope
+		.split(' ')
+		.filter((token) => token.startsWith('space:*?'))
+		.map((token) => new URLSearchParams(token.slice('space:*?'.length)))
+		.filter((params) => params.get('authority') === groupDid);
+}
+
+/** Whether a granted scope lets its holder put, delete or read back their own
+ *  RSVP in `groupDid`'s spaces. Read by parameter, like `holdsAcceptanceGrant`,
+ *  and by the PDS's rule: a write needs its action and the RSVP collection in
+ *  one grant, and a put asks for create when the record is new and update when
+ *  it is not, so it needs both; a read of one's own record needs read_self or
+ *  read and ignores the collection. A grant from before RSVPs joined it holds
+ *  none of the three, and neither does the scope a PDS without spaces leaves. */
+export function holdsRsvpGrant(
+	scope: string,
+	groupDid: string,
+	need: 'put' | 'delete' | 'read'
+): boolean {
+	const grants = groupSpaceGrants(scope, groupDid);
+	if (need === 'read') {
+		return grants.some((params) =>
+			params.getAll('action').some((action) => action === 'read_self' || action === 'read')
+		);
+	}
+	const writes = (action: string) =>
+		grants.some(
+			(params) =>
+				params.getAll('collection').includes(RSVP_COLLECTION) &&
+				params.getAll('action').includes(action)
+		);
+	return need === 'put' ? writes('create') && writes('update') : writes('delete');
 }
 
 /** One grant per group in D1, for the client metadata. A failed read declares

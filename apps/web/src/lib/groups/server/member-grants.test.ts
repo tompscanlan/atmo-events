@@ -11,6 +11,8 @@ import {
 	acceptanceGrant,
 	declaredGrants,
 	firstAcceptedScope,
+	holdsAcceptanceGrant,
+	holdsRsvpGrant,
 	reauthorizeForGroup,
 	signInGrantAttempts
 } from './member-grants';
@@ -54,10 +56,77 @@ function invalidScope(message: string) {
 }
 
 describe('acceptanceGrant', () => {
-	it('names the group as authority and only the acceptance collection, with all three write actions', () => {
-		expect(acceptanceGrant(KONA)).toBe(
-			`space:*?authority=${KONA}&collection=group.opensocial.acceptance&action=create&action=update&action=delete`
+	// One token per group covers both of the member's own records in its spaces:
+	// the acceptance, and an RSVP to a members-only event. Writing the RSVP needs
+	// create and update with its collection in the same grant, and reading it back
+	// from the member's own session needs read_self. Written out, so a changed
+	// grant fails here before any consent screen shows it.
+	it("the member grant lets a member write and read back their own RSVP in the group's spaces", () => {
+		const grant = acceptanceGrant(KONA);
+		expect(grant).toBe(
+			`space:*?authority=${KONA}&collection=group.opensocial.acceptance&collection=community.lexicon.calendar.rsvp&action=read_self&action=create&action=update&action=delete`
 		);
+		const scope = `atproto ${grant}`;
+		expect(holdsRsvpGrant(scope, KONA, 'put')).toBe(true);
+		expect(holdsRsvpGrant(scope, KONA, 'delete')).toBe(true);
+		expect(holdsRsvpGrant(scope, KONA, 'read')).toBe(true);
+		// The acceptance it always covered, it still covers.
+		expect(holdsAcceptanceGrant(scope, KONA, 'create')).toBe(true);
+		expect(holdsAcceptanceGrant(scope, KONA, 'delete')).toBe(true);
+		// Another group's spaces are not this group's.
+		expect(holdsRsvpGrant(scope, HILO, 'put')).toBe(false);
+		expect(holdsRsvpGrant(scope, HILO, 'read')).toBe(false);
+	});
+});
+
+describe('holdsRsvpGrant', () => {
+	const RSVP = 'community.lexicon.calendar.rsvp';
+	/** The grant a member signed in with before RSVPs joined it, written out. */
+	const ACCEPTANCE_ONLY = `space:*?authority=${KONA}&collection=group.opensocial.acceptance&action=create&action=update&action=delete`;
+
+	// The PDS's rule: a write needs its action and its collection in one grant; a
+	// read of one's own record needs read_self or read and ignores the
+	// collection. A put asks for create when the record is new and update when
+	// it is not, so it needs both.
+	it('an RSVP grant is read by parameter, and an acceptance-only grant is not one', () => {
+		const held = (scope: string) =>
+			(['put', 'delete', 'read'] as const).filter((need) => holdsRsvpGrant(scope, KONA, need));
+
+		// A session granted before RSVPs joined the grant holds none of the three.
+		expect(held(`atproto ${ACCEPTANCE_ONLY}`)).toEqual([]);
+		expect(holdsAcceptanceGrant(`atproto ${ACCEPTANCE_ONLY}`, KONA, 'create')).toBe(true);
+		// Nor does the base scope a stock PDS leaves after dropping the grant.
+		expect(held(scopes.join(' '))).toEqual([]);
+
+		// The same grant with its parameters in another order is the same grant.
+		expect(
+			held(
+				`atproto space:*?action=delete&collection=${RSVP}&action=update&authority=${KONA}&action=read_self&action=create`
+			)
+		).toEqual(['put', 'delete', 'read']);
+		// A put needs update as well as create, and the RSVP collection with them.
+		expect(held(`space:*?authority=${KONA}&collection=${RSVP}&action=create`)).toEqual([]);
+		expect(
+			held(
+				`space:*?authority=${KONA}&collection=group.opensocial.acceptance&action=create&action=update`
+			)
+		).toEqual([]);
+		// The actions and the collection must sit in one grant, not across two.
+		expect(
+			held(
+				`space:*?authority=${KONA}&collection=${RSVP}&action=read_self space:*?authority=${KONA}&collection=group.opensocial.acceptance&action=create&action=update&action=delete`
+			)
+		).toEqual(['read']);
+		// A delete needs delete with the RSVP collection.
+		expect(held(`space:*?authority=${KONA}&collection=${RSVP}&action=delete`)).toEqual(['delete']);
+		// Reading one's own record ignores the collection: read_self or read will do.
+		expect(held(`space:*?authority=${KONA}&action=read_self`)).toEqual(['read']);
+		expect(held(`space:*?authority=${KONA}&collection=${RSVP}&action=read`)).toEqual(['read']);
+		// Another group's authority, or none, is not this group's grant.
+		expect(held(`atproto ${acceptanceGrant(HILO)}`)).toEqual([]);
+		expect(
+			held(`space:*?collection=${RSVP}&action=read_self&action=create&action=update&action=delete`)
+		).toEqual([]);
 	});
 });
 
