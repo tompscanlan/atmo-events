@@ -51,6 +51,13 @@ import {
 import { GroupSpaceError } from './server/spaces';
 import { reauthorizeForGroup } from './server/member-grants';
 import { memberSession, type MemberSession } from './server/acceptance';
+// ./server/member-rsvp.ts is shared with the e2e harness, as ./server/roster.ts is.
+import {
+	deleteMembersOnlyRsvp,
+	putMembersOnlyRsvp,
+	type MembersOnlyRsvpCancel,
+	type MembersOnlyRsvpPut
+} from './server/member-rsvp';
 import { createOAuthClient, servesClientMetadata } from '$lib/atproto/server/oauth';
 import { scopes } from '$lib/atproto/settings';
 import type { Did } from '@atcute/lexicons';
@@ -222,10 +229,11 @@ async function callerMember(): Promise<MemberSession | null> {
 
 /** Where to send a member who just joined or asked to join, so their session
  *  carries the group's acceptance grant before their next sign-in (spec FR-208:
- *  joining or requesting re-authorizes). On a device the PDS remembers, nothing
- *  shows unless the request holds a grant not approved before. Otherwise the PDS
- *  asks for the password and consent again, listing every scope. Null when there
- *  is no client metadata to grow, or the PDS refused. */
+ *  joining or requesting re-authorizes), or a member whose session lacks the
+ *  grant when they RSVP to a members-only event. On a device the PDS remembers,
+ *  nothing shows unless the request holds a grant not approved before. Otherwise
+ *  the PDS asks for the password and consent again, listing every scope. Null
+ *  when there is no client metadata to grow, or the PDS refused. */
 async function reauthorizeUrl(ctx: GroupRequestContext): Promise<string | null> {
 	if (!servesClientMetadata(ctx.env)) return null;
 	const result = await reauthorizeForGroup(
@@ -487,5 +495,45 @@ export const putGroupEventImage = command(
 		} catch (e) {
 			return formError(e);
 		}
+	}
+);
+
+// A member's RSVP to a members-only event, and its cancel. The page names the
+// event and the answer, and nothing else: the space, the collection, the key
+// and the subject are the server's to choose (./server/member-rsvp.ts), so no
+// input here takes any of them. Each resolves the group and the caller's
+// standing as every handler does, and the roster gate comes first in the
+// module. A session that lacks the grant gets the re-authorize URL back, which
+// the page follows. (Spec: FR-113, FR-114, FR-120.)
+const rsvpStatusField = v.picklist(['going', 'interested', 'notgoing'] as const);
+
+export const rsvpToMembersOnlyEvent = command(
+	v.object({ groupDid: didField, rkey: rkeyField, status: rsvpStatusField, asked: v.boolean() }),
+	async (data): Promise<MembersOnlyRsvpPut> => {
+		const ctx = await context(data.groupDid);
+		return putMembersOnlyRsvp({
+			membership: ctx.membership,
+			group: ctx.group,
+			member: await callerMember(),
+			rkey: data.rkey,
+			status: data.status,
+			asked: data.asked,
+			reauthorize: () => reauthorizeUrl(ctx)
+		});
+	}
+);
+
+export const cancelMembersOnlyRsvp = command(
+	v.object({ groupDid: didField, rkey: rkeyField, asked: v.boolean() }),
+	async (data): Promise<MembersOnlyRsvpCancel> => {
+		const ctx = await context(data.groupDid);
+		return deleteMembersOnlyRsvp({
+			membership: ctx.membership,
+			group: ctx.group,
+			member: await callerMember(),
+			rkey: data.rkey,
+			asked: data.asked,
+			reauthorize: () => reauthorizeUrl(ctx)
+		});
 	}
 );

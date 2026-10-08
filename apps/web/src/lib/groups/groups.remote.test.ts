@@ -30,10 +30,21 @@ vi.mock('$app/server', () => {
 // package would pull in plyr's CSS, which Node's ESM loader rejects. Same
 // pattern as ../search/server/query.test.ts.
 vi.mock('@atmo-dev/events-ui', () => ({ getProfileUrl: vi.fn() }));
-// A linked group's session, so the group's own writes reach the fake host.
+// A linked group's session, so the group's own writes reach the fake host. The
+// sign-in client's authorize is a stand-in too, so a re-authorization can be
+// accepted or refused without a PDS.
+const signIn = vi.hoisted(() => ({
+	authorize: null as null | ((grants: readonly string[]) => Promise<{ url: URL }>)
+}));
 vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
-	...(await import('./server/__fixtures__/linked-oauth-stub')).linkedOAuthStub
+	...(await import('./server/__fixtures__/linked-oauth-stub')).linkedOAuthStub,
+	createOAuthClient: (_env: unknown, grants: readonly string[] = []) => ({
+		authorize: async () => {
+			if (!signIn.authorize) throw new Error('no sign-in stand-in for this test');
+			return signIn.authorize(grants);
+		}
+	})
 }));
 
 import { sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
@@ -42,15 +53,20 @@ import { linkGroups, linkedCredential, unlinkAllGroups } from './server/__fixtur
 import { createGroup, recordGroupSpaces } from './server/repo';
 import { GroupCredentialError } from './server/event-writer';
 import { acceptanceGrant } from './server/member-grants';
+import { RSVP_NO_SPACES, RSVP_RETRY_LATER } from './server/member-rsvp';
+import { OAuthResponseError } from '@atcute/oauth-node-client';
+import { addMember } from './server/repo';
 import { pdsProvisioner, provisionGroupSpaces } from './server/spaces';
 import { formError } from './form-error';
 import type { GroupFormResult } from './form-result';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from './types';
 import {
+	cancelMembersOnlyRsvp,
 	joinGroupForm,
 	leaveGroupForm,
 	putGroupEvent,
 	removeGroupEvent,
+	rsvpToMembersOnlyEvent,
 	updateGroupForm
 } from './groups.remote';
 
@@ -82,6 +98,7 @@ afterEach(() => {
 	unlinkAllGroups();
 	harness.close();
 	request.locals = { did: null };
+	signIn.authorize = null;
 });
 
 describe('a group whose owner has not linked it', () => {
@@ -399,5 +416,172 @@ describe('placement on the event commands', () => {
 			await expect(run()).resolves.toEqual({ ok: false, error });
 		}
 		expect(pds.writes()).toEqual([]);
+	});
+});
+
+// The two members-only RSVP commands, run through their real handlers: the
+// route gate, the standing read and the grant check are the app's own. The
+// group's host is the fake one; the member's PDS is a session that records what
+// it was asked. (Spec: FR-113, FR-114, FR-120.)
+describe('the members-only RSVP commands', () => {
+	const LINKED = 'did:plc:linkedgroupaaaaaaaaaaaaa';
+	const MEMBER = 'did:plc:rsvpmemberaaaaaaaaaaaaaa';
+	/** Written out, not taken from the app. */
+	const CALENDAR = `at://${LINKED}/space/net.openmeet.space.calendar/self`;
+	const RSVP = 'community.lexicon.calendar.rsvp';
+	const MEETING_URI = `${CALENDAR}/${LINKED}/community.lexicon.calendar.event/3lmeeting`;
+	/** What a sign-in granted before RSVPs joined the grant, written out. */
+	const ACCEPTANCE_ONLY = `atproto space:*?authority=${LINKED}&collection=group.opensocial.acceptance&action=create&action=update&action=delete`;
+
+	type RsvpResult = { ok: boolean; reason?: string; message?: string; url?: string; uri?: string };
+	const rsvp = rsvpToMembersOnlyEvent as unknown as (
+		data: Record<string, unknown>
+	) => Promise<RsvpResult>;
+	const cancel = cancelMembersOnlyRsvp as unknown as (
+		data: Record<string, unknown>
+	) => Promise<RsvpResult>;
+	const schemaOf = (command: unknown) =>
+		(command as { schema: v.GenericSchema<unknown, Record<string, unknown>> }).schema;
+
+	let asked: { pathname: string; body: Record<string, unknown> | null }[];
+	let uris: Awaited<ReturnType<typeof provisionGroupSpaces>>;
+
+	function signInAs(scope: string) {
+		const session = {
+			did: MEMBER,
+			getTokenInfo: async () => ({ scope }),
+			handle: async (pathname: string, init: RequestInit) => {
+				const body = init.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+				asked.push({ pathname, body });
+				return Response.json({ uri: `${CALENDAR}/${MEMBER}/${RSVP}/3lmeeting`, cid: 'bafy' });
+			}
+		};
+		request.locals = { did: MEMBER, session } as typeof request.locals;
+	}
+
+	beforeEach(async () => {
+		asked = [];
+		stubPds({ did: LINKED, handle: 'linked.group.stub.test' });
+		const row = await createGroup(harness.db, {
+			groupDid: LINKED,
+			ownerDid: OWNER,
+			name: 'Linked'
+		});
+		uris = await provisionGroupSpaces(pdsProvisioner(linkedCredential(LINKED), LINKED), 'public');
+		await recordGroupSpaces(harness.db, row.id, uris);
+		await addMember(harness.db, row.id, MEMBER, 'member');
+		// A deployment that serves client metadata, so a re-authorization is asked for.
+		request.platform.env = {
+			DB: harness.db,
+			OAUTH_PUBLIC_URL: 'https://atmo.stub.test',
+			...linkGroups([LINKED])
+		};
+	});
+
+	it("a members-only RSVP names the event's space-form URI, whatever the browser sent", async () => {
+		signInAs(`atproto ${acceptanceGrant(LINKED)}`);
+		// What a page could add beside the four inputs: none of it is read.
+		const forged = {
+			space: uris.membersSpaceUri,
+			spaceUri: uris.aboutSpaceUri,
+			collection: 'app.bsky.feed.post',
+			repo: 'did:plc:someoneelseaaaaaaaaaaaa',
+			subject: { uri: `at://${LINKED}/community.lexicon.calendar.event/3lmeeting` },
+			record: { $type: RSVP, subject: { uri: 'at://did:plc:elsewhere/x/y' } },
+			uri: 'at://did:plc:elsewhere/x/y'
+		};
+		const sent = { groupDid: LINKED, rkey: '3lmeeting', status: 'going', asked: false };
+
+		expect(await rsvp({ ...sent, ...forged })).toEqual({
+			ok: true,
+			uri: `${CALENDAR}/${MEMBER}/${RSVP}/3lmeeting`
+		});
+		expect(await cancel({ groupDid: LINKED, rkey: '3lmeeting', asked: false, ...forged })).toEqual({
+			ok: true
+		});
+
+		expect(asked).toEqual([
+			{
+				pathname: '/xrpc/com.atproto.space.putRecord',
+				body: {
+					space: CALENDAR,
+					repo: MEMBER,
+					collection: RSVP,
+					rkey: '3lmeeting',
+					record: {
+						$type: RSVP,
+						status: `${RSVP}#going`,
+						subject: { uri: MEETING_URI },
+						createdAt: expect.any(String)
+					}
+				}
+			},
+			{
+				pathname: '/xrpc/com.atproto.space.deleteRecord',
+				body: { space: CALENDAR, repo: MEMBER, collection: RSVP, rkey: '3lmeeting' }
+			}
+		]);
+		// And what SvelteKit validates keeps only the inputs: no space, collection,
+		// record or subject reaches the handler from a real request either.
+		expect(
+			Object.keys(v.parse(schemaOf(rsvpToMembersOnlyEvent), { ...sent, ...forged })).sort()
+		).toEqual(['asked', 'groupDid', 'rkey', 'status']);
+		expect(
+			Object.keys(
+				v.parse(schemaOf(cancelMembersOnlyRsvp), {
+					groupDid: LINKED,
+					rkey: '3lmeeting',
+					asked: false,
+					...forged
+				})
+			).sort()
+		).toEqual(['asked', 'groupDid', 'rkey']);
+		// A status the lexicon does not name is refused before the handler.
+		expect(
+			v.safeParse(schemaOf(rsvpToMembersOnlyEvent), { ...sent, status: 'maybe' }).success
+		).toBe(false);
+	});
+
+	it('a re-authorization refused as invalid_scope says to try again shortly, never the no-spaces message', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		signInAs(ACCEPTANCE_ONLY);
+		const tried: string[][] = [];
+		// A PDS still serving client metadata without the widened grant refuses
+		// every set that carries it.
+		signIn.authorize = async (grants) => {
+			tried.push([...grants]);
+			throw new OAuthResponseError(
+				new Response(null, { status: 400 }),
+				'invalid_scope',
+				`Scope "${acceptanceGrant(LINKED)}" is not declared in the client metadata`
+			);
+		};
+
+		const put = await rsvp({ groupDid: LINKED, rkey: '3lmeeting', status: 'going', asked: false });
+		const del = await cancel({ groupDid: LINKED, rkey: '3lmeeting', asked: false });
+
+		for (const result of [put, del]) {
+			expect(result).toEqual({ ok: false, reason: 'retry-later', message: RSVP_RETRY_LATER });
+			expect(result.message).not.toBe(RSVP_NO_SPACES);
+		}
+		// Each attempt asked for this group's grant, and none was retried in a loop:
+		// one authorize per set that carries it, per press.
+		expect(tried.length).toBe(2);
+		for (const grants of tried) expect(grants).toContain(acceptanceGrant(LINKED));
+		// Nothing reached the member's PDS.
+		expect(asked).toEqual([]);
+
+		// The same press with a PDS that accepts the grant is sent to consent.
+		signIn.authorize = async () => ({
+			url: new URL('https://pds.stub.test/oauth/authorize?request_uri=urn:x')
+		});
+		expect(
+			await rsvp({ groupDid: LINKED, rkey: '3lmeeting', status: 'going', asked: false })
+		).toEqual({
+			ok: false,
+			reason: 'reauthorize',
+			url: 'https://pds.stub.test/oauth/authorize?request_uri=urn:x'
+		});
+		expect(asked).toEqual([]);
 	});
 });
