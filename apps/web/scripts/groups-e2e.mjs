@@ -69,7 +69,8 @@
  *   E2E_PLC_URL        required: devnet's PLC directory, the only place a DID is
  *                      resolved, for a network no relay crawls
  * The run is for devnet only, and no request leaves this machine. E2E_PDS and
- * E2E_PLC_URL must be loopback URLs, and before any login the run asks devnet's
+ * E2E_PLC_URL must be loopback URLs; a devnet name counts as one when this run resolves it to
+ * 127.0.0.1 or ::1 alone (the devnet's scripts/https-run). Before any login the run asks devnet's
  * PLC for every fixture DID and stops on one it lacks or one hosted off this
  * machine, printing a REFUSED line for each. Then every request is counted: the
  * worker's pass a Miniflare outboundService and this driver's own fetch is
@@ -113,6 +114,8 @@ import {
 	createLedger,
 	fixtureCheck,
 	guardFetch,
+	isLoopback,
+	localNames,
 	outboundHandler,
 	settingRefusals
 } from './groups-e2e.network.mjs';
@@ -120,8 +123,10 @@ import {
 const WEB_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKER_ENTRY = join(WEB_DIR, 'scripts/groups-e2e.worker.ts');
 
+/** Devnet names this run resolves to this machine, filled before any login. */
+const localHosts = new Set();
 /** Every request the run sends, from this driver and from the worker, for check 24. */
-const ledger = createLedger();
+const ledger = createLedger(console.log, localHosts);
 const nodeFetch = globalThis.fetch;
 // Wrapped before the first request. A redirect comes back as an answer instead
 // of being followed out of the ledger's sight.
@@ -694,7 +699,9 @@ function eventRecord(name, { country, createdAt, image } = {}) {
 /** Stops the run before any login, with nothing yet to clean up, when a setting
  *  or a fixture is off this machine. Otherwise notes where the fixtures live. */
 async function refuseOffMachine() {
-	let refusals = settingRefusals({ E2E_PDS: PDS, E2E_PLC_URL: PLC_URL });
+	const asked = [PDS, PLC_URL].filter((url) => !isLoopback(url) && URL.canParse(url));
+	for (const name of await localNames(asked.map((u) => new URL(u).hostname))) localHosts.add(name);
+	let refusals = settingRefusals({ E2E_PDS: PDS, E2E_PLC_URL: PLC_URL }, localHosts);
 	if (refusals.length === 0) {
 		const fixtures = await fixtureCheck({
 			plcUrl: PLC_URL,
@@ -706,7 +713,8 @@ async function refuseOffMachine() {
 				['E2E_OUTSIDER_DID', MALLORY],
 				['E2E_NOSPACES_DID', CAROL]
 			],
-			fetch
+			fetch,
+			names: localHosts
 		});
 		refusals = fixtures.refusals;
 		if (fixtures.note) note(fixtures.note);
