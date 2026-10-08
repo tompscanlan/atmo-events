@@ -69,13 +69,16 @@
  *   E2E_PLC_URL        required: devnet's PLC directory, the only place a DID is
  *                      resolved, for a network no relay crawls
  * The run is for devnet only, and no request leaves this machine. E2E_PDS and
- * E2E_PLC_URL must be loopback URLs; a devnet name counts as one when this run resolves it to
- * 127.0.0.1 or ::1 alone (the devnet's scripts/https-run). Before any login the run asks devnet's
- * PLC for every fixture DID and stops on one it lacks or one hosted off this
- * machine, printing a REFUSED line for each. Then every request is counted: the
- * worker's pass a Miniflare outboundService and this driver's own fetch is
- * wrapped. A loopback request goes through; any other is refused, never sent,
- * and printed as `REFUSED <driver|worker> <METHOD> <URL without its query>`.
+ * E2E_PLC_URL must be loopback URLs, or devnet names this run resolves to
+ * 127.0.0.1 or ::1 alone (the devnet's scripts/https-run). Outside https-run,
+ * checking such a name is a lookup through the system resolver, so a refused run
+ * may first send a DNS query for it, and nothing else. Before any login the run
+ * asks devnet's PLC for every fixture DID and stops on one it lacks or one hosted
+ * off this machine, printing a REFUSED line for each. Then every request is
+ * counted: the worker's pass a Miniflare outboundService and this driver's own
+ * fetch is wrapped. A request to this machine goes through; any other is refused,
+ * never sent, and printed as `REFUSED <driver|worker> <METHOD> <URL without its
+ * query>`.
  * Check 24 reports the count.
  * The app writes as a group only through the session its owner linked, and a
  * real link needs the deployment's OAuth client key. So the run links the group
@@ -700,7 +703,8 @@ function eventRecord(name, { country, createdAt, image } = {}) {
  *  or a fixture is off this machine. Otherwise notes where the fixtures live. */
 async function refuseOffMachine() {
 	const asked = [PDS, PLC_URL].filter((url) => !isLoopback(url) && URL.canParse(url));
-	for (const name of await localNames(asked.map((u) => new URL(u).hostname))) localHosts.add(name);
+	const hostnames = asked.map((u) => new URL(u).hostname).filter(Boolean);
+	for (const name of await localNames(hostnames)) localHosts.add(name);
 	let refusals = settingRefusals({ E2E_PDS: PDS, E2E_PLC_URL: PLC_URL }, localHosts);
 	if (refusals.length === 0) {
 		const fixtures = await fixtureCheck({

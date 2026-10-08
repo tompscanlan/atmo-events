@@ -435,6 +435,24 @@ describe('isLocal, the classifier the guard uses once names are resolved', () =>
 		expect(isLocal('/xrpc/com.atproto.repo.getRecord', names)).toBe(false);
 	});
 
+	it('admits only the exact name: a subdomain or a sibling handle of a resolved name is refused, and the worker gets 599', async () => {
+		const names = new Set(['alpha.devnet.test']);
+		const lines: string[] = [];
+		const forward = vi.fn(async () => new Response('ok'));
+		const handler = outboundHandler(
+			createLedger((line: string) => lines.push(line), names),
+			forward
+		);
+
+		expect(isLocal('https://carol.alpha.devnet.test/', names)).toBe(false);
+		expect(isLocal('https://alice.devnet.test/', names)).toBe(false);
+		expect(isLocal('https://alpha.devnet.test./', names)).toBe(false);
+		expect((await handler(new Request('https://alice.devnet.test/xrpc/a'))).status).toBe(599);
+		expect((await handler(new Request('https://alpha.devnet.test/xrpc/a'))).status).toBe(200);
+		expect(forward).toHaveBeenCalledTimes(1);
+		expect(lines).toEqual(['REFUSED worker GET https://alice.devnet.test/xrpc/a']);
+	});
+
 	it('lets the ledger count a resolved name as local, still refuse one not in the set, and see a name added later', () => {
 		const names = new Set(['alpha.devnet.test', 'plc.directory']);
 		const lines: string[] = [];

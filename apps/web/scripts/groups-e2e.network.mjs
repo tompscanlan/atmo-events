@@ -6,8 +6,8 @@
 // startup checks that refuse a setting or a fixture off this machine.
 import { promises as dns } from 'node:dns';
 
-/** The only hosts that are this machine. A devnet name such as
- *  regular.devnet.test is not one: it would need a resolver to reach. */
+/** The hosts that are always this machine. A devnet name such as
+ *  regular.devnet.test counts only when this run resolves it here (localNames). */
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /** What the outbound handler answers for a refused request. Not a 4xx or a
@@ -132,8 +132,8 @@ export function createLedger(log = console.log, names = new Set()) {
 /**
  * Miniflare's `outboundService`: workerd hands it every subrequest the worker
  * sends, including those from fetch references taken at module load. A
- * loopback request goes to `forward` as it came; any other is refused with an
- * answer and never sent.
+ * request to this machine (a loopback host, or a name in the ledger's set) goes
+ * to `forward` as it came; any other is refused with an answer and never sent.
  * @param {ReturnType<typeof createLedger>} ledger
  * @param {(request: Request) => Promise<Response> | Response} forward
  */
@@ -150,8 +150,8 @@ export function outboundHandler(ledger, forward) {
 }
 
 /**
- * A `fetch` for the driver: a loopback request goes to `real` as it came; any
- * other throws before it is sent.
+ * A `fetch` for the driver: a request to this machine goes to `real` as it came;
+ * any other throws before it is sent.
  * @param {ReturnType<typeof createLedger>} ledger
  * @param {typeof fetch} real
  * @returns {typeof fetch}
