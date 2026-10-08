@@ -12,7 +12,9 @@
 #  - The page reads the viewer's own RSVP back through their session, after the event read.
 #  - EventView opens no share prompt for a members-only RSVP; a public event's RSVP still opens it.
 # Decisions (TS, 2026-10-08): the member's own session reads the RSVP back (read_self); the gate is
-# this script with the devnet groups e2e, and the browser walk stays with the loopback-grants bead.
+# this script with the devnet groups e2e, and the browser walk stays with the loopback-grants bead;
+# the RSVP's key is the event's key. Amended 2026-10-08 after the first fire stopped on a
+# contradiction: the grant keeps its name (check 1), and nothing else in this script changed.
 # Frozen at fire. Run from anywhere; it cds into the worktree. Every check prints a positive
 # artifact line and the last line is the tally. Checks 14 and 15 need devnet-spaces up
 # (SKIP_DEVNET=1 skips them and counts each as a FAIL).
@@ -70,18 +72,17 @@ first() { printf '%s\n' "$1" | grep -E "$2" | head -1 | cut -d: -f1; }
 # Count of lines matching a regex in a string.
 cnt() { printf '%s\n' "$1" | grep -cE "$2"; }
 
-# 1. The member grant: memberGrant replaces acceptanceGrant everywhere under apps/web/src and
-#    apps/web/scripts; its code names the RSVP collection and read_self; holdsRsvpGrant is
-#    exported. (Spec: FR-113.)
+# 1. The member grant keeps its name, acceptanceGrant (amendment 2026-10-08: a rename would touch
+#    two frozen test files, one of them an OAuth route's), and widens: its code names the RSVP
+#    collection and read_self; holdsRsvpGrant is exported. (Spec: FR-113.)
 gl=$(code_lines "$GRANTS")
-mg=$(cnt "$gl" '^[0-9]+:export function memberGrant\(')
+mg=$(cnt "$gl" '^[0-9]+:export function acceptanceGrant\(')
 hr=$(cnt "$gl" '^[0-9]+:export function holdsRsvpGrant\(')
 rc=$(cnt "$gl" 'community\.lexicon\.calendar\.rsvp')
 rs=$(cnt "$gl" 'read_self')
-ag=$(git grep -n 'acceptanceGrant' -- src scripts | wc -l)
-[ "$mg" -eq 1 ] && [ "$hr" -eq 1 ] && [ "$rc" -ge 1 ] && [ "$rs" -ge 1 ] && [ "$ag" -eq 0 ] \
-  && ok "1 $GRANTS: memberGrant ${mg}x, holdsRsvpGrant ${hr}x, RSVP collection ${rc}x, read_self ${rs}x; acceptanceGrant left in src+scripts: $ag" \
-  || no "1 $GRANTS: memberGrant ${mg}x, holdsRsvpGrant ${hr}x (want 1 each), RSVP collection ${rc}x, read_self ${rs}x (want >=1 each); acceptanceGrant left: $ag (want 0)"
+[ "$mg" -eq 1 ] && [ "$hr" -eq 1 ] && [ "$rc" -ge 1 ] && [ "$rs" -ge 1 ] \
+  && ok "1 $GRANTS: acceptanceGrant ${mg}x, holdsRsvpGrant ${hr}x, RSVP collection ${rc}x, read_self ${rs}x" \
+  || no "1 $GRANTS: acceptanceGrant ${mg}x, holdsRsvpGrant ${hr}x (want 1 each), RSVP collection ${rc}x, read_self ${rs}x (want >=1 each)"
 
 # 2. No public fallback anywhere on the members-only RSVP path: member-rsvp.ts, the page's adapter
 #    and the loader name no com.atproto.repo. method; member-rsvp.ts names the three space methods;
