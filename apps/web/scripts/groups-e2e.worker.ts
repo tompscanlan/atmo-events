@@ -616,10 +616,14 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	 *  here (see `gate`), so this takes the caller's standing the way the gate
 	 *  does. The session is the admin's stand-in, or with `session: 'no-spaces'`
 	 *  the no-spaces member's, or with `session: 'outsider'` one that holds the
-	 *  grant and refuses any request. reauthorize() is a stand-in that answers
-	 *  `reauthorizeUrl` (null when absent) and is never followed. Returns the
-	 *  module's answer, every request sent through the caller's session, and how
-	 *  many times reauthorize() was called. */
+	 *  grant and refuses any request. `stamp` stands for the session's own (0 when
+	 *  absent), `asked` is the marker the page would carry back (null when
+	 *  absent), and a put sends `cid` as the version of the event the page
+	 *  showed. The put reads the event with the group's own space reader, as the
+	 *  command does. reauthorize() is a stand-in that answers `reauthorizeUrl`
+	 *  (null when absent) and is never followed. Returns the module's answer,
+	 *  every request sent through the caller's session, and how many times
+	 *  reauthorize() was called. */
 	membersOnlyRsvp: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		const did = String(args.did);
@@ -638,7 +642,9 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			group,
 			member,
 			rkey: String(args.rkey),
-			asked: args.asked === true,
+			callerDid: did,
+			stamp: typeof args.stamp === 'number' ? args.stamp : 0,
+			asked: typeof args.asked === 'string' ? args.asked : null,
 			reauthorize: async () => {
 				reauthorized++;
 				return args.reauthorizeUrl == null ? null : String(args.reauthorizeUrl);
@@ -648,7 +654,9 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		if (args.action === 'put') {
 			result = await putMembersOnlyRsvp({
 				...target,
-				status: args.status as MembersOnlyRsvpStatus
+				status: args.status as MembersOnlyRsvpStatus,
+				cid: typeof args.cid === 'string' ? args.cid : null,
+				groupReader: async () => reader
 			});
 		} else if (args.action === 'delete') {
 			result = await deleteMembersOnlyRsvp(target);

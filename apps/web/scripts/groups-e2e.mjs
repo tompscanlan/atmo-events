@@ -4,9 +4,9 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 52 numbered checks (1 to 24, plus 10b, 13b to 13u, 15b, 18b, 18c,
+ * It runs 53 numbered checks (1 to 24, plus 10b, 13b to 13v, 15b, 18b, 18c,
  * 18d, 18e, 20b and 20c), prints one PASS or FAIL line each, and a clean run
- * ends with `SUMMARY: 52 passed, 0 failed`. Setup steps print as notes and are
+ * ends with `SUMMARY: 53 passed, 0 failed`. Setup steps print as notes and are
  * not counted. In order: create and the seeded roles (1), join, approval and
  * promotion (2-3), events written as the group DID and the edit gate (4-6),
  * leaving (7-8), a cover image uploaded into the group's repo (9), the profile,
@@ -29,7 +29,9 @@
  * space at the event's key, read back by them and by the group, and cancelled
  * (13t), no RSVP request from a non-member or from a member whose PDS serves no
  * spaces, who is sent to re-authorize and told only after asking that their PDS
- * can't do it (13u), the member's own acceptance at a join request, at leave and at a
+ * can't do it (13u), that RSVP naming the seed's current cid as the group reads
+ * it, and one from a page that showed another version writing nothing (13v),
+ * the member's own acceptance at a join request, at leave and at a
  * sign-in after a direct add (18b-18d), a member whose PDS serves no spaces
  * (18e), the discovery declaration and
  * visibility at the host (19-20c), the events index (21-22), a rebuild of the
@@ -87,8 +89,8 @@
  * grants and refuses any request, so check 18e can show the app sent none.
  *
  * Cleanup runs in the `finally`. It deletes the events, the members-only ones
- * from the calendar space, the admin's RSVP to the seed should 13t stop before
- * its cancel, withdraws the declaration, deletes the admin's
+ * from the calendar space, the admin's RSVP to the seed should 13t or 13v stop
+ * before its cancel, withdraws the declaration, deletes the admin's
  * acceptance, and removes the rules, the authz config and the owner's
  * membership. Then it re-reads each one, a members-only event with the group's
  * own space read, and prints WARN for anything left. The
@@ -1939,19 +1941,22 @@ async function main() {
 		// so does the group, with its space credential at the admin's PDS. Nothing is
 		// in the admin's public repo, and nothing the session sent names
 		// com.atproto.repo. A cancel deletes it, and both reads then find nothing.
+		// The page sends the cid of the version it showed, here the seed's as the
+		// group reads it now.
+		const seedNow = await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, SEED_RKEY);
 		const rsvpOp = (action, extra = {}) =>
 			must('membersOnlyRsvp', {
 				groupId: group.id,
 				did: BOB,
 				rkey: SEED_RKEY,
 				action,
-				asked: false,
+				asked: null,
 				reauthorizeUrl: REAUTHORIZE_STAND_IN,
 				...extra
 			});
 		const nsidsOf = (op) => op.calls.map((path) => path.split('?')[0].replace(/^\/xrpc\//, ''));
 		rsvpWritten = true;
-		const rsvpGoing = await rsvpOp('put', { status: 'going' });
+		const rsvpGoing = await rsvpOp('put', { status: 'going', cid: seedNow.cid });
 		const rsvpOwn = await rsvpOp('read');
 		const rsvpAsGroup = await must('calendarReadAt', {
 			groupId: group.id,
@@ -2009,9 +2014,9 @@ async function main() {
 		// session holds the grant and refuses any request, is turned away with
 		// nothing sent and no re-authorization. A member whose PDS serves no spaces
 		// holds no grant. Their first RSVP is sent to re-authorize (a stand-in URL,
-		// never followed), and only once the page says a re-authorization asked for
-		// the grant are they told their PDS can't do it. Neither sends a request
-		// through their session. They are admitted for this check and leave right
+		// never followed) with a marker for the page to carry, and only once the page
+		// hands that marker back under a session issued since (a new stamp) are they
+		// told their PDS can't do it. Neither sends a request through their session. They are admitted for this check and leave right
 		// after, off the rows, the records and both member lists, so 18e's join
 		// still comes back pending.
 		const outsiderOp = (action, extra = {}) =>
@@ -2020,7 +2025,7 @@ async function main() {
 				did: MALLORY,
 				rkey: SEED_RKEY,
 				action,
-				asked: false,
+				asked: null,
 				session: 'outsider',
 				reauthorizeUrl: REAUTHORIZE_STAND_IN,
 				...extra
@@ -2031,19 +2036,21 @@ async function main() {
 		const noSpacesBefore = await must('noSpacesCalls');
 		noSpacesJoined = true;
 		await must('admitMember', { groupId: group.id, callerDid: ALICE, did: CAROL, role: 'member' });
-		const carolOp = (asked) =>
+		const carolOp = (asked, stamp) =>
 			must('membersOnlyRsvp', {
 				groupId: group.id,
 				did: CAROL,
 				rkey: SEED_RKEY,
 				action: 'put',
 				status: 'going',
+				cid: seedNow.cid,
 				asked,
+				stamp,
 				session: 'no-spaces',
 				reauthorizeUrl: REAUTHORIZE_STAND_IN
 			});
-		const carolFirst = await carolOp(false);
-		const carolAfterAsking = await carolOp(true);
+		const carolFirst = await carolOp(null, 1);
+		const carolAfterAsking = await carolOp(carolFirst.result?.marker ?? null, 2);
 		const noSpacesAfter = await must('noSpacesCalls');
 		await must('leaveGroup', {
 			groupId: group.id,
@@ -2074,6 +2081,7 @@ async function main() {
 				carolFirst.onRoster === true &&
 				carolFirst.result?.reason === 'reauthorize' &&
 				carolFirst.result.url === REAUTHORIZE_STAND_IN &&
+				typeof carolFirst.result.marker === 'string' &&
 				carolFirst.reauthorized === 1 &&
 				carolFirst.calls.length === 0 &&
 				carolAfterAsking.onRoster === true &&
@@ -2092,6 +2100,65 @@ async function main() {
 				`${JSON.stringify(carolAfterAsking.result?.message)} (${carolAfterAsking.reauthorized} re-authorization, ` +
 				`${carolAfterAsking.calls.length} request(s)); sent from their session ${noSpacesAfter.length - noSpacesBefore.length}; ` +
 				`after leaving: ${carolLeft ? 'off the records, the rows and both member lists' : 'STILL LISTED'}`
+		);
+
+		// 13v. the version of the event an RSVP names -----------------------------
+		// An RSVP's subject names the event's cid as well as its URI. The module
+		// reads the seed as the group just before the write, so the admin's RSVP,
+		// as the group reads it back, cites the cid the group reads for the seed.
+		// An RSVP from a page that showed another version (any other cid) answers
+		// 'changed', and the admin's session sends nothing for it: the RSVP already
+		// there keeps its answer and its cid. A cancel after leaves nothing behind.
+		const staleCid = 'bafyreie2estaleversionofthemembersonlyseedevent';
+		rsvpWritten = true;
+		const cidGoing = await rsvpOp('put', { status: 'going', cid: seedNow.cid });
+		const cidAsGroup = await must('calendarReadAt', {
+			groupId: group.id,
+			did: BOB,
+			rkey: SEED_RKEY
+		});
+		const cidStale = await rsvpOp('put', { status: 'notgoing', cid: staleCid });
+		const cidAfterStale = await must('calendarReadAt', {
+			groupId: group.id,
+			did: BOB,
+			rkey: SEED_RKEY
+		});
+		const cidCancel = await rsvpOp('delete');
+		if (cidCancel.result?.ok === true) rsvpWritten = false;
+		const cidGone = await must('calendarReadAt', {
+			groupId: group.id,
+			did: BOB,
+			rkey: SEED_RKEY
+		});
+		record(
+			seedNow.status === 200 &&
+				typeof seedNow.cid === 'string' &&
+				seedNow.cid.length > 0 &&
+				seedNow.cid !== staleCid &&
+				cidGoing.result?.ok === true &&
+				JSON.stringify(nsidsOf(cidGoing)) === JSON.stringify(['com.atproto.space.putRecord']) &&
+				cidAsGroup.status === 200 &&
+				cidAsGroup.value?.subject?.uri === SEED_URI &&
+				cidAsGroup.value?.subject?.cid === seedNow.cid &&
+				cidStale.result?.ok === false &&
+				cidStale.result.reason === 'changed' &&
+				cidStale.calls.length === 0 &&
+				cidStale.reauthorized === 0 &&
+				cidAfterStale.status === 200 &&
+				cidAfterStale.value?.status === `${RSVP_COLLECTION}#going` &&
+				cidAfterStale.value?.subject?.cid === seedNow.cid &&
+				cidCancel.result?.ok === true &&
+				notFound(cidGone),
+			"a members-only RSVP names the event's current cid as the group reads it, and one sent from a page showing an older version writes nothing",
+			`the seed's cid as the group reads it ${seedNow.cid ?? `MISSING (${seedNow.error ?? seedNow.status})`}; ` +
+				`put ${cidGoing.result?.ok ? 'ok' : JSON.stringify(cidGoing.result)} sending [${nsidsOf(cidGoing).join(', ')}]; ` +
+				`the group's read ${cidAsGroup.status}${cidAsGroup.error ? ` ${cidAsGroup.error}` : ''} citing ` +
+				`${cidAsGroup.value?.subject?.cid === seedNow.cid ? "the seed's cid" : JSON.stringify(cidAsGroup.value?.subject)}; ` +
+				`a put naming another version ${cidStale.result?.reason ?? JSON.stringify(cidStale.result)} sending ` +
+				`[${nsidsOf(cidStale).join(', ')}], after it the group reads ${cidAfterStale.value?.status} citing ` +
+				`${cidAfterStale.value?.subject?.cid === seedNow.cid ? "the seed's cid" : JSON.stringify(cidAfterStale.value?.subject)}; ` +
+				`cancel ${cidCancel.result?.ok ? 'ok' : JSON.stringify(cidCancel.result)}, then the group's read ` +
+				`${cidGone.error ?? cidGone.status}`
 		);
 
 		// 14. the space's own member list is write-only --------------------------
@@ -2692,8 +2759,8 @@ async function main() {
 				);
 			}
 		}
-		// The admin's RSVP to the seed, with their own session: should 13t have
-		// stopped before its cancel, it would be in the calendar space.
+		// The admin's RSVP to the seed, with their own session: should 13t or 13v
+		// have stopped before its cancel, it would be in the calendar space.
 		if (rsvpWritten) {
 			try {
 				const after = await deleteOwnRsvp(bobToken);
