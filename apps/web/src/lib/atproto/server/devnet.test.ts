@@ -63,13 +63,13 @@ function caught(fn: () => unknown): unknown {
 /** A devnet on the global fetch: its PDS resolves the handles given, its PLC directory holds
  *  the owner's document, and anything else answers as a devnet that does not know it. Returns
  *  every URL asked, in order. */
-function stubDevnet(pdsHandles: Record<string, Did>): string[] {
+function stubDevnet(pdsHandles: Record<string, Did>, ownerPds = PDS): string[] {
 	const asked: string[] = [];
 	const ownerDoc = {
 		'@context': ['https://www.w3.org/ns/did/v1'],
 		id: OWNER,
 		alsoKnownAs: [`at://${OWNER_HANDLE}`],
-		service: [{ id: '#atproto_pds', type: 'AtprotoPersonalDataServer', serviceEndpoint: PDS }]
+		service: [{ id: '#atproto_pds', type: 'AtprotoPersonalDataServer', serviceEndpoint: ownerPds }]
 	};
 	const stub = async (input: RequestInfo | URL) => {
 		const url = new URL(input instanceof Request ? input.url : String(input));
@@ -188,6 +188,19 @@ describe('devnet mode', () => {
 			/failed to resolve did document/
 		);
 		expect(origins(asked)).toEqual([PLC]);
+	});
+
+	it('devnet: an account whose PDS is off this machine is refused', async () => {
+		const asked = stubDevnet({ [OWNER_HANDLE]: OWNER }, 'https://pds.example.com');
+		const resolver = devnetActorResolver(DEVNET);
+
+		await expect(resolver.resolve(OWNER)).rejects.toThrow(
+			`${OWNER} is hosted at https://pds.example.com/, which is off this machine`
+		);
+		await expect(resolver.resolve(OWNER_HANDLE as ActorIdentifier)).rejects.toThrow(
+			/off this machine/
+		);
+		expect(origins(asked).sort()).toEqual([PDS, PLC].sort());
 	});
 
 	it('devnet: an https OAUTH_PUBLIC_URL is refused', () => {

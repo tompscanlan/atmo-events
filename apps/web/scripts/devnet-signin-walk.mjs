@@ -21,18 +21,21 @@ const PDS = 'http://localhost:3010';
 const ON_SITE = new Set([ATMO, PDS]);
 const REAL_NETWORK_HANDLE = 'bsky.app';
 
+/** The walk owner's sign-in secret, once read. Declared first, so say() works from the start. */
+let secret = '';
 const credentials = readCredentials(process.env.DEVNET_CREDENTIALS);
 const account = {
 	handle: credentials.WALKOWNER_HANDLE,
 	did: credentials.WALKOWNER_DID,
 	secret: credentials.WALKOWNER_PASSWORD
 };
+secret = account.secret ?? '';
 
 /** Every line the walk prints goes through here: the secret never appears, nor does the name
  *  of the PDS form field that holds it (a failure may quote the page). */
 function say(line) {
 	let text = String(line);
-	if (account.secret) text = text.split(account.secret).join('<redacted>');
+	if (secret) text = text.split(secret).join('<redacted>');
 	console.log(text.replace(/password/gi, 'secret'));
 }
 

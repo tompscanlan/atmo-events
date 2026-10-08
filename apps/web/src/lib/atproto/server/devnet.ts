@@ -11,6 +11,8 @@ import {
 	PlcDidDocumentResolver,
 	XrpcHandleResolver
 } from '@atcute/identity-resolver';
+import type { ResolveActorOptions, ResolvedActor } from '@atcute/identity-resolver';
+import type { ActorIdentifier } from '@atcute/lexicons';
 import type { OAuthClient } from '@atcute/oauth-node-client';
 
 /** Where the devnet is: its PLC directory and the PDS that holds its accounts. */
@@ -33,12 +35,32 @@ export function logStartup({ plcUrl, pdsUrl }: DevnetUrls): void {
 	);
 }
 
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** A resolver that also refuses anyone whose PDS is off this machine. The devnet's PLC
+ *  directory could still hold a document naming a real-network PDS, and signing that person
+ *  in would send the browser there. */
+class DevnetActorResolver extends LocalActorResolver {
+	override async resolve(
+		actor: ActorIdentifier,
+		options?: ResolveActorOptions
+	): Promise<ResolvedActor> {
+		const resolved = await super.resolve(actor, options);
+		const host = URL.canParse(resolved.pds) ? new URL(resolved.pds).hostname : '';
+		if (!LOOPBACK_HOSTNAMES.has(host)) {
+			throw new Error(`${resolved.did} is hosted at ${resolved.pds}, which is off this machine`);
+		}
+		return resolved;
+	}
+}
+
 /** Resolves people on the devnet and nowhere else: a DID at the devnet's PLC directory, a
  *  handle through the devnet PDS's com.atproto.identity.resolveHandle. There is no DNS or
  *  well-known lookup, no did:web and no plc.directory fallback, so a handle or DID the devnet
- *  does not know is refused, and a devnet server never signs in a real-network account. */
+ *  does not know is refused, as is anyone whose PDS is off this machine, and a devnet server
+ *  never signs in a real-network account. */
 export function actorResolver({ plcUrl, pdsUrl }: DevnetUrls): LocalActorResolver {
-	return new LocalActorResolver({
+	return new DevnetActorResolver({
 		handleResolver: new XrpcHandleResolver({ serviceUrl: pdsUrl }),
 		didDocumentResolver: new CompositeDidDocumentResolver({
 			methods: { plc: new PlcDidDocumentResolver({ apiUrl: plcUrl }) }
