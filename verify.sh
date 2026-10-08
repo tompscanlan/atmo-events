@@ -14,7 +14,8 @@
 # Decisions (TS, 2026-10-08): the member's own session reads the RSVP back (read_self); the gate is
 # this script with the devnet groups e2e, and the browser walk stays with the loopback-grants bead;
 # the RSVP's key is the event's key. Amended 2026-10-08 after the first fire stopped on a
-# contradiction: the grant keeps its name (check 1), and nothing else in this script changed.
+# contradiction: the grant keeps its name (check 1). Amended again for the fix-up round after the
+# review: six more fixed titles (check 8), suite floors at run 1's counts, and e2e check 13v (53).
 # Frozen at fire. Run from anywhere; it cds into the worktree. Every check prints a positive
 # artifact line and the last line is the tally. Checks 14 and 15 need devnet-spaces up
 # (SKIP_DEVNET=1 skips them and counts each as a FAIL).
@@ -47,8 +48,8 @@ LOCK=/tmp/groups-e2e-devnet.lock
 NOSPACES=did:plc:kfb7njkg4t7azuy7v5gxkjc2   # e2enospaces.regular.devnet.test on :3020 (seeded 10-07)
 CRED=/workspaces/scratch/atproto-devnet/data/accounts.env
 E2E_BASE_PASSED=50       # devnet e2e at 9255b29: 50 numbered checks (the script's header)
-GROUPS_BASELINE=766      # vitest src/lib/groups + groups routes at 9255b29: 766 passed (766), 51 files
-ALL_BASELINE=1181        # whole web suite at 9255b29: 1181 passed | 4 skipped (1185), 98 + 1 skipped files
+GROUPS_BASELINE=782      # vitest src/lib/groups + groups routes at 43f48b6 (run 1): 782 passed (782), 52 files; 766 at 9255b29
+ALL_BASELINE=1197        # whole web suite at 43f48b6 (run 1): 1197 passed | 4 skipped (1201); 1181 at 9255b29
 ALL_SKIPPED=4
 SC_WARN_BASELINE=7       # svelte-check apps/web at 9255b29: 0 errors, 7 warnings
 pass=0; fail=0
@@ -186,6 +187,13 @@ titles=(
   "the members-only event page's adapter writes an RSVP only through the members-only RSVP command"
   "the members-only event page's adapter refuses a space write that is not an RSVP to its event"
   "a members-only RSVP opens no share prompt, and a public event's RSVP still does"
+  # The fix-up round (2026-10-08, after the adversarial review).
+  "the asked marker leaves the address after a successful RSVP or cancel"
+  "an asked marker naming another member, or the session it was issued under, re-authorizes instead of the no-spaces message"
+  "an asked marker with no member session says to try again, never the no-spaces message"
+  "a members-only RSVP names the event's current cid, read as the group before the write"
+  "an RSVP from a page showing an older version of the event, or none, writes nothing and says to reload"
+  "an RSVP to a key the calendar space holds no event at writes nothing"
 )
 out=$(npx vitest run --reporter=verbose $LIB 'src/routes/(app)/groups' 2>&1)
 line=$(printf '%s\n' "$out" | grep -E '^\s+Tests\s' | tail -1)
@@ -260,13 +268,13 @@ else
   printf '%s\n' "$added" | grep -iE "$BEAD|co-authored-by|\bprivate\b" | head -5
 fi
 
-# 13. The e2e script's header counts the two new checks: 52 numbered checks, 13b to 13u, and a
-#     clean run ending SUMMARY: 52 passed, 0 failed (50 and 13s at the base).
+# 13. The e2e script's header counts the three new checks: 53 numbered checks, 13b to 13v, and a
+#     clean run ending SUMMARY: 53 passed, 0 failed (50 and 13s at the base; 13v from the fix-up).
 cd "$WEB"
-h1=$(grep -cF 'It runs 52 numbered checks' "$E2E"); h2=$(grep -cF '13b to 13u' "$E2E")
-h3=$(grep -cF 'SUMMARY: 52 passed, 0 failed' "$E2E")
-[ "$h1" -eq 1 ] && [ "$h2" -eq 1 ] && [ "$h3" -eq 1 ] && ok "13 $E2E header: 52 numbered checks ${h1}x, 13b to 13u ${h2}x, SUMMARY: 52 passed ${h3}x" \
-  || no "13 $E2E header: '52 numbered checks' ${h1}x, '13b to 13u' ${h2}x, 'SUMMARY: 52 passed, 0 failed' ${h3}x (want 1 each)"
+h1=$(grep -cF 'It runs 53 numbered checks' "$E2E"); h2=$(grep -cF '13b to 13v' "$E2E")
+h3=$(grep -cF 'SUMMARY: 53 passed, 0 failed' "$E2E")
+[ "$h1" -eq 1 ] && [ "$h2" -eq 1 ] && [ "$h3" -eq 1 ] && ok "13 $E2E header: 53 numbered checks ${h1}x, 13b to 13v ${h2}x, SUMMARY: 53 passed ${h3}x" \
+  || no "13 $E2E header: '53 numbered checks' ${h1}x, '13b to 13v' ${h2}x, 'SUMMARY: 53 passed, 0 failed' ${h3}x (want 1 each)"
 
 # 14. devnet-spaces is the one the fixtures live on: the alpha PDS answers on :3010, the stock PDS
 #     on :3020, the no-spaces member is hosted on :3020 per devnet PLC, and the credentials file is
@@ -281,9 +289,10 @@ if [ "${SKIP_DEVNET:-0}" = 1 ]; then no "14 devnet checks skipped (SKIP_DEVNET=1
     || no "14 :3010 health ${h10}x, :3020 health ${h20}x, $NOSPACES on :3020 ${pd}x, credentials file ${cr}x (want 1 each)"
 fi
 
-# 15. The live devnet e2e, serialized with every other run: 52 passed, 0 failed; 13t and 13u pass
-#     once each under their exact labels; 13r (the event page's read) and 18e (the no-spaces
+# 15. The live devnet e2e, serialized with every other run: 53 passed, 0 failed; 13t, 13u and 13v
+#     pass once each under their exact labels; 13r (the event page's read) and 18e (the no-spaces
 #     member) still pass; nothing left the machine; no FAIL, REFUSED or WARN line.
+L13V="a members-only RSVP names the event's current cid as the group reads it, and one sent from a page showing an older version writes nothing"
 L13T="a member's RSVP to a members-only event is written into the calendar space at the event's key from their own session, reads back for them and for the group, and a cancel removes it, with no repo call"
 L13U="a caller off the roster and a member whose PDS serves no spaces send no RSVP request, and only the member asked before gets the no-spaces message"
 L13R="one members-only event is read by its rkey for a member, image kept, and a non-member and an anonymous caller send no read"
@@ -297,15 +306,16 @@ if [ "${SKIP_DEVNET:-0}" = 1 ]; then no "15 e2e skipped (SKIP_DEVNET=1)"; else
   sum=$(grep -E '^SUMMARY: [0-9]+ passed, [0-9]+ failed$' "$T/e2e.log" | tail -1)
   p=$(echo "$sum" | sed -nE 's/^SUMMARY: ([0-9]+) passed.*/\1/p'); f=$(echo "$sum" | sed -nE 's/.* ([0-9]+) failed$/\1/p')
   qt=$(grep -cE "^PASS +${L13T}(: |$)" "$T/e2e.log"); qu=$(grep -cE "^PASS +${L13U}(: |$)" "$T/e2e.log")
+  qv=$(grep -cE "^PASS +${L13V}(: |$)" "$T/e2e.log")
   qr=$(grep -cE "^PASS +${L13R}(: |$)" "$T/e2e.log")
   e18=$(grep -cF "their PDS http://localhost:3020 answers the group's space read 400 InvalidToken" "$T/e2e.log")
   netl=$(grep -cE '^PASS +no request left this machine: public 0; ' "$T/e2e.log")
   nf=$(grep -cE '^FAIL ' "$T/e2e.log"); nr=$(grep -cE '^REFUSED ' "$T/e2e.log"); nw=$(grep -cE '^WARN ' "$T/e2e.log")
-  if [ -n "$sum" ] && [ "$p" -eq $((E2E_BASE_PASSED + 2)) ] && [ "$f" -eq 0 ] && [ "$qt" -eq 1 ] && [ "$qu" -eq 1 ] && [ "$qr" -eq 1 ] \
+  if [ -n "$sum" ] && [ "$p" -eq $((E2E_BASE_PASSED + 3)) ] && [ "$f" -eq 0 ] && [ "$qt" -eq 1 ] && [ "$qu" -eq 1 ] && [ "$qv" -eq 1 ] && [ "$qr" -eq 1 ] \
      && [ "$e18" -eq 1 ] && [ "$netl" -eq 1 ] && [ "$nf" -eq 0 ] && [ "$nr" -eq 0 ] && [ "$nw" -eq 0 ]; then
-    ok "15 devnet e2e $sum (base $E2E_BASE_PASSED + 2); 13t, 13u, 13r PASS 1x each; 18e on :3020; nothing left the machine; 0 FAIL, 0 REFUSED, 0 WARN"
+    ok "15 devnet e2e $sum (base $E2E_BASE_PASSED + 3); 13t, 13u, 13v, 13r PASS 1x each; 18e on :3020; nothing left the machine; 0 FAIL, 0 REFUSED, 0 WARN"
   else
-    no "15 devnet e2e '${sum:-no SUMMARY}' (want $((E2E_BASE_PASSED + 2)) passed, 0 failed); 13t/13u/13r PASS $qt/$qu/$qr (want 1 each); 18e ${e18}x, network line ${netl}x (want 1 each); FAIL $nf, REFUSED $nr, WARN $nw (want 0 each) (log $T/e2e.log)"
+    no "15 devnet e2e '${sum:-no SUMMARY}' (want $((E2E_BASE_PASSED + 3)) passed, 0 failed); 13t/13u/13v/13r PASS $qt/$qu/$qv/$qr (want 1 each); 18e ${e18}x, network line ${netl}x (want 1 each); FAIL $nf, REFUSED $nr, WARN $nw (want 0 each) (log $T/e2e.log)"
     grep -E '^(FAIL|REFUSED|WARN|SUMMARY)' "$T/e2e.log" | cut -c1-200
   fi
 fi
