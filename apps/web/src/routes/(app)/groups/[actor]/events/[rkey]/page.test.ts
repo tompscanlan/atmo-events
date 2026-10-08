@@ -4,9 +4,12 @@ import { render } from 'svelte/server';
 // The page of one members-only event, rendered on the server from what its
 // loader returns (./page.server.test.ts tests the loader on its own). The page
 // is the shared EventView as it ships. Only EventRsvp is stubbed, to record
-// what EventView hands it (the event's URI, the space and the adapter), along
-// with the two media players, which import a stylesheet the test runner cannot
-// load. The space reader is a fake host, as in the loader's tests.
+// what EventView hands it (the event's URI, the space and the adapter) and, when
+// a test asks, to press RSVP as it renders; ShareModal is wrapped to record
+// whether it was opened; and the two media players are stubbed, since they
+// import a stylesheet the test runner cannot load. The space reader is a fake
+// host, as in the loader's tests, and the two RSVP commands are stand-ins that
+// record what the adapter sent them.
 vi.mock('$lib/groups/server/about-read', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/groups/server/about-read')>()),
 	groupSpaceReader: vi.fn()
@@ -17,27 +20,49 @@ const signedIn = vi.hoisted(() => ({
 		isLoggedIn: true,
 		did: 'did:plc:member',
 		profile: { handle: 'member.test', displayName: 'A member', avatar: undefined }
-	}
+	},
+	reauthorize: vi.fn()
 }));
 vi.mock('$lib/atproto/auth.svelte', () => signedIn);
 const login = vi.hoisted(() => ({ atProtoLoginModalState: { show: vi.fn() } }));
 vi.mock('$lib/components/LoginModal.svelte', () => login);
-vi.mock('$app/state', () => ({
-	page: {
-		url: new URL('https://atmo.test/groups/did:plc:jcwgw6fcnb5vyoid7nz7sl26/events/3lmeeting')
-	}
+const PAGE_URL = 'https://atmo.test/groups/did:plc:jcwgw6fcnb5vyoid7nz7sl26/events/3lmeeting';
+const appState = vi.hoisted(() => ({ page: { url: new URL('https://atmo.test/') } }));
+vi.mock('$app/state', () => appState);
+const commands = vi.hoisted(() => ({
+	rsvpToMembersOnlyEvent: vi.fn(),
+	cancelMembersOnlyRsvp: vi.fn()
 }));
-const rsvp = vi.hoisted(() => ({ renders: [] as Array<Record<string, unknown>> }));
+vi.mock('$lib/groups/groups.remote', () => commands);
+const rsvp = vi.hoisted(() => ({
+	renders: [] as Array<Record<string, unknown>>,
+	/** Set to press RSVP with this status as EventRsvp renders. */
+	press: null as null | 'going' | 'interested'
+}));
 vi.mock('@atmo-dev/events-ui/EventRsvp.svelte', () => ({
 	default: (_renderer: unknown, props: Record<string, unknown>) => {
 		rsvp.renders.push(props);
+		if (rsvp.press) (props.onrsvp as (status: string, rkey: string) => void)(rsvp.press, '3lrsvp');
 	}
 }));
+const share = vi.hoisted(() => ({ opened: [] as unknown[] }));
+vi.mock('@atmo-dev/events-ui/ShareModal.svelte', async (importOriginal) => {
+	const actual = await importOriginal<{
+		default: (renderer: unknown, props: Record<string, unknown>) => unknown;
+	}>();
+	return {
+		default: (renderer: unknown, props: Record<string, unknown>) => {
+			share.opened.push(props.open);
+			return actual.default(renderer, props);
+		}
+	};
+});
 vi.mock('@atmo-dev/events-ui/VodPlayer.svelte', () => ({ default: () => {} }));
 vi.mock('@atmo-dev/events-ui/event-view/StreamPlacePlayer.svelte', () => ({ default: () => {} }));
 
 import { load } from './+page.server';
 import Page from './+page.svelte';
+import { EventView } from '@atmo-dev/events-ui';
 import type { EditorAdapter, EditorViewer } from '$lib/components/editor/adapter';
 import { createMembersOnlyEventAdapter } from '$lib/groups/event-page-adapter';
 import {
@@ -56,7 +81,20 @@ const { aboutSpaceUri: ABOUT } = groupSpaceUris(GROUP_DID);
 // Written out, so a wrong type, key or URI form in the code under test fails here.
 const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
 const EVENT = 'community.lexicon.calendar.event';
+const RSVP = 'community.lexicon.calendar.rsvp';
 const MEETING_URI = `${CALENDAR}/${GROUP_DID}/${EVENT}/3lmeeting`;
+
+/** An RSVP record as EventRsvp builds it, naming `subject` (by default the
+ *  meeting's space-form URI). */
+function rsvpRecord(status: 'going' | 'interested', subject = MEETING_URI) {
+	return {
+		$type: RSVP,
+		createdWith: 'https://atmo.rsvp',
+		status: `${RSVP}#${status}`,
+		subject: { uri: subject, cid: 'bafymeeting' },
+		createdAt: '2026-10-08T12:00:00.000Z'
+	};
+}
 
 const IMAGE = [
 	{
@@ -96,12 +134,17 @@ beforeEach(async () => {
 	await recordGroupSpaces(harness.db, created.id, groupSpaceUris(GROUP_DID));
 	await addMember(harness.db, created.id, MEMBER, 'member');
 	rsvp.renders.length = 0;
+	rsvp.press = null;
+	share.opened.length = 0;
 	signedIn.user.did = MEMBER;
+	appState.page.url = new URL(PAGE_URL);
 });
 
 afterEach(() => {
 	harness.close();
 	vi.clearAllMocks();
+	vi.restoreAllMocks();
+	vi.unstubAllGlobals();
 });
 
 type Host = GroupSpaceReader & { calls: string[] };
@@ -161,14 +204,15 @@ function calendarCalls(h: Host): string[] {
 	return h.calls.filter((call) => call.includes(CALENDAR));
 }
 
-/** The page rendered as the server renders it, with what EventView handed EventRsvp. */
-function renderPage(data: PageData) {
+/** The page rendered as the server renders it, with what EventView handed
+ *  EventRsvp. `before` is how many renders the test made already. */
+function renderPage(data: PageData, before = 0) {
 	const { head, body } = render(Page, { props: { data } as never });
-	expect(rsvp.renders).toHaveLength(1);
+	expect(rsvp.renders).toHaveLength(before + 1);
 	return {
 		head,
 		body,
-		rsvp: rsvp.renders[0] as {
+		rsvp: rsvp.renders[before] as {
 			eventUri: string;
 			eventCid: string | null;
 			initialRsvpStatus: unknown;
@@ -210,7 +254,8 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 			viewerRsvpStatus: null,
 			viewerRsvpRkey: null,
 			hostProfile: { did: GROUP_DID, displayName: 'Kona Paddlers' },
-			canManageEvents: false
+			canManageEvents: false,
+			membersOnly: true
 		});
 		expect('media' in data.eventData).toBe(false);
 		expect('spaceKey' in data).toBe(false);
@@ -241,31 +286,64 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 		expect(page.head).not.toContain('cdn.bsky.app');
 	});
 
-	it("the members-only event page's adapter has no space write", async () => {
+	it("the members-only event page's adapter writes an RSVP only through the members-only RSVP command", async () => {
 		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
 		const { rsvp: handed } = renderPage(await openAs(MEMBER));
 		const { adapter, viewer } = handed;
-
-		// EventRsvp writes into the space it is given only through these, and with
-		// a space and neither of them it writes nothing and falls back to nothing.
 		expect(handed.spaceUri).toBe(CALENDAR);
-		expect('putSpaceRecord' in adapter).toBe(false);
-		expect('deleteSpaceRecord' in adapter).toBe(false);
-		// Nor any other way to reach a space, or to tell the index about a record.
+
+		// What EventRsvp sends for a first RSVP: a fresh key of its own, and the
+		// event's space-form URI as the subject.
+		commands.rsvpToMembersOnlyEvent.mockResolvedValue({
+			ok: true,
+			uri: `${CALENDAR}/${MEMBER}/${RSVP}/3lmeeting`
+		});
+		expect(
+			await adapter.putSpaceRecord!({
+				spaceUri: CALENDAR,
+				collection: RSVP,
+				rkey: '3lfreshtid',
+				record: rsvpRecord('going')
+			})
+		).toEqual({ ok: true });
+		// The command names the event and the status, and nothing else: the
+		// server picks the space, the collection, the key and the subject.
+		expect(commands.rsvpToMembersOnlyEvent.mock.calls).toEqual([
+			[{ groupDid: GROUP_DID, rkey: '3lmeeting', status: 'going', asked: false }]
+		]);
+
+		commands.cancelMembersOnlyRsvp.mockResolvedValue({ ok: true });
+		await expect(
+			adapter.deleteSpaceRecord!({ spaceUri: CALENDAR, collection: RSVP, rkey: '3lfreshtid' })
+		).resolves.toBeUndefined();
+		expect(commands.cancelMembersOnlyRsvp.mock.calls).toEqual([
+			[{ groupDid: GROUP_DID, rkey: '3lmeeting', asked: false }]
+		]);
+
+		// Back from a re-authorization that asked for the grant, the page says so.
+		appState.page.url = new URL(`${PAGE_URL}?rsvp-grant=asked`);
+		const { rsvp: again } = renderPage(await openAs(MEMBER), 1);
+		await again.adapter.putSpaceRecord!({
+			spaceUri: CALENDAR,
+			collection: RSVP,
+			rkey: '3lmeeting',
+			record: rsvpRecord('interested')
+		});
+		expect(commands.rsvpToMembersOnlyEvent.mock.calls.at(-1)).toEqual([
+			{ groupDid: GROUP_DID, rkey: '3lmeeting', status: 'interested', asked: true }
+		]);
+
+		// No other way to reach a space, or to tell the index about a record.
 		expect('createSpaceInvite' in adapter).toBe(false);
 		expect('createPrivateEvent' in adapter).toBe(false);
 		expect('notifyUpdate' in adapter).toBe(false);
 		// A public write would cite the event outside its space, so each refuses.
-		const record = { $type: 'community.lexicon.calendar.rsvp' };
-		await expect(
-			adapter.putRecord({ collection: 'community.lexicon.calendar.rsvp', rkey: '3lrsvp', record })
-		).rejects.toThrow();
+		const record = { $type: RSVP };
+		await expect(adapter.putRecord({ collection: RSVP, rkey: '3lrsvp', record })).rejects.toThrow();
 		await expect(
 			adapter.createRecord({ collection: 'app.bsky.feed.post', record })
 		).rejects.toThrow();
-		await expect(
-			adapter.deleteRecord({ collection: 'community.lexicon.calendar.rsvp', rkey: '3lrsvp' })
-		).rejects.toThrow();
+		await expect(adapter.deleteRecord({ collection: RSVP, rkey: '3lrsvp' })).rejects.toThrow();
 		await expect(adapter.uploadBlob(new Blob(['x']))).rejects.toThrow();
 		expect(adapter.features).toStrictEqual({ delete: false, recurring: false, privateMode: false });
 		// Signing in still works.
@@ -277,8 +355,240 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 		expect(viewer.isLoggedIn).toBe(true);
 
 		// The page's adapter is the module's own, as built for any caller.
-		const built = createMembersOnlyEventAdapter();
+		const built = createMembersOnlyEventAdapter({
+			groupDid: GROUP_DID,
+			rkey: '3lmeeting',
+			calendarSpaceUri: CALENDAR,
+			asked: false,
+			onNotice: () => {}
+		});
 		expect(Object.keys(built).sort()).toEqual(Object.keys(adapter).sort());
+	});
+
+	it("the members-only event page's adapter refuses a space write that is not an RSVP to its event", async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		const { adapter } = renderPage(await openAs(MEMBER)).rsvp;
+		const { membersSpaceUri } = groupSpaceUris(GROUP_DID);
+		const otherCalendar =
+			'at://did:plc:anothergroupaaaaaaaaaaaa/space/net.openmeet.space.calendar/self';
+
+		const puts: [string, Parameters<NonNullable<EditorAdapter['putSpaceRecord']>>[0]][] = [
+			[
+				'another space of the group',
+				{
+					spaceUri: membersSpaceUri,
+					collection: RSVP,
+					rkey: '3lmeeting',
+					record: rsvpRecord('going')
+				}
+			],
+			[
+				"another group's calendar",
+				{
+					spaceUri: otherCalendar,
+					collection: RSVP,
+					rkey: '3lmeeting',
+					record: rsvpRecord('going')
+				}
+			],
+			[
+				'another collection',
+				{
+					spaceUri: CALENDAR,
+					collection: EVENT,
+					rkey: '3lmeeting',
+					record: { ...rsvpRecord('going'), $type: EVENT }
+				}
+			],
+			[
+				'a post',
+				{
+					spaceUri: CALENDAR,
+					collection: 'app.bsky.feed.post',
+					rkey: '3lmeeting',
+					record: { text: 'hi' }
+				}
+			],
+			[
+				'the plain repo URI',
+				{
+					spaceUri: CALENDAR,
+					collection: RSVP,
+					rkey: '3lmeeting',
+					record: rsvpRecord('going', `at://${GROUP_DID}/${EVENT}/3lmeeting`)
+				}
+			],
+			[
+				'another event',
+				{
+					spaceUri: CALENDAR,
+					collection: RSVP,
+					rkey: '3lmeeting',
+					record: rsvpRecord('going', `${CALENDAR}/${GROUP_DID}/${EVENT}/3lother`)
+				}
+			],
+			[
+				'no subject',
+				{
+					spaceUri: CALENDAR,
+					collection: RSVP,
+					rkey: '3lmeeting',
+					record: { $type: RSVP, status: `${RSVP}#going` }
+				}
+			],
+			[
+				'an unknown status',
+				{
+					spaceUri: CALENDAR,
+					collection: RSVP,
+					rkey: '3lmeeting',
+					record: { ...rsvpRecord('going'), status: `${RSVP}#maybe` }
+				}
+			]
+		];
+		for (const [, call] of puts) {
+			expect(await adapter.putSpaceRecord!(call)).toEqual({ ok: false });
+		}
+		for (const call of [
+			{ spaceUri: membersSpaceUri, collection: RSVP, rkey: '3lmeeting' },
+			{ spaceUri: otherCalendar, collection: RSVP, rkey: '3lmeeting' },
+			{ spaceUri: CALENDAR, collection: EVENT, rkey: '3lmeeting' }
+		]) {
+			await expect(adapter.deleteSpaceRecord!(call)).rejects.toThrow();
+		}
+		expect(commands.rsvpToMembersOnlyEvent).not.toHaveBeenCalled();
+		expect(commands.cancelMembersOnlyRsvp).not.toHaveBeenCalled();
+	});
+
+	it("the adapter shows the command's message, keeps a failed cancel shown, and re-authorizes once", async () => {
+		const notices: (string | null)[] = [];
+		const adapter = createMembersOnlyEventAdapter({
+			groupDid: GROUP_DID,
+			rkey: '3lmeeting',
+			calendarSpaceUri: CALENDAR,
+			asked: false,
+			onNotice: (message) => notices.push(message)
+		});
+		const put = () =>
+			adapter.putSpaceRecord!({
+				spaceUri: CALENDAR,
+				collection: RSVP,
+				rkey: '3lmeeting',
+				record: rsvpRecord('going')
+			});
+		const cancel = () =>
+			adapter.deleteSpaceRecord!({ spaceUri: CALENDAR, collection: RSVP, rkey: '3lmeeting' });
+
+		// Each failure the command reports is shown, and nothing is saved: a put
+		// says so with { ok: false }, a cancel throws, so EventRsvp keeps it shown.
+		const failures = [
+			{ ok: false, reason: 'no-spaces', message: 'no spaces here' },
+			{ ok: false, reason: 'retry-later', message: 'try again shortly' },
+			{ ok: false, reason: 'refused', message: 'the PDS said no' }
+		];
+		for (const failure of failures) {
+			commands.rsvpToMembersOnlyEvent.mockResolvedValueOnce(failure);
+			expect(await put()).toEqual({ ok: false });
+			commands.cancelMembersOnlyRsvp.mockResolvedValueOnce(failure);
+			await expect(cancel()).rejects.toThrow();
+		}
+		expect(notices).toEqual(failures.flatMap((f) => [f.message, f.message]));
+
+		// A member taken off the roster while the page was open is told so.
+		notices.length = 0;
+		commands.rsvpToMembersOnlyEvent.mockResolvedValueOnce({ ok: false, reason: 'not-member' });
+		expect(await put()).toEqual({ ok: false });
+		commands.cancelMembersOnlyRsvp.mockResolvedValueOnce({ ok: false, reason: 'not-member' });
+		await expect(cancel()).rejects.toThrow();
+		expect(notices).toHaveLength(2);
+		for (const notice of notices) expect(notice).toEqual(expect.any(String));
+
+		// A command that could not be reached is a failure too.
+		notices.length = 0;
+		commands.rsvpToMembersOnlyEvent.mockRejectedValueOnce(new Error('fetch failed'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		expect(await put()).toEqual({ ok: false });
+		expect(notices).toEqual([expect.any(String)]);
+
+		// A success clears the notice.
+		notices.length = 0;
+		commands.rsvpToMembersOnlyEvent.mockResolvedValueOnce({ ok: true, uri: 'at://x' });
+		expect(await put()).toEqual({ ok: true });
+		expect(notices).toEqual([null]);
+
+		// Sent to re-authorize: the page URL is marked as having asked, then the
+		// browser goes to consent, once. Nothing is resubmitted.
+		const replaced: string[] = [];
+		vi.stubGlobal('window', { location: { href: PAGE_URL } });
+		vi.stubGlobal('history', {
+			state: { kept: true },
+			replaceState: (_state: unknown, _unused: string, url: string | URL) =>
+				replaced.push(String(url))
+		});
+		const consent = 'https://pds.test/oauth/authorize?request_uri=urn:x';
+		commands.rsvpToMembersOnlyEvent.mockResolvedValueOnce({
+			ok: false,
+			reason: 'reauthorize',
+			url: consent
+		});
+		expect(await put()).toEqual({ ok: false });
+		expect(replaced).toEqual([`${PAGE_URL}?rsvp-grant=asked`]);
+		expect(signedIn.reauthorize.mock.calls).toEqual([[consent]]);
+		commands.cancelMembersOnlyRsvp.mockResolvedValueOnce({
+			ok: false,
+			reason: 'reauthorize',
+			url: consent
+		});
+		await expect(cancel()).rejects.toThrow();
+		expect(signedIn.reauthorize).toHaveBeenCalledTimes(2);
+		expect(commands.rsvpToMembersOnlyEvent).toHaveBeenCalledTimes(failures.length + 4);
+	});
+
+	// A members-only event offers no share prompt after an RSVP of going, since
+	// the post would cite the event outside its space. The shared EventView opens
+	// the prompt for every other event. (Spec: FR-118.)
+	it("a members-only RSVP opens no share prompt, and a public event's RSVP still does", async () => {
+		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		const data = await openAs(MEMBER);
+		rsvp.press = 'going';
+
+		// The server renders on the first read of the output.
+		expect(render(Page, { props: { data } as never }).body).toContain('Committee call');
+		expect(rsvp.renders).toHaveLength(1);
+		expect(share.opened).toContain(false);
+		expect(share.opened).not.toContain(true);
+
+		// The same view for a public event, as the person-style page hands it: an
+		// RSVP of going opens the prompt.
+		rsvp.renders.length = 0;
+		share.opened.length = 0;
+		const publicData = {
+			eventData: { ...MEETING_VALUE, did: GROUP_DID, rkey: '3lpublic' },
+			actorDid: GROUP_DID,
+			rkey: '3lpublic',
+			attendees: { going: [], interested: [], goingCount: 0, interestedCount: 0 },
+			viewerRsvpStatus: null,
+			viewerRsvpRkey: null,
+			hostProfile: null
+		};
+		const viewer = { isLoggedIn: true, did: MEMBER, handle: 'member.test' };
+		const shown = render(EventView, {
+			props: {
+				data: publicData,
+				adapter: createMembersOnlyEventAdapter({
+					groupDid: GROUP_DID,
+					rkey: '3lpublic',
+					calendarSpaceUri: CALENDAR,
+					asked: false,
+					onNotice: () => {}
+				}),
+				viewer,
+				pageUrl: new URL(PAGE_URL)
+			}
+		});
+		expect(shown.body).toContain('Committee call');
+		expect(rsvp.renders.length).toBeGreaterThan(0);
+		expect(share.opened).toContain(true);
 	});
 
 	// The edit page reads a members-only event only when its link says so, since

@@ -2,7 +2,9 @@ import { error } from '@sveltejs/kit';
 import { canSeeMembers } from '$lib/groups/access';
 import { can } from '$lib/groups/permissions';
 import { groupSpaceReader, readGroupAbout } from '$lib/groups/server/about-read';
+import { memberSession, type MemberSession } from '$lib/groups/server/acceptance';
 import { membersOnlyEventForDisplay, readMembersOnlyEvent } from '$lib/groups/server/calendar-read';
+import { readOwnMembersOnlyRsvp } from '$lib/groups/server/member-rsvp';
 import { groupPath, groupRouteContext } from '$lib/groups/server/route-context';
 import type { PageServerLoad } from './$types';
 
@@ -62,6 +64,20 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		}
 	}
 
+	// The viewer's own RSVP, read through their own session from their repo in
+	// the calendar space, after the event read and only for a page that will
+	// render. Nothing is read for a session without the read grant, and a
+	// failed read shows no RSVP rather than failing the page. (Spec: FR-113.)
+	let viewer: MemberSession | null = null;
+	if (locals.session) {
+		try {
+			viewer = await memberSession(locals.session);
+		} catch (e) {
+			console.warn(`[groups] ${group.group_did}: no session to read the viewer's RSVP:`, e);
+		}
+	}
+	const own = await readOwnMembersOnlyRsvp(membership, group, viewer, shown.rkey);
+
 	const canManageEvents = can(membership.permissions, 'MANAGE_EVENTS');
 	return {
 		eventData: {
@@ -77,11 +93,13 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		/** The space form, which an RSVP to this event names. (Spec: FR-120.) */
 		eventUri: shown.uri,
 		spaceUri: shown.space,
-		// Who is going is read as the group, member by member, once members-only
-		// RSVPs land. Until then the page shows no one and reads nothing.
+		// Who is going is read as the group, member by member, which is not built
+		// yet. Until then the page shows no one and reads nothing for it.
 		attendees: { going: [], interested: [], goingCount: 0, interestedCount: 0 },
-		viewerRsvpStatus: null,
-		viewerRsvpRkey: null,
+		viewerRsvpStatus: own?.status ?? null,
+		viewerRsvpRkey: own?.rkey ?? null,
+		// EventView offers no share prompt for this event. (Spec: FR-118.)
+		membersOnly: true,
 		hostProfile: hostName ? { did: group.group_did, displayName: hostName } : null,
 		canManageEvents,
 		// EventView's Edit button, for whoever may manage the group's events. The

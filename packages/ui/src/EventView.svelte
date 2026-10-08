@@ -187,7 +187,7 @@
 			handle: viewer.handle,
 			url: `/${viewer.handle || viewer.did}`
 		});
-		if (status === 'interested') return;
+		if (status === 'interested' || data.membersOnly) return;
 		shareModalTitle = "You're going!";
 		shareModalText = `I'm going to "${eventData.name}".\n\n${shareUrl}`;
 		canSetEventComments = false;

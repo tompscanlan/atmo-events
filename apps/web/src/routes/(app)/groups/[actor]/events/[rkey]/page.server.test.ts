@@ -24,6 +24,7 @@ import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqli
 import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
 import { groupRouteContext } from '$lib/groups/server/route-context';
 import { groupSpaceUris } from '$lib/groups/server/spaces';
+import { acceptanceGrant } from '$lib/groups/server/member-grants';
 
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
@@ -127,10 +128,10 @@ function host(
 	};
 }
 
-function event(did: string | null, rkey: string) {
+function event(did: string | null, rkey: string, session?: unknown) {
 	return {
 		params: { actor: GROUP_DID, rkey },
-		locals: { did },
+		locals: session === undefined ? { did } : { did, session },
 		platform: { env: { DB: harness.db } },
 		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events/${rkey}`)
 	} as unknown as Parameters<typeof load>[0];
@@ -142,8 +143,12 @@ type PageData = Record<string, unknown> & {
 	spaceUri: string;
 };
 
-async function openAs(did: string | null, rkey = '3lmeeting'): Promise<PageData> {
-	return (await load(event(did, rkey))) as PageData;
+async function openAs(
+	did: string | null,
+	rkey = '3lmeeting',
+	session?: unknown
+): Promise<PageData> {
+	return (await load(event(did, rkey, session))) as PageData;
 }
 
 /** What the load threw, which must be one of SvelteKit's HTTP errors. */
@@ -288,5 +293,155 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 		expect((await openAs(OWNER)).canManageEvents).toBe(true);
 		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
 		expect((await openAs(MEMBER)).canManageEvents).toBe(false);
+	});
+});
+
+// The viewer's own RSVP, read back through their own session from their repo in
+// the calendar space, at the event's key. Only after the event read, so a page
+// that 404s sends nothing on the member's behalf either. (Spec: FR-113, FR-117.)
+describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
+	const RSVP = 'community.lexicon.calendar.rsvp';
+	/** What a sign-in granted before RSVPs joined the grant, written out. */
+	const ACCEPTANCE_ONLY = `atproto space:*?authority=${GROUP_DID}&collection=group.opensocial.acceptance&action=create&action=update&action=delete`;
+
+	/** The member's signed-in session. Its requests go into `log`, beside the
+	 *  group host's, so the order of the two is a fact of the test. */
+	function memberSession(scope: string, log: string[], status: string | null = 'going') {
+		return {
+			did: MEMBER,
+			getTokenInfo: async () => ({ scope }),
+			handle: async (pathname: string, init?: RequestInit) => {
+				log.push(`member ${init?.method ?? 'GET'} ${pathname}`);
+				if (status === null) {
+					return Response.json({ error: 'RecordNotFound' }, { status: 400 });
+				}
+				return Response.json({
+					uri: `${CALENDAR}/${MEMBER}/${RSVP}/3lmeeting`,
+					cid: 'bafyrsvp',
+					value: {
+						$type: RSVP,
+						status: `${RSVP}#${status}`,
+						subject: { uri: MEETING_URI },
+						createdAt: '2026-10-08T12:00:00.000Z'
+					}
+				});
+			}
+		};
+	}
+
+	/** The group's host, logging into the same list. */
+	function sharedHost(log: string[]): Host {
+		const h = host([storedMeeting()]);
+		return {
+			...h,
+			async get(q) {
+				log.push(`group get ${q.space} ${q.collection} ${q.rkey}`);
+				return h.get(q);
+			}
+		};
+	}
+
+	const ownRead = `member GET /xrpc/com.atproto.space.getRecord?${new URLSearchParams({
+		space: CALENDAR,
+		repo: MEMBER,
+		collection: RSVP,
+		rkey: '3lmeeting'
+	})}`;
+
+	it("the event page reads the viewer's own RSVP through their session, after the event read", async () => {
+		const log: string[] = [];
+		vi.mocked(groupSpaceReader).mockResolvedValue(sharedHost(log));
+
+		const data = await openAs(
+			MEMBER,
+			'3lmeeting',
+			memberSession(`atproto ${acceptanceGrant(GROUP_DID)}`, log)
+		);
+
+		expect(data.viewerRsvpStatus).toBe('going');
+		expect(data.viewerRsvpRkey).toBe('3lmeeting');
+		expect(data.membersOnly).toBe(true);
+		// One read through the member's session, at the event's key, and only once
+		// the event itself was read.
+		expect(log.filter((line) => line.startsWith('member '))).toEqual([ownRead]);
+		const eventRead = log.indexOf(`group get ${CALENDAR} ${EVENT} 3lmeeting`);
+		expect(eventRead).toBeGreaterThan(-1);
+		expect(log.indexOf(ownRead)).toBeGreaterThan(eventRead);
+
+		// A member who said they are not going reads back as that.
+		const later: string[] = [];
+		vi.mocked(groupSpaceReader).mockResolvedValue(sharedHost(later));
+		const notGoing = await openAs(
+			MEMBER,
+			'3lmeeting',
+			memberSession(`atproto ${acceptanceGrant(GROUP_DID)}`, later, 'notgoing')
+		);
+		expect(notGoing.viewerRsvpStatus).toBe('notgoing');
+
+		// A page that 404s reads nothing through the session.
+		const absent: string[] = [];
+		vi.mocked(groupSpaceReader).mockResolvedValue(sharedHost(absent));
+		await expect(
+			openAs(MEMBER, '3lmadeup', memberSession(`atproto ${acceptanceGrant(GROUP_DID)}`, absent))
+		).rejects.toMatchObject({ status: 404 });
+		expect(absent.filter((line) => line.startsWith('member '))).toEqual([]);
+	});
+
+	it('the event page reads no RSVP for a session without the read grant', async () => {
+		const log: string[] = [];
+		// A session granted before RSVPs joined the grant, one whose PDS dropped the
+		// grant, a signed-in caller with no session, and a member with the grant who
+		// has not RSVPed yet.
+		const cases: [string, unknown][] = [
+			['acceptance only', memberSession(ACCEPTANCE_ONLY, log)],
+			['base scope', memberSession('atproto', log)],
+			['no session', undefined]
+		];
+		for (const [, session] of cases) {
+			vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+			const data = await openAs(MEMBER, '3lmeeting', session);
+			expect(data.viewerRsvpStatus).toBeNull();
+			expect(data.viewerRsvpRkey).toBeNull();
+			expect(data.membersOnly).toBe(true);
+			expect(data.eventData.name).toBe('Committee call');
+		}
+		expect(log).toEqual([]);
+
+		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		const none = await openAs(
+			MEMBER,
+			'3lmeeting',
+			memberSession(`atproto ${acceptanceGrant(GROUP_DID)}`, log, null)
+		);
+		expect(none.viewerRsvpStatus).toBeNull();
+		expect(none.viewerRsvpRkey).toBeNull();
+		// The one session that holds the grant is the one read.
+		expect(log).toEqual([ownRead]);
+	});
+
+	it("a viewer's RSVP that cannot be read leaves the page showing none", async () => {
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const failing = {
+			did: MEMBER,
+			getTokenInfo: async () => ({ scope: `atproto ${acceptanceGrant(GROUP_DID)}` }),
+			handle: async () => Response.json({ error: 'InternalServerError' }, { status: 500 })
+		};
+		const unreadable = {
+			...failing,
+			getTokenInfo: async () => {
+				throw new Error('the session store is down');
+			}
+		};
+		for (const session of [failing, unreadable]) {
+			vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+			const data = await openAs(MEMBER, '3lmeeting', session);
+			expect(data.eventData.name).toBe('Committee call');
+			expect(data.viewerRsvpStatus).toBeNull();
+		}
+		expect(logged).toHaveBeenCalledTimes(1);
+		expect(warned).toHaveBeenCalledTimes(1);
+		logged.mockRestore();
+		warned.mockRestore();
 	});
 });
