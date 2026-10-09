@@ -208,6 +208,16 @@ export function effectivePermissions(
 	return resolvePermissions(grants);
 }
 
+/** What each recorded role grants, for a page's role table, from the binding
+ *  records the gate reads. */
+export function rolePermissionsFromRecords(
+	members: GroupMembers
+): Record<string, GroupPermission[]> {
+	return Object.fromEntries(
+		members.roles.map((role) => [role.id, [...effectivePermissions(members, [role.id])]])
+	);
+}
+
 /** Whether the space holds an authz config at all. None means the config was
  *  never written, not that the group grants nothing. */
 export function hasAuthzRecords(members: GroupMembers): boolean {

@@ -6,11 +6,17 @@
 import { error } from '@sveltejs/kit';
 import { actorToDid } from '$lib/atproto/methods';
 import { canSeeGroup } from '../access';
-import type { CallerMembership, GroupRow, GroupVisibility } from '../types';
+import type { CallerMembership, GroupRow, GroupVisibility, RosterEntry } from '../types';
 import { groupSpaceReader, readGroupProfile, type GroupSpaceReader } from './about-read';
 import { knownHandles } from './identities';
 
-import { getCallerMembership, getGroupByDid } from './repo';
+import { getCallerMembership, getGroupByDid, listMembers } from './repo';
+import {
+	hasMemberRecords,
+	rosterFromRecords,
+	rosterFromRows,
+	type GroupMembers
+} from './members-read';
 import { readGroupVisibility } from './spaces';
 
 import { errorText } from './errors';
@@ -129,6 +135,24 @@ export async function groupHeader(
 	}
 	const handles = await knownHandles(db, [group.group_did]);
 	return { groupName: profile?.name ?? group.name, handle: handles.get(group.group_did) ?? null };
+}
+
+/** A page's roster: the membership records, or the rows when the members space
+ *  holds none, since an empty space means the records were never written, not
+ *  that the group has no members. `confirm` reads which recorded members wrote
+ *  their acceptance, for a page that shows it. */
+export async function pageRoster(
+	db: D1Database,
+	group: GroupRow,
+	members: GroupMembers,
+	confirm?: (dids: string[]) => Promise<ReadonlyMap<string, boolean> | null>
+): Promise<{ entries: RosterEntry[]; source: 'records' | 'cache' }> {
+	if (!hasMemberRecords(members)) {
+		return { entries: rosterFromRows(await listMembers(db, group.id)), source: 'cache' };
+	}
+	const subjects = members.memberships.map((record) => record.subject);
+	const confirmed = confirm ? await confirm(subjects) : null;
+	return { entries: rosterFromRecords(members, confirmed), source: 'records' };
 }
 
 /** The canonical path: always the DID, never a handle. */

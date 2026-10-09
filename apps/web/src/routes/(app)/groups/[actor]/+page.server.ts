@@ -3,16 +3,11 @@ import { groupFace } from '$lib/groups/about-record';
 import { can } from '$lib/groups/permissions';
 import { readGroupAbout, type GroupSpaceReader } from '$lib/groups/server/about-read';
 import { refreshGroupHandle } from '$lib/groups/server/handles';
-import {
-	hasMemberRecords,
-	readGroupMembers,
-	rosterFromRecords,
-	rosterFromRows
-} from '$lib/groups/server/members-read';
+import { readGroupMembers, NO_MEMBER_RECORDS } from '$lib/groups/server/members-read';
 import { loadPeople } from '$lib/groups/server/people';
 
-import { groupRouteContext } from '$lib/groups/server/route-context';
-import { countActiveMembers, listJoinRequests, listMembers } from '$lib/groups/server/repo';
+import { groupRouteContext, pageRoster } from '$lib/groups/server/route-context';
+import { countActiveMembers, listJoinRequests } from '$lib/groups/server/repo';
 import { readGroupVisibility } from '$lib/groups/server/spaces';
 import type { GroupRow, GroupVisibility, RosterEntry } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
@@ -49,10 +44,8 @@ async function rosterPreview(
 	group: GroupRow
 ): Promise<RosterEntry[] | null> {
 	try {
-		const members = reader ? await readGroupMembers(reader, group) : null;
-		return members && hasMemberRecords(members)
-			? rosterFromRecords(members)
-			: rosterFromRows(await listMembers(db, group.id));
+		const members = reader ? await readGroupMembers(reader, group) : NO_MEMBER_RECORDS;
+		return (await pageRoster(db, group, members)).entries;
 	} catch (e) {
 		console.error(`[groups] ${group.group_did}: the members space did not answer:`, e);
 		return null;

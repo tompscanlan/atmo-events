@@ -38,7 +38,8 @@ import {
 	resolveActorPermissions,
 	rolesForDid,
 	rosterFromRecords,
-	rosterFromRows
+	rosterFromRows,
+	rolePermissionsFromRecords
 } from './members-read';
 import {
 	GROUP_ACCESS_COLLECTION,
@@ -241,6 +242,19 @@ describe('the authz config as records', () => {
 		// is the seeded model rather than a missing record.
 		expect([...effectivePermissions(members, ['member'])]).toEqual([]);
 		expect(members.permissions?.bindings.map((b) => b.role)).toEqual(['owner', 'admin', 'member']);
+	});
+
+	// The members page's role table reads the same records the gate does, so it
+	// cannot say a role grants what the gate would refuse.
+	it('tells a page what each recorded role grants, from both records', async () => {
+		const members = await readGroupMembers(readerOver(AUTHZ), group);
+		const table = rolePermissionsFromRecords(members);
+
+		expect(Object.keys(table)).toEqual(['owner', 'admin', 'member']);
+		expect([...table.admin].sort()).toEqual([...effectivePermissions(members, ['admin'])].sort());
+		expect(table.admin).toContain('CREATE_EVENT');
+		expect(table.member).toEqual([]);
+		expect(rolePermissionsFromRecords(NO_MEMBER_RECORDS)).toEqual({});
 	});
 
 	it('grants nothing for a role the caller does not hold, and nothing with no records', async () => {

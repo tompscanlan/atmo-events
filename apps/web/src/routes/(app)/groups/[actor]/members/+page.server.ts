@@ -7,13 +7,13 @@ import {
 	hasMemberRecords,
 	hasRecordedAccess,
 	readGroupMembers,
-	rosterFromRecords,
-	rosterFromRows
+	hasAuthzRecords,
+	rolePermissionsFromRecords
 } from '$lib/groups/server/members-read';
 import { loadPeople } from '$lib/groups/server/people';
 import { groupAcceptanceReader } from '$lib/groups/server/space-credential';
-import { groupHeader, groupRouteContext } from '$lib/groups/server/route-context';
-import { listJoinRequests, listMembers, rolePermissions } from '$lib/groups/server/repo';
+import { groupHeader, groupRouteContext, pageRoster } from '$lib/groups/server/route-context';
+import { listJoinRequests, rolePermissions } from '$lib/groups/server/repo';
 import type { GroupRow } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
 
@@ -65,17 +65,9 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	}
 
 	const canAdmitMembers = can(membership.permissions, 'ADMIT_MEMBERS');
-	const roster = fromRecords
-		? rosterFromRecords(
-				members,
-				await readConfirmations(
-					platform!.env,
-					db,
-					group,
-					members.memberships.map((record) => record.subject)
-				)
-			)
-		: rosterFromRows(await listMembers(db, group.id));
+	const { entries: roster } = await pageRoster(db, group, members, (dids) =>
+		readConfirmations(platform!.env, db, group, dids)
+	);
 	const pendingRequests = canAdmitMembers ? await listJoinRequests(db, group.id, 'pending') : [];
 	const space = group.members_space_uri;
 
@@ -100,8 +92,11 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 			...roster.map((entry) => entry.did),
 			...pendingRequests.map((request) => request.did)
 		]),
-		// Shown so an admin can see what a role grants before assigning it.
-		rolePermissions: await rolePermissions(db, group.id),
+		// Shown so an admin can see what a role grants before assigning it: from
+		// the binding records the gate reads, else the rows.
+		rolePermissions: hasAuthzRecords(members)
+			? rolePermissionsFromRecords(members)
+			: await rolePermissions(db, group.id),
 		assignableRoles: ASSIGNABLE_ROLES,
 		canAdmitMembers,
 		canEjectMembers: can(membership.permissions, 'EJECT_MEMBERS'),
