@@ -3,6 +3,7 @@ import { createOAuthClient } from '$lib/atproto/server/oauth';
 import { setSignedCookie } from '$lib/atproto/server/signed-cookie';
 import { scopes } from '$lib/atproto/settings';
 import { getServerClient } from '$lib/contrail';
+import { acceptOnSignIn } from '$lib/groups/server/acceptance';
 import { dev } from '$app/environment';
 import type { RequestHandler } from './$types';
 
@@ -26,6 +27,10 @@ export const GET: RequestHandler = async ({ url, platform, cookies }) => {
 
 		setSignedCookie(cookies, 'did', session.did, cookieOpts);
 		setSignedCookie(cookies, 'scope', scopes.join(' '), cookieOpts);
+
+		// Groups: the member's acceptance wherever this session's grants allow one
+		// and it is missing. Never throws.
+		await acceptOnSignIn(platform?.env.DB, session);
 	} catch (e) {
 		console.error('OAuth callback failed:', e);
 		redirect(303, '/?error=auth_failed');
