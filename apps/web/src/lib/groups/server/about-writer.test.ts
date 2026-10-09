@@ -99,75 +99,6 @@ describe('writeGroupProfile', () => {
 		});
 		expect(writes[0].record).toMatchObject({ joinPolicy: 'invite' });
 	});
-
-	it('refuses a member without MANAGE_GROUP before any write is attempted', async () => {
-		await expect(
-			writeGroupProfile({
-				db,
-				env,
-				group,
-				visibility: 'public',
-				callerDid: MEMBER,
-				writer,
-				profile: { name: 'Hijacked' }
-			})
-		).rejects.toThrow(GroupPermissionError);
-		expect(writes).toHaveLength(0);
-	});
-
-	it('refuses an anonymous caller before any write is attempted', async () => {
-		await expect(
-			writeGroupProfile({
-				db,
-				env,
-				group,
-				visibility: 'public',
-				callerDid: null,
-				writer,
-				profile: { name: 'Nope' }
-			})
-		).rejects.toThrow(GroupPermissionError);
-		expect(writes).toHaveLength(0);
-	});
-
-	// A group whose provisioning did not finish has nowhere to put a profile.
-	// Saying so beats writing to a URI the PDS has never heard of.
-	it('refuses when the group has no about space yet', async () => {
-		await expect(
-			writeGroupProfile({
-				db,
-				env,
-				group: { ...group, about_space_uri: null },
-				visibility: 'public',
-				callerDid: OWNER,
-				writer,
-				profile: { name: 'Kona' }
-			})
-		).rejects.toThrow(/no about space/);
-		expect(writes).toHaveLength(0);
-	});
-
-	// A row that names a space of another type, or under another DID, is refused:
-	// writing the records there would strand them where no reader looks.
-	it('refuses a space of another type, or one under another DID', async () => {
-		for (const about_space_uri of [
-			`at://${group.group_did}/space/com.example.other/self`,
-			`at://did:plc:someoneelse/space/${ABOUT_SPACE_TYPE}/self`
-		]) {
-			await expect(
-				writeGroupProfile({
-					db,
-					env,
-					group: { ...group, about_space_uri },
-					visibility: 'public',
-					callerDid: OWNER,
-					writer,
-					profile: { name: 'Kona' }
-				})
-			).rejects.toThrow(/is not .*'s about space/);
-		}
-		expect(writes).toHaveLength(0);
-	});
 });
 
 describe('setGroupRules: a citation survives an edit', () => {
@@ -286,19 +217,79 @@ describe('setGroupRules: a citation survives an edit', () => {
 			intent: 'create'
 		});
 	});
+});
 
-	it('refuses a stranger before any write is attempted', async () => {
-		await expect(
-			setGroupRules({
-				db,
-				env,
-				group,
-				callerDid: STRANGER,
-				writer,
-				desired: ['Anything'],
-				existing: []
-			})
-		).rejects.toThrow(GroupPermissionError);
-		expect(writes).toHaveLength(0);
+describe('every refusal comes before any write', () => {
+	const profile = (input: Partial<Parameters<typeof writeGroupProfile>[0]>) =>
+		writeGroupProfile({
+			db,
+			env,
+			group,
+			visibility: 'public',
+			callerDid: OWNER,
+			writer,
+			profile: { name: 'Kona' },
+			...input
+		});
+
+	it.each([
+		[
+			'a profile from a member without MANAGE_GROUP',
+			() => profile({ callerDid: MEMBER }),
+			GroupPermissionError
+		],
+		[
+			'a profile from an anonymous caller',
+			() => profile({ callerDid: null }),
+			GroupPermissionError
+		],
+		[
+			'rules from a stranger',
+			() =>
+				setGroupRules({
+					db,
+					env,
+					group,
+					callerDid: STRANGER,
+					writer,
+					desired: ['Anything'],
+					existing: []
+				}),
+			GroupPermissionError
+		],
+		// A group whose provisioning did not finish has nowhere to put a profile.
+		// Saying so beats writing to a URI the PDS has never heard of.
+		[
+			'a profile for a group with no about space yet',
+			() => profile({ group: { ...group, about_space_uri: null } }),
+			/no about space/
+		],
+		// A row that names a space of another type, or under another DID, would
+		// strand the records where no reader looks.
+		[
+			'a profile into a space of another type',
+			() =>
+				profile({
+					group: {
+						...group,
+						about_space_uri: `at://${group.group_did}/space/com.example.other/self`
+					}
+				}),
+			/is not .*'s about space/
+		],
+		[
+			'a profile into a space under another DID',
+			() =>
+				profile({
+					group: {
+						...group,
+						about_space_uri: `at://did:plc:someoneelse/space/${ABOUT_SPACE_TYPE}/self`
+					}
+				}),
+			/is not .*'s about space/
+		]
+	] as const)('refuses %s', async (_case, run, refusal) => {
+		await expect(run()).rejects.toThrow(refusal);
+		expect(writes).toEqual([]);
 	});
 });

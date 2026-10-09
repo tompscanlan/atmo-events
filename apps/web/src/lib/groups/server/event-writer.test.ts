@@ -34,7 +34,12 @@ vi.mock('$lib/contrail/index', async (importOriginal) => ({
 }));
 
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { linkGroups, linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
+import {
+	LINKED_TEST_TOKEN,
+	linkGroups,
+	linkedCredential,
+	unlinkAllGroups
+} from './__fixtures__/linked-group';
 import { stubPds, type StubPdsOptions } from './__fixtures__/stub-pds';
 
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
@@ -257,7 +262,8 @@ describe('the permission gate', () => {
 			{
 				nsid: 'com.atproto.repo.deleteRecord',
 				body: { repo: GROUP_DID, collection: GROUP_EVENT_COLLECTION, rkey: created.rkey },
-				params: {}
+				params: {},
+				token: LINKED_TEST_TOKEN
 			}
 		]);
 		expect(await hostHas(null, created.rkey)).toBe(false);
@@ -830,12 +836,13 @@ describe('members-only placement', () => {
 		const read = {
 			nsid: 'com.atproto.repo.getRecord',
 			body: null,
-			params: { repo: GROUP_DID, collection: GROUP_EVENT_COLLECTION, rkey: created.rkey }
+			params: { repo: GROUP_DID, collection: GROUP_EVENT_COLLECTION, rkey: created.rkey },
+			token: LINKED_TEST_TOKEN
 		};
 
 		// A public create reads nothing first: it is exactly one call.
 		expect(pds.requests).toEqual([
-			{ nsid: 'com.atproto.repo.createRecord', body: sent, params: {} }
+			{ nsid: 'com.atproto.repo.createRecord', body: sent, params: {}, token: LINKED_TEST_TOKEN }
 		]);
 		pds.clearLog();
 
@@ -844,7 +851,7 @@ describe('members-only placement', () => {
 		await write({ intent: 'update', placement: 'everyone', rkey: created.rkey, record });
 		expect(pds.requests).toEqual([
 			read,
-			{ nsid: 'com.atproto.repo.putRecord', body: sent, params: {} }
+			{ nsid: 'com.atproto.repo.putRecord', body: sent, params: {}, token: LINKED_TEST_TOKEN }
 		]);
 		pds.clearLog();
 
@@ -854,7 +861,8 @@ describe('members-only placement', () => {
 			{
 				nsid: 'com.atproto.repo.deleteRecord',
 				body: { repo: GROUP_DID, collection: GROUP_EVENT_COLLECTION, rkey: created.rkey },
-				params: {}
+				params: {},
+				token: LINKED_TEST_TOKEN
 			}
 		]);
 

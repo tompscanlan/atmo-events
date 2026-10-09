@@ -295,31 +295,6 @@ describe('a save that keeps the visibility leaves the host alone', () => {
 	});
 });
 
-describe('a private switch withdraws the declaration before profile and rules', () => {
-	it('a public group saved as private, whose profile write fails, runs updateSpace, then the declaration delete, then the profile write, and reports failure', async () => {
-		const pds = host((nsid, init) =>
-			nsid === 'com.atproto.space.putRecord' &&
-			(JSON.parse(String(init?.body)) as { collection: string }).collection ===
-				'group.opensocial.profile'
-				? pdsDown()
-				: undefined
-		);
-		const group = await givenGroup('public', pds);
-
-		const result = await save(group, 'private', { shownVisibility: 'public', rules: 'Be kind' });
-
-		expect(result.ok).toBe(false);
-		// The group is no longer announced even though the profile failed, and
-		// the rules were never reached.
-		expect(traced(pds)).toEqual([
-			'simplespace.updateSpace memberListPolicy',
-			'repo.deleteRecord group.opensocial.declaration',
-			'space.putRecord group.opensocial.access',
-			'space.putRecord group.opensocial.profile'
-		]);
-	});
-});
-
 // A private group is invite-only, so it cannot also be open to join. The pair
 // is two fields of this form, and visibility is the host's read policy, which
 // no trigger on our tables can see. So the save refuses it in app code, before
@@ -346,49 +321,41 @@ describe('a private group must require approval', () => {
 	});
 });
 
-describe('a failed updateSpace stops the save', () => {
-	it('a public group saved as private, whose updateSpace answers 500, makes no declaration, profile or rules write, and reports failure', async () => {
-		const pds = host((nsid) =>
-			nsid === 'com.atproto.simplespace.updateSpace' ? pdsDown() : undefined
-		);
-		const group = await givenGroup('public', pds);
-
-		const result = await save(group, 'private', { shownVisibility: 'public', rules: 'Be kind' });
-
-		expect(result.ok).toBe(false);
-		// Not "the records were not updated": what failed is the visibility
-		// change itself, and the message has to say so.
-		expect(!result.ok && result.error).toContain("did not reach the group's PDS");
-		expect(!result.ok && result.error).not.toContain('records were not updated');
-		expect(traced(pds)).toEqual(['simplespace.updateSpace memberListPolicy']);
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
-	});
-});
-
 // A visibility change that fails before the host has taken it must leave the
 // row where it was, and it does so by never writing it: the host goes first.
 // The next save then finds the same change to make and retries it, rather than
 // reporting success while the about space keeps the old read policy.
 describe('a visibility change that does not reach the host leaves the row where it was', () => {
-	it('a public open group saved as private, whose updateSpace answers 500, is still public at its host and open on its row', async () => {
+	it('a public open group saved as private, whose updateSpace answers 500, is still public at its host, writes nothing else, and leaves the whole row as it was', async () => {
 		const pds = host((nsid) =>
 			nsid === 'com.atproto.simplespace.updateSpace' ? pdsDown() : undefined
 		);
 		const group = await givenGroup('public', pds, false);
+		const before = rowWhole();
 
 		const result = await save(group, 'private', {
 			shownVisibility: 'public',
-			requireApproval: true
+			requireApproval: true,
+			name: 'Kona Night Runners',
+			description: 'After dark',
+			rules: 'Be kind'
 		});
 
 		expect(result.ok).toBe(false);
-		// Neither half of the pair moved, though the approval change was only
-		// there because private requires it.
+		expect(traced(pds)).toEqual(['simplespace.updateSpace memberListPolicy']);
 		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
+		// The whole row, the approval included, though that change was only there
+		// because private requires it: the host goes first, so nothing of this
+		// save reached the row.
+		expect(rowWhole()).toEqual(before);
 		expect(approvalNow()).toBe(0);
+		// What failed is the visibility change itself, and the message says so,
+		// not "the records were not updated".
 		expect(!result.ok && result.error).toContain("did not reach the group's PDS");
 		expect(!result.ok && result.error).toContain('visibility was not changed');
 		expect(!result.ok && result.error).toContain('saving again will retry');
+		expect(!result.ok && result.error).toContain('Nothing was saved');
+		expect(!result.ok && result.error).not.toContain('records were not updated');
 	});
 
 	it('saving the same values again with the PDS healthy calls updateSpace, returns ok, and leaves the about space member-list read', async () => {
@@ -614,29 +581,7 @@ describe('a visibility change reaches the host before the row', () => {
 		expect(await declaredNow()).toBe(true);
 	});
 
-	it('a public group saved as private, whose updateSpace answers 500, leaves the whole row as it was and makes no declaration, profile or rules write', async () => {
-		const pds = host((nsid) =>
-			nsid === 'com.atproto.simplespace.updateSpace' ? pdsDown() : undefined
-		);
-		const group = await givenGroup('public', pds);
-		const before = rowWhole();
-
-		const result = await save(group, 'private', {
-			shownVisibility: 'public',
-			name: 'Kona Night Runners',
-			description: 'After dark',
-			rules: 'Be kind'
-		});
-
-		expect(result.ok).toBe(false);
-		// The name and the description too: the host goes first, so nothing of
-		// this save reached the row.
-		expect(rowWhole()).toEqual(before);
-		expect(traced(pds)).toEqual(['simplespace.updateSpace memberListPolicy']);
-		expect(!result.ok && result.error).toContain('Nothing was saved');
-	});
-
-	it('a public group saved as private, whose profile write fails after the host took the change, keeps the host private and puts nothing back', async () => {
+	it('a public group saved as private, whose profile write fails after the host took the change, withdraws the declaration first, keeps the host private and puts nothing back', async () => {
 		const pds = host((nsid, init) =>
 			nsid === 'com.atproto.space.putRecord' &&
 			(JSON.parse(String(init?.body)) as { collection: string }).collection ===
@@ -646,9 +591,17 @@ describe('a visibility change reaches the host before the row', () => {
 		);
 		const group = await givenGroup('public', pds);
 
-		const result = await save(group, 'private', { shownVisibility: 'public' });
+		const result = await save(group, 'private', { shownVisibility: 'public', rules: 'Be kind' });
 
 		expect(result.ok).toBe(false);
+		// The group is no longer announced even though the profile failed, and
+		// the rules were never reached.
+		expect(traced(pds)).toEqual([
+			'simplespace.updateSpace memberListPolicy',
+			'repo.deleteRecord group.opensocial.declaration',
+			'space.putRecord group.opensocial.access',
+			'space.putRecord group.opensocial.profile'
+		]);
 		expect(approvalNow()).toBe(1);
 		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
 		// One call: nothing moved the host back after the failure.

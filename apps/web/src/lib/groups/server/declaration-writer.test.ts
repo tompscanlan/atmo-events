@@ -118,42 +118,6 @@ describe('writeGroupDeclaration', () => {
 			'2026-01-02T03:04:05.000Z'
 		);
 	});
-
-	it('refuses a group whose about space was never provisioned, rather than pointing nowhere', async () => {
-		await expect(
-			writeGroupDeclaration({
-				db,
-				env,
-				group: { ...group, about_space_uri: null },
-				callerDid: OWNER,
-				writer
-			})
-		).rejects.toBeInstanceOf(GroupRecordError);
-		expect(writes).toHaveLength(0);
-	});
-
-	it('refuses to point the declaration at a space of another type', async () => {
-		await expect(
-			writeGroupDeclaration({
-				db,
-				env,
-				group: {
-					...group,
-					about_space_uri: `at://${group.group_did}/space/com.example.other/self`
-				},
-				callerDid: OWNER,
-				writer
-			})
-		).rejects.toBeInstanceOf(GroupRecordError);
-		expect(writes).toHaveLength(0);
-	});
-
-	it('requires MANAGE_GROUP', async () => {
-		await expect(
-			writeGroupDeclaration({ db, env, group, callerDid: MEMBER, writer })
-		).rejects.toBeInstanceOf(GroupPermissionError);
-		expect(writes).toHaveLength(0);
-	});
 });
 
 describe('reconcileGroupDeclaration', () => {
@@ -215,13 +179,6 @@ describe('removeGroupDeclaration', () => {
 		expect(writes).toHaveLength(1);
 		expect(writes[0].intent).toBe('delete');
 	});
-
-	it('requires MANAGE_GROUP, so a member cannot un-announce the group', async () => {
-		await expect(
-			removeGroupDeclaration({ db, env, group, callerDid: MEMBER, writer })
-		).rejects.toBeInstanceOf(GroupPermissionError);
-		expect(writes).toHaveLength(0);
-	});
 });
 
 describe('telling our index about a withdrawal', () => {
@@ -280,5 +237,51 @@ describe('telling our index about a withdrawal', () => {
 		expect(writes).toHaveLength(1);
 		expect(logged).toHaveBeenCalledTimes(1);
 		expect(String(logged.mock.calls[0][0])).toContain(uri);
+	});
+});
+
+describe('every refusal comes before any write', () => {
+	it.each([
+		[
+			'a declaration for a group whose about space was never provisioned, rather than pointing nowhere',
+			() =>
+				writeGroupDeclaration({
+					db,
+					env,
+					group: { ...group, about_space_uri: null },
+					callerDid: OWNER,
+					writer
+				}),
+			GroupRecordError
+		],
+		[
+			'a declaration pointing at a space of another type',
+			() =>
+				writeGroupDeclaration({
+					db,
+					env,
+					group: {
+						...group,
+						about_space_uri: `at://${group.group_did}/space/com.example.other/self`
+					},
+					callerDid: OWNER,
+					writer
+				}),
+			GroupRecordError
+		],
+		// Announcing a group, or withdrawing it, changes its face: MANAGE_GROUP.
+		[
+			'a declaration from a member',
+			() => writeGroupDeclaration({ db, env, group, callerDid: MEMBER, writer }),
+			GroupPermissionError
+		],
+		[
+			'a withdrawal from a member',
+			() => removeGroupDeclaration({ db, env, group, callerDid: MEMBER, writer }),
+			GroupPermissionError
+		]
+	] as const)('refuses %s', async (_case, run, refusal) => {
+		await expect(run()).rejects.toBeInstanceOf(refusal);
+		expect(writes).toEqual([]);
 	});
 });

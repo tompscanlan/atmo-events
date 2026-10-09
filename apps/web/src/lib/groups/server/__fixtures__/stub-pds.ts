@@ -66,6 +66,8 @@ export interface StubPdsRequest {
 	nsid: string;
 	body: Record<string, unknown> | null;
 	params: Record<string, string>;
+	/** The bearer token the request carried, or null. */
+	token: string | null;
 }
 
 /** One entry on a space's member list, as `listMembers` reports it. */
@@ -169,7 +171,8 @@ export function stubPds(options: StubPdsOptions) {
 		const body =
 			typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
 		const query = new URL(url).searchParams;
-		requests.push({ nsid, body, params: Object.fromEntries(query) });
+		const token = new Headers(init?.headers).get('authorization')?.replace(/^Bearer /, '') ?? null;
+		requests.push({ nsid, body, params: Object.fromEntries(query), token });
 
 		const failed = options.fail?.(nsid, init, query);
 		if (failed) return failed;

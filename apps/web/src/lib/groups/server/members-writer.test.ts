@@ -106,93 +106,6 @@ describe('putGroupMembership', () => {
 		expect(writes[0].intent).toBe('update');
 		expect(result.rkey).toBe(STRANGER);
 	});
-
-	it('refuses an admit by a member who holds no ADMIT_MEMBERS', async () => {
-		await expect(
-			putGroupMembership({
-				db,
-				env,
-				group,
-				callerDid: MEMBER,
-				writer,
-				reader,
-				subject: STRANGER,
-				roles: ['member'],
-				intent: 'admit'
-			})
-		).rejects.toThrow(GroupPermissionError);
-		expect(writes).toHaveLength(0);
-	});
-
-	it('refuses a role change by a member who holds no ASSIGN_ROLES', async () => {
-		await expect(
-			putGroupMembership({
-				db,
-				env,
-				group,
-				callerDid: MEMBER,
-				writer,
-				reader,
-				subject: MEMBER,
-				roles: ['admin'],
-				intent: 'assign'
-			})
-		).rejects.toThrow(GroupPermissionError);
-		expect(writes).toHaveLength(0);
-	});
-
-	it('refuses a membership that would grant no role at all', async () => {
-		await expect(
-			putGroupMembership({
-				db,
-				env,
-				group,
-				callerDid: OWNER,
-				writer,
-				reader,
-				subject: STRANGER,
-				roles: [],
-				intent: 'admit'
-			})
-		).rejects.toThrow(GroupRecordError);
-	});
-
-	it('refuses to write before the members space exists', async () => {
-		await expect(
-			putGroupMembership({
-				db,
-				env,
-				group: { ...group, members_space_uri: null },
-				callerDid: OWNER,
-				writer,
-				reader,
-				subject: STRANGER,
-				roles: ['member'],
-				intent: 'admit'
-			})
-		).rejects.toThrow(GroupRecordError);
-		expect(writes).toHaveLength(0);
-	});
-
-	it('refuses to write into a members space of another type', async () => {
-		await expect(
-			putGroupMembership({
-				db,
-				env,
-				group: {
-					...group,
-					members_space_uri: `at://${group.group_did}/space/com.example.other/self`
-				},
-				callerDid: OWNER,
-				writer,
-				reader,
-				subject: STRANGER,
-				roles: ['member'],
-				intent: 'admit'
-			})
-		).rejects.toThrow(/is not .*'s members space/);
-		expect(writes).toHaveLength(0);
-	});
 });
 
 describe('the self-service intents', () => {
@@ -211,23 +124,6 @@ describe('the self-service intents', () => {
 		expect(writes[0].rkey).toBe(MEMBER);
 	});
 
-	it('refuses a join recorded FOR somebody else, which would be an unguarded admit', async () => {
-		await expect(
-			putGroupMembership({
-				db,
-				env,
-				group,
-				callerDid: MEMBER,
-				writer,
-				reader,
-				subject: STRANGER,
-				roles: ['member'],
-				intent: 'join'
-			})
-		).rejects.toThrow(GroupPermissionError);
-		expect(writes).toHaveLength(0);
-	});
-
 	it('lets a plain member revoke their own membership record', async () => {
 		await dropGroupMembership({
 			db,
@@ -241,37 +137,6 @@ describe('the self-service intents', () => {
 		});
 		expect(writes[0].intent).toBe('delete');
 		expect(writes[0].rkey).toBe(MEMBER);
-	});
-
-	it('refuses a leave aimed at somebody else, which would be an unguarded eject', async () => {
-		await expect(
-			dropGroupMembership({
-				db,
-				env,
-				group,
-				callerDid: MEMBER,
-				writer,
-				reader,
-				subject: ADMIN,
-				intent: 'leave'
-			})
-		).rejects.toThrow(GroupPermissionError);
-		expect(writes).toHaveLength(0);
-	});
-
-	it('refuses a leave from an anonymous caller', async () => {
-		await expect(
-			dropGroupMembership({
-				db,
-				env,
-				group,
-				callerDid: null,
-				writer,
-				reader,
-				subject: MEMBER,
-				intent: 'leave'
-			})
-		).rejects.toThrow(GroupPermissionError);
 	});
 });
 
@@ -295,22 +160,6 @@ describe('dropGroupMembership', () => {
 			intent: 'delete'
 		});
 	});
-
-	it('refuses an eject by a member who holds no EJECT_MEMBERS', async () => {
-		await expect(
-			dropGroupMembership({
-				db,
-				env,
-				group,
-				callerDid: MEMBER,
-				writer,
-				reader,
-				subject: ADMIN,
-				intent: 'eject'
-			})
-		).rejects.toThrow(GroupPermissionError);
-		expect(writes).toHaveLength(0);
-	});
 });
 
 describe('writeGroupAccess', () => {
@@ -331,13 +180,12 @@ describe('writeGroupAccess', () => {
 		});
 	});
 
-	it('needs MANAGE_GROUP: the space policy is configuration, not a roster act', async () => {
+	// The space policy is configuration, not a roster act, so it takes
+	// MANAGE_GROUP, which an admin holds (a member's refusal is in the table below).
+	it('lets an admin write it', async () => {
 		await expect(
 			writeGroupAccess({ db, env, group, callerDid: ADMIN, writer, reader })
 		).resolves.toBeDefined();
-		await expect(
-			writeGroupAccess({ db, env, group, callerDid: MEMBER, writer, reader })
-		).rejects.toThrow(GroupPermissionError);
 	});
 
 	// The calendar space's access record says what the members space's says:
@@ -375,21 +223,13 @@ describe('writeGroupAccess', () => {
 		).rejects.toThrow(GroupRecordError);
 		expect(writes).toHaveLength(0);
 	});
-
-	it('needs MANAGE_GROUP for the calendar space too', async () => {
-		await expect(
-			writeGroupAccess({ db, env, group, callerDid: MEMBER, writer, reader, space: CALENDAR })
-		).rejects.toThrow(GroupPermissionError);
-		expect(writes).toHaveLength(0);
-	});
 });
 
 describe('writeGroupSpaceIndex', () => {
 	const indexWrites = () => writes.filter((w) => w.collection === GROUP_SPACE_COLLECTION);
 	const entry = (rkey: string, space: string) => ({ rkey, space });
 
-	// Repair's call. Repair leaves the calendar space to the first members-only
-	// write, so without the calendar space the index is the two spaces it always was.
+	// With no calendar space passed, the index is the two well-known spaces.
 	it('indexes the about and members spaces only when no calendar space is passed', async () => {
 		const result = await writeGroupSpaceIndex({
 			db,
@@ -539,20 +379,6 @@ describe('writeGroupAuthz', () => {
 		expect(writes.every((write) => write.intent === 'update')).toBe(true);
 	});
 
-	// The escalation this gate prevents. The permissions record is the authz
-	// config: a member who could write it could bind their own role to
-	// ASSIGN_ROLES and take over the group. It is configuration, so it needs
-	// MANAGE_GROUP, like the profile, the rules and the access record.
-	it('needs MANAGE_GROUP, so a plain member cannot rewrite the group’s own grants', async () => {
-		await expect(
-			writeGroupAuthz({ db, env, group, callerDid: MEMBER, writer, reader })
-		).rejects.toThrow(GroupPermissionError);
-		await expect(
-			writeGroupAuthz({ db, env, group, callerDid: STRANGER, writer, reader })
-		).rejects.toThrow(GroupPermissionError);
-		expect(writes).toEqual([]);
-	});
-
 	it('publishes the standard’s identifiers for the community four and ours for the event two', async () => {
 		await writeGroupAuthz({
 			db,
@@ -572,5 +398,111 @@ describe('writeGroupAuthz', () => {
 			{ role: 'member', actions: ['admit'], assignable: [] }
 		]);
 		expect(writes[2].record.bindings).toEqual([{ role: 'member', actions: ['createEvent'] }]);
+	});
+});
+
+describe('every refusal comes before any write', () => {
+	const membership = (input: Partial<Parameters<typeof putGroupMembership>[0]>) =>
+		putGroupMembership({
+			db,
+			env,
+			group,
+			callerDid: OWNER,
+			writer,
+			reader,
+			subject: STRANGER,
+			roles: ['member'],
+			intent: 'admit',
+			...input
+		});
+	const drop = (input: Partial<Parameters<typeof dropGroupMembership>[0]>) =>
+		dropGroupMembership({
+			db,
+			env,
+			group,
+			callerDid: MEMBER,
+			writer,
+			reader,
+			subject: ADMIN,
+			intent: 'leave',
+			...input
+		});
+
+	it.each([
+		[
+			'an admit by a member who holds no ADMIT_MEMBERS',
+			() => membership({ callerDid: MEMBER }),
+			GroupPermissionError
+		],
+		[
+			'a role change by a member who holds no ASSIGN_ROLES',
+			() => membership({ callerDid: MEMBER, subject: MEMBER, roles: ['admin'], intent: 'assign' }),
+			GroupPermissionError
+		],
+		[
+			'a membership that would grant no role at all',
+			() => membership({ roles: [] }),
+			GroupRecordError
+		],
+		[
+			'a write before the members space exists',
+			() => membership({ group: { ...group, members_space_uri: null } }),
+			GroupRecordError
+		],
+		[
+			'a write into a members space of another type',
+			() =>
+				membership({
+					group: {
+						...group,
+						members_space_uri: `at://${group.group_did}/space/com.example.other/self`
+					}
+				}),
+			/is not .*'s members space/
+		],
+		// The self-service pair is a member's own: aimed at anyone else, a join
+		// would be an unguarded admit and a leave an unguarded eject.
+		[
+			'a join recorded for somebody else',
+			() => membership({ callerDid: MEMBER, intent: 'join' }),
+			GroupPermissionError
+		],
+		['a leave aimed at somebody else', () => drop({}), GroupPermissionError],
+		[
+			'a leave from an anonymous caller',
+			() => drop({ callerDid: null, subject: MEMBER }),
+			GroupPermissionError
+		],
+		[
+			'an eject by a member who holds no EJECT_MEMBERS',
+			() => drop({ intent: 'eject' }),
+			GroupPermissionError
+		],
+		// Configuration takes MANAGE_GROUP. A member who could write the authz
+		// config could bind their own role to ASSIGN_ROLES and take over the group.
+		[
+			'the access record, from a member',
+			() => writeGroupAccess({ db, env, callerDid: MEMBER, group, writer, reader }),
+			GroupPermissionError
+		],
+		[
+			'the calendar space’s access record, from a member',
+			() =>
+				writeGroupAccess({ db, env, callerDid: MEMBER, group, writer, reader, space: CALENDAR }),
+			GroupPermissionError
+		],
+		[
+			'the authz config, from a member',
+			() => writeGroupAuthz({ db, env, callerDid: MEMBER, group, writer, reader }),
+			GroupPermissionError
+		],
+		[
+			'the authz config, from a stranger',
+			() => writeGroupAuthz({ db, env, callerDid: STRANGER, group, writer, reader }),
+			GroupPermissionError
+		]
+	] as const)('refuses %s', async (_case, run, refusal) => {
+		await expect(run()).rejects.toThrow(refusal);
+		expect(writes).toEqual([]);
 	});
 });

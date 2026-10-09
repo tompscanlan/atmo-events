@@ -370,6 +370,28 @@ describe('refusing before the irreversible step', () => {
 	});
 });
 
+/** The group's spaces by their part, for reading a list of writes. */
+const SPACE_PART: Record<string, string> = {
+	'group.opensocial.meta': 'about',
+	'group.opensocial.members': 'members',
+	'net.openmeet.space.calendar': 'calendar'
+};
+
+/** A write by what it wrote: the method, then the space a space write made or
+ *  went into, and the collection a record went to. */
+function writeStep(request: { nsid: string; body: Record<string, unknown> | null }): string {
+	const method = request.nsid.split('.').slice(-2).join('.');
+	const body = request.body ?? {};
+	const part = (type: string) => SPACE_PART[type] ?? type;
+	const spaceOf = (space: unknown) => part(String(space).split('/space/')[1]?.split('/')[0]);
+	if (body.spaceType) return `${method} ${part(String(body.spaceType))}`;
+	if (body.collection) {
+		return `${method} ${String(body.collection)}${body.space ? ` in ${spaceOf(body.space)}` : ''}`;
+	}
+	if (body.space) return `${method} ${spaceOf(body.space)}`;
+	return method;
+}
+
 describe('a successful create', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
@@ -379,50 +401,48 @@ describe('a successful create', () => {
 	// owner's key did not land at index 0 the group is portable in name only, so
 	// that has to be found out before anyone is told the group exists.
 	it('mints, verifies the rotation key, then inserts, provisions and writes its records', async () => {
-		const { calls } = stubPds();
+		const pds = stubPds();
 
 		const result = await runCreateGroup(env, OWNER, data());
 
 		expect(result.ok).toBe(true);
+		const plcRead = pds.calls.indexOf('plc.directory/data');
+		expect(plcRead).toBeGreaterThan(pds.calls.indexOf('com.atproto.server.createAccount'));
+		expect(plcRead).toBeLessThan(pds.calls.indexOf('com.atproto.simplespace.createSpace'));
 		// Writes only: the gate's own reads of the members space interleave with
 		// them and are tested where the gate is tested.
-		const writes = calls.filter((c) => !c.includes('.getRecord') && !c.includes('.listRecords'));
-		expect(writes).toEqual([
-			'com.atproto.server.createAccount',
-			'plc.directory/data',
-			// About, members, then the calendar space.
-			'com.atproto.simplespace.createSpace',
-			'com.atproto.simplespace.createSpace',
-			'com.atproto.simplespace.createSpace',
+		expect(pds.writes().map(writeStep)).toEqual([
+			'simplespace.createSpace about',
+			'simplespace.createSpace members',
+			'simplespace.createSpace calendar',
 			// The records land after the spaces exist, since there is nowhere to
 			// put them before. The about space first: the profile, then the access
 			// record. Then the declaration in the public repo, which points at the
 			// about space and so cannot come before it, and which a reader may
-			// only find while the access record says public. Then the members
-			// space's access record and the calendar space's, one index entry per
-			// space, the owner's membership, and last the authz config (three
-			// roles and the two binding records). The membership comes first
-			// because once a config exists the gate resolves from it, and an
-			// owner with no membership record could not admit themselves. That
-			// order is asserted on `spaceWrites` in the members-space test below.
-			'com.atproto.space.putRecord',
-			'com.atproto.space.putRecord',
-			'com.atproto.repo.putRecord',
-			'com.atproto.space.putRecord',
-			'com.atproto.space.putRecord',
-			'com.atproto.space.createRecord',
-			'com.atproto.space.createRecord',
-			'com.atproto.space.createRecord',
-			'com.atproto.space.putRecord',
-			'com.atproto.space.putRecord',
-			'com.atproto.space.putRecord',
-			'com.atproto.space.putRecord',
-			'com.atproto.space.putRecord',
-			'com.atproto.space.putRecord',
-			// Last, the owner onto both member lists: a grant writes the
-			// membership record first and the lists after it.
-			'com.atproto.simplespace.putMember',
-			'com.atproto.simplespace.putMember'
+			// only find while the access record says public.
+			'space.putRecord group.opensocial.profile in about',
+			'space.putRecord group.opensocial.access in about',
+			'repo.putRecord group.opensocial.declaration',
+			// Then the members space's access record and the calendar space's, one
+			// index entry per space, the owner's membership, and last the authz
+			// config. The membership comes first because once a config exists the
+			// gate resolves from it, and an owner with no membership record could
+			// not admit themselves.
+			'space.putRecord group.opensocial.access in members',
+			'space.putRecord group.opensocial.access in calendar',
+			'space.createRecord group.opensocial.space in members',
+			'space.createRecord group.opensocial.space in members',
+			'space.createRecord group.opensocial.space in members',
+			'space.putRecord group.opensocial.membership in members',
+			'space.putRecord group.opensocial.role in members',
+			'space.putRecord group.opensocial.role in members',
+			'space.putRecord group.opensocial.role in members',
+			'space.putRecord group.opensocial.permissions in members',
+			'space.putRecord net.openmeet.group.eventPermissions in members',
+			// Last, the owner onto both member lists, write-only first, as for
+			// every later member.
+			'simplespace.putMember members',
+			'simplespace.putMember about'
 		]);
 	});
 
@@ -439,31 +459,24 @@ describe('a successful create', () => {
 	});
 
 	it('serves every write through the session the mint returned', async () => {
-		stubPds();
-		const logged: string[] = [];
-		vi.spyOn(console, 'info').mockImplementation((line: string) => {
-			logged.push(line);
-		});
+		const pds = stubPds();
 
 		const result = await runCreateGroup(env, OWNER, data());
 
 		expect(result.ok).toBe(true);
-		const writes = logged.filter((line) => line.startsWith('[group-session]'));
+		const writes = pds.writes();
 		// Every kind of write a create makes: spaces, space records, the
 		// declaration in the public repo, and the member lists.
-		expect(writes.map((line) => line.split(' ')[2])).toEqual(
-			expect.arrayContaining([
+		expect(new Set(writes.map((w) => w.nsid))).toEqual(
+			new Set([
 				'com.atproto.simplespace.createSpace',
 				'com.atproto.space.putRecord',
+				'com.atproto.space.createRecord',
 				'com.atproto.repo.putRecord',
 				'com.atproto.simplespace.putMember'
 			])
 		);
-		for (const line of writes) {
-			expect(line).toMatch(
-				new RegExp(`^\\[group-session\\] ${MINTED_DID} \\S+ via mint-session: 200$`)
-			);
-		}
+		expect(writes.map((w) => w.token)).toEqual(writes.map(() => 'master-jwt'));
 	});
 
 	// The creator's login reaches the PDS and nowhere else: not a log line, not
