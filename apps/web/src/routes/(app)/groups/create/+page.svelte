@@ -6,6 +6,8 @@
 	import { groupFormError, resetOnSuccess } from '$lib/groups/form-result';
 	import { GROUP_PASSWORD_MIN_LENGTH } from '$lib/groups/form-fields';
 	import { createGroupForm } from '$lib/groups/group.remote';
+	import { FIELD_CLASS } from '$lib/groups/components/field-class';
+	import GroupLinkForm from '$lib/groups/components/GroupLinkForm.svelte';
 
 	let { data } = $props();
 
@@ -100,15 +102,13 @@
 	{/if}
 
 	<!-- The next step, after the key: this site cannot write as the group until
-	     it is linked. A plain post, since the answer is a redirect to the group's
-	     PDS. Leaving this page loses the key, so the copy says save it first. -->
+	     it is linked. Leaving this page loses the key, so the copy says save it
+	     first. -->
 	{#if created}
-		<form
-			method="POST"
-			action="/oauth/group-link"
+		<GroupLinkForm
+			groupDid={created.groupDid}
 			class="ring-base-200 dark:ring-base-800 mb-8 rounded-2xl p-4 text-sm ring-1"
 		>
-			<input type="hidden" name="groupDid" value={created.groupDid} />
 			<p class="font-semibold">Next: link the group's account.</p>
 			<p class="mt-1">
 				This site cannot post as <strong>{created.handle}</strong> until you do. At the group's PDS, sign
@@ -124,7 +124,7 @@
 					>Or continue to {created.handle}</a
 				> and link it from there.
 			</p>
-		</form>
+		</GroupLinkForm>
 	{/if}
 
 	<!-- Once the group exists, the form has nothing left to do, and leaving it
@@ -207,7 +207,7 @@
 					name="description"
 					rows="4"
 					maxlength="4000"
-					class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
+					class={FIELD_CLASS}
 				></textarea>
 			</div>
 
@@ -219,7 +219,7 @@
 					rows="4"
 					maxlength="8000"
 					placeholder="One rule per line"
-					class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
+					class={FIELD_CLASS}
 				></textarea>
 				<p class="text-base-500 dark:text-base-400 text-xs">
 					Optional, and editable later. Each line becomes its own record in the group’s about space,
@@ -229,12 +229,7 @@
 
 			<div class="flex flex-col gap-1.5">
 				<Label for="group-visibility">Visibility</Label>
-				<select
-					id="group-visibility"
-					name="visibility"
-					bind:value={visibility}
-					class="ring-accent-500/30 dark:ring-accent-500/20 bg-accent-400/5 dark:bg-accent-600/5 text-accent-700 dark:text-accent-400 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
-				>
+				<select id="group-visibility" name="visibility" bind:value={visibility} class={FIELD_CLASS}>
 					<option value="public">public: listed and browsable</option>
 					<option value="private">private: members only</option>
 				</select>

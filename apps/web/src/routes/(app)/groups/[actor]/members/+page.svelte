@@ -9,12 +9,11 @@
 	import { resolve } from '$app/paths';
 	import {
 		addMemberForm,
-		approveJoinRequestForm,
 		changeMemberRoleForm,
-		rejectJoinRequestForm,
 		removeMemberForm,
 		suggestPeople
 	} from '$lib/groups/roster.remote';
+	import JoinRequestItem from '$lib/groups/components/JoinRequestItem.svelte';
 
 	let { data } = $props();
 
@@ -165,43 +164,12 @@
 			{:else}
 				<ul class="flex flex-col gap-2">
 					{#each data.pendingRequests as request (request.id)}
-						{@const approveForm = approveJoinRequestForm.for(request.id)}
-						{@const rejectForm = rejectJoinRequestForm.for(request.id)}
-						{@const requestError =
-							groupFormError(approveForm.result) ?? groupFormError(rejectForm.result)}
-						<li
-							class="ring-base-200 dark:ring-base-800 flex flex-wrap items-center justify-between gap-3 rounded-xl p-3 ring-1"
-						>
-							<div class="min-w-0">
-								<PersonLabel did={request.did} person={data.people[request.did]} />
-								{#if request.message}
-									<p class="text-base-500 dark:text-base-400 mt-2 text-sm">{request.message}</p>
-								{/if}
-							</div>
-							<div class="flex shrink-0 items-center gap-2">
-								<form {...resetOnSuccess(approveForm)} class="flex items-center gap-1">
-									<input type="hidden" name="groupDid" value={group.group_did} />
-									<input type="hidden" name="requestId" value={request.id} />
-									<select
-										name="role"
-										class="ring-base-200 dark:ring-base-800 bg-base-100/50 dark:bg-base-900/50 rounded-ui border-0 px-2 py-1 text-xs ring-1 ring-inset"
-									>
-										{#each data.assignableRoles as role (role)}
-											<option value={role} selected={role === 'member'}>{role}</option>
-										{/each}
-									</select>
-									<Button type="submit" size="sm">Approve</Button>
-								</form>
-								<form {...resetOnSuccess(rejectForm)}>
-									<input type="hidden" name="groupDid" value={group.group_did} />
-									<input type="hidden" name="requestId" value={request.id} />
-									<Button type="submit" size="sm" variant="ghost">Reject</Button>
-								</form>
-							</div>
-							{#if requestError}
-								<p class="w-full text-sm text-red-600 dark:text-red-400">{requestError}</p>
-							{/if}
-						</li>
+						<JoinRequestItem
+							groupDid={group.group_did}
+							{request}
+							person={data.people[request.did]}
+							roles={data.assignableRoles}
+						/>
 					{/each}
 				</ul>
 			{/if}
