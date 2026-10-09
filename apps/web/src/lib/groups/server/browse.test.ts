@@ -3,7 +3,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { membersSpaceReader, type CountingSpaceReader } from './__fixtures__/members-space';
+import { membersSpaceReader } from './__fixtures__/members-space';
+import type { FakeSpaceReader } from './__fixtures__/space-reader';
 import { spaceUri } from '../ids';
 import { createGroup, recordGroupSpaces } from './db/groups';
 import { addMember } from './db/roster';
@@ -40,7 +41,7 @@ describe('browse visibility', () => {
 
 	interface HostedGroup {
 		row: GroupRow;
-		reader: CountingSpaceReader;
+		reader: FakeSpaceReader;
 	}
 
 	/** A group with a members space whose authz config is written, holding a
@@ -164,7 +165,7 @@ describe('browse visibility', () => {
 			onRoster: rosterFromRecords(OWNER, [owned])
 		});
 		expect(names(entries)).toEqual(['Owned']);
-		expect(owned.reader.reads).toBe(0);
+		expect(owned.reader.calls).toEqual([]);
 	});
 
 	// The bounded exception to the rule above: a caller sees their own and their

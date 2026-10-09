@@ -13,6 +13,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CallerMembership, GroupRow } from '../types';
 import type { GroupSpaceReader } from './about-read';
+import {
+	spaceReader,
+	type FakeSpaceReader,
+	type SpaceRecordInput
+} from './__fixtures__/space-reader';
 import type { MemberSession } from './acceptance';
 import { memberGrant } from './member-grants';
 import {
@@ -133,36 +138,29 @@ function memberPds(): MemberPds {
 	return pds;
 }
 
-type GroupHost = GroupSpaceReader & {
-	/** The calendar space's events, by key, each with its current cid. */
-	events: Map<string, string>;
-};
-
-/** The group's host, as the group's own space reader sees it. Only one event
- *  read by its key is expected of it. */
-function groupHost(events: Record<string, string> = { '3lmeeting': MEETING_CID }): GroupHost {
-	const host: GroupHost = {
-		events: new Map(Object.entries(events)),
-		async get(q) {
-			sequence.push(`group get ${q.space} ${q.repo} ${q.collection} ${q.rkey}`);
-			const cid = q.space === CALENDAR && q.collection === EVENT ? host.events.get(q.rkey) : null;
-			if (!cid) return null;
-			return {
-				uri: `${q.space}/${q.repo}/${q.collection}/${q.rkey}`,
-				cid,
-				collection: q.collection,
-				rkey: q.rkey,
-				value: { $type: EVENT, name: 'Committee call', startsAt: '2030-11-02T18:00:00.000Z' }
-			};
-		},
-		async list() {
-			throw new Error('an RSVP reads one event by its key, never a listing');
-		},
-		async getSpace() {
-			throw new Error('an RSVP never asks a space its policy');
-		}
+/** The meeting at `rkey` as the group's host holds it now, at `cid`. */
+function meeting(rkey: string, cid: string): SpaceRecordInput {
+	return {
+		collection: EVENT,
+		rkey,
+		cid,
+		value: { $type: EVENT, name: 'Committee call', startsAt: '2030-11-02T18:00:00.000Z' }
 	};
-	return host;
+}
+
+/** The group's host, as the group's own space reader sees it: the calendar
+ *  space's events by key, each at its current cid. Only one event read by its
+ *  key is expected of it, and each call goes into `sequence`. */
+function groupHost(events: Record<string, string> = { '3lmeeting': MEETING_CID }): FakeSpaceReader {
+	return spaceReader(GROUP_DID, {
+		space: CALENDAR,
+		records: Object.entries(events).map(([rkey, cid]) => meeting(rkey, cid)),
+		onCall: (line) => sequence.push(`group ${line}`),
+		fail: (call) =>
+			call.method === 'get'
+				? undefined
+				: new Error(`an RSVP reads one event by its key, never ${call.method}`)
+	});
 }
 
 /** A reauthorize() that records each call and answers `url`. */
@@ -190,7 +188,7 @@ function target(member: MemberSession | null, reauthorize = reauthorizer('https:
  *  meeting's current one unless a test says otherwise) and the group's host. */
 function rsvpInput(
 	member: MemberSession | null,
-	host: GroupHost = groupHost(),
+	host: FakeSpaceReader = groupHost(),
 	reauthorize = reauthorizer('https://never.test')
 ) {
 	return {
@@ -345,7 +343,7 @@ describe('the event an RSVP names', () => {
 
 		// Edited since, the event has a new cid, and an RSVP from a page showing
 		// the new version cites the new one.
-		host.events.set('3lmeeting', 'bafyreimeetingedited');
+		host.put(meeting('3lmeeting', 'bafyreimeetingedited'));
 		sequence.length = 0;
 		expect(
 			await putMembersOnlyRsvp({
@@ -365,7 +363,7 @@ describe('the event an RSVP names', () => {
 
 		// A cancel reads no event and checks no cid: it deletes whatever version
 		// the RSVP named.
-		host.events.set('3lmeeting', 'bafyreimeetingeditedagain');
+		host.put(meeting('3lmeeting', 'bafyreimeetingeditedagain'));
 		sequence.length = 0;
 		expect(await deleteMembersOnlyRsvp(target(member))).toEqual({ ok: true });
 		expect(sequence).toEqual(['member com.atproto.space.deleteRecord']);
@@ -436,12 +434,7 @@ describe('the event an RSVP names', () => {
 			throw new Error('com.atproto.space.getRecord failed: 502');
 		};
 		// A host that answers the event without a cid gives the RSVP nothing to cite.
-		const noCid = groupHost({ '3lmeeting': MEETING_CID });
-		const get = noCid.get.bind(noCid);
-		noCid.get = async (q) => {
-			const found = await get(q);
-			return found && { ...found, cid: '' };
-		};
+		const noCid = groupHost({ '3lmeeting': '' });
 
 		const unlinked = rsvpInput(member);
 		unlinked.groupReader.mockResolvedValue(null);

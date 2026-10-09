@@ -20,6 +20,11 @@ vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 import { load } from './+page.server';
 import { type GroupSpaceReader, type GroupSpaceRecord } from '$lib/groups/server/about-read';
 import {
+	spaceReader,
+	type FakeSpaceReader,
+	type SpaceRecordInput
+} from '$lib/groups/server/__fixtures__/space-reader';
+import {
 	fixtureSessions,
 	resetReaderHost,
 	serveReader
@@ -92,33 +97,27 @@ afterEach(() => {
 	resetReaderHost();
 });
 
-type Host = GroupSpaceReader & { calls: string[] };
-
 /** A public group's host. Its about and members spaces hold no records, so a
  *  roster caller's standing comes from the rows. `calendar` is what the
- *  calendar space holds, or the error every read of it fails with. The host
+ *  calendar space holds, or the error every listing of it fails with. The host
  *  honors the collection filter unless `ignoresFilter`. */
-function publicHost(calendar: GroupSpaceRecord[] | Error, { ignoresFilter = false } = {}): Host {
-	const calls: string[] = [];
-	return {
-		calls,
-		async get(q) {
-			calls.push(`get ${q.space} ${q.collection} ${q.rkey}`);
-			if (q.space === CALENDAR) throw new Error('the calendar space is listed, never fetched');
-			return null;
-		},
-		async list(q) {
-			calls.push(`list ${q.space} ${q.collection ?? '(no collection)'}`);
-			if (q.space !== CALENDAR) return [];
-			if (calendar instanceof Error) throw calendar;
-			return ignoresFilter ? calendar : calendar.filter((r) => r.collection === q.collection);
-		},
-		async getSpace(space) {
-			calls.push(`getSpace ${space}`);
-			if (space === CALENDAR) throw new Error('the calendar space is never asked its policy');
-			return { readPolicy: PUBLIC_POLICY };
+function publicHost(
+	calendar: SpaceRecordInput[] | Error,
+	{ ignoresFilter = false } = {}
+): FakeSpaceReader {
+	return spaceReader(GROUP_DID, {
+		space: CALENDAR,
+		records: calendar instanceof Error ? [] : calendar,
+		policies: { [ABOUT]: PUBLIC_POLICY },
+		ignoresFilter,
+		fail: (call) => {
+			if (call.space !== CALENDAR) return undefined;
+			if (call.method !== 'list') {
+				return new Error(`the calendar space is listed, never read with ${call.method}`);
+			}
+			return calendar instanceof Error ? calendar : undefined;
 		}
-	};
+	});
 }
 
 const FULL_CALENDAR = () => publicHost([ACCESS_SELF, MEETING]);
@@ -137,20 +136,19 @@ async function openAs(did: string | null) {
 	};
 }
 
-function calendarCalls(host: Host): string[] {
-	return host.calls.filter((call) => call.includes(CALENDAR));
-}
-
 /** The reads a page load makes for a caller off the roster, written out: the
  *  gate's (the caller's standing, then the host's visibility), then the
  *  profile for the name. */
-const ABOUT_READS = [`getSpace ${ABOUT}`, `get ${ABOUT} group.opensocial.profile self`];
+const ABOUT_READS = [
+	`getSpace ${ABOUT}`,
+	`get ${ABOUT} ${GROUP_DID} group.opensocial.profile self`
+];
 function standingReads(did: string): string[] {
 	return [
-		`get ${MEMBERS} group.opensocial.membership ${did}`,
-		`get ${MEMBERS} group.opensocial.permissions self`,
-		`get ${MEMBERS} net.openmeet.group.eventPermissions self`,
-		`list ${MEMBERS} group.opensocial.role`
+		`get ${MEMBERS} ${GROUP_DID} group.opensocial.membership ${did}`,
+		`get ${MEMBERS} ${GROUP_DID} group.opensocial.permissions self`,
+		`get ${MEMBERS} ${GROUP_DID} net.openmeet.group.eventPermissions self`,
+		`list ${MEMBERS} ${GROUP_DID} group.opensocial.role`
 	];
 }
 
@@ -174,7 +172,7 @@ describe('/groups/[actor]/events load: a viewer off the roster costs nothing', (
 
 			const data = await openAs(null);
 
-			expect(calendarCalls(host)).toEqual([]);
+			expect(host.callsIn(CALENDAR)).toEqual([]);
 			expect(host.calls).toEqual(ABOUT_READS);
 			expect(data).toStrictEqual(asBefore());
 			expect(data.events).toBe(publicSlice);
@@ -187,7 +185,7 @@ describe('/groups/[actor]/events load: a viewer off the roster costs nothing', (
 
 			const data = await openAs(STRANGER);
 
-			expect(calendarCalls(host)).toEqual([]);
+			expect(host.callsIn(CALENDAR)).toEqual([]);
 			expect(host.calls.sort()).toEqual([...standingReads(STRANGER), ...ABOUT_READS].sort());
 			expect(data).toStrictEqual(asBefore());
 			expect(data.events).toBe(publicSlice);
@@ -210,7 +208,7 @@ describe('/groups/[actor]/events load: a viewer off the roster costs nothing', (
 
 		const data = await openAs(MEMBER);
 
-		expect(calendarCalls(host)).toEqual([]);
+		expect(host.callsIn(CALENDAR)).toEqual([]);
 		expect('membersOnlyNotice' in data).toBe(false);
 		expect(data.events).toBe(publicSlice);
 		logged.mockRestore();
@@ -238,7 +236,7 @@ describe('/groups/[actor]/events load: a member sees both slices', () => {
 
 		const data = await openAs(MEMBER);
 
-		expect(calendarCalls(host)).toEqual([`list ${CALENDAR} ${EVENT}`]);
+		expect(host.callsIn(CALENDAR)).toEqual([`list ${CALENDAR} ${GROUP_DID} ${EVENT}`]);
 		expect(data.events).toStrictEqual([
 			{
 				uri: `at://${GROUP_DID}/space/net.openmeet.space.calendar/self/${GROUP_DID}/${EVENT}/3lmeeting`,
@@ -306,12 +304,7 @@ describe('/groups/[actor]/events load: a member sees both slices', () => {
 	});
 
 	it('a members-only event that shares an rkey with a public one is still its own entry', async () => {
-		serveReader(
-			GROUP_DID,
-			publicHost([
-				{ ...MEETING, rkey: '3lpaddle', uri: `${CALENDAR}/${GROUP_DID}/${EVENT}/3lpaddle` }
-			])
-		);
+		serveReader(GROUP_DID, publicHost([{ ...MEETING, rkey: '3lpaddle' }]));
 
 		const data = await openAs(MEMBER);
 
@@ -350,7 +343,7 @@ describe('/groups/[actor]/events load: when the members-only slice cannot be rea
 		expect(data.membersOnlyNotice).toMatch(/^members-only events couldn't be loaded right now\.$/i);
 		expect(logged).toHaveBeenCalled();
 		// One attempt at the space and no other read in its place.
-		expect(calendarCalls(host)).toEqual([`list ${CALENDAR} ${EVENT}`]);
+		expect(host.callsIn(CALENDAR)).toEqual([`list ${CALENDAR} ${GROUP_DID} ${EVENT}`]);
 		expect(listGroupEvents).toHaveBeenCalledTimes(1);
 	});
 

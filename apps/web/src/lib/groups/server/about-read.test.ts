@@ -13,7 +13,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 
-import { pdsSpaceReader, readGroupAbout, type GroupSpaceReader } from './about-read';
+import { pdsSpaceReader, readGroupAbout } from './about-read';
+import {
+	spaceReader,
+	type SpaceReaderOptions,
+	type SpaceRecordInput
+} from './__fixtures__/space-reader';
 import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import {
 	GROUP_PROFILE_COLLECTION,
@@ -34,34 +39,9 @@ let harness: SqliteD1;
 let db: D1Database;
 let group: GroupRow;
 
-/** A reader over a fixed set of records, addressed the way a space addresses
- *  them: `<space>/<repo>/<collection>/<rkey>`. */
-function readerOver(
-	records: { collection: string; rkey: string; value: Record<string, unknown> }[]
-): GroupSpaceReader {
-	const all = records.map((record) => ({
-		uri: `${ABOUT}/${GROUP_DID}/${record.collection}/${record.rkey}`,
-		cid: 'bafytest',
-		collection: record.collection,
-		rkey: record.rkey,
-		value: record.value
-	}));
-	return {
-		async get(query) {
-			return (
-				all.find(
-					(record) => record.collection === query.collection && record.rkey === query.rkey
-				) ?? null
-			);
-		},
-		async list() {
-			return all;
-		},
-		async getSpace() {
-			throw new Error('this fake holds records, not a space configuration');
-		}
-	};
-}
+/** A reader over records in the group's about space. */
+const readerOver = (records: SpaceRecordInput[], options: SpaceReaderOptions = {}) =>
+	spaceReader(GROUP_DID, { space: ABOUT, records, ...options });
 
 beforeEach(async () => {
 	harness = sqliteD1();
@@ -101,26 +81,31 @@ describe('splitRecordUri', () => {
 });
 
 describe('readGroupAbout', () => {
+	// From a host that ignores the collection filter, so the listing hands back
+	// records that are not rules.
 	it('returns the profile and only the rule records, ignoring anything else', async () => {
-		const reader = readerOver([
-			{
-				collection: GROUP_PROFILE_COLLECTION,
-				rkey: 'self',
-				value: groupProfileRecord({ name: 'Kona', joinPolicy: 'approval' })
-			},
-			{
-				collection: GROUP_RULE_COLLECTION,
-				rkey: 'bbb',
-				value: groupRuleRecord({ text: 'No spam', order: 1 })
-			},
-			{
-				collection: GROUP_RULE_COLLECTION,
-				rkey: 'aaa',
-				value: groupRuleRecord({ text: 'Be kind', order: 0 })
-			},
-			// A record class this reader does not read must not become a rule.
-			{ collection: 'group.opensocial.role', rkey: 'admin', value: { name: 'admin' } }
-		]);
+		const reader = readerOver(
+			[
+				{
+					collection: GROUP_PROFILE_COLLECTION,
+					rkey: 'self',
+					value: groupProfileRecord({ name: 'Kona', joinPolicy: 'approval' })
+				},
+				{
+					collection: GROUP_RULE_COLLECTION,
+					rkey: 'bbb',
+					value: groupRuleRecord({ text: 'No spam', order: 1 })
+				},
+				{
+					collection: GROUP_RULE_COLLECTION,
+					rkey: 'aaa',
+					value: groupRuleRecord({ text: 'Be kind', order: 0 })
+				},
+				// A record class this reader does not read must not become a rule.
+				{ collection: 'group.opensocial.role', rkey: 'admin', value: { name: 'admin' } }
+			],
+			{ ignoresFilter: true }
+		);
 
 		const about = await readGroupAbout(reader, group);
 		expect(about.profile?.name).toBe('Kona');
@@ -157,24 +142,10 @@ describe('readGroupAbout', () => {
 	});
 
 	it('reports a group with no about space as absent without calling the reader', async () => {
-		let called = false;
-		const reader: GroupSpaceReader = {
-			async get() {
-				called = true;
-				return null;
-			},
-			async list() {
-				called = true;
-				return [];
-			},
-			async getSpace() {
-				called = true;
-				return { readPolicy: 'com.atproto.simplespace.defs#publicPolicy' };
-			}
-		};
+		const reader = readerOver([]);
 		const about = await readGroupAbout(reader, { ...group, about_space_uri: null });
 		expect(about).toEqual({ profile: null, rules: [] });
-		expect(called).toBe(false);
+		expect(reader.calls).toEqual([]);
 	});
 });
 

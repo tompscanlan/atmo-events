@@ -13,7 +13,8 @@ import { ABOUT_SPACE_TYPE, type GroupRow } from '../types';
 import { GROUP_PROFILE_COLLECTION, GROUP_RULE_COLLECTION } from '../about-record';
 
 import { spaceUri } from '../ids';
-import { GroupPermissionError, type GroupRepoWrite, type GroupRepoWriter } from './group-write';
+import { GroupPermissionError, type GroupRepoWrite } from './group-write';
+import { recordingWriter, type RecordingWriter } from './__fixtures__/space-reader';
 import { createGroup, recordGroupSpaces } from './db/groups';
 import { addMember } from './db/roster';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -28,7 +29,7 @@ let harness: SqliteD1;
 let db: D1Database;
 let group: GroupRow;
 let writes: GroupRepoWrite[];
-let writer: GroupRepoWriter;
+let writer: RecordingWriter;
 
 // The writer takes an env only to find the group's linked session, and these
 // cases inject their own writer, so it is never consulted.
@@ -61,16 +62,8 @@ beforeEach(async () => {
 	});
 	group = { ...group, about_space_uri: ABOUT };
 
-	writes = [];
-	writer = async (write) => {
-		writes.push(write);
-		return {
-			uri: write.space
-				? `${write.space}/${write.repo}/${write.collection}/${write.rkey}`
-				: `at://${write.repo}/${write.collection}/${write.rkey}`,
-			cid: 'bafytest'
-		};
-	};
+	writer = recordingWriter();
+	writes = writer.writes;
 });
 
 afterEach(() => harness.close());

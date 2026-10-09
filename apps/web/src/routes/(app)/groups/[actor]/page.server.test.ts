@@ -18,7 +18,11 @@ vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { load } from './+page.server';
 import { notAllowed } from '$lib/groups/form-error';
-import { type GroupSpaceReader } from '$lib/groups/server/about-read';
+import {
+	hostDown,
+	spaceReader,
+	type FakeSpaceReader
+} from '$lib/groups/server/__fixtures__/space-reader';
 import {
 	fixtureSessions,
 	resetReaderHost,
@@ -42,7 +46,7 @@ const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
-const { aboutSpaceUri: ABOUT } = groupSpaceUris(GROUP_DID);
+const { aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS } = groupSpaceUris(GROUP_DID);
 
 let harness: SqliteD1;
 
@@ -63,22 +67,13 @@ afterEach(() => {
  *  `readPolicy`, or fails with it. No records means no authz config, so a
  *  roster caller's standing comes from the rows and the gate admits them
  *  without asking the host. */
-function hostReading(readPolicy: string | Error): GroupSpaceReader & { asked: string[] } {
-	const asked: string[] = [];
-	return {
-		asked,
-		async get() {
-			return null;
-		},
-		async list() {
-			return [];
-		},
-		async getSpace(space) {
-			asked.push(space);
-			if (readPolicy instanceof Error) throw readPolicy;
-			return { readPolicy };
-		}
-	};
+function hostReading(readPolicy: string | Error): FakeSpaceReader {
+	return spaceReader(GROUP_DID, { policies: { [ABOUT]: readPolicy } });
+}
+
+/** The read policies `host` was asked for, in order. */
+function policyReads(host: FakeSpaceReader): string[] {
+	return host.calls.filter((call) => call.startsWith('getSpace '));
 }
 
 async function openAs(did: string | null, env: Record<string, unknown> = {}) {
@@ -110,7 +105,7 @@ describe('/groups/[actor] load', () => {
 			const data = await openAs(OWNER);
 
 			expect(data.visibility).toBe(visibility);
-			expect(host.asked).toEqual([ABOUT]);
+			expect(policyReads(host)).toEqual([`getSpace ${ABOUT}`]);
 			// No profile record, so the join policy falls back to the row's
 			// approval and the host's visibility.
 			expect(data.about.joinPolicy).toBe(joinPolicy);
@@ -126,7 +121,7 @@ describe('/groups/[actor] load', () => {
 		const data = await openAs(STRANGER);
 
 		expect(data.visibility).toBe('public');
-		expect(host.asked).toEqual([ABOUT]);
+		expect(policyReads(host)).toEqual([`getSpace ${ABOUT}`]);
 	});
 
 	// The gate never asks the host about visibility for a member whose standing
@@ -177,37 +172,20 @@ describe('a members space that cannot be read', () => {
 
 	/** A host whose members space fails every read while its about space
 	 *  answers with a private profile, and whose about space reports
-	 *  `readPolicy`, or fails with it. `aboutReads` counts every about-space
-	 *  read, so a case can prove the profile was never read. */
-	function membersDown(
-		readPolicy: string | Error
-	): GroupSpaceReader & { asked: string[]; aboutReads: number } {
-		const host = {
-			asked: [] as string[],
-			aboutReads: 0,
-			async get(q: Parameters<GroupSpaceReader['get']>[0]) {
-				if (q.space !== ABOUT) throw new Error('com.atproto.space.getRecord failed: 502');
-				host.aboutReads++;
-				return {
-					uri: `${ABOUT}/${q.collection}/${q.rkey}`,
-					cid: 'bafytest',
-					collection: q.collection,
-					rkey: q.rkey,
+	 *  `readPolicy`, or fails with it. */
+	function membersDown(readPolicy: string | Error): FakeSpaceReader {
+		return spaceReader(GROUP_DID, {
+			space: ABOUT,
+			records: [
+				{
+					collection: 'group.opensocial.profile',
+					rkey: 'self',
 					value: { displayName: 'Members only', joinPolicy: 'invite' }
-				};
-			},
-			async list(q: Parameters<GroupSpaceReader['list']>[0]) {
-				if (q.space !== ABOUT) throw new Error('com.atproto.space.listRecords failed: 502');
-				host.aboutReads++;
-				return [];
-			},
-			async getSpace(space: string) {
-				host.asked.push(space);
-				if (readPolicy instanceof Error) throw readPolicy;
-				return { readPolicy };
-			}
-		};
-		return host;
+				}
+			],
+			policies: { [ABOUT]: readPolicy },
+			fail: hostDown(502, MEMBERS)
+		});
 	}
 
 	it('a stale row does not open a private group, and its profile is never read', async () => {
@@ -218,8 +196,8 @@ describe('a members space that cannot be read', () => {
 			status: 404,
 			body: { message: GROUP_NOT_FOUND }
 		});
-		expect(host.asked).toEqual([ABOUT]);
-		expect(host.aboutReads).toBe(0);
+		// The about space was asked its policy, and nothing was read from it.
+		expect(host.callsIn(ABOUT)).toEqual([`getSpace ${ABOUT}`]);
 	});
 
 	// The events tab, the members page and every group form take their context
@@ -254,7 +232,7 @@ describe('a members space that cannot be read', () => {
 		const data = await openAs(MEMBER);
 
 		expect(data.visibility).toBe('public');
-		expect(host.asked).toEqual([ABOUT]);
+		expect(policyReads(host)).toEqual([`getSpace ${ABOUT}`]);
 		expect(data.membership.onRoster).toBe(false);
 		expect(data.membership.unreadable).toMatch(/failed: 502/);
 		expect(data.membership.role).toBe('member');

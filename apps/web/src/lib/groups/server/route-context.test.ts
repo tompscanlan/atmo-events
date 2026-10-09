@@ -27,7 +27,7 @@ import {
 	groupPath,
 	groupRouteContext
 } from './route-context';
-import type { GroupSpaceReader } from './about-read';
+import { hostDown, spaceReader } from './__fixtures__/space-reader';
 import { linkGroups, linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
 import type { GroupRow, GroupVisibility } from '../types';
@@ -156,17 +156,7 @@ describe('groupPath', () => {
 // row cannot stand in for the record: a removal whose row delete failed leaves
 // a row behind, and it must not open a private group while the space is down.
 describe('readStanding', () => {
-	const down: GroupSpaceReader = {
-		async get() {
-			throw new Error('com.atproto.space.getRecord failed: 502');
-		},
-		async list() {
-			throw new Error('com.atproto.space.listRecords failed: 502');
-		},
-		async getSpace() {
-			throw new Error('com.atproto.simplespace.getSpace failed: 502');
-		}
-	};
+	const down = spaceReader(GROUP_DID, { fail: hostDown(502) });
 	let withSpace: GroupRow;
 
 	beforeEach(async () => {

@@ -16,6 +16,11 @@ import {
 	unionGroupEvents
 } from './calendar-read';
 import { pdsSpaceReader, type GroupSpaceReader, type GroupSpaceRecord } from './about-read';
+import {
+	spaceReader,
+	type FakeSpaceReader,
+	type SpaceRecordInput
+} from './__fixtures__/space-reader';
 import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import type { CallerMembership, GroupEventRecord } from '../types';
 
@@ -95,33 +100,25 @@ const OFF_THE_ROSTER: [string, CallerMembership][] = [
 	['an admin row with no membership record', viewer(false, { role: 'admin' })]
 ];
 
-interface RecordingReader extends GroupSpaceReader {
-	calls: string[];
-}
-
-/** A reader over `records` that logs each call. A host that ignores the
- *  collection parameter hands back every record whatever was asked for. */
+/** A calendar space reader over `records`, or one whose every listing fails
+ *  with `records`. The slice is read with a listing, so a get or a space lookup
+ *  fails loudly. A host that ignores the collection parameter hands back every
+ *  record whatever was asked for. */
 function recordingReader(
-	records: GroupSpaceRecord[] | Error,
+	records: SpaceRecordInput[] | Error,
 	{ ignoresFilter = false } = {}
-): RecordingReader {
-	const calls: string[] = [];
-	return {
-		calls,
-		async get(q) {
-			calls.push(`get ${q.space} ${q.collection} ${q.rkey}`);
-			throw new Error('the slice is read with list, never get');
-		},
-		async list(q) {
-			calls.push(`list ${q.space} ${q.repo} ${q.collection ?? '(no collection)'}`);
-			if (records instanceof Error) throw records;
-			return ignoresFilter ? records : records.filter((r) => r.collection === q.collection);
-		},
-		async getSpace(space) {
-			calls.push(`getSpace ${space}`);
-			throw new Error('the slice never asks for a space configuration');
+): FakeSpaceReader {
+	return spaceReader(GROUP_DID, {
+		space: CALENDAR,
+		records: records instanceof Error ? [] : records,
+		ignoresFilter,
+		fail: (call) => {
+			if (call.method !== 'list') {
+				return new Error(`the slice is read with list, never ${call.method}`);
+			}
+			return records instanceof Error ? records : undefined;
 		}
-	};
+	});
 }
 
 describe('readMembersOnlyEvents: the roster check comes before the read', () => {
@@ -474,26 +471,20 @@ describe('readMembersOnlyEvent', () => {
 		value: STORED_VALUE
 	};
 
-	/** A calendar space read one record at a time. A listing or a space lookup
-	 *  fails loudly, since one event is fetched by its key and nothing else. */
-	function keyedReader(records: GroupSpaceRecord[] | Error): RecordingReader {
-		const calls: string[] = [];
-		return {
-			calls,
-			async get(q) {
-				calls.push(`get ${q.space} ${q.repo} ${q.collection} ${q.rkey}`);
-				if (records instanceof Error) throw records;
-				return records.find((r) => r.collection === q.collection && r.rkey === q.rkey) ?? null;
-			},
-			async list(q) {
-				calls.push(`list ${q.space} ${q.repo} ${q.collection ?? '(no collection)'}`);
-				throw new Error('one event is read by its key, never by a listing');
-			},
-			async getSpace(space) {
-				calls.push(`getSpace ${space}`);
-				throw new Error('one event never asks for a space configuration');
+	/** A calendar space read one record at a time, or one whose every get fails
+	 *  with `records`. A listing or a space lookup fails loudly, since one event
+	 *  is fetched by its key and nothing else. */
+	function keyedReader(records: SpaceRecordInput[] | Error): FakeSpaceReader {
+		return spaceReader(GROUP_DID, {
+			space: CALENDAR,
+			records: records instanceof Error ? [] : records,
+			fail: (call) => {
+				if (call.method !== 'get') {
+					return new Error(`one event is read by its key, never ${call.method}`);
+				}
+				return records instanceof Error ? records : undefined;
 			}
-		};
+		});
 	}
 
 	let requested: URL[];

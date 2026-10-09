@@ -4,8 +4,9 @@
 // not: `getCallerMembership` reads the record, not the row, and answers "off the
 // roster".
 //
-// Test harness only. It counts every read, so a case can also prove that no
-// record was read at all.
+// Test harness only. It is the in-memory reader of ./space-reader.ts, so its
+// call log can also prove that no record was read at all. It holds no space
+// configuration: a members space holds no answer about the about space's.
 import { DEFAULT_ROLE_PERMISSIONS } from '../../permissions';
 import {
 	GROUP_MEMBERSHIP_COLLECTION,
@@ -16,63 +17,37 @@ import {
 	groupMembershipRecord,
 	groupRoleRecord
 } from '../../members-record';
-import type { GroupSpaceReader } from '../about-read';
-
-export interface CountingSpaceReader extends GroupSpaceReader {
-	/** Every get and list this reader has answered. */
-	reads: number;
-}
+import { spaceReader, type FakeSpaceReader } from './space-reader';
 
 export function membersSpaceReader(
 	space: string,
 	groupDid: string,
 	members: string[]
-): CountingSpaceReader {
-	const records = [
-		{
-			collection: GROUP_ROLE_COLLECTION,
-			rkey: 'member',
-			value: { ...groupRoleRecord({ id: 'member' }), $type: GROUP_ROLE_COLLECTION }
-		},
-		{
-			collection: GROUP_PERMISSIONS_COLLECTION,
-			rkey: GROUP_PERMISSIONS_RKEY,
-			value: {
-				...groupBindingsRecord({ altitude: 'community', bundles: DEFAULT_ROLE_PERMISSIONS }),
-				$type: GROUP_PERMISSIONS_COLLECTION
-			}
-		},
-		...members.map((did) => ({
-			collection: GROUP_MEMBERSHIP_COLLECTION,
-			rkey: did,
-			value: {
-				...groupMembershipRecord({ subject: did, roles: ['member'] }),
-				$type: GROUP_MEMBERSHIP_COLLECTION
-			}
-		}))
-	].map((r) => ({
-		...r,
-		uri: `${space}/${groupDid}/${r.collection}/${r.rkey}`,
-		cid: 'bafytest'
-	}));
-
-	const reader: CountingSpaceReader = {
-		reads: 0,
-		async get(query) {
-			reader.reads++;
-			return (
-				records.find((r) => r.collection === query.collection && r.rkey === query.rkey) ?? null
-			);
-		},
-		async list(query) {
-			reader.reads++;
-			return records.filter((r) => !query.collection || r.collection === query.collection);
-		},
-		// Not a record read, and not counted: a members space holds no answer
-		// about the about space's configuration.
-		async getSpace() {
-			throw new Error('this fixture holds members-space records, not a space configuration');
-		}
-	};
-	return reader;
+): FakeSpaceReader {
+	return spaceReader(groupDid, {
+		space,
+		records: [
+			{
+				collection: GROUP_ROLE_COLLECTION,
+				rkey: 'member',
+				value: { ...groupRoleRecord({ id: 'member' }), $type: GROUP_ROLE_COLLECTION }
+			},
+			{
+				collection: GROUP_PERMISSIONS_COLLECTION,
+				rkey: GROUP_PERMISSIONS_RKEY,
+				value: {
+					...groupBindingsRecord({ altitude: 'community', bundles: DEFAULT_ROLE_PERMISSIONS }),
+					$type: GROUP_PERMISSIONS_COLLECTION
+				}
+			},
+			...members.map((did) => ({
+				collection: GROUP_MEMBERSHIP_COLLECTION,
+				rkey: did,
+				value: {
+					...groupMembershipRecord({ subject: did, roles: ['member'] }),
+					$type: GROUP_MEMBERSHIP_COLLECTION
+				}
+			}))
+		]
+	});
 }

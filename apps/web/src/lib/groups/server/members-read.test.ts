@@ -18,7 +18,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 
-import { pdsSpaceReader, type GroupSpaceReader } from './about-read';
+import { pdsSpaceReader } from './about-read';
+import { hostDown, spaceReader, type SpaceRecordInput } from './__fixtures__/space-reader';
 import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import {
 	NO_MEMBER_RECORDS,
@@ -69,37 +70,11 @@ let harness: SqliteD1;
 let db: D1Database;
 let group: GroupRow;
 
-interface SpaceFixture {
-	collection: string;
-	rkey: string;
-	value: Record<string, unknown>;
-}
+/** A reader over records in the group's members space. */
+const readerOver = (records: SpaceRecordInput[]) =>
+	spaceReader(GROUP_DID, { space: MEMBERS, records });
 
-/** A reader over a fixed record set, addressed the way a space addresses them:
- *  `<space>/<repo>/<collection>/<rkey>`. `listRecords` returns no `uri` on the
- *  wire, so the fixture supplies the fields and lets the reader rebuild it. */
-function readerOver(records: SpaceFixture[]): GroupSpaceReader {
-	const all = records.map((record) => ({
-		uri: `${MEMBERS}/${GROUP_DID}/${record.collection}/${record.rkey}`,
-		cid: 'bafytest',
-		collection: record.collection,
-		rkey: record.rkey,
-		value: record.value
-	}));
-	return {
-		async get(query) {
-			return all.find((r) => r.collection === query.collection && r.rkey === query.rkey) ?? null;
-		},
-		async list(query) {
-			return all.filter((r) => !query.collection || r.collection === query.collection);
-		},
-		async getSpace() {
-			throw new Error('this fake holds records, not a space configuration');
-		}
-	};
-}
-
-function membership(did: string, roles: string[], createdAt: string): SpaceFixture {
+function membership(did: string, roles: string[], createdAt: string): SpaceRecordInput {
 	return {
 		collection: GROUP_MEMBERSHIP_COLLECTION,
 		rkey: did,
@@ -110,7 +85,7 @@ function membership(did: string, roles: string[], createdAt: string): SpaceFixtu
 	};
 }
 
-const accessRecord: SpaceFixture = {
+const accessRecord: SpaceRecordInput = {
 	collection: GROUP_ACCESS_COLLECTION,
 	rkey: GROUP_ACCESS_RKEY,
 	value: {
@@ -121,7 +96,7 @@ const accessRecord: SpaceFixture = {
 
 /** The authz config a create writes: one `role` record per seeded role, and
  *  the two binding records over the seeded bundles. */
-function roleRecord(role: GroupRoleName): SpaceFixture {
+function roleRecord(role: GroupRoleName): SpaceRecordInput {
 	return {
 		collection: GROUP_ROLE_COLLECTION,
 		rkey: role,
@@ -132,7 +107,7 @@ function roleRecord(role: GroupRoleName): SpaceFixture {
 function bindingsRecord(
 	altitude: 'community' | 'modality',
 	bundles: Partial<Record<GroupRoleName, readonly GroupPermission[]>> = DEFAULT_ROLE_PERMISSIONS
-): SpaceFixture {
+): SpaceRecordInput {
 	const collection =
 		altitude === 'community' ? GROUP_PERMISSIONS_COLLECTION : GROUP_EVENT_PERMISSIONS_COLLECTION;
 	return {
@@ -142,7 +117,7 @@ function bindingsRecord(
 	};
 }
 
-const AUTHZ: SpaceFixture[] = [
+const AUTHZ: SpaceRecordInput[] = [
 	roleRecord('owner'),
 	roleRecord('admin'),
 	roleRecord('member'),
@@ -655,17 +630,7 @@ describe('the gate, from records', () => {
 	});
 
 	it('fails closed when the space cannot be read', async () => {
-		const down: GroupSpaceReader = {
-			async get() {
-				throw new Error('com.atproto.space.getRecord failed: 502');
-			},
-			async list() {
-				throw new Error('com.atproto.space.listRecords failed: 502');
-			},
-			async getSpace() {
-				throw new Error('com.atproto.simplespace.getSpace failed: 502');
-			}
-		};
+		const down = spaceReader(GROUP_DID, { fail: hostDown(502) });
 		await expect(getCallerMembership(db, group, ADMIN, down)).rejects.toThrow(/502/);
 		// No credential for a group that has a members space: nothing, not rows.
 		const noReader = await getCallerMembership(db, group, ADMIN, null);
@@ -693,18 +658,9 @@ describe('the gate, from records', () => {
 	});
 
 	it('reads nothing for an anonymous caller', async () => {
-		const reader: GroupSpaceReader = {
-			async get() {
-				throw new Error('an anonymous caller must not reach the PDS');
-			},
-			async list() {
-				throw new Error('an anonymous caller must not reach the PDS');
-			},
-			async getSpace() {
-				throw new Error('an anonymous caller must not reach the PDS');
-			}
-		};
+		const reader = readerOver(AUTHZ);
 		const anonymous = await getCallerMembership(db, group, null, reader);
 		expect(anonymous.permissions.size).toBe(0);
+		expect(reader.calls).toEqual([]);
 	});
 });

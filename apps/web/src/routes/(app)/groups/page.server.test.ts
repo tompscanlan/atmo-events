@@ -19,7 +19,6 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { load } from './+page.server';
-import { type GroupSpaceReader } from '$lib/groups/server/about-read';
 import {
 	breakSession,
 	fixtureSessions,
@@ -29,6 +28,7 @@ import {
 import { listDeclaredGroups } from '$lib/groups/server/browse';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { membersSpaceReader } from '$lib/groups/server/__fixtures__/members-space';
+import { hostDown, spaceReader } from '$lib/groups/server/__fixtures__/space-reader';
 
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from '$lib/groups/types';
 
@@ -65,18 +65,8 @@ async function joined(name: string, groupDid: string, recorded: boolean) {
 	return membersSpaceReader(members, groupDid, recorded ? [ALICE] : []);
 }
 
-/** A members space that fails every read. */
-const down: GroupSpaceReader = {
-	async get() {
-		throw new Error('com.atproto.space.getRecord failed: 502');
-	},
-	async list() {
-		throw new Error('com.atproto.space.listRecords failed: 502');
-	},
-	async getSpace() {
-		throw new Error('com.atproto.simplespace.getSpace failed: 502');
-	}
-};
+/** A host that fails every read of the group's spaces. */
+const down = (groupDid: string) => spaceReader(groupDid, { fail: hostDown(502) });
 
 async function browse() {
 	return (await load({
@@ -101,7 +91,7 @@ describe('/groups load', () => {
 		} as unknown as Parameters<typeof load>[0])) as { groups: { name: string | null }[] };
 
 		expect(data.groups.map((g) => g.name)).toEqual(['Kept']);
-		expect(readers.get('did:plc:gone')!.reads).toBeGreaterThan(0);
+		expect(readers.get('did:plc:gone')!.calls).not.toEqual([]);
 	});
 
 	// Browse shows what placement says, with no host read per row: a group in
@@ -136,7 +126,7 @@ describe('/groups load', () => {
 		const kept = await joined('Kept', 'did:plc:kept', true);
 		await joined('Stale', 'did:plc:stale', false);
 		serveReader('did:plc:kept', kept);
-		serveReader('did:plc:stale', down);
+		serveReader('did:plc:stale', down('did:plc:stale'));
 		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		expect((await browse()).groups.map((g) => g.name)).toEqual(['Kept']);
@@ -172,7 +162,7 @@ describe('/groups load', () => {
 			aboutSpaceUri: spaceUri('did:plc:mine', ABOUT_SPACE_TYPE, 'self'),
 			membersSpaceUri: spaceUri('did:plc:mine', MEMBERS_SPACE_TYPE, 'self')
 		});
-		serveReader('did:plc:mine', down);
+		serveReader('did:plc:mine', down('did:plc:mine'));
 
 		expect((await browse()).groups).toEqual([
 			expect.objectContaining({ name: 'Mine', visibility: 'private' })

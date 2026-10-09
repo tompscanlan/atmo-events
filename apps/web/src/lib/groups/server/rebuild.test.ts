@@ -5,7 +5,7 @@
 // profile from one and the roster from the other.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import type { GroupSpaceReader } from './about-read';
+import { spaceReader, type SpaceRecordInput } from './__fixtures__/space-reader';
 import {
 	GROUP_PROFILE_COLLECTION,
 	GROUP_PROFILE_RKEY,
@@ -41,46 +41,16 @@ const { aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS } = groupSpaceUris(GROUP_
 let harness: SqliteD1;
 let db: D1Database;
 
-interface Stored {
-	space: string;
-	collection: string;
-	rkey: string;
-	value: Record<string, unknown>;
-}
-
-/** A reader over a fixed record set that honors `space`, unlike the roster
- *  tests' fixture: a profile answered out of the members space would pass a
- *  rebuild that read the wrong space. `readPolicy` is the about space's, for a
- *  case whose rebuild asks the host; without it the host does not answer. */
-function readerOver(records: Stored[], readPolicy?: string): GroupSpaceReader {
-	const all = records.map((r) => ({
-		...r,
-		uri: `${r.space}/${GROUP_DID}/${r.collection}/${r.rkey}`,
-		cid: 'bafytest'
-	}));
-	return {
-		async get(q) {
-			return (
-				all.find(
-					(r) => r.space === q.space && r.collection === q.collection && r.rkey === q.rkey
-				) ?? null
-			);
-		},
-		async list(q) {
-			return all.filter(
-				(r) => r.space === q.space && (!q.collection || r.collection === q.collection)
-			);
-		},
-		async getSpace(space) {
-			if (readPolicy && space === ABOUT) return { readPolicy };
-			throw new Error('this fake holds records, not a space configuration');
-		}
-	};
-}
+/** A reader over records in both spaces. Each record names its space, and the
+ *  reader keeps them apart: a profile answered out of the members space would
+ *  pass a rebuild that read the wrong space. `readPolicy` is the about space's,
+ *  for a case whose rebuild asks the host; without it the host does not answer. */
+const readerOver = (records: SpaceRecordInput[], readPolicy?: string) =>
+	spaceReader(GROUP_DID, { records, policies: readPolicy ? { [ABOUT]: readPolicy } : {} });
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
-function profile(joinPolicy: GroupJoinPolicy, createdAt: number): Stored {
+function profile(joinPolicy: GroupJoinPolicy, createdAt: number): SpaceRecordInput {
 	return {
 		space: ABOUT,
 		collection: GROUP_PROFILE_COLLECTION,
@@ -98,7 +68,7 @@ function profile(joinPolicy: GroupJoinPolicy, createdAt: number): Stored {
 	};
 }
 
-const rule: Stored = {
+const rule: SpaceRecordInput = {
 	space: ABOUT,
 	collection: GROUP_RULE_COLLECTION,
 	rkey: '3lrule00000001',
@@ -108,7 +78,7 @@ const rule: Stored = {
 	}
 };
 
-function membership(did: string, role: GroupRoleName, createdAt: number): Stored {
+function membership(did: string, role: GroupRoleName, createdAt: number): SpaceRecordInput {
 	return {
 		space: MEMBERS,
 		collection: GROUP_MEMBERSHIP_COLLECTION,
@@ -122,7 +92,7 @@ function membership(did: string, role: GroupRoleName, createdAt: number): Stored
 
 /** The authz config a create writes: a `role` record per seeded role and both
  *  binding records over the seeded bundles. */
-const AUTHZ: Stored[] = [
+const AUTHZ: SpaceRecordInput[] = [
 	...(['owner', 'admin', 'member'] as const).map((id) => ({
 		space: MEMBERS,
 		collection: GROUP_ROLE_COLLECTION,
@@ -185,7 +155,9 @@ async function dropGroupRows(groupId: string) {
 }
 
 /** A group the app created, with its records written to match. */
-async function appGroup(requireApproval: boolean): Promise<{ row: GroupRow; records: Stored[] }> {
+async function appGroup(
+	requireApproval: boolean
+): Promise<{ row: GroupRow; records: SpaceRecordInput[] }> {
 	const row = await createGroup(db, {
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,

@@ -32,15 +32,15 @@ import {
 	GROUP_ROLE_COLLECTION,
 	GROUP_SPACE_COLLECTION
 } from '../members-record';
-import type { GroupSpaceReader } from './about-read';
+import {
+	recordingWriter,
+	spaceReader,
+	type FakeSpaceReader,
+	type RecordingWriter
+} from './__fixtures__/space-reader';
 
 import { spaceUri } from '../ids';
-import {
-	GroupPermissionError,
-	GroupRecordError,
-	type GroupRepoWrite,
-	type GroupRepoWriter
-} from './group-write';
+import { GroupPermissionError, GroupRecordError, type GroupRepoWrite } from './group-write';
 import { createGroup, recordGroupSpaces } from './db/groups';
 import { addMember } from './db/roster';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -58,11 +58,11 @@ let harness: SqliteD1;
 let db: D1Database;
 let group: GroupRow;
 let writes: GroupRepoWrite[];
-let writer: GroupRepoWriter;
+let writer: RecordingWriter;
 /** Reads back what `writer` wrote, so the gate resolves from the same members
  *  space the test writes into. It starts empty (no authz config), so the gate
  *  falls back to the roster rows `addMember` seeded. */
-let reader: GroupSpaceReader;
+let reader: FakeSpaceReader;
 
 // The writers take an env only to resolve a credential, and every case here
 // injects its own transport, so it is never consulted.
@@ -81,42 +81,9 @@ beforeEach(async () => {
 	await recordGroupSpaces(db, group.id, { aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS });
 	group = { ...group, about_space_uri: ABOUT, members_space_uri: MEMBERS };
 
-	writes = [];
-	writer = async (write) => {
-		writes.push(write);
-		return {
-			uri: `${write.space}/${write.repo}/${write.collection}/${write.rkey}`,
-			cid: 'bafytest'
-		};
-	};
-	// The latest write per (space, collection, rkey) wins, and a delete removes.
-	const live = (space: string, collection?: string) => {
-		const current = new Map<string, GroupRepoWrite>();
-		for (const w of writes) {
-			if (w.space !== space || (collection && w.collection !== collection)) continue;
-			current.set(`${w.collection}/${w.rkey}`, w);
-		}
-		return [...current.values()]
-			.filter((w) => w.intent !== 'delete')
-			.map((w) => ({
-				uri: `${w.space}/${w.repo}/${w.collection}/${w.rkey}`,
-				cid: 'bafytest',
-				collection: w.collection,
-				rkey: w.rkey,
-				value: w.record
-			}));
-	};
-	reader = {
-		async get(q) {
-			return live(q.space, q.collection).find((r) => r.rkey === q.rkey) ?? null;
-		},
-		async list(q) {
-			return live(q.space, q.collection);
-		},
-		async getSpace() {
-			throw new Error('this fake holds records, not a space configuration');
-		}
-	};
+	reader = spaceReader(GROUP_DID);
+	writer = recordingWriter(reader);
+	writes = writer.writes;
 });
 
 afterEach(() => harness.close());
