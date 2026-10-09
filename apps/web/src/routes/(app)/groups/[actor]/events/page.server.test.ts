@@ -7,9 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // test is the union and the gate, not the index. The space reader is a fake
 // host that logs every call, so "made no space read" is a count, not a reading
 // of the page.
-vi.mock('$lib/groups/server/about-read', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/groups/server/about-read')>()),
-	groupSpaceReader: vi.fn()
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('$lib/groups/server/__fixtures__/linked-oauth-stub')).linkedOAuthStub
 }));
 vi.mock('$lib/groups/server/events-index', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/groups/server/events-index')>()),
@@ -18,11 +18,12 @@ vi.mock('$lib/groups/server/events-index', async (importOriginal) => ({
 vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { load } from './+page.server';
+import { type GroupSpaceReader, type GroupSpaceRecord } from '$lib/groups/server/about-read';
 import {
-	groupSpaceReader,
-	type GroupSpaceReader,
-	type GroupSpaceRecord
-} from '$lib/groups/server/about-read';
+	fixtureSessions,
+	resetReaderHost,
+	serveReader
+} from '$lib/groups/server/__fixtures__/reader-host';
 import { listGroupEvents } from '$lib/groups/server/events-index';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { addMember, createGroup, getGroupByDid, recordGroupSpaces } from '$lib/groups/server/repo';
@@ -86,6 +87,7 @@ beforeEach(async () => {
 afterEach(() => {
 	harness.close();
 	vi.clearAllMocks();
+	resetReaderHost();
 });
 
 type Host = GroupSpaceReader & { calls: string[] };
@@ -124,7 +126,7 @@ async function openAs(did: string | null) {
 	return (await load({
 		params: { actor: GROUP_DID },
 		locals: { did },
-		platform: { env: { DB: harness.db } },
+		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } },
 		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events`)
 	} as unknown as Parameters<typeof load>[0])) as Record<string, unknown> & {
 		events: GroupEventRecord[];
@@ -181,7 +183,7 @@ const STRANGER_MEMBERSHIP: CallerMembership = { ...ANONYMOUS, did: STRANGER };
 describe('/groups/[actor]/events load: a viewer off the roster costs nothing', () => {
 	it('no space read for an anonymous viewer', async () => {
 		for (const host of [FULL_CALENDAR(), EMPTY_CALENDAR()]) {
-			vi.mocked(groupSpaceReader).mockResolvedValue(host);
+			serveReader(GROUP_DID, host);
 
 			const data = await openAs(null);
 
@@ -194,7 +196,7 @@ describe('/groups/[actor]/events load: a viewer off the roster costs nothing', (
 
 	it('no space read for a signed-in non-member', async () => {
 		for (const host of [FULL_CALENDAR(), EMPTY_CALENDAR()]) {
-			vi.mocked(groupSpaceReader).mockResolvedValue(host);
+			serveReader(GROUP_DID, host);
 
 			const data = await openAs(STRANGER);
 
@@ -217,7 +219,7 @@ describe('/groups/[actor]/events load: a viewer off the roster costs nothing', (
 				return host.get(q);
 			}
 		};
-		vi.mocked(groupSpaceReader).mockResolvedValue(membersDown);
+		serveReader(GROUP_DID, membersDown);
 
 		const data = await openAs(MEMBER);
 
@@ -237,7 +239,7 @@ describe('/groups/[actor]/events load: a member sees both slices', () => {
 			['non-member', STRANGER],
 			['anonymous', null]
 		] as const) {
-			vi.mocked(groupSpaceReader).mockResolvedValue(FULL_CALENDAR());
+			serveReader(GROUP_DID, FULL_CALENDAR());
 			counts[who] = (await openAs(did)).events.length;
 		}
 
@@ -246,7 +248,7 @@ describe('/groups/[actor]/events load: a member sees both slices', () => {
 
 	it("a member's page is the union, newest first, at one listing of the calendar space", async () => {
 		const host = FULL_CALENDAR();
-		vi.mocked(groupSpaceReader).mockResolvedValue(host);
+		serveReader(GROUP_DID, host);
 
 		const data = await openAs(MEMBER);
 
@@ -286,7 +288,7 @@ describe('/groups/[actor]/events load: a member sees both slices', () => {
 		};
 		const stored: GroupSpaceRecord = { ...MEETING, value: { ...MEETING.value, media: [image] } };
 		publicSlice = [publicWithImage];
-		vi.mocked(groupSpaceReader).mockResolvedValue(publicHost([stored]));
+		serveReader(GROUP_DID, publicHost([stored]));
 
 		const data = await openAs(MEMBER);
 
@@ -302,7 +304,7 @@ describe('/groups/[actor]/events load: a member sees both slices', () => {
 	});
 
 	it('the owner, who is on the roster, sees the members-only event too', async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(FULL_CALENDAR());
+		serveReader(GROUP_DID, FULL_CALENDAR());
 
 		const data = await openAs(OWNER);
 
@@ -310,9 +312,7 @@ describe('/groups/[actor]/events load: a member sees both slices', () => {
 	});
 
 	it('the access record never shows as an event, even from a host that ignores the filter', async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(
-			publicHost([ACCESS_SELF, MEETING], { ignoresFilter: true })
-		);
+		serveReader(GROUP_DID, publicHost([ACCESS_SELF, MEETING], { ignoresFilter: true }));
 
 		const data = await openAs(MEMBER);
 
@@ -320,7 +320,8 @@ describe('/groups/[actor]/events load: a member sees both slices', () => {
 	});
 
 	it('a members-only event that shares an rkey with a public one is still its own entry', async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(
+		serveReader(
+			GROUP_DID,
 			publicHost([
 				{ ...MEETING, rkey: '3lpaddle', uri: `${CALENDAR}/${GROUP_DID}/${EVENT}/3lpaddle` }
 			])
@@ -343,7 +344,7 @@ describe('/groups/[actor]/events load: when the members-only slice cannot be rea
 	afterEach(() => logged.mockRestore());
 
 	it('an unlinked group shows a member the public slice and says an organizer has to relink', async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(null);
+		serveReader(GROUP_DID, null);
 
 		const data = await openAs(MEMBER);
 
@@ -356,7 +357,7 @@ describe('/groups/[actor]/events load: when the members-only slice cannot be rea
 
 	it('a calendar read that fails shows the public slice with a notice, and logs it', async () => {
 		const host = publicHost(new Error('com.atproto.space.listRecords failed: 502'));
-		vi.mocked(groupSpaceReader).mockResolvedValue(host);
+		serveReader(GROUP_DID, host);
 
 		const data = await openAs(MEMBER);
 
@@ -369,7 +370,7 @@ describe('/groups/[actor]/events load: when the members-only slice cannot be rea
 	});
 
 	it('an empty calendar space shows a member the public slice and no notice', async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(EMPTY_CALENDAR());
+		serveReader(GROUP_DID, EMPTY_CALENDAR());
 
 		const data = await openAs(MEMBER);
 
@@ -380,7 +381,7 @@ describe('/groups/[actor]/events load: when the members-only slice cannot be rea
 
 	it('a failed index read still leaves a member the members-only slice', async () => {
 		vi.mocked(listGroupEvents).mockRejectedValue(new Error('index down'));
-		vi.mocked(groupSpaceReader).mockResolvedValue(FULL_CALENDAR());
+		serveReader(GROUP_DID, FULL_CALENDAR());
 
 		const member = await openAs(MEMBER);
 		const anonymous = await openAs(null);

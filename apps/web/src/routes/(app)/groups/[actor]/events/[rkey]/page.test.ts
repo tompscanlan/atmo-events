@@ -11,9 +11,9 @@ import { render } from 'svelte/server';
 // host, as in the loader's tests, and the two RSVP commands are stand-ins that
 // record what the adapter sent them. SvelteKit's replaceState is a stand-in
 // that records each address the page asked for.
-vi.mock('$lib/groups/server/about-read', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/groups/server/about-read')>()),
-	groupSpaceReader: vi.fn()
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('$lib/groups/server/__fixtures__/linked-oauth-stub')).linkedOAuthStub
 }));
 vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 const signedIn = vi.hoisted(() => ({
@@ -70,11 +70,12 @@ import Page from './+page.svelte';
 import { EventView } from '@atmo-dev/events-ui';
 import type { EditorAdapter, EditorViewer } from '$lib/components/editor/adapter';
 import { createMembersOnlyEventAdapter } from '$lib/groups/event-page-adapter';
+import { type GroupSpaceReader, type GroupSpaceRecord } from '$lib/groups/server/about-read';
 import {
-	groupSpaceReader,
-	type GroupSpaceReader,
-	type GroupSpaceRecord
-} from '$lib/groups/server/about-read';
+	fixtureSessions,
+	resetReaderHost,
+	serveReader
+} from '$lib/groups/server/__fixtures__/reader-host';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
 import { groupSpaceUris } from '$lib/groups/server/spaces';
@@ -163,6 +164,7 @@ afterEach(() => {
 	vi.clearAllMocks();
 	vi.restoreAllMocks();
 	vi.unstubAllGlobals();
+	resetReaderHost();
 });
 
 type Host = GroupSpaceReader & { calls: string[] };
@@ -213,7 +215,7 @@ async function openAs(did: string | null, rkey = '3lmeeting'): Promise<PageData>
 	return (await load({
 		params: { actor: GROUP_DID, rkey },
 		locals: { did },
-		platform: { env: { DB: harness.db } },
+		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } },
 		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events/${rkey}`)
 	} as unknown as Parameters<typeof load>[0])) as PageData;
 }
@@ -251,7 +253,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	it('the event page hands EventView the space-form URI and the calendar space, without the image', async () => {
 		const stored = storedMeeting();
 		const h = host([stored]);
-		vi.mocked(groupSpaceReader).mockResolvedValue(h);
+		serveReader(GROUP_DID, h);
 
 		const data = await openAs(MEMBER);
 
@@ -305,7 +307,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	});
 
 	it("the members-only event page's adapter writes an RSVP only through the members-only RSVP command", async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		serveReader(GROUP_DID, host([storedMeeting()]));
 		const { rsvp: handed } = renderPage(await openAs(MEMBER));
 		const { adapter, viewer } = handed;
 		expect(handed.spaceUri).toBe(CALENDAR);
@@ -394,7 +396,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	});
 
 	it("the members-only event page's adapter refuses a space write that is not an RSVP to its event", async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		serveReader(GROUP_DID, host([storedMeeting()]));
 		const { adapter } = renderPage(await openAs(MEMBER)).rsvp;
 		const { membersSpaceUri } = groupSpaceUris(GROUP_DID);
 		const otherCalendar =
@@ -578,7 +580,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	// the RSVP it was for is saved, so a link copied afterwards carries none, and
 	// the next press from the same page sends none. (Spec: FR-114.)
 	it('the asked marker leaves the address after a successful RSVP or cancel', async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		serveReader(GROUP_DID, host([storedMeeting()]));
 		const data = await openAs(MEMBER);
 		const marked = new URL(`${PAGE_URL}?from=calendar`);
 		marked.searchParams.set('rsvp-grant', MARKER);
@@ -639,7 +641,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	// the post would cite the event outside its space. The shared EventView opens
 	// the prompt for every other event. (Spec: FR-118.)
 	it("a members-only RSVP opens no share prompt, and a public event's RSVP still does", async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		serveReader(GROUP_DID, host([storedMeeting()]));
 		const data = await openAs(MEMBER);
 		rsvp.press = 'going';
 
@@ -689,7 +691,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	it('the members-only event page offers its Edit link to a manager only, with the placement', async () => {
 		const editHref = `/groups/${GROUP_DID}/events/3lmeeting/edit?placement=members`;
 
-		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		serveReader(GROUP_DID, host([storedMeeting()]));
 		const managed = await openAs(OWNER);
 		expect(managed.canManageEvents).toBe(true);
 		expect(managed.editHref).toBe(editHref);
@@ -703,7 +705,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 
 		rsvp.renders.length = 0;
 		signedIn.user.did = MEMBER;
-		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		serveReader(GROUP_DID, host([storedMeeting()]));
 		const plain = await openAs(MEMBER);
 		expect(plain.canManageEvents).toBe(false);
 		expect('editHref' in plain).toBe(false);

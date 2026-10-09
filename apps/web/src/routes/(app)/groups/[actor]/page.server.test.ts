@@ -10,15 +10,20 @@ vi.mock('$lib/groups/server/handles', () => ({
 	refreshGroupHandle: vi.fn(async () => null)
 }));
 vi.mock('$lib/groups/server/people', () => ({ loadPeople: vi.fn(async () => ({})) }));
-vi.mock('$lib/groups/server/about-read', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/groups/server/about-read')>()),
-	groupSpaceReader: vi.fn()
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('$lib/groups/server/__fixtures__/linked-oauth-stub')).linkedOAuthStub
 }));
 vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { load } from './+page.server';
 import { notAllowed } from '$lib/groups/form-error';
-import { groupSpaceReader, type GroupSpaceReader } from '$lib/groups/server/about-read';
+import { type GroupSpaceReader } from '$lib/groups/server/about-read';
+import {
+	fixtureSessions,
+	resetReaderHost,
+	serveReader
+} from '$lib/groups/server/__fixtures__/reader-host';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { addMember, createGroup, getGroupByDid, recordGroupSpaces } from '$lib/groups/server/repo';
 import {
@@ -48,6 +53,7 @@ beforeEach(async () => {
 afterEach(() => {
 	harness.close();
 	vi.clearAllMocks();
+	resetReaderHost();
 });
 
 /** A host whose spaces hold no records and whose about space reports
@@ -76,7 +82,7 @@ async function openAs(did: string | null, env: Record<string, unknown> = {}) {
 	return (await load({
 		params: { actor: GROUP_DID },
 		locals: { did },
-		platform: { env: { DB: harness.db, ...env } },
+		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions, ...env } },
 		url: new URL(`https://atmo.test/groups/${GROUP_DID}`)
 	} as unknown as Parameters<typeof load>[0])) as {
 		visibility: string | null;
@@ -97,7 +103,7 @@ describe('/groups/[actor] load', () => {
 			['com.atproto.simplespace.defs#memberListPolicy', 'private', 'invite']
 		] as const) {
 			const host = hostReading(policy);
-			vi.mocked(groupSpaceReader).mockResolvedValue(host);
+			serveReader(GROUP_DID, host);
 
 			const data = await openAs(OWNER);
 
@@ -113,7 +119,7 @@ describe('/groups/[actor] load', () => {
 	// page shows that one and does not ask again.
 	it("a stranger's page reuses the gate's answer and asks the host once", async () => {
 		const host = hostReading('com.atproto.simplespace.defs#publicPolicy');
-		vi.mocked(groupSpaceReader).mockResolvedValue(host);
+		serveReader(GROUP_DID, host);
 
 		const data = await openAs(STRANGER);
 
@@ -127,7 +133,7 @@ describe('/groups/[actor] load', () => {
 	// with no visibility, and the join policy fails closed.
 	it("a member's page loads with no visibility when the host cannot say", async () => {
 		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
-		vi.mocked(groupSpaceReader).mockResolvedValue(hostReading(new Error('getSpace failed: 502')));
+		serveReader(GROUP_DID, hostReading(new Error('getSpace failed: 502')));
 
 		const data = await openAs(MEMBER);
 
@@ -138,7 +144,7 @@ describe('/groups/[actor] load', () => {
 	});
 
 	it("an owner's page loads with no visibility when the deployment holds no credential", async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(null);
+		serveReader(GROUP_DID, null);
 
 		const data = await openAs(OWNER);
 
@@ -204,7 +210,7 @@ describe('a members space that cannot be read', () => {
 
 	it('a stale row does not open a private group, and its profile is never read', async () => {
 		const host = membersDown(PRIVATE);
-		vi.mocked(groupSpaceReader).mockResolvedValue(host);
+		serveReader(GROUP_DID, host);
 
 		await expect(openAs(REMOVED)).rejects.toMatchObject({
 			status: 404,
@@ -217,16 +223,18 @@ describe('a members space that cannot be read', () => {
 	// The events tab, the members page and every group form take their context
 	// from the same call, so they refuse the stale row with the page's 404.
 	it('the route context the tabs and forms share refuses the stale row the same way', async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(membersDown(PRIVATE));
+		serveReader(GROUP_DID, membersDown(PRIVATE));
 
-		await expect(groupRouteContext({}, harness.db, GROUP_DID, REMOVED)).rejects.toMatchObject({
+		await expect(
+			groupRouteContext({ OAUTH_SESSIONS: fixtureSessions }, harness.db, GROUP_DID, REMOVED)
+		).rejects.toMatchObject({
 			status: 404,
 			body: { message: GROUP_NOT_FOUND }
 		});
 	});
 
 	it('a stale row gets the 503 when the host cannot say the visibility either', async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(membersDown(new Error('getSpace failed: 502')));
+		serveReader(GROUP_DID, membersDown(new Error('getSpace failed: 502')));
 
 		await expect(openAs(REMOVED)).rejects.toMatchObject({
 			status: 503,
@@ -239,7 +247,7 @@ describe('a members space that cannot be read', () => {
 	// a permission says it could not be checked rather than "Not allowed".
 	it('a member reads a public group as a stranger does, and a form says why', async () => {
 		const host = membersDown(PUBLIC);
-		vi.mocked(groupSpaceReader).mockResolvedValue(host);
+		serveReader(GROUP_DID, host);
 
 		const data = await openAs(MEMBER);
 
@@ -267,19 +275,19 @@ describe('a members space that cannot be read', () => {
 	});
 
 	it('a caller with no row gets the answers a stranger always got', async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(membersDown(PRIVATE));
+		serveReader(GROUP_DID, membersDown(PRIVATE));
 		await expect(openAs(STRANGER)).rejects.toMatchObject({
 			status: 404,
 			body: { message: GROUP_NOT_FOUND }
 		});
 
-		vi.mocked(groupSpaceReader).mockResolvedValue(membersDown(new Error('getSpace failed: 502')));
+		serveReader(GROUP_DID, membersDown(new Error('getSpace failed: 502')));
 		await expect(openAs(STRANGER)).rejects.toMatchObject({
 			status: 503,
 			body: { message: GROUP_VISIBILITY_UNCHECKED }
 		});
 
-		vi.mocked(groupSpaceReader).mockResolvedValue(membersDown(PUBLIC));
+		serveReader(GROUP_DID, membersDown(PUBLIC));
 		expect((await openAs(STRANGER)).visibility).toBe('public');
 	});
 });
@@ -294,7 +302,7 @@ describe('the link prompt', () => {
 	afterEach(() => unlinkAllGroups());
 
 	it('asks the owner to link a group whose account is not linked, and the forms say the same', async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(null);
+		serveReader(GROUP_DID, null);
 
 		const data = await openAs(OWNER, linkGroups([]));
 
@@ -307,7 +315,7 @@ describe('the link prompt', () => {
 	});
 
 	it('shows the owner of a linked group no prompt', async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(hostReading(PUBLIC));
+		serveReader(GROUP_DID, hostReading(PUBLIC));
 
 		const data = await openAs(OWNER, linkGroups([GROUP_DID]));
 
@@ -315,10 +323,10 @@ describe('the link prompt', () => {
 	});
 
 	it('answers null for everyone but the owner, linked or not', async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(null);
+		serveReader(GROUP_DID, null);
 		expect((await openAs(MEMBER, linkGroups([]))).groupLinked).toBeNull();
 
-		vi.mocked(groupSpaceReader).mockResolvedValue(hostReading(PUBLIC));
+		serveReader(GROUP_DID, hostReading(PUBLIC));
 		const linked = linkGroups([GROUP_DID]);
 		expect((await openAs(MEMBER, linked)).groupLinked).toBeNull();
 		expect((await openAs(STRANGER, linked)).groupLinked).toBeNull();

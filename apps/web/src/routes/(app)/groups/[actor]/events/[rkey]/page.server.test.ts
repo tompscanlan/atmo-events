@@ -6,19 +6,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // host that logs every call, so "sent nothing" is a count, not a reading of the
 // page. The page itself, rendered with the shared EventView, is tested in
 // ./page.test.ts.
-vi.mock('$lib/groups/server/about-read', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/groups/server/about-read')>()),
-	groupSpaceReader: vi.fn()
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('$lib/groups/server/__fixtures__/linked-oauth-stub')).linkedOAuthStub
 }));
 vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { isHttpError } from '@sveltejs/kit';
 import { load } from './+page.server';
+import type { GroupSpaceReader, GroupSpaceRecord } from '$lib/groups/server/about-read';
 import {
-	groupSpaceReader,
-	type GroupSpaceReader,
-	type GroupSpaceRecord
-} from '$lib/groups/server/about-read';
+	fixtureSessions,
+	resetReaderHost,
+	serveReader
+} from '$lib/groups/server/__fixtures__/reader-host';
 import { MEMBERS_ONLY_UNLINKED, MEMBERS_ONLY_UNREADABLE } from '$lib/groups/server/calendar-read';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
@@ -83,6 +84,7 @@ afterEach(() => {
 	harness.close();
 	vi.clearAllMocks();
 	vi.unstubAllGlobals();
+	resetReaderHost();
 });
 
 type Host = GroupSpaceReader & { calls: string[] };
@@ -132,7 +134,7 @@ function event(did: string | null, rkey: string, session?: unknown) {
 	return {
 		params: { actor: GROUP_DID, rkey },
 		locals: session === undefined ? { did } : { did, session },
-		platform: { env: { DB: harness.db } },
+		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } },
 		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events/${rkey}`)
 	} as unknown as Parameters<typeof load>[0];
 }
@@ -177,7 +179,7 @@ describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
 			['an anonymous visitor, at the real key', null, '3lmeeting'],
 			['an anonymous visitor, at a made-up key', null, '3lmadeup']
 		] as const) {
-			vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+			serveReader(GROUP_DID, host([storedMeeting()]));
 			refusals[who] = await refusalFor(did, rkey);
 		}
 
@@ -193,7 +195,7 @@ describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
 			const answers = [];
 			for (const rkey of ['3lmeeting', '3lmadeup']) {
 				const h = host([storedMeeting()], { policy: POLICY.memberList });
-				vi.mocked(groupSpaceReader).mockResolvedValue(h);
+				serveReader(GROUP_DID, h);
 				answers.push(await refusalFor(did, rkey));
 				expect(calendarCalls(h)).toEqual([]);
 			}
@@ -206,12 +208,17 @@ describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
 		for (const did of [STRANGER, null]) {
 			// What the group's route context sends on its own, for this caller.
 			const alone = host([storedMeeting()]);
-			vi.mocked(groupSpaceReader).mockResolvedValue(alone);
-			await groupRouteContext({} as never, harness.db, GROUP_DID, did);
-			vi.mocked(groupSpaceReader).mockClear();
+			serveReader(GROUP_DID, alone);
+			await groupRouteContext(
+				{ OAUTH_SESSIONS: fixtureSessions } as never,
+				harness.db,
+				GROUP_DID,
+				did
+			);
+			fixtureSessions.reads = 0;
 
 			const h = host([storedMeeting()]);
-			vi.mocked(groupSpaceReader).mockResolvedValue(h);
+			serveReader(GROUP_DID, h);
 			const refusal = await refusalFor(did, '3lmeeting');
 
 			expect(refusal.status).toBe(404);
@@ -221,8 +228,8 @@ describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
 			expect(h.calls).toContain(`getSpace ${ABOUT}`);
 			expect(calendarCalls(h)).toEqual([]);
 			expect(h.calls.filter((c) => c.includes('group.opensocial.profile'))).toEqual([]);
-			// The route context's reader is the only one made.
-			expect(groupSpaceReader).toHaveBeenCalledTimes(1);
+			// The route context's reader is the only one made: one session lookup.
+			expect(fixtureSessions.reads).toBe(1);
 		}
 	});
 });
@@ -246,11 +253,11 @@ describe('/groups/[actor]/events/[rkey] load: when the event cannot be read', ()
 		vi.stubGlobal('caches', { default: cache });
 
 		// A read that works first, so a copy could have been kept.
-		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		serveReader(GROUP_DID, host([storedMeeting()]));
 		expect((await openAs(MEMBER)).eventData.name).toBe('Committee call');
 
 		const down = host(new Error('com.atproto.space.getRecord failed: 502'));
-		vi.mocked(groupSpaceReader).mockResolvedValue(down);
+		serveReader(GROUP_DID, down);
 		expect(await refusalFor(MEMBER, '3lmeeting')).toStrictEqual({
 			status: 503,
 			body: { message: MEMBERS_ONLY_UNREADABLE }
@@ -260,7 +267,7 @@ describe('/groups/[actor]/events/[rkey] load: when the event cannot be read', ()
 		expect(calendarCalls(down)).toEqual([`get ${CALENDAR} ${EVENT} 3lmeeting`]);
 
 		// A group whose session is gone tells a member why, and reads nothing.
-		vi.mocked(groupSpaceReader).mockResolvedValue(null);
+		serveReader(GROUP_DID, null);
 		expect(await refusalFor(MEMBER, '3lmeeting')).toStrictEqual({
 			status: 503,
 			body: { message: MEMBERS_ONLY_UNLINKED }
@@ -272,7 +279,7 @@ describe('/groups/[actor]/events/[rkey] load: when the event cannot be read', ()
 
 	it('a profile that cannot be read leaves the host unnamed, and the event still shows', async () => {
 		const h = host([storedMeeting()]);
-		vi.mocked(groupSpaceReader).mockResolvedValue({
+		serveReader(GROUP_DID, {
 			...h,
 			async get(q) {
 				if (q.space === ABOUT) throw new Error('com.atproto.space.getRecord failed: 502');
@@ -289,9 +296,9 @@ describe('/groups/[actor]/events/[rkey] load: when the event cannot be read', ()
 
 describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	it('an organizer who may manage events is told so; a member is not', async () => {
-		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		serveReader(GROUP_DID, host([storedMeeting()]));
 		expect((await openAs(OWNER)).canManageEvents).toBe(true);
-		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		serveReader(GROUP_DID, host([storedMeeting()]));
 		expect((await openAs(MEMBER)).canManageEvents).toBe(false);
 	});
 });
@@ -350,7 +357,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 
 	it("the event page reads the viewer's own RSVP through their session, after the event read", async () => {
 		const log: string[] = [];
-		vi.mocked(groupSpaceReader).mockResolvedValue(sharedHost(log));
+		serveReader(GROUP_DID, sharedHost(log));
 
 		const data = await openAs(
 			MEMBER,
@@ -370,7 +377,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 
 		// A member who said they are not going reads back as that.
 		const later: string[] = [];
-		vi.mocked(groupSpaceReader).mockResolvedValue(sharedHost(later));
+		serveReader(GROUP_DID, sharedHost(later));
 		const notGoing = await openAs(
 			MEMBER,
 			'3lmeeting',
@@ -380,7 +387,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 
 		// A page that 404s reads nothing through the session.
 		const absent: string[] = [];
-		vi.mocked(groupSpaceReader).mockResolvedValue(sharedHost(absent));
+		serveReader(GROUP_DID, sharedHost(absent));
 		await expect(
 			openAs(MEMBER, '3lmadeup', memberSession(`atproto ${acceptanceGrant(GROUP_DID)}`, absent))
 		).rejects.toMatchObject({ status: 404 });
@@ -398,7 +405,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 			['no session', undefined]
 		];
 		for (const [, session] of cases) {
-			vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+			serveReader(GROUP_DID, host([storedMeeting()]));
 			const data = await openAs(MEMBER, '3lmeeting', session);
 			expect(data.viewerRsvpStatus).toBeNull();
 			expect(data.viewerRsvpRkey).toBeNull();
@@ -407,7 +414,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 		}
 		expect(log).toEqual([]);
 
-		vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+		serveReader(GROUP_DID, host([storedMeeting()]));
 		const none = await openAs(
 			MEMBER,
 			'3lmeeting',
@@ -434,7 +441,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 			}
 		};
 		for (const session of [failing, unreadable]) {
-			vi.mocked(groupSpaceReader).mockResolvedValue(host([storedMeeting()]));
+			serveReader(GROUP_DID, host([storedMeeting()]));
 			const data = await openAs(MEMBER, '3lmeeting', session);
 			expect(data.eventData.name).toBe('Committee call');
 			expect(data.viewerRsvpStatus).toBeNull();

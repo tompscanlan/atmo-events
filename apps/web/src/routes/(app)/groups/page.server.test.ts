@@ -11,14 +11,20 @@ vi.mock('$lib/groups/server/declaration-index', () => ({
 vi.mock('$lib/groups/server/handles', () => ({
 	knownHandles: vi.fn(async () => new Map())
 }));
-vi.mock('$lib/groups/server/about-read', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/groups/server/about-read')>()),
-	groupSpaceReader: vi.fn()
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('$lib/groups/server/__fixtures__/linked-oauth-stub')).linkedOAuthStub
 }));
 vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { load } from './+page.server';
-import { groupSpaceReader, type GroupSpaceReader } from '$lib/groups/server/about-read';
+import { type GroupSpaceReader } from '$lib/groups/server/about-read';
+import {
+	breakSession,
+	fixtureSessions,
+	resetReaderHost,
+	serveReader
+} from '$lib/groups/server/__fixtures__/reader-host';
 import { listDeclaredGroups } from '$lib/groups/server/declaration-index';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { membersSpaceReader } from '$lib/groups/server/__fixtures__/members-space';
@@ -40,6 +46,7 @@ beforeEach(() => {
 afterEach(() => {
 	harness.close();
 	vi.clearAllMocks();
+	resetReaderHost();
 });
 
 /** An undeclared group someone else owns, with ALICE's row in it and, when
@@ -71,7 +78,7 @@ const down: GroupSpaceReader = {
 async function browse() {
 	return (await load({
 		locals: { did: ALICE },
-		platform: { env: { DB: db } }
+		platform: { env: { DB: db, OAUTH_SESSIONS: fixtureSessions } }
 	} as unknown as Parameters<typeof load>[0])) as {
 		groups: { name: string | null; visibility: string | null }[];
 	};
@@ -83,13 +90,11 @@ describe('/groups load', () => {
 			['did:plc:kept', await joined('Kept', 'did:plc:kept', true)],
 			['did:plc:gone', await joined('Gone', 'did:plc:gone', false)]
 		]);
-		vi.mocked(groupSpaceReader).mockImplementation(
-			async (_env, _db, group) => readers.get(group.group_did) ?? null
-		);
+		for (const [did, reader] of readers) serveReader(did, reader);
 
 		const data = (await load({
 			locals: { did: ALICE },
-			platform: { env: { DB: db } }
+			platform: { env: { DB: db, OAUTH_SESSIONS: fixtureSessions } }
 		} as unknown as Parameters<typeof load>[0])) as { groups: { name: string | null }[] };
 
 		expect(data.groups.map((g) => g.name)).toEqual(['Kept']);
@@ -108,7 +113,7 @@ describe('/groups load', () => {
 
 		const data = (await load({
 			locals: { did: ALICE },
-			platform: { env: { DB: db } }
+			platform: { env: { DB: db, OAUTH_SESSIONS: fixtureSessions } }
 		} as unknown as Parameters<typeof load>[0])) as {
 			groups: { name: string | null; visibility: string | null }[];
 		};
@@ -117,7 +122,7 @@ describe('/groups load', () => {
 			Listed: 'public',
 			Hidden: 'private'
 		});
-		expect(groupSpaceReader).not.toHaveBeenCalled();
+		expect(fixtureSessions.reads).toBe(0);
 	});
 
 	// A row alone does not list a group the caller does not own: it may be the
@@ -127,9 +132,8 @@ describe('/groups load', () => {
 	it('leaves out an undeclared group whose members space errors', async () => {
 		const kept = await joined('Kept', 'did:plc:kept', true);
 		await joined('Stale', 'did:plc:stale', false);
-		vi.mocked(groupSpaceReader).mockImplementation(async (_env, _db, group) =>
-			group.group_did === 'did:plc:stale' ? down : kept
-		);
+		serveReader('did:plc:kept', kept);
+		serveReader('did:plc:stale', down);
 		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		expect((await browse()).groups.map((g) => g.name)).toEqual(['Kept']);
@@ -139,10 +143,8 @@ describe('/groups load', () => {
 	it('leaves out an undeclared group whose reader cannot be built', async () => {
 		const kept = await joined('Kept', 'did:plc:kept', true);
 		await joined('Stale', 'did:plc:stale', false);
-		vi.mocked(groupSpaceReader).mockImplementation(async (_env, _db, group) => {
-			if (group.group_did === 'did:plc:stale') throw new Error('group session login failed');
-			return kept;
-		});
+		serveReader('did:plc:kept', kept);
+		breakSession('did:plc:stale');
 		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		expect((await browse()).groups.map((g) => g.name)).toEqual(['Kept']);
@@ -154,7 +156,7 @@ describe('/groups load', () => {
 	// is not a failed read: its row answers, as it does on the group page.
 	it('lets the row answer for an undeclared group this deployment holds no credential for', async () => {
 		await joined('Uncredentialed', 'did:plc:uncredentialed', false);
-		vi.mocked(groupSpaceReader).mockResolvedValue(null);
+		serveReader('did:plc:uncredentialed', null);
 
 		expect((await browse()).groups.map((g) => g.name)).toEqual(['Uncredentialed']);
 	});
@@ -167,11 +169,11 @@ describe('/groups load', () => {
 			aboutSpaceUri: spaceUri('did:plc:mine', ABOUT_SPACE_TYPE, 'self'),
 			membersSpaceUri: spaceUri('did:plc:mine', MEMBERS_SPACE_TYPE, 'self')
 		});
-		vi.mocked(groupSpaceReader).mockResolvedValue(down);
+		serveReader('did:plc:mine', down);
 
 		expect((await browse()).groups).toEqual([
 			expect.objectContaining({ name: 'Mine', visibility: 'private' })
 		]);
-		expect(groupSpaceReader).not.toHaveBeenCalled();
+		expect(fixtureSessions.reads).toBe(0);
 	});
 });
