@@ -21,9 +21,8 @@ vi.mock('./groups.remote', () => remote);
 
 import { createGroupEditorAdapter } from './editor-adapter';
 
+import { type EventPlacement } from './event-placement';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
-// Written out, so a wrong type or key in the app's constant fails here.
-const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
 const EVENT = 'community.lexicon.calendar.event';
 const BLOB_REF = {
 	$type: 'blob',
@@ -38,14 +37,14 @@ const NO_CALENDAR_SPACE =
 const record = (name: string) => ({ $type: EVENT, name, startsAt: '2026-11-01T18:00:00.000Z' });
 
 /** The adapter the new-event page (no rkey) or the edit page (its rkey) builds. */
-function adapterFor(space: string | null, editingRkey: string | null = null) {
+function adapterFor(placement: EventPlacement, editingRkey: string | null = null) {
 	const onRefusal = vi.fn();
 	const onSaveEnd = vi.fn();
 	const adapter = createGroupEditorAdapter({
 		groupDid: GROUP_DID,
 		editingRkey,
 		canDelete: true,
-		space,
+		placement,
 		onRefusal,
 		onSaveEnd
 	});
@@ -64,13 +63,13 @@ function succeed() {
 /** A save from each page, as the editor makes it: a create from the new-event
  *  page; then, on the edit page, the event's own update, a write to another
  *  rkey (what a recurring copy is), and the delete. */
-async function saveAndDelete(space: string | null) {
-	await adapterFor(space).adapter.putRecord({
+async function saveAndDelete(placement: EventPlacement) {
+	await adapterFor(placement).adapter.putRecord({
 		collection: EVENT,
 		rkey: '3new',
 		record: record('A')
 	});
-	const { adapter } = adapterFor(space, '3edit');
+	const { adapter } = adapterFor(placement, '3edit');
 	await adapter.putRecord({ collection: EVENT, rkey: '3edit', record: record('B') });
 	await adapter.putRecord({ collection: EVENT, rkey: '3copy', record: record('C') });
 	await adapter.deleteRecord({ collection: EVENT, rkey: '3edit' });
@@ -82,28 +81,28 @@ afterEach(() => {
 
 describe('the group editor adapter: recurring copies', () => {
 	it('a members-only event offers no recurring copies', () => {
-		expect(adapterFor(CALENDAR).adapter.features).toEqual({
+		expect(adapterFor('members').adapter.features).toEqual({
 			delete: true,
 			recurring: false,
 			privateMode: false
 		});
-		expect(adapterFor(CALENDAR, '3edit').adapter.features.recurring).toBe(false);
+		expect(adapterFor('members', '3edit').adapter.features.recurring).toBe(false);
 	});
 
 	it('a public event keeps its recurring copies', () => {
-		expect(adapterFor(null).adapter.features).toEqual({
+		expect(adapterFor('everyone').adapter.features).toEqual({
 			delete: true,
 			recurring: true,
 			privateMode: false
 		});
-		expect(adapterFor(null, '3edit').adapter.features.recurring).toBe(true);
+		expect(adapterFor('everyone', '3edit').adapter.features.recurring).toBe(true);
 	});
 });
 
 describe('the group editor adapter: placement on every write', () => {
-	it('a members-only save sends the calendar space on every write and delete', async () => {
+	it('a members-only save sends its placement on every write and delete', async () => {
 		succeed();
-		await saveAndDelete(CALENDAR);
+		await saveAndDelete('members');
 
 		expect(remote.putGroupEvent.mock.calls).toEqual([
 			[
@@ -111,7 +110,7 @@ describe('the group editor adapter: placement on every write', () => {
 					groupDid: GROUP_DID,
 					rkey: '3new',
 					intent: 'create',
-					space: CALENDAR,
+					placement: 'members',
 					record: record('A')
 				}
 			],
@@ -120,7 +119,7 @@ describe('the group editor adapter: placement on every write', () => {
 					groupDid: GROUP_DID,
 					rkey: '3edit',
 					intent: 'update',
-					space: CALENDAR,
+					placement: 'members',
 					record: record('B')
 				}
 			],
@@ -129,27 +128,51 @@ describe('the group editor adapter: placement on every write', () => {
 					groupDid: GROUP_DID,
 					rkey: '3copy',
 					intent: 'create',
-					space: CALENDAR,
+					placement: 'members',
 					record: record('C')
 				}
 			]
 		]);
 		expect(remote.removeGroupEvent.mock.calls).toEqual([
-			[{ groupDid: GROUP_DID, rkey: '3edit', space: CALENDAR }]
+			[{ groupDid: GROUP_DID, rkey: '3edit', placement: 'members' }]
 		]);
 	});
 
-	it('a public save sends no space, as before', async () => {
+	it('a public save sends its placement too, on every write and delete', async () => {
 		succeed();
-		await saveAndDelete(null);
+		await saveAndDelete('everyone');
 
 		expect(remote.putGroupEvent.mock.calls).toEqual([
-			[{ groupDid: GROUP_DID, rkey: '3new', intent: 'create', space: null, record: record('A') }],
-			[{ groupDid: GROUP_DID, rkey: '3edit', intent: 'update', space: null, record: record('B') }],
-			[{ groupDid: GROUP_DID, rkey: '3copy', intent: 'create', space: null, record: record('C') }]
+			[
+				{
+					groupDid: GROUP_DID,
+					rkey: '3new',
+					intent: 'create',
+					placement: 'everyone',
+					record: record('A')
+				}
+			],
+			[
+				{
+					groupDid: GROUP_DID,
+					rkey: '3edit',
+					intent: 'update',
+					placement: 'everyone',
+					record: record('B')
+				}
+			],
+			[
+				{
+					groupDid: GROUP_DID,
+					rkey: '3copy',
+					intent: 'create',
+					placement: 'everyone',
+					record: record('C')
+				}
+			]
 		]);
 		expect(remote.removeGroupEvent.mock.calls).toEqual([
-			[{ groupDid: GROUP_DID, rkey: '3edit', space: null }]
+			[{ groupDid: GROUP_DID, rkey: '3edit', placement: 'everyone' }]
 		]);
 	});
 
@@ -157,15 +180,15 @@ describe('the group editor adapter: placement on every write', () => {
 	// that cites it decides who can reach it.
 	it('the image upload is the same for either placement', async () => {
 		succeed();
-		const upload = async (space: string | null, editingRkey: string | null) =>
-			adapterFor(space, editingRkey).adapter.uploadBlob(
+		const upload = async (placement: EventPlacement, editingRkey: string | null) =>
+			adapterFor(placement, editingRkey).adapter.uploadBlob(
 				new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' })
 			);
 
 		for (const editingRkey of [null, '3edit']) {
 			remote.putGroupEventImage.mockClear();
-			expect(await upload(null, editingRkey)).toEqual(BLOB_REF);
-			expect(await upload(CALENDAR, editingRkey)).toEqual(BLOB_REF);
+			expect(await upload('everyone', editingRkey)).toEqual(BLOB_REF);
+			expect(await upload('members', editingRkey)).toEqual(BLOB_REF);
 
 			const [[asPublic], [asMembersOnly]] = remote.putGroupEventImage.mock.calls;
 			expect(asPublic).toEqual({
@@ -184,7 +207,7 @@ describe('the group editor adapter: refusals', () => {
 		remote.putGroupEvent.mockResolvedValue({ ok: false, error: NO_CALENDAR_SPACE });
 		remote.removeGroupEvent.mockResolvedValue({ ok: false, error: 'Delete refused.' });
 		remote.putGroupEventImage.mockResolvedValue({ ok: false, error: 'Upload refused.' });
-		const { adapter, onRefusal } = adapterFor(CALENDAR, '3edit');
+		const { adapter, onRefusal } = adapterFor('members', '3edit');
 
 		// Each still throws, so the editor stops and shows its own line too.
 		await expect(
@@ -209,7 +232,7 @@ describe('the group editor adapter: refusals', () => {
 	// error is left to the editor's own line.
 	it('a save that succeeds, or fails without a refusal, shows no refusal', async () => {
 		succeed();
-		const { adapter, onRefusal } = adapterFor(CALENDAR);
+		const { adapter, onRefusal } = adapterFor('members');
 		await adapter.putRecord({ collection: EVENT, rkey: '3new', record: record('A') });
 		remote.putGroupEvent.mockRejectedValueOnce(new Error('fetch failed'));
 		await expect(
@@ -227,7 +250,7 @@ describe('the group editor adapter: the end of a save', () => {
 
 	it('a save ends when its write succeeds, is refused or fails', async () => {
 		succeed();
-		const { adapter, onSaveEnd } = adapterFor(CALENDAR);
+		const { adapter, onSaveEnd } = adapterFor('members');
 		await adapter.putRecord({ collection: EVENT, rkey: '3new', record: record('A') });
 		expect(onSaveEnd.mock.calls).toEqual([[true]]);
 
@@ -244,7 +267,7 @@ describe('the group editor adapter: the end of a save', () => {
 
 	it('a failed image upload ends the save, and one that succeeds does not', async () => {
 		succeed();
-		const { adapter, onSaveEnd } = adapterFor(CALENDAR);
+		const { adapter, onSaveEnd } = adapterFor('members');
 		expect(await adapter.uploadBlob(image())).toEqual(BLOB_REF);
 		expect(onSaveEnd).not.toHaveBeenCalled();
 
@@ -259,7 +282,7 @@ describe('the group editor adapter: the end of a save', () => {
 	// ending the save there would unlock the choice before the write is sent.
 	it("a mention that can't be resolved does not end the save", async () => {
 		methods.resolveHandle.mockRejectedValue(new Error('handle not found'));
-		const { adapter, onSaveEnd } = adapterFor(CALENDAR);
+		const { adapter, onSaveEnd } = adapterFor('members');
 		await expect(adapter.resolveHandle('nobody.example.com')).rejects.toThrow('handle not found');
 		expect(onSaveEnd).not.toHaveBeenCalled();
 	});

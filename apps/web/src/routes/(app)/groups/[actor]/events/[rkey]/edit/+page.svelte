@@ -2,7 +2,12 @@
 	import { EventEditor } from '@atmo-dev/events-ui';
 	import { user } from '$lib/atproto/auth.svelte';
 	import { createGroupEditorAdapter } from '$lib/groups/editor-adapter';
-	import { PLACEMENT_FIXED, PLACEMENT_QUESTION, placementLabel } from '$lib/groups/event-placement';
+	import {
+		PLACEMENT_FIXED,
+		PLACEMENT_QUESTION,
+		placementLabel,
+		placementOf
+	} from '$lib/groups/event-placement';
 
 	let { data } = $props();
 
@@ -32,7 +37,7 @@
 			groupDid: data.groupDid,
 			editingRkey: data.rkey,
 			canDelete: data.canDelete,
-			space,
+			placement: placementOf(space),
 			onRefusal: (message) => (refusal = message)
 		})
 	);

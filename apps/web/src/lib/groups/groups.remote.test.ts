@@ -195,8 +195,6 @@ describe('placement on the event commands', () => {
 
 	const NO_PLACEMENT =
 		'This event was sent without saying whether it is public or members-only, so nothing was saved.';
-	const NOT_THE_CALENDAR_SPACE =
-		"A members-only event can only go in this group's calendar space, so nothing was saved.";
 	const NO_CALENDAR_SPACE =
 		'This group has no calendar space for members-only events, because it was made before they existed. Re-create the group to post members-only events. Nothing was saved.';
 	const READABLE_CALENDAR_SPACE =
@@ -268,63 +266,46 @@ describe('placement on the event commands', () => {
 		pds.clearLog();
 	});
 
-	it('the event commands take a placement that is null or a string, never left out', () => {
+	it('the event commands take a placement of everyone or members, never left out', () => {
 		const schemaOf = (command: unknown) =>
 			(command as { schema: v.GenericSchema<unknown, unknown> }).schema;
 		const valid = (command: unknown, data: Record<string, unknown>) =>
 			v.safeParse(schemaOf(command), data).success;
 
 		const putting = { groupDid: LINKED, rkey: '3abc', intent: 'create', record: event() };
-		expect(valid(putGroupEvent, { ...putting, space: null })).toBe(true);
-		expect(valid(putGroupEvent, { ...putting, space: CALENDAR })).toBe(true);
-		expect(valid(putGroupEvent, putting)).toBe(false);
-		expect(valid(putGroupEvent, { ...putting, space: undefined })).toBe(false);
-
 		const removing = { groupDid: LINKED, rkey: '3abc' };
-		expect(valid(removeGroupEvent, { ...removing, space: null })).toBe(true);
-		expect(valid(removeGroupEvent, { ...removing, space: CALENDAR })).toBe(true);
-		expect(valid(removeGroupEvent, removing)).toBe(false);
-		expect(valid(removeGroupEvent, { ...removing, space: undefined })).toBe(false);
+		for (const [command, data] of [
+			[putGroupEvent, putting],
+			[removeGroupEvent, removing]
+		] as const) {
+			expect(valid(command, { ...data, placement: 'everyone' })).toBe(true);
+			expect(valid(command, { ...data, placement: 'members' })).toBe(true);
+			expect(valid(command, data)).toBe(false);
+			for (const placement of [undefined, null, '', 'public', 'Members only', CALENDAR]) {
+				expect(valid(command, { ...data, placement })).toBe(false);
+			}
+		}
 	});
 
-	it("a space other than the group's calendar space is refused before any PDS call", async () => {
-		const others = [
-			uris.aboutSpaceUri,
-			uris.membersSpaceUri,
-			`at://${LINKED}/space/net.openmeet.space.calendar/other`,
-			'at://did:plc:anothergroupaaaaaaaaaaaa/space/net.openmeet.space.calendar/self'
-		];
-		for (const space of others) {
-			const putting = { groupDid: LINKED, rkey: '3abc', space, record: event() };
-			for (const intent of ['create', 'update']) {
-				expect(await put({ ...putting, intent })).toEqual({
-					ok: false,
-					error: NOT_THE_CALENDAR_SPACE
-				});
-			}
-			expect(await remove({ groupDid: LINKED, rkey: '3abc', space })).toEqual({
-				ok: false,
-				error: NOT_THE_CALENDAR_SPACE
-			});
-		}
-		// Not even the caller's standing was read.
-		expect(pds.calls).toEqual([]);
-
-		// The group's own calendar space does reach the host, so the silence above
-		// is the refusal.
+	// The page sends who can see the event, never where it goes: the writer
+	// computes the group's own calendar space from its DID, so no field a caller
+	// sends can aim an event at the about space, which a public group lets anyone
+	// read.
+	it("a members-only event goes to the group's own calendar space, whatever else is sent", async () => {
 		expect(
 			await put({
 				groupDid: LINKED,
 				rkey: '3abc',
 				intent: 'create',
-				space: CALENDAR,
+				placement: 'members',
+				space: uris.aboutSpaceUri,
 				record: event()
 			})
 		).toMatchObject({ ok: true });
 		expect(pds.spaceWrites.map((w) => w.space)).toEqual([CALENDAR]);
 	});
 
-	it('a command with no placement is refused before any PDS call, even past the schema', async () => {
+	it('a command with no placement is refused, never written in public, even past the schema', async () => {
 		expect(
 			await put({ groupDid: LINKED, rkey: '3abc', intent: 'create', record: event() })
 		).toEqual({ ok: false, error: NO_PLACEMENT });
@@ -332,7 +313,7 @@ describe('placement on the event commands', () => {
 			ok: false,
 			error: NO_PLACEMENT
 		});
-		expect(pds.calls).toEqual([]);
+		expect(pds.writes()).toEqual([]);
 	});
 
 	it('each placement refusal reaches the form as a message, not a 500', async () => {
@@ -340,35 +321,34 @@ describe('placement on the event commands', () => {
 		await seed(null, '3public');
 		await seed(CALENDAR, '3members');
 		pds.clearLog();
-		const putting = (rkey: string, intent: string, space: unknown) =>
-			put({ groupDid: LINKED, rkey, intent, space, record: event('Linked meetup, edited') });
+		const putting = (rkey: string, intent: string, placement: unknown) =>
+			put({ groupDid: LINKED, rkey, intent, placement, record: event('Linked meetup, edited') });
 		const calendar = pds.spaces.get(CALENDAR)!;
 
 		const cases: [string, () => void, () => Promise<EventResult>, string][] = [
 			['no placement', () => {}, () => putting('3new', 'create', undefined), NO_PLACEMENT],
 			[
-				'another space',
+				'a flip to public',
 				() => {},
-				() => putting('3new', 'create', uris.aboutSpaceUri),
-				NOT_THE_CALENDAR_SPACE
+				() => putting('3members', 'update', 'everyone'),
+				PLACEMENT_CHANGE
 			],
-			['a flip to public', () => {}, () => putting('3members', 'update', null), PLACEMENT_CHANGE],
 			[
 				'a flip to members-only',
 				() => {},
-				() => putting('3public', 'update', CALENDAR),
+				() => putting('3public', 'update', 'members'),
 				PLACEMENT_CHANGE
 			],
 			[
 				'a public delete of a members-only event',
 				() => {},
-				() => remove({ groupDid: LINKED, rkey: '3members', space: null }),
+				() => remove({ groupDid: LINKED, rkey: '3members', placement: 'everyone' }),
 				WRONG_PLACEMENT_DELETE
 			],
 			[
 				'a members-only delete of a public event',
 				() => {},
-				() => remove({ groupDid: LINKED, rkey: '3public', space: CALENDAR }),
+				() => remove({ groupDid: LINKED, rkey: '3public', placement: 'members' }),
 				WRONG_PLACEMENT_DELETE
 			],
 			[
@@ -376,7 +356,7 @@ describe('placement on the event commands', () => {
 				() => {
 					failing = 'com.atproto.repo.getRecord';
 				},
-				() => putting('3public', 'update', null),
+				() => putting('3public', 'update', 'everyone'),
 				UNCHECKED_PLACEMENT
 			],
 			[
@@ -384,7 +364,7 @@ describe('placement on the event commands', () => {
 				() => {
 					pds.spaces.delete(CALENDAR);
 				},
-				() => putting('3new', 'create', CALENDAR),
+				() => putting('3new', 'create', 'members'),
 				NO_CALENDAR_SPACE
 			],
 			[
@@ -395,7 +375,7 @@ describe('placement on the event commands', () => {
 						readPolicy: { $type: 'com.atproto.simplespace.defs#publicPolicy' }
 					});
 				},
-				() => putting('3new', 'create', CALENDAR),
+				() => putting('3new', 'create', 'members'),
 				READABLE_CALENDAR_SPACE
 			],
 			[
@@ -403,7 +383,7 @@ describe('placement on the event commands', () => {
 				() => {
 					failing = 'com.atproto.simplespace.getSpace';
 				},
-				() => putting('3new', 'create', CALENDAR),
+				() => putting('3new', 'create', 'members'),
 				UNCHECKED_CALENDAR_SPACE
 			]
 		];

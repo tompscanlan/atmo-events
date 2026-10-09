@@ -3,9 +3,9 @@ import {
 	PLACEMENT_FIXED,
 	PLACEMENT_OPTIONS,
 	PLACEMENT_QUESTION,
+	EVENT_PLACEMENTS,
 	placementLabel,
-	placementSpace,
-	type EventPlacement
+	placementOf
 } from './event-placement';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -13,33 +13,19 @@ const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
 
 describe('who can see a group event', () => {
-	it("Everyone is the group's public repo and Members only is its calendar space", () => {
-		expect(placementSpace('everyone', CALENDAR)).toBeNull();
-		expect(placementSpace('members', CALENDAR)).toBe(CALENDAR);
-		// Each label the page offers, to the space a save under it sends.
-		expect(PLACEMENT_OPTIONS.map((o) => [o.label, placementSpace(o.value, CALENDAR)])).toEqual([
-			['Everyone', null],
-			['Members only', CALENDAR]
-		]);
-		// And back, for the edit page's read-only line.
+	// A save sends the answer itself, and the writer turns `members` into the
+	// group's calendar space, so the page holds no space URI at all.
+	it('the two answers are the options the page offers, in order', () => {
+		expect(PLACEMENT_OPTIONS.map((o) => o.value)).toEqual([...EVENT_PLACEMENTS]);
+		expect(PLACEMENT_OPTIONS.map((o) => o.label)).toEqual(['Everyone', 'Members only']);
+	});
+
+	// The edit page reads where the event is and shows it read-only.
+	it("the group's repo reads as Everyone and its calendar space as Members only", () => {
+		expect(placementOf(null)).toBe('everyone');
+		expect(placementOf(CALENDAR)).toBe('members');
 		expect(placementLabel(null)).toBe('Everyone');
 		expect(placementLabel(CALENDAR)).toBe('Members only');
-	});
-
-	// The server accepts null from anyone, so an answer the page did not mean
-	// must never come out as the public repo.
-	it('an answer that is neither is refused, never read as Everyone', () => {
-		for (const answer of [undefined, null, '', 'Everyone', 'public', 'members-only']) {
-			expect(() => placementSpace(answer as unknown as EventPlacement, CALENDAR)).toThrow();
-		}
-	});
-
-	// The loader always computes one, so an empty URI is a bug upstream. Sent,
-	// the server would refuse it rather than publish it; it is refused here so
-	// the module keeps its own promise.
-	it('Members only with no calendar space URI is refused, never sent', () => {
-		expect(() => placementSpace('members', '')).toThrow();
-		expect(() => placementSpace('members', undefined as unknown as string)).toThrow();
 	});
 
 	it('the words are the agreed copy, and none of them calls the event private', () => {

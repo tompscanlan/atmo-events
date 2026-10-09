@@ -8,6 +8,7 @@ import { resolve } from '$app/paths';
 import { resolveHandle } from '$lib/atproto/methods';
 import { atProtoLoginModalState } from '$lib/components/LoginModal.svelte';
 import type { EditorAdapter, EditorBlobRef } from '$lib/components/editor/adapter';
+import type { EventPlacement } from './event-placement';
 import type { GroupFormResult } from './form-result';
 import { putGroupEvent, putGroupEventImage, removeGroupEvent } from './groups.remote';
 
@@ -30,10 +31,9 @@ export function createGroupEditorAdapter(opts: {
 	 *  other rkey, such as a recurrence, is a create. */
 	editingRkey: string | null;
 	canDelete: boolean;
-	/** Where the event is: the group's calendar space for a members-only event,
-	 *  or null for its public repo. Required and passed on every save and delete,
-	 *  so none of them can fall back to public. (Spec: FR-116.) */
-	space: string | null;
+	/** Who can see the event. Required and passed on every save and delete, so
+	 *  none of them can fall back to public. (Spec: FR-116.) */
+	placement: EventPlacement;
 	/** Called with a refusal's message before the save, delete or upload fails.
 	 *  The editor shows its own "Please try again" for every failure, so without
 	 *  this the reason, such as a group that has to be re-created, reaches only
@@ -46,7 +46,7 @@ export function createGroupEditorAdapter(opts: {
 	 *  unlocks its choice here. */
 	onSaveEnd?: (saved: boolean) => void;
 }): EditorAdapter {
-	const { groupDid, editingRkey, space, onRefusal, onSaveEnd } = opts;
+	const { groupDid, editingRkey, placement, onRefusal, onSaveEnd } = opts;
 	const intentFor = (rkey: string) => (rkey === editingRkey ? 'update' : 'create');
 	const eventsTab = resolve('/(app)/groups/[actor]/events', { actor: groupDid });
 
@@ -55,13 +55,13 @@ export function createGroupEditorAdapter(opts: {
 		// can cite its original by the original's members-only URI: the editor
 		// cites it by a URI in the group's repo, where a members-only event isn't.
 		// privateMode stays off: a members-only event goes in the calendar space
-		// through `space`, not through the editor's own mode.
-		features: { delete: opts.canDelete, recurring: space === null, privateMode: false },
+		// through `placement`, not through the editor's own mode.
+		features: { delete: opts.canDelete, recurring: placement === 'everyone', privateMode: false },
 		async putRecord({ rkey, record }) {
 			let saved = false;
 			try {
 				const result = unwrap(
-					await putGroupEvent({ groupDid, rkey, intent: intentFor(rkey), space, record }),
+					await putGroupEvent({ groupDid, rkey, intent: intentFor(rkey), placement, record }),
 					onRefusal
 				);
 				saved = true;
@@ -76,7 +76,7 @@ export function createGroupEditorAdapter(opts: {
 			throw new Error('a group event is written with putRecord');
 		},
 		async deleteRecord({ rkey }) {
-			unwrap(await removeGroupEvent({ groupDid, rkey, space }), onRefusal);
+			unwrap(await removeGroupEvent({ groupDid, rkey, placement }), onRefusal);
 		},
 		async uploadBlob(blob) {
 			try {

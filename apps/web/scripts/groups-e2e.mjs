@@ -833,7 +833,7 @@ async function main() {
 		const created = await must('writeGroupEvent', {
 			groupId: group.id,
 			callerDid: ALICE,
-			space: null,
+			placement: 'everyone',
 			intent: 'create',
 			record: eventRecord('e2e sunrise paddle', { country: 'US' })
 		});
@@ -860,7 +860,7 @@ async function main() {
 		const edited = await must('writeGroupEvent', {
 			groupId: group.id,
 			callerDid: BOB,
-			space: null,
+			placement: 'everyone',
 			intent: 'update',
 			rkey: created.rkey,
 			record: eventRecord(editedName, { country: 'US', createdAt: asPersisted.value?.createdAt })
@@ -891,7 +891,7 @@ async function main() {
 		const refused = await call('writeGroupEvent', {
 			groupId: group.id,
 			callerDid: MALLORY,
-			space: null,
+			placement: 'everyone',
 			intent: 'update',
 			rkey: created.rkey,
 			record: eventRecord('e2e sunrise paddle (hijacked)', { country: 'US' })
@@ -949,7 +949,7 @@ async function main() {
 		const withImage = await must('writeGroupEvent', {
 			groupId: group.id,
 			callerDid: ALICE,
-			space: null,
+			placement: 'everyone',
 			intent: 'create',
 			record: eventRecord('e2e paddle, with a cover image', { country: 'US', image })
 		});
@@ -1409,7 +1409,7 @@ async function main() {
 			groupId: group.id,
 			callerDid: ALICE,
 			intent: 'create',
-			space: CALENDAR_SPACE_URI,
+			placement: 'members',
 			record: membersOnlyRecord
 		});
 		if (!moCreate.ok) {
@@ -1456,7 +1456,7 @@ async function main() {
 			callerDid: ALICE,
 			intent: 'update',
 			rkey: moRkey,
-			space: CALENDAR_SPACE_URI,
+			placement: 'members',
 			record: eventRecord(moEditedName, { createdAt: membersOnlyAt })
 		});
 		const moAfterEdit = await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, moRkey);
@@ -1487,7 +1487,7 @@ async function main() {
 			callerDid: ALICE,
 			intent: 'update',
 			rkey: moRkey,
-			space: null,
+			placement: 'everyone',
 			record: eventRecord(`${membersOnlyName} (made public)`, { createdAt: membersOnlyAt })
 		});
 		const flipInRepo = await getRecord(GROUP_DID, moRkey);
@@ -1513,7 +1513,7 @@ async function main() {
 			groupId: group.id,
 			callerDid: ALICE,
 			intent: 'create',
-			space: null,
+			placement: 'everyone',
 			record: eventRecord(publicName)
 		});
 		written.push(shown.rkey);
@@ -1523,7 +1523,7 @@ async function main() {
 			callerDid: ALICE,
 			intent: 'update',
 			rkey: shown.rkey,
-			space: CALENDAR_SPACE_URI,
+			placement: 'members',
 			record: eventRecord(`${publicName} (members only)`)
 		});
 		const promotedInSpace = await spaceRecord(
@@ -1567,7 +1567,7 @@ async function main() {
 			groupId: group.id,
 			callerDid: ALICE,
 			rkey: shown.rkey,
-			space: null
+			placement: 'everyone'
 		});
 
 		// 13n. it is deleted from the space, and only from the space -------------
@@ -1577,7 +1577,7 @@ async function main() {
 			groupId: group.id,
 			callerDid: ALICE,
 			rkey: moRkey,
-			space: null
+			placement: 'everyone'
 		});
 		const afterWrongDelete = await spaceRecord(
 			groupToken,
@@ -1589,7 +1589,7 @@ async function main() {
 			groupId: group.id,
 			callerDid: ALICE,
 			rkey: moRkey,
-			space: CALENDAR_SPACE_URI
+			placement: 'members'
 		});
 		const moAfterDelete = await spaceRecord(
 			groupToken,
@@ -1664,7 +1664,7 @@ async function main() {
 			groupId: group.id,
 			callerDid: ALICE,
 			intent: 'create',
-			space: CALENDAR_SPACE_URI,
+			placement: 'members',
 			record: eventRecord(`${membersOnlyName}, with an image`, { image: moImage })
 		});
 		if (moWithImage.ok) writtenMembersOnly.push(moWithImage.value.rkey);
@@ -1817,7 +1817,7 @@ async function main() {
 				callerDid: ALICE,
 				intent: 'update',
 				rkey: moKey,
-				space: CALENDAR_SPACE_URI,
+				placement: 'members',
 				record: { ...kept, name: renamedWithImage }
 			});
 		}
@@ -1902,7 +1902,7 @@ async function main() {
 				groupId: group.id,
 				callerDid: ALICE,
 				rkey: moWithImage.value.rkey,
-				space: CALENDAR_SPACE_URI
+				placement: 'members'
 			});
 		}
 
@@ -2613,7 +2613,7 @@ async function main() {
 		const afterBackfill = await must('writeGroupEvent', {
 			groupId: group.id,
 			callerDid: ALICE,
-			space: null,
+			placement: 'everyone',
 			intent: 'create',
 			record: eventRecord('e2e paddle, written after the index had caught up')
 		});
@@ -2622,7 +2622,7 @@ async function main() {
 		await must('deleteGroupEvent', {
 			groupId: group.id,
 			callerDid: ALICE,
-			space: null,
+			placement: 'everyone',
 			rkey: afterBackfill.rkey
 		});
 		const afterDelete = await must('listGroupEvents', { groupId: group.id });
@@ -2692,7 +2692,7 @@ async function main() {
 				const deleted = await call('deleteGroupEvent', {
 					groupId: group.id,
 					callerDid: ALICE,
-					space: null,
+					placement: 'everyone',
 					rkey
 				});
 				if (!deleted.ok) refusal = `${deleted.error.name}: ${deleted.error.message}`;
@@ -2719,7 +2719,7 @@ async function main() {
 					groupId: group.id,
 					callerDid: ALICE,
 					rkey,
-					space: CALENDAR_SPACE_URI
+					placement: 'members'
 				});
 				if (!deleted.ok) refusal = `${deleted.error.name}: ${deleted.error.message}`;
 			} catch (error) {

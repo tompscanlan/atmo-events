@@ -5,7 +5,6 @@
 	import {
 		PLACEMENT_OPTIONS,
 		PLACEMENT_QUESTION,
-		placementSpace,
 		type EventPlacement
 	} from '$lib/groups/event-placement';
 
@@ -48,7 +47,7 @@
 					groupDid: data.groupDid,
 					editingRkey: null,
 					canDelete: false,
-					space: placementSpace(choice, data.calendarSpaceUri),
+					placement: choice,
 					onRefusal: (message) => (refusal = message),
 					onSaveEnd: (saved) => {
 						if (!saved) saving = false;

@@ -9,8 +9,12 @@
 // (Spec: FR-108.)
 
 /** The question's two answers. The new-event page holds no answer until one is
- *  picked, and there is no default: a public post can't be taken back. */
-export type EventPlacement = 'everyone' | 'members';
+ *  picked, and there is no default: a public post can't be taken back. A save
+ *  sends the answer itself, and the writer turns `members` into the group's own
+ *  calendar space, so no value a page sends can mean public by accident.
+ *  (Spec: FR-116.) */
+export const EVENT_PLACEMENTS = ['everyone', 'members'] as const;
+export type EventPlacement = (typeof EVENT_PLACEMENTS)[number];
 
 export const PLACEMENT_QUESTION = 'Who can see this event';
 
@@ -39,22 +43,12 @@ export const PLACEMENT_OPTIONS: readonly PlacementOption[] = [
  *  the group's repo and its calendar space. (Spec: FR-107.) */
 export const PLACEMENT_FIXED = "This can't be changed after the event is published.";
 
-/**
- * The space a save under this answer sends: null for the group's repo, or the
- * calendar space URI the page's loader computed from the group's DID. The
- * server accepts null from anyone, so any other answer throws rather than fall
- * through to public, and so does Members only with no URI to send.
- */
-export function placementSpace(choice: EventPlacement, calendarSpaceUri: string): string | null {
-	if (choice === 'members') {
-		if (!calendarSpaceUri) throw new Error('no calendar space URI for a members-only event');
-		return calendarSpaceUri;
-	}
-	if (choice === 'everyone') return null;
-	throw new Error(`not an answer to "${PLACEMENT_QUESTION}": ${String(choice)}`);
+/** The answer an event's space gives: the group's repo, or its calendar space. */
+export function placementOf(space: string | null): EventPlacement {
+	return space === null ? 'everyone' : 'members';
 }
 
 /** The answer an event's space gives, for a page that shows it read-only. */
 export function placementLabel(space: string | null): string {
-	return space === null ? 'Everyone' : 'Members only';
+	return placementOf(space) === 'everyone' ? 'Everyone' : 'Members only';
 }

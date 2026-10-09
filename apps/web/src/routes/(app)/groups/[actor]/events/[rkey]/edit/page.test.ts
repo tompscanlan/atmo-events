@@ -111,10 +111,18 @@ describe('/groups/[actor]/events/[rkey]/edit', () => {
 		await adapter.putRecord({ collection: EVENT, rkey: '3lpaddle', record: eventData });
 		await adapter.deleteRecord({ collection: EVENT, rkey: '3lpaddle' });
 		expect(remote.putGroupEvent.mock.calls).toEqual([
-			[{ groupDid: GROUP_DID, rkey: '3lpaddle', intent: 'update', space: null, record: eventData }]
+			[
+				{
+					groupDid: GROUP_DID,
+					rkey: '3lpaddle',
+					intent: 'update',
+					placement: 'everyone',
+					record: eventData
+				}
+			]
 		]);
 		expect(remote.removeGroupEvent.mock.calls).toEqual([
-			[{ groupDid: GROUP_DID, rkey: '3lpaddle', space: null }]
+			[{ groupDid: GROUP_DID, rkey: '3lpaddle', placement: 'everyone' }]
 		]);
 	});
 
@@ -147,10 +155,10 @@ describe('/groups/[actor]/events/[rkey]/edit', () => {
 		await adapter.putRecord({ collection: EVENT, rkey: '3lmeeting', record });
 		await adapter.deleteRecord({ collection: EVENT, rkey: '3lmeeting' });
 		expect(remote.putGroupEvent.mock.calls).toEqual([
-			[{ groupDid: GROUP_DID, rkey: '3lmeeting', intent: 'update', space: CALENDAR, record }]
+			[{ groupDid: GROUP_DID, rkey: '3lmeeting', intent: 'update', placement: 'members', record }]
 		]);
 		expect(remote.removeGroupEvent.mock.calls).toEqual([
-			[{ groupDid: GROUP_DID, rkey: '3lmeeting', space: CALENDAR }]
+			[{ groupDid: GROUP_DID, rkey: '3lmeeting', placement: 'members' }]
 		]);
 	});
 

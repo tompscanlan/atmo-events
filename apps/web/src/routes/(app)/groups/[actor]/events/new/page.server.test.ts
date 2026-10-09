@@ -12,8 +12,6 @@ import type { CallerMembership, GroupRow } from '$lib/groups/types';
 const OWNER = 'did:plc:owner';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const HANDLE = 'kona.groups.example.com';
-// Written out, so a wrong type or key in the app's constant fails here.
-const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
 const ENV = { DB: {} };
 
 afterEach(() => {
@@ -22,7 +20,9 @@ afterEach(() => {
 });
 
 describe('/groups/[actor]/events/new load', () => {
-	it("the new-event page loader hands the page the group's calendar space, computed from its DID", async () => {
+	// The page sends who can see the event; the writer works out where it goes, so
+	// the loader hands the page no space at all.
+	it('the new-event page loader hands the page the group and a fresh key, and no space', async () => {
 		vi.mocked(groupEditorPage).mockResolvedValue({
 			group: { group_did: GROUP_DID } as GroupRow,
 			membership: {} as CallerMembership,
@@ -34,7 +34,7 @@ describe('/groups/[actor]/events/new load', () => {
 		});
 		const fetching = vi.spyOn(globalThis, 'fetch');
 
-		// Opened by handle, so a space built from the URL would name the handle.
+		// Opened by handle, and the data names the group by its DID.
 		const data = await load({
 			params: { actor: HANDLE },
 			locals: { did: OWNER },
@@ -45,10 +45,9 @@ describe('/groups/[actor]/events/new load', () => {
 			groupDid: GROUP_DID,
 			groupName: 'Kona',
 			handle: HANDLE,
-			rkey: expect.stringMatching(/^[234567abcdefghij][234567abcdefghijklmnopqrstuvwxyz]{12}$/),
-			calendarSpaceUri: CALENDAR
+			rkey: expect.stringMatching(/^[234567abcdefghij][234567abcdefghijklmnopqrstuvwxyz]{12}$/)
 		});
-		// Still behind the same gate, and nothing asked of a PDS to name the space.
+		// Still behind the same gate, and nothing asked of a PDS.
 		expect(vi.mocked(groupEditorPage).mock.calls).toEqual([[ENV, HANDLE, OWNER, 'CREATE_EVENT']]);
 		expect(fetching).not.toHaveBeenCalled();
 	});

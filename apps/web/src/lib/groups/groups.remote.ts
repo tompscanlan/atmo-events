@@ -27,7 +27,6 @@ import type { JoinOutcome } from './server/repo';
 import { groupActorToDid, groupRouteContext } from './server/route-context';
 import {
 	GROUP_EVENT_IMAGE_MAX_BYTES,
-	checkEventSpace,
 	deleteGroupEvent,
 	uploadGroupEventImage,
 	writeGroupEvent,
@@ -63,6 +62,7 @@ import type { Did } from '@atcute/lexicons';
 import { RSVP_STATUSES } from './ids';
 
 import { errorText } from './server/errors';
+import { EVENT_PLACEMENTS } from './event-placement';
 /** The group key every form posts, and the subject DID on the roster forms.
  *  `context` also accepts a full handle, but the app's forms post the DID. */
 const didField = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,300}$/, 'Invalid DID'));
@@ -404,18 +404,16 @@ export const changeMemberRoleForm = form(
 
 const rkeyField = v.pipe(v.string(), v.regex(/^[a-zA-Z0-9._:~-]{1,512}$/, 'Invalid record key'));
 const eventIntentField = v.picklist(['create', 'update'] as const);
+const placementField = v.picklist(EVENT_PLACEMENTS);
 
 // The group's side of atmo's event editor (./editor-adapter.ts). The editor
 // builds the record; these write it as the group. The writer checks the
 // permission from a fresh membership read (CREATE_EVENT for a create,
 // MANAGE_EVENTS otherwise) and the record against the event lexicon.
 //
-// Both take the event's placement as `space`: the group's calendar space for a
-// members-only event, null for a public one. It is nullable and never optional,
-// so a page that forgets it is refused rather than written in public, and it is
-// checked against the group's own calendar space before the caller's standing is
-// read, so a space the page should never name costs the host nothing.
-// (Spec: FR-116.)
+// Both take the event's placement, `everyone` or `members`, never optional, so a
+// page that forgets it gets a validation error rather than a public post. The
+// writer turns `members` into the group's own calendar space. (Spec: FR-116.)
 
 /** Create or edit a group event, authored by the group DID. */
 export const putGroupEvent = command(
@@ -423,16 +421,10 @@ export const putGroupEvent = command(
 		groupDid: didField,
 		rkey: rkeyField,
 		intent: eventIntentField,
-		space: v.nullable(v.string()),
+		placement: placementField,
 		record: v.record(v.string(), v.unknown())
 	}),
 	async (data): Promise<GroupFormResult<{ uri: string }>> => {
-		let space: string | null;
-		try {
-			space = checkEventSpace(data.groupDid, data.space);
-		} catch (e) {
-			return formError(e);
-		}
 		const { db, env, group, callerDid, reader } = await context(data.groupDid);
 		try {
 			const result = await writeGroupEvent({
@@ -443,7 +435,7 @@ export const putGroupEvent = command(
 				reader,
 				intent: data.intent,
 				rkey: data.rkey,
-				space,
+				placement: data.placement,
 				record: data.record
 			});
 			return { ok: true, uri: result.uri };
@@ -454,14 +446,8 @@ export const putGroupEvent = command(
 );
 
 export const removeGroupEvent = command(
-	v.object({ groupDid: didField, rkey: rkeyField, space: v.nullable(v.string()) }),
+	v.object({ groupDid: didField, rkey: rkeyField, placement: placementField }),
 	async (data): Promise<GroupFormResult<{ uri: string }>> => {
-		let space: string | null;
-		try {
-			space = checkEventSpace(data.groupDid, data.space);
-		} catch (e) {
-			return formError(e);
-		}
 		const { db, env, group, callerDid, reader } = await context(data.groupDid);
 		try {
 			const result = await deleteGroupEvent({
@@ -471,7 +457,7 @@ export const removeGroupEvent = command(
 				callerDid,
 				reader,
 				rkey: data.rkey,
-				space
+				placement: data.placement
 			});
 			return { ok: true, uri: result.uri };
 		} catch (e) {

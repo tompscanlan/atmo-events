@@ -5,6 +5,7 @@ import { now as tidNow } from '@atcute/tid';
 import * as v from '@atcute/lexicons/validations';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
 import { GROUP_EVENT_COLLECTION, POLICY_MEMBER_LIST, groupSpaceUris } from '../ids';
+import type { EventPlacement } from '../event-placement';
 import type { GroupRow } from '../types';
 
 import {
@@ -39,11 +40,11 @@ export interface WriteGroupEventInput {
 	/** Required for `update`. Minted as a TID for `create` if the page has not. */
 	rkey?: string;
 	record: Record<string, unknown>;
-	/** Where the event is: the group's calendar space URI for a members-only
-	 *  event, or null for the group's public repo. Required, with no default: a
-	 *  put creates the record when none is there, so an edit that left it out
-	 *  would make a public copy of a members-only event. (Spec: FR-116.) */
-	space: string | null;
+	/** Who can see the event: `members` puts it in the group's calendar space,
+	 *  `everyone` in its public repo. Required, with no default: a put creates the
+	 *  record when none is there, so an edit that left it out would make a public
+	 *  copy of a members-only event. (Spec: FR-116.) */
+	placement: EventPlacement;
 	/** Overrides the PDS transport, built from the group's credential when absent. */
 	writer?: GroupRepoWriter;
 	reader?: GroupSpaceReader | null;
@@ -83,8 +84,6 @@ async function requireEventPermission(
 const PLACEMENT_REFUSALS = {
 	'no-placement':
 		'This event was sent without saying whether it is public or members-only, so nothing was saved.',
-	'not-the-calendar-space':
-		"A members-only event can only go in this group's calendar space, so nothing was saved.",
 	'no-calendar-space':
 		'This group has no calendar space for members-only events, because it was made before they existed. Re-create the group to post members-only events. Nothing was saved.',
 	'calendar-space-readable':
@@ -108,21 +107,14 @@ export class GroupPlacementError extends GroupRecordError {
 	}
 }
 
-/**
- * The placement a group event write may name: null for the group's public repo,
- * or the group's own calendar space. The URI is computed from the group's DID and
- * compared, never taken on trust: otherwise a CREATE_EVENT holder could aim an
- * event at the about space, which a public group lets anyone read. A missing
- * value is refused, never read as public. Makes no call, so a caller can run it
- * before anything else. (Spec: FR-116.)
- */
-export function checkEventSpace(groupDid: string, space: unknown): string | null {
-	if (space === null) return null;
-	if (typeof space !== 'string') throw new GroupPlacementError('no-placement');
-	if (space !== groupSpaceUris(groupDid).calendarSpaceUri) {
-		throw new GroupPlacementError('not-the-calendar-space');
-	}
-	return space;
+/** Where an event goes: the group's own calendar space for a members-only
+ *  event, computed from its DID and never taken from a page, or null for its
+ *  public repo. Anything else is refused, never read as public, should a caller
+ *  get past the commands' schema. (Spec: FR-116.) */
+function eventSpace(groupDid: string, placement: EventPlacement): string | null {
+	if (placement === 'members') return groupSpaceUris(groupDid).calendarSpaceUri;
+	if (placement === 'everyone') return null;
+	throw new GroupPlacementError('no-placement');
 }
 
 /** The reads that tell where an event is, made before a write. Injectable, like
@@ -226,11 +218,10 @@ async function checkPlacement(
 	}
 }
 
-/** Authorizes the caller, then writes an event where `space` says: the group's
- *  calendar space for a members-only event, its public repo otherwise. */
+/** Authorizes the caller, then writes an event where its placement says: the
+ *  group's calendar space for a members-only event, its public repo otherwise. */
 export async function writeGroupEvent(input: WriteGroupEventInput): Promise<GroupEventWriteResult> {
-	// No call is made for a placement the page should never send.
-	const space = checkEventSpace(input.group.group_did, input.space);
+	const space = eventSpace(input.group.group_did, input.placement);
 	await requireEventPermission(input, input.intent);
 
 	if (input.intent === 'update' && !input.rkey) {
@@ -280,7 +271,7 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 export async function deleteGroupEvent(
 	input: Omit<WriteGroupEventInput, 'intent' | 'record'> & { rkey: string }
 ): Promise<{ uri: string; repo: string }> {
-	const space = checkEventSpace(input.group.group_did, input.space);
+	const space = eventSpace(input.group.group_did, input.placement);
 	await requireEventPermission(input, 'delete');
 	const locator = input.locator ?? (await groupEventLocator(input.env, input.group));
 	await checkPlacement(locator, input.group.group_did, space, input.rkey, 'delete');

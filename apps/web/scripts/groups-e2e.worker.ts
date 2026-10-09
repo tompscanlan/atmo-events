@@ -133,6 +133,7 @@ import { groupSpaceUris, type RsvpStatus } from '../src/lib/groups/ids';
 import { groupWriter } from '../src/lib/groups/server/group-write';
 
 import { registerGroupIdentity } from '../src/lib/groups/server/identities';
+import { type EventPlacement } from '../src/lib/groups/event-placement';
 interface Env {
 	DB: D1Database;
 	/** Where the app looks for the group's linked session, as in production. */
@@ -390,9 +391,9 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	},
 
 	/** The write gate. `callerDid` is the person acting; the credential and repo
-	 *  are the group's. `record` has the shape atmo's event editor builds. `space`
-	 *  is the placement, the calendar space or null for the public repo, passed
-	 *  on as sent: a driver that leaves it out gets the writer's refusal. */
+	 *  are the group's. `record` has the shape atmo's event editor builds.
+	 *  `placement` is passed on as sent: a driver that leaves it out gets the
+	 *  writer's refusal. */
 	writeGroupEvent: async (env, args) =>
 		writeGroupEvent({
 			db: env.DB,
@@ -401,7 +402,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
 			intent: args.intent as 'create' | 'update',
 			rkey: args.rkey as string | undefined,
-			space: args.space as string | null,
+			placement: args.placement as EventPlacement,
 			record: args.record as Record<string, unknown>
 		}),
 
@@ -426,7 +427,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			group: await groupById(env, args.groupId),
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
 			rkey: String(args.rkey),
-			space: args.space as string | null
+			placement: args.placement as EventPlacement
 		}),
 
 	/** How many requests the app has sent through the group's session, and with
