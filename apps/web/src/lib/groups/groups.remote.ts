@@ -48,6 +48,7 @@ import {
 import { GroupSpaceError } from './server/spaces';
 import type { GroupSpaceReader } from './server/about-read';
 import { reauthorizeForGroup } from './server/member-grants';
+import { authorizeWithGrants } from './server/sign-in-grants';
 import { memberSession, type MemberSession } from './server/acceptance';
 // ./server/member-rsvp.ts is shared with the e2e harness, as ./server/roster.ts is.
 import {
@@ -56,8 +57,7 @@ import {
 	type MembersOnlyRsvpCancel,
 	type MembersOnlyRsvpPut
 } from './server/member-rsvp';
-import { createOAuthClient, servesClientMetadata } from '$lib/atproto/server/oauth';
-import { scopes } from '$lib/atproto/settings';
+import { servesClientMetadata } from '$lib/atproto/server/oauth';
 import type { Did } from '@atcute/lexicons';
 import { RSVP_STATUSES } from './ids';
 
@@ -243,9 +243,8 @@ async function reauthorizeUrl(ctx: GroupRequestContext): Promise<string | null> 
 		ctx.group.group_did,
 		Date.now(),
 		(grants) =>
-			createOAuthClient(ctx.env, grants).authorize({
-				target: { type: 'account', identifier: ctx.callerDid as Did },
-				scope: [...scopes, ...grants].join(' ')
+			authorizeWithGrants(ctx.env, grants, {
+				target: { type: 'account', identifier: ctx.callerDid as Did }
 			})
 	);
 	return result?.url.toString() ?? null;
