@@ -147,26 +147,31 @@ function recordsNotUpdated(
 
 /** What the read phase found and what this save decided. */
 interface SaveState {
-	env: CredentialStoreEnv;
-	db: D1Database;
 	/** The group as it was loaded. */
 	group: GroupRow;
 	/** The group as this save describes it. */
 	fresh: GroupRow;
-	callerDid: string;
 	data: UpdateGroupData;
-	reader: GroupSpaceReader;
 	about: GroupAbout;
 	/** The about space's access record as read, then as this save last wrote it. */
 	access: GroupAccessFields | null;
-	writer: GroupRepoWriter;
 	/** Whether this save moved the host. */
 	flipped: boolean;
 	requireApproval: boolean;
+	/** What every write of this save shares: the group as this save describes it,
+	 *  the caller, and the one writer and reader the save built. */
+	as: {
+		db: D1Database;
+		env: CredentialStoreEnv;
+		group: GroupRow;
+		callerDid: string;
+		writer: GroupRepoWriter;
+		reader: GroupSpaceReader;
+	};
 }
 
 function writeRow(s: SaveState): Promise<void> {
-	return updateGroup(s.db, s.group.id, {
+	return updateGroup(s.as.db, s.group.id, {
 		name: s.data.name,
 		description: s.data.description || null,
 		requireApproval: s.requireApproval
@@ -177,12 +182,8 @@ function writeRow(s: SaveState): Promise<void> {
  *  declaration is dated from the group's creation, not from this save. */
 function reconcileDeclaration(s: SaveState, visibility: GroupVisibility) {
 	return reconcileGroupDeclaration({
-		db: s.db,
-		env: s.env,
-		group: s.fresh,
+		...s.as,
 		visibility,
-		callerDid: s.callerDid,
-		writer: s.writer,
 		createdAt: s.about.profile?.createdAt ?? undefined
 	});
 }
@@ -192,14 +193,7 @@ function reconcileDeclaration(s: SaveState, visibility: GroupVisibility) {
 async function alignAccess(s: SaveState, visibility: GroupVisibility): Promise<void> {
 	const isPublic = visibility === 'public';
 	if (accessSays(s.access, isPublic)) return;
-	await writeAboutAccess({
-		db: s.db,
-		env: s.env,
-		group: s.fresh,
-		visibility,
-		callerDid: s.callerDid,
-		writer: s.writer
-	});
+	await writeAboutAccess({ ...s.as, visibility });
 	s.access = { roles: [...ABOUT_SPACE_READER_ROLES], public: isPublic };
 }
 
@@ -209,12 +203,8 @@ async function alignAccess(s: SaveState, visibility: GroupVisibility): Promise<v
 async function writeAboutRecords(s: SaveState, visibility: GroupVisibility): Promise<void> {
 	await alignAccess(s, visibility);
 	await writeGroupProfile({
-		db: s.db,
-		env: s.env,
-		group: s.fresh,
+		...s.as,
 		visibility,
-		callerDid: s.callerDid,
-		writer: s.writer,
 		profile: {
 			name: s.data.name,
 			description: s.data.description || null,
@@ -225,11 +215,7 @@ async function writeAboutRecords(s: SaveState, visibility: GroupVisibility): Pro
 		}
 	});
 	await setGroupRules({
-		db: s.db,
-		env: s.env,
-		group: s.fresh,
-		callerDid: s.callerDid,
-		writer: s.writer,
+		...s.as,
 		desired: splitRuleLines(s.data.rules),
 		existing: s.about.rules
 	});
@@ -268,7 +254,7 @@ async function saveAsPublic(s: SaveState): Promise<GroupFormResult> {
 
 	let now: GroupVisibility;
 	try {
-		now = await readGroupVisibility(s.reader, s.group);
+		now = await readGroupVisibility(s.as.reader, s.group);
 	} catch (e) {
 		return notAnnounced(e, s.flipped);
 	}
@@ -350,31 +336,21 @@ export async function runUpdateGroup(
 	// write.
 	if (flipped) {
 		try {
-			await setAboutSpaceReadPolicy({
-				db,
-				env,
-				group: fresh,
-				callerDid,
-				visibility
-			});
+			await setAboutSpaceReadPolicy({ db, env, group: fresh, callerDid, reader, visibility });
 		} catch (e) {
 			return hostRefused(e);
 		}
 	}
 
 	const state: SaveState = {
-		env,
-		db,
 		group,
 		fresh,
-		callerDid,
 		data,
-		reader,
 		about,
 		access,
-		writer,
 		flipped,
-		requireApproval
+		requireApproval,
+		as: { db, env, group: fresh, callerDid, writer, reader }
 	};
 	return declarationRequired(visibility) ? saveAsPublic(state) : saveAsPrivate(state);
 }

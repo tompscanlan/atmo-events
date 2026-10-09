@@ -331,15 +331,13 @@ async function setUpMintedGroup(
 	// The gate reads the members space too. The group is not linked yet, so it
 	// reads with the same session; left to find its own, it would find none.
 	const reader = pdsSpaceReader(minted.credential, minted.did);
+	// What every write below shares: the group as provisioned, the caller, and
+	// the minted session's writer and reader.
+	const as = { db: env.DB, env, group: withSpaces, callerDid, writer, reader };
 	try {
 		await writeGroupProfile({
-			db: env.DB,
-			env,
-			group: withSpaces,
+			...as,
 			visibility: data.visibility,
-			callerDid,
-			writer,
-			reader,
 			profile: {
 				name: data.name,
 				description: data.description || null,
@@ -350,12 +348,7 @@ async function setUpMintedGroup(
 		const rules = splitRuleLines(data.rules);
 		if (rules.length > 0) {
 			await setGroupRules({
-				db: env.DB,
-				env,
-				group: withSpaces,
-				callerDid,
-				writer,
-				reader,
+				...as,
 				desired: rules,
 				// A new group has no rule records, so no read is needed.
 				existing: []
@@ -365,26 +358,16 @@ async function setUpMintedGroup(
 		// The about space's access record says what its read policy says. It goes
 		// before the declaration, so a declared group's access always says public.
 		await writeAboutAccess({
-			db: env.DB,
-			env,
-			group: withSpaces,
-			visibility: data.visibility,
-			callerDid,
-			writer,
-			reader
+			...as,
+			visibility: data.visibility
 		});
 
 		// The declaration goes last, so a group whose profile write failed is
 		// never announced with an empty about space. A private group is not
 		// declared. `assumeAbsent` skips the withdrawal check: a new repo has none.
 		await reconcileGroupDeclaration({
-			db: env.DB,
-			env,
-			group: withSpaces,
+			...as,
 			visibility: data.visibility,
-			callerDid,
-			writer,
-			reader,
 			createdAt,
 			assumeAbsent: true
 		});
@@ -412,48 +395,28 @@ async function setUpMintedGroup(
 	// app reads it as the group. (Spec: FR-101b.)
 	let calendarWritten = false;
 	try {
-		await writeGroupAccess({ db: env.DB, env, group: withSpaces, callerDid, writer, reader });
+		await writeGroupAccess(as);
 		await writeGroupAccess({
-			db: env.DB,
-			env,
-			group: withSpaces,
-			callerDid,
-			writer,
-			reader,
+			...as,
 			space: calendarUri
 		});
 		// A new members space holds no index, so nothing is read.
 		await writeGroupSpaceIndex({
-			db: env.DB,
-			env,
-			group: withSpaces,
-			callerDid,
-			writer,
-			reader,
+			...as,
 			existing: [],
 			calendarSpace: calendarUri,
 			createdAt
 		});
 		calendarWritten = true;
 		await putGroupMembership({
-			db: env.DB,
-			env,
-			group: withSpaces,
-			callerDid,
-			writer,
-			reader,
+			...as,
 			subject: callerDid,
 			roles: ['owner'],
 			intent: 'admit',
 			createdAt
 		});
 		await writeGroupAuthz({
-			db: env.DB,
-			env,
-			group: withSpaces,
-			callerDid,
-			writer,
-			reader,
+			...as,
 			createdAt
 		});
 	} catch (e) {
