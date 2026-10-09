@@ -41,7 +41,6 @@ import {
 	alignAboutMembers,
 	alignMemberWriters,
 	groupMemberList,
-	type GroupMemberList,
 	type SpaceMemberAlignment
 } from './member-list';
 import { readGroupMembers, readGroupSpaceIndex, type GroupMembers } from './members-read';
@@ -55,7 +54,7 @@ import { rebuildGroup, type GroupRebuildResult } from './rebuild';
 
 import { readGroupVisibility } from './spaces';
 
-import { GroupRecordError, requireGroupPermission, type GroupRepoWriter } from './group-write';
+import { GroupRecordError, requireGroupPermission } from './group-write';
 import { type CredentialStoreEnv } from './session';
 import { groupSpaceUris } from '../ids';
 import { GROUP_ACCESS_COLLECTION, GROUP_ACCESS_RKEY, parseGroupAccess } from '../members-record';
@@ -67,14 +66,9 @@ export interface RepairGroupInput {
 	group: GroupRow;
 	/** The human pressing the button. Checked, never written as. */
 	callerDid: string | null;
-	/** Overrides the PDS transport. Tests pass this. */
-	writer?: GroupRepoWriter;
-	/** Overrides the space reader, for the gate, step 1 and step 3. */
+	/** The route's reader, for the gate, step 1 and step 3. Built from the
+	 *  credential if absent. */
 	reader?: GroupSpaceReader | null;
-	/** Overrides step 3's check of whether the public repo holds the declaration. */
-	declared?: () => Promise<boolean>;
-	/** Overrides the member-list transport, for both spaces. */
-	memberList?: GroupMemberList;
 }
 
 export interface GroupRepairResult {
@@ -185,14 +179,13 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 	// Step 2. `members` was read before step 1, so add the owner if step 1 wrote them.
 	const holders = new Set(recorded);
 	if (wrote.ownerMembership) holders.add(group.owner_did);
-	const list = input.memberList ?? (await groupMemberList(env, group));
+	const list = await groupMemberList(env, group);
 	const memberList = await alignAboutMembers(list, group, holders);
 	const writers = new Set(holders);
 	for (const request of await listJoinRequests(db, group.id)) writers.add(request.did);
 	const writerList = await alignMemberWriters(list, group, writers);
 
-	const declared = input.declared ?? (() => groupDeclared(env, group.group_did));
-	const host = await alignToHost({ ...write, createdAt }, declared);
+	const host = await alignToHost({ ...write, createdAt });
 
 	const rebuild = await rebuildGroup(db, reader, group.group_did);
 
@@ -211,12 +204,11 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
  *  declared group's access must say public, so the access record goes before a
  *  declaration is published and after one is withdrawn. */
 async function alignToHost(
-	input: RepairGroupInput & { reader: GroupSpaceReader; createdAt: string },
-	declaredOnHost: () => Promise<boolean>
+	input: RepairGroupInput & { reader: GroupSpaceReader; createdAt: string }
 ): Promise<HostAlignment> {
 	const visibility = await readGroupVisibility(input.reader, input.group);
 	const [declared, access] = await Promise.all([
-		declaredOnHost(),
+		groupDeclared(input.env, input.group.group_did),
 		readAboutAccess(input.reader, input.group)
 	]);
 
