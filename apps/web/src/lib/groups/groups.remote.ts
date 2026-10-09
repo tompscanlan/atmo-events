@@ -36,16 +36,14 @@ import {
 import { describeRepair, repairGroup } from './server/repair';
 // ./server/roster.ts is shared with the e2e harness, so both run the same sequence.
 import {
-	RosterListError,
-	RosterRecordError,
-	RosterRowError,
 	admitFromRequest,
 	admitMember,
 	ejectMember,
 	joinGroup,
 	leaveGroup,
-	promoteMember,
 	rejectJoinRequest,
+	promoteMember,
+	RosterStepError,
 	withdrawJoinRequest
 } from './server/roster';
 import { GroupSpaceError } from './server/spaces';
@@ -64,6 +62,7 @@ import { scopes } from '$lib/atproto/settings';
 import type { Did } from '@atcute/lexicons';
 import { RSVP_STATUSES } from './ids';
 
+import { errorText } from './server/errors';
 /** The group key every form posts, and the subject DID on the roster forms.
  *  `context` also accepts a full handle, but the app's forms post the DID. */
 const didField = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,300}$/, 'Invalid DID'));
@@ -169,9 +168,9 @@ export const repairGroupForm = form(
 				// checked first, so a second run continues from there.
 				return {
 					ok: false,
-					error: `The repair stopped partway: ${
-						e instanceof Error ? e.message : String(e)
-					}. Anything it wrote is kept, and running it again continues from there.`
+					error: `The repair stopped partway: ${errorText(
+						e
+					)}. Anything it wrote is kept, and running it again continues from there.`
 				};
 			}
 		}
@@ -183,7 +182,7 @@ export const repairGroupForm = form(
  *  (`server/roster.ts`), so the message says what is out of step. Returns the
  *  failure only, so it also fits a handler whose success carries a payload. */
 function rosterFailure(e: unknown): GroupFormFailure {
-	if (e instanceof RosterListError) {
+	if (e instanceof RosterStepError && e.step === 'list') {
 		return {
 			ok: false,
 			error:
@@ -194,13 +193,13 @@ function rosterFailure(e: unknown): GroupFormFailure {
 						: `${e.subject} can no longer read the group at its PDS, but their membership was not removed: ${e.message}. Removing them again finishes it.`
 		};
 	}
-	if (e instanceof RosterRecordError) {
+	if (e instanceof RosterStepError && e.step === 'record') {
 		return {
 			ok: false,
 			error: `The roster was updated, but the membership record for ${e.subject} was not: ${e.message}`
 		};
 	}
-	if (e instanceof RosterRowError) {
+	if (e instanceof RosterStepError) {
 		return {
 			ok: false,
 			error: `Access was revoked for ${e.subject}, but the roster still lists them: ${e.message}`

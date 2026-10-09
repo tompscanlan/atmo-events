@@ -49,6 +49,7 @@ import {
 } from '../ids';
 
 import { describeFailure, xrpc, type XrpcAnswer } from './xrpc';
+import { errorText } from './errors';
 /** Shown once a re-authorization that asked for the grant came back without it. */
 export const RSVP_NO_SPACES =
 	"Your PDS can't RSVP to members-only events yet, so nothing was saved.";
@@ -195,8 +196,7 @@ function refused(
 	what: 'write' | 'delete',
 	cause: unknown
 ): MembersOnlyRsvpFailure {
-	const detail =
-		typeof cause === 'string' ? cause : cause instanceof Error ? cause.message : String(cause);
+	const detail = errorText(cause);
 	console.error(
 		`[groups] ${target.group.group_did}: ${target.member?.did}'s RSVP ${what} at ${target.rkey} failed: ${detail}`
 	);

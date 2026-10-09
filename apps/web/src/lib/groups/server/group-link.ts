@@ -16,6 +16,7 @@ import type { OAuthClient, OAuthClientStores } from '@atcute/oauth-node-client';
 import type { GroupRow } from '../types';
 import { GROUP_SESSION_SCOPE } from './linked-session';
 
+import { errorText } from './errors';
 /** Carried through the PDS in the authorization's state. */
 export interface GroupLinkState {
 	groupDid: string;
@@ -111,7 +112,7 @@ export async function finishGroupLink(input: {
 		return {
 			ok: false,
 			groupDid: link.groupDid,
-			reason: e instanceof Error ? e.message : String(e)
+			reason: errorText(e)
 		};
 	}
 	if (session.did !== link.groupDid) {

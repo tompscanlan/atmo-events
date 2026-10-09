@@ -52,6 +52,7 @@ import type { GroupFormFailure, GroupFormResult } from './form-result';
 import type { GroupRow, GroupVisibility } from './types';
 
 import { GroupCredentialError, groupWriter, type GroupRepoWriter } from './server/group-write';
+import { errorText } from './server/errors';
 export interface UpdateGroupData {
 	name: string;
 	description?: string;
@@ -65,8 +66,6 @@ export interface UpdateGroupData {
 	rules?: string;
 }
 
-const describeError = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
 const STILL_LISTED = 'Its declaration was not withdrawn, so it is still listed in browse.';
 
 const SHOWN_UNKNOWN =
@@ -76,14 +75,14 @@ const SHOWN_UNKNOWN =
 function nothingSaved(failed: string, e: unknown): GroupFormFailure {
 	return {
 		ok: false,
-		error: `Nothing was saved, because ${failed}: ${describeError(e)}. Saving again will retry it.`
+		error: `Nothing was saved, because ${failed}: ${errorText(e)}. Saving again will retry it.`
 	};
 }
 
 function hostRefused(e: unknown): GroupFormFailure {
 	return {
 		ok: false,
-		error: `The visibility change did not reach the group's PDS: ${describeError(
+		error: `The visibility change did not reach the group's PDS: ${errorText(
 			e
 		)}. Nothing was saved, so the group's visibility was not changed, and saving again will retry it.`
 	};
@@ -92,7 +91,7 @@ function hostRefused(e: unknown): GroupFormFailure {
 function notWithdrawn(e: unknown, flipped: boolean): GroupFormFailure {
 	return {
 		ok: false,
-		error: `The group's PDS ${flipped ? 'now reads' : 'reads'} it as private, but its declaration could not be withdrawn: ${describeError(
+		error: `The group's PDS ${flipped ? 'now reads' : 'reads'} it as private, but its declaration could not be withdrawn: ${errorText(
 			e
 		)}. ${STILL_LISTED} Its name, description, approval setting, profile and rules were not saved, so browse still shows what it showed before. Saving the settings again finishes it.`
 	};
@@ -103,10 +102,10 @@ function rowNotSaved(e: unknown, to: GroupVisibility, flipped: boolean): GroupFo
 	const host = `The group's PDS ${flipped ? 'now reads' : 'reads'} it as ${to}`;
 	const landed =
 		to === 'private'
-			? `${host} and its declaration is withdrawn, so browse does not list it, but this site did not save the change: ${describeError(
+			? `${host} and its declaration is withdrawn, so browse does not list it, but this site did not save the change: ${errorText(
 					e
 				)}. The group's profile and rules were not updated either.`
-			: `${host}, but this site did not save the change: ${describeError(
+			: `${host}, but this site did not save the change: ${errorText(
 					e
 				)}. The group's declaration, profile and rules were not updated either.`;
 	return { ok: false, error: `${landed} Saving the settings again finishes it.` };
@@ -120,7 +119,7 @@ function notAnnounced(e: unknown, flipped: boolean): GroupFormFailure {
 		: 'This site saved the settings';
 	return {
 		ok: false,
-		error: `${landed}, but this save neither published nor withdrew the group's declaration, which is what lists it in browse: its PDS did not answer when asked again whether it is public (${describeError(
+		error: `${landed}, but this save neither published nor withdrew the group's declaration, which is what lists it in browse: its PDS did not answer when asked again whether it is public (${errorText(
 			e
 		)}). The declaration is as it was before this save, and the group's profile and rules were not updated. Saving the settings again finishes it.`
 	};
@@ -139,7 +138,7 @@ function recordsNotUpdated(
 		: 'Settings were saved';
 	return {
 		ok: false,
-		error: `${landed}, but this group's records were not updated: ${describeError(e)}.${
+		error: `${landed}, but this group's records were not updated: ${errorText(e)}.${
 			listed ? ` ${STILL_LISTED}` : ''
 		} Saving the settings again finishes it.`
 	};

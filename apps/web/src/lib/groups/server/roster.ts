@@ -59,42 +59,30 @@ import { readGroupVisibility } from './spaces';
 import { deleteAcceptance, writeAcceptance, type MemberSession } from './acceptance';
 
 import { requireGroupPermission, type GroupRepoWriter } from './group-write';
-/** A grant whose row moved but whose record did not. */
-export class RosterRecordError extends Error {
-	constructor(
-		readonly subject: string,
-		readonly cause: unknown
-	) {
-		super(cause instanceof Error ? cause.message : String(cause));
-		this.name = 'RosterRecordError';
-	}
-}
+import { errorText } from './errors';
+export type RosterStep = 'record' | 'row' | 'list';
+export type RosterChange = 'grant' | 'revoke' | 'request';
 
-/** A revocation whose record went but whose row did not. The gate already
- *  denies, and a retry removes the row. */
-export class RosterRowError extends Error {
+/** A roster act whose earlier half took effect and whose later half failed, so
+ *  its pieces are out of step. `step` names the half that failed:
+ *
+ *  - `record`: a grant whose row moved but whose record did not.
+ *  - `row`: a revocation whose record went but whose row did not. The gate
+ *    already denies, and a retry removes the row.
+ *  - `list`: member-list entries and the record disagree. After a `grant` the
+ *    host grants less than the record until Repair lists the DID. After a
+ *    `revoke` the host already denies reads, and a retry finishes the removal.
+ *    After a `request` the request stands, but the host would not track the
+ *    requester's acceptance until Repair lists them. */
+export class RosterStepError extends Error {
 	constructor(
+		readonly step: RosterStep,
 		readonly subject: string,
-		readonly cause: unknown
+		readonly cause: unknown,
+		readonly change?: RosterChange
 	) {
-		super(cause instanceof Error ? cause.message : String(cause));
-		this.name = 'RosterRowError';
-	}
-}
-
-/** An act whose member-list entries and record disagree. After a `grant` the
- *  host grants less than the record until Repair lists the DID. After a
- *  `revoke` the host already denies reads, and a retry finishes the removal.
- *  After a `request` the request stands but the host would not track the
- *  requester's acceptance until Repair lists them. */
-export class RosterListError extends Error {
-	constructor(
-		readonly subject: string,
-		readonly change: 'grant' | 'revoke' | 'request',
-		readonly cause: unknown
-	) {
-		super(cause instanceof Error ? cause.message : String(cause));
-		this.name = 'RosterListError';
+		super(errorText(cause));
+		this.name = 'RosterStepError';
 	}
 }
 
@@ -119,21 +107,18 @@ export interface RosterContext {
 
 type AssignableRole = Exclude<GroupRoleName, 'owner'>;
 
-/** A grant's record half, second: re-labels its failure as out of step. */
-async function published<T>(subject: string, write: () => Promise<T>): Promise<T> {
+/** Runs a later half of a roster act, labelling a failure with that half, since
+ *  an earlier half already took effect. */
+async function step<T>(
+	failed: RosterStep,
+	subject: string,
+	write: () => Promise<T>,
+	change?: RosterChange
+): Promise<T> {
 	try {
 		return await write();
 	} catch (e) {
-		throw new RosterRecordError(subject, e);
-	}
-}
-
-/** A revocation's row half, last: re-labels its failure as out of step. */
-async function unlisted(subject: string, write: () => Promise<void>): Promise<void> {
-	try {
-		await write();
-	} catch (e) {
-		throw new RosterRowError(subject, e);
+		throw new RosterStepError(failed, subject, e, change);
 	}
 }
 
@@ -146,11 +131,12 @@ function memberListFor(ctx: RosterContext): Promise<GroupMemberList> {
 /** An entry's list half, last. The row and record are in, so any failure here
  *  is the lists out of step. */
 async function listed(ctx: RosterContext, subject: string): Promise<void> {
-	try {
-		await listRosterMember(await memberListFor(ctx), ctx.group, subject);
-	} catch (e) {
-		throw new RosterListError(subject, 'grant', e);
-	}
+	await step(
+		'list',
+		subject,
+		async () => listRosterMember(await memberListFor(ctx), ctx.group, subject),
+		'grant'
+	);
 }
 
 /** The session, when it is the caller's own. */
@@ -195,13 +181,16 @@ async function revoke(ctx: RosterContext, subject: string, intent: MembershipDro
 
 	if (intent === 'leave') await unaccept(ctx);
 	await list.remove({ space: about, did: subject });
-	try {
-		await list.remove({ space: members, did: subject });
-		await dropGroupMembership({ ...ctx, subject, intent });
-	} catch (e) {
-		throw new RosterListError(subject, 'revoke', e);
-	}
-	await unlisted(subject, () => removeMember(ctx.db, ctx.group.id, subject));
+	await step(
+		'list',
+		subject,
+		async () => {
+			await list.remove({ space: members, did: subject });
+			await dropGroupMembership({ ...ctx, subject, intent });
+		},
+		'revoke'
+	);
+	await step('row', subject, () => removeMember(ctx.db, ctx.group.id, subject));
 }
 
 /** The DID is on the roster and is not the owner. The triggers check this too,
@@ -271,19 +260,20 @@ export async function joinGroup(ctx: RosterContext, message: string | null): Pro
 		await joinVisibility(ctx)
 	);
 	if (outcome === 'pending') {
-		try {
-			await listJoinRequester(await memberListFor(ctx), ctx.group, ctx.callerDid);
-		} catch (e) {
-			throw new RosterListError(ctx.callerDid, 'request', e);
-		}
+		await step(
+			'list',
+			ctx.callerDid,
+			async () => listJoinRequester(await memberListFor(ctx), ctx.group, ctx.callerDid),
+			'request'
+		);
 		await accept(ctx);
 		return outcome;
 	}
 	if (outcome !== 'joined') return outcome;
 	// The record carries the row's `created_at`, so both copies share one clock.
 	// The row has moved, so a failed read here is the record half failing.
-	const createdAt = await published(ctx.callerDid, () => joinedAt(ctx, ctx.callerDid));
-	await published(ctx.callerDid, () =>
+	const createdAt = await step('record', ctx.callerDid, () => joinedAt(ctx, ctx.callerDid));
+	await step('record', ctx.callerDid, () =>
 		putGroupMembership({
 			...ctx,
 			subject: ctx.callerDid,
@@ -310,8 +300,8 @@ export async function admitFromRequest(
 	role: AssignableRole
 ): Promise<{ did: string }> {
 	const admitted = await approveJoinRequest(ctx.db, ctx.group.id, requestId, ctx.callerDid, role);
-	const createdAt = await published(admitted.did, () => joinedAt(ctx, admitted.did));
-	await published(admitted.did, () =>
+	const createdAt = await step('record', admitted.did, () => joinedAt(ctx, admitted.did));
+	await step('record', admitted.did, () =>
 		putGroupMembership({
 			...ctx,
 			subject: admitted.did,
@@ -331,8 +321,8 @@ export async function admitMember(
 	role: AssignableRole
 ): Promise<void> {
 	await addMember(ctx.db, ctx.group.id, did, role, ctx.callerDid);
-	const createdAt = await published(did, () => joinedAt(ctx, did));
-	await published(did, () =>
+	const createdAt = await step('record', did, () => joinedAt(ctx, did));
+	await step('record', did, () =>
 		putGroupMembership({ ...ctx, subject: did, roles: [role], createdAt, intent: 'admit' })
 	);
 	await listed(ctx, did);
@@ -391,9 +381,9 @@ export async function promoteMember(
 
 	if (removesAccess(current.role, role)) {
 		await writeRecord();
-		await unlisted(did, moveRow);
+		await step('row', did, moveRow);
 		return;
 	}
 	await moveRow();
-	await published(did, writeRecord);
+	await step('record', did, writeRecord);
 }

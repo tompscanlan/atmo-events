@@ -26,6 +26,7 @@ import {
 } from './members-read';
 import { ensureGroupsSchema } from './schema';
 
+import { errorText } from './errors';
 /** A new group's row. Visibility is not here: it is the about space's read
  *  policy. The space URIs start NULL and `recordGroupSpaces` fills them. */
 export interface CreateGroupInput {
@@ -74,7 +75,7 @@ export class GroupRuleError extends Error {
  *  the index, and D1 wraps the same text, so matching is on column names and
  *  on the triggers' RAISE messages. */
 function constraintMessage(e: unknown): GroupRuleError | null {
-	const text = e instanceof Error ? e.message : String(e);
+	const text = errorText(e);
 	// Triggers first: one statement can fire a trigger and trip a unique index.
 	if (/owner role is reserved/.test(text)) {
 		return new GroupRuleError('owner-role-reserved', 'The owner role is reserved for the owner');
@@ -171,7 +172,7 @@ export async function rehearseCreateGroup(
 	try {
 		await db.batch(statements);
 	} catch (e) {
-		const text = e instanceof Error ? e.message : String(e);
+		const text = errorText(e);
 		if (text.includes(REHEARSAL_LANDED)) return;
 		if (text.includes(REHEARSAL_NO_OWNER)) {
 			throw new Error('the group row was accepted but its owner membership was not', {

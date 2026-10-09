@@ -48,8 +48,7 @@ import {
 	leaveGroup,
 	promoteMember,
 	rejectJoinRequest,
-	RosterRecordError,
-	RosterRowError,
+	RosterStepError,
 	withdrawJoinRequest
 } from './roster';
 
@@ -353,9 +352,7 @@ describe('a revocation takes the list entry first, then the record', () => {
 		failRecord = (w) => w.intent === 'delete';
 		const error = await ejectMember(ctx(OWNER), ADMIN).catch((e: unknown) => e);
 
-		expect(error).toMatchObject({ name: 'RosterListError', subject: ADMIN });
-		expect(error).not.toBeInstanceOf(RosterRecordError);
-		expect(error).not.toBeInstanceOf(RosterRowError);
+		expect(error).toMatchObject({ name: 'RosterStepError', step: 'list', subject: ADMIN });
 		expect(order).toEqual(['list:remove', 'list:remove', 'record:delete']);
 		expect((await getMemberRow(harness.db, group.id, ADMIN))?.role).toBe('admin');
 		expect(await membershipRecord(ADMIN)).not.toBeNull();
@@ -369,7 +366,12 @@ describe('a revocation takes the list entry first, then the record', () => {
 		failListSpace = MEMBERS;
 		const error = await ejectMember(ctx(OWNER), ADMIN).catch((e: unknown) => e);
 
-		expect(error).toMatchObject({ name: 'RosterListError', subject: ADMIN, change: 'revoke' });
+		expect(error).toMatchObject({
+			name: 'RosterStepError',
+			step: 'list',
+			subject: ADMIN,
+			change: 'revoke'
+		});
 		expect(order).toEqual(['list:remove', 'list:remove']);
 		expect(pds.listed(ABOUT)).not.toContain(ADMIN);
 		expect(pds.listed(MEMBERS)).toContain(ADMIN);
@@ -386,8 +388,8 @@ describe('a revocation takes the list entry first, then the record', () => {
 		failRow = /^\s*DELETE FROM memberships/;
 		const error = await ejectMember(ctx(OWNER), ADMIN).catch((e: unknown) => e);
 
-		expect(error).toBeInstanceOf(RosterRowError);
-		expect((error as RosterRowError).subject).toBe(ADMIN);
+		expect(error).toMatchObject({ name: 'RosterStepError', step: 'row' });
+		expect((error as RosterStepError).subject).toBe(ADMIN);
 		// The row still says admin; the gate believes the record, which is gone.
 		expect((await getMemberRow(harness.db, group.id, ADMIN))?.role).toBe('admin');
 		expect(await gate(ADMIN)).toEqual([]);
@@ -426,7 +428,7 @@ describe('a role change splits by direction', () => {
 		failRecord = (w) => w.intent === 'update';
 		const error = await promoteMember(ctx(OWNER), MEMBER, 'admin').catch((e: unknown) => e);
 
-		expect(error).toBeInstanceOf(RosterRecordError);
+		expect(error).toMatchObject({ name: 'RosterStepError', step: 'record' });
 		expect((await getMemberRow(harness.db, group.id, MEMBER))?.role).toBe('admin');
 		expect(await gate(MEMBER)).toEqual(granted('member'));
 	});
@@ -441,7 +443,7 @@ describe('a role change splits by direction', () => {
 		failRow = /^\s*UPDATE memberships/;
 		const error = await promoteMember(ctx(OWNER), ADMIN, 'member').catch((e: unknown) => e);
 
-		expect(error).toBeInstanceOf(RosterRowError);
+		expect(error).toMatchObject({ name: 'RosterStepError', step: 'row' });
 		expect((await getMemberRow(harness.db, group.id, ADMIN))?.role).toBe('admin');
 		expect((await membershipRecord(ADMIN))?.value).toMatchObject({ roles: ['member'] });
 		expect(await gate(ADMIN)).toEqual(granted('member'));
@@ -451,8 +453,7 @@ describe('a role change splits by direction', () => {
 		failRecord = (w) => w.intent === 'update';
 		const error = await promoteMember(ctx(OWNER), ADMIN, 'member').catch((e: unknown) => e);
 
-		expect(error).not.toBeInstanceOf(RosterRecordError);
-		expect(error).not.toBeInstanceOf(RosterRowError);
+		expect(error).not.toBeInstanceOf(RosterStepError);
 		expect(order).toEqual(['record:update']);
 		expect((await getMemberRow(harness.db, group.id, ADMIN))?.role).toBe('admin');
 		expect(await gate(ADMIN)).toEqual(granted('admin'));
@@ -490,7 +491,7 @@ describe('a grant whose join-date read fails after the row moved', () => {
 			(e: unknown) => e
 		);
 
-		expect(error).toBeInstanceOf(RosterRecordError);
+		expect(error).toMatchObject({ name: 'RosterStepError', step: 'record' });
 		expect(await getMemberRow(harness.db, group.id, NEWCOMER)).not.toBeNull();
 		expect(writes.some((w) => w.rkey === NEWCOMER)).toBe(false);
 	});
@@ -633,8 +634,7 @@ describe('the about space member list mirrors the roster', () => {
 
 		const error = await admitMember(ctx(ADMIN), NEWCOMER, 'member').catch((e: unknown) => e);
 
-		expect(error).toMatchObject({ name: 'RosterListError', subject: NEWCOMER });
-		expect(error).not.toBeInstanceOf(RosterRecordError);
+		expect(error).toMatchObject({ name: 'RosterStepError', step: 'list', subject: NEWCOMER });
 		expect(await getMemberRow(harness.db, group.id, NEWCOMER)).not.toBeNull();
 		expect(await membershipRecord(NEWCOMER)).not.toBeNull();
 		expect(pds.listed(ABOUT)).not.toContain(NEWCOMER);
@@ -696,7 +696,7 @@ describe('the about space member list mirrors the roster', () => {
 			'member'
 		).catch((e: unknown) => e);
 
-		expect(error).toBeInstanceOf(RosterRecordError);
+		expect(error).toMatchObject({ name: 'RosterStepError', step: 'record' });
 		expect(memberListCalls()).toEqual([]);
 	});
 
@@ -710,7 +710,7 @@ describe('the about space member list mirrors the roster', () => {
 			'member'
 		).catch((e: unknown) => e);
 
-		expect(error).toMatchObject({ name: 'RosterListError', subject: NEWCOMER });
+		expect(error).toMatchObject({ name: 'RosterStepError', step: 'list', subject: NEWCOMER });
 		expect(await getMemberRow(harness.db, group.id, NEWCOMER)).not.toBeNull();
 		expect(await membershipRecord(NEWCOMER)).not.toBeNull();
 		expect(memberListCalls()).toEqual([]);
@@ -753,7 +753,12 @@ describe('a join request holds a write-only entry on the members space list', ()
 
 		const error = await joinGroup(ctx(NEWCOMER), null).catch((e: unknown) => e);
 
-		expect(error).toMatchObject({ name: 'RosterListError', subject: NEWCOMER, change: 'request' });
+		expect(error).toMatchObject({
+			name: 'RosterStepError',
+			step: 'list',
+			subject: NEWCOMER,
+			change: 'request'
+		});
 		expect(await requestStatus(NEWCOMER)).toBe('pending');
 		expect(pds.listed(MEMBERS)).not.toContain(NEWCOMER);
 	});

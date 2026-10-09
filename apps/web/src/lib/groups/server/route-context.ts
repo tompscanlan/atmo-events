@@ -12,6 +12,7 @@ import type { CredentialStoreEnv } from './credentials';
 import { getCallerMembership, getGroupByDid } from './repo';
 import { readGroupVisibility } from './spaces';
 
+import { errorText } from './errors';
 /** Every refusal says this, byte for byte, so the causes cannot be told apart. */
 export const GROUP_NOT_FOUND = 'Group not found';
 
@@ -96,7 +97,7 @@ export async function readStanding(
 			...row,
 			permissions: new Set(),
 			onRoster: false,
-			unreadable: e instanceof Error ? e.message : String(e)
+			unreadable: errorText(e)
 		};
 	}
 }

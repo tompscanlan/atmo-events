@@ -50,6 +50,7 @@ import type { GroupVisibility } from './types';
 import { GROUP_PASSWORD_MIN_LENGTH } from './form-fields';
 
 import { pdsWriter } from './server/group-write';
+import { errorText } from './server/errors';
 /** Structural rather than `App.Platform['env']`, so a test can supply only
  *  what a create reads. */
 export interface CreateGroupEnv extends CredentialStoreEnv {
@@ -199,9 +200,9 @@ export async function runCreateGroup(
 	} catch (e) {
 		return {
 			ok: false,
-			error: `Group creation is unavailable on this deployment: the database would not accept the new group (${
-				e instanceof Error ? e.message : String(e)
-			}), so nothing was registered. Please tell an administrator.`
+			error: `Group creation is unavailable on this deployment: the database would not accept the new group (${errorText(
+				e
+			)}), so nothing was registered. Please tell an administrator.`
 		};
 	}
 
@@ -250,9 +251,9 @@ export async function runCreateGroup(
 	} catch (e) {
 		return {
 			ok: false,
-			error: `${minted.handle} was registered, but setting it up failed (${
-				e instanceof Error ? e.message : String(e)
-			}). Keep its recovery key, and tell an administrator before creating it again.`,
+			error: `${minted.handle} was registered, but setting it up failed (${errorText(
+				e
+			)}). Keep its recovery key, and tell an administrator before creating it again.`,
 			registered
 		};
 	}
@@ -389,9 +390,9 @@ async function setUpMintedGroup(
 	} catch (e) {
 		return {
 			ok: false,
-			error: `${minted.handle} was created, but its profile records were not written: ${
-				e instanceof Error ? e.message : String(e)
-			}. Link the group's account from its page, then save its settings to write them, and run "Repair this group" in its settings for the members-space records and member lists this create skipped.${CALENDAR_NOT_REPAIRED}`,
+			error: `${minted.handle} was created, but its profile records were not written: ${errorText(
+				e
+			)}. Link the group's account from its page, then save its settings to write them, and run "Repair this group" in its settings for the members-space records and member lists this create skipped.${CALENDAR_NOT_REPAIRED}`,
 			registered
 		};
 	}
@@ -457,9 +458,9 @@ async function setUpMintedGroup(
 	} catch (e) {
 		return {
 			ok: false,
-			error: `${minted.handle} was created, but not all of its member and calendar records were written: ${
-				e instanceof Error ? e.message : String(e)
-			}. Link the group's account from its page, then "Repair this group" in its settings writes the missing members-space records.${
+			error: `${minted.handle} was created, but not all of its member and calendar records were written: ${errorText(
+				e
+			)}. Link the group's account from its page, then "Repair this group" in its settings writes the missing members-space records.${
 				calendarWritten ? '' : CALENDAR_NOT_REPAIRED
 			}`,
 			registered
@@ -474,9 +475,9 @@ async function setUpMintedGroup(
 	} catch (e) {
 		return {
 			ok: false,
-			error: `${minted.handle} was created, but you were not added to its member lists at its PDS: ${
-				e instanceof Error ? e.message : String(e)
-			}. Link the group's account from its page, then "Repair this group" in its settings adds you.`,
+			error: `${minted.handle} was created, but you were not added to its member lists at its PDS: ${errorText(
+				e
+			)}. Link the group's account from its page, then "Repair this group" in its settings adds you.`,
 			registered
 		};
 	}
