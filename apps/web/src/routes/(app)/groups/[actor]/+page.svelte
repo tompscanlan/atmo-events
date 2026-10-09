@@ -8,8 +8,8 @@
 		repairGroupForm,
 		updateGroupForm
 	} from '$lib/groups/groups.remote';
-	import { groupFormError } from '$lib/groups/form-result';
-	import { resetOnSuccess } from '$lib/groups/form-enhance';
+	import { groupFormError, resetOnSuccess } from '$lib/groups/form-result';
+
 	import PdslsLink from '$lib/groups/components/PdslsLink.svelte';
 	import GroupMonogram from '$lib/groups/components/GroupMonogram.svelte';
 	import PersonLabel from '$lib/groups/components/PersonLabel.svelte';

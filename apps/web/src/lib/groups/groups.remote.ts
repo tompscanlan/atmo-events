@@ -7,21 +7,26 @@
 import { error } from '@sveltejs/kit';
 import { command, form, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
-import { ASSIGNABLE_ROLES, can } from './permissions';
+import { can } from './permissions';
 import type { GroupFormFailure, GroupFormResult } from './form-result';
 import { formError, notAllowed, knownFormError } from './form-error';
-// Not declared here: the Vite plugin rejects non-remote exports from a
-// `*.remote.ts`, so a field that a test needs lives in ./form-fields.ts.
-import { checkboxField, memberActorField, shownVisibilityField } from './form-fields';
+import {
+	askedField,
+	assignableRoleField,
+	didField,
+	eventIntentField,
+	groupSettingsFields,
+	idField,
+	labelField,
+	memberActorField,
+	placementField,
+	rkeyField,
+	rsvpStatusField,
+	shownVisibilityField
+} from './form-fields';
 import { runCreateGroup, type CreateGroupOutcome } from './create-group';
 import { runUpdateGroup } from './update-group';
-import { GROUP_LABEL_PATTERN } from './handle-label';
-import {
-	GROUP_VISIBILITIES,
-	type CallerMembership,
-	type GroupRow,
-	type GroupVisibility
-} from './types';
+import type { CallerMembership, GroupRow, GroupVisibility } from './types';
 import { searchPeopleByHandle } from './server/people-search';
 
 import { groupActorToDid, groupRouteContext } from './server/route-context';
@@ -59,22 +64,9 @@ import {
 } from './server/member-rsvp';
 import { servesClientMetadata } from '$lib/atproto/server/oauth';
 import type { Did } from '@atcute/lexicons';
-import { RSVP_STATUSES } from './ids';
 
 import { errorText } from './server/errors';
-import { EVENT_PLACEMENTS } from './event-placement';
 import { type JoinOutcome } from './server/db/roster';
-/** The group key every form posts, and the subject DID on the roster forms.
- *  `context` also accepts a full handle, but the app's forms post the DID. */
-const didField = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,300}$/, 'Invalid DID'));
-/** Shape only. `runCreateGroup` applies the stricter rules for a new label
- *  (`labelMintRefusal`). */
-const labelField = v.pipe(v.string(), v.regex(GROUP_LABEL_PATTERN, 'Invalid group handle label'));
-const idField = v.pipe(v.string(), v.minLength(1), v.maxLength(64));
-/** No `owner`: a SQL trigger pins it to `groups.owner_did`. A picklist, not a
- *  `v.check`, so the output type is the role union the repo calls take. */
-const assignableRoleField = v.picklist(ASSIGNABLE_ROLES, 'Unknown role');
-
 /** What every handler resolves before it acts: the bindings, the group, and the
  *  caller's standing in it. */
 interface GroupRequestContext {
@@ -109,13 +101,9 @@ async function context(actor: string): Promise<GroupRequestContext> {
 
 export const createGroupForm = form(
 	v.object({
-		name: v.pipe(v.string(), v.trim(), v.minLength(2), v.maxLength(120)),
+		...groupSettingsFields,
 		label: labelField,
-		description: v.optional(v.pipe(v.string(), v.maxLength(4000))),
-		visibility: v.picklist(GROUP_VISIBILITIES),
-		requireApproval: checkboxField,
 		locationName: v.optional(v.pipe(v.string(), v.maxLength(200))),
-		rules: v.optional(v.pipe(v.string(), v.maxLength(8000))),
 		/** The group account's login. Length and shape are checked by
 		 *  `runCreateGroup`, so its refusal reads as a sentence. */
 		email: v.pipe(v.string(), v.trim(), v.maxLength(254)),
@@ -134,13 +122,9 @@ export const createGroupForm = form(
 export const updateGroupForm = form(
 	v.object({
 		groupDid: didField,
-		name: v.pipe(v.string(), v.trim(), v.minLength(2), v.maxLength(120)),
-		description: v.optional(v.pipe(v.string(), v.maxLength(4000))),
-		visibility: v.picklist(GROUP_VISIBILITIES),
+		...groupSettingsFields,
 		/** What the form showed, so the save can tell a change from a stale default. */
-		shownVisibility: shownVisibilityField,
-		requireApproval: checkboxField,
-		rules: v.optional(v.pipe(v.string(), v.maxLength(8000)))
+		shownVisibility: shownVisibilityField
 	}),
 	async (data): Promise<GroupFormResult> => {
 		const { db, env, group, membership, callerDid } = await context(data.groupDid);
@@ -402,10 +386,6 @@ export const changeMemberRoleForm = form(
 	}
 );
 
-const rkeyField = v.pipe(v.string(), v.regex(/^[a-zA-Z0-9._:~-]{1,512}$/, 'Invalid record key'));
-const eventIntentField = v.picklist(['create', 'update'] as const);
-const placementField = v.picklist(EVENT_PLACEMENTS);
-
 // The group's side of atmo's event editor (./editor-adapter.ts). The editor
 // builds the record; these write it as the group. The writer checks the
 // permission from a fresh membership read (CREATE_EVENT for a create,
@@ -503,10 +483,6 @@ export const putGroupEventImage = command(
 // handler does, and the roster gate comes first in the module. A session that
 // lacks the grant gets the re-authorize URL back, which the page follows, with
 // a marker the page carries back as `asked`. (Spec: FR-113, FR-114, FR-120.)
-const rsvpStatusField = v.picklist(RSVP_STATUSES);
-/** Shape only: the module reads a marker it did not make as none. */
-const askedField = v.nullable(v.pipe(v.string(), v.maxLength(2100)));
-
 /** A stamp of the caller's session: when its token expires, in milliseconds,
  *  read without a refresh, or 0 when there is no session or it can't be read.
  *  A new sign-in issues a new token, which is how an asked marker tells a

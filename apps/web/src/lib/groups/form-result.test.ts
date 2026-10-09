@@ -6,8 +6,8 @@
 // The fake stands in for a remote form: `enhance` hands back the callback the
 // page would attach, and `submit` sets `result` the way the real one does.
 import { describe, it, expect, vi } from 'vitest';
-import { resetOnSuccess } from './form-enhance';
 
+import { resetOnSuccess } from './form-result';
 type Result = { ok: true } | { ok: false; error: string } | undefined;
 
 function fakeRemoteForm(next: Result) {

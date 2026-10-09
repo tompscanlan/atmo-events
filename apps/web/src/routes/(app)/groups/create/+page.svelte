@@ -3,9 +3,8 @@
 	import { createGroupForm } from '$lib/groups/groups.remote';
 	import { resolve } from '$app/paths';
 	import { MINTABLE_LABEL_INPUT_PATTERN, labelFromGroupName } from '$lib/groups/handle-label';
-	import { groupFormError } from '$lib/groups/form-result';
+	import { groupFormError, resetOnSuccess } from '$lib/groups/form-result';
 	import { GROUP_PASSWORD_MIN_LENGTH } from '$lib/groups/form-fields';
-	import { resetOnSuccess } from '$lib/groups/form-enhance';
 
 	let { data } = $props();
 
