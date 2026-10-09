@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { pdslsUrl } from './pdsls';
-import { spaceRecordUri } from './server/about-read';
 
+import { spaceRecordUri } from './ids';
 const GROUP = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const SPACE = `at://${GROUP}/space/group.opensocial.members/self`;
 

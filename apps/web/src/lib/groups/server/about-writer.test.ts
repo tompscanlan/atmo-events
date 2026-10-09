@@ -11,8 +11,8 @@ import type { GroupRuleRecord } from './about-read';
 import { GroupPermissionError, type GroupRepoWrite, type GroupRepoWriter } from './event-writer';
 import { ABOUT_SPACE_TYPE, type GroupRow } from '../types';
 import { GROUP_PROFILE_COLLECTION, GROUP_RULE_COLLECTION } from '../about-record';
-import { spaceUri } from './spaces';
 
+import { spaceUri } from '../ids';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';

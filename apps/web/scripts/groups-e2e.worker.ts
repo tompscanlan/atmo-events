@@ -103,10 +103,9 @@ import { acceptanceGrant } from '../src/lib/groups/server/member-grants';
 import {
 	deleteMembersOnlyRsvp,
 	putMembersOnlyRsvp,
-	readOwnMembersOnlyRsvp,
-	type MembersOnlyRsvpStatus
+	readOwnMembersOnlyRsvp
 } from '../src/lib/groups/server/member-rsvp';
-import { groupSpaceUris } from '../src/lib/groups/server/space-uris';
+
 import {
 	didSpaceHosts,
 	groupAcceptanceReader,
@@ -126,6 +125,7 @@ import {
 } from '../src/lib/groups/members-record';
 import { scopes } from '../src/lib/atproto/settings';
 
+import { groupSpaceUris, type RsvpStatus } from '../src/lib/groups/ids';
 interface Env {
 	DB: D1Database;
 	/** Where the app looks for the group's linked session, as in production. */
@@ -654,7 +654,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		if (args.action === 'put') {
 			result = await putMembersOnlyRsvp({
 				...target,
-				status: args.status as MembersOnlyRsvpStatus,
+				status: args.status as RsvpStatus,
 				cid: typeof args.cid === 'string' ? args.cid : null,
 				groupReader: async () => reader
 			});

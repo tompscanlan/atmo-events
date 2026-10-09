@@ -35,9 +35,10 @@ import {
 	groupAcceptanceRecord
 } from './members-record';
 import { DEFAULT_ROLE_PERMISSIONS, GROUP_ROLES } from './permissions';
-import { spaceUri } from './server/spaces';
+
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from './types';
 
+import { spaceUri } from './ids';
 const REFERENCE_DIR = new URL('../../../lexicons/reference/group/opensocial/', import.meta.url);
 
 interface LexSchema {

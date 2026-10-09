@@ -62,6 +62,7 @@ import {
 import { createOAuthClient, servesClientMetadata } from '$lib/atproto/server/oauth';
 import { scopes } from '$lib/atproto/settings';
 import type { Did } from '@atcute/lexicons';
+import { RSVP_STATUSES } from './ids';
 
 /** The group key every form posts, and the subject DID on the roster forms.
  *  `context` also accepts a full handle, but the app's forms post the DID. */
@@ -507,7 +508,7 @@ export const putGroupEventImage = command(
 // handler does, and the roster gate comes first in the module. A session that
 // lacks the grant gets the re-authorize URL back, which the page follows, with
 // a marker the page carries back as `asked`. (Spec: FR-113, FR-114, FR-120.)
-const rsvpStatusField = v.picklist(['going', 'interested', 'notgoing'] as const);
+const rsvpStatusField = v.picklist(RSVP_STATUSES);
 /** Shape only: the module reads a marker it did not make as none. */
 const askedField = v.nullable(v.pipe(v.string(), v.maxLength(2100)));
 

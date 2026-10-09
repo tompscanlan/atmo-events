@@ -63,10 +63,11 @@ import {
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import { GROUP_MEMBERSHIP_COLLECTION } from '../members-record';
 import { DEFAULT_ROLE_PERMISSIONS, type GroupRoleName } from '../permissions';
-import { pdsProvisioner, provisionGroupSpaces, spaceUri } from './spaces';
+import { pdsProvisioner, provisionGroupSpaces } from './spaces';
 import { acceptanceGrant } from './member-grants';
 import type { MemberSession } from './acceptance';
 
+import { spaceUri } from '../ids';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';

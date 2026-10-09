@@ -56,8 +56,8 @@ import {
 } from '../members-record';
 import { DEFAULT_ROLE_PERMISSIONS, type GroupPermission, type GroupRoleName } from '../permissions';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
-import { spaceUri } from './spaces';
 
+import { spaceUri } from '../ids';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';

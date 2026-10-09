@@ -46,8 +46,8 @@ import { groupEditorPage } from '$lib/groups/server/editor-page';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
 import { groupRouteContext } from '$lib/groups/server/route-context';
-import { groupSpaceUris } from '$lib/groups/server/spaces';
 
+import { groupSpaceUris } from '$lib/groups/ids';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';

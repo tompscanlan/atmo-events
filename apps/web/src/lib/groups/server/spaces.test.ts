@@ -17,13 +17,12 @@ import { pdsWriter } from './event-writer';
 import {
 	GroupSpaceError,
 	SpacesUnsupportedError,
-	groupSpaceUris,
 	pdsProvisioner,
 	provisionGroupSpaces,
-	spaceUri,
 	type SpaceProvision
 } from './spaces';
 
+import { groupSpaceUris, spaceUri } from '../ids';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const CRED = linkedCredential(GROUP_DID, 'https://pds.example.com');
 

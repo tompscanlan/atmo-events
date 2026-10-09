@@ -24,8 +24,8 @@ import {
 	requestJoin,
 	rolePermissions
 } from './repo';
-import { spaceUri } from './spaces';
 
+import { spaceUri } from '../ids';
 const OWNER = 'did:plc:owner';
 const ALICE = 'did:plc:alice';
 const BOB = 'did:plc:bob';

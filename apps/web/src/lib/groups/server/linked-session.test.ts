@@ -26,11 +26,12 @@ vi.mock('$lib/atproto/server/oauth', () => ({
 }));
 
 import { resolveGroupCredential } from './credentials';
-import { GROUP_EVENT_COLLECTION, pdsWriter } from './event-writer';
+import { pdsWriter } from './event-writer';
 import { GROUP_SESSION_PREFIX, groupSessionScopes, hasLinkedSession } from './linked-session';
 import { groupClient } from './session';
 import { GROUP_DECLARATION_COLLECTION } from '../declaration-record';
 
+import { GROUP_EVENT_COLLECTION } from '../ids';
 const GROUP = 'did:plc:linkedgroupaaaaaaaaaaaaa';
 const OTHER = 'did:plc:someoneelseaaaaaaaaaaaaa';
 

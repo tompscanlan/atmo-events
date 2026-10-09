@@ -19,6 +19,7 @@ import {
 	parseGroupAccess,
 	type GroupAccessFields
 } from '../members-record';
+import { spaceRecordUri, splitRecordUri } from '../ids';
 import type { GroupRow } from '../types';
 import type { CredentialStoreEnv } from './credentials';
 import { resolveGroupCredential } from './credentials';
@@ -66,26 +67,6 @@ export interface GroupSpaceReader {
 const LIST_RECORDS_LIMIT = 100;
 
 const GET_SPACE = '/xrpc/com.atproto.simplespace.getSpace';
-
-/** A space record URI is `at://<owner>/space/<type>/<skey>/<repo>/<collection>/<rkey>`.
- *  Collection and rkey are the last two segments in both it and the plain form. */
-export function splitRecordUri(uri: string): { collection: string; rkey: string } {
-	const segments = uri.split('/');
-	return {
-		collection: segments[segments.length - 2] ?? '',
-		rkey: segments[segments.length - 1] ?? ''
-	};
-}
-
-/** A space record's URI, in the form `getRecord` returns. A rule citation uses it. */
-export function spaceRecordUri(
-	space: string,
-	repo: string,
-	collection: string,
-	rkey: string
-): string {
-	return `${space}/${repo}/${collection}/${rkey}`;
-}
 
 function asRecord(value: unknown): Record<string, unknown> {
 	return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};

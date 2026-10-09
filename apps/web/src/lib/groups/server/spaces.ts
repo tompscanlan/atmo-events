@@ -22,15 +22,14 @@ import type { GroupSpaceReader } from './about-read';
 import { resolveGroupCredential, type GroupCredential } from './credentials';
 import { GroupCredentialError, requireGroupPermission, type GroupGateInput } from './event-writer';
 import { groupClient } from './session';
+
 import {
 	POLICY_MEMBER_LIST,
 	POLICY_PUBLIC,
 	SPACE_SKEY,
 	spaceUri,
 	type GroupSpaceUris
-} from './space-uris';
-
-export { groupSpaceUris, spaceUri, type GroupSpaceUris } from './space-uris';
+} from '../ids';
 
 const APP_ACCESS_OPEN = 'com.atproto.simplespace.defs#open';
 

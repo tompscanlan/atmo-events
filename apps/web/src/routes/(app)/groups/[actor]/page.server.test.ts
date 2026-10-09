@@ -32,9 +32,10 @@ import {
 	groupRouteContext
 } from '$lib/groups/server/route-context';
 import { linkGroups, unlinkAllGroups } from '$lib/groups/server/__fixtures__/linked-group';
-import { groupSpaceUris } from '$lib/groups/server/spaces';
+
 import type { CallerMembership } from '$lib/groups/types';
 
+import { groupSpaceUris } from '$lib/groups/ids';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';

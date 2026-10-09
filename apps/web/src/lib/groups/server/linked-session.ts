@@ -12,8 +12,8 @@ import { scope, type OAuthClient, type OAuthSession } from '@atcute/oauth-node-c
 import type { Did } from '@atcute/lexicons';
 import { createOAuthClientFor } from '$lib/atproto/server/oauth';
 import { GROUP_DECLARATION_COLLECTION } from '../declaration-record';
-import { GROUP_EVENT_COLLECTION } from './event-writer';
 
+import { GROUP_EVENT_COLLECTION } from '../ids';
 export const GROUP_SESSION_PREFIX = 'group:session:';
 
 /** What the group's session may do, and nothing else: its public-repo records

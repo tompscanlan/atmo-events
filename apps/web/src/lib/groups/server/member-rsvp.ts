@@ -38,10 +38,15 @@ import type { GroupSpaceReader } from './about-read';
 import type { MemberSession } from './acceptance';
 import { readMembersOnlyEvent } from './calendar-read';
 import { holdsRsvpGrant } from './member-grants';
-import { groupSpaceUris } from './space-uris';
 
-const RSVP_COLLECTION = 'community.lexicon.calendar.rsvp';
-const EVENT_COLLECTION = 'community.lexicon.calendar.event';
+import {
+	GROUP_RSVP_COLLECTION,
+	RSVP_STATUSES,
+	groupSpaceUris,
+	membersOnlyEventUri,
+	spaceRecordUri,
+	type RsvpStatus
+} from '../ids';
 
 /** Shown once a re-authorization that asked for the grant came back without it. */
 export const RSVP_NO_SPACES =
@@ -55,9 +60,6 @@ export const RSVP_NO_EVENT = "This event isn't there anymore, so nothing was sav
 /** Shown when the page showed another version of the event than the one there now. */
 export const RSVP_EVENT_CHANGED =
 	'This event changed since you opened it. Reload the page to see the latest, then RSVP again.';
-
-export type MembersOnlyRsvpStatus = 'going' | 'interested' | 'notgoing';
-const STATUSES: readonly MembersOnlyRsvpStatus[] = ['going', 'interested', 'notgoing'];
 
 type RsvpGroup = Pick<GroupRow, 'group_did'>;
 
@@ -86,7 +88,7 @@ export interface MembersOnlyRsvpTarget {
 
 /** What an RSVP needs: a cancel's target, the answer, and what the event is. */
 export interface MembersOnlyRsvpInput extends MembersOnlyRsvpTarget {
-	status: MembersOnlyRsvpStatus;
+	status: RsvpStatus;
 	/** The event's cid as the page showed it, or null. Compared with the event's
 	 *  current cid, never written. */
 	cid: string | null;
@@ -111,14 +113,14 @@ export type MembersOnlyRsvpCancel = { ok: true } | MembersOnlyRsvpFailure;
 
 /** The member's RSVP, as the event page shows it. */
 export interface OwnMembersOnlyRsvp {
-	status: MembersOnlyRsvpStatus;
+	status: RsvpStatus;
 	rkey: string;
 }
 
 /** Where an RSVP to the event at `rkey` lives, and the event it names. */
 function rsvpPlace(group: RsvpGroup, rkey: string) {
 	const space = groupSpaceUris(group.group_did).calendarSpaceUri;
-	return { space, eventUri: `${space}/${group.group_did}/${EVENT_COLLECTION}/${rkey}` };
+	return { space, eventUri: membersOnlyEventUri(group.group_did, rkey) };
 }
 
 type Sent =
@@ -256,11 +258,11 @@ export async function putMembersOnlyRsvp(input: MembersOnlyRsvpInput): Promise<M
 			body: {
 				space,
 				repo: member.did,
-				collection: RSVP_COLLECTION,
+				collection: GROUP_RSVP_COLLECTION,
 				rkey,
 				record: {
-					$type: RSVP_COLLECTION,
-					status: `${RSVP_COLLECTION}#${input.status}`,
+					$type: GROUP_RSVP_COLLECTION,
+					status: `${GROUP_RSVP_COLLECTION}#${input.status}`,
 					subject: { uri: eventUri, cid: event.cid },
 					createdAt: new Date().toISOString()
 				}
@@ -271,7 +273,7 @@ export async function putMembersOnlyRsvp(input: MembersOnlyRsvpInput): Promise<M
 	}
 	if (!sent.ok) return refused(input, 'write', answer(sent));
 	const uri = typeof sent.data.uri === 'string' ? sent.data.uri : null;
-	return { ok: true, uri: uri ?? `${space}/${member.did}/${RSVP_COLLECTION}/${rkey}` };
+	return { ok: true, uri: uri ?? spaceRecordUri(space, member.did, GROUP_RSVP_COLLECTION, rkey) };
 }
 
 /** Deletes the member's RSVP from the calendar space: one deleteRecord at the
@@ -289,7 +291,7 @@ export async function deleteMembersOnlyRsvp(
 	let sent: Sent;
 	try {
 		sent = await send(member, 'com.atproto.space.deleteRecord', {
-			body: { space, repo: member.did, collection: RSVP_COLLECTION, rkey }
+			body: { space, repo: member.did, collection: GROUP_RSVP_COLLECTION, rkey }
 		});
 	} catch (e) {
 		return refused(target, 'delete', e);
@@ -316,7 +318,7 @@ export async function readOwnMembersOnlyRsvp(
 	let sent: Sent;
 	try {
 		sent = await send(member, 'com.atproto.space.getRecord', {
-			query: { space, repo: member.did, collection: RSVP_COLLECTION, rkey }
+			query: { space, repo: member.did, collection: GROUP_RSVP_COLLECTION, rkey }
 		});
 	} catch (e) {
 		console.error(
@@ -334,6 +336,6 @@ export async function readOwnMembersOnlyRsvp(
 	}
 	const value = sent.data.value as { status?: unknown; subject?: { uri?: unknown } } | undefined;
 	if (value?.subject?.uri !== eventUri) return null;
-	const status = STATUSES.find((s) => value.status === `${RSVP_COLLECTION}#${s}`);
+	const status = RSVP_STATUSES.find((s) => value.status === `${GROUP_RSVP_COLLECTION}#${s}`);
 	return status ? { status, rkey } : null;
 }

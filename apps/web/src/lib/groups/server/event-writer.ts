@@ -25,9 +25,8 @@ import {
 import { getCallerMembership } from './repo';
 import { groupClient } from './session';
 import { contrailNotifier, type GroupEventNotifier } from './events-index';
-import { POLICY_MEMBER_LIST, groupSpaceUris } from './space-uris';
 
-export const GROUP_EVENT_COLLECTION = 'community.lexicon.calendar.event';
+import { GROUP_EVENT_COLLECTION, POLICY_MEMBER_LIST, groupSpaceUris } from '../ids';
 
 /** The caller's role does not grant the permission this write needs. */
 export class GroupPermissionError extends Error {

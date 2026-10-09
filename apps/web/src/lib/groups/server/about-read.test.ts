@@ -18,7 +18,6 @@ import {
 	pdsSpaceReader,
 	readGroupAbout,
 	rebuildGroupCache,
-	splitRecordUri,
 	type GroupSpaceReader
 } from './about-read';
 import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
@@ -29,8 +28,8 @@ import {
 	groupRuleRecord
 } from '../about-record';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
-import { spaceUri } from './spaces';
 
+import { splitRecordUri, spaceUri } from '../ids';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ABOUT = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self');

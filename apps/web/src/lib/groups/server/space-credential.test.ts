@@ -37,8 +37,8 @@ import {
 import { rosterFromRecords, type GroupMembers } from './members-read';
 import { GROUP_ACCEPTANCE_COLLECTION, GROUP_MEMBERSHIP_COLLECTION } from '../members-record';
 import { MEMBERS_SPACE_TYPE } from '../types';
-import { spaceUri } from './spaces';
 
+import { spaceUri } from '../ids';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const BOB = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const CAROL = 'did:plc:6cz6dldz42itymdbte47ewcv';

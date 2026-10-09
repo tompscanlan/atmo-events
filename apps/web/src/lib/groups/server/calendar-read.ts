@@ -17,10 +17,9 @@ import { isRecordKey } from '@atcute/lexicons/syntax';
 import type { FlatEventRecord } from '$lib/contrail';
 import { canSeeMembers } from '../access';
 import type { CallerMembership, GroupEventRecord, GroupRow } from '../types';
-import { spaceRecordUri, type GroupSpaceReader, type GroupSpaceRecord } from './about-read';
-import { GROUP_EVENT_COLLECTION } from './event-writer';
-import { groupSpaceUris } from './spaces';
+import { type GroupSpaceReader, type GroupSpaceRecord } from './about-read';
 
+import { GROUP_EVENT_COLLECTION, groupSpaceUris, membersOnlyEventUri } from '../ids';
 /** A member's notice when the group's session is gone: nothing can read the
  *  space until an organizer links the group's account again. (Spec: FR-121.) */
 export const MEMBERS_ONLY_UNLINKED =
@@ -197,7 +196,7 @@ export async function readMembersOnlyEvent(
 	return {
 		status: 'found',
 		event: {
-			uri: spaceRecordUri(space, group.group_did, GROUP_EVENT_COLLECTION, rkey),
+			uri: membersOnlyEventUri(group.group_did, rkey),
 			cid: found.cid,
 			rkey,
 			value: found.value,

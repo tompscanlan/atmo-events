@@ -33,13 +33,16 @@ import { atProtoLoginModalState } from '$lib/components/LoginModal.svelte';
 import type { EditorAdapter } from '$lib/components/editor/adapter';
 import { reauthorize } from '$lib/atproto/auth.svelte';
 import type { MembersOnlyRsvpCancel, MembersOnlyRsvpPut } from './server/member-rsvp';
+import {
+	GROUP_EVENT_COLLECTION,
+	GROUP_RSVP_COLLECTION,
+	RSVP_STATUSES,
+	spaceRecordUri,
+	type RsvpStatus
+} from './ids';
 
 const WRITES_NOTHING = 'a members-only event page writes nothing';
 const NOT_THIS_RSVP = 'a members-only event page writes only an RSVP to its own event';
-const RSVP_COLLECTION = 'community.lexicon.calendar.rsvp';
-const EVENT_COLLECTION = 'community.lexicon.calendar.event';
-const STATUSES = ['going', 'interested', 'notgoing'] as const;
-type RsvpStatus = (typeof STATUSES)[number];
 
 /** The query parameter that carries the server's marker through a
  *  re-authorization that asked for the RSVP grant, and back. */
@@ -80,10 +83,10 @@ export function createMembersOnlyEventAdapter(page: MembersOnlyEventPage): Edito
 	let asked = page.asked;
 	/** The event's space-form URI, which an RSVP to it names. (Spec: FR-120.) */
 	const eventUri =
-		calendarSpaceUri && `${calendarSpaceUri}/${groupDid}/${EVENT_COLLECTION}/${rkey}`;
+		calendarSpaceUri && spaceRecordUri(calendarSpaceUri, groupDid, GROUP_EVENT_COLLECTION, rkey);
 	/** Whether a space write is to this event's calendar space, in the RSVP collection. */
 	const isRsvpHere = (spaceUri: string, collection: string) =>
-		!!calendarSpaceUri && spaceUri === calendarSpaceUri && collection === RSVP_COLLECTION;
+		!!calendarSpaceUri && spaceUri === calendarSpaceUri && collection === GROUP_RSVP_COLLECTION;
 
 	const refuse = async (): Promise<never> => {
 		throw new Error(WRITES_NOTHING);
@@ -94,7 +97,7 @@ export function createMembersOnlyEventAdapter(page: MembersOnlyEventPage): Edito
 	function statusOf(record: Record<string, unknown>): RsvpStatus | null {
 		const subject = record.subject as { uri?: unknown } | undefined;
 		if (!eventUri || subject?.uri !== eventUri) return null;
-		return STATUSES.find((s) => record.status === `${RSVP_COLLECTION}#${s}`) ?? null;
+		return RSVP_STATUSES.find((s) => record.status === `${GROUP_RSVP_COLLECTION}#${s}`) ?? null;
 	}
 
 	/** The cid an RSVP record names, which is the version of the event the page

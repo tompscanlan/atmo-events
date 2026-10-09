@@ -19,9 +19,8 @@
 // missing from the copy a PDS holds: sign-in then retries without those grants,
 // and asks for them again at the next sign-in.
 import { OAuthResponseError } from '@atcute/oauth-node-client';
-
-const ACCEPTANCE_COLLECTION = 'group.opensocial.acceptance';
-const RSVP_COLLECTION = 'community.lexicon.calendar.rsvp';
+import { GROUP_RSVP_COLLECTION } from '../ids';
+import { GROUP_ACCEPTANCE_COLLECTION } from '../members-record';
 
 /** How long a PDS may keep serving client metadata it fetched earlier. */
 export const METADATA_CACHE_MS = 10 * 60 * 1000;
@@ -31,7 +30,7 @@ export const METADATA_CACHE_MS = 10 * 60 * 1000;
  *  to a members-only event there, and nothing else. One token per group, so a
  *  session never holds half of it. */
 export function acceptanceGrant(groupDid: string): string {
-	return `space:*?authority=${groupDid}&collection=${ACCEPTANCE_COLLECTION}&collection=${RSVP_COLLECTION}&action=read_self&action=create&action=update&action=delete`;
+	return `space:*?authority=${groupDid}&collection=${GROUP_ACCEPTANCE_COLLECTION}&collection=${GROUP_RSVP_COLLECTION}&action=read_self&action=create&action=update&action=delete`;
 }
 
 /** Whether a granted scope lets its holder `action` their acceptance in
@@ -49,7 +48,7 @@ export function holdsAcceptanceGrant(
 		const params = new URLSearchParams(token.slice('space:*?'.length));
 		return (
 			params.get('authority') === groupDid &&
-			params.getAll('collection').includes(ACCEPTANCE_COLLECTION) &&
+			params.getAll('collection').includes(GROUP_ACCEPTANCE_COLLECTION) &&
 			params.getAll('action').includes(action)
 		);
 	});
@@ -86,7 +85,7 @@ export function holdsRsvpGrant(
 	const writes = (action: string) =>
 		grants.some(
 			(params) =>
-				params.getAll('collection').includes(RSVP_COLLECTION) &&
+				params.getAll('collection').includes(GROUP_RSVP_COLLECTION) &&
 				params.getAll('action').includes(action)
 		);
 	return need === 'put' ? writes('create') && writes('update') : writes('delete');

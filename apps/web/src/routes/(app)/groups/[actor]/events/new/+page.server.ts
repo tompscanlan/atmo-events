@@ -1,8 +1,9 @@
 import { now as tidNow } from '@atcute/tid';
 import { groupEditorPage } from '$lib/groups/server/editor-page';
-import { groupSpaceUris } from '$lib/groups/server/space-uris';
+
 import type { PageServerLoad } from './$types';
 
+import { groupSpaceUris } from '$lib/groups/ids';
 /** atmo's event editor, publishing a new event as the group. */
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const { groupDid, groupName, handle } = await groupEditorPage(

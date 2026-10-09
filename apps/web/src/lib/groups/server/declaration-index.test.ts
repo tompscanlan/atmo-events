@@ -26,8 +26,8 @@ import { reconcileGroupDeclaration, removeGroupDeclaration } from './declaration
 import { registerGroupIdentity } from './events-index';
 import type { GroupRepoWriter } from './event-writer';
 import { createGroup } from './repo';
-import { spaceUri } from './spaces';
 
+import { spaceUri } from '../ids';
 const OWNER = 'did:plc:owner';
 const PDS = 'https://pds.example.test';
 

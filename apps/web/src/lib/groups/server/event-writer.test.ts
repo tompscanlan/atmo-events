@@ -16,7 +16,6 @@ import { stubPds, type StubPdsOptions } from './__fixtures__/stub-pds';
 import { addMember, createGroup, recordGroupSpaces } from './repo';
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
 import {
-	GROUP_EVENT_COLLECTION,
 	GroupCredentialError,
 	GroupPermissionError,
 	GroupRecordError,
@@ -35,6 +34,7 @@ import {
 import type { GroupEventNotifier } from './events-index';
 import type { GroupRow } from '../types';
 
+import { GROUP_EVENT_COLLECTION } from '../ids';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 /** The admin in every case below: a non-owner who was promoted, exactly the

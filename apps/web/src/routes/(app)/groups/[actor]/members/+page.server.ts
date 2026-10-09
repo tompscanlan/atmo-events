@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import { canSeeMembers } from '$lib/groups/access';
 import { GROUP_MEMBERSHIP_COLLECTION, isMembershipKey } from '$lib/groups/members-record';
 import { ASSIGNABLE_ROLES, can } from '$lib/groups/permissions';
-import { groupSpaceReader, readGroupAbout, spaceRecordUri } from '$lib/groups/server/about-read';
+import { groupSpaceReader, readGroupAbout } from '$lib/groups/server/about-read';
 import {
 	NO_MEMBER_RECORDS,
 	hasMemberRecords,
@@ -18,6 +18,7 @@ import { listJoinRequests, listMembers, rolePermissions } from '$lib/groups/serv
 import type { GroupRow } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
 
+import { spaceRecordUri } from '$lib/groups/ids';
 /** Whether each member wrote their acceptance, read by DID with the group's space
  *  credential. Null when it cannot be read: the group has no linked session, or
  *  no credential could be had. The page then shows no state rather than a guess,

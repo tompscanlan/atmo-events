@@ -40,8 +40,8 @@ import {
 } from './members-read';
 import { getGroupByDid, restoreGroup } from './repo';
 import { groupClient } from './session';
-import { groupSpaceUris } from './spaces';
 
+import { groupSpaceUris } from '../ids';
 /** A rebuild that stopped before writing anything. `reason` is a stable tag,
  *  so a command can report it without matching the message. */
 export class GroupRebuildRefused extends Error {

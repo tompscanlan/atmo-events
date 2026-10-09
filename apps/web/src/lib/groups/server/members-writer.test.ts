@@ -38,8 +38,8 @@ import {
 	GROUP_SPACE_COLLECTION
 } from '../members-record';
 import type { GroupSpaceReader } from './about-read';
-import { spaceUri } from './spaces';
 
+import { spaceUri } from '../ids';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';

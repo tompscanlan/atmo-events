@@ -21,8 +21,8 @@ import { GroupPermissionError, type GroupRepoWrite, type GroupRepoWriter } from 
 import { GroupRecordError } from './event-writer';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import { GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY } from '../declaration-record';
-import { spaceUri } from './spaces';
 
+import { spaceUri } from '../ids';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:6cz6dldz42itymdbte47ewcv';

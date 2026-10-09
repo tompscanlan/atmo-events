@@ -24,8 +24,8 @@ import { GROUP_ACCEPTANCE_COLLECTION, GROUP_ACCEPTANCE_RKEY } from '../members-r
 import type { GroupRow } from '../types';
 import { resolveGroupCredential, type CredentialStoreEnv } from './credentials';
 import { groupClient } from './session';
-import { splitRecordUri } from './about-read';
 
+import { splitRecordUri } from '../ids';
 const SIGNATURE_LABEL = 'atproto-space';
 
 /** The key a credential is bound to. `keyId` is its P-256 did:key, which the host

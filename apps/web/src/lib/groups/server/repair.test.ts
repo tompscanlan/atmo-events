@@ -63,8 +63,8 @@ import {
 	GROUP_ROLE_COLLECTION,
 	GROUP_SPACE_COLLECTION
 } from '../members-record';
-import { spaceUri } from './spaces';
 
+import { spaceUri } from '../ids';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:6cz6dldz42itymdbte47ewcv';

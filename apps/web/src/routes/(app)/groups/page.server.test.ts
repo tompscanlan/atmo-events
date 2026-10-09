@@ -29,9 +29,10 @@ import { listDeclaredGroups } from '$lib/groups/server/declaration-index';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { membersSpaceReader } from '$lib/groups/server/__fixtures__/members-space';
 import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
-import { spaceUri } from '$lib/groups/server/spaces';
+
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from '$lib/groups/types';
 
+import { spaceUri } from '$lib/groups/ids';
 const OWNER = 'did:plc:owner';
 const ALICE = 'did:plc:alice';
 

@@ -27,9 +27,10 @@ import {
 import { listGroupEvents } from '$lib/groups/server/events-index';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { addMember, createGroup, getGroupByDid, recordGroupSpaces } from '$lib/groups/server/repo';
-import { groupSpaceUris } from '$lib/groups/server/spaces';
+
 import type { CallerMembership, GroupEventRecord, GroupRow } from '$lib/groups/types';
 
+import { groupSpaceUris } from '$lib/groups/ids';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';
