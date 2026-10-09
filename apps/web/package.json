@@ -16,6 +16,7 @@
 		"meili:reindex:remote": "npx tsx src/lib/search/server/reindex-cli.ts --remote",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"check:e2e": "tsc -p scripts/tsconfig.json && node scripts/groups-e2e.check.mjs",
 		"test": "vitest run",
 		"format": "prettier --write .",
 		"lint": "prettier --check . && eslint .",

@@ -109,10 +109,9 @@ import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
-import { build } from 'vite';
+import { WEB_DIR, bundleWorker } from './groups-e2e.build.mjs';
 import {
 	createLedger,
 	fixtureCheck,
@@ -122,9 +121,6 @@ import {
 	outboundHandler,
 	settingRefusals
 } from './groups-e2e.network.mjs';
-
-const WEB_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const WORKER_ENTRY = join(WEB_DIR, 'scripts/groups-e2e.worker.ts');
 
 /** Devnet names this run resolves to this machine, filled before any login. */
 const localHosts = new Set();
@@ -322,44 +318,11 @@ async function must(op, args = {}) {
 	return body.value;
 }
 
-/** Bundles the Worker with Vite, like the app's server build, so the modules
- *  compile the way they ship and the `?raw` migration import in schema.ts works. */
+/** Bundles the Worker (./groups-e2e.build.mjs) and starts it in Miniflare. */
 async function startWorker(stateDir, password, adminPassword) {
 	const started = Date.now();
 	const outDir = join(stateDir, 'bundle');
-	await build({
-		configFile: false,
-		root: WEB_DIR,
-		logLevel: 'error',
-		ssr: { target: 'webworker', noExternal: true },
-		resolve: {
-			alias: [
-				{
-					find: '$app/environment',
-					replacement: join(WEB_DIR, 'scripts/groups-e2e.app-environment.js')
-				},
-				// Exactly this module: the stand-in for the group's linked session.
-				{
-					find: /^\$lib\/atproto\/server\/oauth$/,
-					replacement: join(WEB_DIR, 'scripts/groups-e2e.oauth.ts')
-				},
-				// Devnet's PLC directory, the only one asked.
-				{
-					find: /^@atcute\/identity-resolver$/,
-					replacement: join(WEB_DIR, 'scripts/groups-e2e.identity-resolver.ts')
-				}
-			]
-		},
-		define: { __E2E_PLC_URL__: JSON.stringify(PLC_URL) },
-		build: {
-			ssr: WORKER_ENTRY,
-			outDir,
-			emptyOutDir: true,
-			minify: false,
-			target: 'esnext',
-			rollupOptions: { output: { entryFileNames: 'worker.js', format: 'es' } }
-		}
-	});
+	await bundleWorker(outDir, PLC_URL);
 
 	// miniflare is not a direct dependency. It is resolved through wrangler, which
 	// ships it, so it is not pinned twice.
