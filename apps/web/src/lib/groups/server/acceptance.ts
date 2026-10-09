@@ -22,6 +22,7 @@ import type { GroupRow } from '../types';
 import { holdsAcceptanceGrant } from './member-grants';
 
 import { xrpc, xrpcError } from './xrpc';
+import { groupsOfMember } from './repo';
 /** The member's session at their own PDS, as an acceptance write needs it. */
 export interface MemberSession {
 	did: string;
@@ -98,18 +99,7 @@ export async function writeMissingAcceptances(
 ): Promise<void> {
 	let groups: AcceptanceGroup[];
 	try {
-		const { results } = await db
-			.prepare(
-				`SELECT group_did, members_space_uri FROM groups
-				 WHERE members_space_uri IS NOT NULL AND id IN (
-				   SELECT group_id FROM memberships WHERE did = ?
-				   UNION
-				   SELECT group_id FROM join_requests WHERE did = ? AND status = 'pending'
-				 )`
-			)
-			.bind(member.did, member.did)
-			.all<AcceptanceGroup>();
-		groups = results;
+		groups = (await groupsOfMember(db, member.did)).filter((g) => g.members_space_uri !== null);
 	} catch (e) {
 		console.warn('[groups] sign-in writes no acceptances:', e);
 		return;

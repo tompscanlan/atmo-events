@@ -570,15 +570,14 @@ export async function applyGroupCache(
 }
 
 /** The roster, owner first, then by join time. Roles come back as names. */
+/** A roster row as `MemberRow`, for the reads below to filter and order. */
+const MEMBER_ROW = `SELECT m.id AS membership_id, m.did, r.name AS role, m.status, m.created_at
+	FROM memberships m JOIN roles r ON r.id = m.role_id`;
+
 export async function listMembers(db: D1Database, groupId: string): Promise<MemberRow[]> {
 	await ensureGroupsSchema(db);
 	const { results } = await db
-		.prepare(
-			`SELECT m.id AS membership_id, m.did, r.name AS role, m.status, m.created_at
-			 FROM memberships m JOIN roles r ON r.id = m.role_id
-			 WHERE m.group_id = ?
-			 ORDER BY r.is_owner DESC, m.created_at ASC`
-		)
+		.prepare(`${MEMBER_ROW} WHERE m.group_id = ? ORDER BY r.is_owner DESC, m.created_at ASC`)
 		.bind(groupId)
 		.all<MemberRow>();
 	return results ?? [];
@@ -593,13 +592,32 @@ export async function getMemberRow(
 ): Promise<MemberRow | null> {
 	await ensureGroupsSchema(db);
 	return db
-		.prepare(
-			`SELECT m.id AS membership_id, m.did, r.name AS role, m.status, m.created_at
-			 FROM memberships m JOIN roles r ON r.id = m.role_id
-			 WHERE m.group_id = ? AND m.did = ?`
-		)
+		.prepare(`${MEMBER_ROW} WHERE m.group_id = ? AND m.did = ?`)
 		.bind(groupId, did)
 		.first<MemberRow>();
+}
+
+/** The groups `did` is on the roster of or has a pending request in, oldest
+ *  first. Unlike the reads above it does not create the schema: sign-in asks
+ *  it on every deployment, so one with no groups tables throws here, and each
+ *  caller reads that as no groups. */
+export async function groupsOfMember(
+	db: D1Database,
+	did: string
+): Promise<Pick<GroupRow, 'group_did' | 'members_space_uri' | 'created_at'>[]> {
+	const { results } = await db
+		.prepare(
+			`SELECT group_did, members_space_uri, created_at FROM groups
+			 WHERE id IN (
+			   SELECT group_id FROM memberships WHERE did = ?
+			   UNION
+			   SELECT group_id FROM join_requests WHERE did = ? AND status = 'pending'
+			 )
+			 ORDER BY created_at, group_did`
+		)
+		.bind(did, did)
+		.all<Pick<GroupRow, 'group_did' | 'members_space_uri' | 'created_at'>>();
+	return results ?? [];
 }
 
 export async function listJoinRequests(
@@ -655,13 +673,7 @@ export async function getCallerMembership(
 			? readCallerAuthz(reader, group, did)
 			: null;
 	const [membership, pending, members] = await Promise.all([
-		db
-			.prepare(
-				`SELECT r.name AS role, m.status FROM memberships m JOIN roles r ON r.id = m.role_id
-				 WHERE m.group_id = ? AND m.did = ?`
-			)
-			.bind(group.id, did)
-			.first<{ role: GroupRoleName; status: MemberRow['status'] }>(),
+		getMemberRow(db, group.id, did),
 		db
 			.prepare(`SELECT id FROM join_requests WHERE group_id = ? AND did = ? AND status = 'pending'`)
 			.bind(group.id, did)
@@ -766,11 +778,7 @@ export async function requestJoin(
 	visibility: GroupVisibility | null
 ): Promise<JoinOutcome> {
 	await ensureGroupsSchema(db);
-	const existing = await db
-		.prepare(`SELECT status FROM memberships WHERE group_id = ? AND did = ?`)
-		.bind(group.id, did)
-		.first<{ status: string }>();
-	if (existing) return 'already-member';
+	if (await getMemberRow(db, group.id, did)) return 'already-member';
 
 	if (visibility !== 'public') {
 		throw new GroupRuleError('invite-only', 'This group is invite-only');
@@ -832,11 +840,11 @@ export async function addMember(
 	);
 }
 
-/** Approve: roster insert and request close in one batch, so an approved
- *  request always has a member behind it. A request from a DID already on the
- *  roster fails the insert, which rolls back the close, as
- *  `GroupRuleError('constraint')`. Returns the admitted DID, which the request
- *  names and the caller's membership record is keyed by. */
+/** Approve: the request's DID goes on the roster, and the same batch closes its
+ *  pending request (`addMember`), so an approved request always has a member
+ *  behind it. A DID already on the roster fails the insert, which rolls back the
+ *  close, as `GroupRuleError('constraint')`. Returns the admitted DID, which the
+ *  caller's membership record is keyed by. */
 export async function approveJoinRequest(
 	db: D1Database,
 	groupId: string,
@@ -844,32 +852,10 @@ export async function approveJoinRequest(
 	deciderDid: string,
 	role: Exclude<GroupRoleName, 'owner'> = 'member'
 ): Promise<{ did: string }> {
-	await ensureGroupsSchema(db);
-	const request = await db
-		.prepare(`SELECT did FROM join_requests WHERE id = ? AND group_id = ? AND status = 'pending'`)
-		.bind(requestId, groupId)
-		.first<{ did: string }>();
-	if (!request) throw new GroupRuleError('not-found', 'No such pending join request');
-
-	const now = Date.now();
-	await guard(() =>
-		db.batch([
-			db
-				.prepare(
-					`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
-					 SELECT ?, ?, ?, r.id, 'active', ?, ? FROM roles r
-					 WHERE r.group_id = ? AND r.name = ?`
-				)
-				.bind(crypto.randomUUID(), groupId, request.did, now, now, groupId, role),
-			db
-				.prepare(
-					`UPDATE join_requests SET status = 'approved', decided_by_did = ?, decided_at = ?,
-					   updated_at = ? WHERE id = ?`
-				)
-				.bind(deciderDid, now, now, requestId)
-		])
-	);
-	return { did: request.did };
+	const did = await pendingRequestDid(db, groupId, requestId);
+	if (!did) throw new GroupRuleError('not-found', 'No such pending join request');
+	await addMember(db, groupId, did, role, deciderDid);
+	return { did };
 }
 
 /** The DID behind a pending request, or null when the group has no such

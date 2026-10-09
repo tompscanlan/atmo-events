@@ -22,6 +22,7 @@ import { OAuthResponseError } from '@atcute/oauth-node-client';
 import { GROUP_RSVP_COLLECTION } from '../ids';
 import { GROUP_ACCEPTANCE_COLLECTION } from '../members-record';
 
+import { groupsOfMember } from './repo';
 /** How long a PDS may keep serving client metadata it fetched earlier. */
 export const METADATA_CACHE_MS = 10 * 60 * 1000;
 
@@ -121,19 +122,7 @@ export async function signInGrantAttempts(
 ): Promise<string[][]> {
 	let groups: { group_did: string; created_at: number }[];
 	try {
-		const { results } = await db
-			.prepare(
-				`SELECT g.group_did, g.created_at FROM groups g
-				 WHERE g.id IN (
-				   SELECT group_id FROM memberships WHERE did = ?
-				   UNION
-				   SELECT group_id FROM join_requests WHERE did = ? AND status = 'pending'
-				 )
-				 ORDER BY g.created_at, g.group_did`
-			)
-			.bind(did, did)
-			.all<{ group_did: string; created_at: number }>();
-		groups = results;
+		groups = await groupsOfMember(db, did);
 	} catch (e) {
 		console.warn('[groups] sign-in asks for no group grants:', e);
 		groups = [];
