@@ -31,8 +31,7 @@ export function spaceUri(ownerDid: string, type: string, skey: string): string {
 export interface GroupSpaceUris {
 	aboutSpaceUri: string;
 	membersSpaceUri: string;
-	/** No column holds it: it follows from the DID, like the other two, so a
-	 *  group made before the calendar space existed needs no migration.
+	/** No column holds it: it follows from the DID, like the other two.
 	 *  (Spec: FR-101a.) */
 	calendarSpaceUri: string;
 }

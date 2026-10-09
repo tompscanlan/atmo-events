@@ -1,9 +1,11 @@
 // Repairs a group whose records and D1 cache have drifted apart, from the
 // settings page, behind MANAGE_GROUP. Four steps, in order:
 //
-//   1. Write the members-space records the row is certain of, if missing:
-//      `access`, the index of the two spaces, the owner's `membership`, and
-//      the authz config.
+//   1. Write the records the row is certain of, if missing: the members and
+//      calendar spaces' `access`, the index of the three spaces, the owner's
+//      `membership`, and the authz config. The create makes the three spaces
+//      together and records their URIs only once all three exist, so a group
+//      the repair can reach has a calendar space.
 //   2. Make the about space's member list equal the membership records, and
 //      the members space's write-only list equal those plus the pending join
 //      requests. Requests live only in D1, so a requester keeps their entry
@@ -55,6 +57,8 @@ import { readGroupVisibility } from './spaces';
 
 import { GroupRecordError, requireGroupPermission, type GroupRepoWriter } from './group-write';
 import { type CredentialStoreEnv } from './session';
+import { groupSpaceUris } from '../ids';
+import { GROUP_ACCESS_COLLECTION, GROUP_ACCESS_RKEY, parseGroupAccess } from '../members-record';
 import { rolePermissions } from './db/groups';
 import { listJoinRequests, listMembers } from './db/roster';
 export interface RepairGroupInput {
@@ -76,7 +80,13 @@ export interface RepairGroupInput {
 export interface GroupRepairResult {
 	/** What step 1 wrote. `false` means it was already there, or held back.
 	 *  `spaceIndex` means an entry was added or a second one deleted. */
-	wrote: { access: boolean; spaceIndex: boolean; ownerMembership: boolean; authz: boolean };
+	wrote: {
+		access: boolean;
+		calendarAccess: boolean;
+		spaceIndex: boolean;
+		ownerMembership: boolean;
+		authz: boolean;
+	};
 	/** Active members, other than the owner, with no membership record. */
 	unrecordedMembers: string[];
 	/** Why the authz config was not written, when it was missing. */
@@ -114,6 +124,7 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 	const write = { ...input, reader };
 	const wrote: GroupRepairResult['wrote'] = {
 		access: false,
+		calendarAccess: false,
 		spaceIndex: false,
 		ownerMembership: false,
 		authz: false
@@ -124,10 +135,22 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 		await writeGroupAccess(write);
 		wrote.access = true;
 	}
+	const calendarSpace = groupSpaceUris(group.group_did).calendarSpaceUri;
+	const calendarAccess = await reader.get({
+		space: calendarSpace,
+		repo: group.group_did,
+		collection: GROUP_ACCESS_COLLECTION,
+		rkey: GROUP_ACCESS_RKEY
+	});
+	if (!calendarAccess || !parseGroupAccess(calendarAccess.value)) {
+		await writeGroupAccess({ ...write, space: calendarSpace });
+		wrote.calendarAccess = true;
+	}
 
 	const index = await writeGroupSpaceIndex({
 		...write,
 		existing: await readGroupSpaceIndex(reader, group),
+		calendarSpace,
 		createdAt
 	});
 	wrote.spaceIndex = index.added.length > 0 || index.removed.length > 0;
@@ -238,6 +261,7 @@ export function describeRepair(result: GroupRepairResult): string {
 	const written = [
 		wrote.ownerMembership && "owner's membership record",
 		wrote.access && 'access record',
+		wrote.calendarAccess && "calendar space's access record",
 		wrote.spaceIndex && 'space index',
 		wrote.authz && 'permission config'
 	].filter((part): part is string => typeof part === 'string');

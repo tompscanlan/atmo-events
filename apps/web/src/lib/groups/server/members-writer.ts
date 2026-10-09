@@ -177,9 +177,7 @@ export async function dropGroupMembership(
 
 /** Puts a members-read space's `access` record: not public, and the roles that
  *  may read it. The members space, unless `space` names the group's calendar
- *  space, whose record says the same. The create names it and the repair does
- *  not: a group made before the calendar space existed has none for a record to
- *  describe. Never the about space, whose record says the visibility
+ *  space, whose record says the same. Never the about space, whose record says the visibility
  *  (`writeAboutAccess`). Needs MANAGE_GROUP, since it is configuration.
  *  Idempotent, keyed `self`. */
 export async function writeGroupAccess(
@@ -220,9 +218,8 @@ export interface SpaceIndexWriteResult {
  * Leaves exactly one `space` entry for each space it is given: the about and
  * members spaces always, and the calendar space when the caller passes it. It
  * adds one for a space with none, and deletes all but the oldest for a space with
- * several. An entry for any other space is left alone. The create passes the
- * calendar space and the repair does not, since a group made before that space
- * existed has none to index; a calendar entry the repair finds stays as it is.
+ * several. An entry for any other space is left alone. The create and the repair
+ * both pass the calendar space.
  * `existing` is passed in, as for rules, so a new group passes `[]` and reads
  * nothing. Needs MANAGE_GROUP, since it is configuration.
  */

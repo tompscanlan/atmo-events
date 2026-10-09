@@ -325,7 +325,7 @@ describe('readMembersOnlyEvents: through the real reader', () => {
 		expect(requested).toEqual([]);
 	});
 
-	// A group made before the calendar space existed has none. One host answers
+	// A group with no calendar space at its host. One host answers
 	// that with an empty list (devnet does), another with SpaceNotFound. Either
 	// way the group simply has no members-only events, which is not a failure.
 	it('a space the host never created is no members-only events and no notice', async () => {
@@ -636,7 +636,7 @@ describe('readMembersOnlyEvent', () => {
 		});
 		expect(logged).not.toHaveBeenCalled();
 
-		// A group made before the calendar space existed has no such event. The
+		// A group with no calendar space at its host has no such event. The
 		// log says so, naming the group and not its calendar space.
 		const noSpace = hostAnswering(() => Response.json({ error: 'SpaceNotFound' }, { status: 400 }));
 		expect(await readMembersOnlyEvent(viewer(true), noSpace, GROUP, '3lmeeting')).toStrictEqual({

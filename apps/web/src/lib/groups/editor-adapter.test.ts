@@ -30,9 +30,9 @@ const BLOB_REF = {
 	mimeType: 'image/png',
 	size: 3
 };
-/** Unit A's refusal for a group made before the calendar space, word for word. */
+/** The writer's refusal for a group with no calendar space, word for word. */
 const NO_CALENDAR_SPACE =
-	'This group has no calendar space for members-only events, because it was made before they existed. Re-create the group to post members-only events. Nothing was saved.';
+	'This group has no calendar space for members-only events at its PDS, so nothing was saved.';
 
 const record = (name: string) => ({ $type: EVENT, name, startsAt: '2026-11-01T18:00:00.000Z' });
 

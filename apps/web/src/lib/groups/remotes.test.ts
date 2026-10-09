@@ -192,7 +192,7 @@ describe('placement on the event commands', () => {
 	const NO_PLACEMENT =
 		'This event was sent without saying whether it is public or members-only, so nothing was saved.';
 	const NO_CALENDAR_SPACE =
-		'This group has no calendar space for members-only events, because it was made before they existed. Re-create the group to post members-only events. Nothing was saved.';
+		'This group has no calendar space for members-only events at its PDS, so nothing was saved.';
 	const READABLE_CALENDAR_SPACE =
 		"This group's calendar space can be read by more than its members, so the members-only event was not saved.";
 	const UNCHECKED_CALENDAR_SPACE =

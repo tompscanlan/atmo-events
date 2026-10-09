@@ -85,7 +85,7 @@ const PLACEMENT_REFUSALS = {
 	'no-placement':
 		'This event was sent without saying whether it is public or members-only, so nothing was saved.',
 	'no-calendar-space':
-		'This group has no calendar space for members-only events, because it was made before they existed. Re-create the group to post members-only events. Nothing was saved.',
+		'This group has no calendar space for members-only events at its PDS, so nothing was saved.',
 	'calendar-space-readable':
 		"This group's calendar space can be read by more than its members, so the members-only event was not saved.",
 	'calendar-space-unchecked':

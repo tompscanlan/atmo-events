@@ -755,7 +755,7 @@ describe('members-only placement', () => {
 
 	// The refusals' copy, as approved for the form.
 	const NO_CALENDAR_SPACE =
-		'This group has no calendar space for members-only events, because it was made before they existed. Re-create the group to post members-only events. Nothing was saved.';
+		'This group has no calendar space for members-only events at its PDS, so nothing was saved.';
 	const READABLE_CALENDAR_SPACE =
 		"This group's calendar space can be read by more than its members, so the members-only event was not saved.";
 	const UNCHECKED_CALENDAR_SPACE =
@@ -1003,7 +1003,7 @@ describe('members-only placement', () => {
 	});
 
 	it('a members-only write to a group with no calendar space is refused with no write', async () => {
-		// A group made before the calendar space existed. The host would take the
+		// A group with no calendar space at its host. The host would take the
 		// write anyway and make the space as it went, so the refusal is the app's.
 		pds.spaces.delete(CALENDAR);
 

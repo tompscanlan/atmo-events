@@ -199,6 +199,7 @@ describe('repairGroup', () => {
 
 		expect(result.wrote).toEqual({
 			access: true,
+			calendarAccess: true,
 			spaceIndex: true,
 			ownerMembership: true,
 			authz: true
@@ -206,7 +207,7 @@ describe('repairGroup', () => {
 		expect(result.unrecordedMembers).toEqual([]);
 		expect(result.authzHeldBack).toBeNull();
 		expect(describeRepair(result)).toMatch(
-			/^Wrote the missing owner's membership record, access record, space index and permission config\. /
+			/^Wrote the missing owner's membership record, access record, calendar space's access record, space index and permission config\. /
 		);
 		// The config goes last: once it exists the gate reads records, so the
 		// owner's record must already be there.
@@ -232,6 +233,7 @@ describe('repairGroup', () => {
 		expect(writes).toHaveLength(before);
 		expect(again.wrote).toEqual({
 			access: false,
+			calendarAccess: false,
 			spaceIndex: false,
 			ownerMembership: false,
 			authz: false
@@ -259,6 +261,7 @@ describe('repairGroup', () => {
 
 		expect(result.wrote).toEqual({
 			access: true,
+			calendarAccess: true,
 			spaceIndex: true,
 			ownerMembership: true,
 			authz: true
@@ -277,6 +280,7 @@ describe('repairGroup', () => {
 		expect(result.unrecordedMembers).toEqual([MEMBER]);
 		expect(result.wrote).toEqual({
 			access: true,
+			calendarAccess: true,
 			spaceIndex: true,
 			ownerMembership: true,
 			authz: false
@@ -354,7 +358,7 @@ describe('repairGroup', () => {
 
 	// The standard wants exactly one index entry per space. A second entry for a
 	// space, such as two repairs racing would leave, loses to the oldest, and an
-	// entry for a space that is not one of the two is not this repair's.
+	// entry for a space that is not one of the group's three is not this repair's.
 	it('keeps one index entry per space: adds what is missing, deletes the younger of two, and leaves other spaces alone', async () => {
 		const index = (rkey: string, space: string) =>
 			writer({
@@ -378,7 +382,8 @@ describe('repairGroup', () => {
 			indexWrites.map((w) => [w.intent, w.intent === 'delete' ? w.rkey : w.record.space])
 		).toEqual([
 			['delete', '3m2aaaaaaaaa3'],
-			['create', MEMBERS]
+			['create', MEMBERS],
+			['create', CALENDAR]
 		]);
 		expect(result.wrote.spaceIndex).toBe(true);
 		const live = (
@@ -390,22 +395,27 @@ describe('repairGroup', () => {
 				['3m2aaaaaaaaa4', EVENTS]
 			])
 		);
-		expect(live).toHaveLength(3);
+		expect(live).toHaveLength(4);
 
 		const again = await repair();
 		expect(again.wrote.spaceIndex).toBe(false);
 	});
 
-	// Repair is create-only for the calendar space. A group made before it existed
-	// has no calendar space at its host, so an access record or index entry for one
-	// would describe a space that is not there. Repair writes neither, and leaves
-	// any calendar entry a later create wrote as it found it.
-	it('writes nothing into the calendar space and indexes only the about and members spaces', async () => {
+	// The create makes the calendar space with the other two, so a group the
+	// repair reaches has one. The repair fills its access record and index entry
+	// as it does the members space's, and nothing else of it.
+	it("writes the calendar space's access record and indexes all three spaces", async () => {
 		const result = await repair();
 
-		expect(result.wrote.access).toBe(true);
-		expect(writes.filter((w) => w.space === CALENDAR)).toEqual([]);
-		expect(wroteTo(GROUP_SPACE_COLLECTION).map((w) => w.record.space)).toEqual([ABOUT, MEMBERS]);
+		expect(result.wrote.calendarAccess).toBe(true);
+		expect(writes.filter((w) => w.space === CALENDAR).map((w) => w.collection)).toEqual([
+			GROUP_ACCESS_COLLECTION
+		]);
+		expect(wroteTo(GROUP_SPACE_COLLECTION).map((w) => w.record.space)).toEqual([
+			ABOUT,
+			MEMBERS,
+			CALENDAR
+		]);
 		// Nor does it provision the space or list anyone on it at the host.
 		expect(pds.requests.filter((r) => r.nsid === 'com.atproto.simplespace.createSpace')).toEqual(
 			[]
@@ -647,13 +657,14 @@ describe('Repair aligns the declaration to the host', () => {
 		repairGroup({ db, env, group: (await getGroupByDid(db, GROUP_DID))!, callerDid: OWNER });
 
 	// A complete group, as a public create leaves it: the owner's membership
-	// record, both access records, the space index, the authz config and the
-	// owner on the about space's list. So the only thing a repair can find to
-	// change is what the case sets up.
+	// record, the three access records, the space index, the authz config and
+	// the owner on the about space's list. So the only thing a repair can find
+	// to change is what the case sets up.
 	beforeEach(async () => {
 		const seed = { db, env, group, callerDid: OWNER };
 		await writeGroupAccess(seed);
-		await writeGroupSpaceIndex({ ...seed, existing: [] });
+		await writeGroupAccess({ ...seed, space: CALENDAR });
+		await writeGroupSpaceIndex({ ...seed, existing: [], calendarSpace: CALENDAR });
 		await writeAboutAccess({ ...seed, visibility: 'public' });
 		await putGroupMembership({ ...seed, subject: OWNER, roles: ['owner'], intent: 'admit' });
 		await writeGroupAuthz(seed);
