@@ -1,5 +1,5 @@
 import { can } from '$lib/groups/permissions';
-import { groupSpaceReader, readGroupAbout } from '$lib/groups/server/about-read';
+import { readGroupAbout } from '$lib/groups/server/about-read';
 import { readMembersOnlyEvents, unionGroupEvents } from '$lib/groups/server/calendar-read';
 import { listGroupEvents } from '$lib/groups/server/events-index';
 import { knownHandles } from '$lib/groups/server/handles';
@@ -15,14 +15,13 @@ import type { PageServerLoad } from './$types';
  *  profile record, as on the group page. */
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
-	const { group, membership } = await groupRouteContext(
+	const { group, membership, reader } = await groupRouteContext(
 		platform!.env,
 		db,
 		params.actor,
 		locals.did
 	);
 
-	const reader = await groupSpaceReader(platform!.env, group);
 	const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };
 
 	const [events, membersOnly] = await Promise.all([

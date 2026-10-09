@@ -25,6 +25,10 @@ export interface GroupRouteContext {
 	/** As the host reported it, so a form need not ask again. `null` when the
 	 *  caller is on the roster, since the gate then does not ask. */
 	visibility: GroupVisibility | null;
+	/** The group's space reader, built once for the gate, or null when its owner
+	 *  has not linked the group. Pages and forms read through it rather than
+	 *  building another. */
+	reader: GroupSpaceReader | null;
 }
 
 /** A route key to a DID, or null. `actorToDid` cannot tell an unknown handle
@@ -55,7 +59,7 @@ export async function groupRouteContext(
 	// A caller on the roster sees the group at every visibility, so the host is
 	// not asked, and a failed visibility read cannot lock a member out.
 	const membership = await readStanding(db, group, callerDid, reader);
-	if (membership.onRoster) return { group, membership, visibility: null };
+	if (membership.onRoster) return { group, membership, visibility: null, reader };
 
 	// Without a credential the host cannot be asked, so nobody else is let in.
 	if (!reader) error(404, GROUP_NOT_FOUND);
@@ -69,7 +73,7 @@ export async function groupRouteContext(
 	}
 	if (!canSeeGroup(visibility, membership)) error(404, GROUP_NOT_FOUND);
 
-	return { group, membership, visibility };
+	return { group, membership, visibility, reader };
 }
 
 /** When the members space errors, the caller is off the roster and holds no

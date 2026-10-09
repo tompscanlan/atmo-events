@@ -1,11 +1,7 @@
 import { canSeeMembers } from '$lib/groups/access';
 import { groupFace } from '$lib/groups/about-record';
 import { can } from '$lib/groups/permissions';
-import {
-	groupSpaceReader,
-	readGroupAbout,
-	type GroupSpaceReader
-} from '$lib/groups/server/about-read';
+import { readGroupAbout, type GroupSpaceReader } from '$lib/groups/server/about-read';
 import { refreshGroupHandle } from '$lib/groups/server/handles';
 import {
 	hasMemberRecords,
@@ -21,7 +17,6 @@ import { readGroupVisibility } from '$lib/groups/server/spaces';
 import type { GroupRow, GroupVisibility, RosterEntry } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
 
-import { hasLinkedSession } from '$lib/groups/server/session';
 /** The visibility the page shows: the host's, since the row holds none. The
  *  gate's answer is reused. For a caller on the roster the gate did not ask,
  *  so the page does, and a host that does not answer gives null rather than
@@ -70,7 +65,8 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 	const {
 		group,
 		membership,
-		visibility: gateVisibility
+		visibility: gateVisibility,
+		reader
 	} = await groupRouteContext(platform!.env, db, params.actor, locals.did);
 
 	const canAdmitMembers = can(membership.permissions, 'ADMIT_MEMBERS');
@@ -79,7 +75,6 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 	// space still gets a page. A failed read fails the page: a row that quietly
 	// stands in for a record the PDS refused is how a stale name becomes
 	// permanent. A null reader (no credential) is the absent case.
-	const reader = await groupSpaceReader(platform!.env, group);
 	const showRoster = canSeeMembers(membership);
 	const [about, visibility, roster, pendingRequests] = await Promise.all([
 		reader ? readGroupAbout(reader, group) : { profile: null, rules: [] },
@@ -127,10 +122,7 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 		/** For the owner only, who alone may link the group's account: whether
 		 *  this site writes as the group through a session the owner linked.
 		 *  Null for anyone else. */
-		groupLinked:
-			locals.did && locals.did === group.owner_did
-				? await hasLinkedSession(platform!.env, group.group_did)
-				: null,
+		groupLinked: locals.did && locals.did === group.owner_did ? reader !== null : null,
 		/** How a link the owner just ran ended, from the link callback. */
 		linkOutcome,
 		canAdmitMembers,

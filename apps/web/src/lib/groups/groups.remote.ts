@@ -47,7 +47,7 @@ import {
 	withdrawJoinRequest
 } from './server/roster';
 import { GroupSpaceError } from './server/spaces';
-import { groupSpaceReader } from './server/about-read';
+import type { GroupSpaceReader } from './server/about-read';
 import { reauthorizeForGroup } from './server/member-grants';
 import { memberSession, type MemberSession } from './server/acceptance';
 // ./server/member-rsvp.ts is shared with the e2e harness, as ./server/roster.ts is.
@@ -83,6 +83,8 @@ interface GroupRequestContext {
 	membership: CallerMembership;
 	/** The host's visibility, when the gate asked. The join refusal reads it. */
 	visibility: GroupVisibility | null;
+	/** The gate's reader, so an act reads through the same session. */
+	reader: GroupSpaceReader | null;
 	/** Never null: `context` throws 401 before returning. */
 	callerDid: string;
 }
@@ -95,13 +97,13 @@ async function context(actor: string): Promise<GroupRequestContext> {
 	const { locals, platform } = getRequestEvent();
 	if (!locals.did) error(401, 'Sign in to do that');
 	const db = platform!.env.DB;
-	const { group, membership, visibility } = await groupRouteContext(
+	const { group, membership, visibility, reader } = await groupRouteContext(
 		platform!.env,
 		db,
 		actor,
 		locals.did
 	);
-	return { db, env: platform!.env, group, membership, visibility, callerDid: locals.did };
+	return { db, env: platform!.env, group, membership, visibility, reader, callerDid: locals.did };
 }
 
 export const createGroupForm = form(
@@ -558,7 +560,7 @@ export const rsvpToMembersOnlyEvent = command(
 			rkey: data.rkey,
 			status: data.status,
 			cid: data.cid,
-			groupReader: () => groupSpaceReader(ctx.env, ctx.group)
+			groupReader: async () => ctx.reader
 		});
 	}
 );

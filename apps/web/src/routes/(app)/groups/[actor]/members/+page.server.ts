@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import { canSeeMembers } from '$lib/groups/access';
 import { GROUP_MEMBERSHIP_COLLECTION, isMembershipKey } from '$lib/groups/members-record';
 import { ASSIGNABLE_ROLES, can } from '$lib/groups/permissions';
-import { groupSpaceReader, readGroupAbout } from '$lib/groups/server/about-read';
+import { readGroupAbout } from '$lib/groups/server/about-read';
 import {
 	NO_MEMBER_RECORDS,
 	hasMemberRecords,
@@ -47,14 +47,13 @@ async function readConfirmations(
  *  whatever a stale row says. */
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
-	const { group, membership } = await groupRouteContext(
+	const { group, membership, reader } = await groupRouteContext(
 		platform!.env,
 		db,
 		params.actor,
 		locals.did
 	);
 
-	const reader = await groupSpaceReader(platform!.env, group);
 	// The back-link's name comes from the profile record, as on the group page.
 	const members = reader ? await readGroupMembers(reader, group) : NO_MEMBER_RECORDS;
 	const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };

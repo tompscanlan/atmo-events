@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { canSeeMembers } from '$lib/groups/access';
 import { can } from '$lib/groups/permissions';
-import { groupSpaceReader, readGroupAbout } from '$lib/groups/server/about-read';
+import { readGroupAbout } from '$lib/groups/server/about-read';
 import { memberSession, type MemberSession } from '$lib/groups/server/acceptance';
 import { membersOnlyEventForDisplay, readMembersOnlyEvent } from '$lib/groups/server/calendar-read';
 import { readOwnMembersOnlyRsvp } from '$lib/groups/server/member-rsvp';
@@ -33,13 +33,12 @@ const EVENT_NOT_FOUND = 'Event not found';
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const env = platform!.env;
 	const db = env.DB;
-	const { group, membership } = await groupRouteContext(env, db, params.actor, locals.did);
+	const { group, membership, reader } = await groupRouteContext(env, db, params.actor, locals.did);
 
 	// The roster, never the group's visibility: a public group shows itself to
 	// everyone, and only its members see its members-only events.
 	if (!canSeeMembers(membership)) error(404, EVENT_NOT_FOUND);
 
-	const reader = await groupSpaceReader(env, group);
 	const read = await readMembersOnlyEvent(membership, reader, group, params.rkey);
 	if (read.status === 'hidden' || read.status === 'absent') error(404, EVENT_NOT_FOUND);
 	if (read.status !== 'found') error(503, read.notice);

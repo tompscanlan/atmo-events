@@ -3,7 +3,7 @@
 // the writer (./event-writer.ts).
 import { error } from '@sveltejs/kit';
 import { can, type EnforcedGroupPermission } from '../permissions';
-import { groupSpaceReader, readGroupAbout } from './about-read';
+import { readGroupAbout } from './about-read';
 
 import { knownHandles } from './handles';
 import { groupRouteContext } from './route-context';
@@ -16,11 +16,10 @@ export async function groupEditorPage(
 	permission: EnforcedGroupPermission
 ) {
 	const db = env.DB;
-	const { group, membership } = await groupRouteContext(env, db, actor, callerDid);
+	const { group, membership, reader } = await groupRouteContext(env, db, actor, callerDid);
 	if (!can(membership.permissions, permission)) {
 		error(403, callerDid ? `Not allowed: ${permission} required` : 'Sign in to publish as a group');
 	}
-	const reader = await groupSpaceReader(env, group);
 	const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };
 	return {
 		group,
