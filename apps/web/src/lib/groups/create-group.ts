@@ -110,40 +110,58 @@ export function mintConfig(env: CreateGroupEnv): MintConfig | null {
 	return { service, handleDomain, inviteCode };
 }
 
-/** What a failed mint says to the person filling in the form. The operator's
- *  cases do not guess a cause: the PDS returns the same error for an exhausted,
- *  wrong or rotated invite code, and a public Worker must not hold the admin
- *  password that `com.atproto.admin.getInviteCodes` needs. */
+/** Each mint failure: whether it is the creator's to fix (and so not logged for
+ *  the operator), and what the form says. One table, so a new failure cannot
+ *  get a message without a decision about who fixes it. The operator's cases do
+ *  not guess a cause: the PDS returns the same error for an exhausted, wrong or
+ *  rotated invite code, and a public Worker must not hold the admin password that
+ *  `com.atproto.admin.getInviteCodes` needs. */
+const MINT_FAILURES: Record<
+	MintFailure,
+	{
+		creators: boolean;
+		say: (label: string, e: { failure: MintFailure; message: string }) => string;
+	}
+> = {
+	'handle-taken': {
+		creators: true,
+		say: (label) => `“${label}” is already taken. Choose another address for the group.`
+	},
+	'handle-invalid': {
+		creators: true,
+		say: (label) => `The group PDS refused “${label}” as an address. Choose another one.`
+	},
+	'email-rejected': {
+		creators: true,
+		say: () =>
+			'The group PDS would not take that email. Each account there needs its own address, so if you already used it, add a tag to your address (you+mygroup@example.com) or use another one.'
+	},
+	'password-rejected': {
+		creators: true,
+		say: () => 'The group PDS would not take that password. Choose a longer or different one.'
+	},
+	'rotation-key-unverified': {
+		creators: false,
+		say: (label, e) =>
+			`“${label}” was registered, but we could not confirm that you hold its recovery key, so it has not been set up as your group. Tell an administrator before creating it again. (${e.message})`
+	},
+	'invite-missing': { creators: false, say: (_label, e) => operatorAlert(e.failure) },
+	'invite-unavailable': { creators: false, say: (_label, e) => operatorAlert(e.failure) },
+	'pds-unreachable': { creators: false, say: (_label, e) => operatorAlert(e.failure) },
+	'pds-refused': { creators: false, say: (_label, e) => operatorAlert(e.failure) }
+};
+
+function operatorAlert(failure: MintFailure): string {
+	return `Group creation is temporarily unavailable. This is a deployment problem, not something you did. Please try again later or tell an administrator. (${failure})`;
+}
+
+/** What a failed mint says to the person filling in the form. */
 export function mintErrorMessage(
 	e: { failure: MintFailure; message: string },
 	label: string
 ): string {
-	const operatorAlert = `Group creation is temporarily unavailable. This is a deployment problem, not something you did. Please try again later or tell an administrator. (${e.failure})`;
-	switch (e.failure) {
-		case 'handle-taken':
-			return `“${label}” is already taken. Choose another address for the group.`;
-		case 'handle-invalid':
-			return `The group PDS refused “${label}” as an address. Choose another one.`;
-		case 'rotation-key-unverified':
-			return `“${label}” was registered, but we could not confirm that you hold its recovery key, so it has not been set up as your group. Tell an administrator before creating it again. (${e.message})`;
-		case 'email-rejected':
-			return 'The group PDS would not take that email. Each account there needs its own address, so if you already used it, add a tag to your address (you+mygroup@example.com) or use another one.';
-		case 'password-rejected':
-			return 'The group PDS would not take that password. Choose a longer or different one.';
-		case 'invite-missing':
-		case 'invite-unavailable':
-		case 'pds-unreachable':
-			return operatorAlert;
-	}
+	return MINT_FAILURES[e.failure].say(label, e);
 }
-
-/** Refusals that are the creator's to fix, so not logged for the operator. */
-const CREATOR_FAILURES: ReadonlySet<MintFailure> = new Set([
-	'handle-taken',
-	'handle-invalid',
-	'email-rejected',
-	'password-rejected'
-]);
 
 /** Why the typed login cannot be sent to the PDS, or null. Only a shape check:
  *  whether the PDS takes the address is known only when it answers. */
@@ -217,13 +235,15 @@ export async function runCreateGroup(
 		});
 	} catch (e) {
 		if (!(e instanceof GroupMintError)) throw e;
-		// Deployment failures are logged for the operator: the failure class only,
-		// never the invite code, the login or the PDS's message.
-		if (!CREATOR_FAILURES.has(e.failure)) {
+		// Deployment failures are logged for the operator: the failure class and the
+		// error name a refusing PDS sent, never the invite code, the login or the
+		// PDS's message, which can name the email.
+		if (!MINT_FAILURES[e.failure].creators) {
 			console.error({
 				event: 'groups.mint-failed',
 				failure: e.failure,
-				registered: e.registered !== undefined
+				registered: e.registered !== undefined,
+				...(e.pdsError ? { pdsError: e.pdsError } : {})
 			});
 		}
 		const error = mintErrorMessage(e, data.label);

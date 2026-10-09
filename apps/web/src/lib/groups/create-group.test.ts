@@ -145,12 +145,37 @@ describe('a mint failure that is the deployment’s, not the user’s', () => {
 		expect(logged).toHaveBeenCalledWith({
 			event: 'groups.mint-failed',
 			failure: 'invite-unavailable',
-			registered: false
+			registered: false,
+			pdsError: 'InvalidInviteCode'
 		});
 		const line = JSON.stringify(logged.mock.calls);
 		expect(line).not.toContain(env.GROUP_PDS_INVITE_CODE);
 		expect(line).not.toContain(EMAIL);
 		expect(line).not.toContain(PASSWORD);
+	});
+
+	// A refusal the app does not map is the PDS's answer, not an outage. The form
+	// says so, and the log carries the PDS's error name, never its message.
+	it('tells a refusal it does not map from an unreachable PDS', async () => {
+		stubPds({
+			account: () =>
+				Response.json(
+					{ error: 'InvalidRequest', message: `Invalid handle, and ${EMAIL} looks odd` },
+					{ status: 400 }
+				)
+		});
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		expect(!result.ok && result.error).toMatch(/\(pds-refused\)$/);
+		expect(logged).toHaveBeenCalledWith({
+			event: 'groups.mint-failed',
+			failure: 'pds-refused',
+			registered: false,
+			pdsError: 'InvalidRequest'
+		});
+		expect(JSON.stringify(logged.mock.calls)).not.toContain(EMAIL);
 	});
 
 	it('logs nothing for a name the user can change', async () => {

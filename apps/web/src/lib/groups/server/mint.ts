@@ -43,6 +43,8 @@ export type MintFailure =
 	| 'password-rejected'
 	/** The PDS did not answer, or answered in a shape we do not understand. */
 	| 'pds-unreachable'
+	/** The PDS answered with a refusal this app does not map to a cause. */
+	| 'pds-refused'
 	/** The owner's key is not rotationKeys[0], so the group is not portable. */
 	| 'rotation-key-unverified';
 
@@ -59,7 +61,10 @@ export class GroupMintError extends Error {
 		readonly failure: MintFailure,
 		message: string,
 		/** Set when the failure came after createAccount succeeded. */
-		readonly registered?: RegisteredAccount
+		readonly registered?: RegisteredAccount,
+		/** The error name a refusing PDS sent, for the operator's log. Never its
+		 *  message, which can name the email. */
+		readonly pdsError: string | null = null
 	) {
 		super(message);
 		this.name = 'GroupMintError';
@@ -110,7 +115,7 @@ function mintFailureFor(error: string | null, message: string | null): MintFailu
 	}
 	if (message && /email/i.test(message)) return 'email-rejected';
 	if (message && /password/i.test(message)) return 'password-rejected';
-	return 'pds-unreachable';
+	return 'pds-refused';
 }
 
 async function refusal(res: Response): Promise<GroupMintError> {
@@ -128,7 +133,9 @@ async function refusal(res: Response): Promise<GroupMintError> {
 	// never logged: it may name the email.
 	return new GroupMintError(
 		failure,
-		`${res.status} ${error ?? 'error'}: ${message ?? 'no detail'}`
+		`${res.status} ${error ?? 'error'}: ${message ?? 'no detail'}`,
+		undefined,
+		error
 	);
 }
 

@@ -146,6 +146,25 @@ describe('mintGroupAccount', () => {
 		});
 	});
 
+	// A refusal no row above maps is the PDS's answer, not an outage, so it is told
+	// apart from one, and its error name is kept for the operator's log. This is
+	// the refusal a misconfigured handle domain gets ("kona..groups.example.com").
+	it('reports a refusal it does not map as refused, with the error name only', async () => {
+		stubPds({
+			account: Response.json(
+				{
+					error: 'InvalidRequest',
+					message: 'Invalid handle (got "kona..groups.example.com") at $.handle'
+				},
+				{ status: 400 }
+			)
+		});
+		await expect(mintGroupAccount(CFG, 'kona', LOGIN, async () => {})).rejects.toMatchObject({
+			failure: 'pds-refused',
+			pdsError: 'InvalidRequest'
+		});
+	});
+
 	it('reports an unreachable PDS rather than throwing a transport error', async () => {
 		vi.stubGlobal('fetch', async () => {
 			throw new TypeError('network down');
