@@ -694,6 +694,26 @@ describe('a visibility change reaches the host before the row', () => {
 		expect(!result.ok && result.error).toContain('Saving the settings again finishes it');
 	});
 
+	// Without a host change the row is the save's first write, so a database
+	// failure there has changed nothing, and the form says so rather than fail
+	// the request.
+	it('a public group whose row write fails, with no host change, says nothing was saved', async () => {
+		const pds = host();
+		const group = await givenGroup('public', pds);
+		harness.raw.exec(
+			`CREATE TRIGGER refuse_save BEFORE UPDATE ON groups
+			 BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`
+		);
+		const before = rowWhole();
+
+		const result = await save(group, 'public', { shownVisibility: 'public', name: 'Kona Paddle' });
+
+		expect(result.ok).toBe(false);
+		expect(!result.ok && result.error).toMatch(/^Nothing was saved, because .*disk I\/O error/);
+		expect(rowWhole()).toEqual(before);
+		expect(pds.writes()).toEqual([]);
+	});
+
 	it('a public group saved as private, whose declaration delete fails, says the group is still listed in browse', async () => {
 		const pds = host((nsid) => (nsid === 'com.atproto.repo.deleteRecord' ? pdsDown() : undefined));
 		const group = await givenGroup('public', pds);

@@ -14,17 +14,26 @@ const NOT_LINKED: GroupFormFailure = {
 		'This site cannot write as this group yet: its owner has to link the group’s account, from the group page. Nothing was changed.'
 };
 
-/** Permission and credential failures are kept apart: one is the caller's
- *  business, the other is the group owner's. Anything else is rethrown, because an
- *  unrecognized failure must not be flattened into a form message. */
-export function formError(e: unknown): GroupFormFailure {
+/** The form message for a domain error, or null for any other failure, which a
+ *  caller words for what it had done so far. Permission and credential failures
+ *  are kept apart: one is the caller's business, the other is the group
+ *  owner's. */
+export function knownFormError(e: unknown): GroupFormFailure | null {
 	if (e instanceof GroupPermissionError) {
 		return { ok: false, error: `Not allowed: ${e.permission} required` };
 	}
 	if (e instanceof GroupCredentialError) return { ...NOT_LINKED };
 	if (e instanceof GroupRecordError) return { ok: false, error: e.message };
 	if (e instanceof GroupRuleError) return { ok: false, error: e.message };
-	throw e;
+	return null;
+}
+
+/** `knownFormError`, rethrowing anything else, because an unrecognized failure
+ *  must not be flattened into a form message. */
+export function formError(e: unknown): GroupFormFailure {
+	const known = knownFormError(e);
+	if (!known) throw e;
+	return known;
 }
 
 /** The refusal for a caller who lacks `permission`. When the members space

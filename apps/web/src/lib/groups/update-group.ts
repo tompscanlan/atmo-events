@@ -47,7 +47,7 @@ import { ABOUT_SPACE_READER_ROLES, type GroupAccessFields } from './members-reco
 import { reconcileGroupDeclaration } from './server/declaration-writer';
 import { declarationRequired } from './declaration-record';
 import { readGroupVisibility, setAboutSpaceReadPolicy } from './server/spaces';
-import { formError } from './form-error';
+import { knownFormError } from './form-error';
 import type { GroupFormFailure, GroupFormResult } from './form-result';
 import type { GroupRow, GroupVisibility } from './types';
 
@@ -248,7 +248,10 @@ async function saveAsPublic(s: SaveState): Promise<GroupFormResult> {
 		await writeRow(s);
 	} catch (e) {
 		// Without a flip nothing has landed yet.
-		return s.flipped ? rowNotSaved(e, 'public', true) : formError(e);
+		if (s.flipped) return rowNotSaved(e, 'public', true);
+		return (
+			knownFormError(e) ?? nothingSaved("this site's copy of the group could not be updated", e)
+		);
 	}
 
 	let now: GroupVisibility;

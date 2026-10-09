@@ -9,7 +9,7 @@ import { command, form, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
 import { ASSIGNABLE_ROLES, can } from './permissions';
 import type { GroupFormFailure, GroupFormResult } from './form-result';
-import { formError, notAllowed } from './form-error';
+import { formError, notAllowed, knownFormError } from './form-error';
 // Not declared here: the Vite plugin rejects non-remote exports from a
 // `*.remote.ts`, so a field that a test needs lives in ./form-fields.ts.
 import { checkboxField, memberActorField, shownVisibilityField } from './form-fields';
@@ -163,18 +163,16 @@ export const repairGroupForm = form(
 			const result = await repairGroup({ db, env, group, callerDid, reader });
 			return { ok: true, summary: describeRepair(result) };
 		} catch (e) {
-			try {
-				return formError(e);
-			} catch {
-				// The PDS or the database failed partway. Every repair write is
-				// checked first, so a second run continues from there.
-				return {
+			// Otherwise the PDS or the database failed partway. Every repair write
+			// is checked first, so a second run continues from there.
+			return (
+				knownFormError(e) ?? {
 					ok: false,
 					error: `The repair stopped partway: ${errorText(
 						e
 					)}. Anything it wrote is kept, and running it again continues from there.`
-				};
-			}
+				}
+			);
 		}
 	}
 );
