@@ -29,7 +29,11 @@ const login = vi.hoisted(() => ({ atProtoLoginModalState: { show: vi.fn() } }));
 vi.mock('$lib/components/LoginModal.svelte', () => login);
 const PAGE_URL = 'https://atmo.test/groups/did:plc:jcwgw6fcnb5vyoid7nz7sl26/events/3lmeeting';
 const appState = vi.hoisted(() => ({
-	page: { url: new URL('https://atmo.test/'), state: {} as Record<string, unknown> }
+	page: {
+		url: new URL('https://atmo.test/'),
+		params: {} as Record<string, string>,
+		state: {} as Record<string, unknown>
+	}
 }));
 vi.mock('$app/state', () => appState);
 const navigation = vi.hoisted(() => ({ replaceState: vi.fn() }));
@@ -128,6 +132,7 @@ beforeEach(async () => {
 	share.opened.length = 0;
 	signedIn.user.did = MEMBER;
 	appState.page.url = new URL(PAGE_URL);
+	appState.page.params = {};
 	appState.page.state = {};
 	// The page changes its address through SvelteKit only, never directly.
 	vi.stubGlobal('history', {
@@ -571,6 +576,38 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 		await refused.putSpaceRecord!(going);
 		expect(commands.rsvpToMembersOnlyEvent.mock.calls.at(-1)![0]).toMatchObject({ asked: MARKER });
 		expect(addresses()).toEqual([unmarked]);
+	});
+
+	// The address the marker is written into is the page's own: one reached
+	// through the group's handle keeps the handle, and keeps the rest of its query.
+	it("the marker keeps the address's own actor and query", async () => {
+		const handleUrl = 'https://atmo.test/groups/kona.groups.test/events/3lmeeting?from=calendar';
+		appState.page.url = new URL(handleUrl);
+		appState.page.params = { actor: 'kona.groups.test', rkey: '3lmeeting' };
+		const adapter = createMembersOnlyEventAdapter({
+			groupDid: GROUP_DID,
+			rkey: '3lmeeting',
+			calendarSpaceUri: CALENDAR,
+			asked: null,
+			onNotice: () => {}
+		});
+		commands.rsvpToMembersOnlyEvent.mockResolvedValueOnce({
+			ok: false,
+			reason: 'reauthorize',
+			url: 'https://pds.test/oauth/authorize?request_uri=urn:x',
+			marker: MARKER
+		});
+		await adapter.putSpaceRecord!({
+			spaceUri: CALENDAR,
+			collection: RSVP,
+			rkey: '3lmeeting',
+			record: rsvpRecord('going')
+		});
+		const marked = new URL(handleUrl);
+		marked.searchParams.set('rsvp-grant', MARKER);
+		expect(navigation.replaceState.mock.calls.map(([url]) => String(url))).toEqual([
+			String(marked)
+		]);
 	});
 
 	// A members-only event offers no share prompt after an RSVP of going, since

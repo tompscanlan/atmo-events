@@ -28,6 +28,7 @@
 // the index about a record either, since the index must never learn a
 // members-only event's URI. (Spec: FR-111a.)
 import { replaceState } from '$app/navigation';
+import { resolve } from '$app/paths';
 import { page as appPage } from '$app/state';
 import { atProtoLoginModalState } from '$lib/components/LoginModal.svelte';
 import type { EditorAdapter } from '$lib/components/editor/adapter';
@@ -108,12 +109,22 @@ export function createMembersOnlyEventAdapter(page: MembersOnlyEventPage): Edito
 	}
 
 	/** Sets the marker in the page's address, or with null takes it out, through
-	 *  SvelteKit so its router keeps track of the entry. The page's state is kept. */
+	 *  SvelteKit so its router keeps track of the entry. The page's state and the
+	 *  rest of its query are kept, and so is the actor its address names. */
 	function markAddress(marker: string | null) {
-		const url = new URL(appPage.url);
+		const actor = appPage.params.actor ?? groupDid;
+		const url = new URL(
+			resolve('/(app)/groups/[actor]/events/[rkey]', { actor, rkey }),
+			appPage.url
+		);
+		url.search = appPage.url.search;
 		if (marker === null) url.searchParams.delete(GRANT_PARAM);
 		else url.searchParams.set(GRANT_PARAM, marker);
 		try {
+			// resolve() covers the base path; the query string can't go through it,
+			// so the rule can't see the route is resolved. The URL is built from
+			// resolve(), so the address stays base-path safe.
+			// eslint-disable-next-line svelte/no-navigation-without-resolve
 			replaceState(url, appPage.state);
 		} catch (e) {
 			console.error('[groups] the RSVP marker could not be written to the address:', e);
