@@ -2,10 +2,11 @@ import { can } from '$lib/groups/permissions';
 import { readGroupAbout } from '$lib/groups/server/about-read';
 import { readMembersOnlyEvents, unionGroupEvents } from '$lib/groups/server/calendar-read';
 import { listGroupEvents } from '$lib/groups/server/events-index';
-import { knownHandles } from '$lib/groups/server/handles';
+
 import { groupRouteContext } from '$lib/groups/server/route-context';
 import type { PageServerLoad } from './$types';
 
+import { knownHandles } from '$lib/groups/server/identities';
 /** The group's events, in two slices. The public slice is read from the app's
  *  index like any other actor's, so the page renders for a visitor who is not
  *  signed in, and a failed index read gives an empty list rather than a 500.

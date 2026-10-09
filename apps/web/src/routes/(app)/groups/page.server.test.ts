@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('$lib/groups/server/declaration-index', () => ({
 	listDeclaredGroups: vi.fn(async () => [])
 }));
-vi.mock('$lib/groups/server/handles', () => ({
+vi.mock('$lib/groups/server/identities', () => ({
 	knownHandles: vi.fn(async () => new Map())
 }));
 vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({

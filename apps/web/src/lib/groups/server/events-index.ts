@@ -9,31 +9,6 @@ import type { ResourceUri } from '@atcute/lexicons/syntax';
 import type { RsvpAtmoEventListRecords } from '../../../lexicon-types';
 import type { GroupEventRecord, GroupRow } from '../types';
 
-/** Records where a group's repo lives, in the table the index resolves DIDs through.
- *  COALESCE, so a partial write never erases a value already resolved. Returns false
- *  when the row did not land, which is not fatal: the index can still resolve the DID
- *  over the network, and a D1 seeded from `migrations/` alone has no `identities`. */
-export async function registerGroupIdentity(
-	db: D1Database,
-	identity: { did: string; handle: string | null; pds: string | null }
-): Promise<boolean> {
-	try {
-		await db
-			.prepare(
-				`INSERT INTO identities (did, handle, pds, resolved_at) VALUES (?, ?, ?, ?)
-				 ON CONFLICT (did) DO UPDATE SET
-					handle = COALESCE(excluded.handle, identities.handle),
-					pds = COALESCE(excluded.pds, identities.pds),
-					resolved_at = excluded.resolved_at`
-			)
-			.bind(identity.did, identity.handle, identity.pds, Date.now())
-			.run();
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 /** Called by the write gate with the URI it just wrote. A seam, so tests need no appview. */
 export type GroupEventNotifier = (uri: string) => Promise<void>;
 

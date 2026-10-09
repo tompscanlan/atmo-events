@@ -1,11 +1,12 @@
 import { groupSpaceReader, type GroupSpaceReader } from '$lib/groups/server/about-read';
 import { listDeclaredGroups } from '$lib/groups/server/declaration-index';
-import { knownHandles } from '$lib/groups/server/handles';
+
 import { listGroups } from '$lib/groups/server/repo';
 import { readStanding } from '$lib/groups/server/route-context';
 import type { GroupVisibility } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
 
+import { knownHandles } from '$lib/groups/server/identities';
 /** Browse: the declaration index plus the caller's own groups (`listGroups`
  *  has the rules). Names come from the D1 rows. A group with no row is listed
  *  by handle or DID and not linked, since its page would 404. The badge is

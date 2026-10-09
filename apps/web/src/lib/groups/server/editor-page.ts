@@ -5,10 +5,10 @@ import { error } from '@sveltejs/kit';
 import { can, type EnforcedGroupPermission } from '../permissions';
 import { readGroupAbout } from './about-read';
 
-import { knownHandles } from './handles';
 import { groupRouteContext } from './route-context';
 
 import { type CredentialStoreEnv } from './session';
+import { knownHandles } from './identities';
 export async function groupEditorPage(
 	env: CredentialStoreEnv & { DB: D1Database },
 	actor: string,

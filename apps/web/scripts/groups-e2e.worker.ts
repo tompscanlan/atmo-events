@@ -44,7 +44,7 @@ import {
 	GROUP_ACCEPTANCE_COLLECTION,
 	GROUP_ACCEPTANCE_RKEY
 } from '../src/lib/groups/members-record';
-import { listGroupEvents, registerGroupIdentity } from '../src/lib/groups/server/events-index';
+import { listGroupEvents } from '../src/lib/groups/server/events-index';
 import { ensureInit } from '../src/lib/contrail/index';
 import { splitRuleLines } from '../src/lib/groups/about-record';
 import { reconcileGroupDeclaration } from '../src/lib/groups/server/declaration-writer';
@@ -126,6 +126,8 @@ import { scopes } from '../src/lib/atproto/settings';
 
 import { groupSpaceUris, type RsvpStatus } from '../src/lib/groups/ids';
 import { groupWriter } from '../src/lib/groups/server/group-write';
+
+import { registerGroupIdentity } from '../src/lib/groups/server/identities';
 interface Env {
 	DB: D1Database;
 	/** Where the app looks for the group's linked session, as in production. */

@@ -41,7 +41,7 @@ import {
 
 import { pdsSpaceReader } from './server/about-read';
 import { listRosterMember, pdsMemberList } from './server/member-list';
-import { registerGroupIdentity } from './server/events-index';
+
 import { approvalRefusal, splitRuleLines } from './about-record';
 import { labelMintRefusal, labelMintRefusalMessage } from './handle-label';
 import { formError } from './form-error';
@@ -52,6 +52,8 @@ import { GROUP_PASSWORD_MIN_LENGTH } from './form-fields';
 import { pdsWriter } from './server/group-write';
 import { errorText } from './server/errors';
 import { type CredentialStoreEnv } from './server/session';
+
+import { registerGroupIdentity } from './server/identities';
 /** Structural rather than `App.Platform['env']`, so a test can supply only
  *  what a create reads. */
 export interface CreateGroupEnv extends CredentialStoreEnv {
