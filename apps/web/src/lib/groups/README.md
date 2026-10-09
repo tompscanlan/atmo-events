@@ -214,3 +214,9 @@ group: the create page shows no form and the server refuses.
 
 For a local run, set these in `apps/web/.env` with the app's other local settings. `.env.example`
 has them commented out.
+
+## Checks against a live PDS
+
+Unit tests run with `vitest` and need no network. An end-to-end run of the same code against PDSes on
+a local atproto-devnet sandbox needs that sandbox's hosts and accounts, so it is kept out of this
+repository, on the `test/groups-e2e` branch of `tompscanlan/atmo-events`.
