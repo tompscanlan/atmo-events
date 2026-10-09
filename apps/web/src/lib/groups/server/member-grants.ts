@@ -22,7 +22,7 @@ import { OAuthResponseError } from '@atcute/oauth-node-client';
 import { GROUP_RSVP_COLLECTION } from '../ids';
 import { GROUP_ACCEPTANCE_COLLECTION } from '../members-record';
 
-import { groupsOfMember } from './repo';
+import { groupsOfMember } from './db/roster';
 /** How long a PDS may keep serving client metadata it fetched earlier. */
 export const METADATA_CACHE_MS = 10 * 60 * 1000;
 

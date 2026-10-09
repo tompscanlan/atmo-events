@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OAuthResponseError } from '@atcute/oauth-node-client';
 import { scopes } from '$lib/atproto/settings';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { addMember, createGroup, decideJoinRequest, requestJoin } from './repo';
+
 import {
 	METADATA_CACHE_MS,
 	memberGrant,
@@ -17,6 +17,8 @@ import {
 	signInGrantAttempts
 } from './member-grants';
 
+import { createGroup } from './db/groups';
+import { addMember, decideJoinRequest, requestJoin } from './db/roster';
 const OWNER = 'did:plc:owner';
 const ALICE = 'did:plc:alice';
 const BOB = 'did:plc:bob';

@@ -50,7 +50,6 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 import { sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { stubPds } from './server/__fixtures__/stub-pds';
 import { linkGroups, linkedCredential, unlinkAllGroups } from './server/__fixtures__/linked-group';
-import { createGroup, recordGroupSpaces, addMember } from './server/repo';
 
 import { memberGrant } from './server/member-grants';
 import { RSVP_NO_SPACES, RSVP_RETRY_LATER } from './server/member-rsvp';
@@ -70,6 +69,8 @@ import {
 } from './groups.remote';
 
 import { GroupCredentialError } from './server/session';
+import { createGroup, recordGroupSpaces } from './server/db/groups';
+import { addMember } from './server/db/roster';
 const OWNER = 'did:plc:owner';
 const GROUP_DID = 'did:plc:unlinkedgroupaaaaaaaaaaa';
 

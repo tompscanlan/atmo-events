@@ -26,11 +26,12 @@ import {
 } from '$lib/groups/server/__fixtures__/reader-host';
 import { listGroupEvents } from '$lib/groups/server/events-index';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
-import { addMember, createGroup, getGroupByDid, recordGroupSpaces } from '$lib/groups/server/repo';
 
 import type { CallerMembership, GroupEventRecord, GroupRow } from '$lib/groups/types';
 
 import { groupSpaceUris } from '$lib/groups/ids';
+import { createGroup, getGroupByDid, recordGroupSpaces } from '$lib/groups/server/db/groups';
+import { addMember } from '$lib/groups/server/db/roster';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';
@@ -165,7 +166,6 @@ function asBefore() {
 		canManageEvents: false
 	};
 }
-
 
 describe('/groups/[actor]/events load: a viewer off the roster costs nothing', () => {
 	it('no space read for an anonymous viewer', async () => {

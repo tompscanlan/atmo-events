@@ -18,15 +18,7 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 
 import { isRowWrite, sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { stubPds, type StubPdsOptions } from './__fixtures__/stub-pds';
-import {
-	addMember,
-	createGroup,
-	getGroupByDid,
-	getMemberRow,
-	recordGroupSpaces,
-	requestJoin,
-	updateGroup
-} from './repo';
+
 import {
 	putGroupMembership,
 	writeGroupAccess,
@@ -65,6 +57,8 @@ import {
 
 import { spaceUri } from '../ids';
 import { GroupPermissionError, type GroupRepoWrite, type GroupRepoWriter } from './group-write';
+import { createGroup, getGroupByDid, recordGroupSpaces, updateGroup } from './db/groups';
+import { addMember, getMemberRow, requestJoin } from './db/roster';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:6cz6dldz42itymdbte47ewcv';

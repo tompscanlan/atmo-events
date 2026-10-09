@@ -13,11 +13,13 @@ import {
 import { loadPeople } from '$lib/groups/server/people';
 import { groupAcceptanceReader } from '$lib/groups/server/space-credential';
 import { groupHeader, groupRouteContext, pageRoster } from '$lib/groups/server/route-context';
-import { listJoinRequests, rolePermissions } from '$lib/groups/server/repo';
+
 import type { GroupRow } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
 
 import { spaceRecordUri } from '$lib/groups/ids';
+import { rolePermissions } from '$lib/groups/server/db/groups';
+import { listJoinRequests } from '$lib/groups/server/db/roster';
 /** Whether each member wrote their acceptance, read by DID with the group's space
  *  credential. Null when it cannot be read: the group has no linked session, or
  *  no credential could be had. The page then shows no state rather than a guess,

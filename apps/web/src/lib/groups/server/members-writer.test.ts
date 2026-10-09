@@ -13,7 +13,7 @@
 // only from a caller that names it: create does, repair does not.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { addMember, createGroup, recordGroupSpaces } from './repo';
+
 import {
 	dropGroupMembership,
 	putGroupMembership,
@@ -41,6 +41,8 @@ import {
 	type GroupRepoWrite,
 	type GroupRepoWriter
 } from './group-write';
+import { createGroup, recordGroupSpaces } from './db/groups';
+import { addMember } from './db/roster';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';

@@ -22,12 +22,14 @@ import {
 } from '$lib/groups/server/__fixtures__/reader-host';
 import { MEMBERS_ONLY_UNLINKED, MEMBERS_ONLY_UNREADABLE } from '$lib/groups/server/calendar-read';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
-import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
+
 import { groupRouteContext } from '$lib/groups/server/route-context';
 
 import { memberGrant } from '$lib/groups/server/member-grants';
 
 import { groupSpaceUris } from '$lib/groups/ids';
+import { createGroup, recordGroupSpaces } from '$lib/groups/server/db/groups';
+import { addMember } from '$lib/groups/server/db/roster';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';

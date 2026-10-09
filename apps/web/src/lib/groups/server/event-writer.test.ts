@@ -13,7 +13,7 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { linkGroups, linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import { stubPds, type StubPdsOptions } from './__fixtures__/stub-pds';
-import { addMember, createGroup, recordGroupSpaces } from './repo';
+
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
 import {
 	GROUP_EVENT_IMAGE_MAX_BYTES,
@@ -38,6 +38,8 @@ import {
 } from './group-write';
 import { GroupCredentialError } from './session';
 import { type EventPlacement } from '../event-placement';
+import { createGroup, recordGroupSpaces } from './db/groups';
+import { addMember } from './db/roster';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 /** The admin in every case below: a non-owner who was promoted, exactly the

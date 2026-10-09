@@ -2,11 +2,11 @@ import { redirect } from '@sveltejs/kit';
 import { oauthStates } from '$lib/atproto/server/oauth';
 import { finishGroupLink } from '$lib/groups/server/group-link';
 
-import { getGroupByDid } from '$lib/groups/server/repo';
 import { groupPath } from '$lib/groups/server/route-context';
 import type { RequestHandler } from './$types';
 
 import { groupLinkClient } from '$lib/groups/server/session';
+import { getGroupByDid } from '$lib/groups/server/db/groups';
 // Where the group's PDS returns after its owner authorizes this app as the group.
 // It sets no cookie: the browser stays signed in as the owner.
 export const GET: RequestHandler = async ({ url, locals, platform }) => {

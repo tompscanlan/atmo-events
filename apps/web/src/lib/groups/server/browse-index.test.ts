@@ -21,15 +21,14 @@ import {
 } from '../declaration-record';
 import { ABOUT_SPACE_TYPE, type GroupRow } from '../types';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { listDeclaredGroups } from './declaration-index';
+import { listDeclaredGroups } from './browse';
 import { reconcileGroupDeclaration, removeGroupDeclaration } from './declaration-writer';
-
-import { createGroup } from './repo';
 
 import { spaceUri } from '../ids';
 import { type GroupRepoWriter } from './group-write';
 
 import { registerGroupIdentity } from './identities';
+import { createGroup } from './db/groups';
 const OWNER = 'did:plc:owner';
 const PDS = 'https://pds.example.test';
 

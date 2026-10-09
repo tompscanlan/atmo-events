@@ -32,9 +32,11 @@ vi.mock('$lib/atproto/server/oauth', () => ({
 
 import { authorizeSignIn } from './sign-in-grants';
 import { memberGrant, METADATA_CACHE_MS } from './member-grants';
-import { addMember, createGroup } from './repo';
+
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 
+import { createGroup } from './db/groups';
+import { addMember } from './db/roster';
 const OWNER = 'did:plc:owner';
 const ALICE = 'did:plc:alice';
 const KONA = 'did:plc:kona0000000000000000000a';

@@ -8,7 +8,7 @@
 // member's repo afterwards.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { addMember, createGroup, recordGroupSpaces, requestJoin } from './repo';
+
 import { memberGrant, holdsAcceptanceGrant } from './member-grants';
 import {
 	acceptOnSignIn,
@@ -21,6 +21,8 @@ import type { OAuthSession } from '@atcute/oauth-node-client';
 import { GROUP_ACCEPTANCE_COLLECTION, GROUP_ACCEPTANCE_RKEY } from '../members-record';
 import { MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 
+import { createGroup, recordGroupSpaces } from './db/groups';
+import { addMember, requestJoin } from './db/roster';
 const MEMBER = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OTHER_GROUP = 'did:plc:othergroupaaaaaaaaaaaaaa';

@@ -15,7 +15,7 @@ import {
 	type GroupRow
 } from '../types';
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
-import { getCallerMembership } from './repo';
+
 import {
 	GroupCredentialError,
 	groupClient,
@@ -25,6 +25,7 @@ import {
 } from './session';
 import { xrpc, xrpcError } from './xrpc';
 
+import { getCallerMembership } from './standing';
 /** The error name in a typed client's failed answer, if it has one. */
 function errorOf(data: unknown): string | null {
 	const error = data && typeof data === 'object' && 'error' in data ? data.error : null;

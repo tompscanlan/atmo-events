@@ -30,8 +30,8 @@ vi.mock('$lib/groups/server/session', async (importOriginal) => ({
 import { POST } from './+server';
 import { GET } from './callback/+server';
 import { sqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
-import { createGroup } from '$lib/groups/server/repo';
 
+import { createGroup } from '$lib/groups/server/db/groups';
 const GROUP = 'did:plc:linkedgroupaaaaaaaaaaaaa';
 const OWNER = 'did:plc:owneraaaaaaaaaaaaaaaaaaa';
 const MEMBER = 'did:plc:memberaaaaaaaaaaaaaaaaaa';

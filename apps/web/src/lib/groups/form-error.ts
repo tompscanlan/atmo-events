@@ -4,10 +4,9 @@ import type { GroupFormFailure } from './form-result';
 import type { GroupPermission } from './permissions';
 import type { CallerMembership } from './types';
 
-import { GroupRuleError } from './server/repo';
-
 import { GroupPermissionError, GroupRecordError } from './server/group-write';
 import { GroupCredentialError } from './server/session';
+import { GroupRuleError } from './server/db/rules';
 const NOT_LINKED: GroupFormFailure = {
 	ok: false,
 	error:

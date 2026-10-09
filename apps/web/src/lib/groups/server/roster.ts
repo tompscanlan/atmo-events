@@ -21,18 +21,6 @@
 import { GROUP_ROLES, type GroupRoleName, type AssignableRole } from '../permissions';
 import type { GroupRow, GroupVisibility, MemberRow } from '../types';
 
-import {
-	GroupRuleError,
-	addMember,
-	approveJoinRequest,
-	changeMemberRole,
-	decideJoinRequest,
-	getMemberRow,
-	pendingRequestDid,
-	removeMember,
-	requestJoin,
-	type JoinOutcome
-} from './repo';
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
 
 import {
@@ -57,6 +45,18 @@ import { groupWriter, requireGroupPermission, type GroupRepoWriter } from './gro
 import { errorText } from './errors';
 import { type CredentialStoreEnv } from './session';
 import { readMembership } from './members-read';
+import { GroupRuleError } from './db/rules';
+import {
+	addMember,
+	approveJoinRequest,
+	changeMemberRole,
+	decideJoinRequest,
+	getMemberRow,
+	pendingRequestDid,
+	removeMember,
+	requestJoin,
+	type JoinOutcome
+} from './db/roster';
 export type RosterStep = 'record' | 'row' | 'list';
 export type RosterChange = 'grant' | 'revoke' | 'request';
 

@@ -77,9 +77,10 @@ import {
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
-import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
 
 import { groupSpaceUris } from '$lib/groups/ids';
+import { createGroup, recordGroupSpaces } from '$lib/groups/server/db/groups';
+import { addMember } from '$lib/groups/server/db/roster';
 const OWNER = 'did:plc:owner';
 const MEMBER = signedIn.user.did;
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';

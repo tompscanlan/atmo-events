@@ -31,8 +31,9 @@ import {
 	readGroupMembers,
 	type GroupMembers
 } from './members-read';
-import { applyGroupCache, getGroupByDid, restoreGroup } from './repo';
+
 import { ensureGroupsSchema } from './schema';
+import { applyGroupCache, getGroupByDid, restoreGroup } from './db/groups';
 /** A rebuild that stopped before writing anything. `reason` is a stable tag,
  *  so a command can report it without matching the message. */
 export class GroupRebuildRefused extends Error {

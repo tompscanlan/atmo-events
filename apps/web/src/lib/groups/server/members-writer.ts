@@ -70,7 +70,7 @@ export type MembershipIntent = MembershipPut | MembershipDrop;
 
 /** Authorized by identity, not by a grant: the caller must be the subject. A
  *  plain member holds no roster grant but may join and leave. `join` does not
- *  apply the join policy here; `requestJoin` (./repo.ts) already did. */
+ *  apply the join policy here; `requestJoin` (./db/roster.ts) already did. */
 const SELF_SERVICE: readonly MembershipIntent[] = ['join', 'leave'];
 
 const PERMISSION_FOR: Readonly<

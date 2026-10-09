@@ -10,7 +10,6 @@ import type { CallerMembership, GroupRow, GroupVisibility, RosterEntry } from '.
 import { groupSpaceReader, readGroupProfile, type GroupSpaceReader } from './about-read';
 import { knownHandles } from './identities';
 
-import { getCallerMembership, getGroupByDid, listMembers } from './repo';
 import {
 	hasMemberRecords,
 	rosterFromRecords,
@@ -19,8 +18,10 @@ import {
 } from './members-read';
 import { readGroupVisibility } from './spaces';
 
-import { errorText } from './errors';
 import { type CredentialStoreEnv } from './session';
+import { getGroupByDid } from './db/groups';
+import { listMembers } from './db/roster';
+import { readStanding } from './standing';
 /** Every refusal says this, byte for byte, so the causes cannot be told apart. */
 export const GROUP_NOT_FOUND = 'Group not found';
 
@@ -81,37 +82,6 @@ export async function groupRouteContext(
 	if (!canSeeGroup(visibility, membership)) error(404, GROUP_NOT_FOUND);
 
 	return { group, membership, visibility, reader };
-}
-
-/** When the members space errors, the caller is off the roster and holds no
- *  permission. The row cannot stand in: after a removal whose row delete failed,
- *  it would let the removed member in. It still supplies what the page shows,
- *  and `unreadable` makes a form say "could not be checked". When there is no
- *  reader because the owner has not linked the group, `unlinked` makes a form
- *  say that instead. */
-export async function readStanding(
-	db: D1Database,
-	group: GroupRow,
-	callerDid: string | null,
-	reader: GroupSpaceReader | null
-): Promise<CallerMembership> {
-	try {
-		const membership = await getCallerMembership(db, group, callerDid, reader);
-		return !reader && group.members_space_uri ? { ...membership, unlinked: true } : membership;
-	} catch (e) {
-		if (!reader) throw e;
-		console.error(
-			`[groups] ${group.group_did}: members space unreadable; the caller is off the roster for this read:`,
-			e
-		);
-		const row = await getCallerMembership(db, group, callerDid, null);
-		return {
-			...row,
-			permissions: new Set(),
-			onRoster: false,
-			unreadable: errorText(e)
-		};
-	}
 }
 
 /** A group page's header: the profile record's name, else the row's, and the

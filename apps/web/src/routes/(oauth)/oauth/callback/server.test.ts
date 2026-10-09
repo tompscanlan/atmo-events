@@ -18,9 +18,11 @@ vi.mock('$lib/contrail', () => ({ getServerClient: () => ({ get: async () => ({}
 
 import { GET } from './+server';
 import { sqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
-import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
+
 import { memberGrant } from '$lib/groups/server/member-grants';
 
+import { createGroup, recordGroupSpaces } from '$lib/groups/server/db/groups';
+import { addMember } from '$lib/groups/server/db/roster';
 const GROUP = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const MEMBER = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const MEMBERS = `at://${GROUP}/space/group.opensocial.members/self`;

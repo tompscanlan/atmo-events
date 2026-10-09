@@ -49,12 +49,13 @@ import {
 	linkedCredential,
 	unlinkAllGroups
 } from './server/__fixtures__/linked-group';
-import { createGroup, getGroupByDid, recordGroupSpaces } from './server/repo';
+
 import { pdsProvisioner, provisionGroupSpaces } from './server/spaces';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow, type GroupVisibility } from './types';
 import { runUpdateGroup, type UpdateGroupData } from './update-group';
 
 import { pdsWriter } from './server/group-write';
+import { createGroup, getGroupByDid, recordGroupSpaces } from './server/db/groups';
 const OWNER = 'did:plc:owner';
 const GROUP_DID = 'did:plc:settingsgroupaaaaaaaaaaa';
 const HANDLE = 'kona.group.stub.test';
@@ -798,7 +799,7 @@ describe('a visibility change reaches the host before the row', () => {
 		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
 		expect(await declaredNow()).toBe(true);
 		expect(rowWhole()).toEqual(before);
-		const { listGroups } = await import('./server/repo');
+		const { listGroups } = await import('./server/browse');
 		const browse = await listGroups(harness.db, {
 			declared: [{ did: GROUP_DID, createdAt: null }]
 		});

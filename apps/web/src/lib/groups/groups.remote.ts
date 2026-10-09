@@ -23,7 +23,7 @@ import {
 	type GroupVisibility
 } from './types';
 import { searchPeopleByHandle } from './server/people-search';
-import type { JoinOutcome } from './server/repo';
+
 import { groupActorToDid, groupRouteContext } from './server/route-context';
 import {
 	GROUP_EVENT_IMAGE_MAX_BYTES,
@@ -63,6 +63,7 @@ import { RSVP_STATUSES } from './ids';
 
 import { errorText } from './server/errors';
 import { EVENT_PLACEMENTS } from './event-placement';
+import { type JoinOutcome } from './server/db/roster';
 /** The group key every form posts, and the subject DID on the roster forms.
  *  `context` also accepts a full handle, but the app's forms post the DID. */
 const didField = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,300}$/, 'Invalid DID'));

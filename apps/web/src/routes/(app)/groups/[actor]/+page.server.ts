@@ -7,11 +7,12 @@ import { readGroupMembers, NO_MEMBER_RECORDS } from '$lib/groups/server/members-
 import { loadPeople } from '$lib/groups/server/people';
 
 import { groupRouteContext, pageRoster } from '$lib/groups/server/route-context';
-import { countActiveMembers, listJoinRequests } from '$lib/groups/server/repo';
+
 import { readGroupVisibility } from '$lib/groups/server/spaces';
 import type { GroupRow, GroupVisibility, RosterEntry } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
 
+import { countMembers, listJoinRequests } from '$lib/groups/server/db/roster';
 /** The visibility the page shows: the host's, since the row holds none. The
  *  gate's answer is reused. For a caller on the roster the gate did not ask,
  *  so the page does, and a host that does not answer gives null rather than
@@ -99,7 +100,7 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 		},
 		/** The roster's length when it was read; for a caller who cannot see
 		 *  the roster, the rows' count. */
-		memberCount: roster?.length ?? (await countActiveMembers(db, group.id)),
+		memberCount: roster?.length ?? (await countMembers(db, group.id)),
 		/** The first members, for their faces. Empty for a caller who cannot see the roster. */
 		rosterPreview: preview,
 		/** Null for a caller who cannot see the roster. */

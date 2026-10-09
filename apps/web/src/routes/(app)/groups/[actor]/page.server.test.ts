@@ -25,7 +25,7 @@ import {
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
-import { addMember, createGroup, getGroupByDid, recordGroupSpaces } from '$lib/groups/server/repo';
+
 import {
 	GROUP_NOT_FOUND,
 	GROUP_VISIBILITY_UNCHECKED,
@@ -36,6 +36,8 @@ import { linkGroups, unlinkAllGroups } from '$lib/groups/server/__fixtures__/lin
 import type { CallerMembership } from '$lib/groups/types';
 
 import { groupSpaceUris } from '$lib/groups/ids';
+import { createGroup, getGroupByDid, recordGroupSpaces } from '$lib/groups/server/db/groups';
+import { addMember } from '$lib/groups/server/db/roster';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';

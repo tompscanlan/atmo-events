@@ -19,20 +19,22 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 import { actorToDid } from '$lib/atproto/methods';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { stubPds } from './__fixtures__/stub-pds';
-import { addMember, createGroup, recordGroupSpaces } from './repo';
+
 import {
 	GROUP_NOT_FOUND,
 	GROUP_VISIBILITY_UNCHECKED,
 	groupActorToDid,
 	groupPath,
-	groupRouteContext,
-	readStanding
+	groupRouteContext
 } from './route-context';
 import type { GroupSpaceReader } from './about-read';
 import { linkGroups, linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
 import type { GroupRow, GroupVisibility } from '../types';
 
+import { createGroup, recordGroupSpaces } from './db/groups';
+import { addMember } from './db/roster';
+import { readStanding } from './standing';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';

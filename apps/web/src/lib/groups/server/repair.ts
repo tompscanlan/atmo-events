@@ -50,11 +50,13 @@ import {
 	writeGroupSpaceIndex
 } from './members-writer';
 import { rebuildGroup, type GroupRebuildResult } from './rebuild';
-import { listJoinRequests, listMembers, rolePermissions } from './repo';
+
 import { readGroupVisibility } from './spaces';
 
 import { GroupRecordError, requireGroupPermission, type GroupRepoWriter } from './group-write';
 import { type CredentialStoreEnv } from './session';
+import { rolePermissions } from './db/groups';
+import { listJoinRequests, listMembers } from './db/roster';
 export interface RepairGroupInput {
 	db: D1Database;
 	env: CredentialStoreEnv;

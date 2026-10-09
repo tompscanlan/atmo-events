@@ -12,7 +12,7 @@
 //      shown and enforced (`groupFace`, `requestJoin`), not from the row.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { createGroup, getGroupById, recordGroupSpaces } from './repo';
+
 import { pdsSpaceReader, readGroupAbout, type GroupSpaceReader } from './about-read';
 import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import {
@@ -25,6 +25,7 @@ import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 
 import { splitRecordUri, spaceUri } from '../ids';
 import { cacheFromProfile, rebuildGroupCache } from './rebuild';
+import { createGroup, getGroupById, recordGroupSpaces } from './db/groups';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ABOUT = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self');

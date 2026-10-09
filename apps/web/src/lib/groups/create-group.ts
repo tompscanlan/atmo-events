@@ -18,12 +18,7 @@ import {
 	type MintFailure,
 	type MintedGroup
 } from './server/mint';
-import {
-	createGroup,
-	recordGroupSpaces,
-	rehearseCreateGroup,
-	type CreateGroupInput
-} from './server/repo';
+
 import {
 	GroupSpaceError,
 	SpacesUnsupportedError,
@@ -54,6 +49,12 @@ import { errorText } from './server/errors';
 import { groupLinkConfigured, type CredentialStoreEnv } from './server/session';
 
 import { registerGroupIdentity } from './server/identities';
+import {
+	createGroup,
+	recordGroupSpaces,
+	rehearseCreateGroup,
+	type CreateGroupInput
+} from './server/db/groups';
 /** Structural rather than `App.Platform['env']`, so a test can supply only
  *  what a create reads. */
 export interface CreateGroupEnv extends CredentialStoreEnv {
@@ -69,7 +70,7 @@ export interface CreateGroupData {
 	label: string;
 	description?: string;
 	visibility: GroupVisibility;
-	/** Missing means approval on: `repo.ts` stores anything but `false` as 1. */
+	/** Missing means approval on: `createGroup` (server/db/groups.ts) stores anything but `false` as 1. */
 	requireApproval?: boolean;
 	locationName?: string;
 	/** One rule per non-empty line. Stored only as about-space records. */

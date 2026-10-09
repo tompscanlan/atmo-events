@@ -7,11 +7,11 @@
 //     the signal, so a stale one keeps announcing a group that asked not to be;
 //   * a withdrawal tells our own index, after the PDS delete and never instead
 //     of it, and a failure to tell it does not fail the save. The index's side
-//     of this runs for real in ./declaration-index.test.ts;
+//     of this runs for real in ./browse-index.test.ts;
 //   * the gate is MANAGE_GROUP, since announcing a group changes its face.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { addMember, createGroup, recordGroupSpaces } from './repo';
+
 import {
 	reconcileGroupDeclaration,
 	removeGroupDeclaration,
@@ -28,6 +28,8 @@ import {
 	type GroupRepoWriter,
 	GroupRecordError
 } from './group-write';
+import { createGroup, recordGroupSpaces } from './db/groups';
+import { addMember } from './db/roster';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:6cz6dldz42itymdbte47ewcv';

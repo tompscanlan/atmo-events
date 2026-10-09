@@ -22,7 +22,8 @@ import type { GroupRow } from '../types';
 import { holdsAcceptanceGrant } from './member-grants';
 
 import { xrpc, xrpcError } from './xrpc';
-import { groupsOfMember } from './repo';
+
+import { groupsOfMember } from './db/roster';
 /** The member's session at their own PDS, as an acceptance write needs it. */
 export interface MemberSession {
 	did: string;

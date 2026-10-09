@@ -28,9 +28,10 @@ import { DEFAULT_ROLE_PERMISSIONS, type GroupRoleName } from '../permissions';
 import type { GroupRow } from '../types';
 import * as rebuildModule from './rebuild';
 import { GroupRebuildRefused, rebuildGroup } from './rebuild';
-import { addMember, createGroup, recordGroupSpaces } from './repo';
 
 import { groupSpaceUris } from '../ids';
+import { createGroup, recordGroupSpaces } from './db/groups';
+import { addMember } from './db/roster';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const ADMIN = 'did:plc:6cz6dldz42itymdbte47ewcv';

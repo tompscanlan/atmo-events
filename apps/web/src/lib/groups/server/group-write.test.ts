@@ -8,8 +8,9 @@ import type { GroupRow } from '../types';
 import type { GroupSpaceReader } from './about-read';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { GroupPermissionError, requireGroupPermission } from './group-write';
-import { addMember, createGroup, getGroupByDid, recordGroupSpaces } from './repo';
 
+import { createGroup, getGroupByDid, recordGroupSpaces } from './db/groups';
+import { addMember } from './db/roster';
 const GROUP_DID = 'did:plc:gatetestgroupaaaaaaaaaaa';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';

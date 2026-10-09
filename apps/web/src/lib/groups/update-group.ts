@@ -32,8 +32,6 @@
 // when it says something else. A declared group's access must say public, so it
 // goes before a declaration is published and after one is withdrawn.
 
-import { updateGroup } from './server/repo';
-
 import { approvalRefusal, groupFace, splitRuleLines } from './about-record';
 import {
 	groupSpaceReader,
@@ -54,6 +52,7 @@ import type { GroupRow, GroupVisibility } from './types';
 import { groupWriter, type GroupRepoWriter } from './server/group-write';
 import { errorText } from './server/errors';
 import { type CredentialStoreEnv, GroupCredentialError } from './server/session';
+import { updateGroup } from './server/db/groups';
 export interface UpdateGroupData {
 	name: string;
 	description?: string;

@@ -16,21 +16,7 @@ import {
 } from '../src/lib/groups/permissions';
 import { canSeeGroup } from '../src/lib/groups/access';
 import type { GroupRow, GroupVisibility } from '../src/lib/groups/types';
-import {
-	approveJoinRequest,
-	changeMemberRole,
-	createGroup,
-	getCallerMembership,
-	getGroupByDid,
-	getGroupById,
-	listJoinRequests,
-	listMembers,
-	recordGroupSpaces,
-	removeMember,
-	requestJoin,
-	rolePermissions,
-	updateGroup
-} from '../src/lib/groups/server/repo';
+
 import {
 	checkCalendarSpace,
 	deleteGroupEvent,
@@ -134,6 +120,23 @@ import { groupWriter } from '../src/lib/groups/server/group-write';
 
 import { registerGroupIdentity } from '../src/lib/groups/server/identities';
 import { type EventPlacement } from '../src/lib/groups/event-placement';
+import {
+	createGroup,
+	getGroupByDid,
+	getGroupById,
+	recordGroupSpaces,
+	rolePermissions,
+	updateGroup
+} from '../src/lib/groups/server/db/groups';
+import {
+	approveJoinRequest,
+	changeMemberRole,
+	listJoinRequests,
+	listMembers,
+	removeMember,
+	requestJoin
+} from '../src/lib/groups/server/db/roster';
+import { getCallerMembership } from '../src/lib/groups/server/standing';
 interface Env {
 	DB: D1Database;
 	/** Where the app looks for the group's linked session, as in production. */

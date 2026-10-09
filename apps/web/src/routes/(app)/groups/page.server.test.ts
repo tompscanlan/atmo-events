@@ -3,9 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // What this route decides for /groups: that the record check `listGroups` asks
 // for an undeclared group is the signed-in caller's own standing, read from the
 // group's members space. The listing rules are pinned in
-// lib/groups/server/repo.test.ts; the index and the handle cache are stubbed
+// lib/groups/server/browse.test.ts; the index and the handle cache are stubbed
 // here because neither decides anything about the check.
-vi.mock('$lib/groups/server/declaration-index', () => ({
+vi.mock('$lib/groups/server/browse', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/groups/server/browse')>()),
 	listDeclaredGroups: vi.fn(async () => [])
 }));
 vi.mock('$lib/groups/server/identities', () => ({
@@ -25,14 +26,15 @@ import {
 	resetReaderHost,
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
-import { listDeclaredGroups } from '$lib/groups/server/declaration-index';
+import { listDeclaredGroups } from '$lib/groups/server/browse';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { membersSpaceReader } from '$lib/groups/server/__fixtures__/members-space';
-import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
 
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from '$lib/groups/types';
 
 import { spaceUri } from '$lib/groups/ids';
+import { createGroup, recordGroupSpaces } from '$lib/groups/server/db/groups';
+import { addMember } from '$lib/groups/server/db/roster';
 const OWNER = 'did:plc:owner';
 const ALICE = 'did:plc:alice';
 
