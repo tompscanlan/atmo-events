@@ -155,12 +155,12 @@ export const updateGroupForm = form(
 export const repairGroupForm = form(
 	v.object({ groupDid: didField }),
 	async (data): Promise<GroupFormResult<{ summary: string }>> => {
-		const { db, env, group, membership, callerDid } = await context(data.groupDid);
+		const { db, env, group, membership, callerDid, reader } = await context(data.groupDid);
 		if (!can(membership.permissions, 'MANAGE_GROUP')) {
 			return notAllowed(membership, 'MANAGE_GROUP');
 		}
 		try {
-			const result = await repairGroup({ db, env, group, callerDid });
+			const result = await repairGroup({ db, env, group, callerDid, reader });
 			return { ok: true, summary: describeRepair(result) };
 		} catch (e) {
 			try {
@@ -435,13 +435,14 @@ export const putGroupEvent = command(
 		} catch (e) {
 			return formError(e);
 		}
-		const { db, env, group, callerDid } = await context(data.groupDid);
+		const { db, env, group, callerDid, reader } = await context(data.groupDid);
 		try {
 			const result = await writeGroupEvent({
 				db,
 				env,
 				group,
 				callerDid,
+				reader,
 				intent: data.intent,
 				rkey: data.rkey,
 				space,
@@ -463,9 +464,17 @@ export const removeGroupEvent = command(
 		} catch (e) {
 			return formError(e);
 		}
-		const { db, env, group, callerDid } = await context(data.groupDid);
+		const { db, env, group, callerDid, reader } = await context(data.groupDid);
 		try {
-			const result = await deleteGroupEvent({ db, env, group, callerDid, rkey: data.rkey, space });
+			const result = await deleteGroupEvent({
+				db,
+				env,
+				group,
+				callerDid,
+				reader,
+				rkey: data.rkey,
+				space
+			});
 			return { ok: true, uri: result.uri };
 		} catch (e) {
 			return formError(e);
@@ -483,13 +492,14 @@ export const putGroupEventImage = command(
 		mimeType: v.pipe(v.string(), v.maxLength(100))
 	}),
 	async (data): Promise<GroupFormResult<{ blob: GroupBlobRef }>> => {
-		const { db, env, group, callerDid } = await context(data.groupDid);
+		const { db, env, group, callerDid, reader } = await context(data.groupDid);
 		try {
 			const blob = await uploadGroupEventImage({
 				db,
 				env,
 				group,
 				callerDid,
+				reader,
 				intent: data.intent,
 				bytes: new Uint8Array(data.bytes),
 				mimeType: data.mimeType
