@@ -25,7 +25,7 @@ import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqli
 import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
 import { groupRouteContext } from '$lib/groups/server/route-context';
 
-import { acceptanceGrant } from '$lib/groups/server/member-grants';
+import { memberGrant } from '$lib/groups/server/member-grants';
 
 import { groupSpaceUris } from '$lib/groups/ids';
 const OWNER = 'did:plc:owner';
@@ -365,7 +365,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 		const data = await openAs(
 			MEMBER,
 			'3lmeeting',
-			memberSession(`atproto ${acceptanceGrant(GROUP_DID)}`, log)
+			memberSession(`atproto ${memberGrant(GROUP_DID)}`, log)
 		);
 
 		expect(data.viewerRsvpStatus).toBe('going');
@@ -384,7 +384,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 		const notGoing = await openAs(
 			MEMBER,
 			'3lmeeting',
-			memberSession(`atproto ${acceptanceGrant(GROUP_DID)}`, later, 'notgoing')
+			memberSession(`atproto ${memberGrant(GROUP_DID)}`, later, 'notgoing')
 		);
 		expect(notGoing.viewerRsvpStatus).toBe('notgoing');
 
@@ -392,7 +392,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 		const absent: string[] = [];
 		serveReader(GROUP_DID, sharedHost(absent));
 		await expect(
-			openAs(MEMBER, '3lmadeup', memberSession(`atproto ${acceptanceGrant(GROUP_DID)}`, absent))
+			openAs(MEMBER, '3lmadeup', memberSession(`atproto ${memberGrant(GROUP_DID)}`, absent))
 		).rejects.toMatchObject({ status: 404 });
 		expect(absent.filter((line) => line.startsWith('member '))).toEqual([]);
 	});
@@ -421,7 +421,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 		const none = await openAs(
 			MEMBER,
 			'3lmeeting',
-			memberSession(`atproto ${acceptanceGrant(GROUP_DID)}`, log, null)
+			memberSession(`atproto ${memberGrant(GROUP_DID)}`, log, null)
 		);
 		expect(none.viewerRsvpStatus).toBeNull();
 		expect(none.viewerRsvpRkey).toBeNull();
@@ -434,7 +434,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 		const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const failing = {
 			did: MEMBER,
-			getTokenInfo: async () => ({ scope: `atproto ${acceptanceGrant(GROUP_DID)}` }),
+			getTokenInfo: async () => ({ scope: `atproto ${memberGrant(GROUP_DID)}` }),
 			handle: async () => Response.json({ error: 'InternalServerError' }, { status: 500 })
 		};
 		const unreadable = {

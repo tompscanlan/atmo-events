@@ -63,7 +63,7 @@ import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import { GROUP_MEMBERSHIP_COLLECTION } from '../members-record';
 import { DEFAULT_ROLE_PERMISSIONS, type GroupRoleName } from '../permissions';
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
-import { acceptanceGrant } from './member-grants';
+import { memberGrant } from './member-grants';
 import type { MemberSession } from './acceptance';
 
 import { spaceUri } from '../ids';
@@ -895,7 +895,7 @@ describe('the member writes and deletes their own acceptance', () => {
 	function memberSession(did: string, { fail = false } = {}): MemberSession {
 		return {
 			did,
-			scope: acceptanceGrant(GROUP_DID),
+			scope: memberGrant(GROUP_DID),
 			async handle(pathname) {
 				const create = pathname === '/xrpc/com.atproto.space.createRecord';
 				order.push(create ? 'acceptance:create' : 'acceptance:delete');

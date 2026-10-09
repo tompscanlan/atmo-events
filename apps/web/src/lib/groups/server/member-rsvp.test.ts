@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CallerMembership, GroupRow } from '../types';
 import type { GroupSpaceReader } from './about-read';
 import type { MemberSession } from './acceptance';
-import { acceptanceGrant } from './member-grants';
+import { memberGrant } from './member-grants';
 import {
 	RSVP_EVENT_CHANGED,
 	RSVP_NO_EVENT,
@@ -37,7 +37,7 @@ const MEETING_URI = `${CALENDAR}/${GROUP_DID}/${EVENT}/3lmeeting`;
 const MEETING_CID = 'bafyreimeetingcurrent';
 const BASE_SCOPE = 'atproto rpc:app.bsky.actor.getProfile?aud=*';
 /** What a sign-in grants today. */
-const GRANTED = `${BASE_SCOPE} ${acceptanceGrant(GROUP_DID)}`;
+const GRANTED = `${BASE_SCOPE} ${memberGrant(GROUP_DID)}`;
 /** What a sign-in granted before RSVPs joined the grant, written out. */
 const ACCEPTANCE_ONLY = `${BASE_SCOPE} space:*?authority=${GROUP_DID}&collection=group.opensocial.acceptance&action=create&action=update&action=delete`;
 /** Stamps of the member's session before a re-authorization and after it. */

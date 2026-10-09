@@ -30,7 +30,7 @@ export const METADATA_CACHE_MS = 10 * 60 * 1000;
  *  delete their acceptance, and to write, delete and read back their own RSVP
  *  to a members-only event there, and nothing else. One token per group, so a
  *  session never holds half of it. */
-export function acceptanceGrant(groupDid: string): string {
+export function memberGrant(groupDid: string): string {
 	return `space:*?authority=${groupDid}&collection=${GROUP_ACCEPTANCE_COLLECTION}&collection=${GROUP_RSVP_COLLECTION}&action=read_self&action=create&action=update&action=delete`;
 }
 
@@ -44,15 +44,11 @@ export function holdsAcceptanceGrant(
 	groupDid: string,
 	action: 'create' | 'delete'
 ): boolean {
-	return scope.split(' ').some((token) => {
-		if (!token.startsWith('space:*?')) return false;
-		const params = new URLSearchParams(token.slice('space:*?'.length));
-		return (
-			params.get('authority') === groupDid &&
+	return groupSpaceGrants(scope, groupDid).some(
+		(params) =>
 			params.getAll('collection').includes(GROUP_ACCEPTANCE_COLLECTION) &&
 			params.getAll('action').includes(action)
-		);
-	});
+	);
 }
 
 /** The parameters of each `space:*` grant in `scope` whose authority is
@@ -101,7 +97,7 @@ export async function declaredGrants(db: D1Database): Promise<string[]> {
 		const { results } = await db
 			.prepare(`SELECT group_did FROM groups ORDER BY created_at, group_did`)
 			.all<{ group_did: string }>();
-		return results.map((r) => acceptanceGrant(r.group_did));
+		return results.map((r) => memberGrant(r.group_did));
 	} catch (e) {
 		console.warn('[groups] client metadata declares no group grants:', e);
 		return [];
@@ -129,10 +125,10 @@ export async function signInGrantAttempts(
 	}
 	if (groups.length === 0) return [[]];
 
-	const all = groups.map((g) => acceptanceGrant(g.group_did));
+	const all = groups.map((g) => memberGrant(g.group_did));
 	const settled = groups
 		.filter((g) => now - g.created_at >= METADATA_CACHE_MS)
-		.map((g) => acceptanceGrant(g.group_did));
+		.map((g) => memberGrant(g.group_did));
 
 	const attempts = [all];
 	if (settled.length < all.length && settled.length > 0) attempts.push(settled);
@@ -180,7 +176,7 @@ export async function reauthorizeForGroup<T>(
 	now: number,
 	authorize: (grants: string[]) => Promise<T>
 ): Promise<T | null> {
-	const grant = acceptanceGrant(groupDid);
+	const grant = memberGrant(groupDid);
 	try {
 		const attempts = (await signInGrantAttempts(db, did, now)).filter((a) => a.includes(grant));
 		if (attempts.length === 0) return null;

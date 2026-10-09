@@ -102,7 +102,7 @@ import {
 	writeMissingAcceptances,
 	type MemberSession
 } from '../src/lib/groups/server/acceptance';
-import { acceptanceGrant } from '../src/lib/groups/server/member-grants';
+import { memberGrant } from '../src/lib/groups/server/member-grants';
 import {
 	deleteMembersOnlyRsvp,
 	putMembersOnlyRsvp,
@@ -191,7 +191,7 @@ async function adminSession(env: Env, did: string, group: GroupRow): Promise<Mem
 	if (loggedIn !== did) throw new Error(`the admin login is ${loggedIn}, not ${did}`);
 	return {
 		did,
-		scope: acceptanceGrant(group.group_did),
+		scope: memberGrant(group.group_did),
 		handle: (pathname, init) => {
 			const headers = new Headers(init.headers);
 			headers.set('authorization', `Bearer ${accessJwt}`);
@@ -226,7 +226,7 @@ function noSpacesSession(did: string): MemberSession {
 function outsiderSession(did: string, group: GroupRow, calls: string[]): MemberSession {
 	return {
 		did,
-		scope: acceptanceGrant(group.group_did),
+		scope: memberGrant(group.group_did),
 		handle: async (pathname) => {
 			calls.push(pathname);
 			throw new Error(`the outsider's session was asked for ${pathname}`);

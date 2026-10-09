@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { addMember, createGroup, recordGroupSpaces, requestJoin } from './repo';
-import { acceptanceGrant, holdsAcceptanceGrant } from './member-grants';
+import { memberGrant, holdsAcceptanceGrant } from './member-grants';
 import {
 	acceptOnSignIn,
 	deleteAcceptance,
@@ -80,7 +80,7 @@ function memberPds(): MemberPds {
 }
 
 const group = { group_did: GROUP_DID, members_space_uri: MEMBERS } as GroupRow;
-const granted = `${BASE_SCOPE} ${acceptanceGrant(GROUP_DID)}`;
+const granted = `${BASE_SCOPE} ${memberGrant(GROUP_DID)}`;
 
 let pds: MemberPds;
 
@@ -228,7 +228,7 @@ describe('writeMissingAcceptances', () => {
 		await addMember(harness.db, bare.id, MEMBER, 'member');
 		const scope = [
 			BASE_SCOPE,
-			...[joined, asked, bare, stranger].map((g) => acceptanceGrant(g.group_did))
+			...[joined, asked, bare, stranger].map((g) => memberGrant(g.group_did))
 		].join(' ');
 
 		await writeMissingAcceptances(harness.db, pds.session(scope));
@@ -246,7 +246,7 @@ describe('writeMissingAcceptances', () => {
 		await addMember(harness.db, first.id, MEMBER, 'member');
 		await addMember(harness.db, second.id, MEMBER, 'member');
 		pds.failFor.add(spaceOf(first.group_did));
-		const scope = [first, second].map((g) => acceptanceGrant(g.group_did)).join(' ');
+		const scope = [first, second].map((g) => memberGrant(g.group_did)).join(' ');
 
 		await expect(writeMissingAcceptances(harness.db, pds.session(scope))).resolves.toBeUndefined();
 

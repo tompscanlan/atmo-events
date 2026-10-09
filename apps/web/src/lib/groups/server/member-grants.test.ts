@@ -8,7 +8,7 @@ import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { addMember, createGroup, decideJoinRequest, requestJoin } from './repo';
 import {
 	METADATA_CACHE_MS,
-	acceptanceGrant,
+	memberGrant,
 	declaredGrants,
 	firstAcceptedScope,
 	holdsAcceptanceGrant,
@@ -55,14 +55,14 @@ function invalidScope(message: string) {
 	return new OAuthResponseError(new Response(null, { status: 400 }), 'invalid_scope', message);
 }
 
-describe('acceptanceGrant', () => {
+describe('memberGrant', () => {
 	// One token per group covers both of the member's own records in its spaces:
 	// the acceptance, and an RSVP to a members-only event. Writing the RSVP needs
 	// create and update with its collection in the same grant, and reading it back
 	// from the member's own session needs read_self. Written out, so a changed
 	// grant fails here before any consent screen shows it.
 	it("the member grant lets a member write and read back their own RSVP in the group's spaces", () => {
-		const grant = acceptanceGrant(KONA);
+		const grant = memberGrant(KONA);
 		expect(grant).toBe(
 			`space:*?authority=${KONA}&collection=group.opensocial.acceptance&collection=community.lexicon.calendar.rsvp&action=read_self&action=create&action=update&action=delete`
 		);
@@ -123,7 +123,7 @@ describe('holdsRsvpGrant', () => {
 		expect(held(`space:*?authority=${KONA}&action=read_self`)).toEqual(['read']);
 		expect(held(`space:*?authority=${KONA}&collection=${RSVP}&action=read`)).toEqual(['read']);
 		// Another group's authority, or none, is not this group's grant.
-		expect(held(`atproto ${acceptanceGrant(HILO)}`)).toEqual([]);
+		expect(held(`atproto ${memberGrant(HILO)}`)).toEqual([]);
 		expect(
 			held(`space:*?collection=${RSVP}&action=read_self&action=create&action=update&action=delete`)
 		).toEqual([]);
@@ -141,7 +141,7 @@ describe('declaredGrants', () => {
 
 		const grants = await declaredGrants(db);
 		expect(grants).toHaveLength(2);
-		expect(grants.slice().sort()).toEqual([acceptanceGrant(KONA), acceptanceGrant(HILO)].sort());
+		expect(grants.slice().sort()).toEqual([memberGrant(KONA), memberGrant(HILO)].sort());
 	});
 });
 
@@ -171,14 +171,14 @@ describe('signInGrantAttempts', () => {
 		await addMember(db, puna.id, BOB, 'member');
 
 		const [first] = await signInGrantAttempts(db, ALICE, now);
-		expect(first.slice().sort()).toEqual([acceptanceGrant(KONA), acceptanceGrant(HILO)].sort());
+		expect(first.slice().sort()).toEqual([memberGrant(KONA), memberGrant(HILO)].sort());
 	});
 
 	it("includes the owner's own groups, since the owner holds a membership", async () => {
 		await group(KONA);
 		await age(KONA, now, METADATA_CACHE_MS);
 
-		expect((await signInGrantAttempts(db, OWNER, now))[0]).toEqual([acceptanceGrant(KONA)]);
+		expect((await signInGrantAttempts(db, OWNER, now))[0]).toEqual([memberGrant(KONA)]);
 	});
 
 	it('retries first without the grants of groups younger than the metadata cache, then with none', async () => {
@@ -191,10 +191,8 @@ describe('signInGrantAttempts', () => {
 
 		const attempts = await signInGrantAttempts(db, ALICE, now);
 		expect(attempts).toHaveLength(3);
-		expect(attempts[0].slice().sort()).toEqual(
-			[acceptanceGrant(KONA), acceptanceGrant(HILO)].sort()
-		);
-		expect(attempts[1]).toEqual([acceptanceGrant(KONA)]);
+		expect(attempts[0].slice().sort()).toEqual([memberGrant(KONA), memberGrant(HILO)].sort());
+		expect(attempts[1]).toEqual([memberGrant(KONA)]);
 		expect(attempts[2]).toEqual([]);
 	});
 
@@ -203,7 +201,7 @@ describe('signInGrantAttempts', () => {
 		await age(KONA, now, METADATA_CACHE_MS);
 		await addMember(db, kona.id, ALICE, 'member');
 
-		expect(await signInGrantAttempts(db, ALICE, now)).toEqual([[acceptanceGrant(KONA)], []]);
+		expect(await signInGrantAttempts(db, ALICE, now)).toEqual([[memberGrant(KONA)], []]);
 	});
 
 	it('falls back to the base scope when the groups tables are missing', async () => {
@@ -240,21 +238,19 @@ describe('firstAcceptedScope', () => {
 			await signInGrantAttempts(db, ALICE, now),
 			async (grants) => {
 				tried.push(grants);
-				if (grants.includes(acceptanceGrant(HILO))) {
-					throw invalidScope(
-						`Scope "${acceptanceGrant(HILO)}" is not declared in the client metadata`
-					);
+				if (grants.includes(memberGrant(HILO))) {
+					throw invalidScope(`Scope "${memberGrant(HILO)}" is not declared in the client metadata`);
 				}
 				return grants;
 			}
 		);
 
-		expect(result).toEqual([acceptanceGrant(KONA)]);
+		expect(result).toEqual([memberGrant(KONA)]);
 		expect(tried).toHaveLength(2);
 	});
 
 	it('signs in with the base scope when the PDS refuses every grant', async () => {
-		const result = await firstAcceptedScope([[acceptanceGrant(KONA)], []], async (grants) => {
+		const result = await firstAcceptedScope([[memberGrant(KONA)], []], async (grants) => {
 			if (grants.length > 0) throw invalidScope('refused');
 			return 'signed-in';
 		});
@@ -263,14 +259,10 @@ describe('firstAcceptedScope', () => {
 
 	it('logs each refusal it retries past, so a member left unconfirmed has a trace', async () => {
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-		await firstAcceptedScope(
-			[[acceptanceGrant(KONA), acceptanceGrant(HILO)], []],
-			async (grants) => {
-				if (grants.length > 0)
-					throw invalidScope('Scope "x" is not declared in the client metadata');
-				return 'signed-in';
-			}
-		);
+		await firstAcceptedScope([[memberGrant(KONA), memberGrant(HILO)], []], async (grants) => {
+			if (grants.length > 0) throw invalidScope('Scope "x" is not declared in the client metadata');
+			return 'signed-in';
+		});
 		expect(warn).toHaveBeenCalledTimes(1);
 		expect(warn.mock.calls[0].join(' ')).toMatch(
 			/refused 2 group grants, retrying with 0: Scope "x" is not declared/
@@ -280,7 +272,7 @@ describe('firstAcceptedScope', () => {
 
 	it('logs nothing when the first grant set is accepted', async () => {
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-		await firstAcceptedScope([[acceptanceGrant(KONA)], []], async () => 'signed-in');
+		await firstAcceptedScope([[memberGrant(KONA)], []], async () => 'signed-in');
 		expect(warn).not.toHaveBeenCalled();
 		warn.mockRestore();
 	});
@@ -289,7 +281,7 @@ describe('firstAcceptedScope', () => {
 		let calls = 0;
 		const failure = new OAuthResponseError(new Response(null, { status: 400 }), 'invalid_request');
 		await expect(
-			firstAcceptedScope([[acceptanceGrant(KONA)], []], async () => {
+			firstAcceptedScope([[memberGrant(KONA)], []], async () => {
 				calls++;
 				throw failure;
 			})
@@ -326,7 +318,7 @@ describe('reauthorizeForGroup', () => {
 		expect(await requestJoin(db, kona, ALICE, null, 'public')).toBe('joined');
 
 		const asked = await reauthorizeForGroup(db, ALICE, KONA, now, async (grants) => grants);
-		expect(asked).toEqual([acceptanceGrant(KONA)]);
+		expect(asked).toEqual([memberGrant(KONA)]);
 	});
 
 	it("asks for the new group's grant after a join request", async () => {
@@ -335,7 +327,7 @@ describe('reauthorizeForGroup', () => {
 		expect(await requestJoin(db, hilo, ALICE, null, 'public')).toBe('pending');
 
 		const asked = await reauthorizeForGroup(db, ALICE, HILO, now, async (grants) => grants);
-		expect(asked).toEqual([acceptanceGrant(HILO)]);
+		expect(asked).toEqual([memberGrant(HILO)]);
 	});
 
 	it("keeps the member's other groups' grants, since the new session replaces the old", async () => {
@@ -347,7 +339,7 @@ describe('reauthorizeForGroup', () => {
 		expect(await requestJoin(db, hilo, ALICE, null, 'public')).toBe('joined');
 
 		const asked = await reauthorizeForGroup(db, ALICE, HILO, now, async (grants) => grants);
-		expect(asked).toEqual([acceptanceGrant(KONA), acceptanceGrant(HILO)]);
+		expect(asked).toEqual([memberGrant(KONA), memberGrant(HILO)]);
 	});
 
 	it('gives up after one refusal when the new group is younger than the metadata cache', async () => {
@@ -358,7 +350,7 @@ describe('reauthorizeForGroup', () => {
 		let calls = 0;
 		const asked = await reauthorizeForGroup(db, ALICE, KONA, now, async () => {
 			calls++;
-			throw invalidScope(`Scope "${acceptanceGrant(KONA)}" is not declared in the client metadata`);
+			throw invalidScope(`Scope "${memberGrant(KONA)}" is not declared in the client metadata`);
 		});
 		// A retry without the new grant would only reissue what the member already holds.
 		expect(asked).toBeNull();

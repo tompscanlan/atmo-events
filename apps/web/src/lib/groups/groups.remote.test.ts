@@ -52,7 +52,7 @@ import { stubPds } from './server/__fixtures__/stub-pds';
 import { linkGroups, linkedCredential, unlinkAllGroups } from './server/__fixtures__/linked-group';
 import { createGroup, recordGroupSpaces, addMember } from './server/repo';
 
-import { acceptanceGrant } from './server/member-grants';
+import { memberGrant } from './server/member-grants';
 import { RSVP_NO_SPACES, RSVP_RETRY_LATER } from './server/member-rsvp';
 import { OAuthResponseError } from '@atcute/oauth-node-client';
 import { pdsProvisioner, provisionGroupSpaces } from './server/spaces';
@@ -153,7 +153,7 @@ describe('the join and leave buttons, for a member whose session holds the grant
 		const asked: { nsid: string; space: unknown; repo: unknown }[] = [];
 		const session = {
 			did: JOINER,
-			getTokenInfo: async () => ({ scope: `atproto ${acceptanceGrant(LINKED)}` }),
+			getTokenInfo: async () => ({ scope: `atproto ${memberGrant(LINKED)}` }),
 			handle: async (pathname: string, init: RequestInit) => {
 				const body = JSON.parse(String(init.body)) as Record<string, unknown>;
 				asked.push({ nsid: pathname, space: body.space, repo: body.repo });
@@ -523,7 +523,7 @@ describe('the members-only RSVP commands', () => {
 	});
 
 	it("a members-only RSVP names the event's space-form URI, whatever the browser sent", async () => {
-		signInAs(`atproto ${acceptanceGrant(LINKED)}`);
+		signInAs(`atproto ${memberGrant(LINKED)}`);
 		// What a page could add beside the five inputs: none of it is read.
 		const forged = {
 			space: uris.membersSpaceUri,
@@ -603,7 +603,7 @@ describe('the members-only RSVP commands', () => {
 			throw new OAuthResponseError(
 				new Response(null, { status: 400 }),
 				'invalid_scope',
-				`Scope "${acceptanceGrant(LINKED)}" is not declared in the client metadata`
+				`Scope "${memberGrant(LINKED)}" is not declared in the client metadata`
 			);
 		};
 		const press = { groupDid: LINKED, rkey: '3lmeeting', asked: null };
@@ -618,7 +618,7 @@ describe('the members-only RSVP commands', () => {
 		// Each attempt asked for this group's grant, and none was retried in a loop:
 		// one authorize per set that carries it, per press.
 		expect(tried.length).toBe(2);
-		for (const grants of tried) expect(grants).toContain(acceptanceGrant(LINKED));
+		for (const grants of tried) expect(grants).toContain(memberGrant(LINKED));
 		// Nothing reached the member's PDS.
 		expect(asked).toEqual([]);
 

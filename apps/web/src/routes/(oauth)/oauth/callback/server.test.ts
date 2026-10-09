@@ -19,7 +19,7 @@ vi.mock('$lib/contrail', () => ({ getServerClient: () => ({ get: async () => ({}
 import { GET } from './+server';
 import { sqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { addMember, createGroup, recordGroupSpaces } from '$lib/groups/server/repo';
-import { acceptanceGrant } from '$lib/groups/server/member-grants';
+import { memberGrant } from '$lib/groups/server/member-grants';
 
 const GROUP = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const MEMBER = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
@@ -37,7 +37,7 @@ describe('/oauth/callback', () => {
 		const asked: { pathname: string; body: Record<string, unknown> }[] = [];
 		signedIn.session = {
 			did: MEMBER,
-			getTokenInfo: async () => ({ scope: `atproto ${acceptanceGrant(GROUP)}` }),
+			getTokenInfo: async () => ({ scope: `atproto ${memberGrant(GROUP)}` }),
 			handle: async (pathname: string, init: RequestInit) => {
 				asked.push({ pathname, body: JSON.parse(String(init.body)) });
 				return Response.json({
