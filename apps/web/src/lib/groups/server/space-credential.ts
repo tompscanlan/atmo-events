@@ -26,6 +26,7 @@ import { resolveGroupCredential, type CredentialStoreEnv } from './credentials';
 import { groupClient } from './session';
 
 import { splitRecordUri } from '../ids';
+import { describeFailure, isRecordNotFound, readXrpc, xrpcError } from './xrpc';
 const SIGNATURE_LABEL = 'atproto-space';
 
 /** The key a credential is bound to. `keyId` is its P-256 did:key, which the host
@@ -108,19 +109,6 @@ export function credentialExpiry(jwt: string): number | null {
 	}
 }
 
-async function errorName(res: Response): Promise<string | null> {
-	const body = (await res
-		.clone()
-		.json()
-		.catch(() => null)) as { error?: unknown } | null;
-	return typeof body?.error === 'string' ? body.error : null;
-}
-
-async function failure(nsid: string, res: Response): Promise<Error> {
-	const name = await errorName(res);
-	return new Error(`${nsid} failed: ${res.status}${name ? ` ${name}` : ''}`);
-}
-
 /** A delegation token from the group's PDS, then a credential for `space` from the
  *  authority's host, bound to a key made for it. Throws on any refusal. */
 export async function exchangeSpaceCredential(
@@ -132,8 +120,9 @@ export async function exchangeSpaceCredential(
 		`/xrpc/com.atproto.space.getDelegationToken?${new URLSearchParams({ space })}`,
 		{ method: 'GET' }
 	);
-	if (!delegated.ok) throw await failure('com.atproto.space.getDelegationToken', delegated);
-	const { token } = (await delegated.json()) as { token?: unknown };
+	const delegation = await readXrpc(delegated);
+	if (!delegation.ok) throw xrpcError('com.atproto.space.getDelegationToken', delegation);
+	const { token } = delegation.data;
 	if (typeof token !== 'string') {
 		throw new Error('com.atproto.space.getDelegationToken returned no token');
 	}
@@ -148,8 +137,9 @@ export async function exchangeSpaceCredential(
 		},
 		body: JSON.stringify({ space })
 	});
-	if (!res.ok) throw await failure('com.atproto.space.getSpaceCredential', res);
-	const { credential } = (await res.json()) as { credential?: unknown };
+	const issued = await readXrpc(res);
+	if (!issued.ok) throw xrpcError('com.atproto.space.getSpaceCredential', issued);
+	const { credential } = issued.data;
 	if (typeof credential !== 'string') {
 		throw new Error('com.atproto.space.getSpaceCredential returned no credential');
 	}
@@ -230,18 +220,15 @@ async function readAcceptance(
 			method: 'GET',
 			headers: await spaceSigHeaders(cred.signer, `Atproto-Space ${cred.token}`, did)
 		});
-		if (res.ok) {
-			const body = (await res.json().catch(() => null)) as { uri?: unknown } | null;
+		const answer = await readXrpc(res);
+		if (answer.ok) {
 			// Checked, as the other readers do, in case a host ignores the collection.
-			const uri = typeof body?.uri === 'string' ? body.uri : '';
+			const uri = typeof answer.data.uri === 'string' ? answer.data.uri : '';
 			return splitRecordUri(uri).collection === GROUP_ACCEPTANCE_COLLECTION ? 'accepted' : 'absent';
 		}
-		const name = await errorName(res);
-		if (res.status === 400 && name === 'RecordNotFound') return 'absent';
-		if (name && SPENT[name]) return 'spent';
-		console.info(
-			`[groups] acceptance read for ${did} in ${space}: ${res.status}${name ? ` ${name}` : ''}`
-		);
+		if (isRecordNotFound(answer)) return 'absent';
+		if (answer.error && SPENT[answer.error]) return 'spent';
+		console.info(`[groups] acceptance read for ${did} in ${space}: ${describeFailure(answer)}`);
 		return 'absent';
 	} catch (e) {
 		console.info(`[groups] acceptance read for ${did} in ${space} failed:`, e);

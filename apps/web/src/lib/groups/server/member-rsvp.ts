@@ -48,6 +48,7 @@ import {
 	type RsvpStatus
 } from '../ids';
 
+import { describeFailure, xrpc, type XrpcAnswer } from './xrpc';
 /** Shown once a re-authorization that asked for the grant came back without it. */
 export const RSVP_NO_SPACES =
 	"Your PDS can't RSVP to members-only events yet, so nothing was saved.";
@@ -121,41 +122,6 @@ export interface OwnMembersOnlyRsvp {
 function rsvpPlace(group: RsvpGroup, rkey: string) {
 	const space = groupSpaceUris(group.group_did).calendarSpaceUri;
 	return { space, eventUri: membersOnlyEventUri(group.group_did, rkey) };
-}
-
-type Sent =
-	| { ok: true; data: Record<string, unknown> }
-	| { ok: false; status: number; error: string | null };
-
-/** One request to the member's PDS, as the member: a procedure with `body`, or
- *  a query with `query`. */
-async function send(
-	member: MemberSession,
-	nsid: string,
-	request: { body: Record<string, unknown> } | { query: Record<string, string> }
-): Promise<Sent> {
-	const res =
-		'body' in request
-			? await member.handle(`/xrpc/${nsid}`, {
-					method: 'POST',
-					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify(request.body)
-				})
-			: await member.handle(`/xrpc/${nsid}?${new URLSearchParams(request.query)}`, {
-					method: 'GET'
-				});
-	const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-	if (res.ok) return { ok: true, data: data ?? {} };
-	return {
-		ok: false,
-		status: res.status,
-		error: typeof data?.error === 'string' ? data.error : null
-	};
-}
-
-/** What a PDS answer says, for a log line. */
-function answer(sent: Exclude<Sent, { ok: true }>): string {
-	return `${sent.status}${sent.error ? ` ${sent.error}` : ''}`;
 }
 
 /** An asked marker: the caller's DID and the stamp of the session it was handed
@@ -252,9 +218,9 @@ export async function putMembersOnlyRsvp(input: MembersOnlyRsvpInput): Promise<M
 		return { ok: false, reason: 'changed', message: RSVP_EVENT_CHANGED };
 	}
 	const { space, eventUri } = rsvpPlace(group, rkey);
-	let sent: Sent;
+	let sent: XrpcAnswer;
 	try {
-		sent = await send(member, 'com.atproto.space.putRecord', {
+		sent = await xrpc(member.handle, 'com.atproto.space.putRecord', {
 			body: {
 				space,
 				repo: member.did,
@@ -271,7 +237,7 @@ export async function putMembersOnlyRsvp(input: MembersOnlyRsvpInput): Promise<M
 	} catch (e) {
 		return refused(input, 'write', e);
 	}
-	if (!sent.ok) return refused(input, 'write', answer(sent));
+	if (!sent.ok) return refused(input, 'write', describeFailure(sent));
 	const uri = typeof sent.data.uri === 'string' ? sent.data.uri : null;
 	return { ok: true, uri: uri ?? spaceRecordUri(space, member.did, GROUP_RSVP_COLLECTION, rkey) };
 }
@@ -288,15 +254,15 @@ export async function deleteMembersOnlyRsvp(
 		return await withoutGrant(target);
 	}
 	const { space } = rsvpPlace(group, rkey);
-	let sent: Sent;
+	let sent: XrpcAnswer;
 	try {
-		sent = await send(member, 'com.atproto.space.deleteRecord', {
+		sent = await xrpc(member.handle, 'com.atproto.space.deleteRecord', {
 			body: { space, repo: member.did, collection: GROUP_RSVP_COLLECTION, rkey }
 		});
 	} catch (e) {
 		return refused(target, 'delete', e);
 	}
-	if (!sent.ok) return refused(target, 'delete', answer(sent));
+	if (!sent.ok) return refused(target, 'delete', describeFailure(sent));
 	return { ok: true };
 }
 
@@ -315,9 +281,9 @@ export async function readOwnMembersOnlyRsvp(
 	if (!canSeeMembers(membership)) return null;
 	if (!member || !holdsRsvpGrant(member.scope, group.group_did, 'read')) return null;
 	const { space, eventUri } = rsvpPlace(group, rkey);
-	let sent: Sent;
+	let sent: XrpcAnswer;
 	try {
-		sent = await send(member, 'com.atproto.space.getRecord', {
+		sent = await xrpc(member.handle, 'com.atproto.space.getRecord', {
 			query: { space, repo: member.did, collection: GROUP_RSVP_COLLECTION, rkey }
 		});
 	} catch (e) {
@@ -330,7 +296,7 @@ export async function readOwnMembersOnlyRsvp(
 	if (!sent.ok) {
 		if (sent.error === 'RecordNotFound') return null;
 		console.error(
-			`[groups] ${group.group_did}: ${member.did}'s RSVP at ${rkey} could not be read: ${answer(sent)}`
+			`[groups] ${group.group_did}: ${member.did}'s RSVP at ${rkey} could not be read: ${describeFailure(sent)}`
 		);
 		return null;
 	}

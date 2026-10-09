@@ -40,6 +40,7 @@ import {
 } from './members-read';
 import { getGroupByDid, restoreGroup } from './repo';
 import { groupClient } from './session';
+import { repoRecordExists } from './xrpc';
 
 import { groupSpaceUris } from '../ids';
 /** A rebuild that stopped before writing anything. `reason` is a stable tag,
@@ -187,15 +188,6 @@ function timestamp(value: string | null, fallback: number): number {
 function pdsDeclarationProbe(cred: GroupCredential, groupDid: string): () => Promise<boolean> {
 	return async () => {
 		const { handle } = await groupClient(cred, groupDid);
-		const query = new URLSearchParams({
-			repo: groupDid,
-			collection: GROUP_DECLARATION_COLLECTION,
-			rkey: GROUP_DECLARATION_RKEY
-		});
-		const res = await handle(`/xrpc/com.atproto.repo.getRecord?${query}`, { method: 'GET' });
-		if (res.ok) return true;
-		const body = (await res.json().catch(() => null)) as { error?: string } | null;
-		if (res.status === 400 && body?.error === 'RecordNotFound') return false;
-		throw new Error(`declaration probe for ${groupDid} failed: ${res.status} ${body?.error ?? ''}`);
+		return repoRecordExists(handle, groupDid, GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY);
 	};
 }

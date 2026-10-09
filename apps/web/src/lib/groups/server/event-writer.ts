@@ -18,6 +18,7 @@ import {
 	type GroupRepoWriter
 } from './group-write';
 import { groupClient } from './session';
+import { repoRecordExists, xrpc, xrpcError } from './xrpc';
 
 export interface WriteGroupEventInput {
 	db: D1Database;
@@ -159,18 +160,7 @@ export function pdsEventLocator(cred: GroupCredential, groupDid: string): GroupE
 				return found !== null;
 			}
 			const { handle } = await groupClient(cred, groupDid);
-			const query = new URLSearchParams({
-				repo: groupDid,
-				collection: GROUP_EVENT_COLLECTION,
-				rkey
-			});
-			const res = await handle(`/xrpc/com.atproto.repo.getRecord?${query}`, { method: 'GET' });
-			if (res.ok) return true;
-			const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
-			if (res.status === 400 && body?.error === 'RecordNotFound') return false;
-			throw new Error(
-				`com.atproto.repo.getRecord failed: ${res.status} ${String(body?.error ?? '')}`
-			);
+			return repoRecordExists(handle, groupDid, GROUP_EVENT_COLLECTION, rkey);
 		}
 	};
 }
@@ -382,17 +372,11 @@ export async function groupBlobUploader(
 	const cred = await requireGroupCredential(env, group.group_did);
 	return async (blob) => {
 		const { handle } = await groupClient(cred, group.group_did);
-		const res = await handle('/xrpc/com.atproto.repo.uploadBlob', {
-			method: 'POST',
-			headers: { 'content-type': blob.type },
-			body: blob
-		});
-		const data: unknown = await res.json().catch(() => null);
-		const ref = data && typeof data === 'object' ? (data as { blob?: unknown }).blob : undefined;
-		if (!res.ok || !isBlobRef(ref)) {
-			throw new Error(`uploadBlob failed: ${res.status} ${JSON.stringify(data)}`);
-		}
-		return ref;
+		const nsid = 'com.atproto.repo.uploadBlob';
+		const answer = await xrpc(handle, nsid, { blob });
+		if (!answer.ok) throw xrpcError(nsid, answer);
+		if (!isBlobRef(answer.data.blob)) throw new Error(`${nsid} returned no blob reference`);
+		return answer.data.blob;
 	};
 }
 

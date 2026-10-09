@@ -16,6 +16,13 @@ import {
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
 import { getCallerMembership } from './repo';
 import { groupClient } from './session';
+import { xrpc, xrpcError } from './xrpc';
+
+/** The error name in a typed client's failed answer, if it has one. */
+function errorOf(data: unknown): string | null {
+	const error = data && typeof data === 'object' && 'error' in data ? data.error : null;
+	return typeof error === 'string' ? error : null;
+}
 
 /** The caller's role does not grant the permission this write needs. */
 export class GroupPermissionError extends Error {
@@ -82,15 +89,12 @@ export function pdsWriter(cred: GroupCredential, groupDid: string): GroupRepoWri
 		// The space methods are not in the generated lexicon set, so they use the
 		// raw handler. The repo methods stay on the typed client.
 		const sendSpace = async (nsid: string, input: Record<string, unknown>) => {
-			const res = await handle(`/xrpc/${nsid}`, {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ space, repo, collection, ...input })
-			});
-			const data: unknown = await res.json().catch(() => null);
-			if (!res.ok) throw new Error(`${nsid} failed: ${res.status} ${JSON.stringify(data)}`);
-			return data;
+			const answer = await xrpc(handle, nsid, { body: { space, repo, collection, ...input } });
+			if (!answer.ok) throw xrpcError(nsid, answer);
+			return answer.data;
 		};
+		const failed = (nsid: string, res: { status: number; data: unknown }) =>
+			xrpcError(nsid, { status: res.status, error: errorOf(res.data) });
 
 		if (write.intent === 'delete') {
 			if (space) {
@@ -99,7 +103,7 @@ export function pdsWriter(cred: GroupCredential, groupDid: string): GroupRepoWri
 				const res = await client.post('com.atproto.repo.deleteRecord', {
 					input: { repo, collection, rkey: write.rkey }
 				});
-				if (!res.ok) throw new Error(`deleteRecord failed: ${JSON.stringify(res.data)}`);
+				if (!res.ok) throw failed('com.atproto.repo.deleteRecord', res);
 			}
 			// deleteRecord returns no useful body, so the URI is rebuilt. A space
 			// scopes access and does not reparent a record, so `repo` is the author.
@@ -118,7 +122,7 @@ export function pdsWriter(cred: GroupCredential, groupDid: string): GroupRepoWri
 			const res = await client.post(nsid, {
 				input: { repo, collection, rkey: write.rkey, record: write.record }
 			});
-			if (!res.ok) throw new Error(`${nsid} failed: ${JSON.stringify(res.data)}`);
+			if (!res.ok) throw failed(nsid, res);
 			body = res.data;
 		}
 

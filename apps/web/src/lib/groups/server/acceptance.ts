@@ -21,6 +21,7 @@ import {
 import type { GroupRow } from '../types';
 import { holdsAcceptanceGrant } from './member-grants';
 
+import { xrpc, xrpcError } from './xrpc';
 /** The member's session at their own PDS, as an acceptance write needs it. */
 export interface MemberSession {
 	did: string;
@@ -39,25 +40,6 @@ export async function memberSession(session: OAuthSession): Promise<MemberSessio
 
 type AcceptanceGroup = Pick<GroupRow, 'group_did' | 'members_space_uri'>;
 
-async function send(
-	member: MemberSession,
-	nsid: string,
-	body: Record<string, unknown>
-): Promise<{ ok: true } | { ok: false; status: number; error: string | null }> {
-	const res = await member.handle(`/xrpc/${nsid}`, {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify(body)
-	});
-	if (res.ok) return { ok: true };
-	const data = (await res.json().catch(() => null)) as { error?: unknown } | null;
-	return {
-		ok: false,
-		status: res.status,
-		error: typeof data?.error === 'string' ? data.error : null
-	};
-}
-
 /** Writes the member's acceptance unless it exists. `skipped` when the group has
  *  no members space or the session lacks its grant. Any other refusal throws. */
 export async function writeAcceptance(
@@ -67,21 +49,22 @@ export async function writeAcceptance(
 ): Promise<'written' | 'present' | 'skipped'> {
 	const space = group.members_space_uri;
 	if (!space || !holdsAcceptanceGrant(member.scope, group.group_did, 'create')) return 'skipped';
-	const result = await send(member, 'com.atproto.space.createRecord', {
-		space,
-		repo: member.did,
-		collection: GROUP_ACCEPTANCE_COLLECTION,
-		rkey: GROUP_ACCEPTANCE_RKEY,
-		record: {
-			$type: GROUP_ACCEPTANCE_COLLECTION,
-			...groupAcceptanceRecord({ createdAt: now.toISOString() })
+	const nsid = 'com.atproto.space.createRecord';
+	const result = await xrpc(member.handle, nsid, {
+		body: {
+			space,
+			repo: member.did,
+			collection: GROUP_ACCEPTANCE_COLLECTION,
+			rkey: GROUP_ACCEPTANCE_RKEY,
+			record: {
+				$type: GROUP_ACCEPTANCE_COLLECTION,
+				...groupAcceptanceRecord({ createdAt: now.toISOString() })
+			}
 		}
 	});
 	if (result.ok) return 'written';
 	if (result.status === 400 && result.error === 'RecordAlreadyExists') return 'present';
-	throw new Error(
-		`com.atproto.space.createRecord failed: ${result.status}${result.error ? ` ${result.error}` : ''}`
-	);
+	throw xrpcError(nsid, result);
 }
 
 /** Deletes the member's acceptance. The PDS answers the same whether or not it
@@ -92,16 +75,17 @@ export async function deleteAcceptance(
 ): Promise<'deleted' | 'skipped'> {
 	const space = group.members_space_uri;
 	if (!space || !holdsAcceptanceGrant(member.scope, group.group_did, 'delete')) return 'skipped';
-	const result = await send(member, 'com.atproto.space.deleteRecord', {
-		space,
-		repo: member.did,
-		collection: GROUP_ACCEPTANCE_COLLECTION,
-		rkey: GROUP_ACCEPTANCE_RKEY
+	const nsid = 'com.atproto.space.deleteRecord';
+	const result = await xrpc(member.handle, nsid, {
+		body: {
+			space,
+			repo: member.did,
+			collection: GROUP_ACCEPTANCE_COLLECTION,
+			rkey: GROUP_ACCEPTANCE_RKEY
+		}
 	});
 	if (result.ok) return 'deleted';
-	throw new Error(
-		`com.atproto.space.deleteRecord failed: ${result.status}${result.error ? ` ${result.error}` : ''}`
-	);
+	throw xrpcError(nsid, result);
 }
 
 /** At sign-in: an acceptance for each group the member is in or has asked to

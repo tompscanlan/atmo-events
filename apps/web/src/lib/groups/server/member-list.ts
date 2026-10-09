@@ -19,6 +19,7 @@ import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import { type CredentialStoreEnv, type GroupCredential } from './credentials';
 
 import { groupClient } from './session';
+import { describeFailure, xrpc } from './xrpc';
 import { GroupSpaceError } from './spaces';
 
 import { GroupRecordError, requireGroupCredential } from './group-write';
@@ -54,31 +55,27 @@ export const MEMBERS_WRITER_ACCESS = { read: false, write: true } as const;
 /** The largest page `listMembers` allows. */
 const LIST_MEMBERS_LIMIT = 1000;
 
-const LIST_MEMBERS = '/xrpc/com.atproto.simplespace.listMembers';
-
 /** The real transport, over the group's own session: all three methods need
  *  the space owner's credential. `putMember` and `removeMember` are an upsert
  *  and a delete with no output, so repeating either is harmless. */
 export function pdsMemberList(cred: GroupCredential, groupDid: string): GroupMemberList {
-	const post = async (method: string, path: string, body: Record<string, unknown>) => {
+	const post = async (
+		method: string,
+		body: { space: string; did: string } & Record<string, unknown>
+	) => {
 		const { handle } = await groupClient(cred, groupDid);
-		const res = await handle(path, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify(body)
-		});
-		if (!res.ok) {
-			const data: unknown = await res.json().catch(() => null);
+		const answer = await xrpc(handle, `com.atproto.simplespace.${method}`, { body });
+		if (!answer.ok) {
 			throw new GroupSpaceError(
-				`${method} failed for ${String(body.did)} on ${String(body.space)}: ${res.status} ${JSON.stringify(data)}`,
-				spaceTypeOf(String(body.space))
+				`${method} failed for ${body.did} on ${body.space}: ${describeFailure(answer)}`,
+				spaceTypeOf(body.space)
 			);
 		}
 	};
 
 	return {
 		async put({ space, did, read, write }) {
-			await post('putMember', '/xrpc/com.atproto.simplespace.putMember', {
+			await post('putMember', {
 				space,
 				did,
 				read,
@@ -86,21 +83,21 @@ export function pdsMemberList(cred: GroupCredential, groupDid: string): GroupMem
 			});
 		},
 		async remove({ space, did }) {
-			await post('removeMember', '/xrpc/com.atproto.simplespace.removeMember', { space, did });
+			await post('removeMember', { space, did });
 		},
 		async list({ space, cursor }) {
 			const { handle } = await groupClient(cred, groupDid);
-			const query = new URLSearchParams({ space, limit: String(LIST_MEMBERS_LIMIT) });
-			if (cursor) query.set('cursor', cursor);
-			const res = await handle(`${LIST_MEMBERS}?${query}`, { method: 'GET' });
-			const data: unknown = await res.json().catch(() => null);
-			if (!res.ok) {
+			const answer = await xrpc(handle, 'com.atproto.simplespace.listMembers', {
+				query: { space, limit: String(LIST_MEMBERS_LIMIT), ...(cursor ? { cursor } : {}) }
+			});
+			if (!answer.ok) {
 				throw new GroupSpaceError(
-					`listMembers failed on ${space}: ${res.status} ${JSON.stringify(data)}`,
+					`listMembers failed on ${space}: ${describeFailure(answer)}`,
 					spaceTypeOf(space)
 				);
 			}
-			if (!data || typeof data !== 'object' || !('members' in data)) {
+			const data = answer.data;
+			if (!('members' in data)) {
 				throw new GroupSpaceError(
 					`listMembers returned no members for ${space}`,
 					spaceTypeOf(space)

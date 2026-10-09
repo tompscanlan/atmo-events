@@ -22,6 +22,7 @@ import type { GroupSpaceReader } from './about-read';
 import type { GroupCredential } from './credentials';
 
 import { groupClient } from './session';
+import { describeFailure, xrpc } from './xrpc';
 
 import {
 	POLICY_MEMBER_LIST,
@@ -114,39 +115,34 @@ export type GroupSpaceProvisioner = (space: SpaceProvision) => Promise<{ uri: st
 export function pdsProvisioner(cred: GroupCredential, groupDid: string): GroupSpaceProvisioner {
 	return async (space) => {
 		const { handle } = await groupClient(cred, groupDid);
-		const res = await handle('/xrpc/com.atproto.simplespace.createSpace', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({
+		const answer = await xrpc(handle, 'com.atproto.simplespace.createSpace', {
+			body: {
 				spaceType: space.type,
 				skey: space.skey,
 				readPolicy: { $type: space.readPolicy },
 				writePolicy: { $type: POLICY_MEMBER_LIST },
 				appAccess: { $type: APP_ACCESS_OPEN }
-			})
+			}
 		});
-		const body: unknown = await res.json().catch(() => null);
 
-		if (!res.ok) {
-			const code = body && typeof body === 'object' && 'error' in body ? body.error : undefined;
-			if (code === 'SpaceAlreadyExists') {
+		if (!answer.ok) {
+			if (answer.error === 'SpaceAlreadyExists') {
 				return { uri: spaceUri(groupDid, space.type, space.skey) };
 			}
-			const message =
-				body && typeof body === 'object' && 'message' in body ? body.message : undefined;
-			if (hostLacksSpaces(res.status, code, message)) {
-				throw new SpacesUnsupportedError(space.type, res.status);
+			if (hostLacksSpaces(answer.status, answer.error, answer.message)) {
+				throw new SpacesUnsupportedError(space.type, answer.status);
 			}
 			throw new GroupSpaceError(
-				`createSpace failed for ${space.type}: ${res.status} ${JSON.stringify(body)}`,
+				`createSpace failed for ${space.type}: ${describeFailure(answer)}`,
 				space.type
 			);
 		}
 
-		if (!(body && typeof body === 'object' && 'uri' in body && typeof body.uri === 'string')) {
+		const { uri } = answer.data;
+		if (typeof uri !== 'string') {
 			throw new GroupSpaceError(`createSpace returned no space uri for ${space.type}`, space.type);
 		}
-		return { uri: body.uri };
+		return { uri };
 	};
 }
 
@@ -194,15 +190,12 @@ export type GroupSpaceUpdater = (update: {
 export function pdsSpaceUpdater(cred: GroupCredential, groupDid: string): GroupSpaceUpdater {
 	return async ({ space, readPolicy }) => {
 		const { handle } = await groupClient(cred, groupDid);
-		const res = await handle('/xrpc/com.atproto.simplespace.updateSpace', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ space, readPolicy: { $type: readPolicy } })
+		const answer = await xrpc(handle, 'com.atproto.simplespace.updateSpace', {
+			body: { space, readPolicy: { $type: readPolicy } }
 		});
-		if (!res.ok) {
-			const body: unknown = await res.json().catch(() => null);
+		if (!answer.ok) {
 			throw new GroupSpaceError(
-				`updateSpace failed for ${space}: ${res.status} ${JSON.stringify(body)}`,
+				`updateSpace failed for ${space}: ${describeFailure(answer)}`,
 				ABOUT_SPACE_TYPE
 			);
 		}

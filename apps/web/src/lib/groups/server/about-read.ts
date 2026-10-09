@@ -25,6 +25,7 @@ import type { CredentialStoreEnv } from './credentials';
 import { resolveGroupCredential } from './credentials';
 import { applyGroupCache } from './repo';
 import { groupClient } from './session';
+import { isRecordNotFound, xrpc, xrpcError } from './xrpc';
 
 export interface GroupSpaceRecord {
 	uri: string;
@@ -66,7 +67,7 @@ export interface GroupSpaceReader {
 
 const LIST_RECORDS_LIMIT = 100;
 
-const GET_SPACE = '/xrpc/com.atproto.simplespace.getSpace';
+const GET_SPACE = 'com.atproto.simplespace.getSpace';
 
 function asRecord(value: unknown): Record<string, unknown> {
 	return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -112,17 +113,12 @@ export function pdsSpaceReader(
 ): GroupSpaceReader {
 	const send = async (nsid: string, params: Record<string, string>) => {
 		const { handle } = await groupClient(cred, groupDid);
-		const query = new URLSearchParams(params).toString();
-		const res = await handle(`/xrpc/${nsid}?${query}`, { method: 'GET' });
-		if (!res.ok) {
-			const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
-			const error = typeof body?.error === 'string' ? body.error : null;
-			// RecordNotFound is the only 400 that means absent. Anything else throws,
-			// so the gate fails closed rather than read "no records".
-			if (res.status === 400 && error === 'RecordNotFound') return null;
-			throw new Error(`${nsid} failed: ${res.status}${error ? ` ${error}` : ''}`);
-		}
-		return (await res.json().catch(() => null)) as unknown;
+		const answer = await xrpc(handle, nsid, { query: params });
+		// RecordNotFound is the only 400 that means absent. Anything else throws,
+		// so the gate fails closed rather than read "no records".
+		if (isRecordNotFound(answer)) return null;
+		if (!answer.ok) throw xrpcError(nsid, answer);
+		return answer.data;
 	};
 
 	return {
@@ -169,19 +165,9 @@ export function pdsSpaceReader(
 		// Every failure throws, `SpaceNotFound` included: the gate must not guess.
 		async getSpace(space) {
 			const { handle } = await groupClient(cred, groupDid);
-			const res = await handle(`${GET_SPACE}?${new URLSearchParams({ space })}`, {
-				method: 'GET'
-			});
-			const body: unknown = await res.json().catch(() => null);
-			if (!res.ok) {
-				const error =
-					body && typeof body === 'object' && 'error' in body && typeof body.error === 'string'
-						? ` ${body.error}`
-						: '';
-				throw new Error(`com.atproto.simplespace.getSpace failed: ${res.status}${error}`);
-			}
-			const policy =
-				body && typeof body === 'object' && 'readPolicy' in body ? asRecord(body.readPolicy) : {};
+			const answer = await xrpc(handle, GET_SPACE, { query: { space } });
+			if (!answer.ok) throw xrpcError(GET_SPACE, answer);
+			const policy = asRecord(answer.data.readPolicy);
 			if (typeof policy.$type !== 'string') {
 				throw new Error(`com.atproto.simplespace.getSpace returned no read policy for ${space}`);
 			}
