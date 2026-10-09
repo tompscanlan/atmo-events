@@ -6,8 +6,8 @@
 //      the authz config.
 //   2. Make the about space's member list equal the membership records, and
 //      the members space's write-only list equal those plus the pending join
-//      requests. Requests live only in D1 (spec 003 SC-205), so a requester
-//      keeps their entry while D1 holds the request.
+//      requests. Requests live only in D1, so a requester keeps their entry
+//      while D1 holds the request. (Spec: SC-205.)
 //   3. Make the about space's access record and the declaration agree with
 //      its read policy.
 //   4. Rebuild the cache from the records.

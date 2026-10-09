@@ -258,7 +258,7 @@ async function joinVisibility(ctx: PreparedRoster): Promise<GroupVisibility | nu
 /** Self-service join. Only `joined` is published: the groups standard models
  *  a join request as host state, not a record. A `pending` request still puts
  *  the requester on the members space's list, write-only, because they write
- *  their acceptance at request time (spec 003 FR-206). Either way the caller
+ *  their acceptance at request time. (Spec: FR-206.) Either way the caller
  *  then writes it, when their session holds the group's grant. */
 export async function joinGroup(
 	given: RosterContext,

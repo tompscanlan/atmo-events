@@ -200,8 +200,8 @@ type AcceptanceRead = 'accepted' | 'absent' | 'spent';
 
 /** One member's acceptance, at their PDS, with the group's credential. A failure
  *  other than a spent credential reads as absent and is logged: the roster then
- *  shows the member unconfirmed, which is also what FR-204 asks for a member whose
- *  PDS serves no spaces. */
+ *  shows the member unconfirmed, which is also how it shows a member whose PDS
+ *  serves no spaces. (Spec: FR-204.) */
 async function readAcceptance(
 	cred: SpaceCredential,
 	hosts: SpaceHosts,

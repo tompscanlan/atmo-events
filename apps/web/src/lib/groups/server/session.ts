@@ -43,8 +43,7 @@ export const GROUP_SESSION_PREFIX = 'group:session:';
  *  and image uploads. `authority=self` is the group's own spaces, resolved to
  *  its DID when the token is issued. The type is `*` because the PDS resolves
  *  every type a scope names, and the group.opensocial lexicons do not resolve
- *  yet (memory spaces-oauth-scopes-alpha). Proved on the alpha PDS by the
- *  2026-10-01 group-account OAuth probe, except the `repo:` and `blob:` parts. */
+ *  yet, so a typed scope would fail consent. */
 export const GROUP_SESSION_SCOPES: readonly string[] = [
 	scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
 	'space:*?authority=self&manage=create&manage=update&manage=delete',
@@ -160,7 +159,7 @@ type GroupTransport = {
 };
 
 /** Which credential served a write as the group: one line per write, never the
- *  token. Reads are not logged; there are many, and custody is about writes. */
+ *  token. Reads are not logged: there are many, and the log is about who wrote. */
 function reportWrite(
 	via: GroupCredential['kind'],
 	did: string,

@@ -2132,7 +2132,7 @@ async function main() {
 
 		// 14. the space's own member list is write-only --------------------------
 		// An admitted member goes on it so the PDS tracks the acceptance they write
-		// (spec 003 FR-206). A DID that could read this space would see the whole
+		//. (Spec: FR-206.) A DID that could read this space would see the whole
 		// roster with its own credential, bypassing the app's gate, so every entry
 		// is read:false write:true.
 		const memberList = await spaceMemberList(groupToken, membersSpaceUri);

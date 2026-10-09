@@ -100,8 +100,8 @@ describe('provisionGroupSpaces', () => {
 			]);
 
 			// The about space is the group's face: readable by anyone signed in for a
-			// public group, and only by its member list for a private one. The field is
-			// `spaceType`, not `type`, since the spaces alpha of 2026-10-01.
+			// public group, and only by its member list for a private one. The host
+			// names the field `spaceType`, not `type`.
 			expect(calls[0].body).toEqual({
 				spaceType: ABOUT_SPACE_TYPE,
 				skey: 'self',

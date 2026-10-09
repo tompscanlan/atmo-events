@@ -663,7 +663,7 @@ describe('the about space member list mirrors the roster', () => {
 
 	// A DID that could read the members space would see every membership, role
 	// and permission record straight from the host, so every entry this app
-	// puts there is write-only (spec 003 FR-206, SC-202).
+	// puts there is write-only. (Spec: FR-206, SC-202.)
 	it('the members space list only ever gets write-only entries', async () => {
 		const SECOND = 'did:plc:secondaaaaaaaaaaaaaaaaaa';
 		await setGroup({ require_approval: 0 });
@@ -726,11 +726,11 @@ describe('the about space member list mirrors the roster', () => {
 	});
 });
 
-// A join requester writes their acceptance at request time (spec 003 FR-206),
-// so the host must track their writes before an admin decides. A request is
-// host state, not a record, so only the members space's list and the
-// `join_requests` row change. The order errs the same way as a roster act: the
-// row goes in before the entry, and the entry comes off before the row closes.
+// A join requester writes their acceptance at request time, so the host must
+// track their writes before an admin decides. A request is host state, not a
+// record, so only the members space's list and the `join_requests` row change.
+// The order errs the same way as a roster act: the row goes in before the
+// entry, and the entry comes off before the row closes. (Spec: FR-206.)
 describe('a join request holds a write-only entry on the members space list', () => {
 	it('a request puts the requester on the members space list only, write-only', async () => {
 		expect(await joinGroup(ctx(NEWCOMER), 'hello')).toBe('pending');
@@ -878,13 +878,13 @@ describe('a join request holds a write-only entry on the members space list', ()
 	});
 });
 
-// The caller's own acceptance (spec FR-205, FR-209). The member is on the
-// members space's list, write-only, before they write it, so the host tracks the
-// write (FR-206). At leave and withdrawal it is deleted before that entry comes
-// off, because a host that has already dropped the writer refuses the notice
-// of the delete, and its writer set would keep the old state. Neither half can
-// stop the act: the acceptance decides how the roster shows a member, never
-// what they may do.
+// The caller's own acceptance. The member is on the members space's list,
+// write-only, before they write it, so the host tracks the write. At leave and
+// withdrawal it is deleted before that entry comes off, because a host that has
+// already dropped the writer refuses the notice of the delete, and its writer
+// set would keep the old state. Neither half can stop the act: the acceptance
+// decides how the roster shows a member, never what they may do.
+// (Spec: FR-205, FR-206, FR-209.)
 describe('the member writes and deletes their own acceptance', () => {
 	/** The caller's session at their own PDS, holding the group's grant. Each
 	 *  acceptance call adds a step to `order`, and fails when `fail` is set. */

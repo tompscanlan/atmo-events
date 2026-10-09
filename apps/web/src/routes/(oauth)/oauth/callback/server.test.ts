@@ -1,6 +1,6 @@
 // The sign-in callback, as far as groups reach into it: one call that writes the
 // member's missing acceptance in each group they are in or asked to join, from
-// the session just granted (groups spec FR-205). That covers the group's
+// the session just granted. (Spec: FR-205.) That covers the group's
 // creator and a member added directly, neither of whom was present to write one.
 //
 // The OAuth client, the signed cookies and the feed pre-warm are stubbed; the

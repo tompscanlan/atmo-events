@@ -17,7 +17,7 @@ const EVENT_NOT_FOUND = 'Event not found';
 /**
  * One members-only event, read from the group's calendar space as the group.
  * This route serves members-only events only; a public event's page is the
- * person-style event page, as before.
+ * person-style event page.
  *
  * Membership is checked before any read of the space. The route context reads
  * the caller's standing, as every group page does, and a caller off the roster

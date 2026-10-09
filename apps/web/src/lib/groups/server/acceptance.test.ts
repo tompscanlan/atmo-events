@@ -1,5 +1,5 @@
 // The member's own half of a membership: the acceptance they write, from their
-// own session, into their repo in the group's members space (spec FR-205, FR-209).
+// own session, into their repo in the group's members space. (Spec: FR-205, FR-209.)
 //
 // The member's PDS is a fake that answers the way the spaces PDS does at the
 // revision atmo targets: a create refuses a record that exists, with 400
@@ -189,8 +189,8 @@ describe('deleteAcceptance', () => {
 	});
 });
 
-// At sign-in (FR-205's last case): the creator, a direct admit, and any write
-// that could not happen at its first moment.
+// At sign-in: the creator, a direct admit, and any write that could not happen
+// at its first moment. (Spec: FR-205.)
 describe('writeMissingAcceptances', () => {
 	let harness: SqliteD1;
 

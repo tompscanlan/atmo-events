@@ -11,7 +11,7 @@
 //     write nothing into the about space.
 //   * The members space's list holds every member and every pending join
 //     requester, write-only, so the host tracks the `acceptance` each one
-//     writes into their own repo (spec 003 FR-206). An entry must exist before
+//     writes into their own repo. (Spec: FR-206.) An entry must exist before
 //     that write, or the host accepts it and never tracks it. `read` stays
 //     false: a DID that could read the members space would see every
 //     membership, role and permission record.

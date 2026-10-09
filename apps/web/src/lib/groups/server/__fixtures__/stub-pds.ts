@@ -173,8 +173,8 @@ export function stubPds(options: StubPdsOptions) {
 					string,
 					string
 				>;
-				// The spaces alpha of 2026-10-01 renamed `type` to `spaceType` and refuses a
-				// body without it, so a caller still sending `type` fails here too.
+				// The host takes the space's type as `spaceType` and refuses a body without
+				// it, so a caller sending `type` fails here too.
 				if (!spaceType) {
 					return Response.json(
 						{ error: 'InvalidRequest', message: 'Input must have the property "spaceType"' },

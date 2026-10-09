@@ -182,7 +182,7 @@ describe('/groups/[actor]/events/[rkey]/edit', () => {
 		expect(body).not.toContain('cdn.bsky.app');
 		expect(body).not.toContain('bafkreithumb');
 
-		// A public event's preview is the editor's own, as before. (A server render
+		// A public event's preview is the editor's own. (A server render
 		// runs when its markup is read.)
 		editor.renders.length = 0;
 		const asPublic = render(Page, { props: { data: { ...data, space: null } } as never });

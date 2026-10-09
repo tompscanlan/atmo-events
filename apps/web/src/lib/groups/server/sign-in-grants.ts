@@ -42,7 +42,7 @@ export async function authorizeSignIn(
 
 /** The grant sets a sign-in as `handle` tries. A signup, a loopback client, or a
  *  deployment without D1 asks for none. So does a handle that does not resolve
- *  here, and authorize then reports it as before. */
+ *  here, and authorize then reports it as it reports any unknown handle. */
 async function signInGrants(
 	env: App.Platform['env'] | undefined,
 	handle: string | undefined

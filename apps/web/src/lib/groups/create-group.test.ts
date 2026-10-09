@@ -849,8 +849,8 @@ describe('the create choice sets the about space’s read policy', () => {
 // is what lets the owner read a private group's face at the host from any app,
 // and a public group gets it too, so a later flip needs no backfill. The
 // members space's entry is write-only: it makes the host track the acceptance
-// the owner writes (spec 003 FR-206) and grants no read of the roster. Both
-// follow the owner's membership record.
+// the owner writes and grants no read of the roster. Both follow the owner's
+// membership record. (Spec: FR-206.)
 describe('the create puts the owner on both member lists', () => {
 	const ABOUT = `at://${MINTED_DID}/space/group.opensocial.meta/self`;
 	const MEMBERS = `at://${MINTED_DID}/space/group.opensocial.members/self`;
@@ -1120,8 +1120,8 @@ describe('a create that fails after the mint', () => {
 	});
 
 	// Repair writes the members space's records but never the calendar space's
-	// two (spec FR-101a), so only a create that stopped before those says to
-	// create the group again. The about space has an access record too, so the
+	// two, so only a create that stopped before those says to create the group
+	// again. (Spec: FR-101a.) The about space has an access record too, so the
 	// access rows match on the space, not the collection.
 	const writingAccessIn = (space: string) => (nsid: string, init?: RequestInit) => {
 		if (!nsid.startsWith('com.atproto.space.putRecord')) return undefined;

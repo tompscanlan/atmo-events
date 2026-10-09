@@ -457,9 +457,9 @@ describe('/groups/[actor]/events/[rkey]/edit load: a public event', () => {
 		);
 		expect(calendarCalls(h)).toEqual([]);
 
-		// What the index does not hold, or cannot read, is the same 404 as before,
-		// a members-only event's key included: without its placement, the edit
-		// page never looks in the space.
+		// What the index does not hold, or cannot read, is a 404, a members-only
+		// event's key included: without its placement, the edit page never looks
+		// in the space.
 		vi.mocked(getEventRecordFromContrail).mockResolvedValue(null);
 		expect(await refusalFor(OWNER, '3lmeeting')).toStrictEqual(NOT_FOUND);
 		vi.mocked(getEventRecordFromContrail).mockRejectedValue(new Error('D1 is down'));

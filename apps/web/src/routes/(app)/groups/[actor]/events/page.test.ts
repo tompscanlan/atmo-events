@@ -85,8 +85,8 @@ describe('/groups/[actor]/events', () => {
 	it("the events tab's Edit link names the placement of a members-only event only", () => {
 		const { body } = renderTab({ canManageEvents: true });
 
-		// A public event's edit page reads it from the index, as before; a
-		// members-only event's link says where it is, since the two share a key.
+		// A public event's edit page reads it from the index; a members-only
+		// event's link says where it is, since the two share a key.
 		expect(editLinksIn(body)).toEqual([
 			`/groups/${GROUP_DID}/events/3lshared/edit?placement=members`,
 			`/groups/${GROUP_DID}/events/3lshared/edit`

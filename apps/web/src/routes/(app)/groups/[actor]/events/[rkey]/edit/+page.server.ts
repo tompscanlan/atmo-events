@@ -15,7 +15,7 @@ const EVENT_NOT_FOUND = 'Event not found';
  * person's. A members-only event is read from the group's calendar space, and
  * only when the link says so with ?placement=members: a public and a
  * members-only event can share a key, so the page never guesses, and a link
- * without the param reads the index exactly as before. Any other value is a
+ * without the param reads the index. Any other value is a
  * 404 with no read, so a mangled link never falls through to the public read.
  *
  * A caller who may not edit gets the editor gate's 403 before any of this, the

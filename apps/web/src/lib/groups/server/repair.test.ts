@@ -483,9 +483,9 @@ describe('the about space member list follows the membership records', () => {
 		expect(memberListWrites().filter((c) => c.space === MEMBERS)).toEqual([]);
 	});
 
-	// Spec 003 FR-206 and SC-205: the write-only entries are host state, so the
-	// repair re-derives them from the membership records, plus the pending
-	// requests that only D1 holds.
+	// The write-only entries are host state, so the repair re-derives them from
+	// the membership records, plus the pending requests that only D1 holds.
+	// (Spec: FR-206, SC-205.)
 	it('repair makes the members space list equal the membership records plus pending requests, write-only', async () => {
 		const REQUESTER = 'did:plc:requesteraaaaaaaaaaaaaaaa';
 		await requestJoin(db, group, REQUESTER, null, 'public');
@@ -508,8 +508,8 @@ describe('the about space member list follows the membership records', () => {
 		);
 	});
 
-	// TS ruling A on SC-205: a requester is in D1 only, so the repair must read
-	// join_requests or it would take their entry off while the request stands.
+	// A requester is in D1 only, so the repair must read join_requests or it
+	// would take their entry off while the request stands. (Spec: SC-205.)
 	it('repair keeps a pending requester on the members space list', async () => {
 		const REQUESTER = 'did:plc:requesteraaaaaaaaaaaaaaaa';
 		await requestJoin(db, group, REQUESTER, null, 'public');
@@ -523,7 +523,7 @@ describe('the about space member list follows the membership records', () => {
 		expect(memberListWrites()).toEqual([]);
 	});
 
-	// SC-205's gate: the list emptied at the host comes back from the records.
+	// A list emptied at the host comes back from the records. (Spec: SC-205.)
 	it('repair rebuilds an emptied members space list from the membership records', async () => {
 		for (const did of ROSTER) await hostList('removeMember', MEMBERS, did);
 		pds.clearLog();

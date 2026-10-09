@@ -239,7 +239,7 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 		);
 	}
 
-	// A public create reads nothing first, as before.
+	// A public create reads nothing first.
 	if (space !== null || input.intent === 'update') {
 		const locator = input.locator ?? (await groupEventLocator(input.env, input.group));
 		if (space !== null) await checkCalendarSpace(locator, space);
