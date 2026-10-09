@@ -1,0 +1,40 @@
+{
+  "lexicon": 1,
+  "id": "group.opensocial.access",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Space read policy and delegated group-DID OAuth grants, authored by the space authority in its own repo in that space. Roles resolve against this group members/self. In a personal invites space, public must be false and both arrays empty: owner-only reads are mandatory and group role grants do not apply.",
+      "key": "literal:self",
+      "record": {
+        "type": "object",
+        "description": "Read access is public OR the member holds any readRoles role. Acceptance is not required. Empty readRoles with public=false admits no members through this policy. The authority retains control of its own data.",
+        "required": ["public", "readRoles", "grants"],
+        "properties": {
+          "public": {
+            "type": "boolean",
+            "description": "Allow any user to obtain a read credential, regardless of membership. Protocol credential requirements still apply."
+          },
+          "readRoles": {
+            "type": "array",
+            "items": {
+              "type": "ref",
+              "ref": "group.opensocial.defs#roleId"
+            },
+            "description": "Distinct role IDs declared by this group. Unknown roles and duplicate entries must be rejected.",
+            "maxLength": 100
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "type": "ref",
+              "ref": "group.opensocial.defs#scopeGrant"
+            },
+            "description": "Group-DID OAuth scopes available to holders of each role. Grants do not themselves confer space read access.",
+            "maxLength": 100
+          }
+        }
+      }
+    }
+  }
+}
