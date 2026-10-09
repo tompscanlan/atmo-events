@@ -58,7 +58,7 @@ import {
 import { readGroupVisibility } from './spaces';
 import { deleteAcceptance, writeAcceptance, type MemberSession } from './acceptance';
 
-import { requireGroupPermission, type GroupRepoWriter } from './group-write';
+import { groupWriter, requireGroupPermission, type GroupRepoWriter } from './group-write';
 import { errorText } from './errors';
 import { type CredentialStoreEnv } from './session';
 export type RosterStep = 'record' | 'row' | 'list';
@@ -123,17 +123,49 @@ async function step<T>(
 	}
 }
 
-function memberListFor(ctx: RosterContext): Promise<GroupMemberList> {
-	return ctx.memberList ? Promise.resolve(ctx.memberList) : groupMemberList(ctx.env, ctx.group);
+/** A writer that builds the real one on first use, once. */
+function writerOnFirstUse(build: () => Promise<GroupRepoWriter>): GroupRepoWriter {
+	let built: Promise<GroupRepoWriter> | undefined;
+	return async (write) => (await (built ??= build()))(write);
+}
+
+/** A member list that builds the real one on first use, once. */
+function memberListOnFirstUse(build: () => Promise<GroupMemberList>): GroupMemberList {
+	let built: Promise<GroupMemberList> | undefined;
+	const list = () => (built ??= build());
+	return {
+		put: async (entry) => (await list()).put(entry),
+		remove: async (entry) => (await list()).remove(entry),
+		list: async (query) => (await list()).list(query)
+	};
+}
+
+/** An act's context, with the gate's reader, and the writer and member list
+ *  built from the group's credential on first use. Every step of an act then
+ *  talks through one session, and the gate reads the caller's standing once.
+ *  An act that never writes a record never asks for the credential. */
+type PreparedRoster = RosterContext & {
+	reader: GroupSpaceReader | null;
+	writer: GroupRepoWriter;
+	memberList: GroupMemberList;
+};
+
+async function prepared(ctx: RosterContext): Promise<PreparedRoster> {
+	return {
+		...ctx,
+		reader: ctx.reader !== undefined ? ctx.reader : await groupSpaceReader(ctx.env, ctx.group),
+		writer: ctx.writer ?? writerOnFirstUse(() => groupWriter(ctx.env, ctx.group)),
+		memberList: ctx.memberList ?? memberListOnFirstUse(() => groupMemberList(ctx.env, ctx.group))
+	};
 }
 
 /** An entry's list half, last. The row and record are in, so any failure here
  *  is the lists out of step. */
-async function listed(ctx: RosterContext, subject: string): Promise<void> {
+async function listed(ctx: PreparedRoster, subject: string): Promise<void> {
 	await step(
 		'list',
 		subject,
-		async () => listRosterMember(await memberListFor(ctx), ctx.group, subject),
+		async () => listRosterMember(ctx.memberList, ctx.group, subject),
 		'grant'
 	);
 }
@@ -171,12 +203,12 @@ async function unaccept(ctx: RosterContext): Promise<void> {
  *  write, because the list entries go first: read access, then the write-only
  *  entry. Once the first is gone, any failure leaves the DID unable to read.
  *  A leave deletes the caller's acceptance before either. */
-async function revoke(ctx: RosterContext, subject: string, intent: MembershipDrop): Promise<void> {
+async function revoke(ctx: PreparedRoster, subject: string, intent: MembershipDrop): Promise<void> {
 	await changeableRow(ctx, subject);
 	await authorizeMembership({ ...ctx, subject, intent });
 	const about = aboutSpace(ctx.group);
 	const members = membersSpace(ctx.group);
-	const list = await memberListFor(ctx);
+	const list = ctx.memberList;
 
 	if (intent === 'leave') await unaccept(ctx);
 	await list.remove({ space: about, did: subject });
@@ -215,8 +247,8 @@ function removesAccess(from: GroupRoleName, to: GroupRoleName): boolean {
  * `undefined` lets the record builder stamp now. A failed record read throws,
  * because a date from the row would overwrite a published one.
  */
-export async function joinedAt(ctx: RosterContext, subject: string): Promise<string | undefined> {
-	const reader = ctx.reader !== undefined ? ctx.reader : await groupSpaceReader(ctx.env, ctx.group);
+export async function joinedAt(ctx: PreparedRoster, subject: string): Promise<string | undefined> {
+	const { reader } = ctx;
 	const space = ctx.group.members_space_uri;
 	if (reader && space && isMembershipKey(subject)) {
 		const record = await reader.get({
@@ -237,10 +269,9 @@ export async function joinedAt(ctx: RosterContext, subject: string): Promise<str
 
 /** The route's visibility if it read one, else the host's. With no credential
  *  for the group it is `null`, which refuses a stranger. */
-async function joinVisibility(ctx: RosterContext): Promise<GroupVisibility | null> {
+async function joinVisibility(ctx: PreparedRoster): Promise<GroupVisibility | null> {
 	if (ctx.visibility !== undefined) return ctx.visibility;
-	const reader = ctx.reader !== undefined ? ctx.reader : await groupSpaceReader(ctx.env, ctx.group);
-	return reader ? readGroupVisibility(reader, ctx.group) : null;
+	return ctx.reader ? readGroupVisibility(ctx.reader, ctx.group) : null;
 }
 
 /** Self-service join. Only `joined` is published: the groups standard models
@@ -248,7 +279,11 @@ async function joinVisibility(ctx: RosterContext): Promise<GroupVisibility | nul
  *  the requester on the members space's list, write-only, because they write
  *  their acceptance at request time (spec 003 FR-206). Either way the caller
  *  then writes it, when their session holds the group's grant. */
-export async function joinGroup(ctx: RosterContext, message: string | null): Promise<JoinOutcome> {
+export async function joinGroup(
+	given: RosterContext,
+	message: string | null
+): Promise<JoinOutcome> {
+	const ctx = await prepared(given);
 	const outcome = await requestJoin(
 		ctx.db,
 		ctx.group,
@@ -260,7 +295,7 @@ export async function joinGroup(ctx: RosterContext, message: string | null): Pro
 		await step(
 			'list',
 			ctx.callerDid,
-			async () => listJoinRequester(await memberListFor(ctx), ctx.group, ctx.callerDid),
+			async () => listJoinRequester(ctx.memberList, ctx.group, ctx.callerDid),
 			'request'
 		);
 		await accept(ctx);
@@ -285,17 +320,21 @@ export async function joinGroup(ctx: RosterContext, message: string | null): Pro
 }
 
 /** Self-service leave. The owner cannot leave. */
-export async function leaveGroup(ctx: RosterContext): Promise<void> {
+export async function leaveGroup(given: RosterContext): Promise<void> {
+	const ctx = await prepared(given);
 	await revoke(ctx, ctx.callerDid, 'leave');
 }
 
 /** Approve a pending request. A DID already on the roster is refused before
  *  any record is written, so an approval never publishes a role the row lacks. */
 export async function admitFromRequest(
-	ctx: RosterContext,
+	given: RosterContext,
 	requestId: string,
 	role: AssignableRole
 ): Promise<{ did: string }> {
+	const ctx = await prepared(given);
+	// Before the row moves, so a refusal changes nothing.
+	await requireGroupPermission(ctx, 'ADMIT_MEMBERS');
 	const admitted = await approveJoinRequest(ctx.db, ctx.group.id, requestId, ctx.callerDid, role);
 	const createdAt = await step('record', admitted.did, () => joinedAt(ctx, admitted.did));
 	await step('record', admitted.did, () =>
@@ -313,10 +352,13 @@ export async function admitFromRequest(
 
 /** Direct add. A request the DID has pending is closed by the same row write. */
 export async function admitMember(
-	ctx: RosterContext,
+	given: RosterContext,
 	did: string,
 	role: AssignableRole
 ): Promise<void> {
+	const ctx = await prepared(given);
+	// Before the row moves, so a refusal changes nothing.
+	await requireGroupPermission(ctx, 'ADMIT_MEMBERS');
 	await addMember(ctx.db, ctx.group.id, did, role, ctx.callerDid);
 	const createdAt = await step('record', did, () => joinedAt(ctx, did));
 	await step('record', did, () =>
@@ -330,19 +372,20 @@ export async function admitMember(
  *  track, which Repair lists again, rather than a closed one it still does. A
  *  withdrawal deletes the requester's acceptance before the entry. */
 async function closeRequest(
-	ctx: RosterContext,
+	ctx: PreparedRoster,
 	requestId: string,
 	did: string,
 	status: 'rejected' | 'withdrawn'
 ): Promise<void> {
-	const list = await memberListFor(ctx);
+	const list = ctx.memberList;
 	if (status === 'withdrawn') await unaccept(ctx);
 	await unlistJoinRequester(list, ctx.group, did);
 	await decideJoinRequest(ctx.db, ctx.group.id, requestId, ctx.callerDid, status);
 }
 
 /** Withdraw the caller's own pending request. */
-export async function withdrawJoinRequest(ctx: RosterContext, requestId: string): Promise<void> {
+export async function withdrawJoinRequest(given: RosterContext, requestId: string): Promise<void> {
+	const ctx = await prepared(given);
 	const did = await pendingRequestDid(ctx.db, ctx.group.id, requestId);
 	if (did !== ctx.callerDid) {
 		throw new GroupRuleError('not-found', 'No such pending join request');
@@ -351,7 +394,8 @@ export async function withdrawJoinRequest(ctx: RosterContext, requestId: string)
 }
 
 /** Reject a pending request, behind the same permission as approving one. */
-export async function rejectJoinRequest(ctx: RosterContext, requestId: string): Promise<void> {
+export async function rejectJoinRequest(given: RosterContext, requestId: string): Promise<void> {
+	const ctx = await prepared(given);
 	await requireGroupPermission(ctx, 'ADMIT_MEMBERS');
 	const did = await pendingRequestDid(ctx.db, ctx.group.id, requestId);
 	if (!did) throw new GroupRuleError('not-found', 'No such pending join request');
@@ -359,18 +403,21 @@ export async function rejectJoinRequest(ctx: RosterContext, requestId: string): 
 }
 
 /** Eject, behind the same checks as leave. */
-export async function ejectMember(ctx: RosterContext, did: string): Promise<void> {
-	await revoke(ctx, did, 'eject');
+export async function ejectMember(given: RosterContext, did: string): Promise<void> {
+	await revoke(await prepared(given), did, 'eject');
 }
 
 /** Assign a role. A promotion is a grant and a demotion a revocation, each in
  *  its own order (see the file header). */
 export async function promoteMember(
-	ctx: RosterContext,
+	given: RosterContext,
 	did: string,
 	role: AssignableRole
 ): Promise<void> {
+	const ctx = await prepared(given);
 	const current = await changeableRow(ctx, did);
+	// Before either half, so a refusal changes nothing.
+	await requireGroupPermission(ctx, 'ASSIGN_ROLES');
 	const createdAt = await joinedAt(ctx, did);
 	const writeRecord = () =>
 		putGroupMembership({ ...ctx, subject: did, roles: [role], createdAt, intent: 'assign' });

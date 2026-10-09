@@ -833,6 +833,28 @@ describe('a join request holds a write-only entry on the members space list', ()
 		expect(await requestStatus(NEWCOMER)).toBe('pending');
 	});
 
+	it('a member cannot admit, approve or promote, and no row moves first', async () => {
+		const STRANGER = 'did:plc:strangeraaaaaaaaaaaaaaaaa';
+		await joinGroup(ctx(NEWCOMER), null);
+		const id = await pendingId(NEWCOMER);
+		pds.clearLog();
+
+		for (const act of [
+			() => admitMember(ctx(MEMBER), STRANGER, 'member'),
+			() => admitFromRequest(ctx(MEMBER), id, 'member'),
+			() => promoteMember(ctx(MEMBER), MEMBER, 'admin')
+		]) {
+			expect(await act().catch((e: unknown) => e)).toMatchObject({
+				name: 'GroupPermissionError'
+			});
+		}
+
+		expect(await getMemberRow(harness.db, group.id, STRANGER)).toBeNull();
+		expect(await requestStatus(NEWCOMER)).toBe('pending');
+		expect((await getMemberRow(harness.db, group.id, MEMBER))?.role).toBe('member');
+		expect(pds.writes()).toEqual([]);
+	});
+
 	it('rejecting a request that is no longer pending is refused before any write', async () => {
 		await joinGroup(ctx(NEWCOMER), null);
 		const id = await pendingId(NEWCOMER);
