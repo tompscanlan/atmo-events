@@ -263,19 +263,35 @@ async function groupReadAt(
 	};
 }
 
-/** A roster act's context. The driver names the caller on every call, and
- *  `asMember` hands the act the caller's own session, as the join and leave
- *  forms do: the admin's, or with `session: 'no-spaces'` the no-spaces member's. */
-async function rosterCtx(env: Env, args: Args): Promise<RosterContext> {
-	const group = await groupById(env, args.groupId);
-	const callerDid = String(args.callerDid);
-	let member: MemberSession | null = null;
-	if (args.asMember) {
-		member =
-			args.session === 'no-spaces'
-				? noSpacesSession(callerDid)
-				: await adminSession(env, callerDid, group);
+/** The caller's own session, by the stand-in the driver names in `session`:
+ *  the admin's (the default), `no-spaces` for the member whose PDS serves no
+ *  spaces, or `outsider` for one that holds the grant and refuses every
+ *  request. Each request it is asked for is recorded in `calls`. */
+async function standInSession(
+	env: Env,
+	kind: unknown,
+	did: string,
+	group: GroupRow,
+	calls: string[] = []
+): Promise<MemberSession> {
+	switch (kind ?? 'admin') {
+		case 'admin':
+			return recorded(await adminSession(env, did, group), calls);
+		case 'no-spaces':
+			return recorded(noSpacesSession(did), calls);
+		case 'outsider':
+			return outsiderSession(did, group, calls);
+		default:
+			throw new Error(`unknown stand-in session ${String(kind)}`);
 	}
+}
+
+/** A roster act's context. The driver names the caller on every call, and
+ *  `asMember` hands the act the caller's own session (`standInSession`), as the
+ *  join and leave forms do. */
+async function rosterCtx(env: Env, args: Args, group: GroupRow): Promise<RosterContext> {
+	const callerDid = String(args.callerDid);
+	const member = args.asMember ? await standInSession(env, args.session, callerDid, group) : null;
 	return { db: env.DB, env, group, callerDid, member };
 }
 
@@ -287,7 +303,9 @@ async function spaceReader(env: Env, group: GroupRow) {
 	return reader;
 }
 
-const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
+/** Each op gets the group the driver named by `groupId`, resolved once here.
+ *  An op that names no group never reads it. */
+const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unknown>> = {
 	/** The app's own create, as the create form runs it: it mints the group's
 	 *  account on the devnet PDS and sets the group up. The owner's recovery key
 	 *  never leaves the worker, only whether the create handed one back. */
@@ -345,8 +363,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	/** The app's own permission answer, plus `can()` for each probed name. Once
 	 *  the members space holds an authz config, it comes from the records. */
-	membership: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	membership: async (env, args, group) => {
 		const membership = await getCallerMembership(
 			env.DB,
 			group,
@@ -368,11 +385,11 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	 *  are the group's. `record` has the shape atmo's event editor builds.
 	 *  `placement` is passed on as sent: a driver that leaves it out gets the
 	 *  writer's refusal. */
-	writeGroupEvent: async (env, args) =>
+	writeGroupEvent: async (env, args, group) =>
 		writeGroupEvent({
 			db: env.DB,
 			env,
-			group: await groupById(env, args.groupId),
+			group,
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
 			intent: args.intent as 'create' | 'update',
 			rkey: args.rkey as string | undefined,
@@ -382,11 +399,11 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	/** The editor's image upload, into the group's repo. `bytes` is a number
 	 *  array, as the editor's command sends it. */
-	uploadGroupEventImage: async (env, args) =>
+	uploadGroupEventImage: async (env, args, group) =>
 		uploadGroupEventImage({
 			db: env.DB,
 			env,
-			group: await groupById(env, args.groupId),
+			group,
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
 			intent: args.intent as 'create' | 'update',
 			bytes: new Uint8Array(args.bytes as number[]),
@@ -394,11 +411,11 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		}),
 
 	/** The delete, at the placement the driver names, as `writeGroupEvent`. */
-	deleteGroupEvent: async (env, args) =>
+	deleteGroupEvent: async (env, args, group) =>
 		deleteGroupEvent({
 			db: env.DB,
 			env,
-			group: await groupById(env, args.groupId),
+			group,
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
 			rkey: String(args.rkey),
 			placement: args.placement as EventPlacement
@@ -415,8 +432,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	 *  `space` through the app's own reader. Read-only: it never writes, so a
 	 *  space it is pointed at that does not exist still does not exist after.
 	 *  Answers with the refusal, if any, and every request it sent. */
-	calendarSpaceCheck: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	calendarSpaceCheck: async (env, args, group) => {
 		const from = standInCalls.length;
 		let refusal: ReturnType<typeof serializeError> | null = null;
 		try {
@@ -428,11 +444,10 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	},
 
 	/** The events tab's list, from the app's index and not from the PDS. */
-	listGroupEvents: async (env, args) => listGroupEvents(env.DB, await groupById(env, args.groupId)),
+	listGroupEvents: async (env, args, group) => listGroupEvents(env.DB, group),
 
 	/** The route's two calls: read the current rules, then reconcile them. */
-	setGroupRules: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	setGroupRules: async (env, args, group) => {
 		const reader = await groupSpaceReader(env, group);
 		if (!reader) throw new Error(`no credential for ${group.group_did}`);
 		const about = await readGroupAbout(reader, group);
@@ -447,27 +462,26 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	},
 
 	/** Read back through the group's own session, the way the app reads it. */
-	readGroupAbout: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	readGroupAbout: async (env, args, group) => {
 		const reader = await groupSpaceReader(env, group);
 		if (!reader) throw new Error(`no credential for ${group.group_did}`);
 		return readGroupAbout(reader, group);
 	},
 
-	rebuildGroupCache: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	rebuildGroupCache: async (env, args, group) => {
 		const reader = await groupSpaceReader(env, group);
 		if (!reader) throw new Error(`no credential for ${group.group_did}`);
 		const outcome = await rebuildGroupCache(env.DB, reader, group);
+		// Read again: the row the dispatcher resolved is from before the rebuild.
 		return { ...outcome, row: await groupById(env, args.groupId) };
 	},
 
 	/** The settings save's own call, behind MANAGE_GROUP. */
-	setReadPolicy: async (env, args) => {
+	setReadPolicy: async (env, args, group) => {
 		await setAboutSpaceReadPolicy({
 			db: env.DB,
 			env,
-			group: await groupById(env, args.groupId),
+			group,
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
 			visibility: chosenVisibility(args)
 		});
@@ -475,28 +489,30 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	},
 
 	/** The join form's roster act. It is passed no visibility, so it asks the host. */
-	joinGroup: async (env, args) => ({
-		outcome: await joinGroup(await rosterCtx(env, args), (args.message as string | null) ?? null)
+	joinGroup: async (env, args, group) => ({
+		outcome: await joinGroup(
+			await rosterCtx(env, args, group),
+			(args.message as string | null) ?? null
+		)
 	}),
 
 	/** The leave form's roster act. */
-	leaveGroup: async (env, args) => {
-		await leaveGroup(await rosterCtx(env, args));
+	leaveGroup: async (env, args, group) => {
+		await leaveGroup(await rosterCtx(env, args, group));
 		return { left: args.callerDid };
 	},
 
 	/** The approve button's roster act: row, record and both member lists. */
-	admitFromRequest: async (env, args) =>
+	admitFromRequest: async (env, args, group) =>
 		admitFromRequest(
-			await rosterCtx(env, args),
+			await rosterCtx(env, args, group),
 			String(args.requestId),
 			(args.role as AssignableRole) ?? 'member'
 		),
 
 	/** What the sign-in callback runs for the caller (acceptOnSignIn, without the
 	 *  OAuth session it reads the scope from). */
-	signInAcceptances: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	signInAcceptances: async (env, args, group) => {
 		await writeMissingAcceptances(env.DB, await adminSession(env, String(args.did), group));
 		return { signedIn: args.did };
 	},
@@ -520,8 +536,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	/** The roster's read of one member's acceptance in the members space
 	 *  (`groupReadAt`). */
-	spaceReadAt: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	spaceReadAt: async (env, args, group) => {
 		const space = group.members_space_uri;
 		if (!space) throw new Error(`${group.group_did} has no members space`);
 		const { host, status, error } = await groupReadAt(
@@ -537,8 +552,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	/** The group's own read of one member's RSVP in the calendar space, at the
 	 *  event's key (`groupReadAt`): what the attendee list will read. */
-	calendarReadAt: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	calendarReadAt: async (env, args, group) => {
 		return groupReadAt(
 			env,
 			group,
@@ -562,17 +576,11 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	 *  (null when absent) and is never followed. Returns the module's answer,
 	 *  every request sent through the caller's session, and how many times
 	 *  reauthorize() was called. */
-	membersOnlyRsvp: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	membersOnlyRsvp: async (env, args, group) => {
 		const did = String(args.did);
 		const { membership, reader } = await groupRouteContext(env, env.DB, group.group_did, did);
 		const calls: string[] = [];
-		const member =
-			args.session === 'no-spaces'
-				? recorded(noSpacesSession(did), calls)
-				: args.session === 'outsider'
-					? outsiderSession(did, group, calls)
-					: recorded(await adminSession(env, did, group), calls);
+		const member = await standInSession(env, args.session, did, group, calls);
 		let reauthorized = 0;
 		const target = {
 			membership,
@@ -608,8 +616,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	/** The roster as the members page shows it: the records, each entry marked
 	 *  confirmed or not from the acceptances read by DID with the group's
 	 *  credential. `confirmed` is null when they could not be read. */
-	confirmedRoster: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	confirmedRoster: async (env, args, group) => {
 		const members = await readGroupMembers(await spaceReader(env, group), group);
 		const dids = members.memberships.map((record) => record.subject);
 		const acceptances = await groupAcceptanceReader(env, group);
@@ -628,8 +635,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	/** The gate every group page runs, for one caller (`groupRouteContext`).
 	 *  `canSee` is false for its 404. `visibility` is null for a caller on the
 	 *  roster, whom the gate lets in without asking the host. */
-	gate: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	gate: async (env, args, group) => {
 		try {
 			const context = await groupRouteContext(
 				env,
@@ -657,8 +663,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	 *  `sliceCalls` for the slice read alone. With `unlinked`, the group's stored
 	 *  session is taken away for the read, as a lapsed link leaves it, and put
 	 *  back before the op returns. */
-	membersOnlySlice: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	membersOnlySlice: async (env, args, group) => {
 		const did = args.did == null ? null : String(args.did);
 		const key = GROUP_SESSION_PREFIX + group.group_did;
 		const stored = args.unlinked ? await env.OAUTH_SESSIONS.get(key) : null;
@@ -687,8 +692,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	 *  function its loader calls. It returns every request sent through the group's
 	 *  session: `calls` for the whole op, standing included, and `readCalls` for
 	 *  the event read alone. */
-	membersOnlyEvent: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	membersOnlyEvent: async (env, args, group) => {
 		const did = args.did == null ? null : String(args.did);
 		const from = standInCalls.length;
 		const { membership, reader } = await groupRouteContext(env, env.DB, group.group_did, did);
@@ -709,8 +713,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	 *  the gate's 403; the caller's standing is then read afterwards, only to
 	 *  report it. It returns every request sent through the group's session:
 	 *  `calls` for the whole op, and `readCalls` for what came after the gate. */
-	membersOnlyEditRead: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	membersOnlyEditRead: async (env, args, group) => {
 		const did = args.did == null ? null : String(args.did);
 		const from = standInCalls.length;
 		let page;
@@ -753,8 +756,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	},
 
 	/** Whether the app finds the group's stored session, as the pages do. */
-	linked: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	linked: async (env, args, group) => {
 		return { linked: (await resolveGroupCredential(env, group.group_did)) !== null };
 	},
 
@@ -767,6 +769,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			locationName: 'CORRUPTED',
 			requireApproval: false
 		});
+		// Read again: the row the dispatcher resolved is from before the update.
 		return groupById(env, args.groupId);
 	},
 
@@ -775,8 +778,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	/** The index of the group's spaces, read first as the repair reads it. The
 	 *  calendar space joins it when the driver passes `calendarSpaceUri`, as the
 	 *  create does; without it, as the repair does, the index is the two spaces. */
-	writeSpaceIndex: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	writeSpaceIndex: async (env, args, group) => {
 		return writeGroupSpaceIndex({
 			db: env.DB,
 			env,
@@ -789,8 +791,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	/** The only record a stranger can read. The driver passes a visibility, as the
 	 *  settings save does, or `'host'` to use the host's answer, as the repair does. */
-	reconcileDeclaration: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	reconcileDeclaration: async (env, args, group) => {
 		const visibility =
 			args.visibility === 'host'
 				? await readGroupVisibility(await spaceReader(env, group), group)
@@ -808,18 +809,17 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	/** The authz config: one `role` record per seeded role and the two binding
 	 *  records. */
-	writeGroupAuthz: async (env, args) =>
+	writeGroupAuthz: async (env, args, group) =>
 		writeGroupAuthz({
 			db: env.DB,
 			env,
-			group: await groupById(env, args.groupId),
+			group,
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
 			bundles: args.bundles as Record<GroupRoleName, GroupPermission[]> | undefined
 		}),
 
 	/** The authz config as the records say it is, plus one role's effective grant. */
-	recordedAuthz: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	recordedAuthz: async (env, args, group) => {
 		const members = await readGroupMembers(await spaceReader(env, group), group);
 		const role = (args.role as GroupRoleName) ?? 'admin';
 		return {
@@ -832,25 +832,32 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	},
 
 	/** The roster acts the app's own handlers call: row plus record, in its order. */
-	admitMember: async (env, args) => {
-		await admitMember(await rosterCtx(env, args), String(args.did), args.role as AssignableRole);
+	admitMember: async (env, args, group) => {
+		await admitMember(
+			await rosterCtx(env, args, group),
+			String(args.did),
+			args.role as AssignableRole
+		);
 		return { admitted: args.did };
 	},
 
-	promoteMember: async (env, args) => {
-		await promoteMember(await rosterCtx(env, args), String(args.did), args.role as AssignableRole);
+	promoteMember: async (env, args, group) => {
+		await promoteMember(
+			await rosterCtx(env, args, group),
+			String(args.did),
+			args.role as AssignableRole
+		);
 		return { promoted: args.did, role: args.role };
 	},
 
-	ejectMember: async (env, args) => {
-		await ejectMember(await rosterCtx(env, args), String(args.did));
+	ejectMember: async (env, args, group) => {
+		await ejectMember(await rosterCtx(env, args, group), String(args.did));
 		return { ejected: args.did };
 	},
 
 	/** The roster as the members page builds it (records if the space holds any,
 	 *  else the cache), plus the access answer for one DID. */
-	recordedRoster: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	recordedRoster: async (env, args, group) => {
 		const members = await readGroupMembers(await spaceReader(env, group), group);
 		const fromRecords = hasMemberRecords(members);
 		return {
@@ -872,8 +879,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	/** Drops the non-owner roster rows with raw SQL, because no app path deletes
 	 *  them in bulk. The `memberships_owner_undeletable` trigger keeps the owner's. */
-	dropMembershipRows: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	dropMembershipRows: async (env, args, group) => {
 		const before = await listMembers(env.DB, group.id);
 		await env.DB.prepare(`DELETE FROM memberships WHERE group_id = ? AND did <> ?`)
 			.bind(group.id, group.owner_did)
@@ -881,8 +887,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		return { dropped: before.length - (await listMembers(env.DB, group.id)).length };
 	},
 
-	rebuildGroupMembers: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	rebuildGroupMembers: async (env, args, group) => {
 		const outcome = await rebuildGroupMembers(env.DB, await spaceReader(env, group), group);
 		return { ...outcome, roster: rosterFromRows(await listMembers(env.DB, group.id)) };
 	},
@@ -910,8 +915,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	/** Deletes the group row and, by cascade, its roles, bundles, roster and join
 	 *  requests. The linked session is kept outside D1 and survives. A rebuild
 	 *  starts from it. */
-	dropGroupRows: async (env, args) => {
-		const group = await groupById(env, args.groupId);
+	dropGroupRows: async (env, args, group) => {
 		await env.DB.prepare(`DELETE FROM groups WHERE id = ?`).bind(group.id).run();
 		return { left: await getGroupByDid(env.DB, group.group_did) };
 	},
@@ -949,7 +953,12 @@ export default {
 		if (!run) return json({ ok: false, error: serializeError(new Error(`unknown op ${op}`)) }, 400);
 
 		try {
-			return json({ ok: true, value: await run(env, args ?? ({} as Args)) });
+			const given = args ?? ({} as Args);
+			const group =
+				given.groupId == null
+					? (undefined as unknown as GroupRow)
+					: await groupById(env, given.groupId);
+			return json({ ok: true, value: await run(env, given, group) });
 		} catch (error) {
 			return json({ ok: false, error: serializeError(error) });
 		}

@@ -267,39 +267,32 @@ async function loadSecret(name) {
 	throw new Error(`no ${name} in ${CREDENTIALS_PATH}`);
 }
 
-/**
- * Logs in as the run's group, with the password the create set, for the
- * driver's direct space reads. The group's writes still go through the app's
- * credential path inside the Worker.
- */
-async function logInAsGroup(password) {
-	const response = await fetch(`${PDS}/xrpc/com.atproto.server.createSession`, {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ identifier: GROUP_DID, password })
+/** Logs in to the PDS, for the driver's direct reads and writes. Returns the
+ *  session's DID and token. */
+async function logIn(identifier, password) {
+	const { status, body } = await pdsPost('com.atproto.server.createSession', {
+		identifier,
+		password
 	});
-	const body = await response.json().catch(() => ({}));
-	if (!response.ok) {
-		throw new Error(`createSession ${GROUP_DID} failed: ${response.status} ${body.error ?? ''}`);
+	if (status !== 200) {
+		const hint = status === 401 ? ' (the password is stale)' : '';
+		throw new Error(`createSession ${identifier} failed: ${status} ${body.error ?? ''}${hint}`);
 	}
-	return body.accessJwt;
+	return { did: body.did, token: body.accessJwt };
+}
+
+/** Logs in as the run's group, with the password the create set. The group's
+ *  writes still go through the app's credential path inside the Worker. */
+async function logInAsGroup(password) {
+	return (await logIn(GROUP_DID, password)).token;
 }
 
 /** Fails early if the admin's password is stale. Returns their session token,
- *  for reading and resetting their own acceptance without the app's code. */
+ *  for reading and deleting their own acceptance without the app's code. */
 async function checkAdminAccount(password) {
-	const response = await fetch(`${PDS}/xrpc/com.atproto.server.createSession`, {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ identifier: BOB, password })
-	});
-	const body = await response.json().catch(() => ({}));
-	if (!response.ok) {
-		const hint = response.status === 401 ? ' (the fixture password is stale)' : '';
-		throw new Error(`createSession ${BOB} failed: ${response.status} ${body.error ?? ''}${hint}`);
-	}
-	if (body.did !== BOB) throw new Error(`the admin login is ${body.did}, not ${BOB}`);
-	return body.accessJwt;
+	const { did, token } = await logIn(BOB, password);
+	if (did !== BOB) throw new Error(`the admin login is ${did}, not ${BOB}`);
+	return token;
 }
 
 let miniflare;
@@ -395,63 +388,74 @@ function refusesSpaceRead(read) {
 	return refused && !spacesAnswer.includes(read.error);
 }
 
+/** One XRPC query on the PDS, with `token` as the bearer when there is one.
+ *  Answers the status and the JSON body, `{}` when the body is not JSON. */
+async function pdsGet(nsid, params, token) {
+	const url = new URL(`/xrpc/${nsid}`, PDS);
+	for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
+	const response = await fetch(url, token ? { headers: { authorization: `Bearer ${token}` } } : {});
+	return { status: response.status, body: await response.json().catch(() => ({})) };
+}
+
+/** One XRPC procedure on the PDS, as `pdsGet`. */
+async function pdsPost(nsid, input, token) {
+	const response = await fetch(new URL(`/xrpc/${nsid}`, PDS), {
+		method: 'POST',
+		headers: {
+			'content-type': 'application/json',
+			...(token ? { authorization: `Bearer ${token}` } : {})
+		},
+		body: JSON.stringify(input)
+	});
+	return { status: response.status, body: await response.json().catch(() => ({})) };
+}
+
 /** Unauthenticated read straight from the PDS. */
 async function getRecord(repo, rkey, collection = EVENT_COLLECTION) {
-	const url = new URL('/xrpc/com.atproto.repo.getRecord', PDS);
-	url.searchParams.set('repo', repo);
-	url.searchParams.set('collection', collection);
-	url.searchParams.set('rkey', rkey);
-	const response = await fetch(url);
-	const body = await response.json().catch(() => ({}));
-	return { status: response.status, ...body };
+	const { status, body } = await pdsGet('com.atproto.repo.getRecord', { repo, collection, rkey });
+	return { status, ...body };
 }
 
 async function listRecords(repo) {
-	const url = new URL('/xrpc/com.atproto.repo.listRecords', PDS);
-	url.searchParams.set('repo', repo);
-	url.searchParams.set('collection', EVENT_COLLECTION);
-	url.searchParams.set('limit', '100');
-	const response = await fetch(url);
-	const body = await response.json().catch(() => ({}));
-	return { status: response.status, records: body.records ?? [] };
+	const { status, body } = await pdsGet('com.atproto.repo.listRecords', {
+		repo,
+		collection: EVENT_COLLECTION,
+		limit: 100
+	});
+	return { status, records: body.records ?? [] };
 }
 
 /** A record in one of the group's spaces, read with the group's session and not
  *  through the app's reader, so the check shares no code with the writer. */
-async function spaceRecord(token, space, collection, rkey) {
-	const url = new URL('/xrpc/com.atproto.space.getRecord', PDS);
-	url.searchParams.set('space', space);
-	url.searchParams.set('repo', GROUP_DID);
-	url.searchParams.set('collection', collection);
-	url.searchParams.set('rkey', rkey);
-	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
-	const body = await response.json().catch(() => ({}));
-	return { status: response.status, ...body };
+async function spaceRecord(token, space, collection, rkey, repo = GROUP_DID) {
+	const { status, body } = await pdsGet(
+		'com.atproto.space.getRecord',
+		{ space, repo, collection, rkey },
+		token
+	);
+	return { status, ...body };
 }
 
 /** Every record of one collection in one of the group's spaces, read like
  *  `spaceRecord`. One page: the collections read this way stay small. */
 async function spaceRecords(token, space, collection) {
-	const url = new URL('/xrpc/com.atproto.space.listRecords', PDS);
-	url.searchParams.set('space', space);
-	url.searchParams.set('repo', GROUP_DID);
-	url.searchParams.set('collection', collection);
-	url.searchParams.set('limit', '100');
-	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
-	const body = await response.json().catch(() => ({}));
-	return { status: response.status, records: body.records ?? [], cursor: body.cursor };
+	const { status, body } = await pdsGet(
+		'com.atproto.space.listRecords',
+		{ space, repo: GROUP_DID, collection, limit: 100 },
+		token
+	);
+	return { status, records: body.records ?? [], cursor: body.cursor };
 }
 
 /** Writes a record into one of the group's spaces with the group's session,
  *  with no app code: the seed of the members-only slice. */
 async function putSpaceRecord(token, space, collection, rkey, record) {
-	const response = await fetch(new URL('/xrpc/com.atproto.space.putRecord', PDS), {
-		method: 'POST',
-		headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-		body: JSON.stringify({ space, repo: GROUP_DID, collection, rkey, record })
-	});
-	const body = await response.json().catch(() => ({}));
-	return { status: response.status, ...body };
+	const { status, body } = await pdsPost(
+		'com.atproto.space.putRecord',
+		{ space, repo: GROUP_DID, collection, rkey, record },
+		token
+	);
+	return { status, ...body };
 }
 
 /** The requests in a worker op's log that named the calendar space. A write
@@ -475,67 +479,43 @@ const ACCEPTANCE_COLLECTION = 'group.opensocial.acceptance';
 /** The admin's own acceptance in the members space, read with their own session,
  *  so the check shares no code with the app's writer or its reader. */
 async function ownAcceptance(token, space) {
-	const url = new URL('/xrpc/com.atproto.space.getRecord', PDS);
-	url.searchParams.set('space', space);
-	url.searchParams.set('repo', BOB);
-	url.searchParams.set('collection', ACCEPTANCE_COLLECTION);
-	url.searchParams.set('rkey', 'self');
-	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
-	const body = await response.json().catch(() => ({}));
-	return { status: response.status, ...body };
+	return spaceRecord(token, space, ACCEPTANCE_COLLECTION, 'self', BOB);
 }
 
-/** Deletes the admin's acceptance with their own session: a leftover from an
- *  earlier run would make checks 18b and 18d pass on stale data. */
+/** Deletes the admin's acceptance with their own session, for cleanup. */
 async function deleteOwnAcceptance(token, space) {
-	const response = await fetch(new URL('/xrpc/com.atproto.space.deleteRecord', PDS), {
-		method: 'POST',
-		headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-		body: JSON.stringify({ space, repo: BOB, collection: ACCEPTANCE_COLLECTION, rkey: 'self' })
-	});
-	return response.status;
+	const { status } = await pdsPost(
+		'com.atproto.space.deleteRecord',
+		{ space, repo: BOB, collection: ACCEPTANCE_COLLECTION, rkey: 'self' },
+		token
+	);
+	return status;
 }
 
 /** Deletes the admin's RSVP to the members-only seed with their own session,
  *  for cleanup, and reads it back the same way. */
 async function deleteOwnRsvp(token) {
-	await fetch(new URL('/xrpc/com.atproto.space.deleteRecord', PDS), {
-		method: 'POST',
-		headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-		body: JSON.stringify({
-			space: CALENDAR_SPACE_URI,
-			repo: BOB,
-			collection: RSVP_COLLECTION,
-			rkey: SEED_RKEY
-		})
-	});
-	const url = new URL('/xrpc/com.atproto.space.getRecord', PDS);
-	url.searchParams.set('space', CALENDAR_SPACE_URI);
-	url.searchParams.set('repo', BOB);
-	url.searchParams.set('collection', RSVP_COLLECTION);
-	url.searchParams.set('rkey', SEED_RKEY);
-	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
-	const body = await response.json().catch(() => ({}));
-	return { status: response.status, ...body };
+	const rsvp = {
+		space: CALENDAR_SPACE_URI,
+		repo: BOB,
+		collection: RSVP_COLLECTION,
+		rkey: SEED_RKEY
+	};
+	await pdsPost('com.atproto.space.deleteRecord', rsvp, token);
+	return spaceRecord(token, rsvp.space, rsvp.collection, rsvp.rkey, BOB);
 }
 
 /** A space's read policy as the host reports it. */
 async function spaceReadPolicy(token, space) {
-	const url = new URL('/xrpc/com.atproto.simplespace.getSpace', PDS);
-	url.searchParams.set('space', space);
-	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
-	const body = await response.json().catch(() => ({}));
-	return { status: response.status, readPolicy: body.readPolicy?.$type ?? null, error: body.error };
+	const { status, body } = await pdsGet('com.atproto.simplespace.getSpace', { space }, token);
+	return { status, readPolicy: body.readPolicy?.$type ?? null, error: body.error };
 }
 
 /** The PDS's own member list for a space, separate from our `membership`
  *  records. `listMembers` is owner-only, and the group is the owner. */
 async function spaceMemberList(token, space) {
-	const url = new URL('/xrpc/com.atproto.simplespace.listMembers', PDS);
-	url.searchParams.set('space', space);
-	const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
-	const body = await response.json().catch(() => ({}));
-	return { status: response.status, members: body.members ?? [], error: body.error };
+	const { status, body } = await pdsGet('com.atproto.simplespace.listMembers', { space }, token);
+	return { status, members: body.members ?? [], error: body.error };
 }
 
 /** The `at://<authority>/...` a record actually landed under. */
@@ -545,13 +525,12 @@ function authorityOf(uri) {
 
 /** A space listing with no credential at all, as any stranger would ask. */
 async function anonymousSpaceList(space) {
-	const url = new URL('/xrpc/com.atproto.space.listRecords', PDS);
-	url.searchParams.set('space', space);
-	url.searchParams.set('repo', GROUP_DID);
-	url.searchParams.set('collection', EVENT_COLLECTION);
-	const response = await fetch(url);
-	const body = await response.json().catch(() => ({}));
-	return { status: response.status, error: body.error, records: body.records ?? [] };
+	const { status, body } = await pdsGet('com.atproto.space.listRecords', {
+		space,
+		repo: GROUP_DID,
+		collection: EVENT_COLLECTION
+	});
+	return { status, error: body.error, records: body.records ?? [] };
 }
 
 /** Runs a worker op and adds every request it sent through the group's session,
@@ -728,6 +707,11 @@ async function main() {
 	const stateDir = await mkdtemp(join(tmpdir(), 'groups-e2e-'));
 	let worker;
 	let group;
+	/** A worker op on the run's group: `must`, `call` and `traced` with the
+	 *  group's id filled in. */
+	const op = (name, args = {}) => must(name, { groupId: group.id, ...args });
+	const tryOp = (name, args = {}) => call(name, { groupId: group.id, ...args });
+	const tracedOp = (name, args = {}) => traced(name, { groupId: group.id, ...args });
 	/** The driver's own session as the group, for reading its spaces directly. */
 	let groupToken;
 	const written = [];
@@ -761,8 +745,8 @@ async function main() {
 		membersSpaceUri = group.members_space_uri;
 		aboutSpaceUri = group.about_space_uri;
 		calendarSpaceUri = CALENDAR_SPACE_URI;
-		const members = await must('listMembers', { groupId: group.id });
-		const bundles = await must('rolePermissions', { groupId: group.id });
+		const members = await op('listMembers');
+		const bundles = await op('rolePermissions');
 		const sizes = Object.fromEntries(Object.entries(bundles).map(([r, p]) => [r, p.length]));
 		const owners = members.filter((m) => m.role === 'owner');
 		const seededBundles =
@@ -796,13 +780,12 @@ async function main() {
 
 		// The admin, through the roster as the members page adds and promotes: a
 		// membership record and both member lists, then the role.
-		await must('admitMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'member' });
-		await must('promoteMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'admin' });
+		await op('admitMember', { callerDid: ALICE, did: BOB, role: 'member' });
+		await op('promoteMember', { callerDid: ALICE, did: BOB, role: 'admin' });
 		note(`${BOB} admitted and promoted to admin through the roster`);
 
 		// 4. the owner's event is the group's record ----------------------------
-		const created = await must('writeGroupEvent', {
-			groupId: group.id,
+		const created = await op('writeGroupEvent', {
 			callerDid: ALICE,
 			placement: 'everyone',
 			intent: 'create',
@@ -828,8 +811,7 @@ async function main() {
 		// 5. an admin edits an event they did not create -------------------------
 		// Admins edit through the group's credential, so the author must not change.
 		const editedName = 'e2e sunrise paddle (rescheduled by admin bob)';
-		const edited = await must('writeGroupEvent', {
-			groupId: group.id,
+		const edited = await op('writeGroupEvent', {
 			callerDid: BOB,
 			placement: 'everyone',
 			intent: 'update',
@@ -859,8 +841,7 @@ async function main() {
 		);
 
 		// 6. a non-member tries the same edit ------------------------------------
-		const refused = await call('writeGroupEvent', {
-			groupId: group.id,
+		const refused = await tryOp('writeGroupEvent', {
 			callerDid: MALLORY,
 			placement: 'everyone',
 			intent: 'update',
@@ -881,15 +862,13 @@ async function main() {
 		// 9. a cover image -----------------------------------------------------------
 		// The editor uploads the image first, into the group's repo, then cites it
 		// in the record. The PDS serves the blob only once a record cites it.
-		const image = await must('uploadGroupEventImage', {
-			groupId: group.id,
+		const image = await op('uploadGroupEventImage', {
 			callerDid: ALICE,
 			intent: 'create',
 			bytes: PNG_1PX,
 			mimeType: 'image/png'
 		});
-		const withImage = await must('writeGroupEvent', {
-			groupId: group.id,
+		const withImage = await op('writeGroupEvent', {
 			callerDid: ALICE,
 			placement: 'everyone',
 			intent: 'create',
@@ -898,15 +877,12 @@ async function main() {
 		written.push(withImage.rkey);
 		const persistedWithImage = await getRecord(GROUP_DID, withImage.rkey);
 		const cited = persistedWithImage.value?.media?.[0]?.content?.ref?.$link;
-		const blobUrl = new URL('/xrpc/com.atproto.sync.getBlob', PDS);
-		blobUrl.searchParams.set('did', GROUP_DID);
-		blobUrl.searchParams.set('cid', String(cited));
-		const blob = await fetch(blobUrl);
+		const blob = await anonymousBlob(cited);
 		record(
 			persistedWithImage.status === 200 &&
 				authorityOf(persistedWithImage.uri) === GROUP_DID &&
 				cited === image?.ref?.$link &&
-				blob.ok,
+				blob.status === 200,
 			"an event's cover image is uploaded into the GROUP repo, and its record cites it",
 			`${persistedWithImage.uri} cites ${cited}; uploaded ${image?.ref?.$link}; ` +
 				`getBlob from the group's repo: ${blob.status}`
@@ -919,7 +895,7 @@ async function main() {
 		note(`members space  ${membersSpaceUri}`);
 		note(`calendar space ${calendarSpaceUri}`);
 		const startPolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
-		const about = await must('readGroupAbout', { groupId: group.id });
+		const about = await op('readGroupAbout');
 		record(
 			startPolicy.readPolicy === READ_POLICY[CREATE_VISIBILITY] &&
 				about.profile?.name === CREATE_DATA.name &&
@@ -953,12 +929,11 @@ async function main() {
 		// A writer that rewrote the whole list would pass check 10 and still break
 		// every existing citation of a rule.
 		const urisBefore = about.rules.map((rule) => rule.uri);
-		const secondRules = await must('setGroupRules', {
-			groupId: group.id,
+		const secondRules = await op('setGroupRules', {
 			callerDid: ALICE,
 			rules: 'Be kind\nNo self-promotion\nStay on topic'
 		});
-		const afterEditAbout = await must('readGroupAbout', { groupId: group.id });
+		const afterEditAbout = await op('readGroupAbout');
 		const urisAfter = afterEditAbout.rules.map((rule) => rule.uri);
 		record(
 			urisAfter[0] === urisBefore[0] &&
@@ -975,8 +950,8 @@ async function main() {
 
 		// 12. the row is a cache of the records ------------------------------------
 		// The row has no visibility column, so a rebuild has nothing to guess.
-		await must('corruptGroupCache', { groupId: group.id });
-		const rebuilt = await must('rebuildGroupCache', { groupId: group.id });
+		await op('corruptGroupCache');
+		const rebuilt = await op('rebuildGroupCache');
 		record(
 			rebuilt.outcome === 'repaired' &&
 				rebuilt.row.name === CREATE_DATA.name &&
@@ -994,7 +969,7 @@ async function main() {
 		// back through the app's reader and straight from the PDS. That proves the
 		// records exist and that a DID works as a record key.
 
-		const recorded = await must('recordedRoster', { groupId: group.id, did: BOB });
+		const recorded = await op('recordedRoster', { did: BOB });
 		const bobsRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
@@ -1033,8 +1008,7 @@ async function main() {
 		// One entry per space, the two well-known ones included. The key is a TID,
 		// so a writer that did not list the index first would add a second entry on
 		// every write: a write after the create's must add nothing.
-		const indexWrite = await must('writeSpaceIndex', {
-			groupId: group.id,
+		const indexWrite = await op('writeSpaceIndex', {
 			callerDid: ALICE,
 			calendarSpaceUri
 		});
@@ -1117,7 +1091,7 @@ async function main() {
 			.sort();
 
 		// 13d. a member reads it ---------------------------------------------------
-		const memberSlice = await must('membersOnlySlice', { groupId: group.id, did: BOB });
+		const memberSlice = await op('membersOnlySlice', { did: BOB });
 		const memberEvents = memberSlice.slice?.events ?? [];
 		const seedRead = memberEvents.filter((e) => e.rkey === SEED_RKEY);
 		const memberListings = calendarListings(memberSlice.sliceCalls);
@@ -1145,7 +1119,7 @@ async function main() {
 		// 13e. a signed-in non-member causes no read ----------------------------
 		// The viewer's standing is read from the members space as for any page; the
 		// calendar space must not be named once, in the standing or the slice.
-		const strangerSlice = await must('membersOnlySlice', { groupId: group.id, did: MALLORY });
+		const strangerSlice = await op('membersOnlySlice', { did: MALLORY });
 		record(
 			strangerSlice.onRoster === false &&
 				strangerSlice.slice === null &&
@@ -1159,7 +1133,7 @@ async function main() {
 		);
 
 		// 13f. and neither does an anonymous visitor -------------------------------
-		const anonymousSlice = await must('membersOnlySlice', { groupId: group.id, did: null });
+		const anonymousSlice = await op('membersOnlySlice', { did: null });
 		record(
 			anonymousSlice.onRoster === false &&
 				anonymousSlice.slice === null &&
@@ -1190,12 +1164,11 @@ async function main() {
 		// 13h. an unlinked group tells a member why, and reads nothing ------------
 		// The op takes the group's stored session away for the read, as a lapsed link
 		// leaves it, and puts it back; the next op shows the link is back.
-		const unlinkedSlice = await must('membersOnlySlice', {
-			groupId: group.id,
+		const unlinkedSlice = await op('membersOnlySlice', {
 			did: BOB,
 			unlinked: true
 		});
-		const relinked = await must('linked', { groupId: group.id });
+		const relinked = await op('linked');
 		record(
 			unlinkedSlice.linked === false &&
 				unlinkedSlice.onRoster === true &&
@@ -1222,8 +1195,7 @@ async function main() {
 		const membersOnlyRecord = eventRecord(membersOnlyName, { createdAt: membersOnlyAt });
 
 		// 13i. it is written into the calendar space, and only there ---------------
-		const moCreate = await traced('writeGroupEvent', {
-			groupId: group.id,
+		const moCreate = await tracedOp('writeGroupEvent', {
 			callerDid: ALICE,
 			intent: 'create',
 			placement: 'members',
@@ -1267,8 +1239,7 @@ async function main() {
 
 		// 13j. an edit stays in the space ------------------------------------------
 		const moEditedName = `${membersOnlyName} (moved to the evening)`;
-		const moEdit = await traced('writeGroupEvent', {
-			groupId: group.id,
+		const moEdit = await tracedOp('writeGroupEvent', {
 			callerDid: ALICE,
 			intent: 'update',
 			rkey: moRkey,
@@ -1298,8 +1269,7 @@ async function main() {
 		// 13k. a flip to public is refused ----------------------------------------
 		// A put creates a record where none is, so without the refusal this edit
 		// would publish a copy of the event under the same key.
-		const flip = await traced('writeGroupEvent', {
-			groupId: group.id,
+		const flip = await tracedOp('writeGroupEvent', {
 			callerDid: ALICE,
 			intent: 'update',
 			rkey: moRkey,
@@ -1325,8 +1295,7 @@ async function main() {
 
 		// 13l. a public event is not made members-only by an edit either ---------
 		const publicName = 'e2e public talk';
-		const shown = await must('writeGroupEvent', {
-			groupId: group.id,
+		const shown = await op('writeGroupEvent', {
 			callerDid: ALICE,
 			intent: 'create',
 			placement: 'everyone',
@@ -1334,8 +1303,7 @@ async function main() {
 		});
 		written.push(shown.rkey);
 		const shownBefore = await getRecord(GROUP_DID, shown.rkey);
-		const promote = await traced('writeGroupEvent', {
-			groupId: group.id,
+		const promote = await tracedOp('writeGroupEvent', {
 			callerDid: ALICE,
 			intent: 'update',
 			rkey: shown.rkey,
@@ -1379,8 +1347,7 @@ async function main() {
 			`calendar space copy ${topKeys(moAfterEdit.value)}; public repo copy ` +
 				`${topKeys(shownBefore.value)}; audience keys found: ${flagged.length ? flagged.join(', ') : 'none'}`
 		);
-		await must('deleteGroupEvent', {
-			groupId: group.id,
+		await op('deleteGroupEvent', {
 			callerDid: ALICE,
 			rkey: shown.rkey,
 			placement: 'everyone'
@@ -1389,8 +1356,7 @@ async function main() {
 		// 13n. it is deleted from the space, and only from the space -------------
 		// A delete of a missing record succeeds in either container, so one sent to
 		// the public repo would report success and leave the event in place.
-		const wrongDelete = await traced('deleteGroupEvent', {
-			groupId: group.id,
+		const wrongDelete = await tracedOp('deleteGroupEvent', {
 			callerDid: ALICE,
 			rkey: moRkey,
 			placement: 'everyone'
@@ -1401,8 +1367,7 @@ async function main() {
 			EVENT_COLLECTION,
 			moRkey
 		);
-		const moDelete = await traced('deleteGroupEvent', {
-			groupId: group.id,
+		const moDelete = await tracedOp('deleteGroupEvent', {
 			callerDid: ALICE,
 			rkey: moRkey,
 			placement: 'members'
@@ -1413,7 +1378,7 @@ async function main() {
 			EVENT_COLLECTION,
 			moRkey
 		);
-		const ownerSlice = await must('membersOnlySlice', { groupId: group.id, did: ALICE });
+		const ownerSlice = await op('membersOnlySlice', { did: ALICE });
 		const stillListed = (ownerSlice.slice?.events ?? []).some((e) => e.rkey === moRkey);
 		const deleteWrites = writesIn(moDelete.calls);
 		record(
@@ -1441,8 +1406,7 @@ async function main() {
 		// that was never created, through the app's own reader: it reads and
 		// never writes, because a write would make the host create the space.
 		const neverBefore = await spaceReadPolicy(groupToken, NEVER_CREATED_SPACE);
-		const spaceProbe = await must('calendarSpaceCheck', {
-			groupId: group.id,
+		const spaceProbe = await op('calendarSpaceCheck', {
 			space: NEVER_CREATED_SPACE
 		});
 		const neverAfter = await spaceReadPolicy(groupToken, NEVER_CREATED_SPACE);
@@ -1469,15 +1433,13 @@ async function main() {
 		// it back through the space. The image is new each run, so no public record
 		// cites the same bytes.
 		const moImageBytes = runPng();
-		const moImage = await must('uploadGroupEventImage', {
-			groupId: group.id,
+		const moImage = await op('uploadGroupEventImage', {
 			callerDid: ALICE,
 			intent: 'create',
 			bytes: [...moImageBytes],
 			mimeType: 'image/png'
 		});
-		const moWithImage = await traced('writeGroupEvent', {
-			groupId: group.id,
+		const moWithImage = await tracedOp('writeGroupEvent', {
 			callerDid: ALICE,
 			intent: 'create',
 			placement: 'members',
@@ -1512,7 +1474,7 @@ async function main() {
 		// read leaves it out until members get it through atmo's own route. The
 		// event itself is read as written, and the stored record keeps its image.
 		const imageRkey = moWithImage.ok ? moWithImage.value.rkey : null;
-		const imageSlice = await must('membersOnlySlice', { groupId: group.id, did: BOB });
+		const imageSlice = await op('membersOnlySlice', { did: BOB });
 		const imageRead = (imageSlice.slice?.events ?? []).filter((e) => e.rkey === imageRkey);
 		const imageValue = imageRead[0]?.value ?? {};
 		record(
@@ -1543,23 +1505,19 @@ async function main() {
 		// the space does not hold is absent, after one read. Run before the image
 		// event 13p wrote is deleted, so the image is really there to keep.
 		const moKey = imageRkey ?? SEED_RKEY;
-		const oneForMember = await must('membersOnlyEvent', {
-			groupId: group.id,
+		const oneForMember = await op('membersOnlyEvent', {
 			did: BOB,
 			rkey: moKey
 		});
-		const oneForStranger = await must('membersOnlyEvent', {
-			groupId: group.id,
+		const oneForStranger = await op('membersOnlyEvent', {
 			did: MALLORY,
 			rkey: moKey
 		});
-		const oneForAnonymous = await must('membersOnlyEvent', {
-			groupId: group.id,
+		const oneForAnonymous = await op('membersOnlyEvent', {
 			did: null,
 			rkey: moKey
 		});
-		const oneMadeUp = await must('membersOnlyEvent', {
-			groupId: group.id,
+		const oneMadeUp = await op('membersOnlyEvent', {
 			did: BOB,
 			rkey: MADE_UP_RKEY
 		});
@@ -1614,8 +1572,7 @@ async function main() {
 		// nothing sent past their standing. BOB is an admin by now, so he is a plain
 		// member for his refusal and promoted back after it, as check 17 does. Run
 		// before the image event 13p wrote is deleted.
-		const editRead = await must('membersOnlyEditRead', {
-			groupId: group.id,
+		const editRead = await op('membersOnlyEditRead', {
 			did: ALICE,
 			rkey: moKey
 		});
@@ -1627,8 +1584,7 @@ async function main() {
 			// The editor's own save drops these, which the read puts beside the record.
 			const kept = { ...editCopy };
 			for (const key of ['cid', 'did', 'rkey', 'uri']) delete kept[key];
-			editSave = await traced('writeGroupEvent', {
-				groupId: group.id,
+			editSave = await tracedOp('writeGroupEvent', {
 				callerDid: ALICE,
 				intent: 'update',
 				rkey: moKey,
@@ -1645,24 +1601,21 @@ async function main() {
 		const editSaveWrites = writesIn(editSave.calls);
 		const editBlobAnonymous = await anonymousBlob(moImage?.ref?.$link);
 		const editInRepo = await getRecord(GROUP_DID, moKey);
-		await must('promoteMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'member' });
+		await op('promoteMember', { callerDid: ALICE, did: BOB, role: 'member' });
 		let editForMember;
 		try {
-			editForMember = await must('membersOnlyEditRead', {
-				groupId: group.id,
+			editForMember = await op('membersOnlyEditRead', {
 				did: BOB,
 				rkey: moKey
 			});
 		} finally {
-			await must('promoteMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'admin' });
+			await op('promoteMember', { callerDid: ALICE, did: BOB, role: 'admin' });
 		}
-		const editForStranger = await must('membersOnlyEditRead', {
-			groupId: group.id,
+		const editForStranger = await op('membersOnlyEditRead', {
 			did: MALLORY,
 			rkey: moKey
 		});
-		const editForAnonymous = await must('membersOnlyEditRead', {
-			groupId: group.id,
+		const editForAnonymous = await op('membersOnlyEditRead', {
 			did: null,
 			rkey: moKey
 		});
@@ -1713,8 +1666,7 @@ async function main() {
 				`${refusalDetail(MALLORY, editForStranger)}; ${refusalDetail('anonymous', editForAnonymous)}`
 		);
 		if (moWithImage.ok) {
-			await must('deleteGroupEvent', {
-				groupId: group.id,
+			await op('deleteGroupEvent', {
 				callerDid: ALICE,
 				rkey: moWithImage.value.rkey,
 				placement: 'members'
@@ -1735,8 +1687,7 @@ async function main() {
 		// group reads it now.
 		const seedNow = await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, SEED_RKEY);
 		const rsvpOp = (action, extra = {}) =>
-			must('membersOnlyRsvp', {
-				groupId: group.id,
+			op('membersOnlyRsvp', {
 				did: BOB,
 				rkey: SEED_RKEY,
 				action,
@@ -1748,8 +1699,7 @@ async function main() {
 		rsvpWritten = true;
 		const rsvpGoing = await rsvpOp('put', { status: 'going', cid: seedNow.cid });
 		const rsvpOwn = await rsvpOp('read');
-		const rsvpAsGroup = await must('calendarReadAt', {
-			groupId: group.id,
+		const rsvpAsGroup = await op('calendarReadAt', {
 			did: BOB,
 			rkey: SEED_RKEY
 		});
@@ -1757,8 +1707,7 @@ async function main() {
 		const rsvpCancel = await rsvpOp('delete');
 		if (rsvpCancel.result?.ok === true) rsvpWritten = false;
 		const ownAfterCancel = await rsvpOp('read');
-		const groupAfterCancel = await must('calendarReadAt', {
-			groupId: group.id,
+		const groupAfterCancel = await op('calendarReadAt', {
 			did: BOB,
 			rkey: SEED_RKEY
 		});
@@ -1810,8 +1759,7 @@ async function main() {
 		// after, off the rows, the records and both member lists, so 18e's join
 		// still comes back pending.
 		const outsiderOp = (action, extra = {}) =>
-			must('membersOnlyRsvp', {
-				groupId: group.id,
+			op('membersOnlyRsvp', {
 				did: MALLORY,
 				rkey: SEED_RKEY,
 				action,
@@ -1824,10 +1772,9 @@ async function main() {
 		const outsiderCancel = await outsiderOp('delete');
 		const outsiderRead = await outsiderOp('read');
 		const noSpacesBefore = await must('noSpacesCalls');
-		await must('admitMember', { groupId: group.id, callerDid: ALICE, did: CAROL, role: 'member' });
+		await op('admitMember', { callerDid: ALICE, did: CAROL, role: 'member' });
 		const carolOp = (asked, stamp) =>
-			must('membersOnlyRsvp', {
-				groupId: group.id,
+			op('membersOnlyRsvp', {
 				did: CAROL,
 				rkey: SEED_RKEY,
 				action: 'put',
@@ -1841,14 +1788,13 @@ async function main() {
 		const carolFirst = await carolOp(null, 1);
 		const carolAfterAsking = await carolOp(carolFirst.result?.marker ?? null, 2);
 		const noSpacesAfter = await must('noSpacesCalls');
-		await must('leaveGroup', {
-			groupId: group.id,
+		await op('leaveGroup', {
 			callerDid: CAROL,
 			asMember: true,
 			session: 'no-spaces'
 		});
-		const carolRecords = await must('recordedRoster', { groupId: group.id });
-		const carolRows = await must('listMembers', { groupId: group.id });
+		const carolRecords = await op('recordedRoster');
+		const carolRows = await op('listMembers');
 		const carolLists = await Promise.all(
 			[membersSpaceUri, aboutSpaceUri].map((space) => spaceMemberList(groupToken, space))
 		);
@@ -1900,21 +1846,18 @@ async function main() {
 		const staleCid = 'bafyreie2estaleversionofthemembersonlyseedevent';
 		rsvpWritten = true;
 		const cidGoing = await rsvpOp('put', { status: 'going', cid: seedNow.cid });
-		const cidAsGroup = await must('calendarReadAt', {
-			groupId: group.id,
+		const cidAsGroup = await op('calendarReadAt', {
 			did: BOB,
 			rkey: SEED_RKEY
 		});
 		const cidStale = await rsvpOp('put', { status: 'notgoing', cid: staleCid });
-		const cidAfterStale = await must('calendarReadAt', {
-			groupId: group.id,
+		const cidAfterStale = await op('calendarReadAt', {
 			did: BOB,
 			rkey: SEED_RKEY
 		});
 		const cidCancel = await rsvpOp('delete');
 		if (cidCancel.result?.ok === true) rsvpWritten = false;
-		const cidGone = await must('calendarReadAt', {
-			groupId: group.id,
+		const cidGone = await op('calendarReadAt', {
 			did: BOB,
 			rkey: SEED_RKEY
 		});
@@ -1971,8 +1914,8 @@ async function main() {
 		// Read through the app's reader, which maps actions to our permission names,
 		// and straight from the PDS, which shows the wire form uses the standard's
 		// action identifiers. A role's grant is the union of both binding records.
-		await must('writeGroupAuthz', { groupId: group.id, callerDid: ALICE });
-		const authz = await must('recordedAuthz', { groupId: group.id, role: 'admin' });
+		await op('writeGroupAuthz', { callerDid: ALICE });
+		const authz = await op('recordedAuthz', { role: 'admin' });
 		const permissionsRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
@@ -2022,9 +1965,8 @@ async function main() {
 		// Take CREATE_EVENT from admin in the `eventPermissions` record only. The D1
 		// rows still grant it, so only a gate that reads the records changes its answer.
 		const probe = ['CREATE_EVENT', 'MANAGE_EVENTS'];
-		const bobBefore = await must('membership', { groupId: group.id, did: BOB, probe });
-		await must('writeGroupAuthz', {
-			groupId: group.id,
+		const bobBefore = await op('membership', { did: BOB, probe });
+		await op('writeGroupAuthz', {
 			callerDid: ALICE,
 			bundles: {
 				owner: [
@@ -2039,18 +1981,16 @@ async function main() {
 				member: []
 			}
 		});
-		const bobEdited = await must('membership', { groupId: group.id, did: BOB, probe });
+		const bobEdited = await op('membership', { did: BOB, probe });
 		const editedRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
 			'net.openmeet.group.eventPermissions',
 			'self'
 		);
-		await must('writeGroupAuthz', { groupId: group.id, callerDid: ALICE });
-		const bobRestored = await must('membership', { groupId: group.id, did: BOB, probe });
-		const bobRowRole = (await must('listMembers', { groupId: group.id })).find(
-			(m) => m.did === BOB
-		)?.role;
+		await op('writeGroupAuthz', { callerDid: ALICE });
+		const bobRestored = await op('membership', { did: BOB, probe });
+		const bobRowRole = (await op('listMembers')).find((m) => m.did === BOB)?.role;
 		record(
 			bobBefore.can.CREATE_EVENT === true &&
 				bobEdited.can.CREATE_EVENT === false &&
@@ -2068,9 +2008,9 @@ async function main() {
 
 		// 16. drop the roster rows, rebuild from records ---------------------------
 		// A trigger protects the owner's row, so only the other rows are dropped.
-		const dropped = await must('dropMembershipRows', { groupId: group.id });
-		const rosterWhileDropped = await must('recordedRoster', { groupId: group.id, did: BOB });
-		const rebuiltMembers = await must('rebuildGroupMembers', { groupId: group.id });
+		const dropped = await op('dropMembershipRows');
+		const rosterWhileDropped = await op('recordedRoster', { did: BOB });
+		const rebuiltMembers = await op('rebuildGroupMembers');
 		record(
 			dropped.dropped === 1 &&
 				rosterWhileDropped.roster.length === 2 &&
@@ -2092,17 +2032,16 @@ async function main() {
 		// an admin to eject.
 		const joinedAt = recorded.memberships.find((m) => m.subject === BOB)?.createdAt;
 		const rosterProbe = ['EJECT_MEMBERS', 'CREATE_EVENT'];
-		await must('promoteMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'member' });
+		await op('promoteMember', { callerDid: ALICE, did: BOB, role: 'member' });
 		const demotedRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
 			'group.opensocial.membership',
 			BOB
 		);
-		const demoted = await must('membership', { groupId: group.id, did: BOB, probe: rosterProbe });
-		await must('promoteMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'admin' });
-		const repromoted = await must('membership', {
-			groupId: group.id,
+		const demoted = await op('membership', { did: BOB, probe: rosterProbe });
+		await op('promoteMember', { callerDid: ALICE, did: BOB, role: 'admin' });
+		const repromoted = await op('membership', {
 			did: BOB,
 			probe: rosterProbe
 		});
@@ -2125,9 +2064,9 @@ async function main() {
 
 		// 18. no record, no access --------------------------------------------------
 		// An eject deletes the record. Records, not rows, decide access.
-		await must('ejectMember', { groupId: group.id, callerDid: ALICE, did: BOB });
-		const afterEject = await must('recordedRoster', { groupId: group.id, did: BOB });
-		const strangerCheck = await must('recordedRoster', { groupId: group.id, did: MALLORY });
+		await op('ejectMember', { callerDid: ALICE, did: BOB });
+		const afterEject = await op('recordedRoster', { did: BOB });
+		const strangerCheck = await op('recordedRoster', { did: MALLORY });
 		const ejectedRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
@@ -2156,23 +2095,21 @@ async function main() {
 		// roster, which reads acceptances by DID with the group's credential, then
 		// shows them confirmed.
 		acceptanceWritten = true;
-		const asked = await must('joinGroup', {
-			groupId: group.id,
+		const asked = await op('joinGroup', {
 			callerDid: BOB,
 			asMember: true,
 			message: 'back again'
 		});
 		const atRequest = await ownAcceptance(bobToken, membersSpaceUri);
 		const listAtRequest = await spaceMemberList(groupToken, membersSpaceUri);
-		const pendingAgain = await must('listJoinRequests', { groupId: group.id });
+		const pendingAgain = await op('listJoinRequests');
 		const bobsRequest = pendingAgain.find((request) => request.did === BOB);
-		await must('admitFromRequest', {
-			groupId: group.id,
+		await op('admitFromRequest', {
 			callerDid: ALICE,
 			requestId: bobsRequest?.id,
 			role: 'member'
 		});
-		const approvedRoster = await must('confirmedRoster', { groupId: group.id });
+		const approvedRoster = await op('confirmedRoster');
 		const bobApproved = approvedRoster.roster.find((entry) => entry.did === BOB);
 		record(
 			asked.outcome === 'pending' &&
@@ -2191,9 +2128,9 @@ async function main() {
 		// From the member's session, before the group takes them off the members
 		// list, so the host still accepts the notice of the delete.
 		const beforeLeaving = await ownAcceptance(bobToken, membersSpaceUri);
-		await must('leaveGroup', { groupId: group.id, callerDid: BOB, asMember: true });
+		await op('leaveGroup', { callerDid: BOB, asMember: true });
 		const afterLeaving = await ownAcceptance(bobToken, membersSpaceUri);
-		const rosterAfterLeaving = await must('confirmedRoster', { groupId: group.id });
+		const rosterAfterLeaving = await op('confirmedRoster');
 		const listAfterLeaving = await spaceMemberList(groupToken, membersSpaceUri);
 		record(
 			beforeLeaving.status === 200 &&
@@ -2212,14 +2149,14 @@ async function main() {
 		// The member was not there to write an acceptance. They can still read,
 		// because access comes from membership alone, and the roster shows them,
 		// unconfirmed. The sign-in callback's write then confirms them.
-		await must('admitMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'member' });
-		const addedRoster = await must('confirmedRoster', { groupId: group.id });
+		await op('admitMember', { callerDid: ALICE, did: BOB, role: 'member' });
+		const addedRoster = await op('confirmedRoster');
 		const bobAdded = addedRoster.roster.find((entry) => entry.did === BOB);
-		const addedGate = await must('gate', { groupId: group.id, did: BOB });
+		const addedGate = await op('gate', { did: BOB });
 		const beforeSignIn = await ownAcceptance(bobToken, membersSpaceUri);
-		await must('signInAcceptances', { groupId: group.id, did: BOB });
+		await op('signInAcceptances', { did: BOB });
 		const afterSignIn = await ownAcceptance(bobToken, membersSpaceUri);
-		const signedInRoster = await must('confirmedRoster', { groupId: group.id });
+		const signedInRoster = await op('confirmedRoster');
 		const bobSignedIn = signedInRoster.roster.find((entry) => entry.did === BOB);
 		record(
 			bobAdded?.confirmed === false &&
@@ -2234,7 +2171,7 @@ async function main() {
 				`after ${afterSignIn.error ?? afterSignIn.status}; confirmed after ${bobSignedIn?.confirmed}`
 		);
 		// Back out the same way, so checks 19-23 see the roster check 18 left.
-		await must('leaveGroup', { groupId: group.id, callerDid: BOB, asMember: true });
+		await op('leaveGroup', { callerDid: BOB, asMember: true });
 		note(`${BOB} left again (acceptance deleted, roster back to the owner alone)`);
 
 		// 18e. a member whose PDS serves no spaces ---------------------------------
@@ -2243,27 +2180,23 @@ async function main() {
 		// and their sign-in still works. The premise is checked first-hand: their
 		// PDS must refuse the group's space read itself, since a RecordNotFound
 		// would mean it serves spaces and the check proves nothing about step 4.
-		const carolAsked = await must('joinGroup', {
-			groupId: group.id,
+		const carolAsked = await op('joinGroup', {
 			callerDid: CAROL,
 			asMember: true,
 			session: 'no-spaces',
 			message: null
 		});
-		const carolsRequest = (await must('listJoinRequests', { groupId: group.id })).find(
-			(request) => request.did === CAROL
-		);
-		await must('admitFromRequest', {
-			groupId: group.id,
+		const carolsRequest = (await op('listJoinRequests')).find((request) => request.did === CAROL);
+		await op('admitFromRequest', {
 			callerDid: ALICE,
 			requestId: carolsRequest?.id,
 			role: 'member'
 		});
-		await must('signInCallback', { groupId: group.id, did: CAROL });
-		const carolRoster = await must('confirmedRoster', { groupId: group.id });
+		await op('signInCallback', { did: CAROL });
+		const carolRoster = await op('confirmedRoster');
 		const carolEntry = carolRoster.roster.find((entry) => entry.did === CAROL);
-		const carolGate = await must('gate', { groupId: group.id, did: CAROL });
-		const carolRead = await must('spaceReadAt', { groupId: group.id, did: CAROL });
+		const carolGate = await op('gate', { did: CAROL });
+		const carolRead = await op('spaceReadAt', { did: CAROL });
 		const carolCalls = await must('noSpacesCalls');
 		record(
 			refusesSpaceRead(carolRead) &&
@@ -2279,8 +2212,7 @@ async function main() {
 				`${carolGate.onRoster}, can see ${carolGate.canSee}; sent from their session ` +
 				`${carolCalls.length > 0 ? carolCalls.join(', ') : 'nothing'}`
 		);
-		await must('leaveGroup', {
-			groupId: group.id,
+		await op('leaveGroup', {
 			callerDid: CAROL,
 			asMember: true,
 			session: 'no-spaces'
@@ -2307,14 +2239,12 @@ async function main() {
 		// 20. and turning private withdraws it --------------------------------------
 		// A private group must not be announced, so its declaration is deleted. The
 		// visibility is passed in, as the settings save passes the form's choice.
-		await must('reconcileDeclaration', {
-			groupId: group.id,
+		await op('reconcileDeclaration', {
 			callerDid: ALICE,
 			visibility: 'private'
 		});
 		const withdrawn = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
-		await must('reconcileDeclaration', {
-			groupId: group.id,
+		await op('reconcileDeclaration', {
 			callerDid: ALICE,
 			visibility: 'public'
 		});
@@ -2329,16 +2259,14 @@ async function main() {
 		// Here the group is made private at the host, through the settings save's
 		// call, and the declaration follows the host's answer. The second reconcile
 		// re-sends the withdrawal, which must be a no-op at the PDS.
-		await must('setReadPolicy', { groupId: group.id, callerDid: ALICE, visibility: 'private' });
+		await op('setReadPolicy', { callerDid: ALICE, visibility: 'private' });
 		const privatePolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
-		const aligned = await must('reconcileDeclaration', {
-			groupId: group.id,
+		const aligned = await op('reconcileDeclaration', {
 			callerDid: ALICE,
 			visibility: 'host'
 		});
 		const withdrawnAtHost = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
-		const realigned = await must('reconcileDeclaration', {
-			groupId: group.id,
+		const realigned = await op('reconcileDeclaration', {
 			callerDid: ALICE,
 			visibility: 'host'
 		});
@@ -2359,23 +2287,20 @@ async function main() {
 		// The join is passed no visibility, so it asks the host. Then the host goes
 		// back to public and the app must read it so. Every read above answered
 		// private, so this shows the app tells the two apart.
-		const strangerJoin = await call('joinGroup', {
-			groupId: group.id,
+		const strangerJoin = await tryOp('joinGroup', {
 			callerDid: MALLORY,
 			message: 'let me in'
 		});
-		const requestsNow = await must('listJoinRequests', { groupId: group.id, status: 'all' });
-		const ownerGate = await must('gate', { groupId: group.id, did: ALICE });
-		const strangerGate = await must('gate', { groupId: group.id, did: MALLORY });
+		const requestsNow = await op('listJoinRequests', { status: 'all' });
+		const ownerGate = await op('gate', { did: ALICE });
+		const strangerGate = await op('gate', { did: MALLORY });
 		const privateNow = await spaceReadPolicy(groupToken, aboutSpaceUri);
-		await must('setReadPolicy', {
-			groupId: group.id,
+		await op('setReadPolicy', {
 			callerDid: ALICE,
 			visibility: CREATE_VISIBILITY
 		});
 		const backPolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
-		const backAligned = await must('reconcileDeclaration', {
-			groupId: group.id,
+		const backAligned = await op('reconcileDeclaration', {
 			callerDid: ALICE,
 			visibility: 'host'
 		});
@@ -2398,7 +2323,7 @@ async function main() {
 		// 21. the events tab's list comes from the index, not the PDS -------------
 		// The tab reads the app's index, like any other account's events, and not the
 		// group's repo.
-		const indexed = await must('listGroupEvents', { groupId: group.id });
+		const indexed = await op('listGroupEvents');
 		const indexedNames = indexed.map((e) => e.value?.name);
 		record(
 			indexed.length === 2 &&
@@ -2414,22 +2339,20 @@ async function main() {
 		// An actor-scoped query backfills a repo only once, so check 21 could pass on
 		// the backfill alone. A write and a delete after it, with no cron tick, show
 		// that the write gate updates the index itself.
-		const afterBackfill = await must('writeGroupEvent', {
-			groupId: group.id,
+		const afterBackfill = await op('writeGroupEvent', {
 			callerDid: ALICE,
 			placement: 'everyone',
 			intent: 'create',
 			record: eventRecord('e2e paddle, written after the index had caught up')
 		});
 		written.push(afterBackfill.rkey);
-		const withThird = await must('listGroupEvents', { groupId: group.id });
-		await must('deleteGroupEvent', {
-			groupId: group.id,
+		const withThird = await op('listGroupEvents');
+		await op('deleteGroupEvent', {
 			callerDid: ALICE,
 			placement: 'everyone',
 			rkey: afterBackfill.rkey
 		});
-		const afterDelete = await must('listGroupEvents', { groupId: group.id });
+		const afterDelete = await op('listGroupEvents');
 		record(
 			withThird.some((e) => e.rkey === afterBackfill.rkey) &&
 				withThird.length === 3 &&
@@ -2444,10 +2367,10 @@ async function main() {
 		// 23. the whole group, rebuilt from no row ---------------------------------
 		// Last, because it replaces the row the checks above act through. Nothing is
 		// restored for visibility, which stays at the host.
-		const profileNow = await must('readGroupAbout', { groupId: group.id });
-		const rosterNow = await must('recordedRoster', { groupId: group.id });
+		const profileNow = await op('readGroupAbout');
+		const rosterNow = await op('recordedRoster');
 		const beforeDrop = await must('groupSnapshot', { groupDid: GROUP_DID });
-		const wiped = await must('dropGroupRows', { groupId: group.id });
+		const wiped = await op('dropGroupRows');
 		let restored;
 		try {
 			restored = await must('rebuildGroup', { groupDid: GROUP_DID });
@@ -2494,8 +2417,7 @@ async function main() {
 			const uri = `at://${GROUP_DID}/${EVENT_COLLECTION}/${rkey}`;
 			let refusal;
 			try {
-				const deleted = await call('deleteGroupEvent', {
-					groupId: group.id,
+				const deleted = await tryOp('deleteGroupEvent', {
 					callerDid: ALICE,
 					placement: 'everyone',
 					rkey
@@ -2542,8 +2464,7 @@ async function main() {
 		// A leftover declaration would keep announcing a test group to the network.
 		if (declared && group) {
 			try {
-				await call('reconcileDeclaration', {
-					groupId: group.id,
+				await tryOp('reconcileDeclaration', {
 					callerDid: ALICE,
 					visibility: 'private'
 				});
