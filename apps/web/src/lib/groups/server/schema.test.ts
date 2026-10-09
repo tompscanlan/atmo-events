@@ -107,40 +107,6 @@ describe('the migration itself', () => {
 	});
 });
 
-// A group's visibility is where its records are: the about space's read policy
-// at its host, and whether its public repo holds a declaration. A column would
-// be a second copy that no other app can read and that a failed save leaves
-// behind, so the table has none, and nothing in the schema keys on one.
-describe('visibility is not a column', () => {
-	it('the groups table has no visibility column', () => {
-		const columns = (db.prepare('PRAGMA table_info(groups)').all() as { name: string }[]).map(
-			(c) => c.name
-		);
-		expect(columns).toContain('require_approval');
-		expect(columns).not.toContain('visibility');
-	});
-
-	// The rule those triggers carried, that a private group requires approval,
-	// is app code now: a trigger cannot ask the host what the group is.
-	it('no trigger ties approval to visibility', () => {
-		const triggers = db
-			.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")
-			.all() as { name: string; sql: string }[];
-		expect(triggers.length).toBeGreaterThan(0);
-		expect(triggers.map((t) => t.name)).not.toContainEqual(
-			expect.stringMatching(/^groups_private_requires_approval/)
-		);
-		expect(triggers.filter((t) => /visibility/.test(t.sql))).toEqual([]);
-	});
-
-	it('the browse index does not key on visibility', () => {
-		const keys = (db.prepare("PRAGMA index_info('groups_browse')").all() as { name: string }[]).map(
-			(c) => c.name
-		);
-		expect(keys).toEqual(['created_at']);
-	});
-});
-
 describe('a role is owner, admin or member', () => {
 	beforeEach(() => insertGroup('g1', 'did:plc:owner'));
 

@@ -309,9 +309,9 @@ describe('rebuildGroup: a surviving row', () => {
 
 	// The row's approval is a plain cache of the profile's join policy. A
 	// private group is invite-only because its host says private, which the
-	// page derives (`groupFace`), not because the row is forced to 1: any client
-	// can move the host's read policy without touching this row.
-	it('the group cache follows the profile join policy, with no private override', async () => {
+	// page derives (`groupFace`): any client can move the host's read policy
+	// without touching this row.
+	it("the row's approval follows the profile's join policy, even for a private group", async () => {
 		const { row, records } = await appGroup(false);
 		await db.prepare(`UPDATE groups SET require_approval = 1 WHERE id = ?`).bind(row.id).run();
 

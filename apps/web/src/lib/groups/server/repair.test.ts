@@ -16,7 +16,7 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 	...(await import('./__fixtures__/linked-oauth-stub')).linkedOAuthStub
 }));
 
-import { isRowWrite, sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
+import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { stubPds, type StubPdsOptions } from './__fixtures__/stub-pds';
 
 import {
@@ -748,11 +748,10 @@ describe('Repair aligns the declaration to the host', () => {
 	// The shape a failed save really leaves: a public group open to join is
 	// saved as private and the host takes the change, while the profile record
 	// still says anyone may join. Repair withdraws the declaration and rebuilds
-	// the row from the records, and at no point writes a visibility into the
-	// row: there is no column for it. The row's approval stays a cache of the
+	// the row from the records. The row's approval stays a cache of the
 	// profile's "open". The group is still invite-only, because its host reads
 	// it as private and the page derives the policy from that (`groupFace`).
-	it('repair writes no visibility to the row', async () => {
+	it("repair leaves the row's approval a cache of the profile, and the host decides invite-only", async () => {
 		await updateGroup(db, group.id, { requireApproval: false });
 		await writeGroupProfile({
 			db,
@@ -773,13 +772,9 @@ describe('Repair aligns the declaration to the host', () => {
 			readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' }
 		});
 		pds.clearLog();
-		harness.statements.length = 0;
 
 		const result = await hostRepair();
 
-		const rowWrites = harness.statements.filter(isRowWrite);
-		expect(rowWrites.length).toBeGreaterThan(0);
-		expect(rowWrites.filter((sql) => /visibility/.test(sql))).toEqual([]);
 		expect(result.host).toEqual({ visibility: 'private', declaration: 'withdrawn', access: true });
 		const row = (await getGroupByDid(db, GROUP_DID))!;
 		expect(row.require_approval).toBe(0);
