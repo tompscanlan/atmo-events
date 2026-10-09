@@ -22,6 +22,8 @@
 //   repo records    The declaration lives in the group's public repo, and
 //                   Repair reads it back (`getRecord`) to decide whether to
 //                   write or withdraw it, so a second run can write nothing.
+//   blobs           `uploadBlob` keeps each upload's type and bytes, and
+//                   answers with a reference to it, as an event image needs.
 //
 // Both listings page the way the reference host does, so a caller that reads
 // only the first page is caught:
@@ -97,6 +99,12 @@ interface RepoRecordWrite {
 	record: Record<string, unknown>;
 }
 
+/** One `uploadBlob` body, as the host received it. */
+export interface StubBlob {
+	mimeType: string;
+	bytes: Uint8Array;
+}
+
 /** The procedures that change something on the host. Everything else this
  *  stub answers is a read or a session. */
 const WRITE_METHODS = new Set([
@@ -109,7 +117,8 @@ const WRITE_METHODS = new Set([
 	'com.atproto.space.deleteRecord',
 	'com.atproto.repo.putRecord',
 	'com.atproto.repo.createRecord',
-	'com.atproto.repo.deleteRecord'
+	'com.atproto.repo.deleteRecord',
+	'com.atproto.repo.uploadBlob'
 ]);
 
 export function stubPds(options: StubPdsOptions) {
@@ -130,6 +139,8 @@ export function stubPds(options: StubPdsOptions) {
 	const liveRecords = new Map<string, SpaceRecordWrite>();
 	/** The same for the group's public repo, keyed by repo, collection and rkey. */
 	const liveRepoRecords = new Map<string, RepoRecordWrite>();
+	/** Every blob uploaded, in order. */
+	const blobs: StubBlob[] = [];
 	/** Each space's member list, by space URI, then by member DID. */
 	const memberLists = new Map<string, Map<string, StubSpaceMember>>();
 	const memberList = (space: string) => {
@@ -324,6 +335,21 @@ export function stubPds(options: StubPdsOptions) {
 					value: hit.record
 				});
 			}
+
+			// The body is the blob itself, typed by its content-type header.
+			case 'com.atproto.repo.uploadBlob': {
+				const mimeType = new Headers(init?.headers).get('content-type') ?? '';
+				const bytes = new Uint8Array(await new Response(init?.body).arrayBuffer());
+				blobs.push({ mimeType, bytes });
+				return Response.json({
+					blob: {
+						$type: 'blob',
+						ref: { $link: `bafkreiupload${blobs.length}` },
+						mimeType,
+						size: bytes.byteLength
+					}
+				});
+			}
 		}
 		throw new Error(`unexpected call to ${url}`);
 	});
@@ -334,6 +360,7 @@ export function stubPds(options: StubPdsOptions) {
 		spaceWrites,
 		repoWrites,
 		spaces,
+		blobs,
 		/** The DIDs on a space's member list, sorted. A test seeds a list through
 		 *  the real transport, so the seed goes through the same checks. */
 		listed: (space: string) => [...memberList(space).keys()].sort(),

@@ -14,13 +14,12 @@ import {
 	type GroupSpaceConfig,
 	type GroupSpaceReader
 } from './about-read';
-import { notifyIndexQuietly, type IndexNotifier } from './events-index';
+import { notifyIndexQuietly } from './events-index';
 import {
 	GroupRecordError,
 	groupWriter,
 	requireGroupPermission,
-	type GroupGateInput,
-	type GroupRepoWriter
+	type GroupGateInput
 } from './group-write';
 import {
 	groupClient,
@@ -45,13 +44,8 @@ export interface WriteGroupEventInput {
 	 *  record when none is there, so an edit that left it out would make a public
 	 *  copy of a members-only event. (Spec: FR-116.) */
 	placement: EventPlacement;
-	/** Overrides the PDS transport, built from the group's credential when absent. */
-	writer?: GroupRepoWriter;
+	/** The request's reader, for the permission gate. */
 	reader?: GroupSpaceReader | null;
-	/** Overrides the reads that check placement, built like `writer`. */
-	locator?: GroupEventLocator;
-	/** For tests only: a caller that supplies its own notifier can forget it. */
-	notify?: IndexNotifier;
 }
 
 export interface GroupEventWriteResult {
@@ -117,8 +111,8 @@ function eventSpace(groupDid: string, placement: EventPlacement): string | null 
 	throw new GroupPlacementError('no-placement');
 }
 
-/** The reads that tell where an event is, made before a write. Injectable, like
- *  `GroupRepoWriter`, and built from the group's credential when absent. */
+/** The reads that tell where an event is, made before a write, with the
+ *  group's own session. */
 export interface GroupEventLocator {
 	/** The space's configuration. Throws on every failure, `SpaceNotFound`
 	 *  included, so a failed read never passes for either answer. */
@@ -241,14 +235,14 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 
 	// A public create reads nothing first.
 	if (space !== null || input.intent === 'update') {
-		const locator = input.locator ?? (await groupEventLocator(input.env, input.group));
+		const locator = await groupEventLocator(input.env, input.group);
 		if (space !== null) await checkCalendarSpace(locator, space);
 		if (input.intent === 'update') {
 			await checkPlacement(locator, input.group.group_did, space, rkey, 'update');
 		}
 	}
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.group));
+	const writer = await groupWriter(input.env, input.group);
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
@@ -264,7 +258,7 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 	// writes a group event, so the index is told here. Never about a members-only
 	// event, which the index would publish. The test is the placement the write
 	// was sent to, not the URI that came back. (Spec: FR-111a.)
-	if (space === null) await notifyIndexQuietly(input.db, result.uri, input.notify);
+	if (space === null) await notifyIndexQuietly(input.db, result.uri);
 	return { uri: result.uri, cid: result.cid, rkey, repo: input.group.group_did };
 }
 
@@ -273,9 +267,9 @@ export async function deleteGroupEvent(
 ): Promise<{ uri: string; repo: string }> {
 	const space = eventSpace(input.group.group_did, input.placement);
 	await requireEventPermission(input, 'delete');
-	const locator = input.locator ?? (await groupEventLocator(input.env, input.group));
+	const locator = await groupEventLocator(input.env, input.group);
 	await checkPlacement(locator, input.group.group_did, space, input.rkey, 'delete');
-	const writer = input.writer ?? (await groupWriter(input.env, input.group));
+	const writer = await groupWriter(input.env, input.group);
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
@@ -289,7 +283,7 @@ export async function deleteGroupEvent(
 	// The index re-fetches the URI, finds nothing, and drops the row. A space
 	// delete answers with the plain URI too, so here as well the skip keys on
 	// where the delete was sent. (Spec: FR-111a.)
-	if (space === null) await notifyIndexQuietly(input.db, result.uri, input.notify);
+	if (space === null) await notifyIndexQuietly(input.db, result.uri);
 	return { uri: result.uri, repo: input.group.group_did };
 }
 
@@ -312,8 +306,6 @@ export interface UploadGroupEventImageInput extends GroupGateInput {
 	intent: 'create' | 'update';
 	bytes: Uint8Array<ArrayBuffer>;
 	mimeType: string;
-	/** Overrides the PDS transport, built from the group's credential when absent. */
-	upload?: GroupBlobUploader;
 }
 
 /** Authorizes the caller as for the event the image belongs to, then uploads it
@@ -330,7 +322,7 @@ export async function uploadGroupEventImage(
 			`an event image may be at most ${GROUP_EVENT_IMAGE_MAX_BYTES} bytes, not ${input.bytes.byteLength}`
 		);
 	}
-	const upload = input.upload ?? (await groupBlobUploader(input.env, input.group));
+	const upload = await groupBlobUploader(input.env, input.group);
 	return upload(new Blob([input.bytes], { type: input.mimeType }));
 }
 
