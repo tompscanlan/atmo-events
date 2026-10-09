@@ -27,7 +27,7 @@ vi.mock('$lib/atproto/server/oauth', () => ({
 
 import { resolveGroupCredential } from './credentials';
 
-import { GROUP_SESSION_PREFIX, groupSessionScopes, hasLinkedSession } from './linked-session';
+import { GROUP_SESSION_PREFIX, GROUP_SESSION_SCOPES, hasLinkedSession } from './linked-session';
 import { groupClient } from './session';
 import { GROUP_DECLARATION_COLLECTION } from '../declaration-record';
 
@@ -113,7 +113,7 @@ describe('the session seam', () => {
 
 describe('the scope a link asks for', () => {
 	it('covers every public-repo collection the group writes, and only the group’s own spaces', () => {
-		const scopes = groupSessionScopes();
+		const scopes = GROUP_SESSION_SCOPES;
 		const repo = scopes.find((s) => s.startsWith('repo'));
 		expect(repo).toContain(GROUP_EVENT_COLLECTION);
 		expect(repo).toContain(GROUP_DECLARATION_COLLECTION);

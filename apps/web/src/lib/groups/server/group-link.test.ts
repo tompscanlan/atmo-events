@@ -13,7 +13,7 @@ import {
 	startGroupLink,
 	type GroupLinkState
 } from './group-link';
-import { groupSessionScope } from './linked-session';
+import { GROUP_SESSION_SCOPE } from './linked-session';
 
 const GROUP = 'did:plc:linkedgroupaaaaaaaaaaaaa';
 const OWNER = 'did:plc:owneraaaaaaaaaaaaaaaaaaa';
@@ -83,7 +83,7 @@ describe('starting a link', () => {
 				// An account target makes the client resolve the group's DID now and
 				// refuse a token issued to anyone else at the callback.
 				target: { type: 'account', identifier: GROUP },
-				scope: groupSessionScope(),
+				scope: GROUP_SESSION_SCOPE,
 				redirectUri: REDIRECT,
 				state: { groupDid: GROUP, by: OWNER }
 			}

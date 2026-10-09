@@ -14,7 +14,7 @@
 import type { Did } from '@atcute/lexicons';
 import type { OAuthClient, OAuthClientStores } from '@atcute/oauth-node-client';
 import type { GroupRow } from '../types';
-import { groupSessionScope } from './linked-session';
+import { GROUP_SESSION_SCOPE } from './linked-session';
 
 /** Carried through the PDS in the authorization's state. */
 export interface GroupLinkState {
@@ -50,7 +50,7 @@ export async function startGroupLink(input: {
 	const state: GroupLinkState = { groupDid: input.group.group_did, by: input.signedInDid };
 	const { url } = await input.client.authorize({
 		target: { type: 'account', identifier: input.group.group_did as Did },
-		scope: groupSessionScope(),
+		scope: GROUP_SESSION_SCOPE,
 		redirectUri: input.redirectUri,
 		state
 	});

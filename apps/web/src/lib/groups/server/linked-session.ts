@@ -22,27 +22,20 @@ export const GROUP_SESSION_PREFIX = 'group:session:';
  *  its DID when the token is issued. The type is `*` because the PDS resolves
  *  every type a scope names, and the group.opensocial lexicons do not resolve
  *  yet (memory spaces-oauth-scopes-alpha). Proved on the alpha PDS by the
- *  2026-10-01 group-account OAuth probe, except the `repo:` and `blob:` parts.
- *
- *  A function, not a constant: ./event-writer reaches this module through
- *  ./credentials, so its collection is not yet bound while this module loads. */
-export function groupSessionScopes(): readonly string[] {
-	return [
-		scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
-		'space:*?authority=self&manage=create&manage=update&manage=delete',
-		'space:*?authority=self&collection=*',
-		scope.blob({ accept: ['image/*'] })
-	];
-}
+ *  2026-10-01 group-account OAuth probe, except the `repo:` and `blob:` parts. */
+export const GROUP_SESSION_SCOPES: readonly string[] = [
+	scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
+	'space:*?authority=self&manage=create&manage=update&manage=delete',
+	'space:*?authority=self&collection=*',
+	scope.blob({ accept: ['image/*'] })
+];
 
 /** The scope a link asks for. */
-export function groupSessionScope(): string {
-	return ['atproto', ...groupSessionScopes()].join(' ');
-}
+export const GROUP_SESSION_SCOPE = ['atproto', ...GROUP_SESSION_SCOPES].join(' ');
 
 /** The client that links groups and restores their sessions. */
 export function groupLinkClient(env: App.Platform['env'] | undefined): OAuthClient {
-	return createOAuthClientFor(env, groupSessionScopes(), GROUP_SESSION_PREFIX);
+	return createOAuthClientFor(env, GROUP_SESSION_SCOPES, GROUP_SESSION_PREFIX);
 }
 
 /** Whether `groupDid` has a linked session stored. A read of the store only:
