@@ -8,7 +8,7 @@ import { GROUP_EVENT_COLLECTION, POLICY_MEMBER_LIST, groupSpaceUris } from '../i
 import type { GroupRow } from '../types';
 
 import { pdsSpaceReader, type GroupSpaceConfig, type GroupSpaceReader } from './about-read';
-import { contrailNotifier, type GroupEventNotifier } from './events-index';
+import { notifyIndexQuietly, type IndexNotifier } from './events-index';
 import {
 	GroupRecordError,
 	groupWriter,
@@ -45,7 +45,7 @@ export interface WriteGroupEventInput {
 	/** Overrides the reads that check placement, built like `writer`. */
 	locator?: GroupEventLocator;
 	/** For tests only: a caller that supplies its own notifier can forget it. */
-	notify?: GroupEventNotifier;
+	notify?: IndexNotifier;
 }
 
 export interface GroupEventWriteResult {
@@ -62,19 +62,6 @@ async function requireEventPermission(
 	intent: 'create' | 'update' | 'delete'
 ): Promise<void> {
 	await requireGroupPermission(input, intent === 'create' ? 'CREATE_EVENT' : 'MANAGE_EVENTS');
-}
-
-/** A failure is logged, not thrown. The PDS already accepted the record, and
- *  reporting a failed write would invite a retry of a write that landed. */
-async function notifyIndex(
-	input: Pick<WriteGroupEventInput, 'db' | 'notify'>,
-	uri: string
-): Promise<void> {
-	try {
-		await (input.notify ?? contrailNotifier(input.db))(uri);
-	} catch (e) {
-		console.error(`[groups] could not tell the index about ${uri}:`, e);
-	}
 }
 
 // ---- placement ----------------------------------------------------------------
@@ -285,7 +272,7 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 	// writes a group event, so the index is told here. Never about a members-only
 	// event, which the index would publish. The test is the placement the write
 	// was sent to, not the URI that came back. (Spec: FR-111a.)
-	if (space === null) await notifyIndex(input, result.uri);
+	if (space === null) await notifyIndexQuietly(input.db, result.uri, input.notify);
 	return { uri: result.uri, cid: result.cid, rkey, repo: input.group.group_did };
 }
 
@@ -310,7 +297,7 @@ export async function deleteGroupEvent(
 	// The index re-fetches the URI, finds nothing, and drops the row. A space
 	// delete answers with the plain URI too, so here as well the skip keys on
 	// where the delete was sent. (Spec: FR-111a.)
-	if (space === null) await notifyIndex(input, result.uri);
+	if (space === null) await notifyIndexQuietly(input.db, result.uri, input.notify);
 	return { uri: result.uri, repo: input.group.group_did };
 }
 

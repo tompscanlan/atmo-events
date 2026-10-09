@@ -15,7 +15,7 @@ import {
 import { type GroupRow, type GroupVisibility } from '../types';
 import type { GroupSpaceReader } from './about-read';
 
-import { contrailNotifier, type GroupEventNotifier } from './events-index';
+import { notifyIndexQuietly, type IndexNotifier } from './events-index';
 
 import { groupWriter, requireGroupPermission, type GroupRepoWriter, ownSpace } from './group-write';
 
@@ -34,7 +34,7 @@ export interface WriteGroupDeclarationInput {
 }
 
 export interface WithdrawGroupDeclarationInput extends WriteGroupDeclarationInput {
-	notify?: GroupEventNotifier;
+	notify?: IndexNotifier;
 }
 
 export interface DeclarationWriteResult {
@@ -86,17 +86,11 @@ export async function removeGroupDeclaration(input: WithdrawGroupDeclarationInpu
 		intent: 'delete'
 	});
 
-	await forgetDeclaration(input);
-}
-
-/** A failure is logged, not thrown, as in `notifyIndex` (./event-writer.ts). */
-async function forgetDeclaration(input: WithdrawGroupDeclarationInput): Promise<void> {
-	const uri = `at://${input.group.group_did}/${GROUP_DECLARATION_COLLECTION}/${GROUP_DECLARATION_RKEY}`;
-	try {
-		await (input.notify ?? contrailNotifier(input.db))(uri);
-	} catch (e) {
-		console.error(`[groups] could not tell the index that ${uri} was withdrawn:`, e);
-	}
+	await notifyIndexQuietly(
+		input.db,
+		`at://${input.group.group_did}/${GROUP_DECLARATION_COLLECTION}/${GROUP_DECLARATION_RKEY}`,
+		input.notify
+	);
 }
 
 /**

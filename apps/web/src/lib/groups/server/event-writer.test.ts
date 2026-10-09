@@ -25,7 +25,7 @@ import {
 	type GroupEventLocator,
 	type WriteGroupEventInput
 } from './event-writer';
-import type { GroupEventNotifier } from './events-index';
+import type { IndexNotifier } from './events-index';
 import type { GroupRow } from '../types';
 
 import { GROUP_EVENT_COLLECTION } from '../ids';
@@ -54,7 +54,7 @@ let writer: GroupRepoWriter;
  *  gets as far as a write: the real notifier stands up an appview, which a
  *  unit test should not do. */
 let notified: string[];
-let notify: GroupEventNotifier;
+let notify: IndexNotifier;
 
 // The writer takes an env only to find the group's linked session, and these
 // cases inject their own writer, so it is never consulted.

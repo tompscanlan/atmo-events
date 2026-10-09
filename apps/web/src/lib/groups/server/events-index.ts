@@ -9,8 +9,23 @@ import type { ResourceUri } from '@atcute/lexicons/syntax';
 import type { RsvpAtmoEventListRecords } from '../../../lexicon-types';
 import type { GroupEventRecord, GroupRow } from '../types';
 
-/** Called by the write gate with the URI it just wrote. A seam, so tests need no appview. */
-export type GroupEventNotifier = (uri: string) => Promise<void>;
+/** Hands the index a URI a writer just wrote, an event or a declaration. A seam,
+ *  so tests need no appview. */
+export type IndexNotifier = (uri: string) => Promise<void>;
+
+/** Tells the index about a write the PDS already took. A failure is logged, not
+ *  thrown: reporting a failed write would invite a retry of a write that landed. */
+export async function notifyIndexQuietly(
+	db: D1Database,
+	uri: string,
+	notify?: IndexNotifier
+): Promise<void> {
+	try {
+		await (notify ?? contrailNotifier(db))(uri);
+	} catch (e) {
+		console.error(`[groups] could not tell the index about ${uri}:`, e);
+	}
+}
 
 /** The group's public events, newest first by the record's own `createdAt`, since a
  *  backfill stamps a whole repo with one ingest time. */
@@ -44,7 +59,7 @@ export async function listGroupEvents(
 
 /** Hands a just-written URI to the index, which re-fetches it and applies a create,
  *  update or delete. Throws what the index reports; the write gate decides what to show. */
-export function contrailNotifier(db: D1Database): GroupEventNotifier {
+export function contrailNotifier(db: D1Database): IndexNotifier {
 	return async (uri: string) => {
 		const res = await getServerClient(db).post('rsvp.atmo.notifyOfUpdate', {
 			input: { uris: [uri as ResourceUri] }
