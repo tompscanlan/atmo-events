@@ -1,23 +1,26 @@
 # Groups
 
-A group is an AT Protocol account that the app creates and runs for its owner. Its events are
-ordinary `community.lexicon.calendar.*` records in the group's own repo, so they are indexed and
-shown like any other account's events. Everything else about the group is also records on the
-group's PDS. D1 holds a cache of them that the app can query.
+A group is an AT Protocol account that the app creates and runs for its owner. Its public events
+are ordinary `community.lexicon.calendar.*` records in the group's own repo, so they are indexed and
+shown like any other account's events. Its members-only events are the same records in the group's
+calendar space, which only its members see. Everything else about the group is also records on the
+group's PDS, except a pending join request, which only D1 holds. D1 also holds a cache of the
+records that the app can query.
 
 ## Where a group's data lives
 
-| what                                                | where                                                   | read policy            |
-| --------------------------------------------------- | ------------------------------------------------------- | ---------------------- |
-| public events                                       | the group's public repo                                 | anyone                 |
-| declaration (makes the group findable)              | the group's public repo, only while the group is public | anyone                 |
-| profile, rules, access                              | the about space, of type `group.opensocial.meta`        | the group's visibility |
-| roles, permissions, membership, access, space index | the members space, of type `group.opensocial.members`   | member list            |
-| a cache of the records above                        | D1, `migrations/0001_groups.sql`                        | the app                |
-| the session the owner linked                        | the sessions KV namespace, under `group:session:`       | the app                |
+| what                                                | where                                                     | read policy                      |
+| --------------------------------------------------- | --------------------------------------------------------- | -------------------------------- |
+| public events                                       | the group's public repo                                   | anyone                           |
+| declaration (makes the group findable)              | the group's public repo, only while the group is public   | anyone                           |
+| profile, rules, access                              | the about space, of type `group.opensocial.meta`          | the group's visibility           |
+| roles, permissions, membership, access, space index | the members space, of type `group.opensocial.members`     | member list                      |
+| members-only events, members' RSVPs to them, access | the calendar space, of type `net.openmeet.space.calendar` | the group, and members their own |
+| a cache of the records above, and join requests     | D1, `migrations/0001_groups.sql`                          | the app                          |
+| the session the owner linked                        | the sessions KV namespace, under `group:session:`         | the app                          |
 
-The app reads both spaces as the group, through the session the group's owner linked. A space needs
-a login whatever its read policy.
+The app reads the group's spaces as the group, through the session the group's owner linked. A
+space needs a login whatever its read policy.
 
 ## The records
 
@@ -42,10 +45,11 @@ A role's required `displayName` is its id with a capital, so `owner` shows as "O
 Each space has an `access` record. The standard keeps a group's visibility in the meta space's one
 and has the host enforce it. A simplespace PDS enforces the space's read policy instead and never
 reads the record, so the app writes the record to say what the policy says: public exactly when the
-read policy is, every role a reader, and no grants. The members space's says not public. A group
-with a declaration must have an access record that says public, so the record is written before a
-declaration is published and after one is withdrawn. The members space also holds `space`, the
-standard's index of the group's spaces: one entry for the about space and one for the members space.
+read policy is, every role a reader, and no grants. The members and calendar spaces' say not
+public. A group with a declaration must have an access record that says public, so the record is
+written before a declaration is published and after one is withdrawn. The members space also holds
+`space`, the standard's index of the group's spaces: one entry each for the about, members and
+calendar spaces.
 Its key is a TID, so a put cannot land on an existing entry. The writer lists the index and adds
 only what is missing, and it deletes all but the oldest entry for a space that has several.
 
@@ -101,7 +105,7 @@ that carries the group's grant (`server/acceptance.ts`). Leaving, or withdrawing
 it. It decides only whether the roster shows them confirmed. Access comes from the membership record
 alone, so a member whose PDS serves no spaces can read the group and stays unconfirmed.
 
-Both spaces use a member-list write policy and `open` app access. The write policy governs only
+All three spaces use a member-list write policy and `open` app access. The write policy governs only
 other users' writes, and the group always writes as the space owner. `open` leaves for later the
 choice of which other apps may read a group.
 
@@ -113,9 +117,32 @@ running before the declaration collection was added to its config needs a one-ti
 
 When a record and a D1 row disagree, the record wins. `server/rebuild.ts` can rebuild a group's
 rows from its DID alone, and the settings page has a repair step for a group whose create was
-interrupted (`server/repair.ts`). The repair also makes the about space's member list equal the
-membership records, and the declaration agree with the about space's read policy. A rebuild
+interrupted (`server/repair.ts`). The repair writes what the create would have, the calendar
+space's access record and index entry included. It also makes the about space's member list equal
+the membership records, and the declaration agree with the about space's read policy. A rebuild
 restores nothing for the visibility, because nothing in D1 holds it.
+
+## Members-only events
+
+A members-only event is the same `community.lexicon.calendar.event` record as a public one, written
+into the group's calendar space instead of its public repo. Nothing on the record says which: the
+container is the fact, because the host enforces it for every reader. The calendar space's read
+policy is its member list whatever the group's visibility, and that list stays empty, so only the
+group's own account can read it. The app reads it as the group, and only for a caller on the
+roster. The roster check runs before the read, so a non-member's visit costs the group's PDS
+nothing (`server/calendar-read.ts`). The space's type is the app's own, not the standard's, and its
+name is provisional.
+
+Every event command takes the event's placement, `everyone` or `members`, and never a default
+(`event-placement.ts`). Before a members-only write, the writer checks the calendar space's read
+policy at the host and refuses when more than the members could read it (`server/event-writer.ts`).
+An event cannot move between public and members-only yet.
+
+A member's RSVP to a members-only event is a standard `community.lexicon.calendar.rsvp` that they
+write from their own session into the calendar space, in their own repo there, under the event's
+key. It never goes to their public repo, which would publish the event and who is going
+(`server/member-rsvp.ts`). It takes the same per-group grant as their acceptance, which also lets
+them read their RSVP back.
 
 ## Roles and permissions
 
@@ -151,7 +178,7 @@ without the app.
 The app writes as the group only through an OAuth session the owner grants: they sign in at the
 group's PDS as the group and approve this app (`server/group-link.ts`), and can revoke it there.
 The session asks only for the group's public-repo records, its own spaces and image uploads
-(`server/linked-session.ts`). Until the owner links, every write as the group fails and the group
+(`server/session.ts`). Until the owner links, every write as the group fails and the group
 page asks the owner to link. The one exception is the create itself: it sets the new group up with
 the session `createAccount` returns, inside that request, and keeps nothing.
 
