@@ -1,0 +1,34 @@
+{
+  "lexicon": 1,
+  "id": "group.opensocial.permissions",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Flat RBAC configuration, authored by the group DID in members/self. Effective actions are the union across membership roles. Exactly one binding per role; roles without a binding grant no actions. Changed through putRole/deleteRole or authorized group-DID CRUD.",
+      "key": "literal:self",
+      "record": {
+        "type": "object",
+        "required": ["roles", "defaultRoles"],
+        "properties": {
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "ref",
+              "ref": "group.opensocial.defs#rolePermission"
+            },
+            "maxLength": 100
+          },
+          "defaultRoles": {
+            "type": "array",
+            "items": {
+              "type": "ref",
+              "ref": "group.opensocial.defs#roleId"
+            },
+            "description": "Distinct role IDs declared by this group. Unknown roles and duplicate entries must be rejected.",
+            "maxLength": 100
+          }
+        }
+      }
+    }
+  }
+}

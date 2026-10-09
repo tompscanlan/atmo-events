@@ -1,0 +1,455 @@
+{
+  "lexicon": 1,
+  "id": "group.opensocial.defs",
+  "defs": {
+    "roleId": {
+      "type": "string",
+      "description": "The rkey of a group.opensocial.role record in the group authority repo in members/self. admin and moderator are conventions, not privileged roles.",
+      "format": "record-key",
+      "maxLength": 512
+    },
+    "action": {
+      "type": "string",
+      "description": "Standardized group action. Unknown actions confer no authority on hosts that do not implement them.",
+      "knownValues": [
+        "mod.read",
+        "mod.resolve",
+        "label",
+        "takedown",
+        "invite",
+        "admit",
+        "eject",
+        "role.assign",
+        "space.create",
+        "space.configure",
+        "space.delete",
+        "group.configure"
+      ]
+    },
+    "joinPolicy": {
+      "type": "string",
+      "description": "open admits an authenticated requester immediately; approval creates a pending request; invite requires a valid invitation. A valid invite admits its intended recipient under any policy. Admission uses permissions.defaultRoles.",
+      "enum": ["open", "approval", "invite"]
+    },
+    "rolePermission": {
+      "type": "object",
+      "description": "An action binding for one role. assignable bounds both role.assign and eject, but contributes only when this binding grants the action being exercised. No deny, hierarchy, wildcard role, or implicit admin privileges.",
+      "required": ["role", "actions", "assignable"],
+      "properties": {
+        "role": {
+          "type": "ref",
+          "ref": "group.opensocial.defs#roleId"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "ref",
+            "ref": "group.opensocial.defs#action"
+          },
+          "description": "Distinct action names.",
+          "maxLength": 100
+        },
+        "assignable": {
+          "type": "array",
+          "items": {
+            "type": "ref",
+            "ref": "group.opensocial.defs#roleId"
+          },
+          "description": "Distinct role IDs declared by this group. Unknown roles and duplicate entries must be rejected.",
+          "maxLength": 100
+        }
+      }
+    },
+    "scopeGrant": {
+      "type": "object",
+      "description": "Scopes the group authorization server may issue when the personally authenticated user holds this role. Only space: scopes restricted to the containing space (its authority, type, and skey) are permitted. Hosts must reject unsupported, wildcard, or broader grants. Effective grants are the union over the member roles; requesting clients must still be authorized for the scopes.",
+      "required": ["role", "scopes"],
+      "properties": {
+        "role": {
+          "type": "ref",
+          "ref": "group.opensocial.defs#roleId"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "description": "Individual OAuth scope tokens, not a space-separated scope string.",
+          "maxLength": 100
+        }
+      }
+    },
+    "profileData": {
+      "type": "object",
+      "required": ["displayName", "joinPolicy"],
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "maxGraphemes": 64,
+          "maxLength": 640
+        },
+        "description": {
+          "type": "string",
+          "maxGraphemes": 2000,
+          "maxLength": 20000
+        },
+        "avatar": {
+          "type": "blob",
+          "accept": ["image/png", "image/jpeg", "image/webp"],
+          "maxSize": 2000000
+        },
+        "banner": {
+          "type": "blob",
+          "accept": ["image/png", "image/jpeg", "image/webp"],
+          "maxSize": 2000000
+        },
+        "joinPolicy": {
+          "type": "ref",
+          "ref": "group.opensocial.defs#joinPolicy"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Absolute HTTP or HTTPS URL for the group website, if it has one. Hosts must reject other schemes; clients must check the scheme before rendering a link. The uri format alone does not enforce this constraint."
+        }
+      }
+    },
+    "ruleData": {
+      "type": "object",
+      "required": ["title", "text"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxGraphemes": 64,
+          "maxLength": 640
+        },
+        "text": {
+          "type": "string",
+          "maxGraphemes": 2000,
+          "maxLength": 20000
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "roleData": {
+      "type": "object",
+      "required": ["displayName"],
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "maxGraphemes": 64,
+          "maxLength": 640
+        },
+        "description": {
+          "type": "string",
+          "maxGraphemes": 2000,
+          "maxLength": 20000
+        }
+      }
+    },
+    "accessConfig": {
+      "type": "object",
+      "description": "Read access is public OR the member holds any readRoles role. Acceptance is not required. Empty readRoles with public=false admits no members through this policy. The authority retains control of its own data.",
+      "required": ["public", "readRoles", "grants"],
+      "properties": {
+        "public": {
+          "type": "boolean",
+          "description": "Allow any user to obtain a read credential, regardless of membership. Protocol credential requirements still apply."
+        },
+        "readRoles": {
+          "type": "array",
+          "items": {
+            "type": "ref",
+            "ref": "group.opensocial.defs#roleId"
+          },
+          "description": "Distinct role IDs declared by this group. Unknown roles and duplicate entries must be rejected.",
+          "maxLength": 100
+        },
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "ref",
+            "ref": "group.opensocial.defs#scopeGrant"
+          },
+          "description": "Group-DID OAuth scopes available to holders of each role. Grants do not themselves confer space read access.",
+          "maxLength": 100
+        }
+      }
+    },
+    "writeResult": {
+      "type": "object",
+      "required": ["uri", "cid"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "description": "Full permissioned URI of the written record.",
+          "format": "at-uri"
+        },
+        "cid": {
+          "type": "string",
+          "format": "cid"
+        }
+      }
+    },
+    "accountSubject": {
+      "type": "object",
+      "description": "An account with current or past participation in this group. Account labels are stored in the group members/self space.",
+      "required": ["did"],
+      "properties": {
+        "did": {
+          "type": "string",
+          "format": "did"
+        }
+      }
+    },
+    "recordSubject": {
+      "type": "object",
+      "required": ["uri"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "description": "Full permissioned record URI in a space under this group DID, without a query or fragment. Public records and bare space URIs are not valid subjects.",
+          "format": "at-uri"
+        },
+        "cid": {
+          "type": "string",
+          "description": "Optional version being reported or labeled. Omit to address the record independently of version.",
+          "format": "cid"
+        }
+      }
+    },
+    "subjectStatus": {
+      "type": "string",
+      "enum": ["open", "escalated", "resolved"]
+    },
+    "subjectView": {
+      "type": "object",
+      "required": [
+        "subject",
+        "status",
+        "createdAt",
+        "updatedAt",
+        "reportCount"
+      ],
+      "properties": {
+        "subject": {
+          "type": "union",
+          "refs": [
+            "group.opensocial.defs#accountSubject",
+            "group.opensocial.defs#recordSubject"
+          ],
+          "description": "An account in this group or a record in a space whose authority is the group DID. Hosts must reject unsupported subject variants."
+        },
+        "status": {
+          "type": "ref",
+          "ref": "group.opensocial.defs#subjectStatus"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "datetime"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "datetime"
+        },
+        "reportCount": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "reportEvent": {
+      "type": "object",
+      "required": ["reasonType"],
+      "properties": {
+        "reasonType": {
+          "type": "string",
+          "description": "Moderation reason token, conventionally com.atproto.moderation.defs#reasonOther or another reason token.",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "reason": {
+          "type": "string",
+          "maxGraphemes": 2000,
+          "maxLength": 20000
+        },
+        "rule": {
+          "type": "string",
+          "description": "URI of a group.opensocial.rule record authored by this group in its meta/self space. Must identify a complete record, without a query or fragment.",
+          "format": "at-uri"
+        }
+      }
+    },
+    "statusEvent": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "ref",
+          "ref": "group.opensocial.defs#subjectStatus"
+        },
+        "note": {
+          "type": "string",
+          "maxGraphemes": 2000,
+          "maxLength": 20000
+        }
+      }
+    },
+    "labelEvent": {
+      "type": "object",
+      "required": ["label", "val", "neg"],
+      "properties": {
+        "label": {
+          "type": "ref",
+          "ref": "group.opensocial.defs#writeResult"
+        },
+        "val": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1
+        },
+        "neg": {
+          "type": "boolean"
+        },
+        "rule": {
+          "type": "string",
+          "description": "URI of a group.opensocial.rule record authored by this group in its meta/self space. Must identify a complete record, without a query or fragment.",
+          "format": "at-uri"
+        },
+        "note": {
+          "type": "string",
+          "maxGraphemes": 2000,
+          "maxLength": 20000
+        }
+      }
+    },
+    "ejectEvent": {
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "string",
+          "maxGraphemes": 2000,
+          "maxLength": 20000
+        }
+      }
+    },
+    "moderationEvent": {
+      "type": "object",
+      "description": "One event in the host moderation history. Reports, notes, and operator identities are host state, not records exposed to all space readers.",
+      "required": ["id", "createdAt", "event"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "datetime"
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "May be omitted to protect a reporter or moderator identity.",
+          "format": "did"
+        },
+        "event": {
+          "type": "union",
+          "refs": [
+            "group.opensocial.defs#reportEvent",
+            "group.opensocial.defs#statusEvent",
+            "group.opensocial.defs#labelEvent",
+            "group.opensocial.defs#ejectEvent"
+          ]
+        }
+      }
+    },
+    "joinRequest": {
+      "type": "object",
+      "required": ["id", "member", "createdAt"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "member": {
+          "type": "string",
+          "format": "did"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "datetime"
+        },
+        "message": {
+          "type": "string",
+          "maxGraphemes": 2000,
+          "maxLength": 20000
+        },
+        "invite": {
+          "type": "string",
+          "description": "The invite record being redeemed, if any.",
+          "format": "at-uri"
+        }
+      }
+    },
+    "joinResult": {
+      "type": "object",
+      "description": "Admission creates the authority membership record. It never creates the user acceptance record.",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pending", "admitted"]
+        },
+        "request": {
+          "type": "ref",
+          "ref": "group.opensocial.defs#joinRequest",
+          "description": "Present exactly when status is pending."
+        },
+        "membership": {
+          "type": "ref",
+          "ref": "group.opensocial.defs#writeResult",
+          "description": "Present exactly when status is admitted."
+        }
+      }
+    },
+    "inviteView": {
+      "type": "object",
+      "description": "An outstanding invitation issued by this group, from its own issuance state. Listing does not enumerate or read other groups invitations in recipient spaces.",
+      "required": ["uri", "cid", "invitee", "createdAt"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "description": "Full URI of the invitation in the recipient invites/self space.",
+          "format": "at-uri"
+        },
+        "cid": {
+          "type": "string",
+          "format": "cid"
+        },
+        "invitee": {
+          "type": "string",
+          "format": "did"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "datetime"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "datetime"
+        },
+        "message": {
+          "type": "string",
+          "maxGraphemes": 2000,
+          "maxLength": 20000
+        }
+      }
+    }
+  }
+}
