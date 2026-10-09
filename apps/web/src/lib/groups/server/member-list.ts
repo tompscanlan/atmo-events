@@ -26,7 +26,7 @@ import {
 import { describeFailure, xrpc } from './xrpc';
 import { GroupSpaceError } from './spaces';
 
-import { GroupRecordError } from './group-write';
+import { ownSpace } from './group-write';
 /** One entry on a space's member list, as `listMembers` reports it. */
 export interface SpaceMember {
 	did: string;
@@ -138,26 +138,15 @@ function spaceTypeOf(space: string): string {
 
 /** One of the group's own space URIs, checked to be its space of `type`. NULL
  *  means provisioning did not finish. */
-function ownSpace(groupDid: string, uri: string | null, label: string, type: string): string {
-	if (!uri) {
-		throw new GroupRecordError(
-			`${groupDid} has no ${label} space yet, so its member list cannot be written`
-		);
-	}
-	if (!uri.startsWith(`at://${groupDid}/space/${type}/`)) {
-		throw new GroupRecordError(`${uri} is not ${groupDid}'s ${label} space`);
-	}
-	return uri;
-}
 
 /** The about space URI, whose list gets read-only entries. */
 export function aboutSpace(group: Pick<GroupRow, 'group_did' | 'about_space_uri'>): string {
-	return ownSpace(group.group_did, group.about_space_uri, 'about', ABOUT_SPACE_TYPE);
+	return ownSpace(group, 'about', group.about_space_uri, 'its member list cannot be written');
 }
 
 /** The members space URI, whose list gets write-only entries. */
 export function membersSpace(group: Pick<GroupRow, 'group_did' | 'members_space_uri'>): string {
-	return ownSpace(group.group_did, group.members_space_uri, 'members', MEMBERS_SPACE_TYPE);
+	return ownSpace(group, 'members', group.members_space_uri, 'its member list cannot be written');
 }
 
 /** Both entries a roster member holds. The members space's write-only one goes

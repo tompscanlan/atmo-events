@@ -7,7 +7,13 @@
 // is the group's (./credentials.ts), and `repo` is always the group DID.
 import { isActorIdentifier } from '@atcute/lexicons/syntax';
 import { can, type EnforcedGroupPermission } from '../permissions';
-import type { CallerMembership, GroupRow } from '../types';
+import {
+	ABOUT_SPACE_TYPE,
+	CALENDAR_SPACE_TYPE,
+	MEMBERS_SPACE_TYPE,
+	type CallerMembership,
+	type GroupRow
+} from '../types';
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
 import { getCallerMembership } from './repo';
 import {
@@ -44,6 +50,28 @@ export class GroupRecordError extends Error {
 		super(message);
 		this.name = 'GroupRecordError';
 	}
+}
+
+const SPACE_TYPES = {
+	about: ABOUT_SPACE_TYPE,
+	members: MEMBERS_SPACE_TYPE,
+	calendar: CALENDAR_SPACE_TYPE
+} as const;
+
+/** `uri`, checked as `group`'s own space of `kind`: present, and of that type
+ *  under the group's DID. Otherwise a GroupRecordError. A missing space says
+ *  what it stops: "<did> has no <kind> space yet, so <stops>". */
+export function ownSpace(
+	group: Pick<GroupRow, 'group_did'>,
+	kind: keyof typeof SPACE_TYPES,
+	uri: string | null,
+	stops: string
+): string {
+	if (!uri) throw new GroupRecordError(`${group.group_did} has no ${kind} space yet, so ${stops}`);
+	if (!uri.startsWith(`at://${group.group_did}/space/${SPACE_TYPES[kind]}/`)) {
+		throw new GroupRecordError(`${uri} is not ${group.group_did}'s ${kind} space`);
+	}
+	return uri;
 }
 
 export interface GroupRepoWrite {

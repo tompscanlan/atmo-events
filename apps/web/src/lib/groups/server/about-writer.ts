@@ -20,16 +20,14 @@ import {
 	GROUP_ACCESS_RKEY,
 	groupAccessRecord
 } from '../members-record';
-import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from '../types';
+import { type GroupRow, type GroupVisibility } from '../types';
 
 import type { GroupRuleRecord, GroupSpaceReader } from './about-read';
 
-import {
-	GroupRecordError,
-	groupWriter,
-	requireGroupPermission,
-	type GroupRepoWriter
-} from './group-write';
+import { groupWriter, requireGroupPermission, type GroupRepoWriter, ownSpace } from './group-write';
+
+const aboutSpace = (group: GroupRow) =>
+	ownSpace(group, 'about', group.about_space_uri, 'its profile cannot be written');
 import { type CredentialStoreEnv } from './session';
 export interface WriteGroupAboutInput {
 	db: D1Database;
@@ -49,18 +47,6 @@ export interface ProfileWriteResult {
  *  a write must not target a space the PDS has never heard of. A row made before
  *  the space type changed names a space of the old type, and is refused too, so
  *  no record lands where no reader looks. */
-export function aboutSpace(group: GroupRow): string {
-	const space = group.about_space_uri;
-	if (!space) {
-		throw new GroupRecordError(
-			`${group.group_did} has no about space yet, so its profile cannot be written`
-		);
-	}
-	if (!space.startsWith(`at://${group.group_did}/space/${ABOUT_SPACE_TYPE}/`)) {
-		throw new GroupRecordError(`${space} is not ${group.group_did}'s about space`);
-	}
-	return space;
-}
 
 /** Puts the group's one `profile` record, keyed `self`. The caller passes the
  *  existing `createdAt`, so an edit keeps the creation date. */

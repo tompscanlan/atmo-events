@@ -33,9 +33,8 @@ import {
 	type GroupPermission,
 	type GroupRoleName
 } from '../permissions';
-import { CALENDAR_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
+import { type GroupRow } from '../types';
 import type { GroupSpaceReader } from './about-read';
-import { aboutSpace } from './about-writer';
 
 import type { GroupSpaceIndexEntry } from './members-read';
 
@@ -44,8 +43,16 @@ import {
 	GroupRecordError,
 	groupWriter,
 	requireGroupPermission,
-	type GroupRepoWriter
+	type GroupRepoWriter,
+	ownSpace
 } from './group-write';
+
+const membersSpace = (group: GroupRow) =>
+	ownSpace(group, 'members', group.members_space_uri, 'its roster records cannot be written');
+const aboutSpace = (group: GroupRow) =>
+	ownSpace(group, 'about', group.about_space_uri, 'its space index cannot be written');
+const calendarSpace = (group: GroupRow, space: string) =>
+	ownSpace(group, 'calendar', space, 'its calendar space records cannot be written');
 import { type CredentialStoreEnv } from './session';
 export interface WriteGroupMembersInput {
 	db: D1Database;
@@ -78,27 +85,9 @@ const PERMISSION_FOR: Readonly<
 };
 
 /** Read off the row, and checked like `aboutSpace` in ./about-writer.ts. */
-function membersSpace(group: GroupRow): string {
-	const space = group.members_space_uri;
-	if (!space) {
-		throw new GroupRecordError(
-			`${group.group_did} has no members space yet, so its roster records cannot be written`
-		);
-	}
-	if (!space.startsWith(`at://${group.group_did}/space/${MEMBERS_SPACE_TYPE}/`)) {
-		throw new GroupRecordError(`${space} is not ${group.group_did}'s members space`);
-	}
-	return space;
-}
 
 /** The calendar space a caller passed, checked like `membersSpace`. No column
  *  holds it, so it comes from the caller, which today is only the create. */
-function calendarSpace(group: GroupRow, space: string): string {
-	if (!space.startsWith(`at://${group.group_did}/space/${CALENDAR_SPACE_TYPE}/`)) {
-		throw new GroupRecordError(`${space} is not ${group.group_did}'s calendar space`);
-	}
-	return space;
-}
 
 /** The gate for one roster intent. Exported because the roster must refuse the
  *  caller before it edits the about space's member list. */
