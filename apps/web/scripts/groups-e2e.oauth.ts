@@ -45,7 +45,7 @@ async function logIn(service: string, identifier: string, password: string): Pro
 }
 
 /** Replaces the app's: `restore` is all `linkedGroupSession` asks of it. */
-export function createOAuthClientFor(env: StandInEnv | undefined) {
+export function createOAuthClientWithSessions(env: StandInEnv | undefined) {
 	const service = env?.E2E_GROUP_SERVICE;
 	const identifier = env?.E2E_GROUP_IDENTIFIER;
 	const password = env?.E2E_GROUP_PASSWORD;

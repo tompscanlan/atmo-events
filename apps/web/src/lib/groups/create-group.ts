@@ -51,7 +51,7 @@ import { GROUP_PASSWORD_MIN_LENGTH } from './form-fields';
 
 import { pdsWriter } from './server/group-write';
 import { errorText } from './server/errors';
-import { type CredentialStoreEnv } from './server/session';
+import { groupLinkConfigured, type CredentialStoreEnv } from './server/session';
 
 import { registerGroupIdentity } from './server/identities';
 /** Structural rather than `App.Platform['env']`, so a test can supply only
@@ -102,13 +102,24 @@ const CALENDAR_NOT_REPAIRED =
 
 /** The mint target, or null unless all three values are set. A partial
  *  configuration must fail before the mint, not after a did:plc exists. */
-export function mintConfig(env: CreateGroupEnv): MintConfig | null {
+function mintConfig(env: CreateGroupEnv): MintConfig | null {
 	const service = env.GROUP_PDS_SERVICE?.trim();
 	const handleDomain = env.GROUP_HANDLE_DOMAIN?.trim();
 	const inviteCode = env.GROUP_PDS_INVITE_CODE?.trim();
 	if (!service || !handleDomain || !inviteCode) return null;
 	return { service, handleDomain, inviteCode };
 }
+
+/** What a create needs from the deployment: somewhere to mint the group, and a
+ *  way for its owner to link it, since a group nobody can link is one this site
+ *  can never write as. Null unless both are set up. */
+export function creationConfig(env: CreateGroupEnv): MintConfig | null {
+	return groupLinkConfigured(env) ? mintConfig(env) : null;
+}
+
+/** Says which settings a create needs, for the form and the page alike. */
+export const CREATION_UNCONFIGURED =
+	'Group creation is unavailable on this deployment. An administrator needs to set GROUP_PDS_SERVICE, GROUP_HANDLE_DOMAIN, GROUP_PDS_INVITE_CODE and OAUTH_PUBLIC_URL, and bind the OAUTH_SESSIONS store.';
 
 /** Each mint failure: whether it is the creator's to fix (and so not logged for
  *  the operator), and what the form says. One table, so a new failure cannot
@@ -195,15 +206,9 @@ export async function runCreateGroup(
 	const login = loginRefusal(data);
 	if (login) return { ok: false, error: login };
 
-	// 4. The deployment must be able to mint.
-	const mint = mintConfig(env);
-	if (!mint) {
-		return {
-			ok: false,
-			error:
-				'Group creation is unavailable on this deployment: the group PDS is not configured. An administrator needs to set GROUP_PDS_SERVICE, GROUP_HANDLE_DOMAIN and GROUP_PDS_INVITE_CODE.'
-		};
-	}
+	// 4. The deployment must be able to mint, and to link what it mints.
+	const mint = creationConfig(env);
+	if (!mint) return { ok: false, error: CREATION_UNCONFIGURED };
 
 	// One value serves the rehearsal and the INSERT, so they cannot disagree.
 	const row: Omit<CreateGroupInput, 'groupDid'> = {

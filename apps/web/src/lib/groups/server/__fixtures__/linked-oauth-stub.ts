@@ -21,10 +21,10 @@ export function stubSession(did: string, service: string) {
 	};
 }
 
-/** Replaces `createOAuthClientFor`: a client whose `restore` finds the fixture's
+/** Replaces `createOAuthClientWithSessions`: a client whose `restore` finds the fixture's
  *  session, and fails for a group no test linked, as a real store miss would. */
 export const linkedOAuthStub = {
-	createOAuthClientFor: () => ({
+	createOAuthClientWithSessions: () => ({
 		restore: async (did: string) => {
 			const service = linkedServices.get(did);
 			if (!service) throw new Error(`no linked session for ${did}`);

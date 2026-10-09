@@ -11,7 +11,7 @@ let handled: { pathname: string; method: string }[];
 const restored: string[] = [];
 
 vi.mock('$lib/atproto/server/oauth', () => ({
-	createOAuthClientFor: vi.fn(() => ({
+	createOAuthClientWithSessions: vi.fn(() => ({
 		restore: async (did: string) => {
 			restored.push(did);
 			return {

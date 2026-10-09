@@ -20,9 +20,15 @@
 // is used well inside its token's lifetime, so it is sent as it is and never
 // renewed.
 import { Client } from '@atcute/client';
-import { scope, type OAuthClient, type OAuthSession } from '@atcute/oauth-node-client';
+import {
+	scope,
+	type OAuthClient,
+	type OAuthSession,
+	type StoredSession
+} from '@atcute/oauth-node-client';
 import type { Did } from '@atcute/lexicons';
-import { createOAuthClientFor } from '$lib/atproto/server/oauth';
+import { KVStore } from '$lib/atproto/server/kv-store';
+import { createOAuthClientWithSessions } from '$lib/atproto/server/oauth';
 import { GROUP_DECLARATION_COLLECTION } from '../declaration-record';
 import { GROUP_EVENT_COLLECTION } from '../ids';
 
@@ -49,14 +55,32 @@ export const GROUP_SESSION_SCOPES: readonly string[] = [
 /** The scope a link asks for. */
 export const GROUP_SESSION_SCOPE = ['atproto', ...GROUP_SESSION_SCOPES].join(' ');
 
+/** Whether this deployment can link a group: it serves its own client metadata,
+ *  so a link can ask for the group's scope, and it has a sessions store, so a
+ *  link outlives the request that made it. */
+export function groupLinkConfigured(env: CredentialStoreEnv | undefined): boolean {
+	return Boolean(env?.OAUTH_PUBLIC_URL && env?.OAUTH_SESSIONS);
+}
+
+// One client per sessions store, kept per isolate like the sign-in client, so its
+// metadata and DPoP nonce caches survive between requests.
+const linkClients = new WeakMap<KVNamespace, OAuthClient>();
+
 /** The client that links groups and restores their sessions. */
 export function groupLinkClient(env: CredentialStoreEnv | undefined): OAuthClient {
-	// The client reads the OAuth settings, which a deployment that links groups has.
-	return createOAuthClientFor(
-		env as App.Platform['env'] | undefined,
-		GROUP_SESSION_SCOPES,
-		GROUP_SESSION_PREFIX
-	);
+	const kv = env?.OAUTH_SESSIONS;
+	if (!kv) throw new Error('linking a group needs the OAUTH_SESSIONS store');
+	let client = linkClients.get(kv);
+	if (!client) {
+		// The client reads the OAuth settings, which a deployment that links groups has.
+		client = createOAuthClientWithSessions(
+			env as App.Platform['env'],
+			GROUP_SESSION_SCOPES,
+			new KVStore<Did, StoredSession>(kv, { prefix: GROUP_SESSION_PREFIX })
+		);
+		linkClients.set(kv, client);
+	}
+	return client;
 }
 
 /** Whether `groupDid` has a linked session stored. A read of the store only:

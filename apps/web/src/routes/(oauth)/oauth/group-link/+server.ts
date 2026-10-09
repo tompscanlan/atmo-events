@@ -1,5 +1,4 @@
 import { error, redirect } from '@sveltejs/kit';
-import { servesClientMetadata } from '$lib/atproto/server/oauth';
 import { GROUP_LINK_REDIRECT_PATH } from '$lib/atproto/settings';
 import { GroupLinkRefused, startGroupLink } from '$lib/groups/server/group-link';
 
@@ -7,13 +6,13 @@ import { getGroupByDid } from '$lib/groups/server/repo';
 import { GROUP_NOT_FOUND } from '$lib/groups/server/route-context';
 import type { RequestHandler } from './$types';
 
-import { groupLinkClient } from '$lib/groups/server/session';
+import { groupLinkClient, groupLinkConfigured } from '$lib/groups/server/session';
 // Starts linking a group's account (lib/groups/server/group-link.ts). A plain
 // form post from the group page, answered with a redirect to the group's PDS.
 export const POST: RequestHandler = async ({ request, locals, platform }) => {
 	const env = platform?.env;
 	if (!env?.DB) error(503, 'Groups are not available on this deployment');
-	if (!servesClientMetadata(env) || !env.OAUTH_PUBLIC_URL) {
+	if (!groupLinkConfigured(env)) {
 		error(501, 'This deployment cannot link a group: it serves no client metadata of its own');
 	}
 	if (!locals.did) error(401, 'Sign in as the group’s owner to link it');

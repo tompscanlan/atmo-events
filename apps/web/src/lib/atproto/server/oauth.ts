@@ -146,46 +146,16 @@ function confidentialClient(
 	});
 }
 
-const memorySessions = new Map<string, MemoryStore<Did, StoredSession>>();
-const clientsFor = new Map<string, OAuthClient>();
-
-/** A client for sessions that are not sign-ins: the same client_id, metadata and
- *  state store as every other client, with its sessions kept under
- *  `sessionPrefix`. A session it holds is never the one a `did` cookie restores,
- *  and a sign-in under the same DID never overwrites it. Needs this deployment's
- *  own client metadata (see `servesClientMetadata`). */
-export function createOAuthClientFor(
+/** A confidential client that keeps its sessions in `sessions` instead of the
+ *  sign-in store, and shares the rest with every other client: the client_id,
+ *  the metadata and the state store. A session it holds is never the one a `did`
+ *  cookie restores, and a sign-in under the same DID never overwrites it. */
+export function createOAuthClientWithSessions(
 	env: App.Platform['env'] | undefined,
 	extraScopes: readonly string[],
-	sessionPrefix: string
+	sessions: OAuthClientStores['sessions']
 ): OAuthClient {
-	if (!servesClientMetadata(env)) {
-		throw new Error(
-			'this deployment serves no client metadata, so it holds no session but a sign-in'
-		);
-	}
-	// Kept per isolate like the sign-in client, so its metadata and DPoP nonce
-	// caches survive between requests instead of costing round trips each time.
-	const cacheKey = `${sessionPrefix}|${extraScopes.join(' ')}`;
-	const cached = clientsFor.get(cacheKey);
-	if (cached) return cached;
-	let sessions: OAuthClientStores['sessions'];
-	if (env?.OAUTH_SESSIONS) {
-		sessions = new KVStore<Did, StoredSession>(env.OAUTH_SESSIONS, { prefix: sessionPrefix });
-	} else {
-		let memory = memorySessions.get(sessionPrefix);
-		if (!memory) {
-			memory = new MemoryStore<Did, StoredSession>();
-			memorySessions.set(sessionPrefix, memory);
-		}
-		sessions = memory;
-	}
-	const client = confidentialClient(env, extraScopes, {
-		sessions,
-		states: sharedParts(env).stores.states
-	});
-	clientsFor.set(cacheKey, client);
-	return client;
+	return confidentialClient(env, extraScopes, { sessions, states: oauthStates(env) });
 }
 
 export type { OAuthSession };

@@ -82,7 +82,9 @@ beforeEach(() => {
 		DB: harness.db,
 		GROUP_PDS_SERVICE: SERVICE,
 		GROUP_HANDLE_DOMAIN: 'group.stub.test',
-		GROUP_PDS_INVITE_CODE: 'stub-aaaaa-bbbbb'
+		GROUP_PDS_INVITE_CODE: 'stub-aaaaa-bbbbb',
+		OAUTH_PUBLIC_URL: 'https://atmo.stub.test',
+		...noLinks
 	};
 });
 
@@ -238,6 +240,23 @@ describe('refusing before the irreversible step', () => {
 
 		expect(result.ok).toBe(false);
 		expect(!result.ok && result.error).toContain('GROUP_PDS_INVITE_CODE');
+		expect(calls).toEqual([]);
+		expect(await rows('groups')).toEqual([]);
+	});
+
+	// A group nobody can link is one this site can never write as, so a
+	// deployment that cannot link refuses the create rather than mint it.
+	it.each([
+		['serves no client metadata', 'OAUTH_PUBLIC_URL'],
+		['keeps no sessions', 'OAUTH_SESSIONS']
+	] as const)('makes no PDS call when the deployment %s', async (_case, unset) => {
+		const { calls } = stubPds();
+		delete env[unset];
+
+		const result = await runCreateGroup(env, OWNER, data());
+
+		expect(result.ok).toBe(false);
+		expect(!result.ok && result.error).toContain(unset);
 		expect(calls).toEqual([]);
 		expect(await rows('groups')).toEqual([]);
 	});

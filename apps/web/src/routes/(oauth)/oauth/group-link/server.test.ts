@@ -11,7 +11,6 @@ let authorizedAs: string;
 const states = new Map<string, StoredState>();
 
 vi.mock('$lib/atproto/server/oauth', () => ({
-	servesClientMetadata: () => true,
 	oauthStates: () => ({
 		get: async (key: string) => states.get(key),
 		delete: async (key: string) => {
@@ -46,7 +45,11 @@ beforeEach(async () => {
 	states.clear();
 });
 
-const env = () => ({ DB: db, OAUTH_PUBLIC_URL: 'https://atmo.test' });
+const env = (): Record<string, unknown> => ({
+	DB: db,
+	OAUTH_PUBLIC_URL: 'https://atmo.test',
+	OAUTH_SESSIONS: {} as KVNamespace
+});
 
 async function thrown(run: () => unknown): Promise<{ status: number; location?: string }> {
 	try {
@@ -57,14 +60,14 @@ async function thrown(run: () => unknown): Promise<{ status: number; location?: 
 	throw new Error('expected the handler to answer with a redirect or an error');
 }
 
-function start(did: string | null) {
+function start(did: string | null, platformEnv = env()) {
 	const body = new FormData();
 	body.set('groupDid', GROUP);
 	return thrown(() =>
 		POST({
 			request: new Request('https://atmo.test/oauth/group-link', { method: 'POST', body }),
 			locals: { did },
-			platform: { env: env() }
+			platform: { env: platformEnv }
 		} as unknown as Parameters<typeof POST>[0])
 	);
 }
@@ -98,6 +101,13 @@ describe('POST /oauth/group-link', () => {
 
 	it('answers a member who is not the owner as if the group did not exist', async () => {
 		expect(await start(MEMBER)).toMatchObject({ status: 404 });
+	});
+
+	// A link kept nowhere would be lost with the request that made it.
+	it('refuses on a deployment with no sessions store', async () => {
+		const noStore = env();
+		delete noStore.OAUTH_SESSIONS;
+		expect(await start(OWNER, noStore)).toMatchObject({ status: 501 });
 	});
 });
 

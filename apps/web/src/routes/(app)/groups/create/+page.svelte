@@ -50,7 +50,7 @@
 		own later, and nobody, including us, can stop you.
 	</p>
 
-	{#if !data.mintConfigured}
+	{#if !data.creationConfigured}
 		<div
 			class="ring-base-200 dark:ring-base-800 text-base-600 dark:text-base-300 mb-8 rounded-2xl p-4 text-sm ring-1"
 		>
@@ -59,7 +59,8 @@
 				An administrator needs to set <code class="font-mono">GROUP_PDS_SERVICE</code>,
 				<code class="font-mono">GROUP_HANDLE_DOMAIN</code>,
 				<code class="font-mono">GROUP_PDS_INVITE_CODE</code> and
-				<code class="font-mono">OAUTH_PUBLIC_URL</code> first.
+				<code class="font-mono">OAUTH_PUBLIC_URL</code>, and bind the
+				<code class="font-mono">OAUTH_SESSIONS</code> store, first.
 			</p>
 		</div>
 	{/if}
@@ -127,8 +128,9 @@
 	{/if}
 
 	<!-- Once the group exists, the form has nothing left to do, and leaving it
-	     under the recovery key reads as an invitation to submit again. -->
-	{#if !created}
+	     under the recovery key reads as an invitation to submit again. A
+	     deployment that cannot create one gets no form, only the notice above. -->
+	{#if data.creationConfigured && !created}
 		<form {...resetOnSuccess(createGroupForm)} class="flex flex-col gap-5">
 			<div class="flex flex-col gap-1.5">
 				<Label for="group-name">Name</Label>
