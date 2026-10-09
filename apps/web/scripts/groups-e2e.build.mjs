@@ -27,6 +27,12 @@ export async function bundleWorker(outDir, plcUrl) {
 					find: /^\$lib\/atproto\/server\/oauth$/,
 					replacement: join(WEB_DIR, 'scripts/groups-e2e.oauth.ts')
 				},
+				// Exactly this module: the page gate's handle resolver, which a run
+				// naming its group by DID never asks.
+				{
+					find: /^\$lib\/atproto\/methods$/,
+					replacement: join(WEB_DIR, 'scripts/groups-e2e.methods.ts')
+				},
 				// Devnet's PLC directory, the only one asked.
 				{
 					find: /^@atcute\/identity-resolver$/,

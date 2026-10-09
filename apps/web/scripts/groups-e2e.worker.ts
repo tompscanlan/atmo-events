@@ -2,9 +2,8 @@
 // Miniflare. It holds no rules and no assertions: each op is a JSON door onto
 // the $lib/groups modules, which make every decision.
 //
-// Several ops do what `runCreateGroup` does around the account it mints. The
-// e2e binds an existing DID through `createGroup`, which only writes D1 rows, so
-// the driver calls those ops itself.
+// The run makes its group with the app's own create (`runCreateGroup`), which
+// mints a new account on the devnet PDS each run.
 //
 // Not deployed, not routed, never imported by the app. `scripts/` is outside
 // tsconfig's include, like scripts/geocode-events.ts.
@@ -14,7 +13,6 @@ import {
 	type GroupRoleName,
 	type AssignableRole
 } from '../src/lib/groups/permissions';
-import { canSeeGroup } from '../src/lib/groups/access';
 import type { GroupRow, GroupVisibility } from '../src/lib/groups/types';
 
 import {
@@ -25,13 +23,6 @@ import {
 	writeGroupEvent
 } from '../src/lib/groups/server/event-writer';
 import {
-	GROUP_ACCESS_COLLECTION,
-	GROUP_ACCESS_RKEY,
-	GROUP_EVENT_PERMISSIONS_COLLECTION,
-	GROUP_PERMISSIONS_COLLECTION,
-	GROUP_PERMISSIONS_RKEY,
-	GROUP_ROLE_COLLECTION,
-	GROUP_SPACE_COLLECTION,
 	GROUP_ACCEPTANCE_COLLECTION,
 	GROUP_ACCEPTANCE_RKEY
 } from '../src/lib/groups/members-record';
@@ -39,19 +30,10 @@ import { listGroupEvents } from '../src/lib/groups/server/events-index';
 import { ensureInit } from '../src/lib/contrail/index';
 import { splitRuleLines } from '../src/lib/groups/about-record';
 import { reconcileGroupDeclaration } from '../src/lib/groups/server/declaration-writer';
-import {
-	setGroupRules,
-	writeAboutAccess,
-	writeGroupProfile
-} from '../src/lib/groups/server/about-writer';
+import { setGroupRules } from '../src/lib/groups/server/about-writer';
 import { groupSpaceReader, readGroupAbout } from '../src/lib/groups/server/about-read';
 
-import {
-	pdsProvisioner,
-	provisionGroupSpaces,
-	readGroupVisibility,
-	setAboutSpaceReadPolicy
-} from '../src/lib/groups/server/spaces';
+import { readGroupVisibility, setAboutSpaceReadPolicy } from '../src/lib/groups/server/spaces';
 import {
 	rebuildGroup,
 	rebuildGroupCache,
@@ -67,13 +49,7 @@ import {
 	rosterFromRecords,
 	rosterFromRows
 } from '../src/lib/groups/server/members-read';
-import {
-	dropGroupMembership,
-	putGroupMembership,
-	writeGroupAccess,
-	writeGroupAuthz,
-	writeGroupSpaceIndex
-} from '../src/lib/groups/server/members-writer';
+import { writeGroupAuthz, writeGroupSpaceIndex } from '../src/lib/groups/server/members-writer';
 import {
 	admitFromRequest,
 	admitMember,
@@ -112,13 +88,12 @@ import {
 	readMembersOnlyEvents,
 	membersOnlyEventForDisplay
 } from '../src/lib/groups/server/calendar-read';
-import { standInCalls } from './groups-e2e.oauth';
+import { setStandInLogin, standInCalls } from './groups-e2e.oauth';
+import { runCreateGroup, type CreateGroupData } from '../src/lib/groups/create-group';
 import { scopes } from '../src/lib/atproto/settings';
 
 import { groupSpaceUris, type RsvpStatus } from '../src/lib/groups/ids';
-import { groupWriter } from '../src/lib/groups/server/group-write';
 
-import { registerGroupIdentity } from '../src/lib/groups/server/identities';
 import { type EventPlacement } from '../src/lib/groups/event-placement';
 import {
 	createGroup,
@@ -128,23 +103,23 @@ import {
 	rolePermissions,
 	updateGroup
 } from '../src/lib/groups/server/db/groups';
-import {
-	approveJoinRequest,
-	changeMemberRole,
-	listJoinRequests,
-	listMembers,
-	removeMember,
-	requestJoin
-} from '../src/lib/groups/server/db/roster';
+import { listJoinRequests, listMembers } from '../src/lib/groups/server/db/roster';
 import { getCallerMembership } from '../src/lib/groups/server/standing';
+import { isHttpError } from '@sveltejs/kit';
+import { groupRouteContext } from '../src/lib/groups/server/route-context';
+import { groupEditorPage } from '../src/lib/groups/server/editor-page';
 interface Env {
 	DB: D1Database;
 	/** Where the app looks for the group's linked session, as in production. */
 	OAUTH_SESSIONS: KVNamespace;
-	/** The stand-in session's login (./groups-e2e.oauth.ts). */
+	/** What the app's create mints with, as on a deployment. */
+	GROUP_PDS_SERVICE: string;
+	GROUP_HANDLE_DOMAIN: string;
+	GROUP_PDS_INVITE_CODE: string;
+	/** Only for the create's check that linking is configured. */
+	OAUTH_PUBLIC_URL: string;
+	/** Where the stand-in sessions log in (./groups-e2e.oauth.ts, `adminSession`). */
 	E2E_GROUP_SERVICE: string;
-	E2E_GROUP_IDENTIFIER: string;
-	E2E_GROUP_PASSWORD: string;
 	/** The admin's login, for the stand-in of their own session (`adminSession`). */
 	E2E_ADMIN_PASSWORD: string;
 }
@@ -313,13 +288,51 @@ async function spaceReader(env: Env, group: GroupRow) {
 }
 
 const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
-	createGroup: (env, args) => createGroup(env.DB, args as never),
+	/** The app's own create, as the create form runs it: it mints the group's
+	 *  account on the devnet PDS and sets the group up. The owner's recovery key
+	 *  never leaves the worker, only whether the create handed one back. */
+	runCreateGroup: async (env, args) => {
+		// A deployment's index has its tables before any request. This worker's D1
+		// starts empty, and without them the create's identity row cannot land, so
+		// the index would resolve the new DID over the network.
+		await ensureInit(env.DB);
+		const outcome = await runCreateGroup(env, String(args.ownerDid), args.data as CreateGroupData);
+		const registered = outcome.ok ? outcome : 'registered' in outcome ? outcome.registered : null;
+		return {
+			ok: outcome.ok,
+			error: outcome.ok ? null : outcome.error,
+			groupDid: registered?.groupDid ?? null,
+			handle: registered?.handle ?? null,
+			hasRecoveryKey: Boolean(registered?.recoveryKey)
+		};
+	},
 
 	/** Marks the group linked, as its owner's link would. The app finds a linked
-	 *  session by this key; restoring it is the stand-in's (./groups-e2e.oauth.ts). */
+	 *  session by this key; restoring it is the stand-in's (./groups-e2e.oauth.ts),
+	 *  which logs in with the password the create set. */
 	linkGroup: async (env, args) => {
 		await env.OAUTH_SESSIONS.put(GROUP_SESSION_PREFIX + String(args.groupDid), '{}');
+		setStandInLogin(String(args.groupDid), String(args.password));
 		return { linked: args.groupDid };
+	},
+
+	groupByDid: async (env, args) => {
+		const row = await getGroupByDid(env.DB, String(args.groupDid));
+		if (!row) throw new Error(`no group ${String(args.groupDid)} in D1`);
+		return row;
+	},
+
+	/** A bare row on the group's DID, with its spaces recorded, for cleanup to act
+	 *  through when check 23's rebuild did not leave one. */
+	bindRow: async (env, args) => {
+		const groupDid = String(args.groupDid);
+		const row = await createGroup(env.DB, {
+			groupDid,
+			ownerDid: String(args.ownerDid),
+			name: 'groups e2e'
+		});
+		await recordGroupSpaces(env.DB, row.id, groupSpaceUris(groupDid));
+		return (await getGroupByDid(env.DB, groupDid)) ?? row;
 	},
 
 	/** Stored bundles, as rows: the seeded data, not the constant it came from. */
@@ -349,47 +362,6 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			onRoster: membership.onRoster,
 			can: Object.fromEntries(probe.map((p) => [p, can(membership.permissions, p)]))
 		};
-	},
-
-	/** Runs before the spaces exist, so the driver's visibility stands in for the
-	 *  host's answer. */
-	requestJoin: async (env, args) => {
-		const group = await groupById(env, args.groupId);
-		return {
-			outcome: await requestJoin(
-				env.DB,
-				group,
-				String(args.did),
-				(args.message as string | null) ?? null,
-				chosenVisibility(args)
-			)
-		};
-	},
-
-	approveJoinRequest: async (env, args) => {
-		await approveJoinRequest(
-			env.DB,
-			String(args.groupId),
-			String(args.requestId),
-			String(args.deciderDid),
-			(args.role as AssignableRole) ?? 'member'
-		);
-		return { approved: args.requestId };
-	},
-
-	changeMemberRole: async (env, args) => {
-		await changeMemberRole(
-			env.DB,
-			String(args.groupId),
-			String(args.did),
-			args.role as AssignableRole
-		);
-		return { did: args.did, role: args.role };
-	},
-
-	removeMember: async (env, args) => {
-		await removeMember(env.DB, String(args.groupId), String(args.did));
-		return { removed: args.did };
 	},
 
 	/** The write gate. `callerDid` is the person acting; the credential and repo
@@ -455,49 +427,8 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		return { refusal, calls: standInCalls.slice(from) };
 	},
 
-	/** The index row a mint writes: where the group's repo lives. The index creates
-	 *  its `identities` table on its first call, and this D1 starts empty, so it is
-	 *  initialized first; otherwise the insert fails and the false is the only sign. */
-	registerIdentity: async (env, args) => {
-		await ensureInit(env.DB);
-		return registerGroupIdentity(env.DB, {
-			did: String(args.groupDid),
-			handle: args.handle == null ? null : String(args.handle),
-			pds: String(args.pds)
-		});
-	},
-
 	/** The events tab's list, from the app's index and not from the PDS. */
 	listGroupEvents: async (env, args) => listGroupEvents(env.DB, await groupById(env, args.groupId)),
-
-	/** The about, members and calendar spaces, as a create makes them. Idempotent.
-	 *  Returns all three URIs; only the first two are recorded, as at create. */
-	provisionSpaces: async (env, args) => {
-		const group = await groupById(env, args.groupId);
-		const cred = await resolveGroupCredential(env, group.group_did);
-		if (!cred) throw new Error(`no credential for ${group.group_did}`);
-		const uris = await provisionGroupSpaces(
-			pdsProvisioner(cred, group.group_did),
-			chosenVisibility(args)
-		);
-		await recordGroupSpaces(env.DB, group.id, uris);
-		return uris;
-	},
-
-	writeGroupProfile: async (env, args) =>
-		writeGroupProfile({
-			db: env.DB,
-			env,
-			group: await groupById(env, args.groupId),
-			visibility: chosenVisibility(args),
-			callerDid: args.callerDid == null ? null : String(args.callerDid),
-			profile: {
-				name: String(args.name),
-				description: (args.description as string | null) ?? null,
-				locationName: (args.locationName as string | null) ?? null,
-				createdAt: args.createdAt as string | undefined
-			}
-		}),
 
 	/** The route's two calls: read the current rules, then reconcile them. */
 	setGroupRules: async (env, args) => {
@@ -620,9 +551,8 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	/** A member's RSVP to a members-only event, run through the module the RSVP
 	 *  commands and the event page call: `action` 'put', 'delete' or 'read' (the
-	 *  page's read-back) for the caller `did`. The route modules cannot be bundled
-	 *  here (see `gate`), so this takes the caller's standing the way the gate
-	 *  does. The session is the admin's stand-in, or with `session: 'no-spaces'`
+	 *  page's read-back) for the caller `did`, behind the gate the commands run
+	 *  (`groupRouteContext`). The session is the admin's stand-in, or with `session: 'no-spaces'`
 	 *  the no-spaces member's, or with `session: 'outsider'` one that holds the
 	 *  grant and refuses any request. `stamp` stands for the session's own (0 when
 	 *  absent), `asked` is the marker the page would carry back (null when
@@ -635,8 +565,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	membersOnlyRsvp: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		const did = String(args.did);
-		const reader = await groupSpaceReader(env, group);
-		const membership = await getCallerMembership(env.DB, group, did, reader);
+		const { membership, reader } = await groupRouteContext(env, env.DB, group.group_did, did);
 		const calls: string[] = [];
 		const member =
 			args.session === 'no-spaces'
@@ -696,26 +625,34 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		};
 	},
 
-	/** The page gate's predicate for one caller. The route module itself cannot be
-	 *  bundled here: it pulls in the app's identity resolver, a Svelte module. */
+	/** The gate every group page runs, for one caller (`groupRouteContext`).
+	 *  `canSee` is false for its 404. `visibility` is null for a caller on the
+	 *  roster, whom the gate lets in without asking the host. */
 	gate: async (env, args) => {
 		const group = await groupById(env, args.groupId);
-		const reader = await spaceReader(env, group);
-		const [visibility, membership] = await Promise.all([
-			readGroupVisibility(reader, group),
-			getCallerMembership(env.DB, group, args.did == null ? null : String(args.did), reader)
-		]);
-		return {
-			visibility,
-			onRoster: membership.onRoster,
-			canSee: canSeeGroup(visibility, membership)
-		};
+		try {
+			const context = await groupRouteContext(
+				env,
+				env.DB,
+				group.group_did,
+				args.did == null ? null : String(args.did)
+			);
+			return {
+				canSee: true,
+				onRoster: context.membership.onRoster,
+				visibility: context.visibility
+			};
+		} catch (e) {
+			if (isHttpError(e) && e.status === 404) {
+				return { canSee: false, onRoster: false, visibility: null };
+			}
+			throw e;
+		}
 	},
 
 	/** The events tab's members-only slice for one viewer, or null for a viewer
-	 *  off the roster. The route module cannot be bundled here (see `gate`), so
-	 *  this takes the viewer's standing the way the gate does and calls the same
-	 *  $lib function the loader calls. It returns every request sent through the
+	 *  off the roster: the gate the events tab runs (`groupRouteContext`), then the
+	 *  same $lib function its loader calls. It returns every request sent through the
 	 *  group's session: `calls` for the whole op, standing included, and
 	 *  `sliceCalls` for the slice read alone. With `unlinked`, the group's stored
 	 *  session is taken away for the read, as a lapsed link leaves it, and put
@@ -728,8 +665,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		if (args.unlinked) await env.OAUTH_SESSIONS.delete(key);
 		try {
 			const from = standInCalls.length;
-			const reader = await groupSpaceReader(env, group);
-			const membership = await getCallerMembership(env.DB, group, did, reader);
+			const { membership, reader } = await groupRouteContext(env, env.DB, group.group_did, did);
 			const sliceFrom = standInCalls.length;
 			const read = await readMembersOnlyEvents(membership, reader, group);
 			// As the events tab shows it: each event without its image.
@@ -747,17 +683,15 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	},
 
 	/** One members-only event by its key for one viewer, as its page reads it.
-	 *  The route module cannot be bundled here (see `gate`), so this takes the
-	 *  viewer's standing the way the gate does and calls the same $lib function
-	 *  the loader calls. It returns every request sent through the group's
+	 *  The gate the event page runs (`groupRouteContext`), then the same $lib
+	 *  function its loader calls. It returns every request sent through the group's
 	 *  session: `calls` for the whole op, standing included, and `readCalls` for
 	 *  the event read alone. */
 	membersOnlyEvent: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		const did = args.did == null ? null : String(args.did);
 		const from = standInCalls.length;
-		const reader = await groupSpaceReader(env, group);
-		const membership = await getCallerMembership(env.DB, group, did, reader);
+		const { membership, reader } = await groupRouteContext(env, env.DB, group.group_did, did);
 		const readFrom = standInCalls.length;
 		const read = await readMembersOnlyEvent(membership, reader, group, String(args.rkey));
 		return {
@@ -769,30 +703,50 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		};
 	},
 
-	/** The edit page's read of one members-only event for one caller. The route
-	 *  module cannot be bundled here (see `gate`), so this takes the caller's
-	 *  standing the way the gate does, makes the editor gate's MANAGE_EVENTS
-	 *  check, and only for a caller who passes it calls the same $lib read and
-	 *  edit copy the loader calls. `allowed` is false for a caller the editor
-	 *  gate refuses. It returns every request sent through the group's session:
-	 *  `calls` for the whole op, standing included, and `readCalls` for what
-	 *  came after standing. */
+	/** The edit page's read of one members-only event for one caller: the editor
+	 *  gate the page runs (`groupEditorPage`), then for a caller it lets through
+	 *  the same $lib read and edit copy the loader calls. `allowed` is false for
+	 *  the gate's 403; the caller's standing is then read afterwards, only to
+	 *  report it. It returns every request sent through the group's session:
+	 *  `calls` for the whole op, and `readCalls` for what came after the gate. */
 	membersOnlyEditRead: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		const did = args.did == null ? null : String(args.did);
 		const from = standInCalls.length;
-		const reader = await groupSpaceReader(env, group);
-		const membership = await getCallerMembership(env.DB, group, did, reader);
+		let page;
+		try {
+			page = await groupEditorPage(env, group.group_did, did, 'MANAGE_EVENTS');
+		} catch (e) {
+			if (!(isHttpError(e) && e.status === 403)) throw e;
+			const calls = standInCalls.slice(from);
+			const standing = await getCallerMembership(
+				env.DB,
+				group,
+				did,
+				await groupSpaceReader(env, group)
+			);
+			return {
+				onRoster: standing.onRoster,
+				allowed: false,
+				read: null,
+				eventData: null,
+				calls,
+				readCalls: []
+			};
+		}
 		const readFrom = standInCalls.length;
-		const allowed = can(membership.permissions, 'MANAGE_EVENTS');
-		const read = allowed
-			? await readMembersOnlyEvent(membership, reader, group, String(args.rkey))
-			: null;
+		const read = await readMembersOnlyEvent(
+			page.membership,
+			page.reader,
+			page.group,
+			String(args.rkey)
+		);
 		return {
-			onRoster: membership.onRoster,
-			allowed,
+			onRoster: page.membership.onRoster,
+			allowed: true,
 			read,
-			eventData: read?.status === 'found' ? membersOnlyEventForEditing(read.event, group) : null,
+			eventData:
+				read.status === 'found' ? membersOnlyEventForEditing(read.event, page.group) : null,
 			calls: standInCalls.slice(from),
 			readCalls: standInCalls.slice(readFrom)
 		};
@@ -818,46 +772,6 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	// ---- the roster, as records ---------------------------------------------
 
-	/** A members-read space's `access` record: who may read the space. The members
-	 *  space, or the calendar space when the driver passes it as `space`, as the
-	 *  create does. */
-	writeGroupAccess: async (env, args) =>
-		writeGroupAccess({
-			db: env.DB,
-			env,
-			group: await groupById(env, args.groupId),
-			callerDid: args.callerDid == null ? null : String(args.callerDid),
-			space: args.space == null ? undefined : String(args.space)
-		}),
-
-	/** Deletes the calendar space's `access` record through the group's writer. No
-	 *  app path does this, but the e2e reuses one DID across runs, and a record left
-	 *  by an earlier run would let check 13c pass without this run's write. */
-	dropCalendarAccess: async (env, args) => {
-		const group = await groupById(env, args.groupId);
-		const writer = await groupWriter(env, group);
-		await writer({
-			repo: group.group_did,
-			collection: GROUP_ACCESS_COLLECTION,
-			rkey: GROUP_ACCESS_RKEY,
-			record: {},
-			intent: 'delete',
-			space: String(args.space)
-		});
-		return { space: String(args.space) };
-	},
-
-	/** The about space's `access` record, saying the visibility the driver passes,
-	 *  as create and the settings save write it. */
-	writeAboutAccess: async (env, args) =>
-		writeAboutAccess({
-			db: env.DB,
-			env,
-			group: await groupById(env, args.groupId),
-			callerDid: args.callerDid == null ? null : String(args.callerDid),
-			visibility: chosenVisibility(args)
-		}),
-
 	/** The index of the group's spaces, read first as the repair reads it. The
 	 *  calendar space joins it when the driver passes `calendarSpaceUri`, as the
 	 *  create does; without it, as the repair does, the index is the two spaces. */
@@ -871,28 +785,6 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			existing: await readGroupSpaceIndex(await spaceReader(env, group), group),
 			calendarSpace: args.calendarSpaceUri == null ? undefined : String(args.calendarSpaceUri)
 		});
-	},
-
-	/** Deletes every index entry through the group's writer. No app path does
-	 *  this, but the e2e reuses one DID across runs, and a leftover entry would
-	 *  let the index check pass without this run's write. */
-	dropSpaceIndex: async (env, args) => {
-		const group = await groupById(env, args.groupId);
-		if (!group.members_space_uri) return { dropped: [] };
-		const writer = await groupWriter(env, group);
-		const dropped: string[] = [];
-		for (const entry of await readGroupSpaceIndex(await spaceReader(env, group), group)) {
-			await writer({
-				repo: group.group_did,
-				collection: GROUP_SPACE_COLLECTION,
-				rkey: entry.rkey,
-				record: {},
-				intent: 'delete',
-				space: group.members_space_uri
-			});
-			dropped.push(entry.rkey);
-		}
-		return { dropped };
 	},
 
 	/** The only record a stranger can read. The driver passes a visibility, as the
@@ -937,70 +829,6 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			modality: members.eventPermissions?.bindings ?? null,
 			effective: { role, permissions: [...effectivePermissions(members, [role])].sort() }
 		};
-	},
-
-	/** The owner's membership record. Other members go through the roster acts. */
-	putMembership: async (env, args) =>
-		putGroupMembership({
-			db: env.DB,
-			env,
-			group: await groupById(env, args.groupId),
-			callerDid: args.callerDid == null ? null : String(args.callerDid),
-			subject: String(args.did),
-			roles: args.roles as GroupRoleName[],
-			intent: 'admit'
-		}),
-
-	/** Cleanup of the owner's record. The intent is `leave`, because the owner
-	 *  cannot be ejected and leaving needs no grant. */
-	dropMembership: async (env, args) =>
-		dropGroupMembership({
-			db: env.DB,
-			env,
-			group: await groupById(env, args.groupId),
-			callerDid: args.callerDid == null ? null : String(args.callerDid),
-			subject: String(args.did),
-			intent: 'leave'
-		}),
-
-	/** Deletes the authz config through the group's writer. No app path does this,
-	 *  but the e2e reuses one DID across runs. Once a config exists the records
-	 *  decide permissions, so a config left after the owner's membership is gone
-	 *  leaves the owner with nothing. With no config, the gate reads the rows. */
-	dropAuthz: async (env, args) => {
-		const group = await groupById(env, args.groupId);
-		if (!group.members_space_uri) return { dropped: [] };
-		const reader = await spaceReader(env, group);
-		const writer = await groupWriter(env, group);
-		const targets = [
-			...(
-				await reader.list({
-					space: group.members_space_uri,
-					repo: group.group_did,
-					collection: GROUP_ROLE_COLLECTION
-				})
-			).map((r) => ({ collection: GROUP_ROLE_COLLECTION, rkey: r.rkey })),
-			{ collection: GROUP_PERMISSIONS_COLLECTION, rkey: GROUP_PERMISSIONS_RKEY },
-			{ collection: GROUP_EVENT_PERMISSIONS_COLLECTION, rkey: GROUP_PERMISSIONS_RKEY }
-		];
-		const dropped: string[] = [];
-		for (const target of targets) {
-			const present = await reader.get({
-				space: group.members_space_uri,
-				repo: group.group_did,
-				...target
-			});
-			if (!present) continue;
-			await writer({
-				repo: group.group_did,
-				...target,
-				record: {},
-				intent: 'delete',
-				space: group.members_space_uri
-			});
-			dropped.push(`${target.collection}/${target.rkey}`);
-		}
-		return { dropped };
 	},
 
 	/** The roster acts the app's own handlers call: row plus record, in its order. */

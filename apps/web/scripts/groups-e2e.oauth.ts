@@ -4,16 +4,23 @@
 // The app writes as a group only through the session its owner linked. A real link
 // needs this deployment's confidential client key and a consent at the group's PDS,
 // and a local run has neither. So `restore` here returns a session that logs in with
-// the fixture group's password and sends each request with that token. Everything
+// the password the run's create set and sends each request with that token. Everything
 // around it is the app's own: the store lookup (`linkedGroupSession`), the seam's
 // linked branch (`groupClient`) and every transport. What it cannot show is the scope
 // a real link carries; a walk through a deployed site with a linked group covers that.
 
-/** The Worker bindings the driver sets for the stand-in. Never logged. */
+/** The Worker binding the driver sets for the stand-in. */
 interface StandInEnv {
 	E2E_GROUP_SERVICE?: string;
-	E2E_GROUP_IDENTIFIER?: string;
-	E2E_GROUP_PASSWORD?: string;
+}
+
+/** The group's login, set by the worker's link op. Never logged. */
+let standInLogin: { identifier: string; password: string } | null = null;
+
+/** Sets the login the stand-in session uses, as the owner's link would grant it. */
+export function setStandInLogin(identifier: string, password: string): void {
+	standInLogin = { identifier, password };
+	login = null;
 }
 
 interface Login {
@@ -47,13 +54,12 @@ async function logIn(service: string, identifier: string, password: string): Pro
 /** Replaces the app's: `restore` is all `linkedGroupSession` asks of it. */
 export function createOAuthClientWithSessions(env: StandInEnv | undefined) {
 	const service = env?.E2E_GROUP_SERVICE;
-	const identifier = env?.E2E_GROUP_IDENTIFIER;
-	const password = env?.E2E_GROUP_PASSWORD;
 	return {
 		restore: async () => {
-			if (!service || !identifier || !password) {
-				throw new Error('the stand-in linked session has no E2E_GROUP_* bindings');
+			if (!service || !standInLogin) {
+				throw new Error('the stand-in linked session has no login: link the group first');
 			}
+			const { identifier, password } = standInLogin;
 			login ??= logIn(service, identifier, password).catch((e) => {
 				login = null;
 				throw e;

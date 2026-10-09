@@ -4,12 +4,13 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 53 numbered checks (1 to 24, plus 10b, 13b to 13v, 15b, 18b, 18c,
- * 18d, 18e, 20b and 20c), prints one PASS or FAIL line each, and a clean run
- * ends with `SUMMARY: 53 passed, 0 failed`. Setup steps print as notes and are
- * not counted. In order: create and the seeded roles (1), join, approval and
- * promotion (2-3), events written as the group DID and the edit gate (4-6),
- * leaving (7-8), a cover image uploaded into the group's repo (9), the profile,
+ * It runs 49 numbered checks (1, 4 to 6, 9 to 24, plus 10b, 13b to 13v, 15b,
+ * 18b, 18c, 18d, 18e, 20b and 20c), prints one PASS or FAIL line each, and a
+ * clean run ends with `SUMMARY: 49 passed, 0 failed`. Setup steps print as notes
+ * and are not counted. In order: the app's own create, which mints a new group
+ * account for the run, with its seeded roles and member lists (1), events
+ * written as the group DID and the edit gate (4-6), a cover image uploaded into
+ * the group's repo (9), the profile,
  * rules and access record in the about space (10-12), the roster, the index of
  * the group's three spaces and the authz config as records in the members
  * space, with the calendar space's read policy, access record and empty member
@@ -54,11 +55,10 @@
  * group's own session.
  *
  * Environment:
- *   E2E_PDS            the devnet PDS that serves spaces and hosts the group account
- *   E2E_GROUP_DID      the group account's DID
- *   E2E_GROUP_HANDLE   its handle
- *   E2E_GROUP_PASSWORD a password for the group account (an app password works), or
- *   E2E_CREDENTIALS    an env file that holds E2E_GROUP_PASSWORD and E2E_ADMIN_PASSWORD
+ *   E2E_PDS            the devnet PDS that serves spaces, where the run mints its group
+ *   E2E_HANDLE_DOMAIN  the domain the group's handle is minted under (GROUP_HANDLE_DOMAIN)
+ *   E2E_INVITE_CODE    an invite code for E2E_PDS, one use per run (GROUP_PDS_INVITE_CODE), or
+ *   E2E_CREDENTIALS    an env file that holds E2E_INVITE_CODE and E2E_ADMIN_PASSWORD
  *   E2E_OWNER_DID      the person who owns the group
  *   E2E_ADMIN_DID      a person who joins and is promoted to admin, on E2E_PDS
  *   E2E_ADMIN_PASSWORD their password, for their acceptance (checks 18b-18d)
@@ -80,30 +80,24 @@
  * never sent, and printed as `REFUSED <driver|worker> <METHOD> <URL without its
  * query>`.
  * Check 24 reports the count.
+ * Each run mints its own group, so nothing an earlier run wrote can stand in
+ * for this run's writes, and each run leaves one did:plc behind on the devnet.
  * The app writes as a group only through the session its owner linked, and a
  * real link needs the deployment's OAuth client key. So the run links the group
  * with a stand-in (scripts/groups-e2e.oauth.ts, aliased over the OAuth client):
- * its session logs in with this password, and every write still goes through the
- * app's linked branch. The password lives only in the Worker's bindings and is
- * never printed. A 401 from createSession means it is stale. The scope a real
- * link carries is not exercised here; a walk through a deployed site with a
+ * its session logs in with the password the run's create set, and every write
+ * still goes through the app's linked branch. The password is made by the run
+ * and never printed. The scope a real link carries is not exercised here; a walk through a deployed site with a
  * linked group covers it. The admin's acceptance and RSVP are written the same way,
  * through a stand-in for their own session that logs in with E2E_ADMIN_PASSWORD. The
  * no-spaces member's stand-in never logs in: it answers the scope a stock PDS
  * grants and refuses any request, so check 18e can show the app sent none.
  *
- * Cleanup runs in the `finally`. It deletes the events, the members-only ones
- * from the calendar space, the admin's RSVP to the seed should 13t or 13v stop
- * before its cancel, withdraws the declaration, deletes the admin's
- * acceptance, and removes the rules, the authz config and the owner's
- * membership. Then it re-reads each one, a members-only event with the group's
- * own space read, and prints WARN for anything left. The
- * profile and the three `access` records stay at fixed keys that the next run
- * overwrites, and the space index stays until the next run resets it. The
- * members-only seed event stays in the calendar space at its fixed key, where
- * the next run finds it. The
- * spaces themselves stay, so a run after the first finds the calendar space
- * rather than creating it, and keeps whatever read policy it was created with.
+ * Cleanup runs in the `finally`. The group is left behind, so it undoes only
+ * what shows outside the group: it deletes the public events, the admin's RSVP
+ * to the seed should 13t or 13v stop before its cancel, and the admin's
+ * acceptance should 18b-18d stop before they leave, and withdraws the
+ * declaration. Then it re-reads each one and prints WARN for anything left.
  */
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -145,10 +139,9 @@ const PDS = required('E2E_PDS');
  *  nothing else, so a DID it lacks fails to resolve. */
 const PLC_URL = required('E2E_PLC_URL');
 
-/** An existing group account, bound through `createGroup`. Minting one with
- *  `runCreateGroup` would leave a new, permanent did:plc behind on every run. */
-const GROUP_DID = required('E2E_GROUP_DID');
-const GROUP_HANDLE = required('E2E_GROUP_HANDLE');
+/** The domain the run's group is minted under, as GROUP_HANDLE_DOMAIN is for
+ *  the app. */
+const HANDLE_DOMAIN = required('E2E_HANDLE_DOMAIN');
 /** The owner, a member promoted to admin, and a non-member. The run writes to one
  *  of their repos only: the admin's acceptance, in the members space, which it
  *  deletes again. */
@@ -157,13 +150,6 @@ const BOB = required('E2E_ADMIN_DID');
 const MALLORY = required('E2E_OUTSIDER_DID');
 /** Use case step 4's member, on a PDS that serves no spaces. */
 const CAROL = required('E2E_NOSPACES_DID');
-/** Check 1's create, reused by check 23 if its rebuild fails. */
-const CREATE_ARGS = {
-	groupDid: GROUP_DID,
-	ownerDid: ALICE,
-	name: 'groups e2e',
-	description: 'Fixture group for apps/web/scripts/groups-e2e.mjs.'
-};
 
 /** The about space's read policies. Expected values are written out, not
  *  imported from the app, so a check cannot pass just by agreeing with the code
@@ -177,20 +163,41 @@ const READ_POLICY = {
  *  needs it is passed it. */
 const CREATE_VISIBILITY = 'public';
 
+/** The run's group label: new each run, and within the PDS's 18 characters. */
+const GROUP_LABEL = `e2e-${Date.now().toString(36)}`;
+/** Check 1's create, as the create form sends it. The account's password is the
+ *  run's own, made here and never printed. */
+const CREATE_DATA = {
+	name: 'groups e2e',
+	label: GROUP_LABEL,
+	description: 'A group made by apps/web/scripts/groups-e2e.mjs for one run.',
+	visibility: CREATE_VISIBILITY,
+	requireApproval: true,
+	locationName: 'e2e group place',
+	rules: 'Be kind\nNo spam\nStay on topic',
+	email: `groups-e2e+${GROUP_LABEL}@example.com`,
+	password: randomBytes(24).toString('base64url')
+};
+
+/** The run's group, minted by check 1 with the app's own create. Each run leaves
+ *  one did:plc behind on the devnet's PLC, which costs nothing there, and starts
+ *  from an account no earlier run has touched. Set by `useGroup`. */
+let GROUP_DID;
+let GROUP_HANDLE;
 /** The calendar space, written out like READ_POLICY rather than taken from the
  *  app, so a wrong type or key in the app's constant fails check 13c. */
-const CALENDAR_SPACE_URI = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
+let CALENDAR_SPACE_URI;
 
 const EVENT_COLLECTION = 'community.lexicon.calendar.event';
 const ACCESS_COLLECTION = 'group.opensocial.access';
 
 /** One members-only event, written straight into the calendar space by this
- *  driver and kept across runs at a fixed key, so a re-run finds it rather than
- *  adding another. The key is a valid TID, in case a host checks its format. */
+ *  driver with no app code. The key is a valid TID, in case a host checks its
+ *  format. */
 const SEED_RKEY = '3me2emembersx';
 const SEED_NAME = 'e2e members-only meeting (seed)';
 /** Its space-form URI, written out like CALENDAR_SPACE_URI. */
-const SEED_URI = `${CALENDAR_SPACE_URI}/${GROUP_DID}/${EVENT_COLLECTION}/${SEED_RKEY}`;
+let SEED_URI;
 /** A valid key that nothing writes into the calendar space, for a read that
  *  must come back absent. */
 const MADE_UP_RKEY = '3me2enothere';
@@ -207,7 +214,16 @@ const RELINK_NOTICE = "Members-only events can't be shown until an organizer rel
 
 /** A calendar space under the group's DID that nothing ever creates: the check
  *  that reads it writes nothing, so the host never makes it. */
-const NEVER_CREATED_SPACE = `at://${GROUP_DID}/space/net.openmeet.space.calendar/e2enevercreated`;
+let NEVER_CREATED_SPACE;
+
+/** Points the run's written-out URIs at the group check 1 minted. */
+function useGroup(did, handle) {
+	GROUP_DID = did;
+	GROUP_HANDLE = handle;
+	CALENDAR_SPACE_URI = `at://${did}/space/net.openmeet.space.calendar/self`;
+	SEED_URI = `${CALENDAR_SPACE_URI}/${did}/${EVENT_COLLECTION}/${SEED_RKEY}`;
+	NEVER_CREATED_SPACE = `at://${did}/space/net.openmeet.space.calendar/e2enevercreated`;
+}
 
 /** Keys a record would carry if it said who may read it. Placement says that,
  *  so neither container's copy of an event may carry one. */
@@ -237,40 +253,34 @@ function note(text) {
 	console.log(`      ${text}`);
 }
 
-/** A password from the environment, else from the E2E_CREDENTIALS file. */
-async function loadPassword(name) {
+/** A secret from the environment, else from the E2E_CREDENTIALS file. */
+async function loadSecret(name) {
 	const direct = process.env[name]?.trim();
-	if (direct) return { path: name, password: direct };
+	if (direct) return { path: name, value: direct };
 	if (!CREDENTIALS_PATH) throw new Error(`set ${name}, or E2E_CREDENTIALS to a file that holds it`);
 	const text = await readFile(CREDENTIALS_PATH, 'utf8').catch(() => '');
 	const pattern = new RegExp(`^${name}=['"]?([^'"\\s]+)['"]?$`);
 	for (const line of text.split('\n')) {
 		const match = pattern.exec(line.trim());
-		if (match) return { path: CREDENTIALS_PATH, password: match[1] };
+		if (match) return { path: CREDENTIALS_PATH, value: match[1] };
 	}
 	throw new Error(`no ${name} in ${CREDENTIALS_PATH}`);
 }
 
 /**
- * Fails early if the password is stale or the handle does not resolve to
- * GROUP_DID. Returns the session token for the direct space reads. The group's
- * writes still go through the app's credential path inside the Worker.
+ * Logs in as the run's group, with the password the create set, for the
+ * driver's direct space reads. The group's writes still go through the app's
+ * credential path inside the Worker.
  */
-async function checkGroupAccount(password) {
+async function logInAsGroup(password) {
 	const response = await fetch(`${PDS}/xrpc/com.atproto.server.createSession`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ identifier: GROUP_HANDLE, password })
+		body: JSON.stringify({ identifier: GROUP_DID, password })
 	});
 	const body = await response.json().catch(() => ({}));
 	if (!response.ok) {
-		const hint = response.status === 401 ? ' (the fixture password is stale)' : '';
-		throw new Error(
-			`createSession ${GROUP_HANDLE} failed: ${response.status} ${body.error ?? ''}${hint}`
-		);
-	}
-	if (body.did !== GROUP_DID) {
-		throw new Error(`${GROUP_HANDLE} resolves to ${body.did}, not the fixture group ${GROUP_DID}`);
+		throw new Error(`createSession ${GROUP_DID} failed: ${response.status} ${body.error ?? ''}`);
 	}
 	return body.accessJwt;
 }
@@ -319,7 +329,7 @@ async function must(op, args = {}) {
 }
 
 /** Bundles the Worker (./groups-e2e.build.mjs) and starts it in Miniflare. */
-async function startWorker(stateDir, password, adminPassword) {
+async function startWorker(stateDir, adminPassword, inviteCode) {
 	const started = Date.now();
 	const outDir = join(stateDir, 'bundle');
 	await bundleWorker(outDir, PLC_URL);
@@ -348,9 +358,14 @@ async function startWorker(stateDir, password, adminPassword) {
 		d1Databases: { DB: 'groups-e2e' },
 		kvNamespaces: ['OAUTH_SESSIONS'],
 		bindings: {
+			// What the app's create mints with, as on a deployment.
+			GROUP_PDS_SERVICE: PDS,
+			GROUP_HANDLE_DOMAIN: HANDLE_DOMAIN,
+			GROUP_PDS_INVITE_CODE: inviteCode,
+			// Only for the create's check that linking is configured. Nothing is
+			// fetched from it: the stand-in links the group.
+			OAUTH_PUBLIC_URL: ORIGIN,
 			E2E_GROUP_SERVICE: PDS,
-			E2E_GROUP_IDENTIFIER: GROUP_HANDLE,
-			E2E_GROUP_PASSWORD: password,
 			E2E_ADMIN_PASSWORD: adminPassword
 		},
 		defaultPersistRoot: stateDir
@@ -674,7 +689,6 @@ async function refuseOffMachine() {
 			plcUrl: PLC_URL,
 			spacesPds: PDS,
 			fixtures: [
-				['E2E_GROUP_DID', GROUP_DID],
 				['E2E_OWNER_DID', ALICE],
 				['E2E_ADMIN_DID', BOB],
 				['E2E_OUTSIDER_DID', MALLORY],
@@ -697,7 +711,7 @@ async function main() {
 	console.log('groups e2e');
 	console.log(`  pds     ${PDS}`);
 	console.log(`  plc     ${PLC_URL} (devnet only)`);
-	console.log(`  group   ${GROUP_HANDLE} (${GROUP_DID})`);
+	console.log(`  group   ${GROUP_LABEL}.${HANDLE_DOMAIN}, minted by this run`);
 	console.log(`  humans  owner ${ALICE}, admin ${BOB}, non-member ${MALLORY}`);
 	console.log(`          no-spaces member ${CAROL}`);
 	console.log('');
@@ -705,54 +719,48 @@ async function main() {
 	await refuseOffMachine();
 	ledger.startRun();
 
-	const { path, password } = await loadPassword('E2E_GROUP_PASSWORD');
+	const { path, value: adminPassword } = await loadSecret('E2E_ADMIN_PASSWORD');
 	note(`fixture credentials loaded from ${path}`);
-	const groupToken = await checkGroupAccount(password);
-	note(`${GROUP_HANDLE} authenticates as ${GROUP_DID}`);
-	const { password: adminPassword } = await loadPassword('E2E_ADMIN_PASSWORD');
 	const bobToken = await checkAdminAccount(adminPassword);
 	note(`${BOB} authenticates for their own acceptance`);
+	const { value: inviteCode } = await loadSecret('E2E_INVITE_CODE');
 
 	const stateDir = await mkdtemp(join(tmpdir(), 'groups-e2e-'));
 	let worker;
 	let group;
+	/** The driver's own session as the group, for reading its spaces directly. */
+	let groupToken;
 	const written = [];
-	/** The run's members-only events, which cleanup deletes from the calendar space. */
-	const writtenMembersOnly = [];
-	/** Set once the spaces exist, so the `finally` knows to empty them. */
-	let spacesProvisioned = false;
 	let membersSpaceUri;
 	let aboutSpaceUri;
 	let calendarSpaceUri;
-	/** Set once the group is declared, so the `finally` withdraws it. */
+	/** Set once the group may be declared, so the `finally` withdraws it. */
 	let declared = false;
-	/** Set while the about space may be private, so the `finally` makes it public. */
-	let hostPrivate = false;
 	/** Set once the admin's acceptance may exist, so the `finally` deletes it. */
 	let acceptanceWritten = false;
 	/** Set while the admin's RSVP to the seed may exist, so the `finally` deletes it. */
 	let rsvpWritten = false;
-	/** Set while the no-spaces member may be on the roster, so the `finally` removes them. */
-	let noSpacesJoined = false;
 	try {
-		worker = await startWorker(stateDir, password, adminPassword);
+		worker = await startWorker(stateDir, adminPassword, inviteCode);
 		note(`worker bundled and ready in ${worker.seconds}s (workerd, empty D1 under ${stateDir})`);
 		console.log('');
 
-		await must('linkGroup', { groupDid: GROUP_DID });
-		note(`${GROUP_DID} linked through the stand-in session`);
-		// A mint records where the group's repo lives, and the index looks there
-		// first. This run does not mint, so it records it here. Without the row, the
-		// index resolves the DID itself and refuses an http PDS, so stop here.
-		const registered = await must('registerIdentity', {
-			groupDid: GROUP_DID,
-			handle: GROUP_HANDLE,
-			pds: PDS
-		});
-		if (!registered) throw new Error(`the index did not record ${GROUP_DID}'s PDS`);
-		note(`${GROUP_DID} registered with the index as a repo on ${PDS}`);
 		// 1. create ------------------------------------------------------------
-		group = await must('createGroup', CREATE_ARGS);
+		// The create form's own path: it mints the account, makes the three spaces,
+		// writes the profile, rules, access records, space index, the owner's
+		// membership and the authz config, lists the owner, and declares the
+		// public group. The checks after this one read back what it wrote.
+		const minted = await must('runCreateGroup', { ownerDid: ALICE, data: CREATE_DATA });
+		if (minted.groupDid) useGroup(minted.groupDid, minted.handle);
+		declared = minted.groupDid !== null;
+		if (!minted.ok) throw new Error(`the create failed: ${minted.error}`);
+		groupToken = await logInAsGroup(CREATE_DATA.password);
+		await must('linkGroup', { groupDid: GROUP_DID, password: CREATE_DATA.password });
+		note(`${GROUP_HANDLE} is ${GROUP_DID}, linked through the stand-in session`);
+		group = await must('groupByDid', { groupDid: GROUP_DID });
+		membersSpaceUri = group.members_space_uri;
+		aboutSpaceUri = group.about_space_uri;
+		calendarSpaceUri = CALENDAR_SPACE_URI;
 		const members = await must('listMembers', { groupId: group.id });
 		const bundles = await must('rolePermissions', { groupId: group.id });
 		const sizes = Object.fromEntries(Object.entries(bundles).map(([r, p]) => [r, p.length]));
@@ -760,72 +768,37 @@ async function main() {
 		const seededBundles =
 			Object.keys(sizes).length === Object.keys(SEEDED_BUNDLE_SIZES).length &&
 			Object.entries(SEEDED_BUNDLE_SIZES).every(([role, n]) => sizes[role] === n);
+		const ownerLists = await Promise.all(
+			[aboutSpaceUri, membersSpaceUri].map((space) => spaceMemberList(groupToken, space))
+		);
+		const ownerEntries = ownerLists.map((list) => list.members.find((m) => m.did === ALICE));
 		record(
-			group.group_did === GROUP_DID &&
+			minted.hasRecoveryKey === true &&
+				GROUP_HANDLE === `${GROUP_LABEL}.${HANDLE_DOMAIN}` &&
 				members.length === 1 &&
 				owners.length === 1 &&
 				owners[0].did === ALICE &&
-				seededBundles,
-			'group bound to the custodial DID, one active owner, three pared role bundles',
-			`${group.name} on ${group.group_did}, roster ${members.length} (${owners.length} active owner: ${owners[0]?.did}), ` +
+				seededBundles &&
+				aboutSpaceUri?.startsWith(`at://${GROUP_DID}/space/`) &&
+				membersSpaceUri?.startsWith(`at://${GROUP_DID}/space/`) &&
+				ownerEntries[0]?.read === true &&
+				ownerEntries[0]?.write === false &&
+				ownerEntries[1]?.read === false &&
+				ownerEntries[1]?.write === true,
+			"the app's create mints the group with one owner, three pared role bundles, and the owner on both member lists",
+			`${GROUP_HANDLE} (${GROUP_DID}), recovery key handed back ${minted.hasRecoveryKey}; ` +
+				`roster ${members.length} (${owners.length} owner: ${owners[0]?.did}), ` +
 				Object.entries(sizes)
 					.map(([role, n]) => `${role} ${n}`)
-					.join(' / ')
+					.join(' / ') +
+				`; owner on the about list ${JSON.stringify(ownerEntries[0])}, members list ${JSON.stringify(ownerEntries[1])}`
 		);
 
-		// 2. join under require_approval ---------------------------------------
-		const join = await must('requestJoin', {
-			groupId: group.id,
-			did: BOB,
-			message: 'hello',
-			visibility: CREATE_VISIBILITY
-		});
-		const pendingBob = await must('membership', {
-			groupId: group.id,
-			did: BOB,
-			probe: ['CREATE_EVENT', 'MANAGE_EVENTS']
-		});
-		const requests = await must('listJoinRequests', { groupId: group.id });
-		record(
-			group.require_approval === 1 &&
-				join.outcome === 'pending' &&
-				pendingBob.role === null &&
-				pendingBob.permissions.length === 0 &&
-				requests.length === 1 &&
-				requests[0].did === BOB &&
-				requests[0].status === 'pending',
-			'join under require_approval is PENDING, not on the roster',
-			`outcome ${join.outcome}; roster row ${pendingBob.role ?? 'none'}; ` +
-				`join_request ${requests[0]?.id} ${requests[0]?.status}`
-		);
-
-		// 3. approve, then promote ---------------------------------------------
-		await must('approveJoinRequest', {
-			groupId: group.id,
-			requestId: requests[0].id,
-			deciderDid: ALICE,
-			role: 'member'
-		});
-		const asMember = await must('membership', {
-			groupId: group.id,
-			did: BOB,
-			probe: ['MANAGE_EVENTS']
-		});
-		await must('changeMemberRole', { groupId: group.id, did: BOB, role: 'admin' });
-		const asAdmin = await must('membership', {
-			groupId: group.id,
-			did: BOB,
-			probe: ['MANAGE_EVENTS', 'CREATE_EVENT']
-		});
-		record(
-			asMember.role === 'member' &&
-				asMember.can.MANAGE_EVENTS === false &&
-				asAdmin.role === 'admin' &&
-				asAdmin.can.MANAGE_EVENTS === true,
-			'approved, then promoted to admin, and MANAGE_EVENTS follows the role',
-			`member: MANAGE_EVENTS ${asMember.can.MANAGE_EVENTS}; admin: MANAGE_EVENTS ${asAdmin.can.MANAGE_EVENTS}, ` +
-				`${asAdmin.permissions.length} permissions resolved`
-		);
+		// The admin, through the roster as the members page adds and promotes: a
+		// membership record and both member lists, then the role.
+		await must('admitMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'member' });
+		await must('promoteMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'admin' });
+		note(`${BOB} admitted and promoted to admin through the roster`);
 
 		// 4. the owner's event is the group's record ----------------------------
 		const created = await must('writeGroupEvent', {
@@ -905,31 +878,6 @@ async function main() {
 			`${refused.error?.name}: ${refused.error?.message}; record unchanged at cid ${afterRefusal.cid}`
 		);
 
-		// 7. self-service leave ---------------------------------------------------
-		const left = await call('removeMember', { groupId: group.id, did: BOB });
-		const afterLeave = await must('membership', { groupId: group.id, did: BOB, probe: [] });
-		const rosterAfterLeave = await must('listMembers', { groupId: group.id });
-		record(
-			left.ok === true && afterLeave.role === null && rosterAfterLeave.every((m) => m.did !== BOB),
-			'a member can leave',
-			`roster ${rosterAfterLeave.length} row(s) (${rosterAfterLeave.map((m) => m.role).join(', ')}); ` +
-				`${BOB} membership: ${afterLeave.role ?? 'none'}`
-		);
-
-		// 8. the owner cannot -----------------------------------------------------
-		const ownerLeave = await call('removeMember', { groupId: group.id, did: ALICE });
-		const rosterAfterOwner = await must('listMembers', { groupId: group.id });
-		const ownerStill = rosterAfterOwner.find((m) => m.did === ALICE);
-		record(
-			ownerLeave.ok === false &&
-				ownerLeave.error.name === 'GroupRuleError' &&
-				ownerLeave.error.reason === 'owner-protected' &&
-				ownerStill?.role === 'owner',
-			'the owner cannot leave',
-			`${ownerLeave.error?.name}(${ownerLeave.error?.reason}): ${ownerLeave.error?.message}; ` +
-				`owner still ${ownerStill?.role}`
-		);
-
 		// 9. a cover image -----------------------------------------------------------
 		// The editor uploads the image first, into the group's repo, then cites it
 		// in the record. The PDS serves the blob only once a record cites it.
@@ -965,117 +913,40 @@ async function main() {
 		);
 
 		// 10. the group's public face, as records --------------------------------
-		// `createGroup` provisions nothing, so the three spaces are made here. Only a
-		// live PDS can prove the profile and rules read back, because the PDS defines
-		// the com.atproto.space.* parameters and the space URI form.
-		//
-		// The group persists across runs, and createSpace keeps an existing space's
-		// read policy, so whether this run creates the calendar space or finds one is
-		// read first, and check 13c says which it read the policy of.
-		const calendarBefore = await spaceReadPolicy(groupToken, CALENDAR_SPACE_URI);
-		const calendarOrigin =
-			calendarBefore.status === 200
-				? `found from an earlier run, read policy ${calendarBefore.readPolicy}`
-				: `created by this run (getSpace before: ${calendarBefore.error ?? calendarBefore.status})`;
-		const spaces = await must('provisionSpaces', {
-			groupId: group.id,
-			visibility: CREATE_VISIBILITY
-		});
-		note(`about space    ${spaces.aboutSpaceUri}`);
-		note(`members space  ${spaces.membersSpaceUri}`);
-		note(`calendar space ${spaces.calendarSpaceUri}, ${calendarOrigin}`);
-		membersSpaceUri = spaces.membersSpaceUri;
-		aboutSpaceUri = spaces.aboutSpaceUri;
-		calendarSpaceUri = spaces.calendarSpaceUri;
-		spacesProvisioned = true;
-		// Drop any authz config a previous run left (see dropAuthz in the worker).
-		const stale = await must('dropAuthz', { groupId: group.id });
-		if (stale.dropped.length) note(`reset a leftover authz config (${stale.dropped.join(', ')})`);
-		// An existing space keeps its old read policy, so set this run's choice and
-		// read it back. The policy provisioning left is logged first, because the set
-		// would hide a new space provisioned with the wrong one.
-		const provisionedPolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
-		note(
-			`about space read policy as provisioning left it: ${provisionedPolicy.readPolicy ?? provisionedPolicy.error ?? provisionedPolicy.status}`
-		);
-		await must('setReadPolicy', {
-			groupId: group.id,
-			callerDid: ALICE,
-			visibility: CREATE_VISIBILITY
-		});
+		// Only a live PDS can prove the profile and rules read back, because the PDS
+		// defines the com.atproto.space.* parameters and the space URI form.
+		note(`about space    ${aboutSpaceUri}`);
+		note(`members space  ${membersSpaceUri}`);
+		note(`calendar space ${calendarSpaceUri}`);
 		const startPolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
-		if (startPolicy.readPolicy !== READ_POLICY[CREATE_VISIBILITY]) {
-			throw new Error(
-				`the about space reads back ${startPolicy.readPolicy ?? startPolicy.error ?? startPolicy.status}, not ${READ_POLICY[CREATE_VISIBILITY]}`
-			);
-		}
-		note(`about space read policy ${startPolicy.readPolicy}`);
+		const about = await must('readGroupAbout', { groupId: group.id });
+		record(
+			startPolicy.readPolicy === READ_POLICY[CREATE_VISIBILITY] &&
+				about.profile?.name === CREATE_DATA.name &&
+				about.profile?.locationName === CREATE_DATA.locationName &&
+				// From the visibility and require_approval, never from the form.
+				about.profile?.joinPolicy === 'approval' &&
+				about.rules.map((rule) => rule.text).join('|') === 'Be kind|No spam|Stay on topic',
+			'the create’s profile and rules read back out of the about space with the group’s own session',
+			`read policy ${startPolicy.readPolicy}; joinPolicy ${about.profile?.joinPolicy}; ` +
+				`${about.rules.length} rule(s); first rule ${about.rules[0]?.uri}`
+		);
 
 		// 10b. the about space's access record says the visibility ----------------
 		// The standard keeps visibility in this record, but a simplespace host
 		// enforces the read policy and never reads the record, so the record must
-		// say what the policy says. Written the other way first, so a record left
-		// by an earlier run cannot pass for this run's write.
-		const OTHER_VISIBILITY = CREATE_VISIBILITY === 'public' ? 'private' : 'public';
-		await must('writeAboutAccess', {
-			groupId: group.id,
-			callerDid: ALICE,
-			visibility: OTHER_VISIBILITY
-		});
-		const otherAccess = await spaceRecord(
-			groupToken,
-			aboutSpaceUri,
-			'group.opensocial.access',
-			'self'
-		);
-		await must('writeAboutAccess', {
-			groupId: group.id,
-			callerDid: ALICE,
-			visibility: CREATE_VISIBILITY
-		});
-		const aboutAccess = await spaceRecord(
-			groupToken,
-			aboutSpaceUri,
-			'group.opensocial.access',
-			'self'
-		);
+		// say what the policy says.
+		const aboutAccess = await spaceRecord(groupToken, aboutSpaceUri, ACCESS_COLLECTION, 'self');
 		record(
-			otherAccess.value?.public === (OTHER_VISIBILITY === 'public') &&
-				aboutAccess.status === 200 &&
+			aboutAccess.status === 200 &&
 				aboutAccess.value?.public === (startPolicy.readPolicy === READ_POLICY.public) &&
 				JSON.stringify(aboutAccess.value?.readRoles) ===
 					JSON.stringify(['owner', 'admin', 'member']) &&
 				JSON.stringify(aboutAccess.value?.grants) === '[]',
 			'the about space’s access record says what its read policy says',
-			`read policy ${startPolicy.readPolicy}; access public ${aboutAccess.value?.public} ` +
-				`(${otherAccess.value?.public} when written ${OTHER_VISIBILITY}), ` +
+			`read policy ${startPolicy.readPolicy}; access public ${aboutAccess.value?.public}, ` +
 				`readRoles ${JSON.stringify(aboutAccess.value?.readRoles)}, ` +
 				`grants ${JSON.stringify(aboutAccess.value?.grants)}`
-		);
-
-		await must('writeGroupProfile', {
-			groupId: group.id,
-			callerDid: ALICE,
-			visibility: CREATE_VISIBILITY,
-			name: 'groups e2e, from records',
-			description: 'Written into the about space, not a column.',
-			locationName: 'e2e group place'
-		});
-		await must('setGroupRules', {
-			groupId: group.id,
-			callerDid: ALICE,
-			rules: 'Be kind\nNo spam\nStay on topic'
-		});
-		const about = await must('readGroupAbout', { groupId: group.id });
-		record(
-			about.profile?.name === 'groups e2e, from records' &&
-				about.profile?.locationName === 'e2e group place' &&
-				// From the visibility and require_approval, never from the form.
-				about.profile?.joinPolicy === 'approval' &&
-				about.rules.map((rule) => rule.text).join('|') === 'Be kind|No spam|Stay on topic',
-			'profile + rules read back out of the about space with the group’s own session',
-			`joinPolicy ${about.profile?.joinPolicy}; ${about.rules.length} rule(s); ` +
-				`first rule ${about.rules[0]?.uri}`
 		);
 
 		// 11. a rule's citation survives an edit to another rule ------------------
@@ -1108,9 +979,9 @@ async function main() {
 		const rebuilt = await must('rebuildGroupCache', { groupId: group.id });
 		record(
 			rebuilt.outcome === 'repaired' &&
-				rebuilt.row.name === 'groups e2e, from records' &&
-				rebuilt.row.description === 'Written into the about space, not a column.' &&
-				rebuilt.row.location_name === 'e2e group place' &&
+				rebuilt.row.name === CREATE_DATA.name &&
+				rebuilt.row.description === CREATE_DATA.description &&
+				rebuilt.row.location_name === CREATE_DATA.locationName &&
 				rebuilt.row.require_approval === 1 &&
 				!('visibility' in rebuilt.row),
 			'a corrupted cache rebuilds from records, and the row carries no visibility',
@@ -1119,17 +990,9 @@ async function main() {
 		);
 
 		// 13. the roster is records ------------------------------------------------
-		// Read back through the app's reader and straight from the PDS. That proves
-		// the records exist and that a DID works as a record key.
-		await must('writeGroupAccess', { groupId: group.id, callerDid: ALICE });
-		await must('putMembership', {
-			groupId: group.id,
-			callerDid: ALICE,
-			did: ALICE,
-			roles: ['owner']
-		});
-		await must('admitMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'member' });
-		await must('promoteMember', { groupId: group.id, callerDid: ALICE, did: BOB, role: 'admin' });
+		// The owner's record from the create and the admin's from the roster, read
+		// back through the app's reader and straight from the PDS. That proves the
+		// records exist and that a DID works as a record key.
 
 		const recorded = await must('recordedRoster', { groupId: group.id, did: BOB });
 		const bobsRecord = await spaceRecord(
@@ -1167,20 +1030,10 @@ async function main() {
 		);
 
 		// 13b. the members space indexes all three spaces ----------------------------
-		// One entry per space, the two well-known ones included, and the calendar
-		// space passed as a create passes it. The key is a TID, so a writer that did
-		// not list the index first would add a second entry on every write: the
-		// second write here must add nothing.
-		const staleIndex = await must('dropSpaceIndex', { groupId: group.id });
-		if (staleIndex.dropped.length) {
-			note(`reset ${staleIndex.dropped.length} leftover space index entr(ies)`);
-		}
-		const firstIndexWrite = await must('writeSpaceIndex', {
-			groupId: group.id,
-			callerDid: ALICE,
-			calendarSpaceUri
-		});
-		const secondIndexWrite = await must('writeSpaceIndex', {
+		// One entry per space, the two well-known ones included. The key is a TID,
+		// so a writer that did not list the index first would add a second entry on
+		// every write: a write after the create's must add nothing.
+		const indexWrite = await must('writeSpaceIndex', {
 			groupId: group.id,
 			callerDid: ALICE,
 			calendarSpaceUri
@@ -1192,48 +1045,32 @@ async function main() {
 				spaceIndex.records.length === 3 &&
 				JSON.stringify(indexedSpaces) ===
 					JSON.stringify([aboutSpaceUri, membersSpaceUri, CALENDAR_SPACE_URI].sort()) &&
-				firstIndexWrite.added.length === 3 &&
-				secondIndexWrite.added.length === 0 &&
-				secondIndexWrite.removed.length === 0,
+				indexWrite.added.length === 0 &&
+				indexWrite.removed.length === 0,
 			'the members space indexes all three spaces, one entry each',
 			`listRecords ${spaceIndex.status}: ${spaceIndex.records.length} group.opensocial.space ` +
-				`record(s) for ${indexedSpaces.join(', ')}; the first write added ` +
-				`${firstIndexWrite.added.length}, the second ${secondIndexWrite.added.length}`
+				`record(s) for ${indexedSpaces.join(', ')}; a second write added ` +
+				`${indexWrite.added.length} and removed ${indexWrite.removed.length}`
 		);
 
 		// 13c. the calendar space is the members' alone ------------------------------
-		// It will hold members-only events, so its read policy is the member list even
+		// It holds members-only events, so its read policy is the member list even
 		// for this public group: the about space's policy here would let any signed-in
 		// account read them. The policy is read from the host, not taken from what
-		// provisioning sent. Its access record is deleted first, so a record left by an
-		// earlier run cannot pass for this run's write, and its member list stays
-		// empty, since the app reads the space as the group.
-		await must('dropCalendarAccess', { groupId: group.id, space: calendarSpaceUri });
-		const calendarAccessBefore = await spaceRecord(
-			groupToken,
-			calendarSpaceUri,
-			'group.opensocial.access',
-			'self'
-		);
-		await must('writeGroupAccess', {
-			groupId: group.id,
-			callerDid: ALICE,
-			space: calendarSpaceUri
-		});
+		// provisioning sent. Its member list stays empty, since the app reads the
+		// space as the group.
 		const calendarPolicy = await spaceReadPolicy(groupToken, calendarSpaceUri);
 		const calendarAccess = await spaceRecord(
 			groupToken,
 			calendarSpaceUri,
-			'group.opensocial.access',
+			ACCESS_COLLECTION,
 			'self'
 		);
 		const calendarMembers = await spaceMemberList(groupToken, calendarSpaceUri);
 		record(
-			calendarSpaceUri === CALENDAR_SPACE_URI &&
-				CREATE_VISIBILITY === 'public' &&
+			CREATE_VISIBILITY === 'public' &&
 				calendarPolicy.status === 200 &&
 				calendarPolicy.readPolicy === READ_POLICY.private &&
-				notFound(calendarAccessBefore) &&
 				calendarAccess.status === 200 &&
 				calendarAccess.value?.public === false &&
 				JSON.stringify(calendarAccess.value?.readRoles) ===
@@ -1243,9 +1080,8 @@ async function main() {
 				calendarMembers.members.length === 0,
 			'the calendar space is member-list read for a public group, holds access/self not ' +
 				'public, and lists no members',
-			`${calendarSpaceUri} (${calendarOrigin}); getSpace ${calendarPolicy.status} read policy ` +
-				`${calendarPolicy.readPolicy ?? calendarPolicy.error}; access/self before the write ` +
-				`${calendarAccessBefore.error ?? calendarAccessBefore.status}, after ` +
+			`${calendarSpaceUri}: getSpace ${calendarPolicy.status} read policy ` +
+				`${calendarPolicy.readPolicy ?? calendarPolicy.error}; access/self ` +
 				`${calendarAccess.status} public ${calendarAccess.value?.public} readRoles ` +
 				`${JSON.stringify(calendarAccess.value?.readRoles)}; listMembers ${calendarMembers.status}: ` +
 				`${calendarMembers.members.length} member(s)` +
@@ -1255,37 +1091,24 @@ async function main() {
 		// 13d-13h. the members-only slice --------------------------------------------
 		// What the events tab reads from the calendar space, viewer by viewer. One
 		// members-only event is seeded first, by a raw putRecord as the group with no
-		// app code, at a fixed key that a re-run finds. Each read is the app's own,
-		// behind its own roster check, and comes back with every request it sent
-		// through the group's session, so "no read" is a count. A seed left by an
-		// earlier run cannot stand in for this run's read: the member's slice must
-		// match what the PDS lists now, cid included, and must have sent a listing.
-		const seedBefore = await spaceRecord(
+		// app code. Each read is the app's own, behind its own roster check, and
+		// comes back with every request it sent through the group's session, so "no
+		// read" is a count.
+		const seedPut = await putSpaceRecord(
 			groupToken,
 			CALENDAR_SPACE_URI,
 			EVENT_COLLECTION,
-			SEED_RKEY
-		);
-		let seedOrigin = 'found from an earlier run';
-		if (!(seedBefore.status === 200 && seedBefore.value?.name === SEED_NAME)) {
-			const put = await putSpaceRecord(
-				groupToken,
-				CALENDAR_SPACE_URI,
-				EVENT_COLLECTION,
-				SEED_RKEY,
-				{
-					$type: EVENT_COLLECTION,
-					...eventRecord(SEED_NAME, { createdAt: '2026-10-06T12:00:00.000Z' }),
-					description:
-						'Members-only seed for apps/web/scripts/groups-e2e.mjs. Kept across runs at a fixed key.'
-				}
-			);
-			if (put.status !== 200) {
-				throw new Error(`seeding ${SEED_URI} failed: ${put.status} ${put.error ?? ''}`);
+			SEED_RKEY,
+			{
+				$type: EVENT_COLLECTION,
+				...eventRecord(SEED_NAME, { createdAt: '2026-10-06T12:00:00.000Z' }),
+				description: 'Members-only seed for apps/web/scripts/groups-e2e.mjs.'
 			}
-			seedOrigin = `created by this run (getRecord before: ${seedBefore.error ?? seedBefore.status})`;
+		);
+		if (seedPut.status !== 200) {
+			throw new Error(`seeding ${SEED_URI} failed: ${seedPut.status} ${seedPut.error ?? ''}`);
 		}
-		note(`members-only seed ${SEED_URI}: ${seedOrigin}`);
+		note(`members-only seed ${SEED_URI}`);
 		const seed = await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, SEED_RKEY);
 		const listedEvents = await spaceRecords(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION);
 		// The live listing carries the key and no uri; a uri is read too, in case.
@@ -1412,7 +1235,6 @@ async function main() {
 			);
 		}
 		const moRkey = moCreate.value.rkey;
-		writtenMembersOnly.push(moRkey);
 		const moUri = `${CALENDAR_SPACE_URI}/${GROUP_DID}/${EVENT_COLLECTION}/${moRkey}`;
 		const moRead = await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, moRkey);
 		const moAsWritten =
@@ -1661,7 +1483,6 @@ async function main() {
 			placement: 'members',
 			record: eventRecord(`${membersOnlyName}, with an image`, { image: moImage })
 		});
-		if (moWithImage.ok) writtenMembersOnly.push(moWithImage.value.rkey);
 		const moImageRead = moWithImage.ok
 			? await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, moWithImage.value.rkey)
 			: {};
@@ -2003,7 +1824,6 @@ async function main() {
 		const outsiderCancel = await outsiderOp('delete');
 		const outsiderRead = await outsiderOp('read');
 		const noSpacesBefore = await must('noSpacesCalls');
-		noSpacesJoined = true;
 		await must('admitMember', { groupId: group.id, callerDid: ALICE, did: CAROL, role: 'member' });
 		const carolOp = (asked, stamp) =>
 			must('membersOnlyRsvp', {
@@ -2036,7 +1856,6 @@ async function main() {
 			!carolRecords.memberships.some((m) => m.subject === CAROL) &&
 			!carolRows.some((m) => m.did === CAROL) &&
 			carolLists.every((list) => list.status === 200 && !list.members.some((m) => m.did === CAROL));
-		if (carolLeft) noSpacesJoined = false;
 		const outsiderOps = [outsiderPut, outsiderCancel, outsiderRead];
 		record(
 			outsiderOps.every(
@@ -2131,17 +1950,18 @@ async function main() {
 		);
 
 		// 14. the space's own member list is write-only --------------------------
-		// An admitted member goes on it so the PDS tracks the acceptance they write
-		//. (Spec: FR-206.) A DID that could read this space would see the whole
-		// roster with its own credential, bypassing the app's gate, so every entry
-		// is read:false write:true.
+		// The owner and an admitted member go on it so the PDS tracks the
+		// acceptance each writes. A DID that could read this space would see the
+		// whole roster with its own credential, bypassing the app's gate, so every
+		// entry is read:false write:true. (Spec: FR-206.)
 		const memberList = await spaceMemberList(groupToken, membersSpaceUri);
 		const writeOnly = memberList.members.every((m) => m.read === false && m.write === true);
 		record(
 			memberList.status === 200 &&
 				writeOnly &&
-				memberList.members.map((m) => m.did).join(',') === BOB,
-			'an admitted member is on the members space’s own member list, write-only',
+				JSON.stringify(memberList.members.map((m) => m.did).sort()) ===
+					JSON.stringify([ALICE, BOB].sort()),
+			'the owner and an admitted member are on the members space’s own member list, write-only',
 			`listMembers ${memberList.status}: ` +
 				`${memberList.members.map((m) => `${m.did} read:${m.read} write:${m.write}`).join('; ') || 'empty'}` +
 				`${memberList.error ? ` (${memberList.error})` : ''}`
@@ -2335,8 +2155,6 @@ async function main() {
 		// has listed them there write-only. Approval adds the group's half, and the
 		// roster, which reads acceptances by DID with the group's credential, then
 		// shows them confirmed.
-		const reset = await deleteOwnAcceptance(bobToken, membersSpaceUri);
-		note(`reset ${BOB}'s acceptance before the acceptance checks (deleteRecord ${reset})`);
 		acceptanceWritten = true;
 		const asked = await must('joinGroup', {
 			groupId: group.id,
@@ -2425,7 +2243,6 @@ async function main() {
 		// and their sign-in still works. The premise is checked first-hand: their
 		// PDS must refuse the group's space read itself, since a RecordNotFound
 		// would mean it serves spaces and the check proves nothing about step 4.
-		noSpacesJoined = true;
 		const carolAsked = await must('joinGroup', {
 			groupId: group.id,
 			callerDid: CAROL,
@@ -2468,17 +2285,11 @@ async function main() {
 			asMember: true,
 			session: 'no-spaces'
 		});
-		noSpacesJoined = false;
 		note(`${CAROL} left (roster back to the owner alone)`);
 
 		// 19. the declaration: the record that lets other apps discover the group --
-		// Asserted on the raw JSON an anonymous peer app gets, not through our parser.
-		await must('reconcileDeclaration', {
-			groupId: group.id,
-			callerDid: ALICE,
-			visibility: 'public'
-		});
-		declared = true;
+		// The create declared the public group. Asserted on the raw JSON an anonymous
+		// peer app gets, not through our parser.
 		const declaration = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
 		record(
 			declaration.status === 200 &&
@@ -2518,7 +2329,6 @@ async function main() {
 		// Here the group is made private at the host, through the settings save's
 		// call, and the declaration follows the host's answer. The second reconcile
 		// re-sends the withdrawal, which must be a no-op at the PDS.
-		hostPrivate = true;
 		await must('setReadPolicy', { groupId: group.id, callerDid: ALICE, visibility: 'private' });
 		const privatePolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
 		const aligned = await must('reconcileDeclaration', {
@@ -2557,6 +2367,7 @@ async function main() {
 		const requestsNow = await must('listJoinRequests', { groupId: group.id, status: 'all' });
 		const ownerGate = await must('gate', { groupId: group.id, did: ALICE });
 		const strangerGate = await must('gate', { groupId: group.id, did: MALLORY });
+		const privateNow = await spaceReadPolicy(groupToken, aboutSpaceUri);
 		await must('setReadPolicy', {
 			groupId: group.id,
 			callerDid: ALICE,
@@ -2568,12 +2379,11 @@ async function main() {
 			callerDid: ALICE,
 			visibility: 'host'
 		});
-		if (backPolicy.readPolicy === READ_POLICY.public) hostPrivate = false;
 		record(
 			!strangerJoin.ok &&
 				strangerJoin.error.reason === 'invite-only' &&
 				!requestsNow.some((request) => request.did === MALLORY) &&
-				ownerGate.visibility === 'private' &&
+				privateNow.readPolicy === READ_POLICY.private &&
 				ownerGate.canSee === true &&
 				strangerGate.canSee === false &&
 				backPolicy.readPolicy === READ_POLICY.public &&
@@ -2581,7 +2391,7 @@ async function main() {
 			"a private group refuses a stranger's join and records no request; its gate admits the owner only; set back to public, the app reads it as public",
 			`${MALLORY} join: ${strangerJoin.ok ? `ACCEPTED (${strangerJoin.value.outcome})` : strangerJoin.error.reason}; ` +
 				`requests from them ${requestsNow.filter((request) => request.did === MALLORY).length}; ` +
-				`gate: owner ${ownerGate.canSee}, stranger ${strangerGate.canSee} (host ${ownerGate.visibility}); ` +
+				`gate: owner ${ownerGate.canSee}, stranger ${strangerGate.canSee} (host ${privateNow.readPolicy}); ` +
 				`back: getSpace ${backPolicy.readPolicy ?? backPolicy.error ?? backPolicy.status}, app reads ${backAligned.visibility}`
 		);
 
@@ -2642,12 +2452,10 @@ async function main() {
 		try {
 			restored = await must('rebuildGroup', { groupDid: GROUP_DID });
 		} finally {
-			// Cleanup needs a row: the restored one, or else a fresh one on the same DID.
-			if (restored) group = restored.group;
-			else {
-				group = await must('createGroup', CREATE_ARGS);
-				await must('provisionSpaces', { groupId: group.id, visibility: CREATE_VISIBILITY });
-			}
+			// Cleanup needs a row: the restored one, or else a bare one on the same DID.
+			group = restored
+				? restored.group
+				: await must('bindRow', { groupDid: GROUP_DID, ownerDid: ALICE });
 		}
 		const afterRebuild = await must('groupSnapshot', { groupDid: GROUP_DID });
 		// id and updated_at are regenerated, and created_at comes from the profile.
@@ -2678,6 +2486,9 @@ async function main() {
 				`${afterRebuild.grants.length} role grant row(s) ${sameGrants ? 'identical' : 'DIFFER'}`
 		);
 	} finally {
+		// The group is this run's alone and is left behind, so cleanup undoes only
+		// what shows outside it: its public events and its declaration, and the
+		// records the admin wrote into their own repo.
 		if (written.length > 0) console.log('');
 		for (const rkey of written) {
 			const uri = `at://${GROUP_DID}/${EVENT_COLLECTION}/${rkey}`;
@@ -2702,32 +2513,6 @@ async function main() {
 				);
 			}
 		}
-		// A members-only event is deleted where it is, and confirmed gone with the
-		// group's own space read: an anonymous read misses it whether or not it is
-		// still there, so it could not tell.
-		for (const rkey of writtenMembersOnly) {
-			const uri = `${CALENDAR_SPACE_URI}/${GROUP_DID}/${EVENT_COLLECTION}/${rkey}`;
-			let refusal;
-			try {
-				const deleted = await call('deleteGroupEvent', {
-					groupId: group.id,
-					callerDid: ALICE,
-					rkey,
-					placement: 'members'
-				});
-				if (!deleted.ok) refusal = `${deleted.error.name}: ${deleted.error.message}`;
-			} catch (error) {
-				refusal = error.message;
-			}
-			const after = await spaceRecord(groupToken, CALENDAR_SPACE_URI, EVENT_COLLECTION, rkey);
-			if (notFound(after)) {
-				note(`cleaned up ${uri} (${after.error}, read as the group)`);
-			} else {
-				console.log(
-					`WARN  could not confirm members-only ${uri} is gone: ${refusal ?? after.error ?? after.status}`
-				);
-			}
-		}
 		// The admin's RSVP to the seed, with their own session: should 13t or 13v
 		// have stopped before its cancel, it would be in the calendar space.
 		if (rsvpWritten) {
@@ -2742,8 +2527,20 @@ async function main() {
 				console.log(`WARN  could not delete ${BOB}'s RSVP to the seed: ${error.message}`);
 			}
 		}
+		// Should a check have stopped before the admin left, their acceptance would
+		// still be in their repo.
+		if (acceptanceWritten) {
+			try {
+				await deleteOwnAcceptance(bobToken, membersSpaceUri);
+				const after = await ownAcceptance(bobToken, membersSpaceUri);
+				if (notFound(after)) note(`deleted ${BOB}'s acceptance (${after.error})`);
+				else console.log(`WARN  ${BOB}'s acceptance may be left: ${after.error ?? after.status}`);
+			} catch (error) {
+				console.log(`WARN  could not delete ${BOB}'s acceptance: ${error.message}`);
+			}
+		}
 		// A leftover declaration would keep announcing a test group to the network.
-		if (declared) {
+		if (declared && group) {
 			try {
 				await call('reconcileDeclaration', {
 					groupId: group.id,
@@ -2760,95 +2557,6 @@ async function main() {
 				}
 			} catch (error) {
 				console.log(`WARN  could not withdraw the declaration: ${error.message}`);
-			}
-		}
-		if (spacesProvisioned && hostPrivate) {
-			// Before the owner's membership is dropped below, while the owner may still
-			// change the policy.
-			try {
-				const reset = await call('setReadPolicy', {
-					groupId: group.id,
-					callerDid: ALICE,
-					visibility: CREATE_VISIBILITY
-				});
-				const policy = await spaceReadPolicy(groupToken, aboutSpaceUri);
-				if (reset.ok && policy.readPolicy === READ_POLICY[CREATE_VISIBILITY]) {
-					note(`put the about space back to ${policy.readPolicy}`);
-				} else {
-					console.log(
-						`WARN  the about space may still be private: ${reset.ok ? policy.readPolicy : reset.error.message}`
-					);
-				}
-			} catch (error) {
-				console.log(`WARN  could not reset the about space read policy: ${error.message}`);
-			}
-		}
-		if (spacesProvisioned && acceptanceWritten) {
-			// The admin's membership record too, should a check have stopped before
-			// they left.
-			try {
-				await call('dropMembership', { groupId: group.id, callerDid: BOB, did: BOB });
-				await deleteOwnAcceptance(bobToken, membersSpaceUri);
-				const after = await ownAcceptance(bobToken, membersSpaceUri);
-				if (notFound(after)) note(`deleted ${BOB}'s acceptance (${after.error})`);
-				else console.log(`WARN  ${BOB}'s acceptance may be left: ${after.error ?? after.status}`);
-			} catch (error) {
-				console.log(`WARN  could not clean up ${BOB}'s acceptance: ${error.message}`);
-			}
-		}
-		if (spacesProvisioned && noSpacesJoined) {
-			// Leaving takes them off both member lists; the record is dropped directly
-			// too, should they have stopped short of membership.
-			try {
-				await call('leaveGroup', {
-					groupId: group.id,
-					callerDid: CAROL,
-					asMember: true,
-					session: 'no-spaces'
-				});
-				await call('dropMembership', { groupId: group.id, callerDid: CAROL, did: CAROL });
-				const after = await call('recordedRoster', { groupId: group.id });
-				if (after.ok && !after.value.memberships.some((m) => m.subject === CAROL)) {
-					note(`took ${CAROL} off the roster`);
-				} else {
-					console.log(`WARN  ${CAROL} may be left on the roster`);
-				}
-			} catch (error) {
-				console.log(`WARN  could not take ${CAROL} off the roster: ${error.message}`);
-			}
-		}
-		if (spacesProvisioned) {
-			try {
-				await call('setGroupRules', { groupId: group.id, callerDid: ALICE, rules: '' });
-				const leftover = await call('readGroupAbout', { groupId: group.id });
-				const remaining = leftover.ok ? leftover.value.rules.length : -1;
-				if (remaining === 0) {
-					note('cleaned up the about space rule records (profile left at self)');
-				} else {
-					console.log(`WARN  ${remaining} rule record(s) left in the about space`);
-				}
-			} catch (error) {
-				console.log(`WARN  could not clean up the about space: ${error.message}`);
-			}
-			try {
-				// The authz config goes first. See dropAuthz in the worker.
-				const authz = await call('dropAuthz', { groupId: group.id });
-				if (authz.ok) note(`dropped the authz config (${authz.value.dropped.length} record(s))`);
-				else console.log(`WARN  could not drop the authz config: ${authz.error.message}`);
-				// No roster act removes the owner, so the record is dropped directly.
-				await call('dropMembership', { groupId: group.id, callerDid: ALICE, did: ALICE });
-				const leftover = await call('recordedRoster', { groupId: group.id });
-				const remaining = leftover.ok ? leftover.value.memberships.length : -1;
-				if (remaining === 0) {
-					note(
-						'cleaned up the members space membership records (the access record is ' +
-							'left at its fixed key, which a re-run overwrites)'
-					);
-				} else {
-					console.log(`WARN  ${remaining} membership record(s) left in the members space`);
-				}
-			} catch (error) {
-				console.log(`WARN  could not clean up the members space: ${error.message}`);
 			}
 		}
 		await worker?.stop();

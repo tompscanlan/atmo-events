@@ -217,35 +217,36 @@ has them commented out.
 ## Checks against a live PDS
 
 Unit tests run with `vitest` and need no network. The e2e script runs the real code against a PDS on
-an atproto-devnet sandbox and deletes what it writes. It runs against this machine only: it refuses
-a setting that names any other host, and it counts every request the run makes to show that none
-left:
+an atproto-devnet sandbox. It runs against this machine only: it refuses a setting that names any
+other host, and it counts every request the run makes to show that none left:
 
 ```bash
-node apps/web/scripts/groups-e2e.mjs   # the group flow, 53 checks, under the devnet's https-run
+node apps/web/scripts/groups-e2e.mjs   # the group flow, 49 checks, under the devnet's https-run
 ```
 
-The e2e script reads its accounts from the environment, and stops before any network call when one
-is missing:
+Each run makes its own group through the app's create, which mints a new account on the devnet PDS,
+so nothing an earlier run wrote can stand in for this run's writes. The group is left behind, and
+cleanup undoes only what shows outside it: its public events, its declaration, and the admin's own
+records. The script reads its settings and accounts from the environment, and stops before any
+network call when one is missing:
 
-| name                 | meaning                                                           |
-| -------------------- | ----------------------------------------------------------------- |
-| `E2E_PDS`            | the devnet PDS that serves Spaces and hosts the group account     |
-| `E2E_PLC_URL`        | the devnet's PLC directory, the only place a DID is resolved      |
-| `E2E_GROUP_DID`      | an existing group account's DID                                   |
-| `E2E_GROUP_HANDLE`   | that account's handle                                             |
-| `E2E_GROUP_PASSWORD` | a password for it (an app password works)                         |
-| `E2E_CREDENTIALS`    | instead of the two passwords, an env file that has them           |
-| `E2E_OWNER_DID`      | the person who owns the group                                     |
-| `E2E_ADMIN_DID`      | a person who joins and is promoted to admin, on `E2E_PDS`         |
-| `E2E_ADMIN_PASSWORD` | their password, for the acceptance and RSVP they write and delete |
-| `E2E_OUTSIDER_DID`   | a person who is never a member                                    |
-| `E2E_NOSPACES_DID`   | a person on a devnet PDS that serves no spaces, not `E2E_PDS`     |
+| name                 | meaning                                                            |
+| -------------------- | ------------------------------------------------------------------ |
+| `E2E_PDS`            | the devnet PDS that serves Spaces, where the run mints its group   |
+| `E2E_PLC_URL`        | the devnet's PLC directory, the only place a DID is resolved       |
+| `E2E_HANDLE_DOMAIN`  | the domain the group's handle is minted under                      |
+| `E2E_INVITE_CODE`    | an invite code for `E2E_PDS`, one use per run                      |
+| `E2E_CREDENTIALS`    | instead of the invite code and the password, an env file with them |
+| `E2E_OWNER_DID`      | the person who owns the group                                      |
+| `E2E_ADMIN_DID`      | a person who is admitted and promoted to admin, on `E2E_PDS`       |
+| `E2E_ADMIN_PASSWORD` | their password, for the acceptance and RSVP they write and delete  |
+| `E2E_OUTSIDER_DID`   | a person who is never a member                                     |
+| `E2E_NOSPACES_DID`   | a person on a devnet PDS that serves no spaces, not `E2E_PDS`      |
 
 The e2e cannot hold a real linked session, which needs the deployment's OAuth client key, so it
-links the group with a stand-in (`scripts/groups-e2e.oauth.ts`) whose session logs in with
-`E2E_GROUP_PASSWORD`. Every write still goes through the app's linked branch; the scope a real link
-carries is checked by a walk through a deployed site with a linked group instead. The admin's
+links the group with a stand-in (`scripts/groups-e2e.oauth.ts`) whose session logs in with the
+password the run's create set. Every write still goes through the app's linked branch; the scope a
+real link carries is checked by a walk through a deployed site with a linked group instead. The admin's
 acceptance and RSVP are written the same way, through a stand-in for their own session that logs in
 with `E2E_ADMIN_PASSWORD`, so the consent a real sign-in shows is also left to the walk. The
 no-spaces member needs no password: their stand-in answers the scope a PDS without spaces grants and
