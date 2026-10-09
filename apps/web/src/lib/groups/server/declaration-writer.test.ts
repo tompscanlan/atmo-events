@@ -10,6 +10,24 @@
 //     of this runs for real in ./browse-index.test.ts;
 //   * the gate is MANAGE_GROUP, since announcing a group changes its face.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+/** Every URI the index was told about, in order. `down` makes it throw instead. */
+const index = vi.hoisted(() => ({ told: [] as string[], down: null as Error | null }));
+
+// The index runs in process over D1, and a real one would need its own database
+// and an appview. So its client is replaced, and only that: the notifier that
+// calls it is the app's own, failure handling included.
+vi.mock('$lib/contrail/index', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/contrail/index')>()),
+	getServerClient: () => ({
+		async post(nsid: string, { input }: { input: { uris: string[] } }) {
+			if (nsid !== 'rsvp.atmo.notifyOfUpdate') throw new Error(`unexpected index call: ${nsid}`);
+			if (index.down) throw index.down;
+			index.told.push(...input.uris);
+			return { ok: true, data: {} };
+		}
+	})
+}));
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 
 import {
@@ -227,10 +245,14 @@ describe('removeGroupDeclaration', () => {
 describe('telling our index about a withdrawal', () => {
 	const uri = `at://${GROUP_DID}/${GROUP_DECLARATION_COLLECTION}/${GROUP_DECLARATION_RKEY}`;
 
+	beforeEach(() => {
+		index.told = [];
+		index.down = null;
+	});
 	afterEach(() => vi.restoreAllMocks());
 
 	it('tells the index about the declaration once the PDS has deleted it', async () => {
-		const steps: string[] = [];
+		const toldBeforeDelete: number[] = [];
 		await reconcileGroupDeclaration({
 			db,
 			env,
@@ -238,19 +260,16 @@ describe('telling our index about a withdrawal', () => {
 			visibility: 'private',
 			callerDid: OWNER,
 			writer: async (write) => {
-				steps.push(`pds ${write.intent}`);
+				toldBeforeDelete.push(index.told.length);
 				return writer(write);
-			},
-			notify: async (notified) => {
-				steps.push(`index ${notified}`);
 			}
 		});
 
-		expect(steps).toEqual(['pds delete', `index ${uri}`]);
+		expect(toldBeforeDelete).toEqual([0]);
+		expect(index.told).toEqual([uri]);
 	});
 
 	it('does not tell the index when the PDS delete fails', async () => {
-		const notified: string[] = [];
 		await expect(
 			removeGroupDeclaration({
 				db,
@@ -259,13 +278,10 @@ describe('telling our index about a withdrawal', () => {
 				callerDid: OWNER,
 				writer: async () => {
 					throw new Error('com.atproto.repo.deleteRecord failed: 502');
-				},
-				notify: async (u) => {
-					notified.push(u);
 				}
 			})
 		).rejects.toThrow(/502/);
-		expect(notified).toEqual([]);
+		expect(index.told).toEqual([]);
 	});
 
 	// By the time the index is told, the PDS has already deleted the record, so
@@ -273,18 +289,10 @@ describe('telling our index about a withdrawal', () => {
 	// would invite a retry of a delete that landed.
 	it('logs a failure to tell the index and does not fail the save', async () => {
 		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		index.down = new Error('D1_ERROR: Network connection lost');
 
 		await expect(
-			removeGroupDeclaration({
-				db,
-				env,
-				group,
-				callerDid: OWNER,
-				writer,
-				notify: async () => {
-					throw new Error('D1_ERROR: Network connection lost');
-				}
-			})
+			removeGroupDeclaration({ db, env, group, callerDid: OWNER, writer })
 		).resolves.toBeUndefined();
 
 		expect(writes).toHaveLength(1);

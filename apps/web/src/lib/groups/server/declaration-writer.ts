@@ -15,7 +15,7 @@ import {
 import { type GroupRow, type GroupVisibility } from '../types';
 import type { GroupSpaceReader } from './about-read';
 
-import { notifyIndexQuietly, type IndexNotifier } from './events-index';
+import { notifyIndexQuietly } from './events-index';
 
 import { groupWriter, requireGroupPermission, type GroupRepoWriter, ownSpace } from './group-write';
 
@@ -34,9 +34,7 @@ export interface WriteGroupDeclarationInput {
 	reader?: GroupSpaceReader | null;
 }
 
-export interface WithdrawGroupDeclarationInput extends WriteGroupDeclarationInput {
-	notify?: IndexNotifier;
-}
+export type WithdrawGroupDeclarationInput = WriteGroupDeclarationInput;
 
 export interface DeclarationWriteResult {
 	uri: string;
@@ -89,8 +87,7 @@ export async function removeGroupDeclaration(input: WithdrawGroupDeclarationInpu
 
 	await notifyIndexQuietly(
 		input.db,
-		`at://${input.group.group_did}/${GROUP_DECLARATION_COLLECTION}/${GROUP_DECLARATION_RKEY}`,
-		input.notify
+		`at://${input.group.group_did}/${GROUP_DECLARATION_COLLECTION}/${GROUP_DECLARATION_RKEY}`
 	);
 }
 
@@ -104,7 +101,6 @@ export async function removeGroupDeclaration(input: WithdrawGroupDeclarationInpu
 export async function reconcileGroupDeclaration(
 	input: WithdrawGroupDeclarationInput & { visibility: GroupVisibility; declared?: boolean }
 ): Promise<DeclarationWriteResult | null> {
-	// A declare must never tell the index, so `input.notify` stops here.
 	if (declarationRequired(input.visibility)) {
 		return input.declared ? null : writeGroupDeclaration(input);
 	}

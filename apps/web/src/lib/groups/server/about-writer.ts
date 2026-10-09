@@ -45,11 +45,6 @@ export interface ProfileWriteResult {
 	cid: string;
 }
 
-/** Read off the row, not computed: NULL means provisioning did not finish, and
- *  a write must not target a space the PDS has never heard of. A row made before
- *  the space type changed names a space of the old type, and is refused too, so
- *  no record lands where no reader looks. */
-
 /** Puts the group's one `profile` record, keyed `self`. The caller passes the
  *  existing `createdAt`, so an edit keeps the creation date. */
 export async function writeGroupProfile(

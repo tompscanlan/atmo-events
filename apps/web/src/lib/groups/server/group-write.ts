@@ -189,8 +189,9 @@ function standingFor(
 	return standing;
 }
 
-/** What the gate needs. `reader` is a test override; absent, the gate builds
- *  the group's own. */
+/** What the gate needs. `reader` is the request's, so the gate reads through
+ *  the same session as everything else the request does; absent, the gate
+ *  builds the group's own. */
 export interface GroupGateInput {
 	db: D1Database;
 	env: CredentialStoreEnv;

@@ -9,19 +9,12 @@ import type { ResourceUri } from '@atcute/lexicons/syntax';
 import type { RsvpAtmoEventListRecords } from '../../../lexicon-types';
 import type { GroupEventRecord, GroupRow } from '../types';
 
-/** Hands the index a URI a writer just wrote, an event or a declaration. A seam,
- *  so tests need no appview. */
-export type IndexNotifier = (uri: string) => Promise<void>;
-
-/** Tells the index about a write the PDS already took. A failure is logged, not
- *  thrown: reporting a failed write would invite a retry of a write that landed. */
-export async function notifyIndexQuietly(
-	db: D1Database,
-	uri: string,
-	notify?: IndexNotifier
-): Promise<void> {
+/** Tells the index about a write the PDS already took, an event or a
+ *  declaration. A failure is logged, not thrown: reporting a failed write would
+ *  invite a retry of a write that landed. */
+export async function notifyIndexQuietly(db: D1Database, uri: string): Promise<void> {
 	try {
-		await (notify ?? contrailNotifier(db))(uri);
+		await notifyIndex(db, uri);
 	} catch (e) {
 		console.error(`[groups] could not tell the index about ${uri}:`, e);
 	}
@@ -58,15 +51,13 @@ export async function listGroupEvents(
 }
 
 /** Hands a just-written URI to the index, which re-fetches it and applies a create,
- *  update or delete. Throws what the index reports; the write gate decides what to show. */
-export function contrailNotifier(db: D1Database): IndexNotifier {
-	return async (uri: string) => {
-		const res = await getServerClient(db).post('rsvp.atmo.notifyOfUpdate', {
-			input: { uris: [uri as ResourceUri] }
-		});
-		if (!res.ok) throw new Error(`the index refused ${uri}`);
-		if (res.data.errors?.length) {
-			throw new Error(`the index rejected ${uri}: ${res.data.errors.join('; ')}`);
-		}
-	};
+ *  update or delete. Throws what the index reports. */
+async function notifyIndex(db: D1Database, uri: string): Promise<void> {
+	const res = await getServerClient(db).post('rsvp.atmo.notifyOfUpdate', {
+		input: { uris: [uri as ResourceUri] }
+	});
+	if (!res.ok) throw new Error(`the index refused ${uri}`);
+	if (res.data.errors?.length) {
+		throw new Error(`the index rejected ${uri}: ${res.data.errors.join('; ')}`);
+	}
 }

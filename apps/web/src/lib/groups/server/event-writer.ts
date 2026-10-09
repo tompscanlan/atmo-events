@@ -155,11 +155,11 @@ export async function groupEventLocator(
 /**
  * Before a members-only create or update: the calendar space must exist, and only
  * its members may read it. The host checks neither. A space write into a space
- * that was never created succeeds anyway, so a group made before the calendar
- * space would take members-only events into a space this app never set up, with
- * no read policy or access record of its choosing. And a space whose read policy
- * was changed out of band would hand the event to whoever it now lets in. One
- * `getSpace` answers both, and a group without the space is re-created, never
+ * that was never created succeeds anyway, so a group whose calendar space is
+ * missing would take members-only events into a space this app never set up,
+ * with no read policy or access record of its choosing. And a space whose read
+ * policy was changed out of band would hand the event to whoever it now lets in.
+ * One `getSpace` answers both, and a group without the space is refused, never
  * written to in public instead. (Spec: FR-101a.)
  */
 export async function checkCalendarSpace(locator: GroupEventLocator, space: string): Promise<void> {

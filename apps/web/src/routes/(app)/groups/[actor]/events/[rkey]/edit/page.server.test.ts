@@ -54,7 +54,7 @@ const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
-/** A group made before the spaces: no members or calendar space recorded. */
+/** A group whose spaces were never recorded: no members or calendar space. */
 const OLDER_GROUP_DID = 'did:plc:7dbq5kbxtnyzsnjwmufl2hyd';
 const { aboutSpaceUri: ABOUT } = groupSpaceUris(GROUP_DID);
 // Written out, so a wrong type, key or URI form in the code under test fails here.

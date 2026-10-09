@@ -161,8 +161,8 @@ describe('writeGroupProfile', () => {
 		expect(writes).toHaveLength(0);
 	});
 
-	// A row made before the space type changed still names a space of the old
-	// type. Writing the new records there would strand them where no reader looks.
+	// A row that names a space of another type, or under another DID, is refused:
+	// writing the records there would strand them where no reader looks.
 	it('refuses a space of another type, or one under another DID', async () => {
 		for (const about_space_uri of [
 			`at://${group.group_did}/space/com.example.other/self`,
