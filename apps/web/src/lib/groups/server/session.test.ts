@@ -1,4 +1,10 @@
-// The two transports behind the one seam.
+// Writing as a group: where the credential comes from, and the two transports
+// behind the one seam.
+//
+// The only lasting credential is the session the group's owner linked. The store
+// is read for real; the OAuth client that restores a session is the fixture's
+// (./__fixtures__/linked-group.ts), which sends each request through the global
+// `fetch` with its own token, so a request it served is one that carries it.
 //
 // The session `createAccount` returns serves only the create request that minted
 // the account. It is sent as it is: there is no password to log in again with
@@ -9,13 +15,36 @@
 // Every write logs which credential served it, never the token.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-import { groupClient, type LinkedGroupCredential, type MintSessionCredential } from './session';
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('./__fixtures__/linked-oauth-stub')).linkedOAuthStub
+}));
+
+import { LINKED_TEST_TOKEN, linkGroups, unlinkAllGroups } from './__fixtures__/linked-group';
+import {
+	GROUP_SESSION_PREFIX,
+	GROUP_SESSION_SCOPES,
+	groupClient,
+	resolveGroupCredential,
+	type LinkedGroupCredential,
+	type MintSessionCredential
+} from './session';
+import { pdsWriter } from './group-write';
+import { GROUP_DECLARATION_COLLECTION } from '../declaration-record';
+import { GROUP_EVENT_COLLECTION } from '../ids';
 
 const DID = 'did:plc:sessiontestgroup0000000';
 const OTHER = 'did:plc:someoneelseaaaaaaaaaaaaa';
 const TOKEN = 'mint-access-token';
 const PATH = '/xrpc/com.atproto.space.getRecord?space=s&repo=r';
 const WRITE = '/xrpc/com.atproto.repo.createRecord';
+
+/** A sessions namespace holding exactly `keys`. */
+function kv(keys: string[]): KVNamespace {
+	return {
+		get: async (key: string) => (keys.includes(key) ? '{}' : null)
+	} as unknown as KVNamespace;
+}
 
 const minted: MintSessionCredential = {
 	kind: 'mint-session',
@@ -46,6 +75,7 @@ beforeEach(() => {
 afterEach(() => {
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
+	unlinkAllGroups();
 });
 
 describe('groupClient: the minted session', () => {
@@ -130,5 +160,79 @@ describe('groupClient: the linked session', () => {
 	it('refuses a session that authenticates another account, before any request', async () => {
 		await expect(groupClient(linked(OTHER), DID)).rejects.toThrow(/authenticates .*someoneelse/);
 		expect(calls).toEqual([]);
+	});
+});
+
+describe('resolveGroupCredential', () => {
+	it('is the linked session when the store holds one for the group', async () => {
+		const env = linkGroups([DID]);
+
+		const cred = await resolveGroupCredential(env, DID);
+
+		expect(cred?.kind).toBe('linked');
+		expect(cred?.kind === 'linked' && cred.session.did).toBe(DID);
+	});
+
+	// Nothing else stands in: no stored password, no deployment-wide account.
+	it('is null for a group whose owner has not linked it', async () => {
+		await expect(resolveGroupCredential(linkGroups([OTHER]), DID)).resolves.toBeNull();
+	});
+
+	it('is null on a deployment with no sessions namespace', async () => {
+		await expect(resolveGroupCredential({}, DID)).resolves.toBeNull();
+	});
+
+	// A sign-in as the group is stored under the bare DID. It lacks the group's
+	// scope, so it must not count as a link. The fixture's client throws for a
+	// group no test linked, so a restore attempt would fail this case too.
+	it('does not take a sign-in session under the bare DID for a link', async () => {
+		await expect(resolveGroupCredential({ OAUTH_SESSIONS: kv([DID]) }, DID)).resolves.toBeNull();
+	});
+
+	// The owner linked it, so a silent "not linked" would hide a broken session.
+	it('fails, rather than answering null, when a stored link cannot be restored', async () => {
+		const env = { OAUTH_SESSIONS: kv([GROUP_SESSION_PREFIX + DID]) };
+
+		await expect(resolveGroupCredential(env, DID)).rejects.toThrow(/no linked session/);
+	});
+});
+
+describe('writing as a linked group', () => {
+	it('writes through the linked session, and logs which credential served it', async () => {
+		reply = () =>
+			Response.json({ uri: `at://${DID}/${GROUP_EVENT_COLLECTION}/r1`, cid: 'bafylinked' });
+		const cred = await resolveGroupCredential(linkGroups([DID]), DID);
+		expect(cred?.kind).toBe('linked');
+
+		const result = await pdsWriter(
+			cred!,
+			DID
+		)({
+			repo: DID,
+			collection: GROUP_EVENT_COLLECTION,
+			rkey: 'r1',
+			record: { name: 'Kona weekly ride' },
+			intent: 'create'
+		});
+
+		expect(result.cid).toBe('bafylinked');
+		expect(calls.map((c) => [c.url.pathname, c.token])).toEqual([
+			['/xrpc/com.atproto.repo.createRecord', LINKED_TEST_TOKEN]
+		]);
+		expect(logged).toEqual([
+			`[group-session] ${DID} com.atproto.repo.createRecord via linked: 200`
+		]);
+	});
+});
+
+describe('the scope a link asks for', () => {
+	it('covers every public-repo collection the group writes, and only the group’s own spaces', () => {
+		const scopes = GROUP_SESSION_SCOPES;
+		const repo = scopes.find((s) => s.startsWith('repo'));
+		expect(repo).toContain(GROUP_EVENT_COLLECTION);
+		expect(repo).toContain(GROUP_DECLARATION_COLLECTION);
+		const spaces = scopes.filter((s) => s.startsWith('space:'));
+		expect(spaces.length).toBeGreaterThan(0);
+		for (const s of spaces) expect(s).toContain('authority=self');
 	});
 });
