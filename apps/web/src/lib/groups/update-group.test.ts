@@ -41,7 +41,7 @@ import {
 	GROUP_ACCESS_RKEY,
 	groupAccessRecord
 } from './members-record';
-import { pdsWriter } from './server/event-writer';
+
 import { pdsSpaceReader } from './server/about-read';
 import {
 	STUB_PDS_SERVICE,
@@ -54,6 +54,7 @@ import { pdsProvisioner, provisionGroupSpaces } from './server/spaces';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow, type GroupVisibility } from './types';
 import { runUpdateGroup, type UpdateGroupData } from './update-group';
 
+import { pdsWriter } from './server/group-write';
 const OWNER = 'did:plc:owner';
 const GROUP_DID = 'did:plc:settingsgroupaaaaaaaaaaa';
 const HANDLE = 'kona.group.stub.test';

@@ -16,25 +16,27 @@ import { stubPds, type StubPdsOptions } from './__fixtures__/stub-pds';
 import { addMember, createGroup, recordGroupSpaces } from './repo';
 import { pdsProvisioner, provisionGroupSpaces } from './spaces';
 import {
-	GroupCredentialError,
-	GroupPermissionError,
-	GroupRecordError,
 	GROUP_EVENT_IMAGE_MAX_BYTES,
 	deleteGroupEvent,
 	groupBlobUploader,
-	groupWriter,
 	uploadGroupEventImage,
 	writeGroupEvent,
 	type GroupBlobUploader,
 	type GroupEventLocator,
-	type GroupRepoWrite,
-	type GroupRepoWriter,
 	type WriteGroupEventInput
 } from './event-writer';
 import type { GroupEventNotifier } from './events-index';
 import type { GroupRow } from '../types';
 
 import { GROUP_EVENT_COLLECTION } from '../ids';
+import {
+	GroupCredentialError,
+	GroupPermissionError,
+	GroupRecordError,
+	groupWriter,
+	type GroupRepoWrite,
+	type GroupRepoWriter
+} from './group-write';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 /** The admin in every case below: a non-owner who was promoted, exactly the

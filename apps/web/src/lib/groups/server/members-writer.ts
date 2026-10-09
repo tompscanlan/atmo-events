@@ -37,15 +37,16 @@ import { CALENDAR_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types
 import type { GroupSpaceReader } from './about-read';
 import { aboutSpace } from './about-writer';
 import type { CredentialStoreEnv } from './credentials';
+
+import type { GroupSpaceIndexEntry } from './members-read';
+
 import {
 	GroupPermissionError,
 	GroupRecordError,
 	groupWriter,
 	requireGroupPermission,
 	type GroupRepoWriter
-} from './event-writer';
-import type { GroupSpaceIndexEntry } from './members-read';
-
+} from './group-write';
 export interface WriteGroupMembersInput {
 	db: D1Database;
 	env: CredentialStoreEnv;

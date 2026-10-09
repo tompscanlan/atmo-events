@@ -31,7 +31,6 @@ import {
 	checkCalendarSpace,
 	deleteGroupEvent,
 	groupEventLocator,
-	groupWriter,
 	uploadGroupEventImage,
 	writeGroupEvent
 } from '../src/lib/groups/server/event-writer';
@@ -126,6 +125,7 @@ import {
 import { scopes } from '../src/lib/atproto/settings';
 
 import { groupSpaceUris, type RsvpStatus } from '../src/lib/groups/ids';
+import { groupWriter } from '../src/lib/groups/server/group-write';
 interface Env {
 	DB: D1Database;
 	/** Where the app looks for the group's linked session, as in production. */

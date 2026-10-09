@@ -15,14 +15,15 @@ import {
 import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from '../types';
 import type { GroupSpaceReader } from './about-read';
 import type { CredentialStoreEnv } from './credentials';
+
+import { contrailNotifier, type GroupEventNotifier } from './events-index';
+
 import {
 	GroupRecordError,
 	groupWriter,
 	requireGroupPermission,
 	type GroupRepoWriter
-} from './event-writer';
-import { contrailNotifier, type GroupEventNotifier } from './events-index';
-
+} from './group-write';
 export interface WriteGroupDeclarationInput {
 	db: D1Database;
 	env: CredentialStoreEnv;

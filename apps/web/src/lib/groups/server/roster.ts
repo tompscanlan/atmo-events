@@ -34,7 +34,7 @@ import {
 	type JoinOutcome
 } from './repo';
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
-import { requireGroupPermission, type GroupRepoWriter } from './event-writer';
+
 import {
 	GROUP_MEMBERSHIP_COLLECTION,
 	isMembershipKey,
@@ -58,6 +58,7 @@ import {
 import { readGroupVisibility } from './spaces';
 import { deleteAcceptance, writeAcceptance, type MemberSession } from './acceptance';
 
+import { requireGroupPermission, type GroupRepoWriter } from './group-write';
 /** A grant whose row moved but whose record did not. */
 export class RosterRecordError extends Error {
 	constructor(

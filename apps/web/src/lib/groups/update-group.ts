@@ -33,7 +33,7 @@
 // goes before a declaration is published and after one is withdrawn.
 import type { CredentialStoreEnv } from './server/credentials';
 import { updateGroup } from './server/repo';
-import { GroupCredentialError, groupWriter, type GroupRepoWriter } from './server/event-writer';
+
 import { approvalRefusal, groupFace, splitRuleLines } from './about-record';
 import {
 	groupSpaceReader,
@@ -51,6 +51,7 @@ import { formError } from './form-error';
 import type { GroupFormFailure, GroupFormResult } from './form-result';
 import type { GroupRow, GroupVisibility } from './types';
 
+import { GroupCredentialError, groupWriter, type GroupRepoWriter } from './server/group-write';
 export interface UpdateGroupData {
 	name: string;
 	description?: string;

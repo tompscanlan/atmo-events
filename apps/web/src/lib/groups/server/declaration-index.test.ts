@@ -24,10 +24,11 @@ import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { listDeclaredGroups } from './declaration-index';
 import { reconcileGroupDeclaration, removeGroupDeclaration } from './declaration-writer';
 import { registerGroupIdentity } from './events-index';
-import type { GroupRepoWriter } from './event-writer';
+
 import { createGroup } from './repo';
 
 import { spaceUri } from '../ids';
+import { type GroupRepoWriter } from './group-write';
 const OWNER = 'did:plc:owner';
 const PDS = 'https://pds.example.test';
 

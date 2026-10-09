@@ -3,13 +3,10 @@
 import type { GroupFormFailure } from './form-result';
 import type { GroupPermission } from './permissions';
 import type { CallerMembership } from './types';
-import {
-	GroupCredentialError,
-	GroupPermissionError,
-	GroupRecordError
-} from './server/event-writer';
+
 import { GroupRuleError } from './server/repo';
 
+import { GroupCredentialError, GroupPermissionError, GroupRecordError } from './server/group-write';
 const NOT_LINKED: GroupFormFailure = {
 	ok: false,
 	error:

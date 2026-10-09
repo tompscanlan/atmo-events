@@ -21,12 +21,7 @@ import {
 	writeGroupAuthz,
 	writeGroupSpaceIndex
 } from './members-writer';
-import {
-	GroupPermissionError,
-	GroupRecordError,
-	type GroupRepoWrite,
-	type GroupRepoWriter
-} from './event-writer';
+
 import { ABOUT_SPACE_TYPE, CALENDAR_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import {
 	GROUP_ACCESS_COLLECTION,
@@ -40,6 +35,12 @@ import {
 import type { GroupSpaceReader } from './about-read';
 
 import { spaceUri } from '../ids';
+import {
+	GroupPermissionError,
+	GroupRecordError,
+	type GroupRepoWrite,
+	type GroupRepoWriter
+} from './group-write';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';

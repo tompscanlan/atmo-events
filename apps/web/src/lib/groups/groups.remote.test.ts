@@ -51,7 +51,7 @@ import { sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { stubPds } from './server/__fixtures__/stub-pds';
 import { linkGroups, linkedCredential, unlinkAllGroups } from './server/__fixtures__/linked-group';
 import { createGroup, recordGroupSpaces } from './server/repo';
-import { GroupCredentialError } from './server/event-writer';
+
 import { acceptanceGrant } from './server/member-grants';
 import { RSVP_NO_SPACES, RSVP_RETRY_LATER } from './server/member-rsvp';
 import { OAuthResponseError } from '@atcute/oauth-node-client';
@@ -70,6 +70,7 @@ import {
 	updateGroupForm
 } from './groups.remote';
 
+import { GroupCredentialError } from './server/group-write';
 const OWNER = 'did:plc:owner';
 const GROUP_DID = 'did:plc:unlinkedgroupaaaaaaaaaaa';
 

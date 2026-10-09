@@ -19,8 +19,8 @@ import {
 	type GroupVisibility
 } from '../types';
 import type { GroupSpaceReader } from './about-read';
-import { resolveGroupCredential, type GroupCredential } from './credentials';
-import { GroupCredentialError, requireGroupPermission, type GroupGateInput } from './event-writer';
+import type { GroupCredential } from './credentials';
+
 import { groupClient } from './session';
 
 import {
@@ -31,6 +31,7 @@ import {
 	type GroupSpaceUris
 } from '../ids';
 
+import { requireGroupCredential, requireGroupPermission, type GroupGateInput } from './group-write';
 const APP_ACCESS_OPEN = 'com.atproto.simplespace.defs#open';
 
 export type SpaceReadPolicy = typeof POLICY_PUBLIC | typeof POLICY_MEMBER_LIST;
@@ -226,8 +227,7 @@ export async function setAboutSpaceReadPolicy(input: SetAboutSpaceReadPolicyInpu
 	}
 	let updater = input.updater;
 	if (!updater) {
-		const cred = await resolveGroupCredential(input.env, input.group.group_did);
-		if (!cred) throw new GroupCredentialError(input.group.group_did);
+		const cred = await requireGroupCredential(input.env, input.group.group_did);
 		updater = pdsSpaceUpdater(cred, input.group.group_did);
 	}
 	await updater({ space, readPolicy: aboutSpaceReadPolicy(input.visibility) });

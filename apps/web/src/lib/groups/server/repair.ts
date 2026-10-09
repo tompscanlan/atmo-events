@@ -35,7 +35,7 @@ import { writeAboutAccess } from './about-writer';
 import { accessSays } from '../members-record';
 import type { CredentialStoreEnv } from './credentials';
 import { reconcileGroupDeclaration } from './declaration-writer';
-import { GroupRecordError, requireGroupPermission, type GroupRepoWriter } from './event-writer';
+
 import {
 	alignAboutMembers,
 	alignMemberWriters,
@@ -59,6 +59,7 @@ import {
 import { listJoinRequests, listMembers, rolePermissions } from './repo';
 import { readGroupVisibility } from './spaces';
 
+import { GroupRecordError, requireGroupPermission, type GroupRepoWriter } from './group-write';
 export interface RepairGroupInput {
 	db: D1Database;
 	env: CredentialStoreEnv;

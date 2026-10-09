@@ -16,15 +16,12 @@
 //     false: a DID that could read the members space would see every
 //     membership, role and permission record.
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
-import {
-	resolveGroupCredential,
-	type CredentialStoreEnv,
-	type GroupCredential
-} from './credentials';
-import { GroupCredentialError, GroupRecordError } from './event-writer';
+import { type CredentialStoreEnv, type GroupCredential } from './credentials';
+
 import { groupClient } from './session';
 import { GroupSpaceError } from './spaces';
 
+import { GroupRecordError, requireGroupCredential } from './group-write';
 /** One entry on a space's member list, as `listMembers` reports it. */
 export interface SpaceMember {
 	did: string;
@@ -129,9 +126,7 @@ export async function groupMemberList(
 	db: D1Database,
 	group: GroupRow
 ): Promise<GroupMemberList> {
-	const cred = await resolveGroupCredential(env, group.group_did);
-	if (!cred) throw new GroupCredentialError(group.group_did);
-	return pdsMemberList(cred, group.group_did);
+	return pdsMemberList(await requireGroupCredential(env, group.group_did), group.group_did);
 }
 
 type GroupSpaces = Pick<GroupRow, 'group_did' | 'about_space_uri' | 'members_space_uri'>;

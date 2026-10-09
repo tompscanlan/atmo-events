@@ -38,7 +38,7 @@ import {
 	writeGroupAuthz,
 	writeGroupSpaceIndex
 } from './server/members-writer';
-import { pdsWriter } from './server/event-writer';
+
 import { pdsSpaceReader } from './server/about-read';
 import { listRosterMember, pdsMemberList } from './server/member-list';
 import { registerGroupIdentity } from './server/events-index';
@@ -49,6 +49,7 @@ import type { GroupFormFailure, GroupFormResult, GroupFormSuccess } from './form
 import type { GroupVisibility } from './types';
 import { GROUP_PASSWORD_MIN_LENGTH } from './form-fields';
 
+import { pdsWriter } from './server/group-write';
 /** Structural rather than `App.Platform['env']`, so a test can supply only
  *  what a create reads. */
 export interface CreateGroupEnv extends CredentialStoreEnv {

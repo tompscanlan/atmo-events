@@ -52,7 +52,7 @@ import {
 	RosterRowError,
 	withdrawJoinRequest
 } from './roster';
-import type { GroupRepoWrite, GroupRepoWriter } from './event-writer';
+
 import { pdsSpaceReader, type GroupSpaceReader } from './about-read';
 import {
 	STUB_PDS_SERVICE,
@@ -68,6 +68,7 @@ import { acceptanceGrant } from './member-grants';
 import type { MemberSession } from './acceptance';
 
 import { spaceUri } from '../ids';
+import { type GroupRepoWrite, type GroupRepoWriter } from './group-write';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';

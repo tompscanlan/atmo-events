@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ABOUT_SPACE_TYPE, CALENDAR_SPACE_TYPE, MEMBERS_SPACE_TYPE } from '../types';
 import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
-import { pdsWriter } from './event-writer';
+
 import {
 	GroupSpaceError,
 	SpacesUnsupportedError,
@@ -23,6 +23,7 @@ import {
 } from './spaces';
 
 import { groupSpaceUris, spaceUri } from '../ids';
+import { pdsWriter } from './group-write';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const CRED = linkedCredential(GROUP_DID, 'https://pds.example.com');
 

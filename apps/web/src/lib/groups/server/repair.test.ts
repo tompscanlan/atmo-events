@@ -34,7 +34,7 @@ import {
 	writeGroupSpaceIndex
 } from './members-writer';
 import { writeAboutAccess, writeGroupProfile } from './about-writer';
-import { GroupPermissionError, type GroupRepoWrite, type GroupRepoWriter } from './event-writer';
+
 import { readGroupMembers, hasAuthzRecords } from './members-read';
 import { describeRepair, repairGroup } from './repair';
 import type { GroupRebuildSources } from './rebuild';
@@ -65,6 +65,7 @@ import {
 } from '../members-record';
 
 import { spaceUri } from '../ids';
+import { GroupPermissionError, type GroupRepoWrite, type GroupRepoWriter } from './group-write';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:6cz6dldz42itymdbte47ewcv';

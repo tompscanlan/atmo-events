@@ -22,14 +22,15 @@ import {
 } from '../members-record';
 import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from '../types';
 import type { CredentialStoreEnv } from './credentials';
+
+import type { GroupRuleRecord, GroupSpaceReader } from './about-read';
+
 import {
 	GroupRecordError,
 	groupWriter,
 	requireGroupPermission,
 	type GroupRepoWriter
-} from './event-writer';
-import type { GroupRuleRecord, GroupSpaceReader } from './about-read';
-
+} from './group-write';
 export interface WriteGroupAboutInput {
 	db: D1Database;
 	env: CredentialStoreEnv;
