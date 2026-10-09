@@ -215,11 +215,6 @@ async function appGroup(requireApproval: boolean): Promise<{ row: GroupRow; reco
 	};
 }
 
-const sources = (records: Stored[], declared: boolean) => ({
-	reader: readerOver(records),
-	declared: async () => declared
-});
-
 beforeEach(() => {
 	harness = sqliteD1();
 	db = harness.db;
@@ -234,7 +229,7 @@ describe('rebuildGroup: a group with no row', () => {
 		await dropGroupRows(row.id);
 		expect(await snapshot(GROUP_DID)).toBeNull();
 
-		const result = await rebuildGroup(db, sources(records, true), GROUP_DID);
+		const result = await rebuildGroup(db, readerOver(records), GROUP_DID);
 
 		expect(result.path).toBe('restored');
 		expect(await snapshot(GROUP_DID)).toEqual(before);
@@ -248,7 +243,7 @@ describe('rebuildGroup: a group with no row', () => {
 		await dropGroupRows(row.id);
 		const ownerless = records.filter((r) => r.rkey !== OWNER);
 
-		const refusal = await rebuildGroup(db, sources(ownerless, true), GROUP_DID).catch((e) => e);
+		const refusal = await rebuildGroup(db, readerOver(ownerless), GROUP_DID).catch((e) => e);
 
 		expect(refusal).toBeInstanceOf(GroupRebuildRefused);
 		expect(refusal.reason).toBe('no-owner-record');
@@ -262,7 +257,7 @@ describe('rebuildGroup: a group with no row', () => {
 		await dropGroupRows(row.id);
 		const nameless = records.filter((r) => r.collection !== GROUP_PROFILE_COLLECTION);
 
-		const refusal = await rebuildGroup(db, sources(nameless, true), GROUP_DID).catch((e) => e);
+		const refusal = await rebuildGroup(db, readerOver(nameless), GROUP_DID).catch((e) => e);
 
 		expect(refusal.reason).toBe('no-profile');
 		expect(await count('groups')).toBe(0);
@@ -273,7 +268,7 @@ describe('rebuildGroup: a group with no row', () => {
 		await dropGroupRows(row.id);
 		const unbound = records.filter((r) => !AUTHZ.includes(r));
 
-		const refusal = await rebuildGroup(db, sources(unbound, true), GROUP_DID).catch((e) => e);
+		const refusal = await rebuildGroup(db, readerOver(unbound), GROUP_DID).catch((e) => e);
 
 		expect(refusal.reason).toBe('no-authz-records');
 		expect(await count('groups')).toBe(0);
@@ -288,22 +283,9 @@ describe('rebuildGroup: visibility stays at the host', () => {
 	it('a rebuild does not derive visibility', async () => {
 		const { row, records } = await appGroup(false);
 		await dropGroupRows(row.id);
-		let probed = 0;
-
-		const result = await rebuildGroup(
-			db,
-			{
-				reader: readerOver(records),
-				declared: async () => {
-					probed++;
-					return false;
-				}
-			},
-			GROUP_DID
-		);
+		const result = await rebuildGroup(db, readerOver(records), GROUP_DID);
 
 		expect(result.path).toBe('restored');
-		expect(probed).toBe(0);
 		expect(result.group).not.toHaveProperty('visibility');
 		// The profile's join policy round-trips, and nothing overrides it.
 		expect(result.group.require_approval).toBe(0);
@@ -317,7 +299,7 @@ describe('rebuildGroup: a surviving row', () => {
 		const { row, records } = await appGroup(true);
 		await db.prepare(`UPDATE groups SET name = 'drifted' WHERE id = ?`).bind(row.id).run();
 
-		const result = await rebuildGroup(db, sources(records, true), GROUP_DID);
+		const result = await rebuildGroup(db, readerOver(records), GROUP_DID);
 
 		expect(result.path).toBe('repaired');
 		expect(result.group.id).toBe(row.id);
@@ -334,10 +316,7 @@ describe('rebuildGroup: a surviving row', () => {
 
 		const result = await rebuildGroup(
 			db,
-			{
-				reader: readerOver(records, 'com.atproto.simplespace.defs#memberListPolicy'),
-				declared: async () => false
-			},
+			readerOver(records, 'com.atproto.simplespace.defs#memberListPolicy'),
 			GROUP_DID
 		);
 

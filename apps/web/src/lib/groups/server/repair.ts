@@ -34,7 +34,7 @@ import { groupSpaceReader, readAboutAccess, type GroupSpaceReader } from './abou
 import { writeAboutAccess } from './about-writer';
 import { accessSays } from '../members-record';
 
-import { reconcileGroupDeclaration } from './declaration-writer';
+import { groupDeclared, reconcileGroupDeclaration } from './declaration-writer';
 
 import {
 	alignAboutMembers,
@@ -50,12 +50,7 @@ import {
 	writeGroupAuthz,
 	writeGroupSpaceIndex
 } from './members-writer';
-import {
-	groupRebuildSources,
-	rebuildGroup,
-	type GroupRebuildResult,
-	type GroupRebuildSources
-} from './rebuild';
+import { rebuildGroup, type GroupRebuildResult } from './rebuild';
 import { listJoinRequests, listMembers, rolePermissions } from './repo';
 import { readGroupVisibility } from './spaces';
 
@@ -71,8 +66,8 @@ export interface RepairGroupInput {
 	writer?: GroupRepoWriter;
 	/** Overrides the space reader, for the gate, step 1 and step 3. */
 	reader?: GroupSpaceReader | null;
-	/** Overrides where the rebuild reads from, and step 3's declaration probe. */
-	sources?: GroupRebuildSources | null;
+	/** Overrides step 3's check of whether the public repo holds the declaration. */
+	declared?: () => Promise<boolean>;
 	/** Overrides the member-list transport, for both spaces. */
 	memberList?: GroupMemberList;
 }
@@ -172,17 +167,10 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 	for (const request of await listJoinRequests(db, group.id)) writers.add(request.did);
 	const writerList = await alignMemberWriters(list, group, writers);
 
-	const sources =
-		input.sources !== undefined ? input.sources : await groupRebuildSources(env, group.group_did);
-	if (!sources) {
-		throw new GroupRecordError(
-			`this deployment holds no credential for ${group.group_did}, so it cannot be rebuilt`
-		);
-	}
+	const declared = input.declared ?? (() => groupDeclared(env, group.group_did));
+	const host = await alignToHost({ ...write, createdAt }, declared);
 
-	const host = await alignToHost({ ...write, createdAt }, sources);
-
-	const rebuild = await rebuildGroup(db, sources, group.group_did);
+	const rebuild = await rebuildGroup(db, reader, group.group_did);
 
 	return {
 		wrote,
@@ -200,11 +188,11 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
  *  declaration is published and after one is withdrawn. */
 async function alignToHost(
 	input: RepairGroupInput & { reader: GroupSpaceReader; createdAt: string },
-	sources: GroupRebuildSources
+	declaredOnHost: () => Promise<boolean>
 ): Promise<HostAlignment> {
 	const visibility = await readGroupVisibility(input.reader, input.group);
 	const [declared, access] = await Promise.all([
-		sources.declared(),
+		declaredOnHost(),
 		readAboutAccess(input.reader, input.group)
 	]);
 

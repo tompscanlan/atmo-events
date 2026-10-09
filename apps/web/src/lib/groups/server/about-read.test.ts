@@ -13,13 +13,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { createGroup, getGroupById, recordGroupSpaces } from './repo';
-import {
-	cacheFromProfile,
-	pdsSpaceReader,
-	readGroupAbout,
-	rebuildGroupCache,
-	type GroupSpaceReader
-} from './about-read';
+import { pdsSpaceReader, readGroupAbout, type GroupSpaceReader } from './about-read';
 import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import {
 	GROUP_PROFILE_COLLECTION,
@@ -30,6 +24,7 @@ import {
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 
 import { splitRecordUri, spaceUri } from '../ids';
+import { cacheFromProfile, rebuildGroupCache } from './rebuild';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ABOUT = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self');

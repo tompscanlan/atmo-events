@@ -1,5 +1,4 @@
-// Reads a group's roster and authz config from its members space, and repairs
-// the D1 projection from them. The records win: the `memberships` rows are a
+// Reads a group's roster and authz config from its members space. The records win: the `memberships` rows are a
 // cache, and a DID with no `membership` record has no access whatever its row
 // says.
 //
@@ -32,7 +31,6 @@ import {
 } from '../permissions';
 import type { GroupRow, MemberRow, RosterEntry } from '../types';
 import type { GroupSpaceReader, GroupSpaceRecord } from './about-read';
-import { ensureGroupsSchema } from './schema';
 
 /** A membership record. Its `rkey` is the member DID. */
 export interface GroupMembershipRecord {
@@ -276,11 +274,11 @@ export function ownerDidFromRecords(members: GroupMembers): string | null {
 /** The strongest role held, in `GROUP_ROLES` order. A D1 row holds one role,
  *  and picking the weaker one would silently demote. Only a record another app
  *  wrote can hold two. */
-function primaryRole(roles: readonly GroupRoleName[]): GroupRoleName | null {
+export function primaryRole(roles: readonly GroupRoleName[]): GroupRoleName | null {
 	return GROUP_ROLES.find((role) => roles.includes(role)) ?? null;
 }
 
-function createdAtMs(value: string | null): number {
+export function createdAtMs(value: string | null): number {
 	const parsed = value ? Date.parse(value) : Number.NaN;
 	return Number.isFinite(parsed) ? parsed : 0;
 }
@@ -332,125 +330,4 @@ export function rosterFromRows(rows: MemberRow[]): RosterEntry[] {
 		created_at: row.created_at,
 		confirmed: null
 	}));
-}
-
-export interface MembersRebuildResult {
-	/** Rows inserted or corrected from a record. */
-	restored: string[];
-	/** Rows that already agreed with their record. */
-	unchanged: string[];
-	/** Roster rows with no membership record. Reported, never deleted: a failed
-	 *  grant and a half-done revocation both leave one, and the gate denies both. */
-	orphans: string[];
-	/** Records that could not be projected, with the reason. */
-	skipped: { did: string; reason: string }[];
-}
-
-/**
- * Rebuild the `memberships` projection from the records. It is additive: it
- * writes what the records say and touches nothing else, so dropped rows come
- * back. The owner row is inserted, never updated, because the schema refuses
- * any change to it. A record that disagrees with it is skipped with a reason.
- */
-export async function rebuildGroupMembers(
-	db: D1Database,
-	reader: GroupSpaceReader,
-	group: GroupRow
-): Promise<MembersRebuildResult> {
-	return projectGroupMembers(db, await readGroupMembers(reader, group), group);
-}
-
-/** `rebuildGroupMembers` over records already read, so a cold rebuild that
- *  needed them to find the owner does not read the members space twice. */
-export async function projectGroupMembers(
-	db: D1Database,
-	members: GroupMembers,
-	group: GroupRow
-): Promise<MembersRebuildResult> {
-	await ensureGroupsSchema(db);
-	const result: MembersRebuildResult = { restored: [], unchanged: [], orphans: [], skipped: [] };
-
-	const roleRows = await db
-		.prepare(`SELECT id, name FROM roles WHERE group_id = ?`)
-		.bind(group.id)
-		.all<{ id: string; name: GroupRoleName }>();
-	const roleId = new Map<string, string>();
-	for (const row of roleRows.results ?? []) roleId.set(row.name, row.id);
-
-	const existing = await db
-		.prepare(
-			`SELECT m.did, m.role_id, m.status, r.name AS role
-			 FROM memberships m JOIN roles r ON r.id = m.role_id
-			 WHERE m.group_id = ?`
-		)
-		.bind(group.id)
-		.all<{ did: string; role_id: string; status: string; role: GroupRoleName }>();
-	const rows = new Map<string, { role: GroupRoleName; status: string }>();
-	for (const row of existing.results ?? [])
-		rows.set(row.did, { role: row.role, status: row.status });
-
-	const now = Date.now();
-	const recorded = new Set<string>();
-
-	for (const record of members.memberships) {
-		const did = record.subject;
-		// A subject that cannot be a record key would be an unaddressable member.
-		if (!isMembershipKey(did)) {
-			result.skipped.push({ did, reason: 'subject is not a usable record key' });
-			continue;
-		}
-		recorded.add(did);
-
-		const role = primaryRole(record.roles);
-		if (!role) {
-			result.skipped.push({ did, reason: 'the record grants no role this build knows' });
-			continue;
-		}
-		const target = roleId.get(role);
-		if (!target) {
-			result.skipped.push({ did, reason: `this group has no ${role} role row` });
-			continue;
-		}
-
-		const row = rows.get(did);
-
-		// The schema decides the owner. A disagreeing record is reported, not
-		// applied, but a missing owner row is still inserted.
-		if (did === group.owner_did) {
-			if (role !== 'owner') {
-				result.skipped.push({ did, reason: `owner_did cannot hold the ${role} role` });
-				continue;
-			}
-			if (row) {
-				if (row.role === 'owner' && row.status === 'active') result.unchanged.push(did);
-				else {
-					result.skipped.push({
-						did,
-						reason: `the owner's row is ${row.role}/${row.status} and is immutable`
-					});
-				}
-				continue;
-			}
-		} else if (row && row.role === role && row.status === 'active') {
-			result.unchanged.push(did);
-			continue;
-		}
-
-		await db
-			.prepare(
-				`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, 'active', ?, ?)
-				 ON CONFLICT (group_id, did) DO UPDATE SET
-					role_id = excluded.role_id, status = 'active', updated_at = excluded.updated_at`
-			)
-			.bind(crypto.randomUUID(), group.id, did, target, createdAtMs(record.createdAt) || now, now)
-			.run();
-		result.restored.push(did);
-	}
-
-	for (const did of rows.keys()) {
-		if (!recorded.has(did)) result.orphans.push(did);
-	}
-
-	return result;
 }

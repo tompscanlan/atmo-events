@@ -1,5 +1,6 @@
-// Rebuilds a group's D1 cache from its records, keyed by the group DID. With
-// every row but the credential deleted, a rebuild renders the same group.
+// Rebuilds a group's D1 cache from its records, keyed by the group DID: the profile
+// columns from the about space and the roster from the members space. With every
+// row deleted, a rebuild renders the same group.
 // `rebuildGroup` takes whichever path the database leaves it:
 //
 //   a row survives   repair it: overwrite the profile columns and re-project
@@ -15,35 +16,23 @@
 // NULL), no authz records (no member could be restored), or no `membership`
 // record granting `owner`, since `owner_did` can never be corrected once
 // written.
-import { GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY } from '../declaration-record';
+import { requireApprovalFor, type GroupProfileFields } from '../about-record';
+import { groupSpaceUris } from '../ids';
+import { isMembershipKey } from '../members-record';
 import { GROUP_ROLES, type GroupPermission, type GroupRoleName } from '../permissions';
 import type { GroupRow } from '../types';
+import { readGroupAbout, type GroupSpaceReader } from './about-read';
 import {
-	pdsSpaceReader,
-	readGroupAbout,
-	rebuildGroupCache,
-	type GroupSpaceReader
-} from './about-read';
-
-import {
+	createdAtMs,
+	effectivePermissions,
 	hasAuthzRecords,
 	ownerDidFromRecords,
-	projectGroupMembers,
+	primaryRole,
 	readGroupMembers,
-	rebuildGroupMembers,
-	type GroupMembers,
-	type MembersRebuildResult
+	type GroupMembers
 } from './members-read';
-import { getGroupByDid, restoreGroup } from './repo';
-import {
-	groupClient,
-	resolveGroupCredential,
-	type CredentialStoreEnv,
-	type GroupCredential
-} from './session';
-import { repoRecordExists } from './xrpc';
-
-import { groupSpaceUris } from '../ids';
+import { applyGroupCache, getGroupByDid, restoreGroup } from './repo';
+import { ensureGroupsSchema } from './schema';
 /** A rebuild that stopped before writing anything. `reason` is a stable tag,
  *  so a command can report it without matching the message. */
 export class GroupRebuildRefused extends Error {
@@ -56,15 +45,6 @@ export class GroupRebuildRefused extends Error {
 	}
 }
 
-/** Where a rebuild reads from. Injectable, so tests need no live PDS. */
-export interface GroupRebuildSources {
-	/** The about and members spaces, through the group's own session. */
-	reader: GroupSpaceReader;
-	/** Whether the group's public repo holds its declaration. Only the repair
-	 *  reads this (./repair.ts). */
-	declared: () => Promise<boolean>;
-}
-
 export type GroupRebuildResult =
 	| {
 			path: 'repaired';
@@ -74,39 +54,25 @@ export type GroupRebuildResult =
 	  }
 	| { path: 'restored'; group: GroupRow; members: MembersRebuildResult };
 
-/** The rebuild command's sources for a group, or null when this deployment
- *  holds no credential for it. */
-export async function groupRebuildSources(
-	env: CredentialStoreEnv,
-	groupDid: string
-): Promise<GroupRebuildSources | null> {
-	const cred = await resolveGroupCredential(env, groupDid);
-	if (!cred) return null;
-	return {
-		reader: pdsSpaceReader(cred, groupDid),
-		declared: pdsDeclarationProbe(cred, groupDid)
-	};
-}
-
 /** Rebuilds the group whose DID this is, from its records. */
 export async function rebuildGroup(
 	db: D1Database,
-	sources: GroupRebuildSources,
+	reader: GroupSpaceReader,
 	groupDid: string
 ): Promise<GroupRebuildResult> {
 	const row = await getGroupByDid(db, groupDid);
 	if (row) {
-		const profile = await rebuildGroupCache(db, sources.reader, row);
-		const members = await rebuildGroupMembers(db, sources.reader, row);
+		const profile = await rebuildGroupCache(db, reader, row);
+		const members = await rebuildGroupMembers(db, reader, row);
 		const group = (await getGroupByDid(db, groupDid)) ?? row;
 		return { path: 'repaired', group, profile: profile.outcome, members };
 	}
-	return restoreFromRecords(db, sources, groupDid);
+	return restoreFromRecords(db, reader, groupDid);
 }
 
 async function restoreFromRecords(
 	db: D1Database,
-	sources: GroupRebuildSources,
+	reader: GroupSpaceReader,
 	groupDid: string
 ): Promise<GroupRebuildResult> {
 	const spaces = groupSpaceUris(groupDid);
@@ -116,8 +82,8 @@ async function restoreFromRecords(
 		members_space_uri: spaces.membersSpaceUri
 	};
 	const [about, members] = await Promise.all([
-		readGroupAbout(sources.reader, located),
-		readGroupMembers(sources.reader, located)
+		readGroupAbout(reader, located),
+		readGroupMembers(reader, located)
 	]);
 
 	if (!about.profile) {
@@ -147,7 +113,7 @@ async function restoreFromRecords(
 		ownerDid,
 		name: about.profile.name,
 		description: about.profile.description,
-		requireApproval: about.profile.joinPolicy !== 'open',
+		requireApproval: requireApprovalFor(about.profile.joinPolicy) === 1,
 		locationName: about.profile.locationName,
 		aboutSpaceUri: spaces.aboutSpaceUri,
 		membersSpaceUri: spaces.membersSpaceUri,
@@ -167,15 +133,10 @@ function rolesFromRecords(
 ): { name: GroupRoleName; permissions: GroupPermission[] }[] {
 	const declared = new Set<GroupRoleName>(members.roles.map((role) => role.id));
 	declared.add('owner');
-	return GROUP_ROLES.filter((name) => declared.has(name)).map((name) => {
-		const permissions = new Set<GroupPermission>();
-		for (const record of [members.permissions, members.eventPermissions]) {
-			for (const binding of record?.bindings ?? []) {
-				if (binding.role === name) for (const p of binding.permissions) permissions.add(p);
-			}
-		}
-		return { name, permissions: [...permissions] };
-	});
+	return GROUP_ROLES.filter((name) => declared.has(name)).map((name) => ({
+		name,
+		permissions: [...effectivePermissions(members, [name])]
+	}));
 }
 
 function timestamp(value: string | null, fallback: number): number {
@@ -183,11 +144,152 @@ function timestamp(value: string | null, fallback: number): number {
 	return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-/** Whether the group's public repo holds its declaration. An unreachable PDS
- *  throws, so the repair never acts on a state it could not read. */
-function pdsDeclarationProbe(cred: GroupCredential, groupDid: string): () => Promise<boolean> {
-	return async () => {
-		const { handle } = await groupClient(cred, groupDid);
-		return repoRecordExists(handle, groupDid, GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY);
+/** The columns a profile record owns, ready for `applyGroupCache`. */
+export function cacheFromProfile(profile: GroupProfileFields): {
+	name: string;
+	description: string | null;
+	require_approval: number;
+	location_name: string | null;
+} {
+	return {
+		name: profile.name,
+		description: profile.description,
+		require_approval: requireApprovalFor(profile.joinPolicy),
+		location_name: profile.locationName
 	};
+}
+
+/** Cache repair over a surviving row: rewrites the columns the `profile` record
+ *  owns. With no profile it returns `'no-profile'` rather than wipe the cache,
+ *  which the records could not replace. A missing row is ./rebuild.ts's job. */
+export async function rebuildGroupCache(
+	db: D1Database,
+	reader: GroupSpaceReader,
+	group: GroupRow
+): Promise<{ outcome: 'repaired' | 'no-profile'; rules: number }> {
+	const about = await readGroupAbout(reader, group);
+	if (!about.profile) return { outcome: 'no-profile', rules: about.rules.length };
+	await applyGroupCache(db, group.id, cacheFromProfile(about.profile));
+	return { outcome: 'repaired', rules: about.rules.length };
+}
+
+export interface MembersRebuildResult {
+	/** Rows inserted or corrected from a record. */
+	restored: string[];
+	/** Rows that already agreed with their record. */
+	unchanged: string[];
+	/** Roster rows with no membership record. Reported, never deleted: a failed
+	 *  grant and a half-done revocation both leave one, and the gate denies both. */
+	orphans: string[];
+	/** Records that could not be projected, with the reason. */
+	skipped: { did: string; reason: string }[];
+}
+
+/**
+ * Rebuild the `memberships` projection from the records. It is additive: it
+ * writes what the records say and touches nothing else, so dropped rows come
+ * back. The owner row is inserted, never updated, because the schema refuses
+ * any change to it. A record that disagrees with it is skipped with a reason.
+ */
+export async function rebuildGroupMembers(
+	db: D1Database,
+	reader: GroupSpaceReader,
+	group: GroupRow
+): Promise<MembersRebuildResult> {
+	return projectGroupMembers(db, await readGroupMembers(reader, group), group);
+}
+
+/** `rebuildGroupMembers` over records already read, so a cold rebuild that
+ *  needed them to find the owner does not read the members space twice. */
+export async function projectGroupMembers(
+	db: D1Database,
+	members: GroupMembers,
+	group: GroupRow
+): Promise<MembersRebuildResult> {
+	await ensureGroupsSchema(db);
+	const result: MembersRebuildResult = { restored: [], unchanged: [], orphans: [], skipped: [] };
+
+	const roleRows = await db
+		.prepare(`SELECT id, name FROM roles WHERE group_id = ?`)
+		.bind(group.id)
+		.all<{ id: string; name: GroupRoleName }>();
+	const roleId = new Map<string, string>();
+	for (const row of roleRows.results ?? []) roleId.set(row.name, row.id);
+
+	const existing = await db
+		.prepare(
+			`SELECT m.did, m.role_id, m.status, r.name AS role
+			 FROM memberships m JOIN roles r ON r.id = m.role_id
+			 WHERE m.group_id = ?`
+		)
+		.bind(group.id)
+		.all<{ did: string; role_id: string; status: string; role: GroupRoleName }>();
+	const rows = new Map<string, { role: GroupRoleName; status: string }>();
+	for (const row of existing.results ?? [])
+		rows.set(row.did, { role: row.role, status: row.status });
+
+	const now = Date.now();
+	const recorded = new Set<string>();
+
+	for (const record of members.memberships) {
+		const did = record.subject;
+		// A subject that cannot be a record key would be an unaddressable member.
+		if (!isMembershipKey(did)) {
+			result.skipped.push({ did, reason: 'subject is not a usable record key' });
+			continue;
+		}
+		recorded.add(did);
+
+		const role = primaryRole(record.roles);
+		if (!role) {
+			result.skipped.push({ did, reason: 'the record grants no role this build knows' });
+			continue;
+		}
+		const target = roleId.get(role);
+		if (!target) {
+			result.skipped.push({ did, reason: `this group has no ${role} role row` });
+			continue;
+		}
+
+		const row = rows.get(did);
+
+		// The schema decides the owner. A disagreeing record is reported, not
+		// applied, but a missing owner row is still inserted.
+		if (did === group.owner_did) {
+			if (role !== 'owner') {
+				result.skipped.push({ did, reason: `owner_did cannot hold the ${role} role` });
+				continue;
+			}
+			if (row) {
+				if (row.role === 'owner' && row.status === 'active') result.unchanged.push(did);
+				else {
+					result.skipped.push({
+						did,
+						reason: `the owner's row is ${row.role}/${row.status} and is immutable`
+					});
+				}
+				continue;
+			}
+		} else if (row && row.role === role && row.status === 'active') {
+			result.unchanged.push(did);
+			continue;
+		}
+
+		await db
+			.prepare(
+				`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, 'active', ?, ?)
+				 ON CONFLICT (group_id, did) DO UPDATE SET
+					role_id = excluded.role_id, status = 'active', updated_at = excluded.updated_at`
+			)
+			.bind(crypto.randomUUID(), group.id, did, target, createdAtMs(record.createdAt) || now, now)
+			.run();
+		result.restored.push(did);
+	}
+
+	for (const did of rows.keys()) {
+		if (!recorded.has(did)) result.orphans.push(did);
+	}
+
+	return result;
 }

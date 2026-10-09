@@ -10,7 +10,6 @@ import {
 	GROUP_RULE_COLLECTION,
 	parseGroupProfile,
 	parseGroupRule,
-	requireApprovalFor,
 	type GroupProfileFields
 } from '../about-record';
 import {
@@ -22,7 +21,6 @@ import {
 import { spaceRecordUri, splitRecordUri } from '../ids';
 import type { GroupRow } from '../types';
 
-import { applyGroupCache } from './repo';
 import { groupClient, type CredentialStoreEnv, resolveGroupCredential } from './session';
 import { isRecordNotFound, xrpc, xrpcError } from './xrpc';
 
@@ -179,7 +177,7 @@ export function pdsSpaceReader(
  *  it. That is a configuration fact, not an error a page should throw on. */
 export async function groupSpaceReader(
 	env: CredentialStoreEnv,
-	group: GroupRow
+	group: Pick<GroupRow, 'group_did'>
 ): Promise<GroupSpaceReader | null> {
 	const cred = await resolveGroupCredential(env, group.group_did);
 	if (!cred) return null;
@@ -247,33 +245,4 @@ export async function readAboutAccess(
 		rkey: GROUP_ACCESS_RKEY
 	});
 	return found ? parseGroupAccess(found.value) : null;
-}
-
-/** The columns a profile record owns, ready for `applyGroupCache`. */
-export function cacheFromProfile(profile: GroupProfileFields): {
-	name: string;
-	description: string | null;
-	require_approval: number;
-	location_name: string | null;
-} {
-	return {
-		name: profile.name,
-		description: profile.description,
-		require_approval: requireApprovalFor(profile.joinPolicy),
-		location_name: profile.locationName
-	};
-}
-
-/** Cache repair over a surviving row: rewrites the columns the `profile` record
- *  owns. With no profile it returns `'no-profile'` rather than wipe the cache,
- *  which the records could not replace. A missing row is ./rebuild.ts's job. */
-export async function rebuildGroupCache(
-	db: D1Database,
-	reader: GroupSpaceReader,
-	group: GroupRow
-): Promise<{ outcome: 'repaired' | 'no-profile'; rules: number }> {
-	const about = await readGroupAbout(reader, group);
-	if (!about.profile) return { outcome: 'no-profile', rules: about.rules.length };
-	await applyGroupCache(db, group.id, cacheFromProfile(about.profile));
-	return { outcome: 'repaired', rules: about.rules.length };
 }

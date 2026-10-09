@@ -35,7 +35,6 @@ import {
 	ownerDidFromRecords,
 	readCallerAuthz,
 	readGroupMembers,
-	rebuildGroupMembers,
 	resolveActorPermissions,
 	rolesForDid,
 	rosterFromRecords,
@@ -58,6 +57,7 @@ import { DEFAULT_ROLE_PERMISSIONS, type GroupPermission, type GroupRoleName } fr
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 
 import { spaceUri } from '../ids';
+import { rebuildGroupMembers } from './rebuild';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';

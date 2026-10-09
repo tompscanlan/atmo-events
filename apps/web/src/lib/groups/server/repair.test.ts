@@ -37,7 +37,6 @@ import { writeAboutAccess, writeGroupProfile } from './about-writer';
 
 import { readGroupMembers, hasAuthzRecords } from './members-read';
 import { describeRepair, repairGroup } from './repair';
-import type { GroupRebuildSources } from './rebuild';
 import { pdsSpaceReader, readGroupAbout, type GroupSpaceReader } from './about-read';
 import { groupFace } from '../about-record';
 import {
@@ -88,7 +87,6 @@ let group: GroupRow;
 let writes: GroupRepoWrite[];
 let writer: GroupRepoWriter;
 let reader: GroupSpaceReader;
-let sources: GroupRebuildSources;
 let pds: ReturnType<typeof stubPds>;
 /** Set by a case to answer one host call its own way. */
 let failHost: StubPdsOptions['fail'] | null;
@@ -187,7 +185,6 @@ beforeEach(async () => {
 		// the fake host.
 		getSpace: (space) => pdsSpaceReader(CRED, GROUP_DID).getSpace(space)
 	};
-	sources = { reader, declared: async () => true };
 });
 
 afterEach(() => {
@@ -197,7 +194,7 @@ afterEach(() => {
 });
 
 const repair = (callerDid: string | null = OWNER) =>
-	repairGroup({ db, env, group, callerDid, writer, reader, sources });
+	repairGroup({ db, env, group, callerDid, writer, reader, declared: async () => true });
 
 const wroteTo = (collection: string) => writes.filter((w) => w.collection === collection);
 
@@ -451,7 +448,7 @@ describe('the about space member list follows the membership records', () => {
 			env,
 			group,
 			callerDid: OWNER,
-			sources: { reader: pdsSpaceReader(CRED, GROUP_DID), declared: async () => true }
+			declared: async () => true
 		});
 
 	// A complete group: owner, admin and member rows with a membership record

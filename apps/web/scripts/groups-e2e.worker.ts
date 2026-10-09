@@ -58,11 +58,7 @@ import {
 	writeAboutAccess,
 	writeGroupProfile
 } from '../src/lib/groups/server/about-writer';
-import {
-	groupSpaceReader,
-	readGroupAbout,
-	rebuildGroupCache
-} from '../src/lib/groups/server/about-read';
+import { groupSpaceReader, readGroupAbout } from '../src/lib/groups/server/about-read';
 
 import {
 	pdsProvisioner,
@@ -70,7 +66,11 @@ import {
 	readGroupVisibility,
 	setAboutSpaceReadPolicy
 } from '../src/lib/groups/server/spaces';
-import { groupRebuildSources, rebuildGroup } from '../src/lib/groups/server/rebuild';
+import {
+	rebuildGroup,
+	rebuildGroupCache,
+	rebuildGroupMembers
+} from '../src/lib/groups/server/rebuild';
 import {
 	effectivePermissions,
 	hasAuthzRecords,
@@ -78,7 +78,6 @@ import {
 	hasRecordedAccess,
 	readGroupMembers,
 	readGroupSpaceIndex,
-	rebuildGroupMembers,
 	rosterFromRecords,
 	rosterFromRows
 } from '../src/lib/groups/server/members-read';
@@ -1085,9 +1084,9 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	rebuildGroup: async (env, args) => {
 		const groupDid = String(args.groupDid);
-		const sources = await groupRebuildSources(env, groupDid);
-		if (!sources) throw new Error(`no credential for ${groupDid}`);
-		return rebuildGroup(env.DB, sources, groupDid);
+		const reader = await groupSpaceReader(env, { group_did: groupDid });
+		if (!reader) throw new Error(`no credential for ${groupDid}`);
+		return rebuildGroup(env.DB, reader, groupDid);
 	}
 };
 
