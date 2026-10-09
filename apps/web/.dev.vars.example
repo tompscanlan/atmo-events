@@ -1,5 +1,0 @@
-# Copy to `.dev.vars` (git-ignored) for `wrangler dev`. Values below are examples only.
-
-# Invite code for the group PDS, which requires one to create an account.
-# In production this is a Worker secret: `wrangler secret put GROUP_PDS_INVITE_CODE`.
-GROUP_PDS_INVITE_CODE=

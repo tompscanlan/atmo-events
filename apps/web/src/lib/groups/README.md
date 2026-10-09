@@ -176,14 +176,16 @@ host the create stops after the account exists and says the PDS does not support
 | `GROUP_PDS_INVITE_CODE` | secret | invite code, when the PDS requires one              |
 
 Linking also needs the deployment's own OAuth client metadata (`OAUTH_PUBLIC_URL` and
-`CLIENT_ASSERTION_KEY`), so the create page counts a deployment without them as not configured.
+`CLIENT_ASSERTION_KEY`) and the `OAUTH_SESSIONS` store. A deployment without them cannot create a
+group: the create page shows no form and the server refuses.
 
 - Groups get their own handle domain, so a group handle never competes with a person's handle on
   the same PDS.
 - Accounts that share an invite code share its use count, and deleting an account does not give a
   use back.
 
-`apps/web/.dev.vars.example` lists the secrets for local runs.
+For a local run, set these in `apps/web/.env` with the app's other local settings. `.env.example`
+has them commented out.
 
 ## Checks against a live PDS
 
