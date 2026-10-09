@@ -18,7 +18,7 @@
 // their write-only entry, so the host tracks the write, and comes out before
 // that entry does, so the host still accepts the notice of the delete. It never
 // stops the act: it decides how the roster shows a member, not what they may do.
-import { GROUP_ROLES, type GroupRoleName } from '../permissions';
+import { GROUP_ROLES, type GroupRoleName, type AssignableRole } from '../permissions';
 import type { GroupRow, GroupVisibility, MemberRow } from '../types';
 
 import {
@@ -105,8 +105,6 @@ export interface RosterContext {
 	 *  someone else's, and no acceptance is touched. */
 	member?: MemberSession | null;
 }
-
-type AssignableRole = Exclude<GroupRoleName, 'owner'>;
 
 /** Runs a later half of a roster act, labelling a failure with that half, since
  *  an earlier half already took effect. */

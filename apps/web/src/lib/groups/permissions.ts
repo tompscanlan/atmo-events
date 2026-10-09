@@ -17,7 +17,6 @@ export const MODALITY_PERMISSIONS = ['MANAGE_EVENTS', 'CREATE_EVENT'] as const;
 export const GROUP_PERMISSIONS = [...COMMUNITY_PERMISSIONS, ...MODALITY_PERMISSIONS] as const;
 
 export type GroupPermission = (typeof GROUP_PERMISSIONS)[number];
-export type CommunityPermission = (typeof COMMUNITY_PERMISSIONS)[number];
 
 /** Our name -> the identifier a record publishes. The only bridge between the two, so
  *  an upstream rename is an edit here plus a record replay. */
@@ -122,18 +121,8 @@ export const ASSIGNABLE_BY_ROLE: Readonly<Record<GroupRoleName, readonly GroupRo
 /** The roles a member is admitted with, published as the standard's `defaultRoles`. */
 export const DEFAULT_ROLES: readonly GroupRoleName[] = ['member'];
 
-export type EnforcedGroupPermission = GroupPermission;
-
-const IS_ENFORCED: Record<string, true> = Object.fromEntries(
-	GROUP_PERMISSIONS.map((p) => [p, true])
-);
-
 export function isGroupPermission(value: string): value is GroupPermission {
 	return IN_VOCABULARY[value] === true;
-}
-
-export function isEnforced(permission: string): permission is EnforcedGroupPermission {
-	return IS_ENFORCED[permission] === true;
 }
 
 /** Union of the bundles a caller's roles grant. No deny rows, no hierarchy. Names
@@ -148,14 +137,14 @@ export function resolvePermissions(grants: Iterable<Iterable<string>>): Set<Grou
 	return resolved;
 }
 
-/** The single gate every handler asks. `isEnforced` always passes today. It is kept
- *  so a name added to the vocabulary before its handler exists fails closed. */
+/** The single gate every handler asks. */
 export function can(granted: ReadonlySet<GroupPermission>, permission: GroupPermission): boolean {
-	if (!isEnforced(permission)) return false;
 	return granted.has(permission);
 }
 
-/** Roles an `ASSIGN_ROLES` holder may assign. Never `owner`, which SQL triggers pin. */
-export const ASSIGNABLE_ROLES: readonly Exclude<GroupRoleName, 'owner'>[] = GROUP_ROLES.filter(
-	(r): r is Exclude<GroupRoleName, 'owner'> => r !== 'owner'
+/** A role an `ASSIGN_ROLES` holder may assign. Never `owner`, which SQL triggers pin. */
+export type AssignableRole = Exclude<GroupRoleName, 'owner'>;
+
+export const ASSIGNABLE_ROLES: readonly AssignableRole[] = GROUP_ROLES.filter(
+	(r): r is AssignableRole => r !== 'owner'
 );

@@ -7,7 +7,8 @@ import {
 	isGroupPermission,
 	resolvePermissions,
 	type GroupPermission,
-	type GroupRoleName
+	type GroupRoleName,
+	type AssignableRole
 } from '../permissions';
 import type {
 	CallerMembership,
@@ -815,7 +816,7 @@ export async function addMember(
 	db: D1Database,
 	groupId: string,
 	did: string,
-	role: Exclude<GroupRoleName, 'owner'>,
+	role: AssignableRole,
 	decidedBy: string | null = null
 ): Promise<void> {
 	await ensureGroupsSchema(db);
@@ -850,7 +851,7 @@ export async function approveJoinRequest(
 	groupId: string,
 	requestId: string,
 	deciderDid: string,
-	role: Exclude<GroupRoleName, 'owner'> = 'member'
+	role: AssignableRole = 'member'
 ): Promise<{ did: string }> {
 	const did = await pendingRequestDid(db, groupId, requestId);
 	if (!did) throw new GroupRuleError('not-found', 'No such pending join request');
@@ -910,7 +911,7 @@ export async function changeMemberRole(
 	db: D1Database,
 	groupId: string,
 	did: string,
-	role: Exclude<GroupRoleName, 'owner'>
+	role: AssignableRole
 ): Promise<void> {
 	await ensureGroupsSchema(db);
 	const res = await guard(() =>

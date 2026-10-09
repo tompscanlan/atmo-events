@@ -9,20 +9,12 @@ import {
 	MODALITY_PERMISSIONS,
 	PUBLISHED_ACTION,
 	can,
-	isEnforced,
 	isGroupPermission,
 	resolvePermissions,
 	type GroupPermission
 } from './permissions';
 
 describe('the permission vocabulary', () => {
-	// The vocabulary is the enforced set. A name nothing enforces is a grant that
-	// does nothing, and once the lexicon is published it is a name a peer app
-	// reads and honors.
-	it('enforces every name it defines, leaving nothing inert', () => {
-		expect(GROUP_PERMISSIONS.filter((p) => !isEnforced(p))).toEqual([]);
-	});
-
 	it('splits into four community actions and two modality actions, with no read gate', () => {
 		expect([...COMMUNITY_PERMISSIONS, ...MODALITY_PERMISSIONS]).toEqual([...GROUP_PERMISSIONS]);
 		expect(COMMUNITY_PERMISSIONS).toHaveLength(4);

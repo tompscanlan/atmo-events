@@ -6,7 +6,7 @@
 // the signed-in user is only the subject of a permission check. The credential
 // is the group's (./credentials.ts), and `repo` is always the group DID.
 import { isActorIdentifier } from '@atcute/lexicons/syntax';
-import { can, type EnforcedGroupPermission } from '../permissions';
+import { can, type GroupPermission } from '../permissions';
 import {
 	ABOUT_SPACE_TYPE,
 	CALENDAR_SPACE_TYPE,
@@ -34,7 +34,7 @@ function errorOf(data: unknown): string | null {
 /** The caller's role does not grant the permission this write needs. */
 export class GroupPermissionError extends Error {
 	constructor(
-		readonly permission: EnforcedGroupPermission,
+		readonly permission: GroupPermission,
 		readonly groupDid: string
 	) {
 		super(`${permission} is required to do that in this group (${groupDid})`);
@@ -204,7 +204,7 @@ export interface GroupGateInput {
  *  permission can be checked, and the refusal says what would fix it. */
 export async function requireGroupPermission(
 	input: GroupGateInput,
-	permission: EnforcedGroupPermission
+	permission: GroupPermission
 ): Promise<void> {
 	const { db, group, callerDid } = input;
 	if (!callerDid) throw new GroupPermissionError(permission, group.group_did);

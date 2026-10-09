@@ -183,7 +183,7 @@ export async function dropGroupMembership(
  *  (`writeAboutAccess`). Needs MANAGE_GROUP, since it is configuration.
  *  Idempotent, keyed `self`. */
 export async function writeGroupAccess(
-	input: WriteGroupMembersInput & { roles?: readonly GroupRoleName[]; space?: string }
+	input: WriteGroupMembersInput & { space?: string }
 ): Promise<{ uri: string; cid: string }> {
 	await requireGroupPermission(input, 'MANAGE_GROUP');
 
@@ -193,7 +193,7 @@ export async function writeGroupAccess(
 			? members
 			: calendarSpace(input.group, input.space);
 	const record = {
-		...groupAccessRecord({ roles: input.roles ?? MEMBERS_SPACE_READER_ROLES, public: false }),
+		...groupAccessRecord({ roles: MEMBERS_SPACE_READER_ROLES, public: false }),
 		$type: GROUP_ACCESS_COLLECTION
 	};
 

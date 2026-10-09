@@ -8,7 +8,12 @@
 //
 // Not deployed, not routed, never imported by the app. `scripts/` is outside
 // tsconfig's include, like scripts/geocode-events.ts.
-import { can, type GroupPermission, type GroupRoleName } from '../src/lib/groups/permissions';
+import {
+	can,
+	type GroupPermission,
+	type GroupRoleName,
+	type AssignableRole
+} from '../src/lib/groups/permissions';
 import { canSeeGroup } from '../src/lib/groups/access';
 import type { GroupRow, GroupVisibility } from '../src/lib/groups/types';
 import {
@@ -139,8 +144,6 @@ interface Env {
 	/** The admin's login, for the stand-in of their own session (`adminSession`). */
 	E2E_ADMIN_PASSWORD: string;
 }
-
-type AssignableRole = Exclude<GroupRoleName, 'owner'>;
 
 /** Args are already-parsed JSON from the driver, which is the only caller. */
 type Args = Record<string, unknown>;

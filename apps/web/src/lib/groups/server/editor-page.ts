@@ -2,7 +2,7 @@
 // edit pages. The pages are only a first gate; every save is checked again by
 // the writer (./event-writer.ts).
 import { error } from '@sveltejs/kit';
-import { can, type EnforcedGroupPermission } from '../permissions';
+import { can, type GroupPermission } from '../permissions';
 import { readGroupAbout } from './about-read';
 
 import { groupRouteContext } from './route-context';
@@ -13,7 +13,7 @@ export async function groupEditorPage(
 	env: CredentialStoreEnv & { DB: D1Database },
 	actor: string,
 	callerDid: string | null,
-	permission: EnforcedGroupPermission
+	permission: GroupPermission
 ) {
 	const db = env.DB;
 	const { group, membership, reader } = await groupRouteContext(env, db, actor, callerDid);
