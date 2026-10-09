@@ -5,7 +5,7 @@
 // the host.
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
-import { getRecord, resolveHandle } from '$lib/atproto/methods';
+import { resolveHandle } from '$lib/atproto/methods';
 import { atProtoLoginModalState } from '$lib/components/LoginModal.svelte';
 import type { EditorAdapter, EditorBlobRef } from '$lib/components/editor/adapter';
 import type { GroupFormResult } from './form-result';
@@ -96,13 +96,9 @@ export function createGroupEditorAdapter(opts: {
 				throw e;
 			}
 		},
-		async getRecord({ did, collection, rkey }) {
-			const fresh = await getRecord({
-				did: did as `did:${string}:${string}`,
-				collection: collection as Parameters<typeof getRecord>[0]['collection'],
-				rkey
-			});
-			return { value: (fresh as { value?: Record<string, unknown> }).value ?? {} };
+		async getRecord() {
+			// Only the share flow reads a record back, and the editor never opens it.
+			throw new Error('the group event editor reads no record back');
 		},
 		async resolveHandle(handle: string) {
 			return resolveHandle({ handle: handle as Parameters<typeof resolveHandle>[0]['handle'] });
