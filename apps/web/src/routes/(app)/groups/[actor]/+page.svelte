@@ -140,8 +140,12 @@
 	{/if}
 
 	<div class="mt-8 flex flex-wrap items-center gap-3">
-		<!-- The link carries the group's DID, so a page reached through a handle
+		<!-- Both links carry the group's DID, so a page reached through a handle
 		     URL still hands out DID links. -->
+		<Button
+			href={resolve('/(app)/groups/[actor]/events', { actor: group.group_did })}
+			variant="secondary">Events</Button
+		>
 		{#if data.canSeeMembers}
 			<Button
 				href={resolve('/(app)/groups/[actor]/members', { actor: group.group_did })}
