@@ -7,7 +7,12 @@ import { mainSchema as eventSchema } from '../../../lexicon-types/types/communit
 import { GROUP_EVENT_COLLECTION, POLICY_MEMBER_LIST, groupSpaceUris } from '../ids';
 import type { GroupRow } from '../types';
 
-import { pdsSpaceReader, type GroupSpaceConfig, type GroupSpaceReader } from './about-read';
+import {
+	isSpaceNotFound,
+	pdsSpaceReader,
+	type GroupSpaceConfig,
+	type GroupSpaceReader
+} from './about-read';
 import { notifyIndexQuietly, type IndexNotifier } from './events-index';
 import {
 	GroupRecordError,
@@ -103,10 +108,6 @@ export class GroupPlacementError extends GroupRecordError {
 	}
 }
 
-/** The host's own error code for a space it never created, as the reader names
- *  it in what it throws. */
-const NO_SUCH_SPACE = /\bSpaceNotFound\b/;
-
 /**
  * The placement a group event write may name: null for the group's public repo,
  * or the group's own calendar space. The URI is computed from the group's DID and
@@ -180,7 +181,7 @@ export async function checkCalendarSpace(locator: GroupEventLocator, space: stri
 	try {
 		({ readPolicy } = await locator.getSpace(space));
 	} catch (e) {
-		if (e instanceof Error && NO_SUCH_SPACE.test(e.message)) {
+		if (isSpaceNotFound(e)) {
 			throw new GroupPlacementError('no-calendar-space');
 		}
 		console.error(`[groups] ${space} could not be checked; a members-only write was refused:`, e);

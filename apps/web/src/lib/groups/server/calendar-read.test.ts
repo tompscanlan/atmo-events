@@ -255,10 +255,10 @@ describe('readMembersOnlyEvents: through the real reader', () => {
 		warned.mockRestore();
 	});
 
-	// The card builds a cdn.bsky.app URL from an event's image, and that URL
-	// carries the group's DID and the image's CID to a third party. Only the
-	// image goes: the event's identity and every other field arrive as stored.
-	it('a members-only event is read without its image', async () => {
+	// The read hands back each event as stored. A page drops the image from its
+	// own copy (`membersOnlyEventForDisplay`), since a card would build a
+	// cdn.bsky.app URL from it; the events tab's loader does that.
+	it('a members-only event is read as stored, image included', async () => {
 		const stored = {
 			...MEETING_VALUE,
 			media: [image('thumbnail', 'bafkreithumb'), image('header', 'bafkreiheader')]
@@ -277,13 +277,12 @@ describe('readMembersOnlyEvents: through the real reader', () => {
 					uri: spaceForm(EVENT, '3lmeeting'),
 					cid: 'bafymeeting',
 					rkey: '3lmeeting',
-					value: MEETING_VALUE,
+					value: stored,
 					space: CALENDAR
 				}
 			],
 			notice: null
 		});
-		expect('media' in slice!.events[0].value).toBe(false);
 	});
 
 	it('reads a listRecords body that carries no uri, and rebuilds the space-form one', async () => {

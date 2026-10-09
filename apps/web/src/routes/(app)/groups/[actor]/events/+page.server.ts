@@ -1,6 +1,10 @@
 import { can } from '$lib/groups/permissions';
 import { readGroupAbout } from '$lib/groups/server/about-read';
-import { readMembersOnlyEvents, unionGroupEvents } from '$lib/groups/server/calendar-read';
+import {
+	membersOnlyEventForDisplay,
+	readMembersOnlyEvents,
+	unionGroupEvents
+} from '$lib/groups/server/calendar-read';
 import { listGroupEvents } from '$lib/groups/server/events-index';
 
 import { groupRouteContext } from '$lib/groups/server/route-context';
@@ -40,7 +44,10 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		groupName: about.profile?.name ?? group.name,
 		/** The handle Contrail knows for the group, or null. Display only. */
 		handle: (await knownHandles(db, [group.group_did])).get(group.group_did) ?? null,
-		events: membersOnly ? unionGroupEvents(events, membersOnly.events) : events,
+		// Each members-only event without its image, as on its own page. (Spec: FR-119.)
+		events: membersOnly
+			? unionGroupEvents(events, membersOnly.events.map(membersOnlyEventForDisplay))
+			: events,
 		/** Why a member sees no members-only events, when they could not be read.
 		 *  Only a roster member's data can carry it. */
 		...(membersOnly?.notice ? { membersOnlyNotice: membersOnly.notice } : {}),

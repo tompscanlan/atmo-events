@@ -123,7 +123,8 @@ import {
 import {
 	membersOnlyEventForEditing,
 	readMembersOnlyEvent,
-	readMembersOnlyEvents
+	readMembersOnlyEvents,
+	membersOnlyEventForDisplay
 } from '../src/lib/groups/server/calendar-read';
 import { standInCalls } from './groups-e2e.oauth';
 import { scopes } from '../src/lib/atproto/settings';
@@ -727,7 +728,9 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			const reader = await groupSpaceReader(env, group);
 			const membership = await getCallerMembership(env.DB, group, did, reader);
 			const sliceFrom = standInCalls.length;
-			const slice = await readMembersOnlyEvents(membership, reader, group);
+			const read = await readMembersOnlyEvents(membership, reader, group);
+			// As the events tab shows it: each event without its image.
+			const slice = read && { ...read, events: read.events.map(membersOnlyEventForDisplay) };
 			return {
 				linked: reader !== null,
 				onRoster: membership.onRoster,

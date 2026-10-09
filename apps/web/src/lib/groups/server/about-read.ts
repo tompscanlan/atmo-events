@@ -102,6 +102,13 @@ function toSpaceRecord(
 	return { uri: body.uri, cid, collection, rkey, value };
 }
 
+/** Whether a read failed because the host never created the space. The reader
+ *  names the host's error code in what it throws ("<method> failed: 400
+ *  SpaceNotFound"), and this is the one place that reads it back. */
+export function isSpaceNotFound(e: unknown): boolean {
+	return e instanceof Error && /\bSpaceNotFound\b/.test(e.message);
+}
+
 /** Reads with the group's own session, through the raw `handle`, since the
  *  space methods are not in the generated lexicon set. */
 export function pdsSpaceReader(

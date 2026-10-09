@@ -17,7 +17,7 @@ import { isRecordKey } from '@atcute/lexicons/syntax';
 import type { FlatEventRecord } from '$lib/contrail';
 import { canSeeMembers } from '../access';
 import type { CallerMembership, GroupEventRecord, GroupRow } from '../types';
-import { type GroupSpaceReader, type GroupSpaceRecord } from './about-read';
+import { isSpaceNotFound, type GroupSpaceReader } from './about-read';
 
 import { GROUP_EVENT_COLLECTION, groupSpaceUris, membersOnlyEventUri } from '../ids';
 /** A member's notice when the group's session is gone: nothing can read the
@@ -35,76 +35,91 @@ export interface MembersOnlySlice {
 	notice: string | null;
 }
 
-/** The host's own error code for a space it never created, as the reader names
- *  it in what it throws. A group made before the calendar space existed has
- *  none, and that is an empty slice, not a failed read. */
-const NO_SUCH_SPACE = /\bSpaceNotFound\b/;
+/** What a read of the calendar space comes to, before the caller says what it
+ *  means for its own page. */
+type CalendarRead<T> =
+	| { status: 'hidden' }
+	| { status: 'unlinked' }
+	| { status: 'no-space' }
+	| { status: 'unreadable' }
+	| { status: 'read'; space: string; value: T };
+
+/**
+ * The steps every read of the calendar space shares. The roster check comes
+ * first, before the reader is touched. A space the host never created is not a
+ * failure; a host that answered a refused read the same way would leave a member
+ * silently seeing nothing, so the log still says it happened. Any other failure
+ * is logged and never falls back to another source.
+ */
+async function readCalendarSpace<T>(
+	membership: CallerMembership,
+	reader: GroupSpaceReader | null,
+	group: Pick<GroupRow, 'group_did'>,
+	log: { noSpace: string; failed: string },
+	read: (reader: GroupSpaceReader, space: string) => Promise<T>
+): Promise<CalendarRead<T>> {
+	// The roster, never the group's visibility: a public group lets everyone see
+	// it, and only its members see its members-only events.
+	if (!canSeeMembers(membership)) return { status: 'hidden' };
+	if (!reader) return { status: 'unlinked' };
+	const space = groupSpaceUris(group.group_did).calendarSpaceUri;
+	try {
+		return { status: 'read', space, value: await read(reader, space) };
+	} catch (e) {
+		if (isSpaceNotFound(e)) {
+			console.warn(
+				`[groups] ${group.group_did}: the host answered SpaceNotFound for the calendar space; ${log.noSpace}:`,
+				e
+			);
+			return { status: 'no-space' };
+		}
+		console.error(`[groups] ${group.group_did}: ${log.failed}:`, e);
+		return { status: 'unreadable' };
+	}
+}
 
 /**
  * The calendar space's events for `membership`, or null for a caller off the
  * roster. Null means no read was made and there is nothing to say, so the page
- * is exactly what it was before this slice existed.
+ * shows the public slice alone.
  *
  * A failed read never falls back to anything: a member gets the public slice
- * and a notice, and the error goes to the log.
+ * and a notice. The records come back as stored, image included; a page drops
+ * what it must not show from its own copy (`membersOnlyEventForDisplay`).
  */
 export async function readMembersOnlyEvents(
 	membership: CallerMembership,
 	reader: GroupSpaceReader | null,
 	group: Pick<GroupRow, 'group_did'>
 ): Promise<MembersOnlySlice | null> {
-	// The roster, never the group's visibility: a public group lets everyone see
-	// it, and only its members see this slice.
-	if (!canSeeMembers(membership)) return null;
-
-	if (!reader) return { events: [], notice: MEMBERS_ONLY_UNLINKED };
-
-	const space = groupSpaceUris(group.group_did).calendarSpaceUri;
-	let records: GroupSpaceRecord[];
-	try {
-		records = await reader.list({
-			space,
-			repo: group.group_did,
-			collection: GROUP_EVENT_COLLECTION
-		});
-	} catch (e) {
-		// No notice for a space the host never created, but a host that answered a
-		// refused read the same way would leave a member silently seeing nothing,
-		// so the log still says it happened.
-		if (e instanceof Error && NO_SUCH_SPACE.test(e.message)) {
-			console.warn(
-				`[groups] ${group.group_did}: the host answered SpaceNotFound for the calendar space; the slice is shown empty, with no notice:`,
-				e
-			);
-			return { events: [], notice: null };
-		}
-		console.error(
-			`[groups] ${group.group_did}: the calendar space could not be read; members-only events are left out:`,
-			e
-		);
-		return { events: [], notice: MEMBERS_ONLY_UNREADABLE };
-	}
+	const read = await readCalendarSpace(
+		membership,
+		reader,
+		group,
+		{
+			noSpace: 'the slice is shown empty, with no notice',
+			failed: 'the calendar space could not be read; members-only events are left out'
+		},
+		(r, space) => r.list({ space, repo: group.group_did, collection: GROUP_EVENT_COLLECTION })
+	);
+	if (read.status === 'hidden') return null;
+	if (read.status === 'unlinked') return { events: [], notice: MEMBERS_ONLY_UNLINKED };
+	if (read.status === 'no-space') return { events: [], notice: null };
+	if (read.status === 'unreadable') return { events: [], notice: MEMBERS_ONLY_UNREADABLE };
 
 	const events: GroupEventRecord[] = [];
-	for (const record of records) {
+	for (const record of read.value) {
 		// The space also holds its access record. The host was asked for events
 		// only, and each record is checked again in case it ignored the filter.
 		if (record.collection !== GROUP_EVENT_COLLECTION) continue;
-		// Images are wanted on every event. Leaving a members-only event's image
-		// out is interim, until members-only images are served to members through
-		// atmo's own route: the card would build a cdn.bsky.app URL from it, which
-		// hands a third party the group's DID and the image's CID. Only what the
-		// page reads loses it; the stored record keeps its image. (Spec: FR-119.)
-		const value = { ...record.value };
-		delete value.media;
 		// The URI stays the space form the reader built, since that is the
 		// event's identity wherever it is cited. (Spec: FR-120.)
 		events.push({
 			uri: record.uri,
 			cid: record.cid,
 			rkey: record.rkey,
-			value,
-			space
+			value: record.value,
+			space: read.space
 		});
 	}
 	return { events, notice: null };
@@ -150,42 +165,31 @@ export async function readMembersOnlyEvent(
 	group: Pick<GroupRow, 'group_did'>,
 	rkey: string
 ): Promise<MembersOnlyEventRead> {
-	if (!canSeeMembers(membership)) return { status: 'hidden' };
-
-	if (!reader) return { status: 'unlinked', notice: MEMBERS_ONLY_UNLINKED };
-
-	// A key no record can have names nothing, so the host is not asked.
-	if (!isRecordKey(rkey)) return { status: 'absent' };
-
-	const space = groupSpaceUris(group.group_did).calendarSpaceUri;
-	let found: GroupSpaceRecord | null;
-	try {
-		found = await reader.get({
-			space,
-			repo: group.group_did,
-			collection: GROUP_EVENT_COLLECTION,
-			rkey
-		});
-	} catch (e) {
-		// A group made before the calendar space existed has no members-only
-		// events, which is not a failure. The log still says it happened, as the
-		// slice's does, naming the group and not its calendar space.
-		if (e instanceof Error && NO_SUCH_SPACE.test(e.message)) {
-			console.warn(
-				`[groups] ${group.group_did}: the host answered SpaceNotFound for the calendar space; the event is absent:`,
-				e
-			);
-			return { status: 'absent' };
-		}
-		console.error(
-			`[groups] ${group.group_did}: a members-only event could not be read from the calendar space:`,
-			e
-		);
+	// A key no record can have names nothing, so the host is not asked. The roster
+	// check still comes first, so a caller off the roster learns nothing from it.
+	const keyed = isRecordKey(rkey);
+	const read = await readCalendarSpace(
+		membership,
+		reader,
+		group,
+		{
+			noSpace: 'the event is absent',
+			failed: 'a members-only event could not be read from the calendar space'
+		},
+		(r, space) =>
+			keyed
+				? r.get({ space, repo: group.group_did, collection: GROUP_EVENT_COLLECTION, rkey })
+				: Promise.resolve(null)
+	);
+	if (read.status === 'hidden') return { status: 'hidden' };
+	if (read.status === 'unlinked') return { status: 'unlinked', notice: MEMBERS_ONLY_UNLINKED };
+	if (read.status === 'no-space') return { status: 'absent' };
+	if (read.status === 'unreadable')
 		return { status: 'unreadable', notice: MEMBERS_ONLY_UNREADABLE };
-	}
 
 	// The host was asked for one event by its key. A record it hands back under
 	// any other collection or key is not that event.
+	const found = read.value;
 	if (!found || found.collection !== GROUP_EVENT_COLLECTION || found.rkey !== rkey) {
 		return { status: 'absent' };
 	}
@@ -200,7 +204,7 @@ export async function readMembersOnlyEvent(
 			cid: found.cid,
 			rkey,
 			value: found.value,
-			space
+			space: read.space
 		}
 	};
 }
@@ -213,8 +217,8 @@ export async function readMembersOnlyEvent(
  *
  * The copy is shallow: only its top-level image key is dropped, so the event it
  * is given keeps its image, and every nested value is shared between the two.
- * Only the event's page calls this: the edit page saves what it loads, so
- * dropping the image there would delete it.
+ * The event's page and the events tab call this. The edit page does not: it
+ * saves what it loads, so dropping the image there would delete it.
  */
 export function membersOnlyEventForDisplay(event: GroupEventRecord): GroupEventRecord {
 	const value = { ...event.value };
