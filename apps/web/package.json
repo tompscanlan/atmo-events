@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build && contrail append-scheduled",
-		"generate": "contrail-lex generate",
+		"generate": "node scripts/lexicon-shims.mjs write && contrail-lex generate && node scripts/lexicon-shims.mjs unpull",
 		"generate:pull": "contrail-lex all",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
