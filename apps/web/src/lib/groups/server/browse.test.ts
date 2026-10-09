@@ -1,12 +1,12 @@
 // What browse lists, against the real schema. Each case is a rule the browse
 // page trusts without re-checking.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
+import type { GroupRow } from '../types';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { membersSpaceReader } from './__fixtures__/members-space';
+import { seedGroup } from './__fixtures__/seed-group';
 import type { FakeSpaceReader } from './__fixtures__/space-reader';
-import { spaceUri } from '../ids';
-import { createGroup, recordGroupSpaces } from './db/groups';
+import { createGroup } from './db/groups';
 import { addMember } from './db/roster';
 import { listGroups } from './browse';
 import { getCallerMembership } from './standing';
@@ -25,13 +25,11 @@ beforeEach(() => {
 
 afterEach(() => harness.close());
 
+/** The group every case starts from, unless it says otherwise. */
+const KONA = { groupDid: 'did:plc:jcwgw6fcnb5vyoid7nz7sl26', ownerDid: OWNER, name: 'Kona' };
+
 function group(overrides: Partial<Parameters<typeof createGroup>[1]> = {}) {
-	return createGroup(db, {
-		groupDid: 'did:plc:jcwgw6fcnb5vyoid7nz7sl26',
-		ownerDid: OWNER,
-		name: 'Kona',
-		...overrides
-	});
+	return createGroup(db, { ...KONA, ...overrides });
 }
 
 describe('browse visibility', () => {
@@ -50,16 +48,8 @@ describe('browse visibility', () => {
 		input: Partial<Parameters<typeof createGroup>[1]>,
 		members: string[]
 	): Promise<HostedGroup> {
-		const created = await group(input);
-		const space = spaceUri(created.group_did, MEMBERS_SPACE_TYPE, 'self');
-		await recordGroupSpaces(db, created.id, {
-			aboutSpaceUri: spaceUri(created.group_did, ABOUT_SPACE_TYPE, 'self'),
-			membersSpaceUri: space
-		});
-		return {
-			row: { ...created, members_space_uri: space },
-			reader: membersSpaceReader(space, created.group_did, members)
-		};
+		const { group: row, spaces } = await seedGroup({ harness, ...KONA, ...input });
+		return { row, reader: membersSpaceReader(spaces.membersSpaceUri, row.group_did, members) };
 	}
 
 	/** The check the browse loader builds: the caller's standing as the group's

@@ -28,13 +28,10 @@ import {
 import { listDeclaredGroups } from '$lib/groups/server/browse';
 import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { membersSpaceReader } from '$lib/groups/server/__fixtures__/members-space';
+import { seedGroup } from '$lib/groups/server/__fixtures__/seed-group';
 import { hostDown, spaceReader } from '$lib/groups/server/__fixtures__/space-reader';
 
-import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from '$lib/groups/types';
-
-import { spaceUri } from '$lib/groups/ids';
-import { createGroup, recordGroupSpaces } from '$lib/groups/server/db/groups';
-import { addMember } from '$lib/groups/server/db/roster';
+import { createGroup } from '$lib/groups/server/db/groups';
 const OWNER = 'did:plc:owner';
 const ALICE = 'did:plc:alice';
 
@@ -55,14 +52,14 @@ afterEach(() => {
 /** An undeclared group someone else owns, with ALICE's row in it and, when
  *  `recorded`, her membership record in its members space. */
 async function joined(name: string, groupDid: string, recorded: boolean) {
-	const group = await createGroup(db, { groupDid, ownerDid: OWNER, name });
-	const members = spaceUri(groupDid, MEMBERS_SPACE_TYPE, 'self');
-	await recordGroupSpaces(db, group.id, {
-		aboutSpaceUri: spaceUri(groupDid, ABOUT_SPACE_TYPE, 'self'),
-		membersSpaceUri: members
+	const { spaces } = await seedGroup({
+		harness,
+		groupDid,
+		ownerDid: OWNER,
+		name,
+		members: { [ALICE]: 'member' }
 	});
-	await addMember(db, group.id, ALICE, 'member');
-	return membersSpaceReader(members, groupDid, recorded ? [ALICE] : []);
+	return membersSpaceReader(spaces.membersSpaceUri, groupDid, recorded ? [ALICE] : []);
 }
 
 /** A host that fails every read of the group's spaces. */
@@ -157,11 +154,7 @@ describe('/groups load', () => {
 	// The caller's own groups are never checked, so a members space that is
 	// down cannot hide a group from its owner.
 	it("lists the caller's own undeclared group without reading its members space", async () => {
-		const mine = await createGroup(db, { groupDid: 'did:plc:mine', ownerDid: ALICE, name: 'Mine' });
-		await recordGroupSpaces(db, mine.id, {
-			aboutSpaceUri: spaceUri('did:plc:mine', ABOUT_SPACE_TYPE, 'self'),
-			membersSpaceUri: spaceUri('did:plc:mine', MEMBERS_SPACE_TYPE, 'self')
-		});
+		await seedGroup({ harness, groupDid: 'did:plc:mine', ownerDid: ALICE, name: 'Mine' });
 		serveReader('did:plc:mine', down('did:plc:mine'));
 
 		expect((await browse()).groups).toEqual([

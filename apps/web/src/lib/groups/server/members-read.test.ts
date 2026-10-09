@@ -16,7 +16,8 @@
 //   4. The owner's row is immutable in SQL, so the rebuild inserts a missing
 //      one and does not fight one that disagrees.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
+import type { SqliteD1 } from './__fixtures__/d1-sqlite';
+import { seedGroup } from './__fixtures__/seed-group';
 
 import { pdsSpaceReader } from './about-read';
 import { hostDown, spaceReader, type SpaceRecordInput } from './__fixtures__/space-reader';
@@ -50,12 +51,11 @@ import {
 	groupRoleRecord
 } from '../members-record';
 import { DEFAULT_ROLE_PERMISSIONS, type GroupPermission, type GroupRoleName } from '../permissions';
-import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
+import { MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 
 import { spaceUri } from '../ids';
 import { rebuildGroupMembers } from './rebuild';
-import { createGroup, recordGroupSpaces } from './db/groups';
-import { addMember, listMembers } from './db/roster';
+import { listMembers } from './db/roster';
 import { getCallerMembership } from './standing';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
@@ -63,7 +63,6 @@ const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const MEMBER = 'did:plc:6cz6dldz42itymdbte47ewcv';
 const STRANGER = 'did:plc:ib2wrjcp4ulwqu35a7rtlckv';
 
-const ABOUT = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self');
 const MEMBERS = spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self');
 
 let harness: SqliteD1;
@@ -126,17 +125,12 @@ const AUTHZ: SpaceRecordInput[] = [
 ];
 
 beforeEach(async () => {
-	harness = sqliteD1();
-	db = harness.db;
-	group = await createGroup(db, {
+	({ harness, db, group } = await seedGroup({
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
-		name: 'Kona'
-	});
-	await addMember(db, group.id, ADMIN, 'admin');
-	await addMember(db, group.id, MEMBER, 'member');
-	await recordGroupSpaces(db, group.id, { aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS });
-	group = { ...group, about_space_uri: ABOUT, members_space_uri: MEMBERS };
+		name: 'Kona',
+		members: { [ADMIN]: 'admin', [MEMBER]: 'member' }
+	}));
 });
 
 afterEach(() => harness.close());

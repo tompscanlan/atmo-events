@@ -4,7 +4,8 @@
 // be wrong, because a rule has to stay citable by URI. So the reconcile is
 // asserted through the writes it makes, not through the list it ends up with.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
+import type { SqliteD1 } from './__fixtures__/d1-sqlite';
+import { seedGroup } from './__fixtures__/seed-group';
 
 import { setGroupRules, writeGroupProfile } from './about-writer';
 import type { GroupRuleRecord } from './about-read';
@@ -15,8 +16,6 @@ import { GROUP_PROFILE_COLLECTION, GROUP_RULE_COLLECTION } from '../about-record
 import { spaceUri } from '../ids';
 import { GroupPermissionError, type GroupRepoWrite } from './group-write';
 import { recordingWriter, type RecordingWriter } from './__fixtures__/space-reader';
-import { createGroup, recordGroupSpaces } from './db/groups';
-import { addMember } from './db/roster';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
@@ -47,20 +46,14 @@ function existing(rkey: string, text: string, order: number): GroupRuleRecord {
 }
 
 beforeEach(async () => {
-	harness = sqliteD1();
-	db = harness.db;
-	group = await createGroup(db, {
+	({ harness, db, group } = await seedGroup({
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
-		name: 'Kona'
-	});
-	await addMember(db, group.id, ADMIN, 'admin');
-	await addMember(db, group.id, MEMBER, 'member');
-	await recordGroupSpaces(db, group.id, {
-		aboutSpaceUri: ABOUT,
-		membersSpaceUri: spaceUri(GROUP_DID, 'group.opensocial.members', 'self')
-	});
-	group = { ...group, about_space_uri: ABOUT };
+		name: 'Kona',
+		members: { [ADMIN]: 'admin', [MEMBER]: 'member' }
+	}));
+	// The writers get no members space, so the gate resolves from the roster rows.
+	group = { ...group, members_space_uri: null };
 
 	writer = recordingWriter();
 	writes = writer.writes;

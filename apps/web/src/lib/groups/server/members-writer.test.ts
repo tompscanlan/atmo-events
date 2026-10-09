@@ -12,7 +12,8 @@
 // the group), and that the calendar space gets its access record and index entry
 // only from a caller that names it: create does, repair does not.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
+import type { SqliteD1 } from './__fixtures__/d1-sqlite';
+import { seedGroup } from './__fixtures__/seed-group';
 
 import {
 	dropGroupMembership,
@@ -41,8 +42,6 @@ import {
 
 import { spaceUri } from '../ids';
 import { GroupPermissionError, GroupRecordError, type GroupRepoWrite } from './group-write';
-import { createGroup, recordGroupSpaces } from './db/groups';
-import { addMember } from './db/roster';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
@@ -69,17 +68,12 @@ let reader: FakeSpaceReader;
 const env = {};
 
 beforeEach(async () => {
-	harness = sqliteD1();
-	db = harness.db;
-	group = await createGroup(db, {
+	({ harness, db, group } = await seedGroup({
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
-		name: 'Kona'
-	});
-	await addMember(db, group.id, ADMIN, 'admin');
-	await addMember(db, group.id, MEMBER, 'member');
-	await recordGroupSpaces(db, group.id, { aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS });
-	group = { ...group, about_space_uri: ABOUT, members_space_uri: MEMBERS };
+		name: 'Kona',
+		members: { [ADMIN]: 'admin', [MEMBER]: 'member' }
+	}));
 
 	reader = spaceReader(GROUP_DID);
 	writer = recordingWriter(reader);

@@ -28,7 +28,8 @@ import {
 	resetReaderHost,
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
-import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
+import type { SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
+import { seedGroup } from '$lib/groups/server/__fixtures__/seed-group';
 
 import {
 	GROUP_NOT_FOUND,
@@ -40,7 +41,7 @@ import { linkGroups, unlinkAllGroups } from '$lib/groups/server/__fixtures__/lin
 import type { CallerMembership } from '$lib/groups/types';
 
 import { groupSpaceUris } from '$lib/groups/ids';
-import { createGroup, getGroupByDid, recordGroupSpaces } from '$lib/groups/server/db/groups';
+import { getGroupByDid } from '$lib/groups/server/db/groups';
 import { addMember } from '$lib/groups/server/db/roster';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
@@ -51,10 +52,12 @@ const { aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS } = groupSpaceUris(GROUP_
 let harness: SqliteD1;
 
 beforeEach(async () => {
-	harness = sqliteD1();
-	const row = await createGroup(harness.db, { groupDid: GROUP_DID, ownerDid: OWNER, name: 'Kona' });
-	await recordGroupSpaces(harness.db, row.id, groupSpaceUris(GROUP_DID));
-	await addMember(harness.db, row.id, MEMBER, 'member');
+	({ harness } = await seedGroup({
+		groupDid: GROUP_DID,
+		ownerDid: OWNER,
+		name: 'Kona',
+		members: { [MEMBER]: 'member' }
+	}));
 });
 
 afterEach(() => {

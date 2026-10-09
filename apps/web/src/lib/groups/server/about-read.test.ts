@@ -11,7 +11,8 @@
 //      it as private, and the join policy is derived from that where it is
 //      shown and enforced (`groupFace`, `requestJoin`), not from the row.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
+import type { SqliteD1 } from './__fixtures__/d1-sqlite';
+import { seedGroup } from './__fixtures__/seed-group';
 
 import { pdsSpaceReader, readGroupAbout } from './about-read';
 import {
@@ -26,11 +27,11 @@ import {
 	groupProfileRecord,
 	groupRuleRecord
 } from '../about-record';
-import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
+import { ABOUT_SPACE_TYPE, type GroupRow } from '../types';
 
 import { splitRecordUri, spaceUri } from '../ids';
 import { cacheFromProfile, rebuildGroupCache } from './rebuild';
-import { createGroup, getGroupById, recordGroupSpaces } from './db/groups';
+import { getGroupById } from './db/groups';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ABOUT = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self');
@@ -44,20 +45,13 @@ const readerOver = (records: SpaceRecordInput[], options: SpaceReaderOptions = {
 	spaceReader(GROUP_DID, { space: ABOUT, records, ...options });
 
 beforeEach(async () => {
-	harness = sqliteD1();
-	db = harness.db;
-	group = await createGroup(db, {
+	({ harness, db, group } = await seedGroup({
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
 		name: 'Stale name',
 		description: 'Stale description',
 		locationName: 'Stale location'
-	});
-	await recordGroupSpaces(db, group.id, {
-		aboutSpaceUri: ABOUT,
-		membersSpaceUri: spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self')
-	});
-	group = { ...group, about_space_uri: ABOUT };
+	}));
 });
 
 afterEach(() => harness.close());

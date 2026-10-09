@@ -3,15 +3,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // The write gate asks the group's records for the caller's standing once per
 // request: every write a request makes passes the request's one reader, so a
 // create or a settings save that writes nine records reads the standing once.
-import { groupSpaceUris } from '../ids';
 import type { GroupRow } from '../types';
 import type { GroupSpaceReader } from './about-read';
 import { hostDown, spaceReader, type FakeSpaceReader } from './__fixtures__/space-reader';
-import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
+import type { SqliteD1 } from './__fixtures__/d1-sqlite';
+import { seedGroup } from './__fixtures__/seed-group';
 import { GroupPermissionError, requireGroupPermission } from './group-write';
 
-import { createGroup, getGroupByDid, recordGroupSpaces } from './db/groups';
-import { addMember } from './db/roster';
 const GROUP_DID = 'did:plc:gatetestgroupaaaaaaaaaaa';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
@@ -20,15 +18,12 @@ let harness: SqliteD1;
 let group: GroupRow;
 
 beforeEach(async () => {
-	harness = sqliteD1();
-	const created = await createGroup(harness.db, {
+	({ harness, group } = await seedGroup({
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
-		name: 'Kona'
-	});
-	await recordGroupSpaces(harness.db, created.id, groupSpaceUris(GROUP_DID));
-	await addMember(harness.db, created.id, MEMBER, 'member');
-	group = (await getGroupByDid(harness.db, GROUP_DID))!;
+		name: 'Kona',
+		members: { [MEMBER]: 'member' }
+	}));
 });
 
 afterEach(() => harness.close());

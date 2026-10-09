@@ -52,13 +52,11 @@ import {
 } from '$lib/groups/server/__fixtures__/reader-host';
 import { MEMBERS_ONLY_UNLINKED, MEMBERS_ONLY_UNREADABLE } from '$lib/groups/server/calendar-read';
 import { groupEditorPage } from '$lib/groups/server/editor-page';
-import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
+import type { SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
+import { seedGroup } from '$lib/groups/server/__fixtures__/seed-group';
 
 import { groupRouteContext } from '$lib/groups/server/route-context';
 
-import { groupSpaceUris } from '$lib/groups/ids';
-import { createGroup, recordGroupSpaces } from '$lib/groups/server/db/groups';
-import { addMember } from '$lib/groups/server/db/roster';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';
@@ -73,14 +71,12 @@ const NOT_FOUND = { status: 404, body: { message: 'Event not found' } };
 let harness: SqliteD1;
 
 beforeEach(async () => {
-	harness = sqliteD1();
-	const created = await createGroup(harness.db, {
+	({ harness } = await seedGroup({
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
-		name: 'Kona'
-	});
-	await recordGroupSpaces(harness.db, created.id, groupSpaceUris(GROUP_DID));
-	await addMember(harness.db, created.id, MEMBER, 'member');
+		name: 'Kona',
+		members: { [MEMBER]: 'member' }
+	}));
 	// An index that holds none of the group's events, unless a test says otherwise.
 	vi.mocked(getEventRecordFromContrail).mockResolvedValue(null);
 });
@@ -277,7 +273,13 @@ describe('/groups/[actor]/events/[rkey]/edit load: a members-only event', () => 
 			status: 403,
 			body: { message: 'Not allowed: MANAGE_EVENTS required' }
 		});
-		await createGroup(harness.db, { groupDid: OLDER_GROUP_DID, ownerDid: OWNER, name: 'Hilo' });
+		await seedGroup({
+			harness,
+			groupDid: OLDER_GROUP_DID,
+			ownerDid: OWNER,
+			name: 'Hilo',
+			spaces: false
+		});
 		expect(await refusalFor(OWNER, '3lmeeting', MEMBERS_ONLY, OLDER_GROUP_DID)).toStrictEqual({
 			status: 503,
 			body: { message: MEMBERS_ONLY_UNLINKED }

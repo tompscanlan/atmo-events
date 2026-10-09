@@ -30,8 +30,7 @@ import * as rebuildModule from './rebuild';
 import { GroupRebuildRefused, rebuildGroup } from './rebuild';
 
 import { groupSpaceUris } from '../ids';
-import { createGroup, recordGroupSpaces } from './db/groups';
-import { addMember } from './db/roster';
+import { seedGroup } from './__fixtures__/seed-group';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const ADMIN = 'did:plc:6cz6dldz42itymdbte47ewcv';
@@ -158,17 +157,16 @@ async function dropGroupRows(groupId: string) {
 async function appGroup(
 	requireApproval: boolean
 ): Promise<{ row: GroupRow; records: SpaceRecordInput[] }> {
-	const row = await createGroup(db, {
+	const { group: row } = await seedGroup({
+		harness,
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
 		name: 'Kona Surf Club',
 		description: 'Dawn patrol, every day',
 		requireApproval,
-		locationName: 'Kailua-Kona'
+		locationName: 'Kailua-Kona',
+		members: { [ADMIN]: 'admin', [MEMBER]: 'member' }
 	});
-	await addMember(db, row.id, ADMIN, 'admin');
-	await addMember(db, row.id, MEMBER, 'member');
-	await recordGroupSpaces(db, row.id, { aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS });
 
 	const joined = await db
 		.prepare(`SELECT did, created_at FROM memberships WHERE group_id = ?`)

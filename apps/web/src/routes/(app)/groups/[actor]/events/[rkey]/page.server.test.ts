@@ -28,15 +28,14 @@ import {
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
 import { MEMBERS_ONLY_UNLINKED, MEMBERS_ONLY_UNREADABLE } from '$lib/groups/server/calendar-read';
-import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
+import type { SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
+import { seedGroup } from '$lib/groups/server/__fixtures__/seed-group';
 
 import { groupRouteContext } from '$lib/groups/server/route-context';
 
 import { memberGrant } from '$lib/groups/server/member-grants';
 
 import { groupSpaceUris } from '$lib/groups/ids';
-import { createGroup, recordGroupSpaces } from '$lib/groups/server/db/groups';
-import { addMember } from '$lib/groups/server/db/roster';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';
@@ -49,14 +48,12 @@ const MEMBER_LIST_POLICY = 'com.atproto.simplespace.defs#memberListPolicy';
 let harness: SqliteD1;
 
 beforeEach(async () => {
-	harness = sqliteD1();
-	const created = await createGroup(harness.db, {
+	({ harness } = await seedGroup({
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
-		name: 'Kona'
-	});
-	await recordGroupSpaces(harness.db, created.id, groupSpaceUris(GROUP_DID));
-	await addMember(harness.db, created.id, MEMBER, 'member');
+		name: 'Kona',
+		members: { [MEMBER]: 'member' }
+	}));
 });
 
 afterEach(() => {

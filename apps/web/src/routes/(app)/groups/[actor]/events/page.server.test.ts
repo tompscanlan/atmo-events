@@ -30,13 +30,12 @@ import {
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
 import { listGroupEvents } from '$lib/groups/server/events-index';
-import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
+import type { SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
+import { seedGroup } from '$lib/groups/server/__fixtures__/seed-group';
 
 import type { CallerMembership, GroupEventRecord, GroupRow } from '$lib/groups/types';
 
 import { groupSpaceUris } from '$lib/groups/ids';
-import { createGroup, getGroupByDid, recordGroupSpaces } from '$lib/groups/server/db/groups';
-import { addMember } from '$lib/groups/server/db/roster';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';
@@ -78,15 +77,12 @@ let row: GroupRow;
 let publicSlice: GroupEventRecord[];
 
 beforeEach(async () => {
-	harness = sqliteD1();
-	const created = await createGroup(harness.db, {
+	({ harness, group: row } = await seedGroup({
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
-		name: 'Kona'
-	});
-	await recordGroupSpaces(harness.db, created.id, groupSpaceUris(GROUP_DID));
-	await addMember(harness.db, created.id, MEMBER, 'member');
-	row = (await getGroupByDid(harness.db, GROUP_DID))!;
+		name: 'Kona',
+		members: { [MEMBER]: 'member' }
+	}));
 	publicSlice = [PUBLIC_PADDLE];
 	vi.mocked(listGroupEvents).mockImplementation(async () => publicSlice);
 });

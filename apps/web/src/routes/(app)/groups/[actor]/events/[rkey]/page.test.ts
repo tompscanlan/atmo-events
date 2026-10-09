@@ -85,11 +85,10 @@ import {
 	resetReaderHost,
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
-import { sqliteD1, type SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
+import type { SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
+import { seedGroup } from '$lib/groups/server/__fixtures__/seed-group';
 
 import { groupSpaceUris } from '$lib/groups/ids';
-import { createGroup, recordGroupSpaces } from '$lib/groups/server/db/groups';
-import { addMember } from '$lib/groups/server/db/roster';
 const OWNER = 'did:plc:owner';
 const MEMBER = signedIn.user.did;
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -118,14 +117,12 @@ function rsvpRecord(status: 'going' | 'interested', subject = MEETING_URI) {
 let harness: SqliteD1;
 
 beforeEach(async () => {
-	harness = sqliteD1();
-	const created = await createGroup(harness.db, {
+	({ harness } = await seedGroup({
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
-		name: 'Kona'
-	});
-	await recordGroupSpaces(harness.db, created.id, groupSpaceUris(GROUP_DID));
-	await addMember(harness.db, created.id, MEMBER, 'member');
+		name: 'Kona',
+		members: { [MEMBER]: 'member' }
+	}));
 	rsvp.renders.length = 0;
 	rsvp.press = null;
 	share.opened.length = 0;

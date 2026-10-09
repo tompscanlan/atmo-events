@@ -28,7 +28,8 @@ vi.mock('$lib/contrail/index', async (importOriginal) => ({
 		}
 	})
 }));
-import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
+import type { SqliteD1 } from './__fixtures__/d1-sqlite';
+import { seedGroup } from './__fixtures__/seed-group';
 
 import {
 	reconcileGroupDeclaration,
@@ -36,14 +37,12 @@ import {
 	writeGroupDeclaration
 } from './declaration-writer';
 
-import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
+import { ABOUT_SPACE_TYPE, type GroupRow } from '../types';
 import { GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY } from '../declaration-record';
 
 import { spaceUri } from '../ids';
 import { GroupPermissionError, type GroupRepoWrite, GroupRecordError } from './group-write';
 import { recordingWriter, type RecordingWriter } from './__fixtures__/space-reader';
-import { createGroup, recordGroupSpaces } from './db/groups';
-import { addMember } from './db/roster';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:6cz6dldz42itymdbte47ewcv';
@@ -61,19 +60,14 @@ let writer: RecordingWriter;
 const env = {};
 
 beforeEach(async () => {
-	harness = sqliteD1();
-	db = harness.db;
-	group = await createGroup(db, {
+	({ harness, db, group } = await seedGroup({
 		groupDid: GROUP_DID,
 		ownerDid: OWNER,
-		name: 'Kona'
-	});
-	await addMember(db, group.id, MEMBER, 'member');
-	await recordGroupSpaces(db, group.id, {
-		aboutSpaceUri: ABOUT,
-		membersSpaceUri: spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self')
-	});
-	group = { ...group, about_space_uri: ABOUT };
+		name: 'Kona',
+		members: { [MEMBER]: 'member' }
+	}));
+	// The writers get no members space, so the gate resolves from the roster rows.
+	group = { ...group, members_space_uri: null };
 
 	writer = recordingWriter();
 	writes = writer.writes;

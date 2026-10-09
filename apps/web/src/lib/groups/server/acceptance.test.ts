@@ -8,6 +8,7 @@
 // member's repo afterwards.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
+import { seedGroup } from './__fixtures__/seed-group';
 
 import { memberGrant, holdsAcceptanceGrant } from './member-grants';
 import {
@@ -21,7 +22,6 @@ import type { OAuthSession } from '@atcute/oauth-node-client';
 import { GROUP_ACCEPTANCE_COLLECTION, GROUP_ACCEPTANCE_RKEY } from '../members-record';
 import { MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 
-import { createGroup, recordGroupSpaces } from './db/groups';
 import { addMember, requestJoin } from './db/roster';
 const MEMBER = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -202,18 +202,14 @@ describe('writeMissingAcceptances', () => {
 
 	/** A group with a members space, unless `spaces` is false. */
 	async function aGroup(did: string, spaces = true): Promise<GroupRow> {
-		const row = await createGroup(harness.db, {
+		const seeded = await seedGroup({
+			harness,
 			groupDid: did,
 			ownerDid: 'did:plc:owner',
-			name: did
+			name: did,
+			spaces
 		});
-		if (!spaces) return row;
-		const membersSpaceUri = `at://${did}/space/${MEMBERS_SPACE_TYPE}/self`;
-		await recordGroupSpaces(harness.db, row.id, {
-			aboutSpaceUri: `at://${did}/space/group.opensocial.about/self`,
-			membersSpaceUri
-		});
-		return { ...row, members_space_uri: membersSpaceUri };
+		return seeded.group;
 	}
 
 	const spaceOf = (did: string) => `at://${did}/space/${MEMBERS_SPACE_TYPE}/self`;
@@ -291,19 +287,13 @@ describe('acceptOnSignIn', () => {
 	});
 
 	it('writes the missing acceptances for a member who holds a grant', async () => {
-		const harness = sqliteD1();
+		const { harness } = await seedGroup({
+			groupDid: GROUP_DID,
+			ownerDid: 'did:plc:owner',
+			name: 'Kona',
+			members: { [MEMBER]: 'member' }
+		});
 		try {
-			const row = await createGroup(harness.db, {
-				groupDid: GROUP_DID,
-				ownerDid: 'did:plc:owner',
-				name: 'Kona'
-			});
-			await recordGroupSpaces(harness.db, row.id, {
-				aboutSpaceUri: `at://${GROUP_DID}/space/group.opensocial.about/self`,
-				membersSpaceUri: MEMBERS
-			});
-			await addMember(harness.db, row.id, MEMBER, 'member');
-
 			await acceptOnSignIn(harness.db, oauthSession(granted));
 
 			expect([...pds.records.keys()]).toEqual([MEMBERS]);

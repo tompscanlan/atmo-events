@@ -17,25 +17,22 @@ vi.mock('$lib/atproto/server/signed-cookie', () => ({ setSignedCookie: vi.fn() }
 vi.mock('$lib/contrail', () => ({ getServerClient: () => ({ get: async () => ({}) }) }));
 
 import { GET } from './+server';
-import { sqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
+import { seedGroup } from '$lib/groups/server/__fixtures__/seed-group';
 
 import { memberGrant } from '$lib/groups/server/member-grants';
 
-import { createGroup, recordGroupSpaces } from '$lib/groups/server/db/groups';
-import { addMember } from '$lib/groups/server/db/roster';
 const GROUP = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const MEMBER = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const MEMBERS = `at://${GROUP}/space/group.opensocial.members/self`;
 
 describe('/oauth/callback', () => {
 	it('a member added while away writes their acceptance at sign-in, and lands where they were going', async () => {
-		const { db } = sqliteD1();
-		const row = await createGroup(db, { groupDid: GROUP, ownerDid: 'did:plc:owner', name: 'Kona' });
-		await recordGroupSpaces(db, row.id, {
-			aboutSpaceUri: `at://${GROUP}/space/group.opensocial.about/self`,
-			membersSpaceUri: MEMBERS
+		const { db } = await seedGroup({
+			groupDid: GROUP,
+			ownerDid: 'did:plc:owner',
+			name: 'Kona',
+			members: { [MEMBER]: 'member' }
 		});
-		await addMember(db, row.id, MEMBER, 'member');
 		const asked: { pathname: string; body: Record<string, unknown> }[] = [];
 		signedIn.session = {
 			did: MEMBER,
