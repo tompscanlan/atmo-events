@@ -18,7 +18,9 @@ import {
 	ABOUT_SPACE_READER_ROLES,
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
-	groupAccessRecord
+	groupAccessRecord,
+	accessSays,
+	type GroupAccessFields
 } from '../members-record';
 import { type GroupRow, type GroupVisibility } from '../types';
 
@@ -110,6 +112,17 @@ export async function writeAboutAccess(
 		space: aboutSpace(input.group)
 	});
 	return { uri: result.uri, cid: result.cid };
+}
+
+/** Writes the about space's access record when `current`, as read, does not
+ *  already say `visibility`, and answers whether it wrote. */
+export async function alignAboutAccess(
+	input: WriteGroupAboutInput & { visibility: GroupVisibility },
+	current: GroupAccessFields | null
+): Promise<boolean> {
+	if (accessSays(current, input.visibility === 'public')) return false;
+	await writeAboutAccess(input);
+	return true;
 }
 
 export interface RulesWriteResult {

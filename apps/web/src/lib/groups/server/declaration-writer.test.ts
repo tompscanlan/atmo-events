@@ -199,7 +199,7 @@ describe('reconcileGroupDeclaration', () => {
 			writer,
 			// A repo minted seconds ago cannot be holding a declaration, so the
 			// create path is not charged a delete that can only be a no-op.
-			assumeAbsent: true
+			declared: false
 		});
 
 		expect(writes).toEqual([]);

@@ -366,12 +366,12 @@ async function setUpMintedGroup(
 
 		// The declaration goes last, so a group whose profile write failed is
 		// never announced with an empty about space. A private group is not
-		// declared. `assumeAbsent` skips the withdrawal check: a new repo has none.
+		// declared. A new repo holds no declaration, so a private group withdraws none.
 		await reconcileGroupDeclaration({
 			...as,
 			visibility: data.visibility,
 			createdAt,
-			assumeAbsent: true
+			declared: false
 		});
 	} catch (e) {
 		return {

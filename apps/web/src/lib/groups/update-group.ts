@@ -42,8 +42,8 @@ import {
 	type GroupAbout,
 	type GroupSpaceReader
 } from './server/about-read';
-import { setGroupRules, writeAboutAccess, writeGroupProfile } from './server/about-writer';
-import { ABOUT_SPACE_READER_ROLES, accessSays, type GroupAccessFields } from './members-record';
+import { setGroupRules, writeGroupProfile, alignAboutAccess } from './server/about-writer';
+import { ABOUT_SPACE_READER_ROLES, type GroupAccessFields } from './members-record';
 import { reconcileGroupDeclaration } from './server/declaration-writer';
 import { declarationRequired } from './declaration-record';
 import { readGroupVisibility, setAboutSpaceReadPolicy } from './server/spaces';
@@ -191,10 +191,9 @@ function reconcileDeclaration(s: SaveState, visibility: GroupVisibility) {
 /** Writes the about space's access record when it does not already say
  *  `visibility`, and keeps what it wrote, so a second call writes nothing. */
 async function alignAccess(s: SaveState, visibility: GroupVisibility): Promise<void> {
-	const isPublic = visibility === 'public';
-	if (accessSays(s.access, isPublic)) return;
-	await writeAboutAccess({ ...s.as, visibility });
-	s.access = { roles: [...ABOUT_SPACE_READER_ROLES], public: isPublic };
+	if (await alignAboutAccess({ ...s.as, visibility }, s.access)) {
+		s.access = { roles: [...ABOUT_SPACE_READER_ROLES], public: visibility === 'public' };
+	}
 }
 
 /** The about space's records: the access record, if it disagrees, then the

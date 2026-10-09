@@ -31,8 +31,7 @@ import { declarationRequired } from '../declaration-record';
 import { GROUP_ROLES, type GroupPermission, type GroupRoleName } from '../permissions';
 import type { GroupRow, GroupVisibility } from '../types';
 import { groupSpaceReader, readAboutAccess, type GroupSpaceReader } from './about-read';
-import { writeAboutAccess } from './about-writer';
-import { accessSays } from '../members-record';
+import { alignAboutAccess } from './about-writer';
 
 import { groupDeclared, reconcileGroupDeclaration } from './declaration-writer';
 
@@ -196,19 +195,14 @@ async function alignToHost(
 		readAboutAccess(input.reader, input.group)
 	]);
 
-	const alignAccess = async () => {
-		if (accessSays(access, visibility === 'public')) return false;
-		await writeAboutAccess({ ...input, visibility });
-		return true;
-	};
+	const required = declarationRequired(visibility);
+	const alignAccess = () => alignAboutAccess({ ...input, visibility }, access);
 
-	let accessWritten = declarationRequired(visibility) ? await alignAccess() : false;
-	let declaration: HostAlignment['declaration'] = null;
-	if (declared !== declarationRequired(visibility)) {
-		await reconcileGroupDeclaration({ ...input, visibility });
-		declaration = declared ? 'withdrawn' : 'declared';
-	}
-	if (!declarationRequired(visibility)) accessWritten = await alignAccess();
+	let accessWritten = required ? await alignAccess() : false;
+	await reconcileGroupDeclaration({ ...input, visibility, declared });
+	const declaration: HostAlignment['declaration'] =
+		declared === required ? null : declared ? 'withdrawn' : 'declared';
+	if (!required) accessWritten = await alignAccess();
 	return { visibility, declaration, access: accessWritten };
 }
 

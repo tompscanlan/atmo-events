@@ -97,14 +97,18 @@ export async function removeGroupDeclaration(input: WithdrawGroupDeclarationInpu
 /**
  * Declares a public group and withdraws a private group's declaration.
  * `visibility` is the caller's: the form's on a save, the host's on a repair.
- * `assumeAbsent` skips the delete on create, where a new repo holds none.
+ * `declared`, when the caller knows it, is whether the repo already holds the
+ * declaration, so nothing is written that is already so. Unknown, a public
+ * group's declaration is put again and a private group's is withdrawn.
  */
 export async function reconcileGroupDeclaration(
-	input: WithdrawGroupDeclarationInput & { visibility: GroupVisibility; assumeAbsent?: boolean }
+	input: WithdrawGroupDeclarationInput & { visibility: GroupVisibility; declared?: boolean }
 ): Promise<DeclarationWriteResult | null> {
 	// A declare must never tell the index, so `input.notify` stops here.
-	if (declarationRequired(input.visibility)) return writeGroupDeclaration(input);
-	if (input.assumeAbsent) return null;
+	if (declarationRequired(input.visibility)) {
+		return input.declared ? null : writeGroupDeclaration(input);
+	}
+	if (input.declared === false) return null;
 	await removeGroupDeclaration(input);
 	return null;
 }
