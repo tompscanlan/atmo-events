@@ -376,14 +376,6 @@ describe('rosterFromRecords', () => {
 		);
 		expect(rosterFromRecords(members)[0].role).toBe('admin');
 	});
-
-	it('reports every recorded member as active: there is no suspension', async () => {
-		const members = await readGroupMembers(
-			readerOver([membership(MEMBER, ['member'], '2026-09-02T10:00:00.000Z')]),
-			group
-		);
-		expect(rosterFromRecords(members)[0].status).toBe('active');
-	});
 });
 
 // The roster is the membership records. The acceptance decides only how a member
@@ -466,7 +458,6 @@ describe('rebuildGroupMembers', () => {
 		const roster = await listMembers(db, group.id);
 		expect(roster.find((row) => row.did === ADMIN)).toMatchObject({
 			role: 'admin',
-			status: 'active',
 			created_at: Date.parse('2026-09-02T10:00:00.000Z')
 		});
 	});

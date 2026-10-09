@@ -1,17 +1,12 @@
-// Applies migrations/ to D1 on every cold isolate, so each statement must be safe to
-// re-run. The files are imported `?raw`, so wrangler and this runner share one copy.
+// Applies the groups migration to D1 on every cold isolate, so each statement must be
+// safe to re-run. The file is imported `?raw`, so wrangler and this runner share one copy.
 import groupsSql from '../../../../migrations/0001_groups.sql?raw';
-import dropCredentialsSql from '../../../../migrations/0003_drop_group_credentials.sql?raw';
-
-const MIGRATIONS: readonly string[] = [groupsSql, dropCredentialsSql];
 
 /** Split on the `-- @statement` marker, never on `;`: the triggers contain `;`. */
-export const GROUPS_SCHEMA_STATEMENTS: readonly string[] = MIGRATIONS.flatMap((sql) =>
-	sql
-		.split(/^[ \t]*--[ \t]*@statement[ \t]*$/m)
-		.map((s) => s.trim())
-		.filter((s) => s.length > 0 && !/^(?:--[^\n]*\n?)*$/.test(s))
-);
+export const GROUPS_SCHEMA_STATEMENTS: readonly string[] = groupsSql
+	.split(/^[ \t]*--[ \t]*@statement[ \t]*$/m)
+	.map((s) => s.trim())
+	.filter((s) => s.length > 0 && !/^(?:--[^\n]*\n?)*$/.test(s));
 
 /** For tests, against a `node:sqlite` handle. */
 export function applyGroupsSchemaSync(sqlite: { exec(sql: string): void }): void {

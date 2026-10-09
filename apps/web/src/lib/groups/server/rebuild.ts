@@ -218,15 +218,14 @@ export async function projectGroupMembers(
 
 	const existing = await db
 		.prepare(
-			`SELECT m.did, m.role_id, m.status, r.name AS role
+			`SELECT m.did, r.name AS role
 			 FROM memberships m JOIN roles r ON r.id = m.role_id
 			 WHERE m.group_id = ?`
 		)
 		.bind(group.id)
-		.all<{ did: string; role_id: string; status: string; role: GroupRoleName }>();
-	const rows = new Map<string, { role: GroupRoleName; status: string }>();
-	for (const row of existing.results ?? [])
-		rows.set(row.did, { role: row.role, status: row.status });
+		.all<{ did: string; role: GroupRoleName }>();
+	const rows = new Map<string, GroupRoleName>();
+	for (const row of existing.results ?? []) rows.set(row.did, row.role);
 
 	const now = Date.now();
 	const recorded = new Set<string>();
@@ -251,7 +250,7 @@ export async function projectGroupMembers(
 			continue;
 		}
 
-		const row = rows.get(did);
+		const rowRole = rows.get(did);
 
 		// The schema decides the owner. A disagreeing record is reported, not
 		// applied, but a missing owner row is still inserted.
@@ -260,27 +259,27 @@ export async function projectGroupMembers(
 				result.skipped.push({ did, reason: `owner_did cannot hold the ${role} role` });
 				continue;
 			}
-			if (row) {
-				if (row.role === 'owner' && row.status === 'active') result.unchanged.push(did);
+			if (rowRole) {
+				if (rowRole === 'owner') result.unchanged.push(did);
 				else {
 					result.skipped.push({
 						did,
-						reason: `the owner's row is ${row.role}/${row.status} and is immutable`
+						reason: `the owner's row is ${rowRole} and is immutable`
 					});
 				}
 				continue;
 			}
-		} else if (row && row.role === role && row.status === 'active') {
+		} else if (rowRole === role) {
 			result.unchanged.push(did);
 			continue;
 		}
 
 		await db
 			.prepare(
-				`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, 'active', ?, ?)
+				`INSERT INTO memberships (id, group_id, did, role_id, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?)
 				 ON CONFLICT (group_id, did) DO UPDATE SET
-					role_id = excluded.role_id, status = 'active', updated_at = excluded.updated_at`
+					role_id = excluded.role_id, updated_at = excluded.updated_at`
 			)
 			.bind(crypto.randomUUID(), group.id, did, target, createdAtMs(record.createdAt) || now, now)
 			.run();

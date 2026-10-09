@@ -6,7 +6,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { applyGroupsSchemaSync, GROUPS_SCHEMA_STATEMENTS } from './schema';
 import groupsSql from '../../../../migrations/0001_groups.sql?raw';
-import dropCredentialsSql from '../../../../migrations/0003_drop_group_credentials.sql?raw';
 import { sqliteD1 } from './__fixtures__/d1-sqlite';
 
 let db: DatabaseSync;
@@ -47,11 +46,11 @@ function seedRole(groupId: string, name: string) {
 	);
 }
 
-function addMembership(groupId: string, did: string, role: string, status = 'active') {
+function addMembership(groupId: string, did: string, role: string) {
 	db.prepare(
-		`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, 1, 1)`
-	).run(`${groupId}-${did}`, groupId, did, roleId(groupId, role), status);
+		`INSERT INTO memberships (id, group_id, did, role_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 1, 1)`
+	).run(`${groupId}-${did}`, groupId, did, roleId(groupId, role));
 }
 
 beforeEach(() => {
@@ -77,7 +76,6 @@ describe('the migration itself', () => {
 		const fresh = new DatabaseSync(':memory:');
 		try {
 			fresh.exec(groupsSql);
-			fresh.exec(dropCredentialsSql);
 			const triggers = fresh
 				.prepare(`SELECT count(*) AS n FROM sqlite_schema WHERE type = 'trigger'`)
 				.get() as { n: number };
@@ -91,44 +89,6 @@ describe('the migration itself', () => {
 
 	it('re-applies cleanly (IF NOT EXISTS throughout)', () => {
 		expect(() => apply(db)).not.toThrow();
-	});
-
-	const tables = (target: DatabaseSync) =>
-		(
-			target.prepare(`SELECT name FROM sqlite_schema WHERE type = 'table'`).all() as {
-				name: string;
-			}[]
-		).map((t) => t.name);
-
-	// No group account's password is kept: a group writes only through the
-	// session its owner links. A new database never has the table.
-	it('creates no table for group credentials', () => {
-		expect(tables(db)).not.toContain('group_credentials');
-	});
-
-	// A deployed D1 made before the cutover still holds the encrypted app
-	// passwords. The next cold isolate's schema run drops them with their table.
-	it('drops the app passwords a database made before the cutover still holds', () => {
-		const old = new DatabaseSync(':memory:');
-		try {
-			old.exec(groupsSql);
-			old.exec(
-				`CREATE TABLE group_credentials (group_did TEXT PRIMARY KEY, service TEXT NOT NULL,
-				 identifier TEXT NOT NULL, secret TEXT NOT NULL, iv TEXT NOT NULL,
-				 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`
-			);
-			old
-				.prepare(`INSERT INTO group_credentials VALUES (?, ?, ?, ?, ?, 1, 1)`)
-				.run('did:plc:oldgroup', 'https://pds.example', 'old.group.example', 'c2VjcmV0', 'aXY=');
-
-			apply(old);
-
-			expect(tables(old)).not.toContain('group_credentials');
-			// The groups themselves are untouched.
-			expect(tables(old)).toContain('groups');
-		} finally {
-			old.close();
-		}
 	});
 
 	it('applies through ensureGroupsSchema on two cold isolates sharing one D1', async () => {
@@ -251,8 +211,8 @@ describe("a membership's role belongs to the same group", () => {
 		expect(() =>
 			db
 				.prepare(
-					`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
-					 VALUES ('m', 'g1', 'did:plc:alice', ?, 'active', 1, 1)`
+					`INSERT INTO memberships (id, group_id, did, role_id, created_at, updated_at)
+					 VALUES ('m', 'g1', 'did:plc:alice', ?, 1, 1)`
 				)
 				.run(foreignRole)
 		).toThrow(/FOREIGN KEY/);
@@ -302,7 +262,7 @@ describe('the owner cannot be demoted, removed or leave', () => {
 		insertGroup('g2', 'did:plc:owner');
 		seedRole('g2', 'member');
 		expect(() => addMembership('g2', 'did:plc:owner', 'member')).toThrow(
-			/owner must hold an active owner membership|owner role is reserved/
+			/owner must hold the owner role|owner role is reserved/
 		);
 	});
 
@@ -323,23 +283,6 @@ describe('the owner cannot be demoted, removed or leave', () => {
 		expect(() => db.prepare("DELETE FROM groups WHERE id = 'g1'").run()).not.toThrow();
 		expect(db.prepare('SELECT COUNT(*) AS n FROM roles').get()).toEqual({ n: 0 });
 		expect(db.prepare('SELECT COUNT(*) AS n FROM memberships').get()).toEqual({ n: 0 });
-	});
-});
-
-describe('a membership is active or absent', () => {
-	beforeEach(() => {
-		insertGroup('g1', 'did:plc:owner');
-		seedRole('g1', 'member');
-		addMembership('g1', 'did:plc:member', 'member');
-	});
-
-	it('refuses a suspended status, on insert and on update', () => {
-		expect(() => addMembership('g1', 'did:plc:new', 'member', 'suspended')).toThrow(
-			/CHECK constraint failed/
-		);
-		expect(() =>
-			db.prepare("UPDATE memberships SET status = 'suspended' WHERE did = ?").run('did:plc:member')
-		).toThrow(/CHECK constraint failed/);
 	});
 });
 

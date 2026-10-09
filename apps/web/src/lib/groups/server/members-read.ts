@@ -321,8 +321,6 @@ export function rosterFromRecords(
 		roster.push({
 			did: record.subject,
 			role,
-			// A record means access. A revocation deletes the record.
-			status: 'active',
 			created_at: createdAtMs(record.createdAt),
 			confirmed: acceptances ? acceptances.get(record.subject) === true : null
 		});
@@ -336,7 +334,6 @@ export function rosterFromRows(rows: MemberRow[]): RosterEntry[] {
 	return rows.map((row) => ({
 		did: row.did,
 		role: row.role,
-		status: row.status,
 		created_at: row.created_at,
 		confirmed: null
 	}));

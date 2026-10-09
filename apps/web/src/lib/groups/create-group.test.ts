@@ -758,12 +758,7 @@ describe('a successful create', () => {
 		});
 		const [group] = (await rows('groups')) as { group_did: string }[];
 		expect(group.group_did).toBe(MINTED_DID);
-		// No table for credentials exists any more, and the session token the
-		// create wrote with is in no row.
-		const tables = harness.raw
-			.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
-			.all() as { name: string }[];
-		expect(tables.map((t) => t.name)).not.toContain('group_credentials');
+		// The session token the create wrote with is in no row.
 		expect(everyStoredRow()).not.toContain('master-jwt');
 	});
 

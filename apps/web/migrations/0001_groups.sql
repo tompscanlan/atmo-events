@@ -1,4 +1,7 @@
--- Groups, roles, roster and join requests: a cache of each group's records on its PDS.
+-- Groups, roles, roster and join requests. The groups, roles and memberships rows cache
+-- each group's records on its PDS: where they disagree the record wins, and
+-- server/rebuild.ts restores the rows from the records. join_requests is not a cache. A
+-- pending request is not published as a record, so its row is the only copy.
 -- There is no visibility column. Visibility is the about space's read policy at the host.
 -- The app splits statements on `-- @statement`, not `;`, because D1 runs one statement
 -- per prepare() and the triggers contain `;`. Each statement also ends in `;`, so the
@@ -12,10 +15,6 @@ CREATE TABLE IF NOT EXISTS groups (
 	name TEXT NOT NULL,
 	description TEXT,
 	require_approval INTEGER NOT NULL DEFAULT 1 CHECK (require_approval IN (0, 1)),
-	-- The avatar's blob ref: the three fields a `{$type:'blob'}` needs.
-	image_cid TEXT,
-	image_mime TEXT,
-	image_size INTEGER,
 	location_name TEXT,
 	-- at://<group_did>/space/<type>/self, NULL until create provisions the spaces.
 	about_space_uri TEXT,
@@ -89,10 +88,9 @@ CREATE TABLE IF NOT EXISTS memberships (
 	id TEXT PRIMARY KEY,
 	group_id TEXT NOT NULL,
 	did TEXT NOT NULL,
+	-- A row is a member. A pending request is a join_request, not a membership, and
+	-- there is no suspension, so removing someone deletes the row.
 	role_id TEXT NOT NULL,
-	-- A pending request is a join_request, not a membership. There is no suspension,
-	-- so removing someone deletes the row.
-	status TEXT NOT NULL DEFAULT 'active' CHECK (status = 'active'),
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL,
 	UNIQUE (group_id, did),
@@ -103,7 +101,7 @@ CREATE TABLE IF NOT EXISTS memberships (
 -- @statement
 CREATE INDEX IF NOT EXISTS memberships_by_did ON memberships (did);
 -- @statement
-CREATE INDEX IF NOT EXISTS memberships_by_group ON memberships (group_id, status);
+CREATE INDEX IF NOT EXISTS memberships_by_group ON memberships (group_id);
 -- @statement
 CREATE TRIGGER IF NOT EXISTS memberships_owner_role_reserved_insert
 BEFORE INSERT ON memberships
@@ -115,13 +113,13 @@ BEGIN
 END;
 -- @statement
 -- The mirror of the rule above: owner_did may hold only the owner role.
-CREATE TRIGGER IF NOT EXISTS memberships_owner_must_be_active_owner_insert
+CREATE TRIGGER IF NOT EXISTS memberships_owner_holds_owner_role_insert
 BEFORE INSERT ON memberships
 FOR EACH ROW
 WHEN NEW.did = (SELECT g.owner_did FROM groups g WHERE g.id = NEW.group_id)
-	AND (NEW.status <> 'active' OR (SELECT r.is_owner FROM roles r WHERE r.id = NEW.role_id) <> 1)
+	AND (SELECT r.is_owner FROM roles r WHERE r.id = NEW.role_id) <> 1
 BEGIN
-	SELECT RAISE(ABORT, 'the group owner must hold an active owner membership');
+	SELECT RAISE(ABORT, 'the group owner must hold the owner role');
 END;
 -- @statement
 CREATE TRIGGER IF NOT EXISTS memberships_owner_immutable
@@ -130,7 +128,6 @@ FOR EACH ROW
 WHEN OLD.did = (SELECT g.owner_did FROM groups g WHERE g.id = OLD.group_id)
 	AND (
 		NEW.role_id <> OLD.role_id
-		OR NEW.status <> 'active'
 		OR NEW.did <> OLD.did
 		OR NEW.group_id <> OLD.group_id
 	)

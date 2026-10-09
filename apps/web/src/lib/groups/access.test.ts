@@ -17,7 +17,6 @@ function membership(role: GroupRoleName | null): CallerMembership {
 	return {
 		did: role ? 'did:plc:alice' : null,
 		role,
-		status: role ? 'active' : null,
 		pendingRequestId: null,
 		// Deliberately empty: a read gate that consulted these would be the bug.
 		permissions: new Set(),

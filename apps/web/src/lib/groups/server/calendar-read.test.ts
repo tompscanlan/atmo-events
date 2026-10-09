@@ -73,7 +73,6 @@ function viewer(onRoster: boolean, extra: Partial<CallerMembership> = {}): Calle
 	return {
 		did: 'did:plc:viewer',
 		role: onRoster ? 'member' : null,
-		status: onRoster ? 'active' : null,
 		pendingRequestId: null,
 		permissions: new Set(),
 		onRoster,
@@ -91,9 +90,9 @@ const OFF_THE_ROSTER: [string, CallerMembership][] = [
 	['a pending requester', viewer(false, { pendingRequestId: 'req-1' })],
 	[
 		'a member whose roster read failed',
-		viewer(false, { role: 'member', status: 'active', unreadable: 'listRecords failed: 502' })
+		viewer(false, { role: 'member', unreadable: 'listRecords failed: 502' })
 	],
-	['an admin row with no membership record', viewer(false, { role: 'admin', status: 'active' })]
+	['an admin row with no membership record', viewer(false, { role: 'admin' })]
 ];
 
 interface RecordingReader extends GroupSpaceReader {

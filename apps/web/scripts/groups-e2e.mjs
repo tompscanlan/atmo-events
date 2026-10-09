@@ -756,7 +756,7 @@ async function main() {
 		const members = await must('listMembers', { groupId: group.id });
 		const bundles = await must('rolePermissions', { groupId: group.id });
 		const sizes = Object.fromEntries(Object.entries(bundles).map(([r, p]) => [r, p.length]));
-		const owners = members.filter((m) => m.role === 'owner' && m.status === 'active');
+		const owners = members.filter((m) => m.role === 'owner');
 		const seededBundles =
 			Object.keys(sizes).length === Object.keys(SEEDED_BUNDLE_SIZES).length &&
 			Object.entries(SEEDED_BUNDLE_SIZES).every(([role, n]) => sizes[role] === n);
@@ -790,13 +790,12 @@ async function main() {
 			group.require_approval === 1 &&
 				join.outcome === 'pending' &&
 				pendingBob.role === null &&
-				pendingBob.status === null &&
 				pendingBob.permissions.length === 0 &&
 				requests.length === 1 &&
 				requests[0].did === BOB &&
 				requests[0].status === 'pending',
 			'join under require_approval is PENDING, not on the roster',
-			`outcome ${join.outcome}; roster row ${pendingBob.role ?? 'none'}/${pendingBob.status ?? 'none'}; ` +
+			`outcome ${join.outcome}; roster row ${pendingBob.role ?? 'none'}; ` +
 				`join_request ${requests[0]?.id} ${requests[0]?.status}`
 		);
 
@@ -820,7 +819,6 @@ async function main() {
 		});
 		record(
 			asMember.role === 'member' &&
-				asMember.status === 'active' &&
 				asMember.can.MANAGE_EVENTS === false &&
 				asAdmin.role === 'admin' &&
 				asAdmin.can.MANAGE_EVENTS === true,
@@ -912,10 +910,7 @@ async function main() {
 		const afterLeave = await must('membership', { groupId: group.id, did: BOB, probe: [] });
 		const rosterAfterLeave = await must('listMembers', { groupId: group.id });
 		record(
-			left.ok === true &&
-				afterLeave.role === null &&
-				afterLeave.status === null &&
-				rosterAfterLeave.every((m) => m.did !== BOB),
+			left.ok === true && afterLeave.role === null && rosterAfterLeave.every((m) => m.did !== BOB),
 			'a member can leave',
 			`roster ${rosterAfterLeave.length} row(s) (${rosterAfterLeave.map((m) => m.role).join(', ')}); ` +
 				`${BOB} membership: ${afterLeave.role ?? 'none'}`
@@ -929,11 +924,10 @@ async function main() {
 			ownerLeave.ok === false &&
 				ownerLeave.error.name === 'GroupRuleError' &&
 				ownerLeave.error.reason === 'owner-protected' &&
-				ownerStill?.role === 'owner' &&
-				ownerStill?.status === 'active',
+				ownerStill?.role === 'owner',
 			'the owner cannot leave',
 			`${ownerLeave.error?.name}(${ownerLeave.error?.reason}): ${ownerLeave.error?.message}; ` +
-				`owner still ${ownerStill?.role}/${ownerStill?.status}`
+				`owner still ${ownerStill?.role}`
 		);
 
 		// 9. a cover image -----------------------------------------------------------
@@ -2663,7 +2657,7 @@ async function main() {
 			for (const key of ['id', 'created_at', 'updated_at']) delete rest[key];
 			return JSON.stringify(rest);
 		};
-		const rosterOf = (snap) => snap.roster.map((m) => `${m.did}/${m.role}/${m.status}`).join(' ');
+		const rosterOf = (snap) => snap.roster.map((m) => `${m.did}/${m.role}`).join(' ');
 		const recordJoinedAt = Object.fromEntries(
 			rosterNow.roster.map((entry) => [entry.did, entry.created_at])
 		);

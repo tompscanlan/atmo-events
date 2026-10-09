@@ -341,7 +341,6 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		return {
 			did: membership.did,
 			role: membership.role,
-			status: membership.status,
 			pendingRequestId: membership.pendingRequestId,
 			permissions: [...membership.permissions].sort(),
 			onRoster: membership.onRoster,
@@ -1062,7 +1061,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		const row = await getGroupByDid(env.DB, String(args.groupDid));
 		if (!row) return null;
 		const roster = await env.DB.prepare(
-			`SELECT m.did, r.name AS role, m.status, m.created_at FROM memberships m
+			`SELECT m.did, r.name AS role, m.created_at FROM memberships m
 			 JOIN roles r ON r.id = m.role_id WHERE m.group_id = ? ORDER BY m.did`
 		)
 			.bind(row.id)

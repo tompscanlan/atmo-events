@@ -182,10 +182,8 @@ describe('readStanding', () => {
 		const member = await readStanding(db, withSpace, MEMBER, down);
 		expect(member.onRoster).toBe(false);
 		expect(member.permissions.size).toBe(0);
-		// The row still names the role and status the page shows. Neither opens
-		// a read.
+		// The row still names the role the page shows. It opens no read.
 		expect(member.role).toBe('member');
-		expect(member.status).toBe('active');
 		expect((await readStanding(db, withSpace, STRANGER, down)).onRoster).toBe(false);
 	});
 

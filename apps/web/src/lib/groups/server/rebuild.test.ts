@@ -157,7 +157,7 @@ async function snapshot(groupDid: string) {
 	delete columns.updated_at;
 	const roster = await db
 		.prepare(
-			`SELECT m.did, r.name AS role, m.status, m.created_at FROM memberships m
+			`SELECT m.did, r.name AS role, m.created_at FROM memberships m
 			 JOIN roles r ON r.id = m.role_id WHERE m.group_id = ? ORDER BY m.did`
 		)
 		.bind(id)

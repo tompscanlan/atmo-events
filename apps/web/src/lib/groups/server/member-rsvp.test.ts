@@ -50,7 +50,6 @@ function standing(onRoster: boolean): CallerMembership {
 	return {
 		did: MEMBER,
 		role: onRoster ? 'member' : null,
-		status: onRoster ? 'active' : null,
 		pendingRequestId: null,
 		permissions: new Set(),
 		onRoster

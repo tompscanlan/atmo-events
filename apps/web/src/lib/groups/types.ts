@@ -7,10 +7,6 @@ import type { GroupPermission, GroupRoleName } from './permissions';
 export const GROUP_VISIBILITIES = ['public', 'private'] as const;
 export type GroupVisibility = (typeof GROUP_VISIBILITIES)[number];
 
-/** There is no suspension. Removing a member deletes the row. */
-export const MEMBERSHIP_STATUSES = ['active'] as const;
-export type MembershipStatus = (typeof MEMBERSHIP_STATUSES)[number];
-
 export const JOIN_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'withdrawn'] as const;
 export type JoinRequestStatus = (typeof JOIN_REQUEST_STATUSES)[number];
 
@@ -36,9 +32,6 @@ export interface GroupRow {
 	name: string;
 	description: string | null;
 	require_approval: number;
-	image_cid: string | null;
-	image_mime: string | null;
-	image_size: number | null;
 	location_name: string | null;
 	/** at://<group_did>/space/<type>/self, or NULL before provisioning. */
 	about_space_uri: string | null;
@@ -51,7 +44,6 @@ export interface MemberRow {
 	membership_id: string;
 	did: string;
 	role: GroupRoleName;
-	status: MembershipStatus;
 	created_at: number;
 }
 
@@ -59,7 +51,6 @@ export interface MemberRow {
 export interface RosterEntry {
 	did: string;
 	role: GroupRoleName;
-	status: MembershipStatus;
 	created_at: number;
 	/** Whether the member wrote their acceptance: `true` confirmed, `false`
 	 *  unconfirmed, `null` when it was not read. It never changes access. */
@@ -78,7 +69,6 @@ export interface JoinRequestRow {
 export interface CallerMembership {
 	did: string | null;
 	role: GroupRoleName | null;
-	status: MembershipStatus | null;
 	pendingRequestId: string | null;
 	permissions: ReadonlySet<GroupPermission>;
 	/** The only question the read gate asks. From the caller's `membership` record

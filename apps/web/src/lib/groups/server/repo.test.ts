@@ -61,7 +61,7 @@ describe('createGroup', () => {
 
 		const members = await listMembers(db, created.id);
 		expect(members).toHaveLength(1);
-		expect(members[0]).toMatchObject({ did: OWNER, role: 'owner', status: 'active' });
+		expect(members[0]).toMatchObject({ did: OWNER, role: 'owner' });
 		expect(created.require_approval).toBe(1);
 		// createGroup does not provision: the spaces are a PDS call the caller makes
 		// next, so a fresh row says "not yet" rather than claiming a space exists.

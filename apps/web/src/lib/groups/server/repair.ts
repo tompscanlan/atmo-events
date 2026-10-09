@@ -133,7 +133,7 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 	const recorded = new Set(members.memberships.map((record) => record.subject));
 	const unrecordedMembers: string[] = [];
 	for (const row of await listMembers(db, group.id)) {
-		if (row.status !== 'active' || recorded.has(row.did)) continue;
+		if (recorded.has(row.did)) continue;
 		if (row.did !== group.owner_did) {
 			unrecordedMembers.push(row.did);
 			continue;

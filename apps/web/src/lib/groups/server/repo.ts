@@ -112,11 +112,11 @@ async function guard<T>(work: () => Promise<T>): Promise<T> {
 }
 
 const GROUP_COLUMNS = `id, group_did, owner_did, name, description, require_approval,
-	image_cid, image_mime, image_size, location_name, about_space_uri, members_space_uri,
+	location_name, about_space_uri, members_space_uri,
 	created_at, updated_at`;
 
 /** Creates the group, its three roles with their default bundles, and one
- *  active owner membership. D1 runs a batch as one transaction, so a group
+ *  owner membership. D1 runs a batch as one transaction, so a group
  *  never exists without its roles or its owner. The owner role itself comes
  *  from the `groups_seed_owner_role` trigger. */
 export async function createGroup(db: D1Database, input: CreateGroupInput): Promise<GroupRow> {
@@ -164,7 +164,7 @@ export async function rehearseCreateGroup(
 			.prepare(
 				`SELECT json_extract('{}', CASE WHEN EXISTS (
 					SELECT 1 FROM memberships m JOIN roles r ON r.id = m.role_id
-					WHERE m.group_id = ? AND m.did = ? AND r.is_owner = 1 AND m.status = 'active'
+					WHERE m.group_id = ? AND m.did = ? AND r.is_owner = 1
 				) THEN '${REHEARSAL_LANDED}' ELSE '${REHEARSAL_NO_OWNER}' END)`
 			)
 			.bind(groupId, input.ownerDid)
@@ -285,8 +285,8 @@ function seedGroupStatements(db: D1Database, seed: GroupSeed): D1PreparedStateme
 	statements.push(
 		db
 			.prepare(
-				`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
-				 SELECT ?, ?, ?, r.id, 'active', ?, ? FROM roles r
+				`INSERT INTO memberships (id, group_id, did, role_id, created_at, updated_at)
+				 SELECT ?, ?, ?, r.id, ?, ? FROM roles r
 				 WHERE r.group_id = ? AND r.is_owner = 1`
 			)
 			.bind(
@@ -403,7 +403,7 @@ async function confirmNewest(
  *  no visibility filter is needed. A declared group with no row here is still
  *  listed, because another app may have created it.
  *
- *  A signed-in caller also sees the groups they own or are an active member
+ *  A signed-in caller also sees the groups they own or are a member
  *  of, so a private group stays reachable by its members. A row can outlive
  *  its membership record, so an undeclared group the caller does not own is
  *  kept only when `onRoster` confirms them. `confirmNewest` bounds those
@@ -432,7 +432,7 @@ export async function listGroups(
 					.prepare(
 						`SELECT ${GROUP_COLUMNS} FROM groups
 						 WHERE owner_did = ?
-						    OR id IN (SELECT group_id FROM memberships WHERE did = ? AND status = 'active')`
+						    OR id IN (SELECT group_id FROM memberships WHERE did = ?)`
 					)
 					.bind(caller, caller)
 					.all<GroupRow>()
@@ -572,7 +572,7 @@ export async function applyGroupCache(
 
 /** The roster, owner first, then by join time. Roles come back as names. */
 /** A roster row as `MemberRow`, for the reads below to filter and order. */
-const MEMBER_ROW = `SELECT m.id AS membership_id, m.did, r.name AS role, m.status, m.created_at
+const MEMBER_ROW = `SELECT m.id AS membership_id, m.did, r.name AS role, m.created_at
 	FROM memberships m JOIN roles r ON r.id = m.role_id`;
 
 export async function listMembers(db: D1Database, groupId: string): Promise<MemberRow[]> {
@@ -660,7 +660,6 @@ export async function getCallerMembership(
 		return {
 			did: null,
 			role: null,
-			status: null,
 			pendingRequestId: null,
 			permissions: new Set(),
 			onRoster: false
@@ -698,7 +697,6 @@ export async function getCallerMembership(
 	return {
 		did,
 		role: membership?.role ?? null,
-		status: membership?.status ?? null,
 		pendingRequestId: pending?.id ?? null,
 		permissions,
 		onRoster
@@ -706,7 +704,7 @@ export async function getCallerMembership(
 }
 
 /** The fallback for a group with no authz records: the union of the
- *  `role_permissions` rows an active membership reaches. */
+ *  `role_permissions` rows a membership reaches. */
 async function rowPermissions(
 	db: D1Database,
 	groupId: string,
@@ -717,7 +715,7 @@ async function rowPermissions(
 			`SELECT rp.permission FROM role_permissions rp
 			 JOIN roles r ON r.id = rp.role_id
 			 JOIN memberships m ON m.role_id = r.id AND m.group_id = r.group_id
-			 WHERE m.group_id = ? AND m.did = ? AND m.status = 'active'`
+			 WHERE m.group_id = ? AND m.did = ?`
 		)
 		.bind(groupId, did)
 		.all<{ permission: string }>();
@@ -751,7 +749,7 @@ export async function rolePermissions(
 export async function countActiveMembers(db: D1Database, groupId: string): Promise<number> {
 	await ensureGroupsSchema(db);
 	const row = await db
-		.prepare(`SELECT COUNT(*) AS n FROM memberships WHERE group_id = ? AND status = 'active'`)
+		.prepare(`SELECT COUNT(*) AS n FROM memberships WHERE group_id = ?`)
 		.bind(groupId)
 		.first<{ n: number }>();
 	return row?.n ?? 0;
@@ -825,8 +823,8 @@ export async function addMember(
 		db.batch([
 			db
 				.prepare(
-					`INSERT INTO memberships (id, group_id, did, role_id, status, created_at, updated_at)
-					 SELECT ?, ?, ?, r.id, 'active', ?, ? FROM roles r
+					`INSERT INTO memberships (id, group_id, did, role_id, created_at, updated_at)
+					 SELECT ?, ?, ?, r.id, ?, ? FROM roles r
 					 WHERE r.group_id = ? AND r.name = ?`
 				)
 				.bind(crypto.randomUUID(), groupId, did, now, now, groupId, role),
