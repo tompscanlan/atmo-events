@@ -35,7 +35,16 @@ import { buildEventRecord, buildThumbnailMedia } from '@atmo-dev/events-ui/edito
 import { defaultTheme } from '@atmo-dev/events-ui/theme';
 import { load } from './+page.server';
 import { getEventRecordFromContrail, getServerClient, type FlatEventRecord } from '$lib/contrail';
-import { type GroupSpaceReader, type GroupSpaceRecord } from '$lib/groups/server/about-read';
+import {
+	EVENT_COLLECTION as EVENT,
+	MEETING_IMAGE as IMAGE,
+	MEETING_VALUE,
+	PROFILE_NAME,
+	calendarSpaceOf,
+	eventHost,
+	meetingUri,
+	storedMeeting
+} from '$lib/groups/server/__fixtures__/members-only-event';
 import {
 	fixtureSessions,
 	resetReaderHost,
@@ -56,42 +65,10 @@ const STRANGER = 'did:plc:stranger';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 /** A group whose spaces were never recorded: no members or calendar space. */
 const OLDER_GROUP_DID = 'did:plc:7dbq5kbxtnyzsnjwmufl2hyd';
-const { aboutSpaceUri: ABOUT } = groupSpaceUris(GROUP_DID);
-// Written out, so a wrong type, key or URI form in the code under test fails here.
-const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
-const EVENT = 'community.lexicon.calendar.event';
-const MEETING_URI = `${CALENDAR}/${GROUP_DID}/${EVENT}/3lmeeting`;
+const CALENDAR = calendarSpaceOf(GROUP_DID);
+const MEETING_URI = meetingUri(GROUP_DID);
 const MEMBERS_ONLY = '?placement=members';
 const NOT_FOUND = { status: 404, body: { message: 'Event not found' } };
-
-const IMAGE = [
-	{
-		role: 'thumbnail',
-		alt: 'The committee',
-		content: { $type: 'blob', ref: { $link: 'bafkreithumb' }, mimeType: 'image/webp', size: 41250 },
-		aspect_ratio: { width: 800, height: 800 }
-	}
-];
-const MEETING_VALUE = {
-	$type: EVENT,
-	name: 'Committee call',
-	description: 'Agenda in the group chat.',
-	startsAt: '2030-11-02T18:00:00.000Z',
-	endsAt: '2030-11-02T19:00:00.000Z',
-	createdAt: '2026-10-02T09:00:00.000Z',
-	additionalData: { agendaUrl: 'https://example.com/agenda' }
-};
-
-/** The calendar space's one event, as stored: with its image. */
-function storedMeeting(): GroupSpaceRecord {
-	return {
-		uri: MEETING_URI,
-		cid: 'bafymeeting',
-		collection: EVENT,
-		rkey: '3lmeeting',
-		value: { ...MEETING_VALUE, media: structuredClone(IMAGE) }
-	};
-}
 
 let harness: SqliteD1;
 
@@ -114,45 +91,6 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 	resetReaderHost();
 });
-
-type Host = GroupSpaceReader & { calls: string[] };
-
-/** The group's host. Its about space holds the profile and its members space
- *  no records, so a caller's standing comes from the rows. `calendar` is what
- *  the calendar space holds, or the error every read of it fails with. */
-function host(calendar: GroupSpaceRecord[] | Error): Host {
-	const calls: string[] = [];
-	return {
-		calls,
-		async get(q) {
-			calls.push(`get ${q.space} ${q.collection} ${q.rkey}`);
-			if (q.space === CALENDAR) {
-				if (calendar instanceof Error) throw calendar;
-				return calendar.find((r) => r.collection === q.collection && r.rkey === q.rkey) ?? null;
-			}
-			if (q.space === ABOUT && q.collection === 'group.opensocial.profile') {
-				return {
-					uri: `${ABOUT}/${GROUP_DID}/group.opensocial.profile/self`,
-					cid: 'bafyprofile',
-					collection: 'group.opensocial.profile',
-					rkey: 'self',
-					value: { displayName: 'Kona Paddlers' }
-				};
-			}
-			return null;
-		},
-		async list(q) {
-			calls.push(`list ${q.space} ${q.collection ?? '(no collection)'}`);
-			if (q.space === CALENDAR) throw new Error('the edit page reads one event by its key');
-			return [];
-		},
-		async getSpace(space) {
-			calls.push(`getSpace ${space}`);
-			if (space === CALENDAR) throw new Error('the calendar space is never asked its policy');
-			return { readPolicy: 'com.atproto.simplespace.defs#publicPolicy' };
-		}
-	};
-}
 
 function event(did: string | null, rkey: string, query: string, actor = GROUP_DID) {
 	return {
@@ -178,10 +116,6 @@ async function refusalFor(did: string | null, rkey: string, query = '', actor = 
 		return { status: e.status, body: e.body };
 	}
 	throw new Error(`the edit page loaded for ${did} at ${rkey}${query}`);
-}
-
-function calendarCalls(h: Host): string[] {
-	return h.calls.filter((call) => call.includes(CALENDAR));
 }
 
 /** The record EventEditor saves from what the page loaded, the image left as it
@@ -220,8 +154,8 @@ async function asTheEditorSaves(eventData: FlatEventRecord) {
 
 describe('/groups/[actor]/events/[rkey]/edit load: a members-only event', () => {
 	it('the edit read of a members-only event keeps its image and puts no space on the record', async () => {
-		const stored = storedMeeting();
-		const h = host([stored]);
+		const stored = storedMeeting(GROUP_DID);
+		const h = eventHost(GROUP_DID, { calendar: [stored] });
 		serveReader(GROUP_DID, h);
 		// A shared cache holding a copy, which the edit page must never touch.
 		const cache = { match: vi.fn(), put: vi.fn() };
@@ -231,7 +165,7 @@ describe('/groups/[actor]/events/[rkey]/edit load: a members-only event', () => 
 
 		expect(data).toStrictEqual({
 			groupDid: GROUP_DID,
-			groupName: 'Kona Paddlers',
+			groupName: PROFILE_NAME,
 			handle: null,
 			canDelete: true,
 			rkey: '3lmeeting',
@@ -255,7 +189,7 @@ describe('/groups/[actor]/events/[rkey]/edit load: a members-only event', () => 
 		expect(vi.mocked(groupEditorPage).mock.calls).toEqual([
 			[{ DB: harness.db, OAUTH_SESSIONS: fixtureSessions }, GROUP_DID, OWNER, 'MANAGE_EVENTS']
 		]);
-		expect(calendarCalls(h)).toEqual([`get ${CALENDAR} ${EVENT} 3lmeeting`]);
+		expect(h.callsIn(CALENDAR)).toEqual([`get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmeeting`]);
 		expect(getEventRecordFromContrail).not.toHaveBeenCalled();
 		expect(cache.match).not.toHaveBeenCalled();
 		expect(cache.put).not.toHaveBeenCalled();
@@ -264,8 +198,8 @@ describe('/groups/[actor]/events/[rkey]/edit load: a members-only event', () => 
 	});
 
 	it('a members-only edit, saved as the editor builds it, keeps the image and adds no field', async () => {
-		const stored = storedMeeting();
-		serveReader(GROUP_DID, host([stored]));
+		const stored = storedMeeting(GROUP_DID);
+		serveReader(GROUP_DID, eventHost(GROUP_DID, { calendar: [stored] }));
 		const { eventData } = await openAs(OWNER, '3lmeeting', MEMBERS_ONLY);
 
 		const saved = await asTheEditorSaves(eventData);
@@ -278,13 +212,13 @@ describe('/groups/[actor]/events/[rkey]/edit load: a members-only event', () => 
 
 		// The same stored event opened as a public one, from the index, saves to the
 		// very same record: the members-only read adds nothing and drops nothing.
-		serveReader(GROUP_DID, host([]));
+		serveReader(GROUP_DID, eventHost(GROUP_DID, { calendar: [] }));
 		vi.mocked(getEventRecordFromContrail).mockResolvedValue({
 			uri: `at://${GROUP_DID}/${EVENT}/3lmeeting`,
 			cid: 'bafymeeting',
 			did: GROUP_DID,
 			rkey: '3lmeeting',
-			value: storedMeeting().value
+			value: storedMeeting(GROUP_DID).value
 		} as never);
 		const asPublic = await asTheEditorSaves((await openAs(OWNER, '3lmeeting')).eventData);
 		expect(saved).toStrictEqual(asPublic);
@@ -296,35 +230,42 @@ describe('/groups/[actor]/events/[rkey]/edit load: a members-only event', () => 
 
 		// A key the space does not hold, and one no record can have.
 		for (const rkey of ['3lmadeup', 'not a key']) {
-			serveReader(GROUP_DID, host([storedMeeting()]));
+			serveReader(GROUP_DID, eventHost(GROUP_DID));
 			expect(await refusalFor(OWNER, rkey, MEMBERS_ONLY)).toStrictEqual(NOT_FOUND);
 		}
 		// A stored record with no start is not an event the editor can open.
-		const undated = storedMeeting();
+		const undated = storedMeeting(GROUP_DID);
 		delete undated.value.startsAt;
-		serveReader(GROUP_DID, host([undated]));
+		serveReader(GROUP_DID, eventHost(GROUP_DID, { calendar: [undated] }));
 		expect(await refusalFor(OWNER, '3lmeeting', MEMBERS_ONLY)).toStrictEqual(NOT_FOUND);
 		// A group whose host never made the calendar space holds no such event.
-		serveReader(GROUP_DID, host(new Error('com.atproto.space.getRecord failed: SpaceNotFound')));
+		serveReader(
+			GROUP_DID,
+			eventHost(GROUP_DID, {
+				calendar: new Error('com.atproto.space.getRecord failed: SpaceNotFound')
+			})
+		);
 		expect(await refusalFor(OWNER, '3lmeeting', MEMBERS_ONLY)).toStrictEqual(NOT_FOUND);
 
 		// A placement the page does not know is the same 404, with no event read:
 		// a mangled link never falls through to the public read.
 		for (const query of ['?placement=everyone', '?placement=', '?placement=Members']) {
-			const h = host([storedMeeting()]);
+			const h = eventHost(GROUP_DID);
 			serveReader(GROUP_DID, h);
 			expect(await refusalFor(OWNER, '3lmeeting', query)).toStrictEqual(NOT_FOUND);
-			expect(calendarCalls(h)).toEqual([]);
+			expect(h.callsIn(CALENDAR)).toEqual([]);
 		}
 
 		// A read that fails is a 503 that says why, after one attempt.
-		const down = host(new Error('com.atproto.space.getRecord failed: 502'));
+		const down = eventHost(GROUP_DID, {
+			calendar: new Error('com.atproto.space.getRecord failed: 502')
+		});
 		serveReader(GROUP_DID, down);
 		expect(await refusalFor(OWNER, '3lmeeting', MEMBERS_ONLY)).toStrictEqual({
 			status: 503,
 			body: { message: MEMBERS_ONLY_UNREADABLE }
 		});
-		expect(calendarCalls(down)).toEqual([`get ${CALENDAR} ${EVENT} 3lmeeting`]);
+		expect(down.callsIn(CALENDAR)).toEqual([`get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmeeting`]);
 		expect(logged).toHaveBeenCalled();
 		// A group whose session is gone. When its roster is in the members space,
 		// the editor gate cannot read the caller's grants and refuses first, as it
@@ -372,7 +313,7 @@ describe('/groups/[actor]/events/[rkey]/edit load: who may edit', () => {
 			['an anonymous caller', null, anonymousRefusal]
 		] as const) {
 			// What the group's route context sends on its own, for this caller.
-			const alone = host([storedMeeting()]);
+			const alone = eventHost(GROUP_DID);
 			serveReader(GROUP_DID, alone);
 			await groupRouteContext(
 				{ OAUTH_SESSIONS: fixtureSessions } as never,
@@ -383,7 +324,7 @@ describe('/groups/[actor]/events/[rkey]/edit load: who may edit', () => {
 
 			for (const [rkey, query] of urls) {
 				fixtureSessions.reads = 0;
-				const h = host([storedMeeting()]);
+				const h = eventHost(GROUP_DID);
 				serveReader(GROUP_DID, h);
 
 				expect(await refusalFor(did, rkey, query), `${who} at ${rkey}${query}`).toStrictEqual(
@@ -392,7 +333,7 @@ describe('/groups/[actor]/events/[rkey]/edit load: who may edit', () => {
 				// The standing read, the visibility check for a caller off the roster,
 				// and not one request more: no event read, no profile read.
 				expect(h.calls, `${who} at ${rkey}${query}`).toEqual(alone.calls);
-				expect(calendarCalls(h)).toEqual([]);
+				expect(h.callsIn(CALENDAR)).toEqual([]);
 				expect(fixtureSessions.reads).toBe(1);
 			}
 		}
@@ -400,7 +341,7 @@ describe('/groups/[actor]/events/[rkey]/edit load: who may edit', () => {
 
 		// The answer is the caller's, not the URL's: at the same URL, a caller who
 		// may manage events gets the event.
-		serveReader(GROUP_DID, host([storedMeeting()]));
+		serveReader(GROUP_DID, eventHost(GROUP_DID));
 		const data = await openAs(OWNER, '3lmeeting', MEMBERS_ONLY);
 		expect(data.eventData.name).toBe('Committee call');
 		expect(data.space).toBe(CALENDAR);
@@ -409,7 +350,7 @@ describe('/groups/[actor]/events/[rkey]/edit load: who may edit', () => {
 
 describe('/groups/[actor]/events/[rkey]/edit load: a public event', () => {
 	it('a public edit reads the index as before and names no space', async () => {
-		const h = host([storedMeeting()]);
+		const h = eventHost(GROUP_DID);
 		serveReader(GROUP_DID, h);
 		const client = { index: 'the app index' };
 		vi.mocked(getServerClient).mockReturnValue(client as never);
@@ -431,7 +372,7 @@ describe('/groups/[actor]/events/[rkey]/edit load: a public event', () => {
 
 		expect(data).toStrictEqual({
 			groupDid: GROUP_DID,
-			groupName: 'Kona Paddlers',
+			groupName: PROFILE_NAME,
 			handle: null,
 			canDelete: true,
 			rkey: '3lpaddle',
@@ -455,7 +396,7 @@ describe('/groups/[actor]/events/[rkey]/edit load: a public event', () => {
 		expect(vi.mocked(groupEditorPage).mock.invocationCallOrder[0]).toBeLessThan(
 			vi.mocked(getEventRecordFromContrail).mock.invocationCallOrder[0]
 		);
-		expect(calendarCalls(h)).toEqual([]);
+		expect(h.callsIn(CALENDAR)).toEqual([]);
 
 		// What the index does not hold, or cannot read, is a 404, a members-only
 		// event's key included: without its placement, the edit page never looks
@@ -464,6 +405,6 @@ describe('/groups/[actor]/events/[rkey]/edit load: a public event', () => {
 		expect(await refusalFor(OWNER, '3lmeeting')).toStrictEqual(NOT_FOUND);
 		vi.mocked(getEventRecordFromContrail).mockRejectedValue(new Error('D1 is down'));
 		expect(await refusalFor(OWNER, '3lpaddle')).toStrictEqual(NOT_FOUND);
-		expect(calendarCalls(h)).toEqual([]);
+		expect(h.callsIn(CALENDAR)).toEqual([]);
 	});
 });

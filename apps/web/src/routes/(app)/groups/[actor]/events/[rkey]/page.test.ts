@@ -70,7 +70,16 @@ import Page from './+page.svelte';
 import { EventView } from '@atmo-dev/events-ui';
 import type { EditorAdapter, EditorViewer } from '$lib/components/editor/adapter';
 import { createMembersOnlyEventAdapter } from '$lib/groups/event-page-adapter';
-import { type GroupSpaceReader, type GroupSpaceRecord } from '$lib/groups/server/about-read';
+import {
+	EVENT_COLLECTION as EVENT,
+	MEETING_IMAGE as IMAGE,
+	MEETING_VALUE,
+	PROFILE_NAME,
+	calendarSpaceOf,
+	eventHost,
+	meetingUri,
+	storedMeeting
+} from '$lib/groups/server/__fixtures__/members-only-event';
 import {
 	fixtureSessions,
 	resetReaderHost,
@@ -85,11 +94,9 @@ const OWNER = 'did:plc:owner';
 const MEMBER = signedIn.user.did;
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const { aboutSpaceUri: ABOUT } = groupSpaceUris(GROUP_DID);
-// Written out, so a wrong type, key or URI form in the code under test fails here.
-const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
-const EVENT = 'community.lexicon.calendar.event';
+const CALENDAR = calendarSpaceOf(GROUP_DID);
 const RSVP = 'community.lexicon.calendar.rsvp';
-const MEETING_URI = `${CALENDAR}/${GROUP_DID}/${EVENT}/3lmeeting`;
+const MEETING_URI = meetingUri(GROUP_DID);
 /** The meeting's cid as the group's host holds it. */
 const MEETING_CID = 'bafymeeting';
 /** What the server hands the page to carry through consent and back. The page
@@ -105,32 +112,6 @@ function rsvpRecord(status: 'going' | 'interested', subject = MEETING_URI) {
 		status: `${RSVP}#${status}`,
 		subject: { uri: subject, cid: MEETING_CID },
 		createdAt: '2026-10-08T12:00:00.000Z'
-	};
-}
-
-const IMAGE = [
-	{
-		role: 'thumbnail',
-		alt: 'The committee',
-		content: { $type: 'blob', ref: { $link: 'bafkreithumb' }, mimeType: 'image/webp', size: 41250 }
-	}
-];
-const MEETING_VALUE = {
-	$type: EVENT,
-	name: 'Committee call',
-	description: 'Agenda in the group chat.',
-	startsAt: '2030-11-02T18:00:00.000Z',
-	createdAt: '2026-10-02T09:00:00.000Z'
-};
-
-/** The calendar space's one event, as stored: with its image. */
-function storedMeeting(): GroupSpaceRecord {
-	return {
-		uri: MEETING_URI,
-		cid: 'bafymeeting',
-		collection: EVENT,
-		rkey: '3lmeeting',
-		value: { ...MEETING_VALUE, media: structuredClone(IMAGE) }
 	};
 }
 
@@ -168,44 +149,6 @@ afterEach(() => {
 	resetReaderHost();
 });
 
-type Host = GroupSpaceReader & { calls: string[] };
-
-/** The group's host. Its about space holds the profile and its members space
- *  no records, so a caller's standing comes from the rows. */
-function host(calendar: GroupSpaceRecord[]): Host {
-	const calls: string[] = [];
-	return {
-		calls,
-		async get(q) {
-			calls.push(`get ${q.space} ${q.collection} ${q.rkey}`);
-			if (q.space === CALENDAR) {
-				return calendar.find((r) => r.collection === q.collection && r.rkey === q.rkey) ?? null;
-			}
-			if (q.space === ABOUT && q.collection === 'group.opensocial.profile') {
-				return {
-					uri: `${ABOUT}/${GROUP_DID}/group.opensocial.profile/self`,
-					cid: 'bafyprofile',
-					collection: 'group.opensocial.profile',
-					rkey: 'self',
-					value: { displayName: 'Kona Paddlers' }
-				};
-			}
-			return null;
-		},
-		async list(q) {
-			calls.push(`list ${q.space} ${q.collection ?? '(no collection)'}`);
-			if (q.space === CALENDAR)
-				throw new Error('the page reads one event by its key, never a listing');
-			return [];
-		},
-		async getSpace(space) {
-			calls.push(`getSpace ${space}`);
-			if (space === CALENDAR) throw new Error('the calendar space is never asked its policy');
-			return { readPolicy: 'com.atproto.simplespace.defs#publicPolicy' };
-		}
-	};
-}
-
 type PageData = Record<string, unknown> & {
 	eventData: Record<string, unknown>;
 	eventUri: string;
@@ -219,10 +162,6 @@ async function openAs(did: string | null, rkey = '3lmeeting'): Promise<PageData>
 		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } },
 		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events/${rkey}`)
 	} as unknown as Parameters<typeof load>[0])) as PageData;
-}
-
-function calendarCalls(h: Host): string[] {
-	return h.calls.filter((call) => call.includes(CALENDAR));
 }
 
 /** The page rendered as the server renders it, with what EventView handed
@@ -252,8 +191,8 @@ function editLinksIn(body: string): string[] {
 
 describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	it('the event page hands EventView the space-form URI and the calendar space, without the image', async () => {
-		const stored = storedMeeting();
-		const h = host([stored]);
+		const stored = storedMeeting(GROUP_DID);
+		const h = eventHost(GROUP_DID, { calendar: [stored] });
 		serveReader(GROUP_DID, h);
 
 		const data = await openAs(MEMBER);
@@ -274,15 +213,15 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 			attendees: { going: [], interested: [], goingCount: 0, interestedCount: 0 },
 			viewerRsvpStatus: null,
 			viewerRsvpRkey: null,
-			hostProfile: { did: GROUP_DID, displayName: 'Kona Paddlers' },
+			hostProfile: { did: GROUP_DID, displayName: PROFILE_NAME },
 			membersOnly: true
 		});
 		expect('media' in data.eventData).toBe(false);
 		expect('spaceKey' in data).toBe(false);
 		// The event read is one getRecord, and the profile is read after it.
-		expect(calendarCalls(h)).toEqual([`get ${CALENDAR} ${EVENT} 3lmeeting`]);
-		const eventRead = h.calls.indexOf(`get ${CALENDAR} ${EVENT} 3lmeeting`);
-		const profileRead = h.calls.indexOf(`get ${ABOUT} group.opensocial.profile self`);
+		expect(h.callsIn(CALENDAR)).toEqual([`get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmeeting`]);
+		const eventRead = h.calls.indexOf(`get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmeeting`);
+		const profileRead = h.calls.indexOf(`get ${ABOUT} ${GROUP_DID} group.opensocial.profile self`);
 		expect(profileRead).toBeGreaterThan(eventRead);
 		// What the host holds keeps its image.
 		expect(stored.value.media).toStrictEqual(IMAGE);
@@ -307,7 +246,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	});
 
 	it("the members-only event page's adapter writes an RSVP only through the members-only RSVP command", async () => {
-		serveReader(GROUP_DID, host([storedMeeting()]));
+		serveReader(GROUP_DID, eventHost(GROUP_DID));
 		const { rsvp: handed } = renderPage(await openAs(MEMBER));
 		const { adapter, viewer } = handed;
 		expect(handed.spaceUri).toBe(CALENDAR);
@@ -396,7 +335,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	});
 
 	it("the members-only event page's adapter refuses a space write that is not an RSVP to its event", async () => {
-		serveReader(GROUP_DID, host([storedMeeting()]));
+		serveReader(GROUP_DID, eventHost(GROUP_DID));
 		const { adapter } = renderPage(await openAs(MEMBER)).rsvp;
 		const { membersSpaceUri } = groupSpaceUris(GROUP_DID);
 		const otherCalendar =
@@ -580,7 +519,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	// the RSVP it was for is saved, so a link copied afterwards carries none, and
 	// the next press from the same page sends none. (Spec: FR-114.)
 	it('the asked marker leaves the address after a successful RSVP or cancel', async () => {
-		serveReader(GROUP_DID, host([storedMeeting()]));
+		serveReader(GROUP_DID, eventHost(GROUP_DID));
 		const data = await openAs(MEMBER);
 		const marked = new URL(`${PAGE_URL}?from=calendar`);
 		marked.searchParams.set('rsvp-grant', MARKER);
@@ -641,7 +580,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	// the post would cite the event outside its space. The shared EventView opens
 	// the prompt for every other event. (Spec: FR-118.)
 	it("a members-only RSVP opens no share prompt, and a public event's RSVP still does", async () => {
-		serveReader(GROUP_DID, host([storedMeeting()]));
+		serveReader(GROUP_DID, eventHost(GROUP_DID));
 		const data = await openAs(MEMBER);
 		rsvp.press = 'going';
 
@@ -691,7 +630,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	it('the members-only event page offers its Edit link to a manager only, with the placement', async () => {
 		const editHref = `/groups/${GROUP_DID}/events/3lmeeting/edit?placement=members`;
 
-		serveReader(GROUP_DID, host([storedMeeting()]));
+		serveReader(GROUP_DID, eventHost(GROUP_DID));
 		const managed = await openAs(OWNER);
 		expect(managed.editHref).toBe(editHref);
 		signedIn.user.did = OWNER;
@@ -704,7 +643,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 
 		rsvp.renders.length = 0;
 		signedIn.user.did = MEMBER;
-		serveReader(GROUP_DID, host([storedMeeting()]));
+		serveReader(GROUP_DID, eventHost(GROUP_DID));
 		const plain = await openAs(MEMBER);
 		expect('editHref' in plain).toBe(false);
 		const asMember = renderPage(plain);

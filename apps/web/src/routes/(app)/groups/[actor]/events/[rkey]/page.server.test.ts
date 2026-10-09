@@ -14,7 +14,14 @@ vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { isHttpError } from '@sveltejs/kit';
 import { load } from './+page.server';
-import type { GroupSpaceReader, GroupSpaceRecord } from '$lib/groups/server/about-read';
+import {
+	EVENT_COLLECTION as EVENT,
+	MEETING_VALUE,
+	calendarSpaceOf,
+	eventHost,
+	meetingUri
+} from '$lib/groups/server/__fixtures__/members-only-event';
+import type { FakeSpaceReader } from '$lib/groups/server/__fixtures__/space-reader';
 import {
 	fixtureSessions,
 	resetReaderHost,
@@ -35,40 +42,9 @@ const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const { aboutSpaceUri: ABOUT } = groupSpaceUris(GROUP_DID);
-// Written out, so a wrong type, key or URI form in the code under test fails here.
-const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
-const EVENT = 'community.lexicon.calendar.event';
-const MEETING_URI = `${CALENDAR}/${GROUP_DID}/${EVENT}/3lmeeting`;
-const POLICY = {
-	public: 'com.atproto.simplespace.defs#publicPolicy',
-	memberList: 'com.atproto.simplespace.defs#memberListPolicy'
-};
-
-const IMAGE = [
-	{
-		role: 'thumbnail',
-		alt: 'The committee',
-		content: { $type: 'blob', ref: { $link: 'bafkreithumb' }, mimeType: 'image/webp', size: 41250 }
-	}
-];
-const MEETING_VALUE = {
-	$type: EVENT,
-	name: 'Committee call',
-	description: 'Agenda in the group chat.',
-	startsAt: '2030-11-02T18:00:00.000Z',
-	createdAt: '2026-10-02T09:00:00.000Z'
-};
-
-/** The calendar space's one event, as stored: with its image. */
-function storedMeeting(): GroupSpaceRecord {
-	return {
-		uri: MEETING_URI,
-		cid: 'bafymeeting',
-		collection: EVENT,
-		rkey: '3lmeeting',
-		value: { ...MEETING_VALUE, media: structuredClone(IMAGE) }
-	};
-}
+const CALENDAR = calendarSpaceOf(GROUP_DID);
+const MEETING_URI = meetingUri(GROUP_DID);
+const MEMBER_LIST_POLICY = 'com.atproto.simplespace.defs#memberListPolicy';
 
 let harness: SqliteD1;
 
@@ -89,49 +65,6 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 	resetReaderHost();
 });
-
-type Host = GroupSpaceReader & { calls: string[] };
-
-/** The group's host. Its about space holds the profile and its members space
- *  no records, so a caller's standing comes from the rows. `calendar` is what
- *  the calendar space holds, or the error every read of it fails with. */
-function host(
-	calendar: GroupSpaceRecord[] | Error,
-	{ policy = POLICY.public }: { policy?: string } = {}
-): Host {
-	const calls: string[] = [];
-	return {
-		calls,
-		async get(q) {
-			calls.push(`get ${q.space} ${q.collection} ${q.rkey}`);
-			if (q.space === CALENDAR) {
-				if (calendar instanceof Error) throw calendar;
-				return calendar.find((r) => r.collection === q.collection && r.rkey === q.rkey) ?? null;
-			}
-			if (q.space === ABOUT && q.collection === 'group.opensocial.profile') {
-				return {
-					uri: `${ABOUT}/${GROUP_DID}/group.opensocial.profile/self`,
-					cid: 'bafyprofile',
-					collection: 'group.opensocial.profile',
-					rkey: 'self',
-					value: { displayName: 'Kona Paddlers' }
-				};
-			}
-			return null;
-		},
-		async list(q) {
-			calls.push(`list ${q.space} ${q.collection ?? '(no collection)'}`);
-			if (q.space === CALENDAR)
-				throw new Error('the page reads one event by its key, never a listing');
-			return [];
-		},
-		async getSpace(space) {
-			calls.push(`getSpace ${space}`);
-			if (space === CALENDAR) throw new Error('the calendar space is never asked its policy');
-			return { readPolicy: policy };
-		}
-	};
-}
 
 function event(did: string | null, rkey: string, session?: unknown) {
 	return {
@@ -167,10 +100,6 @@ async function refusalFor(did: string | null, rkey: string) {
 	throw new Error(`the page loaded for ${did} at ${rkey}`);
 }
 
-function calendarCalls(h: Host): string[] {
-	return h.calls.filter((call) => call.includes(CALENDAR));
-}
-
 describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
 	it('the event page: an absent rkey and a caller off the roster get the same 404', async () => {
 		const refusals: Record<string, unknown> = {};
@@ -182,7 +111,7 @@ describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
 			['an anonymous visitor, at the real key', null, '3lmeeting'],
 			['an anonymous visitor, at a made-up key', null, '3lmadeup']
 		] as const) {
-			serveReader(GROUP_DID, host([storedMeeting()]));
+			serveReader(GROUP_DID, eventHost(GROUP_DID));
 			refusals[who] = await refusalFor(did, rkey);
 		}
 
@@ -197,10 +126,10 @@ describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
 		for (const did of [STRANGER, null]) {
 			const answers = [];
 			for (const rkey of ['3lmeeting', '3lmadeup']) {
-				const h = host([storedMeeting()], { policy: POLICY.memberList });
+				const h = eventHost(GROUP_DID, { policy: MEMBER_LIST_POLICY });
 				serveReader(GROUP_DID, h);
 				answers.push(await refusalFor(did, rkey));
-				expect(calendarCalls(h)).toEqual([]);
+				expect(h.callsIn(CALENDAR)).toEqual([]);
 			}
 			expect(answers[0]).toStrictEqual({ status: 404, body: { message: 'Group not found' } });
 			expect(answers[1]).toStrictEqual(answers[0]);
@@ -210,7 +139,7 @@ describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
 	it("the event page: a caller off the roster sends nothing through the group's session after standing", async () => {
 		for (const did of [STRANGER, null]) {
 			// What the group's route context sends on its own, for this caller.
-			const alone = host([storedMeeting()]);
+			const alone = eventHost(GROUP_DID);
 			serveReader(GROUP_DID, alone);
 			await groupRouteContext(
 				{ OAUTH_SESSIONS: fixtureSessions } as never,
@@ -220,7 +149,7 @@ describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
 			);
 			fixtureSessions.reads = 0;
 
-			const h = host([storedMeeting()]);
+			const h = eventHost(GROUP_DID);
 			serveReader(GROUP_DID, h);
 			const refusal = await refusalFor(did, '3lmeeting');
 
@@ -229,7 +158,7 @@ describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
 			// no event read, no profile read.
 			expect(h.calls).toEqual(alone.calls);
 			expect(h.calls).toContain(`getSpace ${ABOUT}`);
-			expect(calendarCalls(h)).toEqual([]);
+			expect(h.callsIn(CALENDAR)).toEqual([]);
 			expect(h.calls.filter((c) => c.includes('group.opensocial.profile'))).toEqual([]);
 			// The route context's reader is the only one made: one session lookup.
 			expect(fixtureSessions.reads).toBe(1);
@@ -256,10 +185,12 @@ describe('/groups/[actor]/events/[rkey] load: when the event cannot be read', ()
 		vi.stubGlobal('caches', { default: cache });
 
 		// A read that works first, so a copy could have been kept.
-		serveReader(GROUP_DID, host([storedMeeting()]));
+		serveReader(GROUP_DID, eventHost(GROUP_DID));
 		expect((await openAs(MEMBER)).eventData.name).toBe('Committee call');
 
-		const down = host(new Error('com.atproto.space.getRecord failed: 502'));
+		const down = eventHost(GROUP_DID, {
+			calendar: new Error('com.atproto.space.getRecord failed: 502')
+		});
 		serveReader(GROUP_DID, down);
 		expect(await refusalFor(MEMBER, '3lmeeting')).toStrictEqual({
 			status: 503,
@@ -267,7 +198,7 @@ describe('/groups/[actor]/events/[rkey] load: when the event cannot be read', ()
 		});
 		expect(logged).toHaveBeenCalled();
 		// One attempt at the space and nothing read in its place.
-		expect(calendarCalls(down)).toEqual([`get ${CALENDAR} ${EVENT} 3lmeeting`]);
+		expect(down.callsIn(CALENDAR)).toEqual([`get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmeeting`]);
 
 		// A group whose session is gone tells a member why, and reads nothing.
 		serveReader(GROUP_DID, null);
@@ -281,7 +212,7 @@ describe('/groups/[actor]/events/[rkey] load: when the event cannot be read', ()
 	});
 
 	it('a profile that cannot be read leaves the host unnamed, and the event still shows', async () => {
-		const h = host([storedMeeting()]);
+		const h = eventHost(GROUP_DID);
 		serveReader(GROUP_DID, {
 			...h,
 			async get(q) {
@@ -299,11 +230,11 @@ describe('/groups/[actor]/events/[rkey] load: when the event cannot be read', ()
 
 describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 	it('an organizer who may manage events gets the Edit link; a member does not', async () => {
-		serveReader(GROUP_DID, host([storedMeeting()]));
+		serveReader(GROUP_DID, eventHost(GROUP_DID));
 		expect((await openAs(OWNER)).editHref).toBe(
 			`/groups/${GROUP_DID}/events/3lmeeting/edit?placement=members`
 		);
-		serveReader(GROUP_DID, host([storedMeeting()]));
+		serveReader(GROUP_DID, eventHost(GROUP_DID));
 		expect('editHref' in (await openAs(MEMBER))).toBe(false);
 	});
 });
@@ -342,15 +273,8 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 	}
 
 	/** The group's host, logging into the same list. */
-	function sharedHost(log: string[]): Host {
-		const h = host([storedMeeting()]);
-		return {
-			...h,
-			async get(q) {
-				log.push(`group get ${q.space} ${q.collection} ${q.rkey}`);
-				return h.get(q);
-			}
-		};
+	function sharedHost(log: string[]): FakeSpaceReader {
+		return eventHost(GROUP_DID, { onCall: (line) => log.push(`group ${line}`) });
 	}
 
 	const ownRead = `member GET /xrpc/com.atproto.space.getRecord?${new URLSearchParams({
@@ -376,7 +300,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 		// One read through the member's session, at the event's key, and only once
 		// the event itself was read.
 		expect(log.filter((line) => line.startsWith('member '))).toEqual([ownRead]);
-		const eventRead = log.indexOf(`group get ${CALENDAR} ${EVENT} 3lmeeting`);
+		const eventRead = log.indexOf(`group get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmeeting`);
 		expect(eventRead).toBeGreaterThan(-1);
 		expect(log.indexOf(ownRead)).toBeGreaterThan(eventRead);
 
@@ -410,7 +334,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 			['no session', undefined]
 		];
 		for (const [, session] of cases) {
-			serveReader(GROUP_DID, host([storedMeeting()]));
+			serveReader(GROUP_DID, eventHost(GROUP_DID));
 			const data = await openAs(MEMBER, '3lmeeting', session);
 			expect(data.viewerRsvpStatus).toBeNull();
 			expect(data.viewerRsvpRkey).toBeNull();
@@ -419,7 +343,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 		}
 		expect(log).toEqual([]);
 
-		serveReader(GROUP_DID, host([storedMeeting()]));
+		serveReader(GROUP_DID, eventHost(GROUP_DID));
 		const none = await openAs(
 			MEMBER,
 			'3lmeeting',
@@ -446,7 +370,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 			}
 		};
 		for (const session of [failing, unreadable]) {
-			serveReader(GROUP_DID, host([storedMeeting()]));
+			serveReader(GROUP_DID, eventHost(GROUP_DID));
 			const data = await openAs(MEMBER, '3lmeeting', session);
 			expect(data.eventData.name).toBe('Committee call');
 			expect(data.viewerRsvpStatus).toBeNull();
