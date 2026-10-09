@@ -127,8 +127,9 @@ demoted, removed or leave; the schema enforces that as well as the code. The pub
 `permissions` record says so too: each role lists the roles it may assign and eject, and only the
 owner's list holds `owner`. A new member gets `member`, the record's `defaultRoles`.
 
-Permissions are read from the members space on every call, with no cache. A members space that
-cannot be read grants nothing and does not fall back to D1. A group with no members space, or no
+Permissions are read from the members space once per request: every write a request makes shares
+that request's reader, and the write gate keeps the caller's standing for it. Nothing is kept
+across requests. A members space that cannot be read grants nothing and does not fall back to D1. A group with no members space, or no
 permission records in it, uses D1's `role_permissions`.
 
 A private group is invite-only. That is derived, not stored: whatever the profile's join policy or

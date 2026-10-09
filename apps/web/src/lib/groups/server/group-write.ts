@@ -7,7 +7,7 @@
 // is the group's (./credentials.ts), and `repo` is always the group DID.
 import { isActorIdentifier } from '@atcute/lexicons/syntax';
 import { can, type EnforcedGroupPermission } from '../permissions';
-import type { GroupRow } from '../types';
+import type { CallerMembership, GroupRow } from '../types';
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
 import { getCallerMembership } from './repo';
 import {
@@ -134,6 +134,32 @@ export function pdsWriter(cred: GroupCredential, groupDid: string): GroupRepoWri
 	};
 }
 
+/** The caller's standing, read once per request. A reader is built for one
+ *  request, so every write that request makes passes the same reader, and the
+ *  group's records are asked once however many records the request writes. A
+ *  failed read is not kept, so the next write asks again. Without a reader the
+ *  rows decide, which costs no PDS read, so nothing is kept. */
+const standings = new WeakMap<GroupSpaceReader, Map<string, Promise<CallerMembership>>>();
+
+function standingFor(
+	db: D1Database,
+	group: GroupRow,
+	callerDid: string,
+	reader: GroupSpaceReader | null
+): Promise<CallerMembership> {
+	if (!reader) return getCallerMembership(db, group, callerDid, null);
+	let kept = standings.get(reader);
+	if (!kept) standings.set(reader, (kept = new Map()));
+	const key = `${group.group_did} ${callerDid}`;
+	let standing = kept.get(key);
+	if (!standing) {
+		standing = getCallerMembership(db, group, callerDid, reader);
+		kept.set(key, standing);
+		standing.catch(() => kept.delete(key));
+	}
+	return standing;
+}
+
 /** What the gate needs. `reader` is a test override; absent, the gate builds
  *  the group's own. */
 export interface GroupGateInput {
@@ -159,7 +185,7 @@ export async function requireGroupPermission(
 		reader = await groupSpaceReader(input.env, group);
 		if (!reader && group.members_space_uri) throw new GroupCredentialError(group.group_did);
 	}
-	const membership = await getCallerMembership(db, group, callerDid, reader);
+	const membership = await standingFor(db, group, callerDid, reader);
 	if (!can(membership.permissions, permission)) {
 		throw new GroupPermissionError(permission, group.group_did);
 	}
