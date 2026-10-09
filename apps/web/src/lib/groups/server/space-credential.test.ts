@@ -410,23 +410,21 @@ describe('groupAcceptanceReader', () => {
 	});
 
 	it('has no reader for a group with no credential', async () => {
-		expect(await groupAcceptanceReader({}, harness.db, { group_did: GROUP_DID }, hosts)).toBeNull();
+		expect(await groupAcceptanceReader({}, { group_did: GROUP_DID }, hosts)).toBeNull();
 	});
 
 	it('has no reader, and asks nothing, for a group whose owner has not linked it', async () => {
 		const env = linkGroups(['did:plc:anothergroupaaaaaaaaaaaa'], GROUP_HOST);
 		const fetched = vi.fn();
 		vi.stubGlobal('fetch', fetched);
-		expect(
-			await groupAcceptanceReader(env, harness.db, { group_did: GROUP_DID }, hosts)
-		).toBeNull();
+		expect(await groupAcceptanceReader(env, { group_did: GROUP_DID }, hosts)).toBeNull();
 		expect(fetched).not.toHaveBeenCalled();
 	});
 
 	it('reads through the linked session for a linked group', async () => {
 		const env = linkGroups([GROUP_DID], GROUP_HOST);
 		const net = network({ accepted: new Set([BOB]) });
-		const reader = await groupAcceptanceReader(env, harness.db, { group_did: GROUP_DID }, hosts);
+		const reader = await groupAcceptanceReader(env, { group_did: GROUP_DID }, hosts);
 
 		expect((await reader!.accepted(MEMBERS, [BOB])).get(BOB)).toBe(true);
 		expect(net.delegationAuth).toEqual([`Bearer ${LINKED_TEST_TOKEN}`]);

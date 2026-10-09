@@ -120,7 +120,6 @@ export function pdsMemberList(cred: GroupCredential, groupDid: string): GroupMem
 /** The transport for a group, from its stored credential. */
 export async function groupMemberList(
 	env: CredentialStoreEnv,
-	db: D1Database,
 	group: GroupRow
 ): Promise<GroupMemberList> {
 	return pdsMemberList(await requireGroupCredential(env, group.group_did), group.group_did);

@@ -32,7 +32,7 @@ async function readConfirmations(
 	const space = group.members_space_uri;
 	if (!space || dids.length === 0) return null;
 	try {
-		const reader = await groupAcceptanceReader(env, db, group);
+		const reader = await groupAcceptanceReader(env, group);
 		return reader ? await reader.accepted(space, dids) : null;
 	} catch (e) {
 		console.error(`[groups] ${group.group_did}: acceptances could not be read:`, e);
@@ -54,7 +54,7 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		locals.did
 	);
 
-	const reader = await groupSpaceReader(platform!.env, db, group);
+	const reader = await groupSpaceReader(platform!.env, group);
 	// The back-link's name comes from the profile record, as on the group page.
 	const members = reader ? await readGroupMembers(reader, group) : NO_MEMBER_RECORDS;
 	const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };

@@ -78,7 +78,7 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 	// space still gets a page. A failed read fails the page: a row that quietly
 	// stands in for a record the PDS refused is how a stale name becomes
 	// permanent. A null reader (no credential) is the absent case.
-	const reader = await groupSpaceReader(platform!.env, db, group);
+	const reader = await groupSpaceReader(platform!.env, group);
 	const showRoster = canSeeMembers(membership);
 	const [about, visibility, roster, pendingRequests] = await Promise.all([
 		reader ? readGroupAbout(reader, group) : { profile: null, rules: [] },

@@ -19,7 +19,7 @@ export async function groupEditorPage(
 	if (!can(membership.permissions, permission)) {
 		error(403, callerDid ? `Not allowed: ${permission} required` : 'Sign in to publish as a group');
 	}
-	const reader = await groupSpaceReader(env, db, group);
+	const reader = await groupSpaceReader(env, group);
 	const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };
 	return {
 		group,

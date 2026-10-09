@@ -123,9 +123,7 @@ async function step<T>(
 }
 
 function memberListFor(ctx: RosterContext): Promise<GroupMemberList> {
-	return ctx.memberList
-		? Promise.resolve(ctx.memberList)
-		: groupMemberList(ctx.env, ctx.db, ctx.group);
+	return ctx.memberList ? Promise.resolve(ctx.memberList) : groupMemberList(ctx.env, ctx.group);
 }
 
 /** An entry's list half, last. The row and record are in, so any failure here
@@ -217,8 +215,7 @@ function removesAccess(from: GroupRoleName, to: GroupRoleName): boolean {
  * because a date from the row would overwrite a published one.
  */
 export async function joinedAt(ctx: RosterContext, subject: string): Promise<string | undefined> {
-	const reader =
-		ctx.reader !== undefined ? ctx.reader : await groupSpaceReader(ctx.env, ctx.db, ctx.group);
+	const reader = ctx.reader !== undefined ? ctx.reader : await groupSpaceReader(ctx.env, ctx.group);
 	const space = ctx.group.members_space_uri;
 	if (reader && space && isMembershipKey(subject)) {
 		const record = await reader.get({
@@ -241,8 +238,7 @@ export async function joinedAt(ctx: RosterContext, subject: string): Promise<str
  *  for the group it is `null`, which refuses a stranger. */
 async function joinVisibility(ctx: RosterContext): Promise<GroupVisibility | null> {
 	if (ctx.visibility !== undefined) return ctx.visibility;
-	const reader =
-		ctx.reader !== undefined ? ctx.reader : await groupSpaceReader(ctx.env, ctx.db, ctx.group);
+	const reader = ctx.reader !== undefined ? ctx.reader : await groupSpaceReader(ctx.env, ctx.group);
 	return reader ? readGroupVisibility(reader, ctx.group) : null;
 }
 

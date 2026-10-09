@@ -155,7 +155,7 @@ export async function putGroupMembership(
 		$type: GROUP_MEMBERSHIP_COLLECTION
 	};
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_MEMBERSHIP_COLLECTION,
@@ -174,7 +174,7 @@ export async function dropGroupMembership(
 ): Promise<{ uri: string; rkey: string }> {
 	await authorizeMembership(input);
 	const rkey = membershipRkey(input.subject);
-	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_MEMBERSHIP_COLLECTION,
@@ -208,7 +208,7 @@ export async function writeGroupAccess(
 		$type: GROUP_ACCESS_COLLECTION
 	};
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_ACCESS_COLLECTION,
@@ -251,7 +251,7 @@ export async function writeGroupSpaceIndex(
 	if (input.calendarSpace !== undefined) {
 		spaces.push(calendarSpace(input.group, input.calendarSpace));
 	}
-	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.group));
 	const oldestFirst = [...input.existing].sort((a, b) => a.rkey.localeCompare(b.rkey));
 	const result: SpaceIndexWriteResult = { added: [], removed: [] };
 
@@ -311,7 +311,7 @@ export async function writeGroupAuthz(
 
 	const bundles = input.bundles ?? DEFAULT_ROLE_PERMISSIONS;
 	const space = membersSpace(input.group);
-	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.group));
 	const put = (collection: string, rkey: string, record: Record<string, unknown>) =>
 		writer({
 			repo: input.group.group_did,

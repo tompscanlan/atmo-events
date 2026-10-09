@@ -310,7 +310,7 @@ export async function runUpdateGroup(
 	let access: GroupAccessFields | null;
 	let writer: GroupRepoWriter;
 	try {
-		const found = await groupSpaceReader(env, db, group);
+		const found = await groupSpaceReader(env, group);
 		if (!found) throw new GroupCredentialError(group.group_did);
 		reader = found;
 		failed = "the group's PDS did not say which visibility it enforces";
@@ -320,7 +320,7 @@ export async function runUpdateGroup(
 		failed = "the group's access record could not be read from its PDS";
 		access = await readAboutAccess(reader, group);
 		failed = noCredential;
-		writer = await groupWriter(env, db, group);
+		writer = await groupWriter(env, group);
 	} catch (e) {
 		return nothingSaved(failed, e);
 	}

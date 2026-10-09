@@ -77,7 +77,6 @@ export type GroupRebuildResult =
  *  holds no credential for it. */
 export async function groupRebuildSources(
 	env: CredentialStoreEnv,
-	db: D1Database,
 	groupDid: string
 ): Promise<GroupRebuildSources | null> {
 	const cred = await resolveGroupCredential(env, groupDid);

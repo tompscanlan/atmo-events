@@ -558,7 +558,7 @@ export const rsvpToMembersOnlyEvent = command(
 			rkey: data.rkey,
 			status: data.status,
 			cid: data.cid,
-			groupReader: () => groupSpaceReader(ctx.env, ctx.db, ctx.group)
+			groupReader: () => groupSpaceReader(ctx.env, ctx.group)
 		});
 	}
 );

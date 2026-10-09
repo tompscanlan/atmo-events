@@ -49,7 +49,7 @@ export async function groupRouteContext(
 	const group = await getGroupByDid(db, did);
 	if (!group) error(404, GROUP_NOT_FOUND);
 
-	const reader = await groupSpaceReader(env, db, group);
+	const reader = await groupSpaceReader(env, group);
 
 	// A caller on the roster sees the group at every visibility, so the host is
 	// not asked, and a failed visibility read cannot lock a member out.

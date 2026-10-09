@@ -73,7 +73,7 @@ export async function writeGroupDeclaration(
 		$type: GROUP_DECLARATION_COLLECTION
 	};
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_DECLARATION_COLLECTION,
@@ -91,7 +91,7 @@ export async function writeGroupDeclaration(
 export async function removeGroupDeclaration(input: WithdrawGroupDeclarationInput): Promise<void> {
 	await requireGroupPermission(input, 'MANAGE_GROUP');
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.group));
 	await writer({
 		repo: input.group.group_did,
 		collection: GROUP_DECLARATION_COLLECTION,

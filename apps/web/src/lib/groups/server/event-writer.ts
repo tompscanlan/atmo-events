@@ -169,7 +169,6 @@ export function pdsEventLocator(cred: GroupCredential, groupDid: string): GroupE
  *  is not linked, as `groupWriter` does. */
 export async function groupEventLocator(
 	env: CredentialStoreEnv,
-	db: D1Database,
 	group: GroupRow
 ): Promise<GroupEventLocator> {
 	return pdsEventLocator(await requireGroupCredential(env, group.group_did), group.group_did);
@@ -259,14 +258,14 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 
 	// A public create reads nothing first, as before.
 	if (space !== null || input.intent === 'update') {
-		const locator = input.locator ?? (await groupEventLocator(input.env, input.db, input.group));
+		const locator = input.locator ?? (await groupEventLocator(input.env, input.group));
 		if (space !== null) await checkCalendarSpace(locator, space);
 		if (input.intent === 'update') {
 			await checkPlacement(locator, input.group.group_did, space, rkey, 'update');
 		}
 	}
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
@@ -291,9 +290,9 @@ export async function deleteGroupEvent(
 ): Promise<{ uri: string; repo: string }> {
 	const space = checkEventSpace(input.group.group_did, input.space);
 	await requireEventPermission(input, 'delete');
-	const locator = input.locator ?? (await groupEventLocator(input.env, input.db, input.group));
+	const locator = input.locator ?? (await groupEventLocator(input.env, input.group));
 	await checkPlacement(locator, input.group.group_did, space, input.rkey, 'delete');
-	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
@@ -348,7 +347,7 @@ export async function uploadGroupEventImage(
 			`an event image may be at most ${GROUP_EVENT_IMAGE_MAX_BYTES} bytes, not ${input.bytes.byteLength}`
 		);
 	}
-	const upload = input.upload ?? (await groupBlobUploader(input.env, input.db, input.group));
+	const upload = input.upload ?? (await groupBlobUploader(input.env, input.group));
 	return upload(new Blob([input.bytes], { type: input.mimeType }));
 }
 
@@ -366,7 +365,6 @@ function isBlobRef(value: unknown): value is GroupBlobRef {
  *  GroupCredentialError when the group is not linked. */
 export async function groupBlobUploader(
 	env: CredentialStoreEnv,
-	db: D1Database,
 	group: GroupRow
 ): Promise<GroupBlobUploader> {
 	const cred = await requireGroupCredential(env, group.group_did);

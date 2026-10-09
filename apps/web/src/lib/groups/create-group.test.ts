@@ -462,9 +462,7 @@ describe('a successful create', () => {
 		expect(await resolveGroupCredential(noLinks, MINTED_DID)).toBeNull();
 		const group = await getGroupByDid(harness.db, MINTED_DID);
 		expect(group).not.toBeNull();
-		await expect(groupWriter(noLinks, harness.db, group!)).rejects.toBeInstanceOf(
-			GroupCredentialError
-		);
+		await expect(groupWriter(noLinks, group!)).rejects.toBeInstanceOf(GroupCredentialError);
 	});
 
 	// The only record a stranger can read, and the only one in the public repo.

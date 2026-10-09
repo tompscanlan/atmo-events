@@ -298,7 +298,7 @@ async function rosterCtx(env: Env, args: Args): Promise<RosterContext> {
 /** The group's own space reader. The members space is readable only with the
  *  group's session. */
 async function spaceReader(env: Env, group: GroupRow) {
-	const reader = await groupSpaceReader(env, env.DB, group);
+	const reader = await groupSpaceReader(env, group);
 	if (!reader) throw new Error(`no credential for ${group.group_did}`);
 	return reader;
 }
@@ -329,7 +329,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 			env.DB,
 			group,
 			args.did == null ? null : String(args.did),
-			await groupSpaceReader(env, env.DB, group)
+			await groupSpaceReader(env, group)
 		);
 		const probe = (args.probe as GroupPermission[]) ?? [];
 		return {
@@ -440,7 +440,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		const from = standInCalls.length;
 		let refusal: ReturnType<typeof serializeError> | null = null;
 		try {
-			await checkCalendarSpace(await groupEventLocator(env, env.DB, group), String(args.space));
+			await checkCalendarSpace(await groupEventLocator(env, group), String(args.space));
 		} catch (error) {
 			refusal = serializeError(error);
 		}
@@ -494,7 +494,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	/** The route's two calls: read the current rules, then reconcile them. */
 	setGroupRules: async (env, args) => {
 		const group = await groupById(env, args.groupId);
-		const reader = await groupSpaceReader(env, env.DB, group);
+		const reader = await groupSpaceReader(env, group);
 		if (!reader) throw new Error(`no credential for ${group.group_did}`);
 		const about = await readGroupAbout(reader, group);
 		return setGroupRules({
@@ -510,14 +510,14 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	/** Read back through the group's own session, the way the app reads it. */
 	readGroupAbout: async (env, args) => {
 		const group = await groupById(env, args.groupId);
-		const reader = await groupSpaceReader(env, env.DB, group);
+		const reader = await groupSpaceReader(env, group);
 		if (!reader) throw new Error(`no credential for ${group.group_did}`);
 		return readGroupAbout(reader, group);
 	},
 
 	rebuildGroupCache: async (env, args) => {
 		const group = await groupById(env, args.groupId);
-		const reader = await groupSpaceReader(env, env.DB, group);
+		const reader = await groupSpaceReader(env, group);
 		if (!reader) throw new Error(`no credential for ${group.group_did}`);
 		const outcome = await rebuildGroupCache(env.DB, reader, group);
 		return { ...outcome, row: await groupById(env, args.groupId) };
@@ -627,7 +627,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	membersOnlyRsvp: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		const did = String(args.did);
-		const reader = await groupSpaceReader(env, env.DB, group);
+		const reader = await groupSpaceReader(env, group);
 		const membership = await getCallerMembership(env.DB, group, did, reader);
 		const calls: string[] = [];
 		const member =
@@ -675,7 +675,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		const group = await groupById(env, args.groupId);
 		const members = await readGroupMembers(await spaceReader(env, group), group);
 		const dids = members.memberships.map((record) => record.subject);
-		const acceptances = await groupAcceptanceReader(env, env.DB, group);
+		const acceptances = await groupAcceptanceReader(env, group);
 		const space = group.members_space_uri;
 		const accepted =
 			acceptances && space && dids.length > 0 ? await acceptances.accepted(space, dids) : null;
@@ -720,7 +720,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		if (args.unlinked) await env.OAUTH_SESSIONS.delete(key);
 		try {
 			const from = standInCalls.length;
-			const reader = await groupSpaceReader(env, env.DB, group);
+			const reader = await groupSpaceReader(env, group);
 			const membership = await getCallerMembership(env.DB, group, did, reader);
 			const sliceFrom = standInCalls.length;
 			const slice = await readMembersOnlyEvents(membership, reader, group);
@@ -746,7 +746,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		const group = await groupById(env, args.groupId);
 		const did = args.did == null ? null : String(args.did);
 		const from = standInCalls.length;
-		const reader = await groupSpaceReader(env, env.DB, group);
+		const reader = await groupSpaceReader(env, group);
 		const membership = await getCallerMembership(env.DB, group, did, reader);
 		const readFrom = standInCalls.length;
 		const read = await readMembersOnlyEvent(membership, reader, group, String(args.rkey));
@@ -771,7 +771,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		const group = await groupById(env, args.groupId);
 		const did = args.did == null ? null : String(args.did);
 		const from = standInCalls.length;
-		const reader = await groupSpaceReader(env, env.DB, group);
+		const reader = await groupSpaceReader(env, group);
 		const membership = await getCallerMembership(env.DB, group, did, reader);
 		const readFrom = standInCalls.length;
 		const allowed = can(membership.permissions, 'MANAGE_EVENTS');
@@ -825,7 +825,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	 *  by an earlier run would let check 13c pass without this run's write. */
 	dropCalendarAccess: async (env, args) => {
 		const group = await groupById(env, args.groupId);
-		const writer = await groupWriter(env, env.DB, group);
+		const writer = await groupWriter(env, group);
 		await writer({
 			repo: group.group_did,
 			collection: GROUP_ACCESS_COLLECTION,
@@ -869,7 +869,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 	dropSpaceIndex: async (env, args) => {
 		const group = await groupById(env, args.groupId);
 		if (!group.members_space_uri) return { dropped: [] };
-		const writer = await groupWriter(env, env.DB, group);
+		const writer = await groupWriter(env, group);
 		const dropped: string[] = [];
 		for (const entry of await readGroupSpaceIndex(await spaceReader(env, group), group)) {
 			await writer({
@@ -961,7 +961,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 		const group = await groupById(env, args.groupId);
 		if (!group.members_space_uri) return { dropped: [] };
 		const reader = await spaceReader(env, group);
-		const writer = await groupWriter(env, env.DB, group);
+		const writer = await groupWriter(env, group);
 		const targets = [
 			...(
 				await reader.list({
@@ -1080,7 +1080,7 @@ const ops: Record<string, (env: Env, args: Args) => Promise<unknown>> = {
 
 	rebuildGroup: async (env, args) => {
 		const groupDid = String(args.groupDid);
-		const sources = await groupRebuildSources(env, env.DB, groupDid);
+		const sources = await groupRebuildSources(env, groupDid);
 		if (!sources) throw new Error(`no credential for ${groupDid}`);
 		return rebuildGroup(env.DB, sources, groupDid);
 	}

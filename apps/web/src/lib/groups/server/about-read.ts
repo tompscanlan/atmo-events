@@ -180,7 +180,6 @@ export function pdsSpaceReader(
  *  it. That is a configuration fact, not an error a page should throw on. */
 export async function groupSpaceReader(
 	env: CredentialStoreEnv,
-	db: D1Database,
 	group: GroupRow
 ): Promise<GroupSpaceReader | null> {
 	const cred = await resolveGroupCredential(env, group.group_did);

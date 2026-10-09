@@ -84,7 +84,7 @@ export async function writeGroupProfile(
 		$type: GROUP_PROFILE_COLLECTION
 	};
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_PROFILE_COLLECTION,
@@ -114,7 +114,7 @@ export async function writeAboutAccess(
 		$type: GROUP_ACCESS_COLLECTION
 	};
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.group));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_ACCESS_COLLECTION,
@@ -142,7 +142,7 @@ export async function setGroupRules(
 ): Promise<RulesWriteResult> {
 	await requireGroupPermission(input, 'MANAGE_GROUP');
 	const space = aboutSpace(input.group);
-	const writer = input.writer ?? (await groupWriter(input.env, input.db, input.group));
+	const writer = input.writer ?? (await groupWriter(input.env, input.group));
 
 	const desired: string[] = [];
 	const seen = new Set<string>();

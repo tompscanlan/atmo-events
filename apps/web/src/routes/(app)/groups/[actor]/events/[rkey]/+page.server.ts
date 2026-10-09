@@ -39,7 +39,7 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	// everyone, and only its members see its members-only events.
 	if (!canSeeMembers(membership)) error(404, EVENT_NOT_FOUND);
 
-	const reader = await groupSpaceReader(env, db, group);
+	const reader = await groupSpaceReader(env, group);
 	const read = await readMembersOnlyEvent(membership, reader, group, params.rkey);
 	if (read.status === 'hidden' || read.status === 'absent') error(404, EVENT_NOT_FOUND);
 	if (read.status !== 'found') error(503, read.notice);

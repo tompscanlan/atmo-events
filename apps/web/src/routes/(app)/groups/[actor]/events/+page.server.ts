@@ -22,7 +22,7 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		locals.did
 	);
 
-	const reader = await groupSpaceReader(platform!.env, db, group);
+	const reader = await groupSpaceReader(platform!.env, group);
 	const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };
 
 	const [events, membersOnly] = await Promise.all([

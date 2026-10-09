@@ -513,7 +513,7 @@ describe('credentials', () => {
 		const unlinked = () => linkGroups(['did:plc:anothergroupaaaaaaaaaaaa']);
 
 		it('refuses to build a writer, and sends nothing', async () => {
-			const refusal = groupWriter(unlinked(), db, group);
+			const refusal = groupWriter(unlinked(), group);
 
 			await expect(refusal).rejects.toBeInstanceOf(GroupCredentialError);
 			await expect(refusal).rejects.toThrow(/not linked/);
@@ -521,7 +521,7 @@ describe('credentials', () => {
 		});
 
 		it('refuses to build an image uploader, and sends nothing', async () => {
-			await expect(groupBlobUploader(unlinked(), db, group)).rejects.toBeInstanceOf(
+			await expect(groupBlobUploader(unlinked(), group)).rejects.toBeInstanceOf(
 				GroupCredentialError
 			);
 			expect(requests).toEqual([]);

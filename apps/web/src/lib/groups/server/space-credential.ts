@@ -309,7 +309,6 @@ export const didSpaceHosts: SpaceHosts = {
 /** The acceptance reader for a group, or null when its owner has not linked it. */
 export async function groupAcceptanceReader(
 	env: CredentialStoreEnv,
-	db: D1Database,
 	group: Pick<GroupRow, 'group_did'>,
 	hosts: SpaceHosts = didSpaceHosts
 ): Promise<AcceptanceReader | null> {

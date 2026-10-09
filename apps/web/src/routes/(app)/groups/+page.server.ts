@@ -21,7 +21,7 @@ export const load: PageServerLoad = async ({ locals, platform }) => {
 			// A null reader means no credential, and then the row answers.
 			let reader: GroupSpaceReader | null;
 			try {
-				reader = await groupSpaceReader(env, db, row);
+				reader = await groupSpaceReader(env, row);
 			} catch (e) {
 				console.error(
 					`[groups] ${row.group_did}: no members-space reader for browse; the group is left out:`,

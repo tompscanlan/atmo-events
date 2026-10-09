@@ -105,7 +105,7 @@ export interface HostAlignment {
 
 export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairResult> {
 	const { db, env, group } = input;
-	const reader = input.reader !== undefined ? input.reader : await groupSpaceReader(env, db, group);
+	const reader = input.reader !== undefined ? input.reader : await groupSpaceReader(env, group);
 	await requireGroupPermission({ ...input, reader }, 'MANAGE_GROUP');
 	if (!reader) {
 		throw new GroupRecordError(`${group.group_did} is not linked, so its records cannot be read`);
@@ -165,16 +165,14 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 	// Step 2. `members` was read before step 1, so add the owner if step 1 wrote them.
 	const holders = new Set(recorded);
 	if (wrote.ownerMembership) holders.add(group.owner_did);
-	const list = input.memberList ?? (await groupMemberList(env, db, group));
+	const list = input.memberList ?? (await groupMemberList(env, group));
 	const memberList = await alignAboutMembers(list, group, holders);
 	const writers = new Set(holders);
 	for (const request of await listJoinRequests(db, group.id)) writers.add(request.did);
 	const writerList = await alignMemberWriters(list, group, writers);
 
 	const sources =
-		input.sources !== undefined
-			? input.sources
-			: await groupRebuildSources(env, db, group.group_did);
+		input.sources !== undefined ? input.sources : await groupRebuildSources(env, group.group_did);
 	if (!sources) {
 		throw new GroupRecordError(
 			`this deployment holds no credential for ${group.group_did}, so it cannot be rebuilt`

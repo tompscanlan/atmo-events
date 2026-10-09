@@ -164,7 +164,7 @@ export async function requireGroupPermission(
 	if (!callerDid) throw new GroupPermissionError(permission, group.group_did);
 	let reader = input.reader;
 	if (reader === undefined) {
-		reader = await groupSpaceReader(input.env, db, group);
+		reader = await groupSpaceReader(input.env, group);
 		if (!reader && group.members_space_uri) throw new GroupCredentialError(group.group_did);
 	}
 	const membership = await getCallerMembership(db, group, callerDid, reader);
@@ -188,7 +188,6 @@ export async function requireGroupCredential(
  *  Throws GroupCredentialError when the group is not linked. */
 export async function groupWriter(
 	env: CredentialStoreEnv,
-	db: D1Database,
 	group: GroupRow
 ): Promise<GroupRepoWriter> {
 	return pdsWriter(await requireGroupCredential(env, group.group_did), group.group_did);
