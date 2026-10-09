@@ -65,13 +65,9 @@ export async function signup() {
 	window.location.assign(url);
 
 	await new Promise((_resolve, reject) => {
-		window.addEventListener(
-			'pageshow',
-			() => reject(new Error('user aborted the signup request')),
-			{
-				once: true
-			}
-		);
+		window.addEventListener('pageshow', () => reject(new Error('user aborted the signup request')), {
+			once: true
+		});
 	});
 }
 

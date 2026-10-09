@@ -92,7 +92,7 @@ async function hydrateToPage(
 		events: flattenEventRecords(items.map((i) => i.record)),
 		handles,
 		// Tag the offset with the Meili backend so load-more continues on Meili and
-		// never feeds this number to D1 listRecords.
+		// never feeds this number to D1 listRecords (om-7dbs).
 		cursor: consumed > 0 && moreToScan ? tagCursor('meili', String(next)) : null,
 		distances
 	};
