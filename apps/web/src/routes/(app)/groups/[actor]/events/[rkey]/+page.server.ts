@@ -100,7 +100,6 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		// EventView offers no share prompt for this event. (Spec: FR-118.)
 		membersOnly: true,
 		hostProfile: hostName ? { did: group.group_did, displayName: hostName } : null,
-		canManageEvents,
 		// EventView's Edit button, for whoever may manage the group's events. The
 		// link names the placement, since a public event can share this key and
 		// the edit page reads the index unless told otherwise. Absent for anyone

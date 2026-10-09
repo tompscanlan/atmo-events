@@ -274,7 +274,6 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 			viewerRsvpStatus: null,
 			viewerRsvpRkey: null,
 			hostProfile: { did: GROUP_DID, displayName: 'Kona Paddlers' },
-			canManageEvents: false,
 			membersOnly: true
 		});
 		expect('media' in data.eventData).toBe(false);
@@ -693,7 +692,6 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 
 		serveReader(GROUP_DID, host([storedMeeting()]));
 		const managed = await openAs(OWNER);
-		expect(managed.canManageEvents).toBe(true);
 		expect(managed.editHref).toBe(editHref);
 		signedIn.user.did = OWNER;
 		const asManager = renderPage(managed);
@@ -707,7 +705,6 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 		signedIn.user.did = MEMBER;
 		serveReader(GROUP_DID, host([storedMeeting()]));
 		const plain = await openAs(MEMBER);
-		expect(plain.canManageEvents).toBe(false);
 		expect('editHref' in plain).toBe(false);
 		const asMember = renderPage(plain);
 		expect(editLinksIn(asMember.body)).toEqual([]);

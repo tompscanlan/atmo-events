@@ -140,14 +140,10 @@ function calendarCalls(host: Host): string[] {
 	return host.calls.filter((call) => call.includes(CALENDAR));
 }
 
-/** The reads a page load made before the members-only slice existed, written
- *  out: the gate's (the caller's standing, then the host's visibility for a
- *  caller off the roster), then the profile and rules for the name. */
-const ABOUT_READS = [
-	`getSpace ${ABOUT}`,
-	`get ${ABOUT} group.opensocial.profile self`,
-	`list ${ABOUT} group.opensocial.rule`
-];
+/** The reads a page load makes for a caller off the roster, written out: the
+ *  gate's (the caller's standing, then the host's visibility), then the
+ *  profile for the name. */
+const ABOUT_READS = [`getSpace ${ABOUT}`, `get ${ABOUT} group.opensocial.profile self`];
 function standingReads(did: string): string[] {
 	return [
 		`get ${MEMBERS} group.opensocial.membership ${did}`,
@@ -157,12 +153,11 @@ function standingReads(did: string): string[] {
 	];
 }
 
-/** What the loader returned before the members-only slice existed, written
- *  out: the index's own list, and these seven keys and no other. */
-function asBefore(membership: CallerMembership) {
+/** What the loader returns for a caller off the roster, written out: the
+ *  index's own list, and these six keys and no other. */
+function asBefore() {
 	return {
 		group: row,
-		membership,
 		groupName: 'Kona',
 		handle: null,
 		events: publicSlice,
@@ -171,15 +166,6 @@ function asBefore(membership: CallerMembership) {
 	};
 }
 
-const ANONYMOUS: CallerMembership = {
-	did: null,
-	role: null,
-	status: null,
-	pendingRequestId: null,
-	permissions: new Set(),
-	onRoster: false
-};
-const STRANGER_MEMBERSHIP: CallerMembership = { ...ANONYMOUS, did: STRANGER };
 
 describe('/groups/[actor]/events load: a viewer off the roster costs nothing', () => {
 	it('no space read for an anonymous viewer', async () => {
@@ -190,7 +176,7 @@ describe('/groups/[actor]/events load: a viewer off the roster costs nothing', (
 
 			expect(calendarCalls(host)).toEqual([]);
 			expect(host.calls).toEqual(ABOUT_READS);
-			expect(data).toStrictEqual(asBefore(ANONYMOUS));
+			expect(data).toStrictEqual(asBefore());
 			expect(data.events).toBe(publicSlice);
 		}
 	});
@@ -203,7 +189,7 @@ describe('/groups/[actor]/events load: a viewer off the roster costs nothing', (
 
 			expect(calendarCalls(host)).toEqual([]);
 			expect(host.calls.sort()).toEqual([...standingReads(STRANGER), ...ABOUT_READS].sort());
-			expect(data).toStrictEqual(asBefore(STRANGER_MEMBERSHIP));
+			expect(data).toStrictEqual(asBefore());
 			expect(data.events).toBe(publicSlice);
 		}
 	});
@@ -224,7 +210,6 @@ describe('/groups/[actor]/events load: a viewer off the roster costs nothing', (
 
 		const data = await openAs(MEMBER);
 
-		expect(data.membership.onRoster).toBe(false);
 		expect(calendarCalls(host)).toEqual([]);
 		expect('membersOnlyNotice' in data).toBe(false);
 		expect(data.events).toBe(publicSlice);
@@ -349,7 +334,6 @@ describe('/groups/[actor]/events load: when the members-only slice cannot be rea
 
 		const data = await openAs(MEMBER);
 
-		expect(data.membership.unlinked).toBe(true);
 		expect(data.events).toStrictEqual([PUBLIC_PADDLE]);
 		expect(data.membersOnlyNotice).toMatch(
 			/^members-only events can't be shown until an organizer relinks the group\.$/i

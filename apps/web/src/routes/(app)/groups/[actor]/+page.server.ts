@@ -126,7 +126,6 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 		/** How a link the owner just ran ended, from the link callback. */
 		linkOutcome,
 		canAdmitMembers,
-		canSeeMembers: showRoster,
-		canCreateEvent: can(membership.permissions, 'CREATE_EVENT')
+		canSeeMembers: showRoster
 	};
 };

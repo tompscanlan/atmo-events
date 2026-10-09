@@ -2,7 +2,6 @@ import { error } from '@sveltejs/kit';
 import { canSeeMembers } from '$lib/groups/access';
 import { GROUP_MEMBERSHIP_COLLECTION, isMembershipKey } from '$lib/groups/members-record';
 import { ASSIGNABLE_ROLES, can } from '$lib/groups/permissions';
-import { readGroupAbout } from '$lib/groups/server/about-read';
 import {
 	NO_MEMBER_RECORDS,
 	hasMemberRecords,
@@ -13,7 +12,7 @@ import {
 } from '$lib/groups/server/members-read';
 import { loadPeople } from '$lib/groups/server/people';
 import { groupAcceptanceReader } from '$lib/groups/server/space-credential';
-import { groupRouteContext } from '$lib/groups/server/route-context';
+import { groupHeader, groupRouteContext } from '$lib/groups/server/route-context';
 import { listJoinRequests, listMembers, rolePermissions } from '$lib/groups/server/repo';
 import type { GroupRow } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
@@ -55,8 +54,10 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	);
 
 	// The back-link's name comes from the profile record, as on the group page.
-	const members = reader ? await readGroupMembers(reader, group) : NO_MEMBER_RECORDS;
-	const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };
+	const [members, { groupName }] = await Promise.all([
+		reader ? readGroupMembers(reader, group) : NO_MEMBER_RECORDS,
+		groupHeader(db, group, reader)
+	]);
 	const fromRecords = hasMemberRecords(members);
 
 	if (fromRecords ? !hasRecordedAccess(members, locals.did) : !canSeeMembers(membership)) {
@@ -81,7 +82,7 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	return {
 		group,
 		membership,
-		groupName: about.profile?.name ?? group.name,
+		groupName,
 		members: roster.map((entry) => ({
 			...entry,
 			/** The `membership` record behind the row, when the roster came from

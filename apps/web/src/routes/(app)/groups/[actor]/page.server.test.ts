@@ -92,7 +92,6 @@ async function openAs(did: string | null, env: Record<string, unknown> = {}) {
 		canSeeMembers: boolean;
 		canManageGroup: boolean;
 		canAdmitMembers: boolean;
-		canCreateEvent: boolean;
 		groupLinked: boolean | null;
 	};
 }
@@ -261,13 +260,11 @@ describe('a members space that cannot be read', () => {
 		expect({
 			canSeeMembers: data.canSeeMembers,
 			canManageGroup: data.canManageGroup,
-			canAdmitMembers: data.canAdmitMembers,
-			canCreateEvent: data.canCreateEvent
+			canAdmitMembers: data.canAdmitMembers
 		}).toEqual({
 			canSeeMembers: false,
 			canManageGroup: false,
-			canAdmitMembers: false,
-			canCreateEvent: false
+			canAdmitMembers: false
 		});
 		expect(notAllowed(data.membership, 'MANAGE_GROUP')).toEqual({
 			ok: false,

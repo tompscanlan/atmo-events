@@ -3,12 +3,11 @@
 // the writer (./event-writer.ts).
 import { error } from '@sveltejs/kit';
 import { can, type GroupPermission } from '../permissions';
-import { readGroupAbout } from './about-read';
 
-import { groupRouteContext } from './route-context';
+import { groupHeader, groupRouteContext } from './route-context';
 
 import { type CredentialStoreEnv } from './session';
-import { knownHandles } from './identities';
+
 export async function groupEditorPage(
 	env: CredentialStoreEnv & { DB: D1Database },
 	actor: string,
@@ -20,7 +19,7 @@ export async function groupEditorPage(
 	if (!can(membership.permissions, permission)) {
 		error(403, callerDid ? `Not allowed: ${permission} required` : 'Sign in to publish as a group');
 	}
-	const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };
+	const { groupName, handle } = await groupHeader(db, group, reader);
 	return {
 		group,
 		/** For a page that goes on to read a members-only event: the caller's
@@ -29,8 +28,8 @@ export async function groupEditorPage(
 		reader,
 		groupDid: group.group_did,
 		/** The editor shows the group as the host, by the profile record's name. */
-		groupName: about.profile?.name ?? group.name,
-		handle: (await knownHandles(db, [group.group_did])).get(group.group_did) ?? null,
+		groupName,
+		handle,
 		canDelete: can(membership.permissions, 'MANAGE_EVENTS')
 	};
 }

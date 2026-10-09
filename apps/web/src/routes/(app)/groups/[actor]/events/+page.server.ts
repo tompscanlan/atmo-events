@@ -1,5 +1,4 @@
 import { can } from '$lib/groups/permissions';
-import { readGroupAbout } from '$lib/groups/server/about-read';
 import {
 	membersOnlyEventForDisplay,
 	readMembersOnlyEvents,
@@ -7,10 +6,9 @@ import {
 } from '$lib/groups/server/calendar-read';
 import { listGroupEvents } from '$lib/groups/server/events-index';
 
-import { groupRouteContext } from '$lib/groups/server/route-context';
+import { groupHeader, groupRouteContext } from '$lib/groups/server/route-context';
 import type { PageServerLoad } from './$types';
 
-import { knownHandles } from '$lib/groups/server/identities';
 /** The group's events, in two slices. The public slice is read from the app's
  *  index like any other actor's, so the page renders for a visitor who is not
  *  signed in, and a failed index read gives an empty list rather than a 500.
@@ -27,9 +25,8 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		locals.did
 	);
 
-	const about = reader ? await readGroupAbout(reader, group) : { profile: null, rules: [] };
-
-	const [events, membersOnly] = await Promise.all([
+	const [header, events, membersOnly] = await Promise.all([
+		groupHeader(db, group, reader),
 		listGroupEvents(db, group).catch((e) => {
 			console.error(`[groups] listGroupEvents failed for ${group.group_did}:`, e);
 			return [];
@@ -40,10 +37,7 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 
 	return {
 		group,
-		membership,
-		groupName: about.profile?.name ?? group.name,
-		/** The handle Contrail knows for the group, or null. Display only. */
-		handle: (await knownHandles(db, [group.group_did])).get(group.group_did) ?? null,
+		...header,
 		// Each members-only event without its image, as on its own page. (Spec: FR-119.)
 		events: membersOnly
 			? unionGroupEvents(events, membersOnly.events.map(membersOnlyEventForDisplay))

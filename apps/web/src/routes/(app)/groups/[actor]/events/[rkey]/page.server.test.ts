@@ -296,11 +296,13 @@ describe('/groups/[actor]/events/[rkey] load: when the event cannot be read', ()
 });
 
 describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
-	it('an organizer who may manage events is told so; a member is not', async () => {
+	it('an organizer who may manage events gets the Edit link; a member does not', async () => {
 		serveReader(GROUP_DID, host([storedMeeting()]));
-		expect((await openAs(OWNER)).canManageEvents).toBe(true);
+		expect((await openAs(OWNER)).editHref).toBe(
+			`/groups/${GROUP_DID}/events/3lmeeting/edit?placement=members`
+		);
 		serveReader(GROUP_DID, host([storedMeeting()]));
-		expect((await openAs(MEMBER)).canManageEvents).toBe(false);
+		expect('editHref' in (await openAs(MEMBER))).toBe(false);
 	});
 });
 

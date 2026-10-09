@@ -7,7 +7,8 @@ import { error } from '@sveltejs/kit';
 import { actorToDid } from '$lib/atproto/methods';
 import { canSeeGroup } from '../access';
 import type { CallerMembership, GroupRow, GroupVisibility } from '../types';
-import { groupSpaceReader, type GroupSpaceReader } from './about-read';
+import { groupSpaceReader, readGroupProfile, type GroupSpaceReader } from './about-read';
+import { knownHandles } from './identities';
 
 import { getCallerMembership, getGroupByDid } from './repo';
 import { readGroupVisibility } from './spaces';
@@ -105,6 +106,29 @@ export async function readStanding(
 			unreadable: errorText(e)
 		};
 	}
+}
+
+/** A group page's header: the profile record's name, else the row's, and the
+ *  handle Contrail knows, or null. A profile that cannot be read leaves the
+ *  row's name in place rather than failing the page. */
+export async function groupHeader(
+	db: D1Database,
+	group: GroupRow,
+	reader: GroupSpaceReader | null
+): Promise<{ groupName: string; handle: string | null }> {
+	let profile = null;
+	if (reader) {
+		try {
+			profile = await readGroupProfile(reader, group);
+		} catch (e) {
+			console.error(
+				`[groups] ${group.group_did}: the profile could not be read; the header shows the row's name:`,
+				e
+			);
+		}
+	}
+	const handles = await knownHandles(db, [group.group_did]);
+	return { groupName: profile?.name ?? group.name, handle: handles.get(group.group_did) ?? null };
 }
 
 /** The canonical path: always the DID, never a handle. */

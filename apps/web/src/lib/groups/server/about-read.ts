@@ -198,6 +198,22 @@ export interface GroupAbout {
 
 /** A group's profile and rules. A missing record reads as absent. A failed read
  *  throws, so the cache never stands in for records the PDS refused. */
+/** The group's profile record, or null when it has none. One read. */
+export async function readGroupProfile(
+	reader: GroupSpaceReader,
+	group: Pick<GroupRow, 'group_did' | 'about_space_uri'>
+): Promise<GroupProfileFields | null> {
+	const space = group.about_space_uri;
+	if (!space) return null;
+	const found = await reader.get({
+		space,
+		repo: group.group_did,
+		collection: GROUP_PROFILE_COLLECTION,
+		rkey: GROUP_PROFILE_RKEY
+	});
+	return found ? parseGroupProfile(found.value) : null;
+}
+
 export async function readGroupAbout(
 	reader: GroupSpaceReader,
 	group: Pick<GroupRow, 'group_did' | 'about_space_uri'>
@@ -205,14 +221,7 @@ export async function readGroupAbout(
 	const space = group.about_space_uri;
 	if (!space) return { profile: null, rules: [] };
 	const repo = group.group_did;
-
-	const found = await reader.get({
-		space,
-		repo,
-		collection: GROUP_PROFILE_COLLECTION,
-		rkey: GROUP_PROFILE_RKEY
-	});
-	const profile = found ? parseGroupProfile(found.value) : null;
+	const profile = await readGroupProfile(reader, group);
 
 	const rules: GroupRuleRecord[] = [];
 	for (const record of await reader.list({ space, repo, collection: GROUP_RULE_COLLECTION })) {
