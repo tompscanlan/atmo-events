@@ -552,7 +552,7 @@ describe('event images', () => {
 describe('members-only placement', () => {
 	/** Written out, not taken from the app, so a wrong type or key in the app's
 	 *  constant fails here. */
-	const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
+	const CALENDAR = `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`;
 	const PUBLIC_POLICY = 'com.atproto.simplespace.defs#publicPolicy';
 
 	// The refusals' copy, as approved for the form.

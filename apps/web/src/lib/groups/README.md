@@ -9,15 +9,15 @@ records that the app can query.
 
 ## Where a group's data lives
 
-| what                                                | where                                                     | read policy                      |
-| --------------------------------------------------- | --------------------------------------------------------- | -------------------------------- |
-| public events                                       | the group's public repo                                   | anyone                           |
-| declaration (makes the group findable)              | the group's public repo, only while the group is public   | anyone                           |
-| profile, rules, access                              | the about space, of type `group.opensocial.meta`          | the group's visibility           |
-| roles, permissions, membership, access, space index | the members space, of type `group.opensocial.members`     | member list                      |
-| members-only events, members' RSVPs to them, access | the calendar space, of type `net.openmeet.space.calendar` | the group, and members their own |
-| a cache of the records above, and join requests     | D1, `migrations/0001_groups.sql`                          | the app                          |
-| the session the owner linked                        | the sessions KV namespace, under `group:session:`         | the app                          |
+| what                                                | where                                                   | read policy                      |
+| --------------------------------------------------- | ------------------------------------------------------- | -------------------------------- |
+| public events                                       | the group's public repo                                 | anyone                           |
+| declaration (makes the group findable)              | the group's public repo, only while the group is public | anyone                           |
+| profile, rules, access                              | the about space, of type `group.opensocial.meta`        | the group's visibility           |
+| roles, permissions, membership, access, space index | the members space, of type `group.opensocial.members`   | member list                      |
+| members-only events, members' RSVPs to them, access | the calendar space, of type `rsvp.atmo.group.calendar`  | the group, and members their own |
+| a cache of the records above, and join requests     | D1, `migrations/0001_groups.sql`                        | the app                          |
+| the session the owner linked                        | the sessions KV namespace, under `group:session:`       | the app                          |
 
 The app reads the group's spaces as the group, through the session the group's owner linked. A
 space needs a login whatever its read policy.
@@ -28,8 +28,9 @@ The spaces and records are the ones the opensocial.group proposal drafts as `gro
 commit `d2c89a9` of `tangled.org/opensocial.group/proposal`. The standard calls the about space
 `meta`. The app keeps its own name for it, and so does D1's `about_space_uri` column.
 
-The event actions are the one exception. The standard puts a modality's authz in that modality's own
-space, and a group has no events space yet, so the two event actions stay in a record of the app's
+The event actions are the one exception. The standard leaves who may create an event to the
+modality's own lexicon and defines no record for it. The calendar space holds only members-only
+events, while the two event actions cover public events too, so they stay in a record of the app's
 own in the members space, `eventPermissions`, beside the standard's `permissions`.
 
 Some records carry a field the standard does not declare. Each is one the app reads back:

@@ -28,7 +28,7 @@ const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const GROUP = { group_did: GROUP_DID };
 // Written out, not taken from the app's constants, so a wrong space type, key
 // or URI form in the code under test fails here.
-const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
+const CALENDAR = `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`;
 const ABOUT = `at://${GROUP_DID}/space/group.opensocial.meta/self`;
 const EVENT = 'community.lexicon.calendar.event';
 const ACCESS = 'group.opensocial.access';
@@ -167,7 +167,7 @@ describe('readMembersOnlyEvents: what a member gets back', () => {
 
 		expect(slice?.events).toStrictEqual([
 			{
-				uri: `at://${GROUP_DID}/space/net.openmeet.space.calendar/self/${GROUP_DID}/${EVENT}/3lmeeting`,
+				uri: `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self/${GROUP_DID}/${EVENT}/3lmeeting`,
 				cid: 'bafymeeting',
 				rkey: '3lmeeting',
 				value: MEETING_VALUE,
@@ -522,7 +522,7 @@ describe('readMembersOnlyEvent', () => {
 		expect(read).toStrictEqual({
 			status: 'found',
 			event: {
-				uri: `at://${GROUP_DID}/space/net.openmeet.space.calendar/self/${GROUP_DID}/${EVENT}/3lmeeting`,
+				uri: `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self/${GROUP_DID}/${EVENT}/3lmeeting`,
 				cid: 'bafymeeting',
 				rkey: '3lmeeting',
 				value: STORED_VALUE,

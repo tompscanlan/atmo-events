@@ -341,7 +341,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 		const { adapter } = renderPage(await openAs(MEMBER)).rsvp;
 		const { membersSpaceUri } = groupSpaceUris(GROUP_DID);
 		const otherCalendar =
-			'at://did:plc:anothergroupaaaaaaaaaaaa/space/net.openmeet.space.calendar/self';
+			'at://did:plc:anothergroupaaaaaaaaaaaa/space/rsvp.atmo.group.calendar/self';
 
 		const puts: [string, Parameters<NonNullable<EditorAdapter['putSpaceRecord']>>[0]][] = [
 			[

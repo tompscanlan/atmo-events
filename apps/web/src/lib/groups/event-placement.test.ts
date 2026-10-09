@@ -10,7 +10,7 @@ import {
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 // Written out, so a wrong type or key in the app's constant fails here.
-const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
+const CALENDAR = `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`;
 
 describe('who can see a group event', () => {
 	// A save sends the answer itself, and the writer turns `members` into the

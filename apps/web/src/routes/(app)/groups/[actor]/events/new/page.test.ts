@@ -29,7 +29,7 @@ vi.mock('$lib/groups/group-events.remote', () => ({
 import Page from './+page.svelte';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
-const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
+const CALENDAR = `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`;
 
 /** What a person reads: tags and Svelte's markers dropped, spaces collapsed. */
 const textOf = (html: string) =>

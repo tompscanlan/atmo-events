@@ -347,7 +347,7 @@ describe('collections', () => {
 		// The standard puts a modality's authz in the modality's own space, and
 		// that space does not exist yet, so the event actions stay on their own
 		// record rather than ride on the standard one.
-		expect(GROUP_EVENT_PERMISSIONS_COLLECTION).toBe('net.openmeet.group.eventPermissions');
+		expect(GROUP_EVENT_PERMISSIONS_COLLECTION).toBe('rsvp.atmo.group.eventPermissions');
 		expect(GROUP_EVENT_PERMISSIONS_COLLECTION).not.toBe(GROUP_PERMISSIONS_COLLECTION);
 	});
 });

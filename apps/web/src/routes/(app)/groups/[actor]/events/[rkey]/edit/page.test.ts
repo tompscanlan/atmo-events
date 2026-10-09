@@ -30,7 +30,7 @@ import Page from './+page.svelte';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const EVENT = 'community.lexicon.calendar.event';
 // Written out, so a wrong type or key in the app's constant fails here.
-const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
+const CALENDAR = `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`;
 const IMAGE = [
 	{
 		role: 'thumbnail',

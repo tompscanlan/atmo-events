@@ -374,7 +374,7 @@ describe('refusing before the irreversible step', () => {
 const SPACE_PART: Record<string, string> = {
 	'group.opensocial.meta': 'about',
 	'group.opensocial.members': 'members',
-	'net.openmeet.space.calendar': 'calendar'
+	'rsvp.atmo.group.calendar': 'calendar'
 };
 
 /** A write by what it wrote: the method, then the space a space write made or
@@ -438,7 +438,7 @@ describe('a successful create', () => {
 			'space.putRecord group.opensocial.role in members',
 			'space.putRecord group.opensocial.role in members',
 			'space.putRecord group.opensocial.permissions in members',
-			'space.putRecord net.openmeet.group.eventPermissions in members',
+			'space.putRecord rsvp.atmo.group.eventPermissions in members',
 			// Last, the owner onto both member lists, write-only first, as for
 			// every later member.
 			'simplespace.putMember members',
@@ -673,7 +673,7 @@ describe('a successful create', () => {
 		expect(index.map((w) => w.record.space)).toEqual([
 			`at://${MINTED_DID}/space/group.opensocial.meta/self`,
 			members,
-			`at://${MINTED_DID}/space/net.openmeet.space.calendar/self`
+			`at://${MINTED_DID}/space/rsvp.atmo.group.calendar/self`
 		]);
 		for (const entry of index) {
 			expect(entry.space).toBe(members);
@@ -722,11 +722,11 @@ describe('a successful create', () => {
 		});
 
 		const eventPermissions = spaceWrites.find(
-			(w) => w.collection === 'net.openmeet.group.eventPermissions'
+			(w) => w.collection === 'rsvp.atmo.group.eventPermissions'
 		);
 		expect(eventPermissions).toMatchObject({ space: members, rkey: 'self' });
 		expect(eventPermissions?.record).toMatchObject({
-			$type: 'net.openmeet.group.eventPermissions',
+			$type: 'rsvp.atmo.group.eventPermissions',
 			bindings: [
 				{ role: 'owner', actions: ['manageEvents', 'createEvent'] },
 				{ role: 'admin', actions: ['manageEvents', 'createEvent'] },
@@ -792,7 +792,7 @@ describe('a successful create', () => {
 				'group.opensocial.declaration',
 				'group.opensocial.membership',
 				'group.opensocial.space',
-				'net.openmeet.group.eventPermissions'
+				'rsvp.atmo.group.eventPermissions'
 			])
 		);
 		expect(new Set(stamped.map((w) => w.record.createdAt))).toEqual(
@@ -931,7 +931,7 @@ describe('the members space is member-list read whatever the choice', () => {
 // space's policy copied over would make a public group's members-only events
 // readable by any signed-in account. (Spec: FR-101, FR-101b.)
 describe('the create makes the calendar space, closed to everyone but the group', () => {
-	const CALENDAR = `at://${MINTED_DID}/space/net.openmeet.space.calendar/self`;
+	const CALENDAR = `at://${MINTED_DID}/space/rsvp.atmo.group.calendar/self`;
 
 	it.each(['public', 'private'] as const)(
 		'a %s create provisions the calendar space with memberListPolicy',
@@ -944,11 +944,11 @@ describe('the create makes the calendar space, closed to everyone but the group'
 			const calendar = requests.filter(
 				(r) =>
 					r.nsid === 'com.atproto.simplespace.createSpace' &&
-					r.body?.spaceType === 'net.openmeet.space.calendar'
+					r.body?.spaceType === 'rsvp.atmo.group.calendar'
 			);
 			expect(calendar).toHaveLength(1);
 			expect(calendar[0].body).toEqual({
-				spaceType: 'net.openmeet.space.calendar',
+				spaceType: 'rsvp.atmo.group.calendar',
 				skey: 'self',
 				readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
 				writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
@@ -1004,7 +1004,7 @@ describe('the create makes the calendar space, closed to everyone but the group'
 		expect(result.ok).toBe(true);
 		const [group] = await rows('groups');
 		expect(Object.keys(group).filter((column) => /calendar|events_space/.test(column))).toEqual([]);
-		expect(everyStoredRow()).not.toContain('net.openmeet.space.calendar');
+		expect(everyStoredRow()).not.toContain('rsvp.atmo.group.calendar');
 	});
 });
 
@@ -1052,7 +1052,7 @@ describe('a create that fails after the mint', () => {
 				fail: (nsid: string, init?: RequestInit) =>
 					nsid.startsWith('com.atproto.space.putRecord') &&
 					(JSON.parse(String(init?.body)) as { space: string }).space ===
-						`at://${MINTED_DID}/space/net.openmeet.space.calendar/self`
+						`at://${MINTED_DID}/space/rsvp.atmo.group.calendar/self`
 						? pdsDown()
 						: undefined
 			}
@@ -1150,7 +1150,7 @@ describe('a create that fails after the mint', () => {
 		],
 		[
 			'the calendar space’s access record',
-			writingAccessIn(`at://${MINTED_DID}/space/net.openmeet.space.calendar/self`)
+			writingAccessIn(`at://${MINTED_DID}/space/rsvp.atmo.group.calendar/self`)
 		],
 		['the index of the spaces', writing('group.opensocial.space')],
 		['the owner’s membership', writing('group.opensocial.membership')]

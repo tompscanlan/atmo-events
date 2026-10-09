@@ -21,7 +21,7 @@ export const PUBLIC_POLICY = 'com.atproto.simplespace.defs#publicPolicy';
 export const PROFILE_NAME = 'Kona Paddlers';
 
 export function calendarSpaceOf(groupDid: string): string {
-	return `at://${groupDid}/space/net.openmeet.space.calendar/self`;
+	return `at://${groupDid}/space/rsvp.atmo.group.calendar/self`;
 }
 
 /** The meeting's address in the calendar space, in the space form a read

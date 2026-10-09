@@ -186,7 +186,7 @@ describe('the join and leave buttons, for a member whose session holds the grant
 describe('placement on the event commands', () => {
 	const LINKED = 'did:plc:linkedgroupaaaaaaaaaaaaa';
 	/** Written out, not taken from the app. */
-	const CALENDAR = `at://${LINKED}/space/net.openmeet.space.calendar/self`;
+	const CALENDAR = `at://${LINKED}/space/rsvp.atmo.group.calendar/self`;
 	const EVENT = 'community.lexicon.calendar.event';
 
 	const NO_PLACEMENT =
@@ -404,7 +404,7 @@ describe('the members-only RSVP commands', () => {
 	const MEMBER = 'did:plc:rsvpmemberaaaaaaaaaaaaaa';
 	const OTHER = 'did:plc:rsvpotheraaaaaaaaaaaaaaa';
 	/** Written out, not taken from the app. */
-	const CALENDAR = `at://${LINKED}/space/net.openmeet.space.calendar/self`;
+	const CALENDAR = `at://${LINKED}/space/rsvp.atmo.group.calendar/self`;
 	const RSVP = 'community.lexicon.calendar.rsvp';
 	const EVENT = 'community.lexicon.calendar.event';
 	const MEETING_URI = `${CALENDAR}/${LINKED}/${EVENT}/3lmeeting`;

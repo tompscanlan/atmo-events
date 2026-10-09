@@ -34,7 +34,7 @@ import {
 const MEMBER = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 // Written out, so a wrong type, key or URI form in the code under test fails here.
-const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
+const CALENDAR = `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`;
 const RSVP = 'community.lexicon.calendar.rsvp';
 const EVENT = 'community.lexicon.calendar.event';
 const MEETING_URI = `${CALENDAR}/${GROUP_DID}/${EVENT}/3lmeeting`;

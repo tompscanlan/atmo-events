@@ -6,9 +6,10 @@
 // record that made it.
 //
 // All but `eventPermissions` are the opensocial.group proposal's records, as in
-// ./about-record.ts. The standard puts a modality's authz in the modality's own
-// space, and a group has no events space yet, so the event actions keep a record of
-// their own here.
+// ./about-record.ts. The standard leaves who may create an event to the modality's
+// own lexicon and defines no record for it. The calendar space holds only
+// members-only events, while the event actions cover public events too, so they keep
+// a record of their own here, beside the standard's `permissions`.
 import {
 	ASSIGNABLE_BY_ROLE,
 	DEFAULT_ROLES,
@@ -24,7 +25,7 @@ export const GROUP_MEMBERSHIP_COLLECTION = 'group.opensocial.membership';
 export const GROUP_ACCESS_COLLECTION = 'group.opensocial.access';
 export const GROUP_ROLE_COLLECTION = 'group.opensocial.role';
 export const GROUP_PERMISSIONS_COLLECTION = 'group.opensocial.permissions';
-export const GROUP_EVENT_PERMISSIONS_COLLECTION = 'net.openmeet.group.eventPermissions';
+export const GROUP_EVENT_PERMISSIONS_COLLECTION = 'rsvp.atmo.group.eventPermissions';
 export const GROUP_SPACE_COLLECTION = 'group.opensocial.space';
 
 /** The member's side of a membership, written by the member into their own repo in

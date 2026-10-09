@@ -220,9 +220,9 @@ let NEVER_CREATED_SPACE;
 function useGroup(did, handle) {
 	GROUP_DID = did;
 	GROUP_HANDLE = handle;
-	CALENDAR_SPACE_URI = `at://${did}/space/net.openmeet.space.calendar/self`;
+	CALENDAR_SPACE_URI = `at://${did}/space/rsvp.atmo.group.calendar/self`;
 	SEED_URI = `${CALENDAR_SPACE_URI}/${did}/${EVENT_COLLECTION}/${SEED_RKEY}`;
-	NEVER_CREATED_SPACE = `at://${did}/space/net.openmeet.space.calendar/e2enevercreated`;
+	NEVER_CREATED_SPACE = `at://${did}/space/rsvp.atmo.group.calendar/e2enevercreated`;
 }
 
 /** Keys a record would carry if it said who may read it. Placement says that,
@@ -1925,7 +1925,7 @@ async function main() {
 		const eventPermissionsRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
-			'net.openmeet.group.eventPermissions',
+			'rsvp.atmo.group.eventPermissions',
 			'self'
 		);
 		const adminRoleRecord = await spaceRecord(
@@ -1985,7 +1985,7 @@ async function main() {
 		const editedRecord = await spaceRecord(
 			groupToken,
 			membersSpaceUri,
-			'net.openmeet.group.eventPermissions',
+			'rsvp.atmo.group.eventPermissions',
 			'self'
 		);
 		await op('writeGroupAuthz', { callerDid: ALICE });

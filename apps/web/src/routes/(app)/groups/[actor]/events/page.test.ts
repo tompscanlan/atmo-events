@@ -15,7 +15,7 @@ import type { GroupEventRecord, GroupRow } from '$lib/groups/types';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const EVENT = 'community.lexicon.calendar.event';
 // Written out, so a wrong type or key in the app's constant fails here.
-const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
+const CALENDAR = `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`;
 
 // A public event and a members-only one that share a key, as the two slices
 // allow: only the placement tells their links apart.

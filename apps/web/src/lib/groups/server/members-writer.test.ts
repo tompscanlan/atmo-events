@@ -51,7 +51,7 @@ const STRANGER = 'did:plc:ib2wrjcp4ulwqu35a7rtlckv';
 const ABOUT = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self');
 const MEMBERS = spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self');
 /** Written out, so a wrong type in the constant cannot pass by agreeing with itself. */
-const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
+const CALENDAR = `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`;
 
 let harness: SqliteD1;
 let db: D1Database;
@@ -215,7 +215,7 @@ describe('writeGroupAccess', () => {
 	// contradict its read policy. That record is writeAboutAccess's alone.
 	it.each([
 		['the about space', ABOUT],
-		["another group's calendar space", 'at://did:plc:other/space/net.openmeet.space.calendar/self'],
+		["another group's calendar space", 'at://did:plc:other/space/rsvp.atmo.group.calendar/self'],
 		['a space of another type', `at://${GROUP_DID}/space/com.example.other/self`]
 	])('refuses to write it into %s', async (_case, space) => {
 		await expect(
@@ -344,7 +344,7 @@ describe('writeGroupSpaceIndex', () => {
 
 	it.each([
 		['the about space', ABOUT],
-		["another group's calendar space", 'at://did:plc:other/space/net.openmeet.space.calendar/self']
+		["another group's calendar space", 'at://did:plc:other/space/rsvp.atmo.group.calendar/self']
 	])('refuses %s as the calendar space, before any write', async (_case, calendarSpace) => {
 		await expect(
 			writeGroupSpaceIndex({

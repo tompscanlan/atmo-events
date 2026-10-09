@@ -73,8 +73,8 @@ describe('provisionGroupSpaces', () => {
 	// The third type is ours, not the standard's, and devnet-only until its name is
 	// settled: a calendar space URI carries it, so a rename strands every record
 	// already written under the old one. Written out for the same reason as above.
-	it('provisions the calendar space under net.openmeet.space.calendar', () => {
-		expect(CALENDAR_SPACE_TYPE).toBe('net.openmeet.space.calendar');
+	it('provisions the calendar space under rsvp.atmo.group.calendar', () => {
+		expect(CALENDAR_SPACE_TYPE).toBe('rsvp.atmo.group.calendar');
 	});
 
 	// The about space's read policy is the group's visibility, as the host
@@ -126,7 +126,7 @@ describe('provisionGroupSpaces', () => {
 			// copied for a public group, would let any signed-in account read every
 			// members-only event.
 			expect(calls[2].body).toEqual({
-				spaceType: 'net.openmeet.space.calendar',
+				spaceType: 'rsvp.atmo.group.calendar',
 				skey: 'self',
 				readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
 				writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
@@ -156,12 +156,12 @@ describe('provisionGroupSpaces', () => {
 				readPolicy: 'com.atproto.simplespace.defs#memberListPolicy'
 			},
 			{
-				type: 'net.openmeet.space.calendar',
+				type: 'rsvp.atmo.group.calendar',
 				skey: 'self',
 				readPolicy: 'com.atproto.simplespace.defs#memberListPolicy'
 			}
 		]);
-		expect(uris.calendarSpaceUri).toBe(`at://${GROUP_DID}/space/net.openmeet.space.calendar/self`);
+		expect(uris.calendarSpaceUri).toBe(`at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`);
 	});
 
 	it('returns the three URIs the host confirmed, keyed by space', async () => {
@@ -271,7 +271,7 @@ describe('groupSpaceUris', () => {
 		expect(groupSpaceUris(GROUP_DID)).toEqual({
 			aboutSpaceUri: `at://${GROUP_DID}/space/group.opensocial.meta/self`,
 			membersSpaceUri: `at://${GROUP_DID}/space/group.opensocial.members/self`,
-			calendarSpaceUri: `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`
+			calendarSpaceUri: `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`
 		});
 	});
 });

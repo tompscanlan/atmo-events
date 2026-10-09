@@ -42,7 +42,7 @@ const STRANGER = 'did:plc:stranger';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const { aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS } = groupSpaceUris(GROUP_DID);
 // Written out, so a wrong type or key in the app's constant fails here.
-const CALENDAR = `at://${GROUP_DID}/space/net.openmeet.space.calendar/self`;
+const CALENDAR = `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`;
 const EVENT = 'community.lexicon.calendar.event';
 const PUBLIC_POLICY = 'com.atproto.simplespace.defs#publicPolicy';
 
@@ -143,7 +143,7 @@ function standingReads(did: string): string[] {
 	return [
 		`get ${MEMBERS} ${GROUP_DID} group.opensocial.membership ${did}`,
 		`get ${MEMBERS} ${GROUP_DID} group.opensocial.permissions self`,
-		`get ${MEMBERS} ${GROUP_DID} net.openmeet.group.eventPermissions self`,
+		`get ${MEMBERS} ${GROUP_DID} rsvp.atmo.group.eventPermissions self`,
 		`list ${MEMBERS} ${GROUP_DID} group.opensocial.role`
 	];
 }
@@ -235,7 +235,7 @@ describe('/groups/[actor]/events load: a member sees both slices', () => {
 		expect(host.callsIn(CALENDAR)).toEqual([`list ${CALENDAR} ${GROUP_DID} ${EVENT}`]);
 		expect(data.events).toStrictEqual([
 			{
-				uri: `at://${GROUP_DID}/space/net.openmeet.space.calendar/self/${GROUP_DID}/${EVENT}/3lmeeting`,
+				uri: `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self/${GROUP_DID}/${EVENT}/3lmeeting`,
 				cid: 'bafymeeting',
 				rkey: '3lmeeting',
 				value: MEETING.value,
