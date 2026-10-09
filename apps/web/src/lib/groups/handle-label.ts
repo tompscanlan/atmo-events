@@ -11,8 +11,9 @@ export function labelFromGroupName(name: string): string {
 		.replace(/^-+|-+$/g, '');
 }
 
-/** The widest label a form accepts. Wider than `labelMintRefusal`, so that labels
- *  groups already hold still pass. */
+/** The create form's first check of a label's shape. It is looser than
+ *  `labelMintRefusal`, which runs next and says exactly what the PDS would
+ *  refuse. */
 export const GROUP_LABEL_PATTERN = /^[a-z0-9][a-z0-9-]{1,47}$/;
 
 /** The PDS's handle-label bounds (`ensureHandleServiceConstraints` in the atproto PDS). */

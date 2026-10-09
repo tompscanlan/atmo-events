@@ -107,7 +107,7 @@ describe('writeGroupProfile', () => {
 			visibility: 'private',
 			callerDid: OWNER,
 			writer,
-			profile: { name: 'Kona', joinPolicy: undefined }
+			profile: { name: 'Kona' }
 		});
 		expect(writes[0].record).toMatchObject({ joinPolicy: 'invite' });
 	});

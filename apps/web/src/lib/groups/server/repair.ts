@@ -274,7 +274,11 @@ export function describeRepair(result: GroupRepairResult): string {
 			`Brought the group in line with its PDS, which reads it as ${host.visibility}: ${joinList(aligned)}.`
 		);
 	}
-	sentences.push("Rebuilt this site's copy of the group from its records.");
+	sentences.push(
+		result.rebuild.path === 'repaired' && result.rebuild.profile === 'no-profile'
+			? "Rebuilt this site's copy of the roster from its records. The group has no profile record, so its name and description here were left as they were."
+			: "Rebuilt this site's copy of the group from its records."
+	);
 	const waiting = result.unrecordedMembers.length;
 	if (waiting > 0) {
 		sentences.push(

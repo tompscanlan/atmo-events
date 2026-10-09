@@ -330,8 +330,8 @@ export const rejectJoinRequestForm = form(
 	}
 );
 
-/** Adds a known DID without a request. Same gate as approving one. */
-/** Takes a handle or a DID. A handle is resolved here, after the permission
+/** Adds a member without a request, behind the same gate as approving one. It
+ *  takes a handle or a DID. A handle is resolved here, after the permission
  *  check, and the DID it resolves to is what the roster records. */
 export const addMemberForm = form(
 	v.object({ groupDid: didField, actor: memberActorField, role: v.optional(assignableRoleField) }),

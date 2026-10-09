@@ -55,9 +55,7 @@ export interface ProfileWriteResult {
 export async function writeGroupProfile(
 	input: WriteGroupAboutInput & {
 		visibility: GroupVisibility;
-		profile: Omit<GroupProfileInput, 'joinPolicy'> & {
-			joinPolicy?: GroupProfileInput['joinPolicy'];
-		};
+		profile: Omit<GroupProfileInput, 'joinPolicy'>;
 	}
 ): Promise<ProfileWriteResult> {
 	await requireGroupPermission(input, 'MANAGE_GROUP');
@@ -65,9 +63,8 @@ export async function writeGroupProfile(
 	const record = {
 		...groupProfileRecord({
 			...input.profile,
-			// Derived unless passed, so a private group's profile says invite-only.
-			joinPolicy:
-				input.profile.joinPolicy ?? joinPolicyFor(input.visibility, input.group.require_approval)
+			// Derived, so a private group's profile says invite-only.
+			joinPolicy: joinPolicyFor(input.visibility, input.group.require_approval)
 		}),
 		$type: GROUP_PROFILE_COLLECTION
 	};
