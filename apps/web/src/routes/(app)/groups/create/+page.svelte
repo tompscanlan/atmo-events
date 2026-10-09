@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { Button, Input, Label } from '@foxui/core';
-	import { createGroupForm } from '$lib/groups/groups.remote';
+
 	import { resolve } from '$app/paths';
 	import { MINTABLE_LABEL_INPUT_PATTERN, labelFromGroupName } from '$lib/groups/handle-label';
 	import { groupFormError, resetOnSuccess } from '$lib/groups/form-result';
 	import { GROUP_PASSWORD_MIN_LENGTH } from '$lib/groups/form-fields';
+	import { createGroupForm } from '$lib/groups/group.remote';
 
 	let { data } = $props();
 

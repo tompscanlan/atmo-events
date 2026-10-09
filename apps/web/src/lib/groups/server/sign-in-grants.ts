@@ -1,5 +1,5 @@
 // Sending a member to their PDS with the group grants on top of the base scope:
-// at sign-in (`authorizeSignIn`), and again after a join (groups.remote's
+// at sign-in (`authorizeSignIn`), and again after a join (remote-context's
 // `reauthorizeUrl`). Which grants to ask for is member-grants'. This file only
 // starts the authorization, so member-grants never imports the OAuth client.
 import type { ActorIdentifier } from '@atcute/lexicons';

@@ -7,6 +7,8 @@ import type { CallerMembership } from './types';
 import { GroupPermissionError, GroupRecordError } from './server/group-write';
 import { GroupCredentialError } from './server/session';
 import { GroupRuleError } from './server/db/rules';
+import { RosterStepError } from './server/roster';
+import { GroupSpaceError } from './server/spaces';
 const NOT_LINKED: GroupFormFailure = {
 	ok: false,
 	error:
@@ -53,4 +55,42 @@ export function notAllowed(
 		};
 	}
 	return { ok: false, error: `Not allowed: ${permission} required` };
+}
+
+/** Maps a roster failure to a form result. The three roster errors mean a
+ *  later half of the act failed after an earlier half took effect
+ *  (`server/roster.ts`), so the message says what is out of step. Returns the
+ *  failure only, so it also fits a handler whose success carries a payload. */
+export function rosterFailure(e: unknown): GroupFormFailure {
+	if (e instanceof RosterStepError && e.step === 'list') {
+		return {
+			ok: false,
+			error:
+				e.change === 'grant'
+					? `${e.subject} is on the roster, but was not added to the group's member lists at its PDS: ${e.message}. "Repair this group" in the group's settings adds them.`
+					: e.change === 'request'
+						? `Your request to join was sent, but the group's PDS did not record you as a requester: ${e.message}. An admin's "Repair this group", in the group's settings, records you.`
+						: `${e.subject} can no longer read the group at its PDS, but their membership was not removed: ${e.message}. Removing them again finishes it.`
+		};
+	}
+	if (e instanceof RosterStepError && e.step === 'record') {
+		return {
+			ok: false,
+			error: `The roster was updated, but the membership record for ${e.subject} was not: ${e.message}`
+		};
+	}
+	if (e instanceof RosterStepError) {
+		return {
+			ok: false,
+			error: `Access was revoked for ${e.subject}, but the roster still lists them: ${e.message}`
+		};
+	}
+	// A revocation's first write, the member-list removal, was refused.
+	if (e instanceof GroupSpaceError) {
+		return {
+			ok: false,
+			error: `The group's PDS did not accept the change, so nothing was changed: ${e.message}. Try again.`
+		};
+	}
+	return formError(e);
 }

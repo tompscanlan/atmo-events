@@ -1,4 +1,4 @@
-// The one way into a group route. The pages and every form in `groups.remote.ts`
+// The one way into a group route. The pages and every group remote (../remote-context.ts)
 // gate a group here, since a form with its own lookup could reveal a private
 // group. Every refusal is the same 404, so a hidden group looks like one that
 // never existed. The exception is a 503 when the host cannot say whether the

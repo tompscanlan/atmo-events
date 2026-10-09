@@ -166,7 +166,7 @@ export function createMembersOnlyEventAdapter(page: MembersOnlyEventPage): Edito
 			const status = isRsvpHere(spaceUri, collection) ? statusOf(record) : null;
 			if (!status) return { ok: false };
 			const saved = await settle(async () => {
-				const { rsvpToMembersOnlyEvent } = await import('./groups.remote');
+				const { rsvpToMembersOnlyEvent } = await import('./member-rsvp.remote');
 				return rsvpToMembersOnlyEvent({ groupDid, rkey, status, cid: cidOf(record), asked });
 			});
 			return { ok: saved };
@@ -174,7 +174,7 @@ export function createMembersOnlyEventAdapter(page: MembersOnlyEventPage): Edito
 		async deleteSpaceRecord({ spaceUri, collection }) {
 			if (!isRsvpHere(spaceUri, collection)) throw new Error(NOT_THIS_RSVP);
 			const cancelled = await settle(async () => {
-				const { cancelMembersOnlyRsvp } = await import('./groups.remote');
+				const { cancelMembersOnlyRsvp } = await import('./member-rsvp.remote');
 				return cancelMembersOnlyRsvp({ groupDid, rkey, asked });
 			});
 			if (!cancelled) throw new Error('the RSVP was not cancelled');

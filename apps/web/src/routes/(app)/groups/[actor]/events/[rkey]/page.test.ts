@@ -38,7 +38,7 @@ const commands = vi.hoisted(() => ({
 	rsvpToMembersOnlyEvent: vi.fn(),
 	cancelMembersOnlyRsvp: vi.fn()
 }));
-vi.mock('$lib/groups/groups.remote', () => commands);
+vi.mock('$lib/groups/member-rsvp.remote', () => commands);
 const rsvp = vi.hoisted(() => ({
 	renders: [] as Array<Record<string, unknown>>,
 	/** Set to press RSVP with this status as EventRsvp renders. */

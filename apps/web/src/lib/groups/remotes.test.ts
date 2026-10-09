@@ -58,19 +58,14 @@ import { pdsProvisioner, provisionGroupSpaces } from './server/spaces';
 import { formError } from './form-error';
 import type { GroupFormResult } from './form-result';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from './types';
-import {
-	cancelMembersOnlyRsvp,
-	joinGroupForm,
-	leaveGroupForm,
-	putGroupEvent,
-	removeGroupEvent,
-	rsvpToMembersOnlyEvent,
-	updateGroupForm
-} from './groups.remote';
 
 import { GroupCredentialError } from './server/session';
 import { createGroup, recordGroupSpaces } from './server/db/groups';
 import { addMember } from './server/db/roster';
+import { updateGroupForm } from './group.remote';
+import { joinGroupForm, leaveGroupForm } from './roster.remote';
+import { putGroupEvent, removeGroupEvent } from './group-events.remote';
+import { cancelMembersOnlyRsvp, rsvpToMembersOnlyEvent } from './member-rsvp.remote';
 const OWNER = 'did:plc:owner';
 const GROUP_DID = 'did:plc:unlinkedgroupaaaaaaaaaaa';
 

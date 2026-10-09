@@ -17,7 +17,7 @@ vi.mock('$lib/atproto/methods', () => methods);
 vi.mock('$lib/components/LoginModal.svelte', () => ({
 	atProtoLoginModalState: { show: vi.fn() }
 }));
-vi.mock('./groups.remote', () => remote);
+vi.mock('./group-events.remote', () => remote);
 
 import { createGroupEditorAdapter } from './editor-adapter';
 

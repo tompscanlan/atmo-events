@@ -10,7 +10,7 @@ import { atProtoLoginModalState } from '$lib/components/LoginModal.svelte';
 import type { EditorAdapter, EditorBlobRef } from '$lib/components/editor/adapter';
 import type { EventPlacement } from './event-placement';
 import type { GroupFormResult } from './form-result';
-import { putGroupEvent, putGroupEventImage, removeGroupEvent } from './groups.remote';
+import { putGroupEvent, putGroupEventImage, removeGroupEvent } from './group-events.remote';
 
 /** A refusal goes to the page in its own words, then becomes a throw, which the
  *  editor reports as a failed save. */

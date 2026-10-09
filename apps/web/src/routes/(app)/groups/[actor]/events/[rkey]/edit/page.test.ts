@@ -23,7 +23,7 @@ vi.mock('$lib/atproto/methods', () => ({ getRecord: vi.fn(), resolveHandle: vi.f
 vi.mock('$lib/components/LoginModal.svelte', () => ({
 	atProtoLoginModalState: { show: vi.fn() }
 }));
-vi.mock('$lib/groups/groups.remote', () => remote);
+vi.mock('$lib/groups/group-events.remote', () => remote);
 
 import Page from './+page.svelte';
 

@@ -1,5 +1,12 @@
 <script lang="ts">
 	import { Badge, Button, Input, Label } from '@foxui/core';
+
+	import { groupFormError, resetOnSuccess } from '$lib/groups/form-result';
+
+	import PdslsLink from '$lib/groups/components/PdslsLink.svelte';
+	import PersonLabel from '$lib/groups/components/PersonLabel.svelte';
+	import type { Person } from '$lib/groups/types';
+	import { resolve } from '$app/paths';
 	import {
 		addMemberForm,
 		approveJoinRequestForm,
@@ -7,13 +14,7 @@
 		rejectJoinRequestForm,
 		removeMemberForm,
 		suggestPeople
-	} from '$lib/groups/groups.remote';
-	import { groupFormError, resetOnSuccess } from '$lib/groups/form-result';
-
-	import PdslsLink from '$lib/groups/components/PdslsLink.svelte';
-	import PersonLabel from '$lib/groups/components/PersonLabel.svelte';
-	import type { Person } from '$lib/groups/types';
-	import { resolve } from '$app/paths';
+	} from '$lib/groups/roster.remote';
 
 	let { data } = $props();
 

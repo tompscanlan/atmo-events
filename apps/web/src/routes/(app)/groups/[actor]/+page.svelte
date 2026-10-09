@@ -1,13 +1,6 @@
 <script lang="ts">
 	import { AvatarGroup, Badge, Button, Input, Label } from '@foxui/core';
-	import {
-		approveJoinRequestForm,
-		joinGroupForm,
-		leaveGroupForm,
-		rejectJoinRequestForm,
-		repairGroupForm,
-		updateGroupForm
-	} from '$lib/groups/groups.remote';
+
 	import { groupFormError, resetOnSuccess } from '$lib/groups/form-result';
 
 	import PdslsLink from '$lib/groups/components/PdslsLink.svelte';
@@ -15,6 +8,13 @@
 	import PersonLabel from '$lib/groups/components/PersonLabel.svelte';
 	import { resolve } from '$app/paths';
 	import { reauthorize } from '$lib/atproto/auth.svelte';
+	import { repairGroupForm, updateGroupForm } from '$lib/groups/group.remote';
+	import {
+		approveJoinRequestForm,
+		joinGroupForm,
+		leaveGroupForm,
+		rejectJoinRequestForm
+	} from '$lib/groups/roster.remote';
 
 	let { data } = $props();
 

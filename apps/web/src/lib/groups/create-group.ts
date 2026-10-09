@@ -1,5 +1,5 @@
 // Group creation, as a plain function so a test can call it. `createGroupForm`
-// in groups.remote.ts is the thin wrapper.
+// in group.remote.ts is the thin wrapper.
 //
 // A did:plc is permanent, so every refusal comes before the mint:
 //

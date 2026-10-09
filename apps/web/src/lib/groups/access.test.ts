@@ -1,5 +1,5 @@
 // The read rules as a pure predicate set. The group pages gate on them, and so
-// does every remote form (`context()` in ./groups.remote.ts turns a group the
+// does every remote form (`groupRequestContext` in ./remote-context.ts turns a group the
 // caller cannot see into a 404). A regression here would let anyone learn that
 // a private group exists, which is why these are tested directly and not only
 // through a route.

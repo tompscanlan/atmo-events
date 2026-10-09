@@ -20,7 +20,7 @@ vi.mock('$lib/atproto/methods', () => ({ getRecord: vi.fn(), resolveHandle: vi.f
 vi.mock('$lib/components/LoginModal.svelte', () => ({
 	atProtoLoginModalState: { show: vi.fn() }
 }));
-vi.mock('$lib/groups/groups.remote', () => ({
+vi.mock('$lib/groups/group-events.remote', () => ({
 	putGroupEvent: vi.fn(),
 	removeGroupEvent: vi.fn(),
 	putGroupEventImage: vi.fn()
