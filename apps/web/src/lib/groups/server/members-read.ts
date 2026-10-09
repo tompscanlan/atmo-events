@@ -31,7 +31,7 @@ import {
 	type GroupRoleName
 } from '../permissions';
 import type { GroupRow, MemberRow, RosterEntry } from '../types';
-import type { GroupSpaceReader } from './about-read';
+import type { GroupSpaceReader, GroupSpaceRecord } from './about-read';
 import { ensureGroupsSchema } from './schema';
 
 /** A membership record. Its `rkey` is the member DID. */
@@ -69,11 +69,56 @@ export const NO_MEMBER_RECORDS: GroupMembers = {
 	access: null
 };
 
-/** Records first, then the cache. A page says which one it rendered. */
-export type RosterSource = 'records' | 'cache';
+/** A membership record as read, or null when it is not one: another
+ *  collection (a host that ignored the filter must not turn other records into
+ *  memberships), or a value that does not parse. */
+function toMembershipRecord(record: GroupSpaceRecord | null): GroupMembershipRecord | null {
+	if (!record || record.collection !== GROUP_MEMBERSHIP_COLLECTION) return null;
+	const parsed = parseGroupMembership(record.value, record.rkey);
+	if (!parsed) return null;
+	return {
+		uri: record.uri,
+		rkey: record.rkey,
+		subject: parsed.subject,
+		roles: parsed.roles,
+		createdAt: parsed.createdAt
+	};
+}
 
-/** A group's roster and authz config as records. The five reads are
- *  independent and go out together, so the page waits for one round trip. */
+/** The authz config: both binding records and the role list, read together. An
+ *  unknown role is dropped, since nothing could resolve its grant. */
+async function readAuthz(
+	reader: GroupSpaceReader,
+	space: string,
+	repo: string
+): Promise<Pick<GroupMembers, 'roles' | 'permissions' | 'eventPermissions'>> {
+	const binding = (collection: string) =>
+		reader.get({ space, repo, collection, rkey: GROUP_PERMISSIONS_RKEY });
+	const [permissionsRecord, eventPermissionsRecord, roleRecords] = await Promise.all([
+		binding(GROUP_PERMISSIONS_COLLECTION),
+		binding(GROUP_EVENT_PERMISSIONS_COLLECTION),
+		reader.list({ space, repo, collection: GROUP_ROLE_COLLECTION })
+	]);
+	const roles: GroupRoleRecord[] = [];
+	for (const record of roleRecords) {
+		if (record.collection !== GROUP_ROLE_COLLECTION) continue;
+		const role = parseGroupRole(record.value, record.rkey);
+		if (role) roles.push({ id: role.id, uri: record.uri });
+	}
+	roles.sort((a, b) => GROUP_ROLES.indexOf(a.id) - GROUP_ROLES.indexOf(b.id));
+	return {
+		roles,
+		permissions: permissionsRecord
+			? parseGroupBindings('community', permissionsRecord.value)
+			: null,
+		eventPermissions: eventPermissionsRecord
+			? parseGroupBindings('modality', eventPermissionsRecord.value)
+			: null
+	};
+}
+
+/** A group's roster and authz config as records. The reads are independent and
+ *  go out together, so the page waits for one round trip. */
 export async function readGroupMembers(
 	reader: GroupSpaceReader,
 	group: Pick<GroupRow, 'group_did' | 'members_space_uri'>
@@ -81,63 +126,40 @@ export async function readGroupMembers(
 	const space = group.members_space_uri;
 	if (!space) return NO_MEMBER_RECORDS;
 	const repo = group.group_did;
-
-	const [accessRecord, permissionsRecord, eventPermissionsRecord, membershipRecords, roleRecords] =
-		await Promise.all([
-			reader.get({ space, repo, collection: GROUP_ACCESS_COLLECTION, rkey: GROUP_ACCESS_RKEY }),
-			reader.get({
-				space,
-				repo,
-				collection: GROUP_PERMISSIONS_COLLECTION,
-				rkey: GROUP_PERMISSIONS_RKEY
-			}),
-			reader.get({
-				space,
-				repo,
-				collection: GROUP_EVENT_PERMISSIONS_COLLECTION,
-				rkey: GROUP_PERMISSIONS_RKEY
-			}),
-			reader.list({ space, repo, collection: GROUP_MEMBERSHIP_COLLECTION }),
-			reader.list({ space, repo, collection: GROUP_ROLE_COLLECTION })
-		]);
-
+	const [accessRecord, authz, membershipRecords] = await Promise.all([
+		reader.get({ space, repo, collection: GROUP_ACCESS_COLLECTION, rkey: GROUP_ACCESS_RKEY }),
+		readAuthz(reader, space, repo),
+		reader.list({ space, repo, collection: GROUP_MEMBERSHIP_COLLECTION })
+	]);
 	const memberships: GroupMembershipRecord[] = [];
 	for (const record of membershipRecords) {
-		// Checked again, as in `readGroupAbout`: a host that ignored the
-		// collection parameter must not turn other records into memberships.
-		if (record.collection !== GROUP_MEMBERSHIP_COLLECTION) continue;
-		const parsed = parseGroupMembership(record.value, record.rkey);
-		if (!parsed) continue;
-		memberships.push({
-			uri: record.uri,
-			rkey: record.rkey,
-			subject: parsed.subject,
-			roles: parsed.roles,
-			createdAt: parsed.createdAt
-		});
+		const membership = toMembershipRecord(record);
+		if (membership) memberships.push(membership);
 	}
-
-	const roles: GroupRoleRecord[] = [];
-	for (const record of roleRecords) {
-		if (record.collection !== GROUP_ROLE_COLLECTION) continue;
-		const parsed = parseGroupRole(record.value, record.rkey);
-		// An unknown role is dropped: nothing could resolve its grant.
-		if (!parsed) continue;
-		roles.push({ id: parsed.id, uri: record.uri });
-	}
-	roles.sort((a, b) => GROUP_ROLES.indexOf(a.id) - GROUP_ROLES.indexOf(b.id));
-
 	return {
 		memberships,
-		roles,
-		permissions: permissionsRecord
-			? parseGroupBindings('community', permissionsRecord.value)
-			: null,
-		eventPermissions: eventPermissionsRecord
-			? parseGroupBindings('modality', eventPermissionsRecord.value)
-			: null,
+		...authz,
 		access: accessRecord ? parseGroupAccess(accessRecord.value) : null
 	};
+}
+
+/** One DID's membership record, by its key, or null when there is none. */
+export async function readMembership(
+	reader: GroupSpaceReader,
+	group: Pick<GroupRow, 'group_did' | 'members_space_uri'>,
+	did: string
+): Promise<GroupMembershipRecord | null> {
+	const space = group.members_space_uri;
+	// A DID that cannot be a record key cannot have a membership record.
+	if (!space || !isMembershipKey(did)) return null;
+	return toMembershipRecord(
+		await reader.get({
+			space,
+			repo: group.group_did,
+			collection: GROUP_MEMBERSHIP_COLLECTION,
+			rkey: did
+		})
+	);
 }
 
 /** One entry in the group's index of its spaces. */
@@ -207,9 +229,9 @@ export function resolveActorPermissions(
 }
 
 /** The records the resolver needs for one caller: their own membership (its
- *  rkey is their DID, so one `getRecord`), both binding records, and the role
- *  list. A reader error propagates, so the gate fails closed and never falls
- *  back to the rows. */
+ *  rkey is their DID, so one `getRecord`) and the authz config. The result holds
+ *  at most the caller's own membership and no access record. A reader error
+ *  propagates, so the gate fails closed and never falls back to the rows. */
 export async function readCallerAuthz(
 	reader: GroupSpaceReader,
 	group: GroupRow,
@@ -217,62 +239,11 @@ export async function readCallerAuthz(
 ): Promise<GroupMembers> {
 	const space = group.members_space_uri;
 	if (!space) return NO_MEMBER_RECORDS;
-	const repo = group.group_did;
-
-	const [membershipRecord, permissionsRecord, eventPermissionsRecord, roleRecords] =
-		await Promise.all([
-			// A DID that cannot be a record key cannot have a membership record.
-			isMembershipKey(did)
-				? reader.get({ space, repo, collection: GROUP_MEMBERSHIP_COLLECTION, rkey: did })
-				: null,
-			reader.get({
-				space,
-				repo,
-				collection: GROUP_PERMISSIONS_COLLECTION,
-				rkey: GROUP_PERMISSIONS_RKEY
-			}),
-			reader.get({
-				space,
-				repo,
-				collection: GROUP_EVENT_PERMISSIONS_COLLECTION,
-				rkey: GROUP_PERMISSIONS_RKEY
-			}),
-			reader.list({ space, repo, collection: GROUP_ROLE_COLLECTION })
-		]);
-
-	const memberships: GroupMembershipRecord[] = [];
-	const parsed =
-		membershipRecord && membershipRecord.collection === GROUP_MEMBERSHIP_COLLECTION
-			? parseGroupMembership(membershipRecord.value, membershipRecord.rkey)
-			: null;
-	if (membershipRecord && parsed) {
-		memberships.push({
-			uri: membershipRecord.uri,
-			rkey: membershipRecord.rkey,
-			subject: parsed.subject,
-			roles: parsed.roles,
-			createdAt: parsed.createdAt
-		});
-	}
-
-	const roles: GroupRoleRecord[] = [];
-	for (const record of roleRecords) {
-		if (record.collection !== GROUP_ROLE_COLLECTION) continue;
-		const role = parseGroupRole(record.value, record.rkey);
-		if (role) roles.push({ id: role.id, uri: record.uri });
-	}
-
-	return {
-		memberships,
-		roles,
-		permissions: permissionsRecord
-			? parseGroupBindings('community', permissionsRecord.value)
-			: null,
-		eventPermissions: eventPermissionsRecord
-			? parseGroupBindings('modality', eventPermissionsRecord.value)
-			: null,
-		access: null
-	};
+	const [membership, authz] = await Promise.all([
+		readMembership(reader, group, did),
+		readAuthz(reader, space, group.group_did)
+	]);
+	return { memberships: membership ? [membership] : [], ...authz, access: null };
 }
 
 /** The roles a DID holds according to the records. Empty for an unknown or

@@ -36,11 +36,6 @@ import {
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
 
 import {
-	GROUP_MEMBERSHIP_COLLECTION,
-	isMembershipKey,
-	parseGroupMembership
-} from '../members-record';
-import {
 	authorizeMembership,
 	dropGroupMembership,
 	putGroupMembership,
@@ -61,6 +56,7 @@ import { deleteAcceptance, writeAcceptance, type MemberSession } from './accepta
 import { groupWriter, requireGroupPermission, type GroupRepoWriter } from './group-write';
 import { errorText } from './errors';
 import { type CredentialStoreEnv } from './session';
+import { readMembership } from './members-read';
 export type RosterStep = 'record' | 'row' | 'list';
 export type RosterChange = 'grant' | 'revoke' | 'request';
 
@@ -246,21 +242,8 @@ function removesAccess(from: GroupRoleName, to: GroupRoleName): boolean {
  * because a date from the row would overwrite a published one.
  */
 export async function joinedAt(ctx: PreparedRoster, subject: string): Promise<string | undefined> {
-	const { reader } = ctx;
-	const space = ctx.group.members_space_uri;
-	if (reader && space && isMembershipKey(subject)) {
-		const record = await reader.get({
-			space,
-			repo: ctx.group.group_did,
-			collection: GROUP_MEMBERSHIP_COLLECTION,
-			rkey: subject
-		});
-		const published =
-			record && record.collection === GROUP_MEMBERSHIP_COLLECTION
-				? parseGroupMembership(record.value, record.rkey)
-				: null;
-		if (published?.createdAt) return published.createdAt;
-	}
+	const published = ctx.reader ? await readMembership(ctx.reader, ctx.group, subject) : null;
+	if (published?.createdAt) return published.createdAt;
 	const row = await getMemberRow(ctx.db, ctx.group.id, subject);
 	return row ? new Date(row.created_at).toISOString() : undefined;
 }
