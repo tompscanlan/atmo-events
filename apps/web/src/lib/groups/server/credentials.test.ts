@@ -9,9 +9,8 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 }));
 
 import { linkGroups, unlinkAllGroups } from './__fixtures__/linked-group';
-import { resolveGroupCredential } from './credentials';
-import { GROUP_SESSION_PREFIX } from './linked-session';
 
+import { resolveGroupCredential, GROUP_SESSION_PREFIX } from './session';
 const DID = 'did:plc:mintedgroupaaaaaaaaaaaaa';
 const OTHER = 'did:plc:someoneelseaaaaaaaaaaaaa';
 

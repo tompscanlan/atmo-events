@@ -33,7 +33,7 @@ import type { GroupRow, GroupVisibility } from '../types';
 import { groupSpaceReader, readAboutAccess, type GroupSpaceReader } from './about-read';
 import { writeAboutAccess } from './about-writer';
 import { accessSays } from '../members-record';
-import type { CredentialStoreEnv } from './credentials';
+
 import { reconcileGroupDeclaration } from './declaration-writer';
 
 import {
@@ -60,6 +60,7 @@ import { listJoinRequests, listMembers, rolePermissions } from './repo';
 import { readGroupVisibility } from './spaces';
 
 import { GroupRecordError, requireGroupPermission, type GroupRepoWriter } from './group-write';
+import { type CredentialStoreEnv } from './session';
 export interface RepairGroupInput {
 	db: D1Database;
 	env: CredentialStoreEnv;

@@ -21,7 +21,6 @@ import {
 	groupAccessRecord
 } from '../members-record';
 import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from '../types';
-import type { CredentialStoreEnv } from './credentials';
 
 import type { GroupRuleRecord, GroupSpaceReader } from './about-read';
 
@@ -31,6 +30,7 @@ import {
 	requireGroupPermission,
 	type GroupRepoWriter
 } from './group-write';
+import { type CredentialStoreEnv } from './session';
 export interface WriteGroupAboutInput {
 	db: D1Database;
 	env: CredentialStoreEnv;

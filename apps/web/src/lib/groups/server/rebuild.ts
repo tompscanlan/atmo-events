@@ -24,11 +24,7 @@ import {
 	rebuildGroupCache,
 	type GroupSpaceReader
 } from './about-read';
-import {
-	resolveGroupCredential,
-	type CredentialStoreEnv,
-	type GroupCredential
-} from './credentials';
+
 import {
 	hasAuthzRecords,
 	ownerDidFromRecords,
@@ -39,7 +35,12 @@ import {
 	type MembersRebuildResult
 } from './members-read';
 import { getGroupByDid, restoreGroup } from './repo';
-import { groupClient } from './session';
+import {
+	groupClient,
+	resolveGroupCredential,
+	type CredentialStoreEnv,
+	type GroupCredential
+} from './session';
 import { repoRecordExists } from './xrpc';
 
 import { groupSpaceUris } from '../ids';

@@ -13,8 +13,8 @@ import {
 	startGroupLink,
 	type GroupLinkState
 } from './group-link';
-import { GROUP_SESSION_SCOPE } from './linked-session';
 
+import { GROUP_SESSION_SCOPE } from './session';
 const GROUP = 'did:plc:linkedgroupaaaaaaaaaaaaa';
 const OWNER = 'did:plc:owneraaaaaaaaaaaaaaaaaaa';
 const MEMBER = 'did:plc:memberaaaaaaaaaaaaaaaaaa';

@@ -18,13 +18,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isRowWrite, sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { ensureGroupsSchema } from './server/schema';
 import { stubPds as stubGroupPds, type StubPdsOptions } from './server/__fixtures__/stub-pds';
-import { resolveGroupCredential } from './server/credentials';
 
 import { getGroupByDid } from './server/repo';
 import { GROUP_PASSWORD_MIN_LENGTH } from './form-fields';
 import { runCreateGroup, type CreateGroupData, type CreateGroupEnv } from './create-group';
 
-import { GroupCredentialError, groupWriter } from './server/group-write';
+import { groupWriter } from './server/group-write';
+import { resolveGroupCredential, GroupCredentialError } from './server/session';
 const OWNER = 'did:plc:owner';
 const MINTED_DID = 'did:plc:mintedgroupaaaaaaaaaaaaa';
 const SERVICE = 'https://pds.stub.test';

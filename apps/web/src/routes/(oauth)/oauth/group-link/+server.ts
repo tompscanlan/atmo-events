@@ -2,11 +2,12 @@ import { error, redirect } from '@sveltejs/kit';
 import { servesClientMetadata } from '$lib/atproto/server/oauth';
 import { GROUP_LINK_REDIRECT_PATH } from '$lib/atproto/settings';
 import { GroupLinkRefused, startGroupLink } from '$lib/groups/server/group-link';
-import { groupLinkClient } from '$lib/groups/server/linked-session';
+
 import { getGroupByDid } from '$lib/groups/server/repo';
 import { GROUP_NOT_FOUND } from '$lib/groups/server/route-context';
 import type { RequestHandler } from './$types';
 
+import { groupLinkClient } from '$lib/groups/server/session';
 // Starts linking a group's account (lib/groups/server/group-link.ts). A plain
 // form post from the group page, answered with a redirect to the group's PDS.
 export const POST: RequestHandler = async ({ request, locals, platform }) => {

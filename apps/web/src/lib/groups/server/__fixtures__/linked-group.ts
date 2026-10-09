@@ -14,10 +14,10 @@
 //   	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
 //   	...(await import('./__fixtures__/linked-oauth-stub')).linkedOAuthStub
 //   }));
-import { GROUP_SESSION_PREFIX } from '../linked-session';
-import type { LinkedGroupCredential } from '../credentials';
+
 import { linkedServices, stubSession } from './linked-oauth-stub';
 
+import { GROUP_SESSION_PREFIX, type LinkedGroupCredential } from '../session';
 export { LINKED_TEST_TOKEN } from './linked-oauth-stub';
 
 /** The stub PDS's address, which every fixture group lives on unless a test says. */

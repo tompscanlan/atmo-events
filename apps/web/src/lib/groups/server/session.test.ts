@@ -8,8 +8,8 @@
 //
 // Every write logs which credential served it, never the token.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { LinkedGroupCredential, MintSessionCredential } from './credentials';
-import { groupClient } from './session';
+
+import { groupClient, type LinkedGroupCredential, type MintSessionCredential } from './session';
 
 const DID = 'did:plc:sessiontestgroup0000000';
 const OTHER = 'did:plc:someoneelseaaaaaaaaaaaaa';

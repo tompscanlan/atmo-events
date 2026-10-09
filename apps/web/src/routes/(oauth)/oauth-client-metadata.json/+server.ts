@@ -1,9 +1,10 @@
 import { json } from '@sveltejs/kit';
 import { createOAuthClient } from '$lib/atproto/server/oauth';
 import { declaredGrants } from '$lib/groups/server/member-grants';
-import { GROUP_SESSION_SCOPES } from '$lib/groups/server/linked-session';
+
 import type { RequestHandler } from './$types';
 
+import { GROUP_SESSION_SCOPES } from '$lib/groups/server/session';
 // Declares each group's member grant and the scope a group's owner grants when
 // linking it, as well as the base scopes, because a PDS refuses any requested
 // scope the metadata does not list. Sign-in never asks for the group scope.

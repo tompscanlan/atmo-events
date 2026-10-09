@@ -31,7 +31,7 @@
 // The about space's access record says the visibility too, and is written only
 // when it says something else. A declared group's access must say public, so it
 // goes before a declaration is published and after one is withdrawn.
-import type { CredentialStoreEnv } from './server/credentials';
+
 import { updateGroup } from './server/repo';
 
 import { approvalRefusal, groupFace, splitRuleLines } from './about-record';
@@ -51,8 +51,9 @@ import { formError } from './form-error';
 import type { GroupFormFailure, GroupFormResult } from './form-result';
 import type { GroupRow, GroupVisibility } from './types';
 
-import { GroupCredentialError, groupWriter, type GroupRepoWriter } from './server/group-write';
+import { groupWriter, type GroupRepoWriter } from './server/group-write';
 import { errorText } from './server/errors';
+import { type CredentialStoreEnv, GroupCredentialError } from './server/session';
 export interface UpdateGroupData {
 	name: string;
 	description?: string;

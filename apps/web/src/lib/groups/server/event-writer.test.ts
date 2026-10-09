@@ -30,13 +30,13 @@ import type { GroupRow } from '../types';
 
 import { GROUP_EVENT_COLLECTION } from '../ids';
 import {
-	GroupCredentialError,
 	GroupPermissionError,
 	GroupRecordError,
 	groupWriter,
 	type GroupRepoWrite,
 	type GroupRepoWriter
 } from './group-write';
+import { GroupCredentialError } from './session';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 /** The admin in every case below: a non-owner who was promoted, exactly the

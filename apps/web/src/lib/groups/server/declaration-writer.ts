@@ -14,7 +14,6 @@ import {
 } from '../declaration-record';
 import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from '../types';
 import type { GroupSpaceReader } from './about-read';
-import type { CredentialStoreEnv } from './credentials';
 
 import { contrailNotifier, type GroupEventNotifier } from './events-index';
 
@@ -24,6 +23,7 @@ import {
 	requireGroupPermission,
 	type GroupRepoWriter
 } from './group-write';
+import { type CredentialStoreEnv } from './session';
 export interface WriteGroupDeclarationInput {
 	db: D1Database;
 	env: CredentialStoreEnv;

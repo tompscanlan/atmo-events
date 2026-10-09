@@ -19,8 +19,8 @@ vi.mock('$lib/atproto/server/oauth', () => ({
 		}
 	})
 }));
-vi.mock('$lib/groups/server/linked-session', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/groups/server/linked-session')>()),
+vi.mock('$lib/groups/server/session', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/groups/server/session')>()),
 	groupLinkClient: () => ({
 		authorize: async () => ({ url: new URL('https://pds.test/oauth/authorize'), stateId: 's' }),
 		callback: async () => ({ session: { did: authorizedAs } }),

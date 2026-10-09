@@ -10,7 +10,7 @@
 // password, and nothing here keeps or logs either: the setup writes go through
 // the session the mint returns, and later writes wait for the owner to link the
 // group's account (./server/group-link.ts).
-import type { CredentialStoreEnv } from './server/credentials';
+
 import {
 	GroupMintError,
 	mintGroupAccount,
@@ -51,6 +51,7 @@ import { GROUP_PASSWORD_MIN_LENGTH } from './form-fields';
 
 import { pdsWriter } from './server/group-write';
 import { errorText } from './server/errors';
+import { type CredentialStoreEnv } from './server/session';
 /** Structural rather than `App.Platform['env']`, so a test can supply only
  *  what a create reads. */
 export interface CreateGroupEnv extends CredentialStoreEnv {

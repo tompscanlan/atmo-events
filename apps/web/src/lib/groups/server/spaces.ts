@@ -19,9 +19,8 @@ import {
 	type GroupVisibility
 } from '../types';
 import type { GroupSpaceReader } from './about-read';
-import type { GroupCredential } from './credentials';
 
-import { groupClient } from './session';
+import { groupClient, type GroupCredential, requireGroupCredential } from './session';
 import { describeFailure, xrpc } from './xrpc';
 
 import {
@@ -32,7 +31,7 @@ import {
 	type GroupSpaceUris
 } from '../ids';
 
-import { requireGroupCredential, requireGroupPermission, type GroupGateInput } from './group-write';
+import { requireGroupPermission, type GroupGateInput } from './group-write';
 const APP_ACCESS_OPEN = 'com.atproto.simplespace.defs#open';
 
 export type SpaceReadPolicy = typeof POLICY_PUBLIC | typeof POLICY_MEMBER_LIST;

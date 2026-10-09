@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { formError, notAllowed } from './form-error';
 
-import { GroupCredentialError } from './server/group-write';
+import { GroupCredentialError } from './server/session';
 describe('notAllowed', () => {
 	it('names the permission when the caller simply lacks it', () => {
 		expect(notAllowed({}, 'MANAGE_GROUP')).toEqual({

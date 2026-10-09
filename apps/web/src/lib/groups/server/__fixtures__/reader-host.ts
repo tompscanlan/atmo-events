@@ -14,8 +14,8 @@ import { vi } from 'vitest';
 import type { GroupSpaceReader } from '../about-read';
 import { linkedServices } from './linked-oauth-stub';
 import { STUB_PDS_SERVICE } from './linked-group';
-import { GROUP_SESSION_PREFIX } from '../linked-session';
 
+import { GROUP_SESSION_PREFIX } from '../session';
 /** Groups whose stored session cannot be restored (`breakSession`). */
 const broken = new Set<string>();
 

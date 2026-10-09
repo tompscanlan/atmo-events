@@ -4,10 +4,11 @@
 import { error } from '@sveltejs/kit';
 import { can, type EnforcedGroupPermission } from '../permissions';
 import { groupSpaceReader, readGroupAbout } from './about-read';
-import type { CredentialStoreEnv } from './credentials';
+
 import { knownHandles } from './handles';
 import { groupRouteContext } from './route-context';
 
+import { type CredentialStoreEnv } from './session';
 export async function groupEditorPage(
 	env: CredentialStoreEnv & { DB: D1Database },
 	actor: string,

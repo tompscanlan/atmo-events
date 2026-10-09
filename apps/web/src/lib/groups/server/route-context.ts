@@ -8,11 +8,12 @@ import { actorToDid } from '$lib/atproto/methods';
 import { canSeeGroup } from '../access';
 import type { CallerMembership, GroupRow, GroupVisibility } from '../types';
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
-import type { CredentialStoreEnv } from './credentials';
+
 import { getCallerMembership, getGroupByDid } from './repo';
 import { readGroupVisibility } from './spaces';
 
 import { errorText } from './errors';
+import { type CredentialStoreEnv } from './session';
 /** Every refusal says this, byte for byte, so the causes cannot be told apart. */
 export const GROUP_NOT_FOUND = 'Group not found';
 

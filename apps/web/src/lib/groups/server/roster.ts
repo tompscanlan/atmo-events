@@ -20,7 +20,7 @@
 // stops the act: it decides how the roster shows a member, not what they may do.
 import { GROUP_ROLES, type GroupRoleName } from '../permissions';
 import type { GroupRow, GroupVisibility, MemberRow } from '../types';
-import type { CredentialStoreEnv } from './credentials';
+
 import {
 	GroupRuleError,
 	addMember,
@@ -60,6 +60,7 @@ import { deleteAcceptance, writeAcceptance, type MemberSession } from './accepta
 
 import { requireGroupPermission, type GroupRepoWriter } from './group-write';
 import { errorText } from './errors';
+import { type CredentialStoreEnv } from './session';
 export type RosterStep = 'record' | 'row' | 'list';
 export type RosterChange = 'grant' | 'revoke' | 'request';
 

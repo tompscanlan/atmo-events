@@ -21,10 +21,9 @@ import {
 } from '../members-record';
 import { spaceRecordUri, splitRecordUri } from '../ids';
 import type { GroupRow } from '../types';
-import type { CredentialStoreEnv } from './credentials';
-import { resolveGroupCredential } from './credentials';
+
 import { applyGroupCache } from './repo';
-import { groupClient } from './session';
+import { groupClient, type CredentialStoreEnv, resolveGroupCredential } from './session';
 import { isRecordNotFound, xrpc, xrpcError } from './xrpc';
 
 export interface GroupSpaceRecord {

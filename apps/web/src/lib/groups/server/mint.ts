@@ -5,8 +5,8 @@
 // its email and password, and we pass the password to the PDS once and keep nothing.
 // The session the PDS returns sets the group up in the same request, and then goes.
 import { Secp256k1PrivateKeyExportable } from '@atcute/crypto';
-import type { MintSessionCredential } from './credentials';
 
+import { type MintSessionCredential } from './session';
 /** All three are required. The create flow checks them before a step that cannot be undone. */
 export interface MintConfig {
 	/** PDS base URL (`GROUP_PDS_SERVICE`). */

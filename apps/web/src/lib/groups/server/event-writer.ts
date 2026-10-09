@@ -6,18 +6,22 @@ import * as v from '@atcute/lexicons/validations';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
 import { GROUP_EVENT_COLLECTION, POLICY_MEMBER_LIST, groupSpaceUris } from '../ids';
 import type { GroupRow } from '../types';
-import type { CredentialStoreEnv, GroupCredential } from './credentials';
+
 import { pdsSpaceReader, type GroupSpaceConfig, type GroupSpaceReader } from './about-read';
 import { contrailNotifier, type GroupEventNotifier } from './events-index';
 import {
 	GroupRecordError,
 	groupWriter,
-	requireGroupCredential,
 	requireGroupPermission,
 	type GroupGateInput,
 	type GroupRepoWriter
 } from './group-write';
-import { groupClient } from './session';
+import {
+	groupClient,
+	type CredentialStoreEnv,
+	type GroupCredential,
+	requireGroupCredential
+} from './session';
 import { repoRecordExists, xrpc, xrpcError } from './xrpc';
 
 export interface WriteGroupEventInput {

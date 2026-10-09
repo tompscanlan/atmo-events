@@ -8,9 +8,8 @@
 //
 // Not deployed, not routed, never imported by the app. `scripts/` is outside
 // tsconfig's include, like scripts/geocode-events.ts.
-import { can, type GroupPermission } from '../src/lib/groups/permissions';
+import { can, type GroupPermission, type GroupRoleName } from '../src/lib/groups/permissions';
 import { canSeeGroup } from '../src/lib/groups/access';
-import type { GroupRoleName } from '../src/lib/groups/permissions';
 import type { GroupRow, GroupVisibility } from '../src/lib/groups/types';
 import {
 	approveJoinRequest,
@@ -41,7 +40,9 @@ import {
 	GROUP_PERMISSIONS_COLLECTION,
 	GROUP_PERMISSIONS_RKEY,
 	GROUP_ROLE_COLLECTION,
-	GROUP_SPACE_COLLECTION
+	GROUP_SPACE_COLLECTION,
+	GROUP_ACCEPTANCE_COLLECTION,
+	GROUP_ACCEPTANCE_RKEY
 } from '../src/lib/groups/members-record';
 import { listGroupEvents, registerGroupIdentity } from '../src/lib/groups/server/events-index';
 import { ensureInit } from '../src/lib/contrail/index';
@@ -57,8 +58,7 @@ import {
 	readGroupAbout,
 	rebuildGroupCache
 } from '../src/lib/groups/server/about-read';
-import { resolveGroupCredential } from '../src/lib/groups/server/credentials';
-import { GROUP_SESSION_PREFIX } from '../src/lib/groups/server/linked-session';
+
 import {
 	pdsProvisioner,
 	provisionGroupSpaces,
@@ -111,17 +111,17 @@ import {
 	spaceCredential,
 	spaceSigHeaders
 } from '../src/lib/groups/server/space-credential';
-import { groupClient } from '../src/lib/groups/server/session';
+import {
+	groupClient,
+	resolveGroupCredential,
+	GROUP_SESSION_PREFIX
+} from '../src/lib/groups/server/session';
 import {
 	membersOnlyEventForEditing,
 	readMembersOnlyEvent,
 	readMembersOnlyEvents
 } from '../src/lib/groups/server/calendar-read';
 import { standInCalls } from './groups-e2e.oauth';
-import {
-	GROUP_ACCEPTANCE_COLLECTION,
-	GROUP_ACCEPTANCE_RKEY
-} from '../src/lib/groups/members-record';
 import { scopes } from '../src/lib/atproto/settings';
 
 import { groupSpaceUris, type RsvpStatus } from '../src/lib/groups/ids';

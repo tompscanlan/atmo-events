@@ -14,13 +14,14 @@ import {
 	rosterFromRows
 } from '$lib/groups/server/members-read';
 import { loadPeople } from '$lib/groups/server/people';
-import { hasLinkedSession } from '$lib/groups/server/linked-session';
+
 import { groupRouteContext } from '$lib/groups/server/route-context';
 import { countActiveMembers, listJoinRequests, listMembers } from '$lib/groups/server/repo';
 import { readGroupVisibility } from '$lib/groups/server/spaces';
 import type { GroupRow, GroupVisibility, RosterEntry } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
 
+import { hasLinkedSession } from '$lib/groups/server/session';
 /** The visibility the page shows: the host's, since the row holds none. The
  *  gate's answer is reused. For a caller on the roster the gate did not ask,
  *  so the page does, and a host that does not answer gives null rather than

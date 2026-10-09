@@ -16,13 +16,17 @@
 //     false: a DID that could read the members space would see every
 //     membership, role and permission record.
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
-import { type CredentialStoreEnv, type GroupCredential } from './credentials';
 
-import { groupClient } from './session';
+import {
+	groupClient,
+	type CredentialStoreEnv,
+	type GroupCredential,
+	requireGroupCredential
+} from './session';
 import { describeFailure, xrpc } from './xrpc';
 import { GroupSpaceError } from './spaces';
 
-import { GroupRecordError, requireGroupCredential } from './group-write';
+import { GroupRecordError } from './group-write';
 /** One entry on a space's member list, as `listMembers` reports it. */
 export interface SpaceMember {
 	did: string;

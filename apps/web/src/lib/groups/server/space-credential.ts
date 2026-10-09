@@ -22,8 +22,8 @@ import {
 import type { Did } from '@atcute/lexicons';
 import { GROUP_ACCEPTANCE_COLLECTION, GROUP_ACCEPTANCE_RKEY } from '../members-record';
 import type { GroupRow } from '../types';
-import { resolveGroupCredential, type CredentialStoreEnv } from './credentials';
-import { groupClient } from './session';
+
+import { groupClient, resolveGroupCredential, type CredentialStoreEnv } from './session';
 
 import { splitRecordUri } from '../ids';
 import { describeFailure, isRecordNotFound, readXrpc, xrpcError } from './xrpc';

@@ -8,14 +8,15 @@
 import { isActorIdentifier } from '@atcute/lexicons/syntax';
 import { can, type EnforcedGroupPermission } from '../permissions';
 import type { GroupRow } from '../types';
-import {
-	resolveGroupCredential,
-	type CredentialStoreEnv,
-	type GroupCredential
-} from './credentials';
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
 import { getCallerMembership } from './repo';
-import { groupClient } from './session';
+import {
+	GroupCredentialError,
+	groupClient,
+	requireGroupCredential,
+	type CredentialStoreEnv,
+	type GroupCredential
+} from './session';
 import { xrpc, xrpcError } from './xrpc';
 
 /** The error name in a typed client's failed answer, if it has one. */
@@ -32,15 +33,6 @@ export class GroupPermissionError extends Error {
 	) {
 		super(`${permission} is required to do that in this group (${groupDid})`);
 		this.name = 'GroupPermissionError';
-	}
-}
-
-/** The group's owner has not linked its account, so this app cannot author as the
- *  group. Only the owner can fix it, by linking from the group page. */
-export class GroupCredentialError extends Error {
-	constructor(readonly groupDid: string) {
-		super(`${groupDid} is not linked: its owner has not authorized this app to write as it`);
-		this.name = 'GroupCredentialError';
 	}
 }
 
@@ -171,17 +163,6 @@ export async function requireGroupPermission(
 	if (!can(membership.permissions, permission)) {
 		throw new GroupPermissionError(permission, group.group_did);
 	}
-}
-
-/** The group's credential, for a write. Throws GroupCredentialError when the
- *  group is not linked, which only its owner can fix. */
-export async function requireGroupCredential(
-	env: CredentialStoreEnv,
-	groupDid: string
-): Promise<GroupCredential> {
-	const cred = await resolveGroupCredential(env, groupDid);
-	if (!cred) throw new GroupCredentialError(groupDid);
-	return cred;
 }
 
 /** The transport for the group's repo and its spaces, through its linked session.

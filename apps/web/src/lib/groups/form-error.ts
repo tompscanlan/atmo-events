@@ -6,7 +6,8 @@ import type { CallerMembership } from './types';
 
 import { GroupRuleError } from './server/repo';
 
-import { GroupCredentialError, GroupPermissionError, GroupRecordError } from './server/group-write';
+import { GroupPermissionError, GroupRecordError } from './server/group-write';
+import { GroupCredentialError } from './server/session';
 const NOT_LINKED: GroupFormFailure = {
 	ok: false,
 	error:
