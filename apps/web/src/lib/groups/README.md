@@ -217,15 +217,12 @@ has them commented out.
 ## Checks against a live PDS
 
 Unit tests run with `vitest` and need no network. The e2e script runs the real code against a PDS on
-an atproto-devnet sandbox and deletes what it
-writes. It runs against this machine only: it refuses a setting that names any other host, and it
-counts every request the run makes to show that none left. The two probes only read a running
-deployment:
+an atproto-devnet sandbox and deletes what it writes. It runs against this machine only: it refuses
+a setting that names any other host, and it counts every request the run makes to show that none
+left:
 
 ```bash
-node apps/web/scripts/groups-e2e.mjs            # the group flow, 53 checks, under the devnet's https-run
-node apps/web/scripts/group-declaration.mjs <origin>   # every public group is declared, no private one is
-node apps/web/scripts/inherited-surface.mjs <origin>   # the app's existing pages still answer
+node apps/web/scripts/groups-e2e.mjs   # the group flow, 53 checks, under the devnet's https-run
 ```
 
 The e2e script reads its accounts from the environment, and stops before any network call when one
@@ -257,5 +254,3 @@ there.
 
 The app resolves did:plc at plc.directory, which knows nothing of the sandbox, so the e2e build swaps
 in `scripts/groups-e2e.identity-resolver.ts`, which asks `E2E_PLC_URL` and nothing else.
-
-The other two scripts are read-only and need no credentials.
