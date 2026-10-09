@@ -14,14 +14,13 @@
 //     the row, so a failed later write leaves a record or a list that already
 //     grants less.
 //
-// Each case injects a failure into exactly one half and checks what the gate
-// says afterwards. The requirement is "less access than intended, never more",
-// and only a failing writer can show it.
+// Each case makes exactly one half fail and checks what the gate says
+// afterwards. The requirement is "less access than intended, never more", and
+// only a failing half can show it.
 //
-// The records go through an injected writer and reader. The member list goes
-// through the group's stored credential and the fake host
-// (./__fixtures__/stub-pds.ts), so these cases hold however the list's
-// transport is wired.
+// The records, the reads and the member lists all go through the group's
+// stored credential to a fake host (./__fixtures__/stub-pds.ts), which fails a
+// half when a case asks. So these cases hold however the transports are wired.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
@@ -45,7 +44,7 @@ import {
 	withdrawJoinRequest
 } from './roster';
 
-import { pdsSpaceReader, type GroupSpaceReader } from './about-read';
+import { pdsSpaceReader } from './about-read';
 import {
 	STUB_PDS_SERVICE,
 	linkGroups,
@@ -60,7 +59,6 @@ import { memberGrant } from './member-grants';
 import type { MemberSession } from './acceptance';
 
 import { spaceUri } from '../ids';
-import { type GroupRepoWrite, type GroupRepoWriter } from './group-write';
 import { createGroup, recordGroupSpaces } from './db/groups';
 import { addMember, getMemberRow, requestJoin } from './db/roster';
 import { getCallerMembership } from './standing';
@@ -83,23 +81,30 @@ const LIST_STEP: Record<string, string> = {
 	'com.atproto.simplespace.listMembers': 'list:read'
 };
 
+/** The space record writes, as the step each one adds to `order`. */
+const RECORD_STEP: Record<string, string> = {
+	'com.atproto.space.putRecord': 'record:put',
+	'com.atproto.space.createRecord': 'record:create',
+	'com.atproto.space.deleteRecord': 'record:delete'
+};
+
 let harness: SqliteD1;
 let group: GroupRow;
-let writes: GroupRepoWrite[];
-/** Every half, in the order it ran: `record:<intent>`, `row:<verb>` and
- *  `list:<step>`. */
+/** Every half, in the order the host or D1 saw it: `record:<method>`,
+ *  `row:<verb>` and `list:<step>`. */
 let order: string[];
 /** Set by a case to make the host answer this member-list method with a 502,
  *  on `failListSpace` only when that is set too. */
 let failList: string | null;
 let failListSpace: string | null;
 let pds: ReturnType<typeof stubPds>;
-/** Set by a case to make the record half throw for matching writes. */
-let failRecord: ((write: GroupRepoWrite) => boolean) | null;
+/** Set by a case to make the host answer this record method with a 502. */
+let failRecord: string | null;
+/** Set by a case to make the host answer a read of this DID's membership
+ *  record with a 502. */
+let failRead: string | null;
 /** Set by a case to make the row half throw for matching SQL. */
 let failRow: RegExp | null;
-let writer: GroupRepoWriter;
-let reader: GroupSpaceReader;
 
 let env: ReturnType<typeof linkGroups>;
 
@@ -132,17 +137,26 @@ function rosterDb(): D1Database {
 	});
 }
 
+/** What a route hands an act. The act builds its own reader, writer and
+ *  member list from the stored credential. */
 function ctx(callerDid: string) {
-	return { db: rosterDb(), env, group, callerDid, writer, reader };
+	return { db: rosterDb(), env, group, callerDid };
 }
 
-function membershipRecord(did: string) {
-	return reader.get({
+/** The group's reader, as a request builds it. */
+const hostReader = () => pdsSpaceReader(CRED, GROUP_DID);
+
+/** `did`'s membership record as the host holds it, or null, asked straight
+ *  from the host and not through the app's reader. */
+async function membershipRecord(did: string): Promise<{ value: Record<string, unknown> } | null> {
+	const query = new URLSearchParams({
 		space: MEMBERS,
 		repo: GROUP_DID,
 		collection: GROUP_MEMBERSHIP_COLLECTION,
 		rkey: did
 	});
+	const res = await fetch(`${STUB_PDS_SERVICE}/xrpc/com.atproto.space.getRecord?${query}`);
+	return res.ok ? ((await res.json()) as { value: Record<string, unknown> }) : null;
 }
 
 function granted(role: GroupRoleName): string[] {
@@ -150,7 +164,7 @@ function granted(role: GroupRoleName): string[] {
 }
 
 async function gate(did: string): Promise<string[]> {
-	const membership = await getCallerMembership(harness.db, group, did, reader);
+	const membership = await getCallerMembership(harness.db, group, did, hostReader());
 	return [...membership.permissions].sort();
 }
 
@@ -233,25 +247,31 @@ beforeEach(async () => {
 	await addMember(db, group.id, ADMIN, 'admin');
 	await addMember(db, group.id, MEMBER, 'member');
 
-	writes = [];
 	order = [];
 	failRecord = null;
+	failRead = null;
 	failRow = null;
 	failList = null;
 	failListSpace = null;
 
 	// The host: both spaces provisioned through the group's linked session.
+	const upstreamFailure = () => Response.json({ error: 'UpstreamFailure' }, { status: 502 });
 	pds = stubPds({
 		did: GROUP_DID,
 		handle: HANDLE,
-		fail: (nsid, init) => {
-			if (nsid in LIST_STEP) order.push(LIST_STEP[nsid]);
+		fail: (nsid, init, query) => {
+			const step = LIST_STEP[nsid] ?? RECORD_STEP[nsid];
+			if (step) order.push(step);
+			if (nsid === failRecord) return upstreamFailure();
+			if (nsid === 'com.atproto.space.getRecord' && query?.get('rkey') === failRead) {
+				return upstreamFailure();
+			}
 			const space =
 				typeof init?.body === 'string'
 					? (JSON.parse(init.body) as { space?: string }).space
 					: undefined;
 			return nsid === failList && (!failListSpace || space === failListSpace)
-				? Response.json({ error: 'UpstreamFailure' }, { status: 502 })
+				? upstreamFailure()
 				: undefined;
 		}
 	});
@@ -261,47 +281,10 @@ beforeEach(async () => {
 	await recordGroupSpaces(db, group.id, uris);
 	group = { ...group, about_space_uri: ABOUT, members_space_uri: MEMBERS };
 
-	writer = async (write) => {
-		order.push(`record:${write.intent}`);
-		if (failRecord?.(write)) throw new Error('com.atproto.space.putRecord failed: 502');
-		writes.push(write);
-		return {
-			uri: `${write.space}/${write.repo}/${write.collection}/${write.rkey}`,
-			cid: 'bafytest'
-		};
-	};
-	const live = (space: string, collection?: string) => {
-		const current = new Map<string, GroupRepoWrite>();
-		for (const w of writes) {
-			if (w.space !== space || (collection && w.collection !== collection)) continue;
-			current.set(`${w.collection}/${w.rkey}`, w);
-		}
-		return [...current.values()]
-			.filter((w) => w.intent !== 'delete')
-			.map((w) => ({
-				uri: `${w.space}/${w.repo}/${w.collection}/${w.rkey}`,
-				cid: 'bafytest',
-				collection: w.collection,
-				rkey: w.rkey,
-				value: w.record
-			}));
-	};
-	reader = {
-		async get(q) {
-			return live(q.space, q.collection).find((r) => r.rkey === q.rkey) ?? null;
-		},
-		async list(q) {
-			return live(q.space, q.collection);
-		},
-		// A space's configuration is the host's, not a record, so it comes from
-		// the fake host.
-		getSpace: (space) => pdsSpaceReader(CRED, GROUP_DID).getSpace(space)
-	};
-
 	// Publish the roster and the authz config, so the gate resolves from
 	// records for the rest of the case. Memberships first: until the config
 	// exists the gate falls back to the rows, which is what authorizes these.
-	const seed = { db, env, group, callerDid: OWNER, writer, reader };
+	const seed = { db, env, group, callerDid: OWNER };
 	for (const [subject, role] of [
 		[OWNER, 'owner'],
 		[ADMIN, 'admin'],
@@ -345,7 +328,7 @@ describe('a revocation takes the list entry first, then the record', () => {
 	// longer lets the DID read the about space: that pair is out of step with
 	// the list, and the error says whose.
 	it('reports the list out of step when the record delete fails after the list entry went', async () => {
-		failRecord = (w) => w.intent === 'delete';
+		failRecord = 'com.atproto.space.deleteRecord';
 		const error = await ejectMember(ctx(OWNER), ADMIN).catch((e: unknown) => e);
 
 		expect(error).toMatchObject({ name: 'RosterStepError', step: 'list', subject: ADMIN });
@@ -416,12 +399,12 @@ describe('a revocation takes the list entry first, then the record', () => {
 describe('a role change splits by direction', () => {
 	it('promotes row-then-record: a grant lets the schema adjudicate first', async () => {
 		await promoteMember(ctx(OWNER), MEMBER, 'admin');
-		expect(order).toEqual(['row:update', 'record:update']);
+		expect(order).toEqual(['row:update', 'record:put']);
 		expect(await gate(MEMBER)).toEqual(granted('admin'));
 	});
 
 	it('leaves a failed promotion granting the OLD, smaller set', async () => {
-		failRecord = (w) => w.intent === 'update';
+		failRecord = 'com.atproto.space.putRecord';
 		const error = await promoteMember(ctx(OWNER), MEMBER, 'admin').catch((e: unknown) => e);
 
 		expect(error).toMatchObject({ name: 'RosterStepError', step: 'record' });
@@ -431,7 +414,7 @@ describe('a role change splits by direction', () => {
 
 	it('demotes record-then-row: taking a role away is a revocation', async () => {
 		await promoteMember(ctx(OWNER), ADMIN, 'member');
-		expect(order).toEqual(['record:update', 'row:update']);
+		expect(order).toEqual(['record:put', 'row:update']);
 		expect(await gate(ADMIN)).toEqual(granted('member'));
 	});
 
@@ -446,11 +429,11 @@ describe('a role change splits by direction', () => {
 	});
 
 	it('changes nothing when a demotion cannot write its record', async () => {
-		failRecord = (w) => w.intent === 'update';
+		failRecord = 'com.atproto.space.putRecord';
 		const error = await promoteMember(ctx(OWNER), ADMIN, 'member').catch((e: unknown) => e);
 
 		expect(error).not.toBeInstanceOf(RosterStepError);
-		expect(order).toEqual(['record:update']);
+		expect(order).toEqual(['record:put']);
 		expect((await getMemberRow(harness.db, group.id, ADMIN))?.role).toBe('admin');
 		expect(await gate(ADMIN)).toEqual(granted('admin'));
 	});
@@ -469,27 +452,17 @@ describe('a role change splits by direction', () => {
 // the pair is out of step rather than handed a 500 for a committed row.
 describe('a grant whose join-date read fails after the row moved', () => {
 	it('reports the pair as out of step, with the row in and no record', async () => {
-		const base = reader;
 		// Only the newcomer's own membership read fails; the gate's reads for the
 		// admitting admin still succeed.
-		const failing: GroupSpaceReader = {
-			async get(q) {
-				if (q.rkey === NEWCOMER) {
-					throw new Error('com.atproto.space.getRecord failed: 400 SpaceNotFound');
-				}
-				return base.get(q);
-			},
-			list: (q) => base.list(q),
-			getSpace: (space) => base.getSpace(space)
-		};
+		failRead = NEWCOMER;
 
-		const error = await admitMember({ ...ctx(ADMIN), reader: failing }, NEWCOMER, 'member').catch(
-			(e: unknown) => e
-		);
+		const error = await admitMember(ctx(ADMIN), NEWCOMER, 'member').catch((e: unknown) => e);
 
 		expect(error).toMatchObject({ name: 'RosterStepError', step: 'record' });
 		expect(await getMemberRow(harness.db, group.id, NEWCOMER)).not.toBeNull();
-		expect(writes.some((w) => w.rkey === NEWCOMER)).toBe(false);
+		expect(pds.writes().some((w) => w.body?.rkey === NEWCOMER)).toBe(false);
+		failRead = null;
+		expect(await membershipRecord(NEWCOMER)).toBeNull();
 	});
 });
 
@@ -538,7 +511,7 @@ describe('an admission for a DID already on the roster', () => {
 			.first<{ status: string; decided_by_did: string | null }>();
 		expect(request).toEqual({ status: 'approved', decided_by_did: ADMIN });
 		expect(
-			(await getCallerMembership(harness.db, group, NEWCOMER, reader)).pendingRequestId
+			(await getCallerMembership(harness.db, group, NEWCOMER, hostReader())).pendingRequestId
 		).toBeNull();
 		expect(await gate(NEWCOMER)).toEqual(granted('member'));
 	});
@@ -585,7 +558,7 @@ describe('the about space member list mirrors the roster', () => {
 
 			await entries[act]();
 
-			expect(order).toEqual(['record:update', 'list:put', 'list:put']);
+			expect(order).toEqual(['record:put', 'list:put', 'list:put']);
 			expect(putMembers().map((c) => c.body)).toEqual([
 				{ space: MEMBERS, did: NEWCOMER, read: false, write: true },
 				{ space: ABOUT, did: NEWCOMER, read: true, write: false }

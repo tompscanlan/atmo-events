@@ -89,11 +89,9 @@ export interface RosterContext {
 	env: CredentialStoreEnv;
 	group: GroupRow;
 	callerDid: string;
-	/** Override the PDS transport and the gate's reader. Tests pass these. */
-	writer?: GroupRepoWriter;
+	/** The route's reader, so the act reads through the request's session.
+	 *  Built from the credential if absent. */
 	reader?: GroupSpaceReader | null;
-	/** Override the member-list transport. Built from the credential if absent. */
-	memberList?: GroupMemberList;
 	/** The visibility the route read from the host, or `null` if it did not ask.
 	 *  When absent, a join asks the host itself. */
 	visibility?: GroupVisibility | null;
@@ -148,8 +146,8 @@ async function prepared(ctx: RosterContext): Promise<PreparedRoster> {
 	return {
 		...ctx,
 		reader: ctx.reader !== undefined ? ctx.reader : await groupSpaceReader(ctx.env, ctx.group),
-		writer: ctx.writer ?? writerOnFirstUse(() => groupWriter(ctx.env, ctx.group)),
-		memberList: ctx.memberList ?? memberListOnFirstUse(() => groupMemberList(ctx.env, ctx.group))
+		writer: writerOnFirstUse(() => groupWriter(ctx.env, ctx.group)),
+		memberList: memberListOnFirstUse(() => groupMemberList(ctx.env, ctx.group))
 	};
 }
 
