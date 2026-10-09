@@ -3,7 +3,8 @@ import { error } from '@sveltejs/kit';
 import { command, getRequestEvent } from '$app/server';
 import { createOAuthClient } from './oauth';
 import { getSignedCookie } from './signed-cookie';
-import { scopes, signUpPDS } from '../settings';
+import { signUpPDS } from '../settings';
+import { authorizeSignIn } from '$lib/groups/server/sign-in-grants';
 import type { ActorIdentifier, Did } from '@atcute/lexicons';
 
 export const oauthLogin = command(
@@ -15,17 +16,18 @@ export const oauthLogin = command(
 		const { platform } = getRequestEvent();
 
 		try {
-			const oauth = createOAuthClient(platform?.env);
-
 			const target = input.signup
 				? ({ type: 'pds', serviceUrl: signUpPDS } as const)
 				: ({ type: 'account', identifier: input.handle as ActorIdentifier } as const);
 
-			const { url } = await oauth.authorize({
-				target,
-				scope: scopes.join(' '),
-				prompt: input.signup ? 'create' : undefined
-			});
+			const { url } = await authorizeSignIn(
+				platform?.env,
+				input.signup ? undefined : input.handle,
+				{
+					target,
+					prompt: input.signup ? 'create' : undefined
+				}
+			);
 
 			return { url: url.toString() };
 		} catch (e) {
