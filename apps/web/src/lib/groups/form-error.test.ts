@@ -37,4 +37,20 @@ describe('formError', () => {
 		expect(refusal.error).toMatch(/owner has to link the group’s account/);
 		expect(refusal.error).toMatch(/Nothing was changed/);
 	});
+
+	// A failure it does not know, such as a database that went down partway, is
+	// not the caller's to fix, and as a form message it would read as a refusal
+	// and hide the 500. It goes back up as it came.
+	it.each([
+		['an Error', new Error('D1_ERROR: database is locked')],
+		['a thrown value that is no Error', { status: 500 }]
+	])('rethrows %s it does not know, unchanged', (_, failure) => {
+		let thrown: unknown;
+		try {
+			formError(failure);
+		} catch (e) {
+			thrown = e;
+		}
+		expect(thrown).toBe(failure);
+	});
 });

@@ -6,7 +6,8 @@
 //
 // Test harness only. It is the in-memory reader of ./space-reader.ts, so its
 // call log can also prove that no record was read at all. It holds no space
-// configuration: a members space holds no answer about the about space's.
+// configuration of its own: a members space holds no answer about the about
+// space's, so a test that needs one passes the about space's `policies`.
 import { DEFAULT_ROLE_PERMISSIONS } from '../../permissions';
 import {
 	GROUP_MEMBERSHIP_COLLECTION,
@@ -17,15 +18,17 @@ import {
 	groupMembershipRecord,
 	groupRoleRecord
 } from '../../members-record';
-import { spaceReader, type FakeSpaceReader } from './space-reader';
+import { spaceReader, type FakeSpaceReader, type SpaceReaderOptions } from './space-reader';
 
 export function membersSpaceReader(
 	space: string,
 	groupDid: string,
-	members: string[]
+	members: string[],
+	policies?: SpaceReaderOptions['policies']
 ): FakeSpaceReader {
 	return spaceReader(groupDid, {
 		space,
+		policies,
 		records: [
 			{
 				collection: GROUP_ROLE_COLLECTION,

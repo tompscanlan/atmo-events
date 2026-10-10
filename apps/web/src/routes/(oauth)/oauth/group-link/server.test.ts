@@ -9,6 +9,7 @@ import type { StoredState } from '@atcute/oauth-node-client';
 
 let authorizedAs: string;
 const states = new Map<string, StoredState>();
+const authorize = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/atproto/server/oauth', () => ({
 	oauthStates: () => ({
@@ -21,7 +22,7 @@ vi.mock('$lib/atproto/server/oauth', () => ({
 vi.mock('$lib/groups/server/session', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/groups/server/session')>()),
 	groupLinkClient: () => ({
-		authorize: async () => ({ url: new URL('https://pds.test/oauth/authorize'), stateId: 's' }),
+		authorize,
 		callback: async () => ({ session: { did: authorizedAs } }),
 		revoke: async () => {}
 	})
@@ -43,6 +44,8 @@ beforeEach(async () => {
 	await createGroup(db, { groupDid: GROUP, ownerDid: OWNER, name: 'Kona Trail Runners' });
 	authorizedAs = GROUP;
 	states.clear();
+	authorize.mockReset();
+	authorize.mockResolvedValue({ url: new URL('https://pds.test/oauth/authorize'), stateId: 's' });
 });
 
 const env = (): Record<string, unknown> => ({
@@ -60,9 +63,9 @@ async function thrown(run: () => unknown): Promise<{ status: number; location?: 
 	throw new Error('expected the handler to answer with a redirect or an error');
 }
 
-function start(did: string | null, platformEnv = env()) {
+function start(did: string | null, platformEnv = env(), groupDid: string | null = GROUP) {
 	const body = new FormData();
-	body.set('groupDid', GROUP);
+	if (groupDid !== null) body.set('groupDid', groupDid);
 	return thrown(() =>
 		POST({
 			request: new Request('https://atmo.test/oauth/group-link', { method: 'POST', body }),
@@ -101,6 +104,21 @@ describe('POST /oauth/group-link', () => {
 
 	it('answers a member who is not the owner as if the group did not exist', async () => {
 		expect(await start(MEMBER)).toMatchObject({ status: 404 });
+	});
+
+	// Nobody signed in can be the owner, so the link never starts: no request
+	// goes to any PDS.
+	it('asks a signed-out caller to sign in, and starts nothing', async () => {
+		expect(await start(null)).toMatchObject({ status: 401 });
+		expect(authorize).not.toHaveBeenCalled();
+	});
+
+	it('answers a group this site does not know, or no group at all, with the 404', async () => {
+		expect(await start(OWNER, env(), 'did:plc:unknowngroupaaaaaaaaaaaa')).toMatchObject({
+			status: 404
+		});
+		expect(await start(OWNER, env(), null)).toMatchObject({ status: 404 });
+		expect(authorize).not.toHaveBeenCalled();
 	});
 
 	// A link kept nowhere would be lost with the request that made it.

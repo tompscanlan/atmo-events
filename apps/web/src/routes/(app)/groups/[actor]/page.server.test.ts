@@ -17,6 +17,7 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { load } from './+page.server';
+import { loadPeople } from '$lib/groups/server/people';
 import { notAllowed } from '$lib/groups/form-error';
 import {
 	hostDown,
@@ -149,6 +150,49 @@ describe('/groups/[actor] load', () => {
 		const data = await openAs(OWNER);
 
 		expect(data.visibility).toBeNull();
+	});
+});
+
+// The roster is members-only at every visibility, and the owner is on it, so a
+// public group's page shows a caller off the roster neither the members' faces
+// nor who owns it, and asks for no profile of either. The count stays: it is
+// the rows', and a public group shows it to anyone.
+describe('what a caller off the roster sees on a public group', () => {
+	const PUBLIC = 'com.atproto.simplespace.defs#publicPolicy';
+
+	async function rosterShownTo(did: string | null) {
+		const data = (await openAs(did)) as unknown as {
+			rosterPreview: { did: string }[];
+			ownerDid: string | null;
+			memberCount: number;
+		};
+		const looked = vi.mocked(loadPeople).mock.calls.flatMap(([, dids]) => dids);
+		return { ...data, looked };
+	}
+
+	beforeEach(() => serveReader(GROUP_DID, hostReading(PUBLIC)));
+
+	it('a member sees the faces and the owner', async () => {
+		const shown = await rosterShownTo(MEMBER);
+
+		expect(shown.ownerDid).toBe(OWNER);
+		expect(shown.rosterPreview.map((entry) => entry.did)).toEqual(
+			expect.arrayContaining([OWNER, MEMBER])
+		);
+		expect(shown.looked).toEqual(expect.arrayContaining([OWNER, MEMBER]));
+	});
+
+	it.each([
+		['a signed-in stranger', STRANGER],
+		['a signed-out caller', null]
+	])('%s gets no faces, no owner, and no profile lookup of either', async (_, did) => {
+		const shown = await rosterShownTo(did);
+
+		expect(shown.rosterPreview).toEqual([]);
+		expect(shown.ownerDid).toBeNull();
+		expect(shown.looked).not.toContain(OWNER);
+		expect(shown.looked).not.toContain(MEMBER);
+		expect(shown.memberCount).toBe(2);
 	});
 });
 

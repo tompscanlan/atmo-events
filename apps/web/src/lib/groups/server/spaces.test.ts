@@ -17,13 +17,17 @@ import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import {
 	GroupSpaceError,
 	SpacesUnsupportedError,
+	aboutSpaceReadPolicy,
 	pdsProvisioner,
 	provisionGroupSpaces,
+	setAboutSpaceReadPolicy,
 	type SpaceProvision
 } from './spaces';
 
 import { groupSpaceUris, spaceUri } from '../ids';
-import { pdsWriter } from './group-write';
+import { GroupPermissionError, pdsWriter } from './group-write';
+import { seedGroup, type SeededGroup } from './__fixtures__/seed-group';
+import { spaceReader, type FakeSpaceReader } from './__fixtures__/space-reader';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const CRED = linkedCredential(GROUP_DID, 'https://pds.example.com');
 
@@ -360,5 +364,63 @@ describe('pdsWriter target', () => {
 			'com.atproto.space.createRecord',
 			'com.atproto.space.deleteRecord'
 		]);
+	});
+});
+
+// The visibility flip is gated twice: by the settings form, and here, at the
+// write itself, so a caller that reaches it some other way still needs
+// MANAGE_GROUP. The members space holds no records, so the rows decide.
+describe('setAboutSpaceReadPolicy', () => {
+	const OWNER = 'did:plc:owner';
+	const MEMBER = 'did:plc:member';
+
+	let seeded: SeededGroup;
+	let reader: FakeSpaceReader;
+	let updated: { space: string; readPolicy: string }[];
+
+	beforeEach(async () => {
+		seeded = await seedGroup({
+			groupDid: GROUP_DID,
+			ownerDid: OWNER,
+			name: 'Kona',
+			members: { [MEMBER]: 'member' }
+		});
+		reader = spaceReader(GROUP_DID);
+		updated = [];
+	});
+
+	afterEach(() => seeded.harness.close());
+
+	function flip(callerDid: string | null) {
+		return setAboutSpaceReadPolicy({
+			db: seeded.db,
+			env: {},
+			group: seeded.group,
+			callerDid,
+			reader,
+			visibility: 'private',
+			updater: async (update) => {
+				updated.push(update);
+			}
+		});
+	}
+
+	it("moves an owner's about space to the member-list policy", async () => {
+		await flip(OWNER);
+
+		expect(updated).toEqual([
+			{ space: seeded.spaces.aboutSpaceUri, readPolicy: aboutSpaceReadPolicy('private') }
+		]);
+	});
+
+	it('refuses a member without MANAGE_GROUP, and changes no policy', async () => {
+		await expect(flip(MEMBER)).rejects.toBeInstanceOf(GroupPermissionError);
+		expect(updated).toEqual([]);
+	});
+
+	it('refuses an anonymous caller before reading anything', async () => {
+		await expect(flip(null)).rejects.toBeInstanceOf(GroupPermissionError);
+		expect(reader.calls).toEqual([]);
+		expect(updated).toEqual([]);
 	});
 });

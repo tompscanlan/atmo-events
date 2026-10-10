@@ -55,12 +55,15 @@ import { memberGrant } from './server/member-grants';
 import { RSVP_NO_SPACES, RSVP_RETRY_LATER } from './server/member-rsvp';
 import { OAuthResponseError } from '@atcute/oauth-node-client';
 import { pdsProvisioner, provisionGroupSpaces } from './server/spaces';
-import { formError } from './form-error';
+import { formError, notAllowed } from './form-error';
 import type { GroupFormResult } from './form-result';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from './types';
 
 import { GroupCredentialError } from './server/session';
-import { createGroup, recordGroupSpaces } from './server/db/groups';
+import { createGroup, getGroupByDid, recordGroupSpaces } from './server/db/groups';
+import { seedGroup } from './server/__fixtures__/seed-group';
+import { spaceReader } from './server/__fixtures__/space-reader';
+import { fixtureSessions, resetReaderHost, serveReader } from './server/__fixtures__/reader-host';
 import { addMember } from './server/db/roster';
 import { updateGroupForm } from './group.remote';
 import { joinGroupForm, leaveGroupForm } from './roster.remote';
@@ -123,6 +126,85 @@ describe('a group whose owner has not linked it', () => {
 		});
 
 		expect(result).toEqual(formError(new GroupCredentialError(GROUP_DID)));
+	});
+});
+
+// Every group form resolves its context through the same gate. A signed-out
+// caller is refused with a 401 before the group is looked up, so no session is
+// built and nothing is read. A member without MANAGE_GROUP gets "Not allowed"
+// from the settings save, for a rename and for a visibility flip alike, and the
+// group's PDS is asked nothing but the gate's reads. The group is public and
+// linked, and its members space holds no records, so the rows decide standing.
+describe('the gate in front of the group forms', () => {
+	const LINKED = 'did:plc:linkedgroupaaaaaaaaaaaaa';
+	const MEMBER = 'did:plc:memberaaaaaaaaaaaaaaaaaa';
+	const NAME = 'Kona Trail Runners';
+	const PUBLIC = 'com.atproto.simplespace.defs#publicPolicy';
+	const READS = [
+		'/xrpc/com.atproto.space.getRecord',
+		'/xrpc/com.atproto.space.listRecords',
+		'/xrpc/com.atproto.simplespace.getSpace'
+	];
+
+	beforeEach(async () => {
+		const { spaces } = await seedGroup({
+			harness,
+			groupDid: LINKED,
+			ownerDid: OWNER,
+			name: NAME,
+			members: { [MEMBER]: 'member' }
+		});
+		serveReader(LINKED, spaceReader(LINKED, { policies: { [spaces.aboutSpaceUri]: PUBLIC } }));
+		request.platform.env = { DB: harness.db, OAUTH_SESSIONS: fixtureSessions };
+	});
+
+	afterEach(() => resetReaderHost());
+
+	/** The paths of every request made to the group's PDS. */
+	function asked(): string[] {
+		return vi
+			.mocked(fetch)
+			.mock.calls.map(([input]) => new URL(input instanceof Request ? input.url : String(input)))
+			.map((url) => url.pathname);
+	}
+
+	it.each([
+		[
+			'saving the settings',
+			() =>
+				submitUpdate({
+					groupDid: LINKED,
+					name: 'Renamed',
+					visibility: 'public',
+					shownVisibility: 'public',
+					requireApproval: true
+				})
+		],
+		['asking to join', () => submitJoin({ groupDid: LINKED })]
+	])('refuses a signed-out caller %s with a 401, before any read', async (_, submit) => {
+		request.locals.did = null;
+
+		await expect(submit()).rejects.toMatchObject({ status: 401 });
+		expect(fixtureSessions.reads).toBe(0);
+		expect(asked()).toEqual([]);
+	});
+
+	it.each([
+		['renaming the group', { name: 'Renamed', visibility: 'public' }],
+		['making the group private', { name: NAME, visibility: 'private' }]
+	])('refuses a member without MANAGE_GROUP %s, and writes nothing', async (_, change) => {
+		request.locals.did = MEMBER;
+
+		const result = await submitUpdate({
+			groupDid: LINKED,
+			...change,
+			shownVisibility: 'public',
+			requireApproval: true
+		});
+
+		expect(result).toEqual(notAllowed({}, 'MANAGE_GROUP'));
+		expect(asked().filter((path) => !READS.includes(path))).toEqual([]);
+		expect((await getGroupByDid(harness.db, LINKED))?.name).toBe(NAME);
 	});
 });
 
