@@ -32,8 +32,10 @@
  * spaces, who is sent to re-authorize and told only after asking that their PDS
  * can't do it (13u), that RSVP naming the seed's current cid as the group reads
  * it, and one from a page that showed another version writing nothing (13v),
- * the member's own acceptance at a join request, at leave and at a
- * sign-in after a direct add (18b-18d), a member whose PDS serves no spaces
+ * a join request that writes nothing and is refused a members space
+ * credential until approved, then confirmed at sign-in, the member's own
+ * acceptance deleted at leave, and written at a sign-in after a direct add
+ * (18b-18d), a member whose PDS serves no spaces
  * (18e), the discovery declaration and
  * visibility at the host (19-20c), the events index (21-22), a rebuild of the
  * whole group from its DID (23), and, once cleanup is done, that no request
@@ -379,6 +381,21 @@ function notFound(read) {
 	return read.error === 'RecordNotFound';
 }
 
+/** Whether an `access` record grants every role read on its own space and
+ *  nothing else, in the standard's shape: `grants` of role and scopes, no
+ *  `readRoles`. The space type is the URI's, so the check names no constant the
+ *  app also uses. (Spec: FR-201, FR-214.) */
+function grantsEveryRoleRead(value, spaceUri) {
+	const spaceType = spaceUri?.split('/')[4];
+	const expected = ['owner', 'admin', 'member'].map((role) => ({
+		role,
+		scopes: [`space:${spaceType}?action=read`]
+	}));
+	return (
+		!!value && !('readRoles' in value) && JSON.stringify(value.grants) === JSON.stringify(expected)
+	);
+}
+
 /** A PDS that serves no spaces refuses a space read itself: a 4xx, or 501 for
  *  a method it lacks. A RecordNotFound, or a credential it calls expired or
  *  revoked, comes from a PDS that serves spaces, and a 5xx says nothing. */
@@ -475,6 +492,63 @@ function calendarListings(calls) {
 }
 
 const ACCEPTANCE_COLLECTION = 'group.opensocial.acceptance';
+
+/** A user's own request for a space credential, as another app would make it:
+ *  a delegation token from their session, then `getSpaceCredential` signed by a
+ *  key made for the request. Shares no code with the app. (Spec: SC-202.) */
+async function spaceCredentialRequest(token, space) {
+	const delegated = await pdsGet('com.atproto.space.getDelegationToken', { space }, token);
+	if (delegated.status !== 200) {
+		return { stage: 'getDelegationToken', status: delegated.status, error: delegated.body.error };
+	}
+	const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+		'sign'
+	]);
+	const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+	const compressed = new Uint8Array([raw[64] & 1 ? 0x03 : 0x02, ...raw.slice(1, 33)]);
+	const keyId = `did:key:z${base58(new Uint8Array([0x80, 0x24, ...compressed]))}`;
+	const authorization = `Bearer ${delegated.body.token}`;
+	const params = `("authorization");keyid="${keyId}"`;
+	const signed = new TextEncoder().encode(
+		`"authorization": ${authorization}\n"@signature-params": ${params}`
+	);
+	const signature = new Uint8Array(
+		await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, signed)
+	);
+	const response = await fetch(new URL('/xrpc/com.atproto.space.getSpaceCredential', PDS), {
+		method: 'POST',
+		headers: {
+			'content-type': 'application/json',
+			authorization,
+			'signature-input': `atproto-space=${params}`,
+			signature: `atproto-space=:${Buffer.from(signature).toString('base64')}:`
+		},
+		body: JSON.stringify({ space })
+	});
+	const body = await response.json().catch(() => ({}));
+	return {
+		stage: 'getSpaceCredential',
+		status: response.status,
+		error: body.error,
+		issued: typeof body.credential === 'string'
+	};
+}
+
+/** Base58btc, as a did:key names its key. */
+function base58(bytes) {
+	const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+	let n = BigInt(`0x${Buffer.from(bytes).toString('hex') || '0'}`);
+	let out = '';
+	while (n > 0n) {
+		out = alphabet[Number(n % 58n)] + out;
+		n /= 58n;
+	}
+	for (const byte of bytes) {
+		if (byte !== 0) break;
+		out = `1${out}`;
+	}
+	return out;
+}
 
 /** The admin's own acceptance in the members space, read with their own session,
  *  so the check shares no code with the app's writer or its reader. */
@@ -767,7 +841,7 @@ async function main() {
 				membersSpaceUri?.startsWith(`at://${GROUP_DID}/space/`) &&
 				ownerEntries[0]?.read === true &&
 				ownerEntries[0]?.write === false &&
-				ownerEntries[1]?.read === false &&
+				ownerEntries[1]?.read === true &&
 				ownerEntries[1]?.write === true,
 			"the app's create mints the group with one owner, three pared role bundles, and the owner on both member lists",
 			`${GROUP_HANDLE} (${GROUP_DID}), recovery key handed back ${minted.hasRecoveryKey}; ` +
@@ -852,7 +926,7 @@ async function main() {
 		record(
 			refused.ok === false &&
 				refused.error.name === 'GroupPermissionError' &&
-				refused.error.permission === 'MANAGE_EVENTS' &&
+				refused.error.reason === 'MANAGE_EVENTS required' &&
 				afterRefusal.cid === afterEdit.cid &&
 				afterRefusal.value?.name === editedName,
 			"non-member's identical edit is refused",
@@ -916,12 +990,9 @@ async function main() {
 		record(
 			aboutAccess.status === 200 &&
 				aboutAccess.value?.public === (startPolicy.readPolicy === READ_POLICY.public) &&
-				JSON.stringify(aboutAccess.value?.readRoles) ===
-					JSON.stringify(['owner', 'admin', 'member']) &&
-				JSON.stringify(aboutAccess.value?.grants) === '[]',
-			'the about space’s access record says what its read policy says',
+				grantsEveryRoleRead(aboutAccess.value, aboutSpaceUri),
+			'the about space’s access record says what its read policy says, and grants every role read',
 			`read policy ${startPolicy.readPolicy}; access public ${aboutAccess.value?.public}, ` +
-				`readRoles ${JSON.stringify(aboutAccess.value?.readRoles)}, ` +
 				`grants ${JSON.stringify(aboutAccess.value?.grants)}`
 		);
 
@@ -993,14 +1064,12 @@ async function main() {
 				JSON.stringify(bobsRecord.value?.roles) === JSON.stringify(['admin']) &&
 				accessRecord.status === 200 &&
 				accessRecord.value?.public === false &&
-				JSON.stringify(accessRecord.value?.readRoles) ===
-					JSON.stringify(['owner', 'admin', 'member']) &&
-				JSON.stringify(accessRecord.value?.grants) === '[]',
+				grantsEveryRoleRead(accessRecord.value, membersSpaceUri),
 			'the roster is membership records in the members space, keyed by member DID',
 			`source ${recorded.source}; ${recorded.roster.length} member(s) ` +
 				`(${recorded.roster.map((e) => e.role).join(', ')}); ` +
 				`${BOB} read straight off the PDS at rkey=${BOB} as ${JSON.stringify(bobsRecord.value?.roles)}; ` +
-				`access record readRoles ${JSON.stringify(accessRecord.value?.readRoles)}, ` +
+				`access record grants ${JSON.stringify(accessRecord.value?.grants)}, ` +
 				`public ${accessRecord.value?.public}`
 		);
 
@@ -1047,17 +1116,15 @@ async function main() {
 				calendarPolicy.readPolicy === READ_POLICY.private &&
 				calendarAccess.status === 200 &&
 				calendarAccess.value?.public === false &&
-				JSON.stringify(calendarAccess.value?.readRoles) ===
-					JSON.stringify(['owner', 'admin', 'member']) &&
-				JSON.stringify(calendarAccess.value?.grants) === '[]' &&
+				grantsEveryRoleRead(calendarAccess.value, calendarSpaceUri) &&
 				calendarMembers.status === 200 &&
 				calendarMembers.members.length === 0,
 			'the calendar space is member-list read for a public group, holds access/self not ' +
 				'public, and lists no members',
 			`${calendarSpaceUri}: getSpace ${calendarPolicy.status} read policy ` +
 				`${calendarPolicy.readPolicy ?? calendarPolicy.error}; access/self ` +
-				`${calendarAccess.status} public ${calendarAccess.value?.public} readRoles ` +
-				`${JSON.stringify(calendarAccess.value?.readRoles)}; listMembers ${calendarMembers.status}: ` +
+				`${calendarAccess.status} public ${calendarAccess.value?.public} grants ` +
+				`${JSON.stringify(calendarAccess.value?.grants)}; listMembers ${calendarMembers.status}: ` +
 				`${calendarMembers.members.length} member(s)` +
 				`${calendarMembers.error ? ` (${calendarMembers.error})` : ''}`
 		);
@@ -1892,19 +1959,19 @@ async function main() {
 				`${cidGone.error ?? cidGone.status}`
 		);
 
-		// 14. the space's own member list is write-only --------------------------
-		// The owner and an admitted member go on it so the PDS tracks the
-		// acceptance each writes. A DID that could read this space would see the
-		// whole roster with its own credential, bypassing the app's gate, so every
-		// entry is read:false write:true. (Spec: FR-206.)
+		// 14. the space's own member list holds the members, read and write -------
+		// Reading a space and writing your own records in it are one grant, and
+		// every role reads the members space, so the owner and an admitted member
+		// are each read:true write:true. The PDS tracks the acceptance each writes.
+		// (Spec: FR-206.)
 		const memberList = await spaceMemberList(groupToken, membersSpaceUri);
-		const writeOnly = memberList.members.every((m) => m.read === false && m.write === true);
+		const readWrite = memberList.members.every((m) => m.read === true && m.write === true);
 		record(
 			memberList.status === 200 &&
-				writeOnly &&
+				readWrite &&
 				JSON.stringify(memberList.members.map((m) => m.did).sort()) ===
 					JSON.stringify([ALICE, BOB].sort()),
-			'the owner and an admitted member are on the members space’s own member list, write-only',
+			'the owner and an admitted member are on the members space’s own member list, read and write',
 			`listMembers ${memberList.status}: ` +
 				`${memberList.members.map((m) => `${m.did} read:${m.read} write:${m.write}`).join('; ') || 'empty'}` +
 				`${memberList.error ? ` (${memberList.error})` : ''}`
@@ -1934,10 +2001,17 @@ async function main() {
 			'group.opensocial.role',
 			'admin'
 		);
-		const adminBinding = (permissionsRecord.value?.roles ?? []).find(
-			(binding) => binding.role === 'admin'
+		const memberRoleRecord = await spaceRecord(
+			groupToken,
+			membersSpaceUri,
+			'group.opensocial.role',
+			'member'
 		);
-		const communityActions = adminBinding?.actions;
+		// The standard's shape: `grants` of role, scopes and what the role may
+		// assign. The scopes themselves are checked by what they resolve to.
+		const adminGrant = (permissionsRecord.value?.grants ?? []).find(
+			(grant) => grant.role === 'admin'
+		);
 		const modalityActions = (eventPermissionsRecord.value?.bindings ?? []).find(
 			(binding) => binding.role === 'admin'
 		)?.actions;
@@ -1946,17 +2020,18 @@ async function main() {
 				authz.roles.join(',') === 'owner,admin,member' &&
 				adminRoleRecord.status === 200 &&
 				adminRoleRecord.value?.displayName === 'Admin' &&
-				JSON.stringify(communityActions) ===
-					JSON.stringify(['group.configure', 'admit', 'eject', 'role.assign']) &&
+				memberRoleRecord.value?.default === true &&
+				!('roles' in (permissionsRecord.value ?? {})) &&
+				Array.isArray(adminGrant?.scopes) &&
+				adminGrant.scopes.length > 0 &&
 				// No admin may assign or eject the owner.
-				JSON.stringify(adminBinding?.assignable) === JSON.stringify(['admin', 'member']) &&
-				JSON.stringify(permissionsRecord.value?.defaultRoles) === JSON.stringify(['member']) &&
+				JSON.stringify(adminGrant?.assignable) === JSON.stringify(['admin', 'member']) &&
 				JSON.stringify(modalityActions) === JSON.stringify(['manageEvents', 'createEvent']) &&
 				authz.effective.permissions.join(',') ===
 					'ADMIT_MEMBERS,ASSIGN_ROLES,CREATE_EVENT,EJECT_MEMBERS,MANAGE_EVENTS,MANAGE_GROUP',
-			'roles and both binding records are in the members space, and a grant is their union',
-			`roles [${authz.roles.join(', ')}]; permissions ${JSON.stringify(communityActions)} ` +
-				`assigning ${JSON.stringify(adminBinding?.assignable)}; ` +
+			'roles and both permission records are in the members space, and a grant is their union',
+			`roles [${authz.roles.join(', ')}] (member default ${memberRoleRecord.value?.default}); ` +
+				`admin's scopes ${JSON.stringify(adminGrant?.scopes)} assigning ${JSON.stringify(adminGrant?.assignable)}; ` +
 				`eventPermissions ${JSON.stringify(modalityActions)}; ` +
 				`admin resolves to ${authz.effective.permissions.length} permission(s)`
 		);
@@ -2088,12 +2163,14 @@ async function main() {
 				`${strangerCheck.hasAccess}; roster ${afterEject.roster.length}`
 		);
 
-		// 18b. a join request writes the requester's acceptance --------------------
-		// The member's own half of a membership, written from their own session
-		// into their repo in the members space, at request time, after the group
-		// has listed them there write-only. Approval adds the group's half, and the
-		// roster, which reads acceptances by DID with the group's credential, then
-		// shows them confirmed.
+		// 18b. a join request writes nothing; approval lists them; sign-in confirms --
+		// A requester is not a member, so the request writes no acceptance and puts
+		// them on no list, and the PDS refuses them a members space credential.
+		// Approval lists them read and write, so the same request is granted. The
+		// member's own half, the acceptance, is written from their own session at
+		// their next sign-in, and the roster, which reads acceptances by DID with
+		// the group's credential, then shows them confirmed. (Spec: FR-205,
+		// FR-206, SC-202.)
 		acceptanceWritten = true;
 		const asked = await op('joinGroup', {
 			callerDid: BOB,
@@ -2102,6 +2179,7 @@ async function main() {
 		});
 		const atRequest = await ownAcceptance(bobToken, membersSpaceUri);
 		const listAtRequest = await spaceMemberList(groupToken, membersSpaceUri);
+		const credentialAtRequest = await spaceCredentialRequest(bobToken, membersSpaceUri);
 		const pendingAgain = await op('listJoinRequests');
 		const bobsRequest = pendingAgain.find((request) => request.did === BOB);
 		await op('admitFromRequest', {
@@ -2109,19 +2187,34 @@ async function main() {
 			requestId: bobsRequest?.id,
 			role: 'member'
 		});
-		const approvedRoster = await op('confirmedRoster');
-		const bobApproved = approvedRoster.roster.find((entry) => entry.did === BOB);
+		const listApproved = await spaceMemberList(groupToken, membersSpaceUri);
+		const credentialApproved = await spaceCredentialRequest(bobToken, membersSpaceUri);
+		const bobApproved = (await op('confirmedRoster')).roster.find((entry) => entry.did === BOB);
+		await op('signInAcceptances', { did: BOB });
+		const afterApprovalSignIn = await ownAcceptance(bobToken, membersSpaceUri);
+		const bobConfirmed = (await op('confirmedRoster')).roster.find((entry) => entry.did === BOB);
 		record(
 			asked.outcome === 'pending' &&
-				atRequest.status === 200 &&
-				typeof atRequest.value?.createdAt === 'string' &&
-				listAtRequest.members.some((m) => m.did === BOB && m.read === false && m.write === true) &&
-				bobApproved?.confirmed === true,
-			"a join request writes the requester's acceptance from their own session, and once approved the roster shows them confirmed",
-			`request ${asked.outcome}; acceptance at request ${atRequest.error ?? atRequest.status} ` +
-				`(createdAt ${atRequest.value?.createdAt}); members list entry ` +
-				`${JSON.stringify(listAtRequest.members.find((m) => m.did === BOB) ?? null)}; ` +
-				`approved: ${bobApproved?.role ?? 'not on the roster'}, confirmed ${bobApproved?.confirmed}`
+				notFound(atRequest) &&
+				listAtRequest.status === 200 &&
+				!listAtRequest.members.some((m) => m.did === BOB) &&
+				credentialAtRequest.stage === 'getSpaceCredential' &&
+				credentialAtRequest.status === 400 &&
+				credentialAtRequest.error === 'UserNotAuthorized' &&
+				!credentialAtRequest.issued &&
+				listApproved.members.some((m) => m.did === BOB && m.read === true && m.write === true) &&
+				credentialApproved.status === 200 &&
+				credentialApproved.issued &&
+				bobApproved?.confirmed === false &&
+				afterApprovalSignIn.status === 200 &&
+				bobConfirmed?.confirmed === true,
+			'a join request writes nothing and is refused a members space credential; approval lists them read and write and the credential is issued; their sign-in confirms them',
+			`request ${asked.outcome}; acceptance at request ${atRequest.error ?? atRequest.status}; ` +
+				`on the members list at request ${listAtRequest.members.some((m) => m.did === BOB)}; ` +
+				`credential at request ${JSON.stringify(credentialAtRequest)}; approved entry ` +
+				`${JSON.stringify(listApproved.members.find((m) => m.did === BOB) ?? null)}, credential ` +
+				`${JSON.stringify(credentialApproved)}, confirmed ${bobApproved?.confirmed}; after sign-in ` +
+				`acceptance ${afterApprovalSignIn.error ?? afterApprovalSignIn.status}, confirmed ${bobConfirmed?.confirmed}`
 		);
 
 		// 18c. leaving deletes it ---------------------------------------------------

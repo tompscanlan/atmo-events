@@ -825,9 +825,12 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 		return {
 			hasAuthz: hasAuthzRecords(members),
 			roles: members.roles.map((record) => record.id),
-			community: members.permissions?.bindings ?? null,
+			community: members.permissions,
 			modality: members.eventPermissions?.bindings ?? null,
-			effective: { role, permissions: [...effectivePermissions(members, [role])].sort() }
+			effective: {
+				role,
+				permissions: [...effectivePermissions(members, [role], group.group_did)].sort()
+			}
 		};
 	},
 
