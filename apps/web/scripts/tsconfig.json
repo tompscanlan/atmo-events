@@ -1,0 +1,15 @@
+{
+	// Type-checks the e2e harness's TypeScript against the app, which the app's own
+	// check leaves out (it covers src only). The worker imports app modules by name,
+	// so a renamed export or a changed signature fails here instead of on a devnet run.
+	"extends": "../tsconfig.json",
+	"compilerOptions": { "noEmit": true },
+	"include": [
+		"../.svelte-kit/ambient.d.ts",
+		"../.svelte-kit/non-ambient.d.ts",
+		"../src/**/*.d.ts",
+		"./groups-e2e.worker.ts",
+		"./groups-e2e.oauth.ts",
+		"./groups-e2e.identity-resolver.ts"
+	]
+}
