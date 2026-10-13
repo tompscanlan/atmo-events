@@ -33,7 +33,8 @@ import { reconcileGroupDeclaration } from '../src/lib/groups/server/declaration-
 import { setGroupRules } from '../src/lib/groups/server/about-writer';
 import { groupSpaceReader, readGroupAbout } from '../src/lib/groups/server/about-read';
 
-import { readGroupVisibility, setAboutSpaceReadPolicy } from '../src/lib/groups/server/spaces';
+import { readGroupVisibility } from '../src/lib/groups/server/spaces';
+import { runUpdateGroup } from '../src/lib/groups/update-group';
 import {
 	rebuildGroup,
 	rebuildGroupCache,
@@ -88,7 +89,7 @@ import {
 	readMembersOnlyEvents,
 	membersOnlyEventForDisplay
 } from '../src/lib/groups/server/calendar-read';
-import { setStandInLogin, standInCalls } from './groups-e2e.oauth';
+import { setStandInLogin, standInCalls, standInWrites } from './groups-e2e.oauth';
 import { runCreateGroup, type CreateGroupData } from '../src/lib/groups/create-group';
 import { scopes } from '../src/lib/atproto/settings';
 
@@ -428,6 +429,12 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 		calls: args.from == null ? [] : standInCalls.slice(Number(args.from))
 	}),
 
+	/** The writes among those calls, each with its collection or read policy. */
+	groupWrites: async (_env, args) => ({
+		total: standInWrites.length,
+		writes: args.from == null ? [] : standInWrites.slice(Number(args.from))
+	}),
+
 	/** The calendar space check a members-only write makes first, run alone on
 	 *  `space` through the app's own reader. Read-only: it never writes, so a
 	 *  space it is pointed at that does not exist still does not exist after.
@@ -476,16 +483,24 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 		return { ...outcome, row: await groupById(env, args.groupId) };
 	},
 
-	/** The settings save's own call, behind MANAGE_GROUP. */
-	setReadPolicy: async (env, args, group) => {
-		await setAboutSpaceReadPolicy({
-			db: env.DB,
-			env,
-			group,
-			callerDid: args.callerDid == null ? null : String(args.callerDid),
-			visibility: chosenVisibility(args)
+	/** The settings form's save, behind MANAGE_GROUP: the visibility chosen and
+	 *  the one the form showed. The name, description and rules are sent back as
+	 *  they stand, and the approval too unless the driver passes one, since a
+	 *  private group must require it. */
+	saveSettings: async (env, args, group) => {
+		const reader = await spaceReader(env, group);
+		const { rules } = await readGroupAbout(reader, group);
+		return runUpdateGroup(env, env.DB, group, String(args.callerDid), {
+			name: group.name,
+			description: group.description ?? undefined,
+			visibility: chosenVisibility(args),
+			shownVisibility: chosenVisibility({ visibility: args.shownVisibility }),
+			requireApproval:
+				args.requireApproval === undefined
+					? Boolean(group.require_approval)
+					: Boolean(args.requireApproval),
+			rules: rules.map((rule) => rule.text).join('\n')
 		});
-		return { visibility: args.visibility };
 	},
 
 	/** The join form's roster act. It is passed no visibility, so it asks the host. */
@@ -790,10 +805,11 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 	},
 
 	/** The only record a stranger can read. The driver passes a visibility, as the
-	 *  settings save does, or `'host'` to use the host's answer, as the repair does. */
+	 *  settings save does, or `'record'` to use the about space's access record,
+	 *  as the repair does. */
 	reconcileDeclaration: async (env, args, group) => {
 		const visibility =
-			args.visibility === 'host'
+			args.visibility === 'record'
 				? await readGroupVisibility(await spaceReader(env, group), group)
 				: chosenVisibility(args);
 		const result = await reconcileGroupDeclaration({

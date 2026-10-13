@@ -4,17 +4,17 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 49 numbered checks (1, 4 to 6, 9 to 24, plus 10b, 13b to 13v, 15b,
- * 18b, 18c, 18d, 18e, 20b and 20c), prints one PASS or FAIL line each, and a
- * clean run ends with `SUMMARY: 49 passed, 0 failed`. Setup steps print as notes
+ * It runs 52 numbered checks (1, 4 to 6, 9 to 24, plus 10b, 13b to 13v, 15b,
+ * 18b, 18c, 18d, 18e and 20b to 20f), prints one PASS or FAIL line each, and a
+ * clean run ends with `SUMMARY: 52 passed, 0 failed`. Setup steps print as notes
  * and are not counted. In order: the app's own create, which mints a new group
  * account for the run, with its seeded roles and member lists (1), events
  * written as the group DID and the edit gate (4-6), a cover image uploaded into
  * the group's repo (9), the profile,
  * rules and access record in the about space (10-12), the roster, the index of
  * the group's three spaces and the authz config as records in the members
- * space, with the calendar space's read policy, access record and empty member
- * list (13-18), the members-only slice the events tab reads from the calendar
+ * space, with the calendar space's read policy, access record and member list
+ * (13-18), the members-only slice the events tab reads from the calendar
  * space for a member, a non-member, an anonymous visitor and an unlinked group
  * (13d-13h), members-only events written by the app: into the calendar space and
  * nowhere else, edited and deleted there, never moved to or from the public
@@ -36,13 +36,15 @@
  * credential until approved, then confirmed at sign-in, the member's own
  * acceptance deleted at leave, and written at a sign-in after a direct add
  * (18b-18d), a member whose PDS serves no spaces
- * (18e), the discovery declaration and
- * visibility at the host (19-20c), the events index (21-22), a rebuild of the
+ * (18e), the discovery declaration (19-20), the group flipped private, public,
+ * private and public again by the settings save, with the PDS never more open
+ * than the access record and each space credential issued exactly where the
+ * caller's roles or a public policy allow (20b-20f), the events index (21-22), a rebuild of the
  * whole group from its DID (23), and, once cleanup is done, that no request
  * left this machine (24).
  *
- * Not covered: a member reading a private group's profile with their own
- * credential. This run holds only the group's credential.
+ * Not covered: a member reading a private group's profile with the credential
+ * the PDS issues them (20d asks for the credential only).
  *
  * The real $lib/groups modules run on workerd with a real D1 binding. Vite
  * bundles scripts/groups-e2e.worker.ts, a thin JSON entry onto those modules,
@@ -827,7 +829,9 @@ async function main() {
 			Object.keys(sizes).length === Object.keys(SEEDED_BUNDLE_SIZES).length &&
 			Object.entries(SEEDED_BUNDLE_SIZES).every(([role, n]) => sizes[role] === n);
 		const ownerLists = await Promise.all(
-			[aboutSpaceUri, membersSpaceUri].map((space) => spaceMemberList(groupToken, space))
+			[aboutSpaceUri, membersSpaceUri, calendarSpaceUri].map((space) =>
+				spaceMemberList(groupToken, space)
+			)
 		);
 		const ownerEntries = ownerLists.map((list) => list.members.find((m) => m.did === ALICE));
 		record(
@@ -839,21 +843,18 @@ async function main() {
 				seededBundles &&
 				aboutSpaceUri?.startsWith(`at://${GROUP_DID}/space/`) &&
 				membersSpaceUri?.startsWith(`at://${GROUP_DID}/space/`) &&
-				ownerEntries[0]?.read === true &&
-				ownerEntries[0]?.write === false &&
-				ownerEntries[1]?.read === true &&
-				ownerEntries[1]?.write === true,
-			"the app's create mints the group with one owner, three pared role bundles, and the owner on both member lists",
+				ownerEntries.every((entry) => entry?.read === true && entry?.write === true),
+			"the app's create mints the group with one owner, three pared role bundles, and the owner on all three spaces' member lists, read and write",
 			`${GROUP_HANDLE} (${GROUP_DID}), recovery key handed back ${minted.hasRecoveryKey}; ` +
 				`roster ${members.length} (${owners.length} owner: ${owners[0]?.did}), ` +
 				Object.entries(sizes)
 					.map(([role, n]) => `${role} ${n}`)
 					.join(' / ') +
-				`; owner on the about list ${JSON.stringify(ownerEntries[0])}, members list ${JSON.stringify(ownerEntries[1])}`
+				`; owner on the about list ${JSON.stringify(ownerEntries[0])}, members list ${JSON.stringify(ownerEntries[1])}, calendar list ${JSON.stringify(ownerEntries[2])}`
 		);
 
 		// The admin, through the roster as the members page adds and promotes: a
-		// membership record and both member lists, then the role.
+		// membership record and the three member lists, then the role.
 		await op('admitMember', { callerDid: ALICE, did: BOB, role: 'member' });
 		await op('promoteMember', { callerDid: ALICE, did: BOB, role: 'admin' });
 		note(`${BOB} admitted and promoted to admin through the roster`);
@@ -1100,8 +1101,9 @@ async function main() {
 		// It holds members-only events, so its read policy is the member list even
 		// for this public group: the about space's policy here would let any signed-in
 		// account read them. The policy is read from the host, not taken from what
-		// provisioning sent. Its member list stays empty, since the app reads the
-		// space as the group.
+		// provisioning sent. Its member list holds the same members as the members
+		// space's, read and write, since every role's access grants read there too.
+		// (Spec: FR-214.)
 		const calendarPolicy = await spaceReadPolicy(groupToken, calendarSpaceUri);
 		const calendarAccess = await spaceRecord(
 			groupToken,
@@ -1110,6 +1112,12 @@ async function main() {
 			'self'
 		);
 		const calendarMembers = await spaceMemberList(groupToken, calendarSpaceUri);
+		const rosterList = await spaceMemberList(groupToken, membersSpaceUri);
+		const didsOf = (list) =>
+			list.members
+				.map((m) => m.did)
+				.sort()
+				.join(',');
 		record(
 			CREATE_VISIBILITY === 'public' &&
 				calendarPolicy.status === 200 &&
@@ -1118,14 +1126,16 @@ async function main() {
 				calendarAccess.value?.public === false &&
 				grantsEveryRoleRead(calendarAccess.value, calendarSpaceUri) &&
 				calendarMembers.status === 200 &&
-				calendarMembers.members.length === 0,
+				calendarMembers.members.length > 0 &&
+				calendarMembers.members.every((m) => m.read === true && m.write === true) &&
+				didsOf(calendarMembers) === didsOf(rosterList),
 			'the calendar space is member-list read for a public group, holds access/self not ' +
-				'public, and lists no members',
+				"public, and lists the members space's members, read and write",
 			`${calendarSpaceUri}: getSpace ${calendarPolicy.status} read policy ` +
 				`${calendarPolicy.readPolicy ?? calendarPolicy.error}; access/self ` +
 				`${calendarAccess.status} public ${calendarAccess.value?.public} grants ` +
 				`${JSON.stringify(calendarAccess.value?.grants)}; listMembers ${calendarMembers.status}: ` +
-				`${calendarMembers.members.length} member(s)` +
+				`${calendarMembers.members.length} member(s), the members space ${rosterList.members.length}` +
 				`${calendarMembers.error ? ` (${calendarMembers.error})` : ''}`
 		);
 
@@ -1863,7 +1873,9 @@ async function main() {
 		const carolRecords = await op('recordedRoster');
 		const carolRows = await op('listMembers');
 		const carolLists = await Promise.all(
-			[membersSpaceUri, aboutSpaceUri].map((space) => spaceMemberList(groupToken, space))
+			[membersSpaceUri, aboutSpaceUri, calendarSpaceUri].map((space) =>
+				spaceMemberList(groupToken, space)
+			)
 		);
 		const carolLeft =
 			!carolRecords.memberships.some((m) => m.subject === CAROL) &&
@@ -2348,38 +2360,104 @@ async function main() {
 			`private: ${withdrawn.error ?? withdrawn.status}; public again: ${redeclared.status}`
 		);
 
-		// 20b. private at the host ----------------------------------------------
-		// Here the group is made private at the host, through the settings save's
-		// call, and the declaration follows the host's answer. The second reconcile
-		// re-sends the withdrawal, which must be a no-op at the PDS.
-		await op('setReadPolicy', { callerDid: ALICE, visibility: 'private' });
-		const privatePolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
-		const aligned = await op('reconcileDeclaration', {
-			callerDid: ALICE,
-			visibility: 'host'
+		// 20b-20f. the access record is the policy, and the host follows it --------
+		// SC-208: the group is flipped private, public, private and public again
+		// through the settings save, the way an owner does it. After each flip the
+		// about space's read policy at the PDS says what its access record says,
+		// the declaration exists only while that is public, and a space credential
+		// is issued exactly where the caller's roles, or a public policy, allow:
+		// asked for first-hand from the PDS by the member, and by the same account
+		// as a stranger once they have left. Each save's writes are read in order
+		// from the group's session, so "the host is never more open than the
+		// record" is seen live, not only in the unit tests: a narrowing closes the
+		// host before the record says private, a widening has the record say public
+		// before the host opens. (Spec: FR-214.)
+		const spaceKinds = () => ({
+			about: aboutSpaceUri,
+			members: membersSpaceUri,
+			calendar: calendarSpaceUri
 		});
-		const withdrawnAtHost = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
-		const realigned = await op('reconcileDeclaration', {
-			callerDid: ALICE,
-			visibility: 'host'
-		});
-		const stillWithdrawn = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
+		/** The about space as the PDS holds it, and the declaration as a stranger sees it. */
+		const visibilityNow = async () => {
+			const policy = await spaceReadPolicy(groupToken, aboutSpaceUri);
+			const access = await spaceRecord(groupToken, aboutSpaceUri, ACCESS_COLLECTION, 'self');
+			const declaration = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
+			const others = await Promise.all(
+				[membersSpaceUri, calendarSpaceUri].map((space) => spaceReadPolicy(groupToken, space))
+			);
+			return {
+				readPolicy: policy.readPolicy ?? policy.error ?? policy.status,
+				accessPublic: access.value?.public,
+				declared: declaration.status === 200,
+				othersClosed: others.every((o) => o.readPolicy === READ_POLICY.private)
+			};
+		};
+		/** Bob's own space credential for each space: `issued`, or why not. */
+		const bobCredentials = async () => {
+			const out = {};
+			for (const [kind, space] of Object.entries(spaceKinds())) {
+				const asked = await spaceCredentialRequest(bobToken, space);
+				out[kind] = asked.issued ? 'issued' : `${asked.status} ${asked.error ?? asked.stage}`;
+			}
+			return out;
+		};
+		/** One settings save, and the writes it sent, labelled by what they wrote. */
+		const saveVisibility = async (visibility, shownVisibility, requireApproval) => {
+			const { total: from } = await must('groupWrites', {});
+			const result = await op('saveSettings', {
+				callerDid: ALICE,
+				visibility,
+				shownVisibility,
+				...(requireApproval === undefined ? {} : { requireApproval })
+			});
+			const { writes } = await must('groupWrites', { from });
+			return { result, writes };
+		};
+		/** Where each labelled write falls in a save's sequence, -1 when absent. */
+		const at = (writes, label) => writes.indexOf(label);
+		const ACCESS_WRITE = `space.putRecord ${ACCESS_COLLECTION}`;
+		const OPEN = 'simplespace.updateSpace publicPolicy';
+		const CLOSE = 'simplespace.updateSpace memberListPolicy';
+		const DECLARE = `repo.putRecord ${DECLARATION_COLLECTION}`;
+		const WITHDRAW = `repo.deleteRecord ${DECLARATION_COLLECTION}`;
+		const ISSUED_ALL = { about: 'issued', members: 'issued', calendar: 'issued' };
+		const sameCredentials = (got, want) =>
+			Object.keys(want).every((kind) =>
+				want[kind] === 'issued' ? got[kind] === 'issued' : got[kind] !== 'issued'
+			);
+		const describeFlip = (state, creds, writes) =>
+			`getSpace ${state.readPolicy}; access public ${state.accessPublic}; declared ${state.declared}; ` +
+			`members and calendar closed ${state.othersClosed}; ${BOB} credentials ` +
+			`${Object.entries(creds)
+				.map(([k, v]) => `${k} ${v}`)
+				.join(', ')}; writes ${writes.join(' > ') || '(none)'}`;
+
+		// 20b. a stranger is shut out once the group is private --------------------
+		// Bob left at 18d, so here he is a stranger with a session of his own.
+		const toPrivate = await saveVisibility('private', 'public', true);
+		const privateState = await visibilityNow();
+		const strangerCreds = await bobCredentials();
 		record(
-			privatePolicy.readPolicy === READ_POLICY.private &&
-				aligned.visibility === 'private' &&
-				realigned.visibility === 'private' &&
-				notFound(withdrawnAtHost) &&
-				notFound(stillWithdrawn),
-			'a group made private at its host reads back member-list, its declaration is withdrawn, and withdrawing it again is a no-op',
-			`getSpace ${privatePolicy.readPolicy ?? privatePolicy.error ?? privatePolicy.status}; ` +
-				`declaration ${withdrawnAtHost.error ?? withdrawnAtHost.status}, then ` +
-				`${stillWithdrawn.error ?? stillWithdrawn.status} after a repeated withdrawal`
+			toPrivate.result.ok === true &&
+				privateState.readPolicy === READ_POLICY.private &&
+				privateState.accessPublic === false &&
+				!privateState.declared &&
+				privateState.othersClosed &&
+				at(toPrivate.writes, CLOSE) >= 0 &&
+				at(toPrivate.writes, CLOSE) < at(toPrivate.writes, WITHDRAW) &&
+				at(toPrivate.writes, WITHDRAW) < at(toPrivate.writes, ACCESS_WRITE) &&
+				at(toPrivate.writes, OPEN) === -1 &&
+				sameCredentials(strangerCreds, {
+					about: 'refused',
+					members: 'refused',
+					calendar: 'refused'
+				}),
+			'saved private, the PDS closes the about space before the declaration goes and before the access record says private, and a stranger gets no credential for any space',
+			describeFlip(privateState, strangerCreds, toPrivate.writes)
 		);
 
 		// 20c. and its door is shut to strangers ---------------------------------
-		// The join is passed no visibility, so it asks the host. Then the host goes
-		// back to public and the app must read it so. Every read above answered
-		// private, so this shows the app tells the two apart.
+		// The join is passed no visibility, so it reads the access record.
 		const strangerJoin = await tryOp('joinGroup', {
 			callerDid: MALLORY,
 			message: 'let me in'
@@ -2387,31 +2465,107 @@ async function main() {
 		const requestsNow = await op('listJoinRequests', { status: 'all' });
 		const ownerGate = await op('gate', { did: ALICE });
 		const strangerGate = await op('gate', { did: MALLORY });
-		const privateNow = await spaceReadPolicy(groupToken, aboutSpaceUri);
-		await op('setReadPolicy', {
-			callerDid: ALICE,
-			visibility: CREATE_VISIBILITY
-		});
-		const backPolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
-		const backAligned = await op('reconcileDeclaration', {
-			callerDid: ALICE,
-			visibility: 'host'
-		});
+		const repeated = await op('reconcileDeclaration', { callerDid: ALICE, visibility: 'record' });
+		const stillWithdrawn = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
 		record(
 			!strangerJoin.ok &&
 				strangerJoin.error.reason === 'invite-only' &&
 				!requestsNow.some((request) => request.did === MALLORY) &&
-				privateNow.readPolicy === READ_POLICY.private &&
 				ownerGate.canSee === true &&
 				strangerGate.canSee === false &&
-				backPolicy.readPolicy === READ_POLICY.public &&
-				backAligned.visibility === 'public',
-			"a private group refuses a stranger's join and records no request; its gate admits the owner only; set back to public, the app reads it as public",
+				repeated.visibility === 'private' &&
+				notFound(stillWithdrawn),
+			"a private group refuses a stranger's join and records no request, its gate admits the owner only, and withdrawing its declaration again by the record is a no-op",
 			`${MALLORY} join: ${strangerJoin.ok ? `ACCEPTED (${strangerJoin.value.outcome})` : strangerJoin.error.reason}; ` +
 				`requests from them ${requestsNow.filter((request) => request.did === MALLORY).length}; ` +
-				`gate: owner ${ownerGate.canSee}, stranger ${strangerGate.canSee} (host ${privateNow.readPolicy}); ` +
-				`back: getSpace ${backPolicy.readPolicy ?? backPolicy.error ?? backPolicy.status}, app reads ${backAligned.visibility}`
+				`gate: owner ${ownerGate.canSee}, stranger ${strangerGate.canSee}; ` +
+				`by the record: ${repeated.visibility}, declaration ${stillWithdrawn.error ?? stillWithdrawn.status}`
 		);
+
+		// 20d. a member of a private group gets a credential for every space -------
+		// Every role reads every space, so admitting Bob lists him on all three.
+		await op('admitMember', { callerDid: ALICE, did: BOB, role: 'member' });
+		const memberLists = await Promise.all(
+			Object.values(spaceKinds()).map((space) => spaceMemberList(groupToken, space))
+		);
+		const memberPrivateCreds = await bobCredentials();
+		record(
+			memberLists.every((list) => {
+				const entry = list.members.find((m) => m.did === BOB);
+				return list.status === 200 && entry?.read === true && entry?.write === true;
+			}) && sameCredentials(memberPrivateCreds, ISSUED_ALL),
+			"a member admitted to a private group is on all three spaces' lists, read and write, and the PDS issues them a credential for each",
+			`lists ${memberLists
+				.map((list) => JSON.stringify(list.members.find((m) => m.did === BOB) ?? null))
+				.join(', ')}; credentials ${JSON.stringify(memberPrivateCreds)}`
+		);
+
+		// 20e. private to public to private, with the member on board ---------------
+		const toPublic = await saveVisibility('public', 'private');
+		const publicState = await visibilityNow();
+		const memberPublicCreds = await bobCredentials();
+		const backToPrivate = await saveVisibility('private', 'public', true);
+		const privateAgain = await visibilityNow();
+		const memberPrivateAgain = await bobCredentials();
+		record(
+			toPublic.result.ok === true &&
+				publicState.readPolicy === READ_POLICY.public &&
+				publicState.accessPublic === true &&
+				publicState.declared &&
+				publicState.othersClosed &&
+				at(toPublic.writes, ACCESS_WRITE) >= 0 &&
+				at(toPublic.writes, ACCESS_WRITE) < at(toPublic.writes, OPEN) &&
+				at(toPublic.writes, OPEN) < at(toPublic.writes, DECLARE) &&
+				at(toPublic.writes, CLOSE) === -1 &&
+				sameCredentials(memberPublicCreds, ISSUED_ALL) &&
+				backToPrivate.result.ok === true &&
+				privateAgain.readPolicy === READ_POLICY.private &&
+				privateAgain.accessPublic === false &&
+				!privateAgain.declared &&
+				privateAgain.othersClosed &&
+				at(backToPrivate.writes, CLOSE) >= 0 &&
+				at(backToPrivate.writes, CLOSE) < at(backToPrivate.writes, WITHDRAW) &&
+				at(backToPrivate.writes, WITHDRAW) < at(backToPrivate.writes, ACCESS_WRITE) &&
+				sameCredentials(memberPrivateAgain, ISSUED_ALL),
+			'saved public, the access record says public before the PDS opens the about space and before the declaration; saved private again, the PDS closes first; the member holds a credential for every space throughout',
+			`public: ${describeFlip(publicState, memberPublicCreds, toPublic.writes)} || ` +
+				`private: ${describeFlip(privateAgain, memberPrivateAgain, backToPrivate.writes)}`
+		);
+
+		// 20f. back to public, as created, with the stranger let in only up front ---
+		// Bob leaves, then the group goes back to its create-time visibility and
+		// approval, so checks 21-23 see what 18d left. A stranger to a public group
+		// gets a credential for its about space and for nothing else.
+		await op('leaveGroup', { callerDid: BOB, asMember: true });
+		const leftLists = await Promise.all(
+			Object.values(spaceKinds()).map((space) => spaceMemberList(groupToken, space))
+		);
+		const leftCreds = await bobCredentials();
+		const backAsCreated = await saveVisibility(
+			CREATE_VISIBILITY,
+			'private',
+			CREATE_DATA.requireApproval
+		);
+		const restoredState = await visibilityNow();
+		const strangerPublicCreds = await bobCredentials();
+		record(
+			leftLists.every((list) => list.status === 200 && !list.members.some((m) => m.did === BOB)) &&
+				sameCredentials(leftCreds, { about: 'refused', members: 'refused', calendar: 'refused' }) &&
+				backAsCreated.result.ok === true &&
+				restoredState.readPolicy === READ_POLICY.public &&
+				restoredState.accessPublic === true &&
+				restoredState.declared &&
+				sameCredentials(strangerPublicCreds, {
+					about: 'issued',
+					members: 'refused',
+					calendar: 'refused'
+				}),
+			'a member who leaves a private group is off every list and refused every credential; public again, a stranger gets a credential for the about space only',
+			`after leaving: on a list ${leftLists.some((list) => list.members.some((m) => m.did === BOB))}, ` +
+				`credentials ${JSON.stringify(leftCreds)}; public again: ` +
+				describeFlip(restoredState, strangerPublicCreds, backAsCreated.writes)
+		);
+		note(`${BOB} left again; the group is ${CREATE_VISIBILITY} again, as created`);
 
 		// 21. the events tab's list comes from the index, not the PDS -------------
 		// The tab reads the app's index, like any other account's events, and not the
@@ -2459,7 +2613,7 @@ async function main() {
 
 		// 23. the whole group, rebuilt from no row ---------------------------------
 		// Last, because it replaces the row the checks above act through. Nothing is
-		// restored for visibility, which stays at the host.
+		// restored for visibility, which stays in the about space's access record.
 		const profileNow = await op('readGroupAbout');
 		const rosterNow = await op('recordedRoster');
 		const beforeDrop = await must('groupSnapshot', { groupDid: GROUP_DID });

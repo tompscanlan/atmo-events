@@ -37,6 +37,26 @@ let login: Promise<Login> | null = null;
  *  login is not in it: it is the stand-in's own, and goes out on `fetch`. */
 export const standInCalls: string[] = [];
 
+/** Each write among `standInCalls`, as `<method> <collection or read policy>`:
+ *  what the path alone does not say. Kept apart, so the paths stay as they were
+ *  sent. (Spec: SC-208, the order of a visibility change.) */
+export const standInWrites: string[] = [];
+
+function writeLabel(pathname: string, body: unknown): string | null {
+	const nsid = pathname.split('?')[0].replace(/^\/xrpc\//, '');
+	if (!/^com\.atproto\.(repo|space|simplespace)\./.test(nsid) || typeof body !== 'string')
+		return null;
+	let parsed: Record<string, unknown>;
+	try {
+		parsed = JSON.parse(body) as Record<string, unknown>;
+	} catch {
+		return null;
+	}
+	const policy = (parsed.readPolicy as { $type?: string } | undefined)?.$type?.split('#')[1];
+	const what = typeof parsed.collection === 'string' ? parsed.collection : policy;
+	return what ? `${nsid.replace('com.atproto.', '')} ${what}` : null;
+}
+
 async function logIn(service: string, identifier: string, password: string): Promise<Login> {
 	const res = await fetch(new URL('/xrpc/com.atproto.server.createSession', service), {
 		method: 'POST',
@@ -69,6 +89,8 @@ export function createOAuthClientWithSessions(env: StandInEnv | undefined) {
 				did,
 				handle: (pathname: string, init?: RequestInit) => {
 					standInCalls.push(pathname);
+					const written = writeLabel(pathname, init?.body);
+					if (written) standInWrites.push(written);
 					const headers = new Headers(init?.headers);
 					headers.set('authorization', `Bearer ${accessJwt}`);
 					return fetch(new URL(pathname, service), { ...init, headers });
