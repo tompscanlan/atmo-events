@@ -7,15 +7,23 @@
 // for the host's reading of that record. Routes reach the host only
 // through `groupHost`, so a real host is a second adapter there, not a rewrite.
 //
-// Only the methods atmo calls are here. Writing a requester's membership
-// approves their request, so there is no admit method: admit, eject and role
-// changes are membership writes over the group's session (./roster.ts).
+// Only the methods atmo calls are here, plus the roster acts the standard has
+// no method for: approving a request, adding, ejecting and changing a role are
+// membership writes over the group's session, and a write of the requester's
+// membership is what approves their request. They sit on the binding anyway, so
+// every roster act reaches the host one way and a real host's adapter takes all
+// of them. (Spec: FR-515.)
+import type { AssignableRole } from '../permissions';
 import type { GroupRow, JoinRequestRow } from '../types';
 
 import { listJoinRequests, type JoinOutcome } from './db/roster';
 import {
+	admitFromRequest,
+	admitMember,
+	ejectMember,
 	joinGroup,
 	leaveGroup,
+	promoteMember,
 	rejectJoinRequest,
 	withdrawJoinRequest,
 	type RosterContext
@@ -50,6 +58,19 @@ export interface GroupHost {
 	cancelJoinRequest(caller: HostCaller, requestId: string): Promise<void>;
 	/** Member service auth. Deletes the caller's membership record. */
 	leaveGroup(caller: HostCaller): Promise<void>;
+	/** Group-DID session. Writes the requester's membership, which approves the
+	 *  request. No method of the standard's. */
+	approveJoinRequest(
+		caller: HostCaller,
+		requestId: string,
+		role: AssignableRole
+	): Promise<{ did: string }>;
+	/** Group-DID session. Writes a membership with no request behind it. */
+	addMember(caller: HostCaller, did: string, role: AssignableRole): Promise<void>;
+	/** Group-DID session. Deletes the member's membership record. */
+	ejectMember(caller: HostCaller, did: string): Promise<void>;
+	/** Group-DID session. Rewrites the member's membership with the role. */
+	setMemberRole(caller: HostCaller, did: string, role: AssignableRole): Promise<void>;
 }
 
 /** The group's host: today the emulated one, and where a real host's adapter goes. */
@@ -69,6 +90,10 @@ export function groupHost(binding: HostBinding): GroupHost {
 		denyJoinRequest: (caller, requestId) => rejectJoinRequest(act(caller), requestId),
 		requestJoin: (caller, message) => joinGroup(act(caller), message),
 		cancelJoinRequest: (caller, requestId) => withdrawJoinRequest(act(caller), requestId),
-		leaveGroup: (caller) => leaveGroup(act(caller))
+		leaveGroup: (caller) => leaveGroup(act(caller)),
+		approveJoinRequest: (caller, requestId, role) => admitFromRequest(act(caller), requestId, role),
+		addMember: (caller, did, role) => admitMember(act(caller), did, role),
+		ejectMember: (caller, did) => ejectMember(act(caller), did),
+		setMemberRole: (caller, did, role) => promoteMember(act(caller), did, role)
 	};
 }

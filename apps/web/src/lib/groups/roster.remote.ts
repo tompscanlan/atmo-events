@@ -1,6 +1,7 @@
 // Joining and leaving a group, and an admin's changes to its roster, as remote
-// forms. ./server/roster.ts is shared with the e2e harness, so both run the same
-// sequence.
+// forms. Every act goes through the group's host (./server/host.ts); the
+// emulated one runs ./server/roster.ts, which the e2e harness shares, so both
+// run the same sequence.
 import { command, form, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
 import { can } from './permissions';
@@ -11,7 +12,6 @@ import { callerMember, groupRequestContext, reauthorizeUrl } from './remote-cont
 import { searchPeopleByHandle } from './server/people-search';
 import { groupActorToDid } from './server/route-context';
 import { groupHost } from './server/host';
-import { admitFromRequest, admitMember, ejectMember, promoteMember } from './server/roster';
 import type { JoinOutcome } from './server/db/roster';
 
 export const joinGroupForm = form(
@@ -69,7 +69,7 @@ export const approveJoinRequestForm = form(
 			return notAllowed(ctx.membership, 'ADMIT_MEMBERS');
 		}
 		try {
-			await admitFromRequest(ctx, data.requestId, data.role ?? 'member');
+			await groupHost(ctx).approveJoinRequest(ctx, data.requestId, data.role ?? 'member');
 			return { ok: true };
 		} catch (e) {
 			return rosterFailure(e);
@@ -120,7 +120,7 @@ export const addMemberForm = form(
 			did = resolved;
 		}
 		try {
-			await admitMember(ctx, did, data.role ?? 'member');
+			await groupHost(ctx).addMember(ctx, did, data.role ?? 'member');
 			return { ok: true };
 		} catch (e) {
 			return rosterFailure(e);
@@ -145,7 +145,7 @@ export const removeMemberForm = form(
 			return notAllowed(ctx.membership, 'EJECT_MEMBERS');
 		}
 		try {
-			await ejectMember(ctx, data.did);
+			await groupHost(ctx).ejectMember(ctx, data.did);
 			return { ok: true };
 		} catch (e) {
 			return rosterFailure(e);
@@ -161,7 +161,7 @@ export const changeMemberRoleForm = form(
 			return notAllowed(ctx.membership, 'ASSIGN_ROLES');
 		}
 		try {
-			await promoteMember(ctx, data.did, data.role);
+			await groupHost(ctx).setMemberRole(ctx, data.did, data.role);
 			return { ok: true };
 		} catch (e) {
 			return rosterFailure(e);
