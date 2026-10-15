@@ -392,9 +392,16 @@ export async function groupBlobUploader(
 	group: GroupRow,
 	personDid: string
 ): Promise<GroupBlobUploader> {
-	const cred = await requireGroupCredential(env, group.group_did, personDid);
+	return credentialBlobUploader(
+		await requireGroupCredential(env, group.group_did, personDid),
+		group.group_did
+	);
+}
+
+/** Uploads into the group's repo through the session `cred` holds. */
+export function credentialBlobUploader(cred: GroupCredential, groupDid: string): GroupBlobUploader {
 	return async (blob) => {
-		const { handle } = await groupClient(cred, group.group_did);
+		const { handle } = await groupClient(cred, groupDid);
 		const nsid = 'com.atproto.repo.uploadBlob';
 		const answer = await xrpc(handle, nsid, { blob });
 		if (!answer.ok) throw xrpcError(nsid, answer);
