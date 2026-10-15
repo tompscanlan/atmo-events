@@ -15,14 +15,15 @@
 		roles
 	}: {
 		groupDid: string;
-		request: Pick<JoinRequestRow, 'id' | 'did' | 'message'>;
+		request: Pick<JoinRequestRow, 'did' | 'message'>;
 		person?: Person;
 		roles?: readonly AssignableRole[];
 	} = $props();
 
 	// One form instance per row: a remote form object attaches to one `<form>` only.
-	let approveForm = $derived(approveJoinRequestForm.for(request.id));
-	let rejectForm = $derived(rejectJoinRequestForm.for(request.id));
+	// A person has at most one pending request, so their DID keys the row.
+	let approveForm = $derived(approveJoinRequestForm.for(request.did));
+	let rejectForm = $derived(rejectJoinRequestForm.for(request.did));
 	let requestError = $derived(
 		groupFormError(approveForm.result) ?? groupFormError(rejectForm.result)
 	);
@@ -40,7 +41,7 @@
 	<div class="flex shrink-0 items-center gap-2">
 		<form {...resetOnSuccess(approveForm)} class="flex items-center gap-1">
 			<input type="hidden" name="groupDid" value={groupDid} />
-			<input type="hidden" name="requestId" value={request.id} />
+			<input type="hidden" name="member" value={request.did} />
 			{#if roles}
 				<select
 					name="role"
@@ -57,7 +58,7 @@
 		</form>
 		<form {...resetOnSuccess(rejectForm)}>
 			<input type="hidden" name="groupDid" value={groupDid} />
-			<input type="hidden" name="requestId" value={request.id} />
+			<input type="hidden" name="member" value={request.did} />
 			<Button type="submit" size="sm" variant="ghost">Reject</Button>
 		</form>
 	</div>

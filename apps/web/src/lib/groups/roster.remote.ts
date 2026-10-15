@@ -7,7 +7,7 @@ import * as v from 'valibot';
 import { can } from './permissions';
 import type { GroupFormResult } from './form-result';
 import { notAllowed, rosterFailure } from './form-error';
-import { assignableRoleField, didField, idField, memberActorField } from './form-fields';
+import { assignableRoleField, didField, memberActorField } from './form-fields';
 import { callerMember, groupRequestContext, reauthorizeUrl } from './remote-context';
 import { searchPeopleByHandle } from './server/people-search';
 import { groupActorToDid } from './server/route-context';
@@ -46,7 +46,7 @@ export const leaveGroupForm = form(
 			// A pending applicant has no record and no list entry: only the
 			// request closes.
 			if (ctx.membership.pendingRequestId) {
-				await host.cancelJoinRequest(ctx, ctx.membership.pendingRequestId);
+				await host.cancelJoinRequest(ctx);
 				return { ok: true, outcome: 'withdrawn' };
 			}
 			await host.leaveGroup(ctx);
@@ -60,7 +60,7 @@ export const leaveGroupForm = form(
 export const approveJoinRequestForm = form(
 	v.object({
 		groupDid: didField,
-		requestId: idField,
+		member: didField,
 		role: v.optional(assignableRoleField)
 	}),
 	async (data): Promise<GroupFormResult> => {
@@ -69,7 +69,7 @@ export const approveJoinRequestForm = form(
 			return notAllowed(ctx.membership, 'ADMIT_MEMBERS');
 		}
 		try {
-			await groupHost(ctx).approveJoinRequest(ctx, data.requestId, data.role ?? 'member');
+			await groupHost(ctx).approveJoinRequest(ctx, data.member, data.role ?? 'member');
 			return { ok: true };
 		} catch (e) {
 			return rosterFailure(e);
@@ -78,7 +78,7 @@ export const approveJoinRequestForm = form(
 );
 
 export const rejectJoinRequestForm = form(
-	v.object({ groupDid: didField, requestId: idField }),
+	v.object({ groupDid: didField, member: didField }),
 	async (data): Promise<GroupFormResult> => {
 		const ctx = await groupRequestContext(data.groupDid);
 		if (!can(ctx.membership.permissions, 'ADMIT_MEMBERS')) {
@@ -87,7 +87,7 @@ export const rejectJoinRequestForm = form(
 		try {
 			// A rejected request never granted anything, so there is no record
 			// or list entry, only the request itself.
-			await groupHost(ctx).denyJoinRequest(ctx, data.requestId);
+			await groupHost(ctx).denyJoinRequest(ctx, data.member);
 			return { ok: true };
 		} catch (e) {
 			return rosterFailure(e);

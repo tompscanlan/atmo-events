@@ -2194,9 +2194,9 @@ async function main() {
 		const credentialAtRequest = await spaceCredentialRequest(bobToken, membersSpaceUri);
 		const pendingAgain = await op('listJoinRequests');
 		const bobsRequest = pendingAgain.find((request) => request.did === BOB);
-		await op('admitFromRequest', {
+		await op('approveJoinRequest', {
 			callerDid: ALICE,
-			requestId: bobsRequest?.id,
+			member: BOB,
 			role: 'member'
 		});
 		const listApproved = await spaceMemberList(groupToken, membersSpaceUri);
@@ -2207,6 +2207,7 @@ async function main() {
 		const bobConfirmed = (await op('confirmedRoster')).roster.find((entry) => entry.did === BOB);
 		record(
 			asked.outcome === 'pending' &&
+				bobsRequest !== undefined &&
 				notFound(atRequest) &&
 				listAtRequest.status === 200 &&
 				!listAtRequest.members.some((m) => m.did === BOB) &&
@@ -2221,7 +2222,8 @@ async function main() {
 				afterApprovalSignIn.status === 200 &&
 				bobConfirmed?.confirmed === true,
 			'a join request writes nothing and is refused a members space credential; approval lists them read and write and the credential is issued; their sign-in confirms them',
-			`request ${asked.outcome}; acceptance at request ${atRequest.error ?? atRequest.status}; ` +
+			`request ${asked.outcome}, listed by the host ${bobsRequest !== undefined}; ` +
+				`acceptance at request ${atRequest.error ?? atRequest.status}; ` +
 				`on the members list at request ${listAtRequest.members.some((m) => m.did === BOB)}; ` +
 				`credential at request ${JSON.stringify(credentialAtRequest)}; approved entry ` +
 				`${JSON.stringify(listApproved.members.find((m) => m.did === BOB) ?? null)}, credential ` +
@@ -2292,9 +2294,9 @@ async function main() {
 			message: null
 		});
 		const carolsRequest = (await op('listJoinRequests')).find((request) => request.did === CAROL);
-		await op('admitFromRequest', {
+		await op('approveJoinRequest', {
 			callerDid: ALICE,
-			requestId: carolsRequest?.id,
+			member: CAROL,
 			role: 'member'
 		});
 		await op('signInCallback', { did: CAROL });
@@ -2306,13 +2308,15 @@ async function main() {
 		record(
 			refusesSpaceRead(carolRead) &&
 				carolAsked.outcome === 'pending' &&
+				carolsRequest !== undefined &&
 				carolEntry?.confirmed === false &&
 				carolGate.onRoster === true &&
 				carolGate.canSee === true &&
 				carolCalls.length === 0,
 			'a member whose PDS serves no spaces is approved, shows as unconfirmed, can read the group, and signs in with nothing sent from their session',
 			`their PDS ${carolRead.host} answers the group's space read ${carolRead.status} ` +
-				`${carolRead.error}; request ${carolAsked.outcome}; confirmed ` +
+				`${carolRead.error}; request ${carolAsked.outcome}, listed by the host ` +
+				`${carolsRequest !== undefined}; confirmed ` +
 				`${carolEntry ? carolEntry.confirmed : 'not on the roster'}; on the roster ` +
 				`${carolGate.onRoster}, can see ${carolGate.canSee}; sent from their session ` +
 				`${carolCalls.length > 0 ? carolCalls.join(', ') : 'nothing'}`

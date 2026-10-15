@@ -59,7 +59,7 @@ import {
 	changeMemberRole,
 	decideJoinRequest,
 	getMemberRow,
-	pendingRequestDid,
+	pendingRequestIdOf,
 	removeMember,
 	requestJoin,
 	type JoinOutcome
@@ -332,21 +332,22 @@ export async function leaveGroup(given: RosterContext): Promise<void> {
 	await revoke(ctx, ctx.callerDid, 'leave');
 }
 
-/** Approve a pending request. A DID already on the roster is refused before
- *  any record is written, so an approval never publishes a role the row lacks. */
+/** Approve a member's pending request. A DID already on the roster is refused
+ *  before any record is written, so an approval never publishes a role the row
+ *  lacks. */
 export async function admitFromRequest(
 	given: RosterContext,
-	requestId: string,
+	member: string,
 	role: AssignableRole
 ): Promise<{ did: string }> {
 	const ctx = await prepared(given);
 	// Before the row moves, so a refusal changes nothing. A caller who may admit
-	// no one is refused before learning whether the request exists. The request
-	// names who would be admitted, and the gate checks the role they would get.
+	// no one is refused before learning whether the request exists. The gate
+	// checks the role the requester would get.
 	await requireGroupPermission(ctx, 'ADMIT_MEMBERS');
-	const requester = await pendingRequestDid(ctx.db, ctx.group.id, requestId);
-	if (!requester) throw new GroupRuleError('not-found', 'No such pending join request');
-	await requireMembershipWrite(ctx, requester, [role]);
+	const requestId = await pendingRequestIdOf(ctx.db, ctx.group.id, member);
+	if (!requestId) throw new GroupRuleError('not-found', 'No such pending join request');
+	await requireMembershipWrite(ctx, member, [role]);
 	const admitted = await approveJoinRequest(ctx.db, ctx.group.id, requestId, ctx.callerDid, role);
 	const createdAt = await step('record', admitted.did, () => joinedAt(ctx, admitted.did));
 	await step('record', admitted.did, () =>
@@ -380,22 +381,21 @@ export async function admitMember(
 	await listed(ctx, did, [role]);
 }
 
-/** Withdraw the caller's own pending request. A request wrote nothing at the
- *  host, so only its row closes. */
-export async function withdrawJoinRequest(ctx: RosterContext, requestId: string): Promise<void> {
-	const did = await pendingRequestDid(ctx.db, ctx.group.id, requestId);
-	if (did !== ctx.callerDid) {
-		throw new GroupRuleError('not-found', 'No such pending join request');
-	}
+/** Withdraw the caller's own pending request, the only one they can name. A
+ *  request wrote nothing at the host, so only its row closes. */
+export async function withdrawJoinRequest(ctx: RosterContext): Promise<void> {
+	const requestId = await pendingRequestIdOf(ctx.db, ctx.group.id, ctx.callerDid);
+	if (!requestId) throw new GroupRuleError('not-found', 'No such pending join request');
 	await decideJoinRequest(ctx.db, ctx.group.id, requestId, ctx.callerDid, 'withdrawn');
 }
 
-/** Reject a pending request, behind the same permission as approving one. */
-export async function rejectJoinRequest(given: RosterContext, requestId: string): Promise<void> {
+/** Reject a member's pending request, behind the same permission as approving
+ *  one. */
+export async function rejectJoinRequest(given: RosterContext, member: string): Promise<void> {
 	const ctx = await prepared(given);
 	await requireGroupPermission(ctx, 'ADMIT_MEMBERS');
-	const did = await pendingRequestDid(ctx.db, ctx.group.id, requestId);
-	if (!did) throw new GroupRuleError('not-found', 'No such pending join request');
+	const requestId = await pendingRequestIdOf(ctx.db, ctx.group.id, member);
+	if (!requestId) throw new GroupRuleError('not-found', 'No such pending join request');
 	await decideJoinRequest(ctx.db, ctx.group.id, requestId, ctx.callerDid, 'rejected');
 }
 

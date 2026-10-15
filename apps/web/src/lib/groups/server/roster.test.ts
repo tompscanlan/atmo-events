@@ -224,16 +224,6 @@ async function requestStatus(did: string): Promise<string | null> {
 	return row?.status ?? null;
 }
 
-/** The id of `did`'s pending join request. */
-async function pendingId(did: string): Promise<string> {
-	const row = await harness.db
-		.prepare(`SELECT id FROM join_requests WHERE group_id = ? AND did = ? AND status = 'pending'`)
-		.bind(group.id, did)
-		.first<{ id: string }>();
-	expect(row).not.toBeNull();
-	return row!.id;
-}
-
 /** Makes the group private the way a settings save narrows it: the about
  *  space's read policy at the host first, then its access record, which is
  *  where the visibility lives. The log is cleared, so a case asserts on its own
@@ -595,9 +585,9 @@ describe('an admission for a DID already on the roster', () => {
 	}
 
 	it('approving it is refused, and the row, the record and the list stay as they were', async () => {
-		const request = await staleRequest(MEMBER);
+		await staleRequest(MEMBER);
 
-		const error = await admitFromRequest(ctx(ADMIN), request, 'admin').catch((e: unknown) => e);
+		const error = await admitFromRequest(ctx(ADMIN), MEMBER, 'admin').catch((e: unknown) => e);
 
 		expect(error).toMatchObject({ name: 'GroupRuleError', reason: 'constraint' });
 		expect(order).toEqual([]);
@@ -961,8 +951,8 @@ describe('a join request writes nothing at the host', () => {
 	});
 
 	it.each([
-		['withdrawn', () => pendingId(NEWCOMER).then((id) => withdrawJoinRequest(ctx(NEWCOMER), id))],
-		['rejected', () => pendingId(NEWCOMER).then((id) => rejectJoinRequest(ctx(ADMIN), id))]
+		['withdrawn', () => withdrawJoinRequest(ctx(NEWCOMER))],
+		['rejected', () => rejectJoinRequest(ctx(ADMIN), NEWCOMER)]
 	] as const)('a request %s moves only its row', async (status, close) => {
 		await joinGroup(ctx(NEWCOMER), null);
 		pds.clearLog();
@@ -973,23 +963,42 @@ describe('a join request writes nothing at the host', () => {
 		expect(await requestStatus(NEWCOMER)).toBe(status);
 	});
 
-	it("withdrawing someone else's request is refused, and the request stands", async () => {
+	// A withdrawal names no request, only its caller, so a caller with none of
+	// their own cannot reach someone else's.
+	it('withdrawing with no request of your own is refused, and the pending one stands', async () => {
 		await joinGroup(ctx(NEWCOMER), null);
 
-		const error = await withdrawJoinRequest(ctx(MEMBER), await pendingId(NEWCOMER)).catch(
-			(e: unknown) => e
-		);
+		const error = await withdrawJoinRequest(ctx(MEMBER)).catch((e: unknown) => e);
 
 		expect(error).toMatchObject({ name: 'GroupRuleError', reason: 'not-found' });
 		expect(await requestStatus(NEWCOMER)).toBe('pending');
 	});
 
+	// A request is named by its member now, so the lookup can come back empty.
+	it('approving or rejecting someone with no pending request is refused as not found', async () => {
+		const STRANGER = 'did:plc:strangeraaaaaaaaaaaaaaaaa';
+		await joinGroup(ctx(NEWCOMER), null);
+		pds.clearLog();
+
+		for (const act of [
+			() => admitFromRequest(ctx(ADMIN), STRANGER, 'member'),
+			() => rejectJoinRequest(ctx(ADMIN), STRANGER)
+		]) {
+			expect(await act().catch((e: unknown) => e)).toMatchObject({
+				name: 'GroupRuleError',
+				reason: 'not-found'
+			});
+		}
+
+		expect(await getMemberRow(harness.db, group.id, STRANGER)).toBeNull();
+		expect(await requestStatus(NEWCOMER)).toBe('pending');
+		expect(pds.writes()).toEqual([]);
+	});
+
 	it('a member without ADMIT_MEMBERS cannot reject, and the request stands', async () => {
 		await joinGroup(ctx(NEWCOMER), null);
 
-		const error = await rejectJoinRequest(ctx(MEMBER), await pendingId(NEWCOMER)).catch(
-			(e: unknown) => e
-		);
+		const error = await rejectJoinRequest(ctx(MEMBER), NEWCOMER).catch((e: unknown) => e);
 
 		expect(error).toMatchObject({ name: 'GroupPermissionError' });
 		expect(await requestStatus(NEWCOMER)).toBe('pending');
@@ -998,12 +1007,11 @@ describe('a join request writes nothing at the host', () => {
 	it('a member cannot admit, approve or promote, and no row moves first', async () => {
 		const STRANGER = 'did:plc:strangeraaaaaaaaaaaaaaaaa';
 		await joinGroup(ctx(NEWCOMER), null);
-		const id = await pendingId(NEWCOMER);
 		pds.clearLog();
 
 		for (const act of [
 			() => admitMember(ctx(MEMBER), STRANGER, 'member'),
-			() => admitFromRequest(ctx(MEMBER), id, 'member'),
+			() => admitFromRequest(ctx(MEMBER), NEWCOMER, 'member'),
 			() => promoteMember(ctx(MEMBER), MEMBER, 'admin')
 		]) {
 			expect(await act().catch((e: unknown) => e)).toMatchObject({
@@ -1023,7 +1031,7 @@ describe('a join request writes nothing at the host', () => {
 		await joinGroup(ctx(NEWCOMER), null);
 		order = [];
 
-		await admitFromRequest(ctx(ADMIN), await pendingId(NEWCOMER), 'member');
+		await admitFromRequest(ctx(ADMIN), NEWCOMER, 'member');
 
 		expect(order).toEqual(['record:put', 'list:put', 'list:put', 'list:put']);
 		for (const space of [MEMBERS, ABOUT, CALENDAR]) {
@@ -1091,10 +1099,7 @@ describe('the member writes and deletes their own acceptance', () => {
 		await joinGroup({ ...ctx(NEWCOMER), member: memberSession(NEWCOMER) }, null);
 		order = [];
 
-		await withdrawJoinRequest(
-			{ ...ctx(NEWCOMER), member: memberSession(NEWCOMER) },
-			await pendingId(NEWCOMER)
-		);
+		await withdrawJoinRequest({ ...ctx(NEWCOMER), member: memberSession(NEWCOMER) });
 
 		expect(acceptanceSteps()).toEqual([]);
 		expect(await requestStatus(NEWCOMER)).toBe('withdrawn');
@@ -1127,10 +1132,7 @@ describe('the member writes and deletes their own acceptance', () => {
 	it('an eject, a reject or a refused leave touches no acceptance', async () => {
 		await ejectMember({ ...ctx(OWNER), member: memberSession(OWNER) }, ADMIN);
 		await joinGroup(ctx(NEWCOMER), null);
-		await rejectJoinRequest(
-			{ ...ctx(OWNER), member: memberSession(OWNER) },
-			await pendingId(NEWCOMER)
-		);
+		await rejectJoinRequest({ ...ctx(OWNER), member: memberSession(OWNER) }, NEWCOMER);
 		await leaveGroup({ ...ctx(OWNER), member: memberSession(OWNER) }).catch(() => {});
 
 		expect(acceptanceSteps()).toEqual([]);

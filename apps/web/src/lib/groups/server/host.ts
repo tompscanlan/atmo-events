@@ -50,19 +50,21 @@ export interface GroupHost {
 	createSpace(space: SpaceProvision): Promise<{ uri: string }>;
 	/** Group-DID session. The pending requests, which the host keeps privately. */
 	listJoinRequests(): Promise<JoinRequestRow[]>;
-	/** Group-DID session. */
-	denyJoinRequest(caller: HostCaller, requestId: string): Promise<void>;
+	/** Group-DID session. Denies the member's pending request; the standard names
+	 *  a request by its member, not by an id. */
+	denyJoinRequest(caller: HostCaller, member: string): Promise<void>;
 	/** Member service auth. A private request, or a join where the group takes one. */
 	requestJoin(caller: HostCaller, message: string | null): Promise<JoinOutcome>;
-	/** Member service auth. Withdraws the caller's own request. */
-	cancelJoinRequest(caller: HostCaller, requestId: string): Promise<void>;
+	/** Member service auth. Withdraws the caller's own request, the only one they
+	 *  can name. */
+	cancelJoinRequest(caller: HostCaller): Promise<void>;
 	/** Member service auth. Deletes the caller's membership record. */
 	leaveGroup(caller: HostCaller): Promise<void>;
-	/** Group-DID session. Writes the requester's membership, which approves the
-	 *  request. No method of the standard's. */
+	/** Group-DID session. Writes the requester's membership, keyed by their DID,
+	 *  which approves the request. No method of the standard's. */
 	approveJoinRequest(
 		caller: HostCaller,
-		requestId: string,
+		member: string,
 		role: AssignableRole
 	): Promise<{ did: string }>;
 	/** Group-DID session. Writes a membership with no request behind it. */
@@ -87,11 +89,11 @@ export function groupHost(binding: HostBinding): GroupHost {
 	return {
 		createSpace: async (space) => (await (provisioner ??= provision()))(space),
 		listJoinRequests: () => listJoinRequests(db, group.id, 'pending'),
-		denyJoinRequest: (caller, requestId) => rejectJoinRequest(act(caller), requestId),
+		denyJoinRequest: (caller, member) => rejectJoinRequest(act(caller), member),
 		requestJoin: (caller, message) => joinGroup(act(caller), message),
-		cancelJoinRequest: (caller, requestId) => withdrawJoinRequest(act(caller), requestId),
+		cancelJoinRequest: (caller) => withdrawJoinRequest(act(caller)),
 		leaveGroup: (caller) => leaveGroup(act(caller)),
-		approveJoinRequest: (caller, requestId, role) => admitFromRequest(act(caller), requestId, role),
+		approveJoinRequest: (caller, member, role) => admitFromRequest(act(caller), member, role),
 		addMember: (caller, did, role) => admitMember(act(caller), did, role),
 		ejectMember: (caller, did) => ejectMember(act(caller), did),
 		setMemberRole: (caller, did, role) => promoteMember(act(caller), did, role)

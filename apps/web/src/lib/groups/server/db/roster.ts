@@ -200,6 +200,22 @@ export async function pendingRequestDid(
 	return row?.did ?? null;
 }
 
+/** The id of a person's pending request, or null when they have none. A host
+ *  names a request by its member (`denyJoinRequest`), and the one-pending index
+ *  makes that a single row; the id stays the stand-in's own. */
+export async function pendingRequestIdOf(
+	db: D1Database,
+	groupId: string,
+	did: string
+): Promise<string | null> {
+	await ensureGroupsSchema(db);
+	const row = await db
+		.prepare(`SELECT id FROM join_requests WHERE group_id = ? AND did = ? AND status = 'pending'`)
+		.bind(groupId, did)
+		.first<{ id: string }>();
+	return row?.id ?? null;
+}
+
 export async function decideJoinRequest(
 	db: D1Database,
 	groupId: string,

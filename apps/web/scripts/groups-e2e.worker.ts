@@ -51,15 +51,7 @@ import {
 	rosterFromRows
 } from '../src/lib/groups/server/members-read';
 import { writeGroupAuthz, writeGroupSpaceIndex } from '../src/lib/groups/server/members-writer';
-import {
-	admitFromRequest,
-	admitMember,
-	joinGroup,
-	ejectMember,
-	leaveGroup,
-	promoteMember,
-	type RosterContext
-} from '../src/lib/groups/server/roster';
+import { groupHost, type HostBinding, type HostCaller } from '../src/lib/groups/server/host';
 import {
 	acceptOnSignIn,
 	writeMissingAcceptances,
@@ -290,7 +282,7 @@ async function standInSession(
 /** A roster act's context. The driver names the caller on every call, and
  *  `asMember` hands the act the caller's own session (`standInSession`), as the
  *  join and leave forms do. */
-async function rosterCtx(env: Env, args: Args, group: GroupRow): Promise<RosterContext> {
+async function rosterCtx(env: Env, args: Args, group: GroupRow): Promise<HostBinding & HostCaller> {
 	const callerDid = String(args.callerDid);
 	const member = args.asMember ? await standInSession(env, args.session, callerDid, group) : null;
 	return { db: env.DB, env, group, callerDid, member };
@@ -359,8 +351,13 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 
 	listMembers: (env, args) => listMembers(env.DB, String(args.groupId)),
 
-	listJoinRequests: (env, args) =>
-		listJoinRequests(env.DB, String(args.groupId), (args.status as 'pending' | 'all') ?? 'pending'),
+	/** Pending requests through the host, as the members page lists them. `all`
+	 *  reads the stand-in's own rows, closed ones included: a check only the
+	 *  stand-in can answer. */
+	listJoinRequests: async (env, args, group) =>
+		args.status === 'all'
+			? listJoinRequests(env.DB, String(args.groupId), 'all')
+			: groupHost({ db: env.DB, env, group }).listJoinRequests(),
 
 	/** The app's own permission answer, plus `can()` for each probed name. Once
 	 *  the members space holds an authz config, it comes from the records. */
@@ -504,26 +501,29 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 	},
 
 	/** The join form's roster act. It is passed no visibility, so it asks the host. */
-	joinGroup: async (env, args, group) => ({
-		outcome: await joinGroup(
-			await rosterCtx(env, args, group),
-			(args.message as string | null) ?? null
-		)
-	}),
+	joinGroup: async (env, args, group) => {
+		const ctx = await rosterCtx(env, args, group);
+		return {
+			outcome: await groupHost(ctx).requestJoin(ctx, (args.message as string | null) ?? null)
+		};
+	},
 
 	/** The leave form's roster act. */
 	leaveGroup: async (env, args, group) => {
-		await leaveGroup(await rosterCtx(env, args, group));
+		const ctx = await rosterCtx(env, args, group);
+		await groupHost(ctx).leaveGroup(ctx);
 		return { left: args.callerDid };
 	},
 
 	/** The approve button's roster act: row, record and both member lists. */
-	admitFromRequest: async (env, args, group) =>
-		admitFromRequest(
-			await rosterCtx(env, args, group),
-			String(args.requestId),
+	approveJoinRequest: async (env, args, group) => {
+		const ctx = await rosterCtx(env, args, group);
+		return groupHost(ctx).approveJoinRequest(
+			ctx,
+			String(args.member),
 			(args.role as AssignableRole) ?? 'member'
-		),
+		);
+	},
 
 	/** What the sign-in callback runs for the caller (acceptOnSignIn, without the
 	 *  OAuth session it reads the scope from). */
@@ -852,25 +852,20 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 
 	/** The roster acts the app's own handlers call: row plus record, in its order. */
 	admitMember: async (env, args, group) => {
-		await admitMember(
-			await rosterCtx(env, args, group),
-			String(args.did),
-			args.role as AssignableRole
-		);
+		const ctx = await rosterCtx(env, args, group);
+		await groupHost(ctx).addMember(ctx, String(args.did), args.role as AssignableRole);
 		return { admitted: args.did };
 	},
 
 	promoteMember: async (env, args, group) => {
-		await promoteMember(
-			await rosterCtx(env, args, group),
-			String(args.did),
-			args.role as AssignableRole
-		);
+		const ctx = await rosterCtx(env, args, group);
+		await groupHost(ctx).setMemberRole(ctx, String(args.did), args.role as AssignableRole);
 		return { promoted: args.did, role: args.role };
 	},
 
 	ejectMember: async (env, args, group) => {
-		await ejectMember(await rosterCtx(env, args, group), String(args.did));
+		const ctx = await rosterCtx(env, args, group);
+		await groupHost(ctx).ejectMember(ctx, String(args.did));
 		return { ejected: args.did };
 	},
 
