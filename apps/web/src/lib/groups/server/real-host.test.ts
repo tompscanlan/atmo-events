@@ -15,6 +15,7 @@ import { scopes } from '$lib/atproto/settings';
 import type { SqliteD1 } from './__fixtures__/d1-sqlite';
 import { linkGroups, SESSION_PERSON_HEADER, unlinkAllGroups } from './__fixtures__/linked-group';
 import { seedGroup } from './__fixtures__/seed-group';
+import { authzReader } from './__fixtures__/members-space';
 import type { GroupRow } from '../types';
 import type { MemberSession } from './acceptance';
 import { getMemberRow, pendingRequestIdOf } from './db/roster';
@@ -261,6 +262,73 @@ describe('the group’s own methods, on the caller’s group session', () => {
 		expect(hostCalls[0].body).toEqual({ member: BOB });
 		expect(hostCalls[0].person).toBe(ALICE);
 		expect(await pendingRequestIdOf(db, group.id, BOB)).toBeNull();
+	});
+});
+
+describe('membership writes, on the acting person’s own group session', () => {
+	const PUBLISHED = '2026-09-01T12:00:00.000Z';
+	const roster = { [OWNER]: 'owner', [ALICE]: 'admin', [BOB]: 'member' } as const;
+	const asAlice = () => ({ callerDid: ALICE, reader: authzReader(GROUP_DID, roster) });
+	const ref = {
+		uri: `at://${GROUP_DID}/x/y`,
+		cid: 'bafyreihupokxtlobli2hkvtmnhfwpwar2gtztyenhfq4fgb52x6iordfbm'
+	};
+
+	it('an add writes the member’s membership at the host on the caller’s own session, then caches the row', async () => {
+		const env = linkGroups([GROUP_DID], HOST, [ALICE]);
+		hostReplies = [[200, ref]];
+
+		await host(env).addMember(asAlice(), BOB, 'member');
+
+		expect(hostCalls.map((c) => [c.url.origin, c.url.pathname, c.person])).toEqual([
+			[HOST, '/xrpc/com.atproto.space.putRecord', ALICE]
+		]);
+		expect(hostCalls[0].body).toMatchObject({
+			repo: GROUP_DID,
+			collection: 'group.opensocial.membership',
+			rkey: BOB,
+			record: { member: BOB, roles: ['member'] }
+		});
+		expect((await getMemberRow(db, group.id, BOB))?.role).toBe('member');
+	});
+
+	it('an eject deletes the membership at the host, then the row; the owner is refused with nothing sent', async () => {
+		const env = linkGroups([GROUP_DID], HOST, [ALICE]);
+		hostReplies = [
+			[200, ref],
+			[200, {}]
+		];
+		await host(env).addMember(asAlice(), BOB, 'member');
+
+		const owner = await host(env)
+			.ejectMember(asAlice(), OWNER)
+			.catch((e) => e);
+		expect(owner).toBeInstanceOf(GroupRuleError);
+		expect(owner.reason).toBe('owner-protected');
+
+		await host(env).ejectMember(asAlice(), BOB);
+		expect(hostCalls.map((c) => c.url.pathname)).toEqual([
+			'/xrpc/com.atproto.space.putRecord',
+			'/xrpc/com.atproto.space.deleteRecord'
+		]);
+		expect(hostCalls[1].body).toMatchObject({
+			collection: 'group.opensocial.membership',
+			rkey: BOB
+		});
+		expect(await getMemberRow(db, group.id, BOB)).toBeNull();
+	});
+
+	it('a role change keeps the published date, read with the caller’s own access', async () => {
+		const env = linkGroups([GROUP_DID], HOST, [ALICE]);
+		hostReplies = [[200, ref]];
+
+		await host(env).setMemberRole(asAlice(), BOB, 'admin');
+
+		expect(hostCalls[0].body).toMatchObject({
+			rkey: BOB,
+			record: { member: BOB, roles: ['admin'], createdAt: PUBLISHED }
+		});
+		expect((await getMemberRow(db, group.id, BOB))?.role).toBe('admin');
 	});
 });
 
