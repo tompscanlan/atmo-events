@@ -15,7 +15,7 @@ import type { GroupRow, GroupVisibility, RosterEntry } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
 
 import { countMembers } from '$lib/groups/server/db/roster';
-import { groupHost } from '$lib/groups/server/host';
+import { pendingRequestsFor } from '$lib/groups/server/host';
 import { hasLinkedSession } from '$lib/groups/server/session';
 /** The visibility the page shows: the about space's access record's, since the
  *  row holds none. The gate's answer is reused. For a caller on the roster the
@@ -83,7 +83,9 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 		reader ? readGroupAbout(reader, group) : { profile: null, rules: [] },
 		hostVisibility(gateVisibility, reader, group),
 		showRoster ? rosterPreview(reader, db, group) : null,
-		canAdmitMembers ? groupHost({ db, env: platform!.env, group }).listJoinRequests() : []
+		canAdmitMembers
+			? pendingRequestsFor({ db, env: platform!.env, group }, { callerDid: locals.did!, reader })
+			: []
 	]);
 	// The owner is on the roster, so only a caller who may see the roster sees
 	// who it is: as the records name them, else the row's.
@@ -114,12 +116,14 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 		rosterPreview: preview,
 		/** Null for a caller who cannot see the roster. */
 		ownerDid,
-		pendingRequests,
+		pendingRequests: pendingRequests ?? [],
+		/** The viewer may admit, but holds no group session to ask the host with. */
+		requestsNeedLink: pendingRequests === null,
 		/** Avatar, name and handle for every DID the page shows. */
 		people: await loadPeople(db, [
 			...(ownerDid ? [ownerDid] : []),
 			...preview.map((entry) => entry.did),
-			...pendingRequests.map((request) => request.did)
+			...(pendingRequests ?? []).map((request) => request.did)
 		]),
 		canManageGroup: can(membership.permissions, 'MANAGE_GROUP'),
 		/** For someone whose roles grant writes, who may link a group session:

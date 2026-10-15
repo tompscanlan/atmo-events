@@ -223,7 +223,14 @@
 		</section>
 	{/if}
 
-	{#if data.canAdmitMembers && data.pendingRequests.length > 0}
+	{#if data.canAdmitMembers && data.requestsNeedLink}
+		<section class="mt-10">
+			<h2 class="mb-3 text-xl font-semibold">Join requests</h2>
+			<p class="text-base-500 dark:text-base-400 text-sm">
+				Link your access to this group to see its join requests.
+			</p>
+		</section>
+	{:else if data.canAdmitMembers && data.pendingRequests.length > 0}
 		<section class="mt-10">
 			<h2 class="mb-3 text-xl font-semibold">
 				Join requests ({data.pendingRequests.length})

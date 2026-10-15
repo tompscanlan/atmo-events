@@ -217,7 +217,7 @@ function callerSession(ctx: RosterContext): MemberSession | null {
 
 /** The caller writes their acceptance. A failure is logged, and a sign-in that
  *  holds the grant writes it later. */
-async function accept(ctx: RosterContext): Promise<void> {
+export async function accept(ctx: RosterContext): Promise<void> {
 	const member = callerSession(ctx);
 	if (!member) return;
 	try {
@@ -229,7 +229,7 @@ async function accept(ctx: RosterContext): Promise<void> {
 
 /** The caller deletes their acceptance. A failure is logged and the act goes on:
  *  an acceptance with no membership never reaches the roster. */
-async function unaccept(ctx: RosterContext): Promise<void> {
+export async function unaccept(ctx: RosterContext): Promise<void> {
 	const member = callerSession(ctx);
 	if (!member) return;
 	try {

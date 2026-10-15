@@ -196,7 +196,11 @@
 	{#if data.canAdmitMembers}
 		<section class="mt-10">
 			<h2 class="mb-3 text-xl font-semibold">Pending requests</h2>
-			{#if data.pendingRequests.length === 0}
+			{#if data.requestsNeedLink}
+				<p class="text-base-500 dark:text-base-400 text-sm">
+					Link your access to this group, from the group page, to see its join requests.
+				</p>
+			{:else if data.pendingRequests.length === 0}
 				<p class="text-base-500 dark:text-base-400 text-sm">None.</p>
 			{:else}
 				<ul class="flex flex-col gap-2">

@@ -123,6 +123,13 @@ export interface SpaceProvision {
 	/** Always `SPACE_SKEY`. */
 	skey: string;
 	readPolicy: SpaceReadPolicy;
+	/** The space's `access` record, which a real host makes the space with and
+	 *  reads its policy from (`group.opensocial.createSpace`). The stand-in
+	 *  sets the read policy instead and writes the record after. */
+	access?: {
+		public?: boolean;
+		grants: { role: string; scopes: string[] }[];
+	};
 }
 
 /** Injectable, like `GroupRepoWriter`, so provisioning can be tested without a PDS. */

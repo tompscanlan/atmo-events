@@ -27,7 +27,7 @@ import type { PageServerLoad } from './$types';
 
 import { spaceRecordUri } from '$lib/groups/ids';
 import { rolePermissions } from '$lib/groups/server/db/groups';
-import { groupHost } from '$lib/groups/server/host';
+import { pendingRequestsFor } from '$lib/groups/server/host';
 /** Whether each member wrote their acceptance, read by DID with the viewer's own
  *  space credential. Null when it cannot be read: the viewer's sign-in reads no
  *  spaces, or no credential could be had. The page then shows no state rather
@@ -113,7 +113,10 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const unfinished =
 		canEjectMembers && isUnfinishedRow(members) ? await unfinishedRemovals(db, group, members) : [];
 	const pendingRequests = canAdmitMembers
-		? await groupHost({ db, env: platform!.env, group }).listJoinRequests()
+		? await pendingRequestsFor(
+				{ db, env: platform!.env, group },
+				{ callerDid: locals.did!, reader }
+			)
 		: [];
 	const space = group.members_space_uri;
 
@@ -132,11 +135,13 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		})),
 		/** So an empty record set is never shown as "the group has no members". */
 		rosterSource: fromRecords ? ('records' as const) : ('cache' as const),
-		pendingRequests,
+		pendingRequests: pendingRequests ?? [],
+		/** The viewer may admit, but holds no group session to ask the host with. */
+		requestsNeedLink: pendingRequests === null,
 		/** Avatar, name and handle for every DID the page shows. */
 		people: await loadPeople(db, [
 			...roster.map((entry) => entry.did),
-			...pendingRequests.map((request) => request.did),
+			...(pendingRequests ?? []).map((request) => request.did),
 			...unfinished
 		]),
 		// Shown so an admin can see what a role grants before assigning it: from

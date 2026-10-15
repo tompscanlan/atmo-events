@@ -121,6 +121,11 @@ declare global {
 				GROUP_HANDLE_DOMAIN?: string;
 				/** Invite code for the group PDS (set via `wrangler secret put`). */
 				GROUP_PDS_INVITE_CODE?: string;
+				/** A group host (opensocial.group) this deployment uses, e.g.
+				 *  `https://grouphost.devnet.internal`. A group whose PDS is this host
+				 *  is served by the host's own methods; every other group by the
+				 *  stand-in host. Unset: every group is the stand-in's. */
+				GROUP_HOST_URL?: string;
 			};
 			/** Cloudflare Worker execution context. Use `ctx.waitUntil(promise)` to
 			 *  let the worker keep a fire-and-forget task alive after the response

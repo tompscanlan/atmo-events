@@ -111,26 +111,58 @@ export async function requestJoin(
 		throw new GroupRuleError('invite-only', 'This group is invite-only');
 	}
 
-	if (group.require_approval) {
-		try {
-			const now = Date.now();
-			await db
-				.prepare(
-					`INSERT INTO join_requests (id, group_id, did, status, message, created_at, updated_at)
-					 VALUES (?, ?, ?, 'pending', ?, ?, ?)`
-				)
-				.bind(crypto.randomUUID(), group.id, did, message, now, now)
-				.run();
-			return 'pending';
-		} catch (e) {
-			const mapped = constraintMessage(e);
-			if (mapped?.reason === 'already-pending') return 'already-pending';
-			throw mapped ?? e;
-		}
-	}
+	if (group.require_approval) return noteJoinRequest(db, group.id, did, message);
 
 	await addMember(db, group.id, did, 'member');
 	return 'joined';
+}
+
+/** A pending request row for `did`: the stand-in's request itself, or, for a
+ *  group at a real host, this app's note that the person asked, since no host
+ *  method reads a member's own request back. `already-pending` when one is
+ *  there. */
+export async function noteJoinRequest(
+	db: D1Database,
+	groupId: string,
+	did: string,
+	message: string | null
+): Promise<'pending' | 'already-pending'> {
+	await ensureGroupsSchema(db);
+	try {
+		const now = Date.now();
+		await db
+			.prepare(
+				`INSERT INTO join_requests (id, group_id, did, status, message, created_at, updated_at)
+				 VALUES (?, ?, ?, 'pending', ?, ?, ?)`
+			)
+			.bind(crypto.randomUUID(), groupId, did, message, now, now)
+			.run();
+		return 'pending';
+	} catch (e) {
+		const mapped = constraintMessage(e);
+		if (mapped?.reason === 'already-pending') return 'already-pending';
+		throw mapped ?? e;
+	}
+}
+
+/** Closes `did`'s pending request row if there is one, and does nothing if not:
+ *  for a group at a real host the row is only a note, and the host's answer
+ *  decides. */
+export async function closeJoinRequestNote(
+	db: D1Database,
+	groupId: string,
+	did: string,
+	deciderDid: string | null,
+	status: 'rejected' | 'withdrawn'
+): Promise<void> {
+	const requestId = await pendingRequestIdOf(db, groupId, did);
+	if (!requestId) return;
+	try {
+		await decideJoinRequest(db, groupId, requestId, deciderDid, status);
+	} catch (e) {
+		// Closed between the read and the write: what was wanted.
+		if (!(e instanceof GroupRuleError && e.reason === 'not-found')) throw e;
+	}
 }
 
 /** Puts `did` on the roster with `role`, for an open join or a direct add. A

@@ -9,6 +9,7 @@ import { GroupCredentialError } from './server/session';
 import { GroupRuleError } from './server/db/rules';
 import { RosterStepError } from './server/roster';
 import { GroupSpaceError } from './server/spaces';
+import { GroupHostError, HostSignInError } from './server/real-host';
 const NOT_LINKED: GroupFormFailure = {
 	ok: false,
 	error:
@@ -36,6 +37,19 @@ export function knownFormError(e: unknown): GroupFormFailure | null {
 	}
 	if (e instanceof GroupRecordError) return { ok: false, error: e.message };
 	if (e instanceof GroupRuleError) return { ok: false, error: e.message };
+	if (e instanceof HostSignInError) {
+		return {
+			ok: false,
+			error:
+				'Your sign-in does not let this site ask the group’s host for you. Sign in again, then try once more. Nothing was changed.'
+		};
+	}
+	if (e instanceof GroupHostError) {
+		return {
+			ok: false,
+			error: `The group’s host refused this (${e.error ?? e.status}). Nothing was changed.`
+		};
+	}
 	return null;
 }
 
