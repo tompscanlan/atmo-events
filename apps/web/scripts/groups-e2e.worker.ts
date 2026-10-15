@@ -889,11 +889,6 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 		};
 	},
 
-	/** Whether the app finds the group's stored session, as the pages do. */
-	linked: async (env, args, group) => {
-		return { linked: (await resolveGroupCredential(env, group.group_did)) !== null };
-	},
-
 	/** Overwrites the profile's columns through the app's own updater, not raw
 	 *  SQL, so the damage is one the app itself could cause. */
 	corruptGroupCache: async (env, args) => {
