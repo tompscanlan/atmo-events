@@ -838,8 +838,12 @@ async function main() {
 		declared = minted.groupDid !== null;
 		if (!minted.ok) throw new Error(`the create failed: ${minted.error}`);
 		groupToken = await logInAsGroup(CREATE_DATA.password);
-		await must('linkGroup', { groupDid: GROUP_DID, password: CREATE_DATA.password });
-		note(`${GROUP_HANDLE} is ${GROUP_DID}, linked through the stand-in session`);
+		await must('linkGroup', {
+			groupDid: GROUP_DID,
+			personDid: ALICE,
+			password: CREATE_DATA.password
+		});
+		note(`${GROUP_HANDLE} is ${GROUP_DID}, linked by ${ALICE} through the stand-in session`);
 		group = await must('groupByDid', { groupDid: GROUP_DID });
 		membersSpaceUri = group.members_space_uri;
 		aboutSpaceUri = group.about_space_uri;
@@ -906,8 +910,42 @@ async function main() {
 				`same rkey in the owner's repo: ${inOwnersRepo.status === 200 ? 'PRESENT' : (inOwnersRepo.error ?? inOwnersRepo.status)}`
 		);
 
+		// 5a. an admin with no group session of their own -----------------------
+		// A write as the group goes out only on the acting person's own session,
+		// so the creator's stored one never serves the admin (TS, 2026-10-15).
+		const { total: beforeUnlinked } = await must('groupWrites', {});
+		const unlinked = await tryOp('writeGroupEvent', {
+			callerDid: BOB,
+			placement: 'everyone',
+			intent: 'update',
+			rkey: created.rkey,
+			record: eventRecord('e2e sunrise paddle (no session of his own)', { country: 'US' })
+		});
+		const unlinkedWrites = await must('groupWrites', { from: beforeUnlinked });
+		const afterUnlinked = await getRecord(GROUP_DID, created.rkey);
+		record(
+			unlinked.ok === false &&
+				unlinked.error.name === 'GroupCredentialError' &&
+				unlinked.error.personDid === BOB &&
+				unlinked.error.standInHost === false &&
+				unlinkedWrites.writes.length === 0 &&
+				afterUnlinked.cid === asPersisted.cid,
+			"an admin who has linked no group session is refused, and the creator's session writes nothing for him",
+			`${unlinked.error?.name} for ${unlinked.error?.personDid}; ${unlinkedWrites.writes.length} write(s) as the group; ` +
+				`record at cid ${afterUnlinked.cid}`
+		);
+
 		// 5. an admin edits an event they did not create -------------------------
-		// Admins edit through the group's credential, so the author must not change.
+		// Admins edit on their own group session, so the author must not change. On
+		// the stand-in the only way in is the group's own login, so the harness
+		// stores the admin's session as his own link would; a host cutting it to his
+		// roles is for a run against a real group host.
+		await must('linkGroup', {
+			groupDid: GROUP_DID,
+			personDid: BOB,
+			password: CREATE_DATA.password
+		});
+		const { total: beforeEdit } = await must('groupWrites', {});
 		const editedName = 'e2e sunrise paddle (rescheduled by admin bob)';
 		const edited = await op('writeGroupEvent', {
 			callerDid: BOB,
@@ -916,6 +954,7 @@ async function main() {
 			rkey: created.rkey,
 			record: eventRecord(editedName, { country: 'US', createdAt: asPersisted.value?.createdAt })
 		});
+		const adminEditWrites = await must('groupWrites', { from: beforeEdit });
 		const afterEdit = await getRecord(GROUP_DID, created.rkey);
 		const inAdminsRepo = await getRecord(BOB, created.rkey);
 		const adminsEvents = await listRecords(BOB);
@@ -930,9 +969,12 @@ async function main() {
 				afterEdit.cid !== asPersisted.cid &&
 				notFound(inAdminsRepo) &&
 				adminsEvents.status === 200 &&
-				adminsCopies.length === 0,
-			'admin edits an event they did not create; the author is still the GROUP DID',
+				adminsCopies.length === 0 &&
+				adminEditWrites.by.length > 0 &&
+				adminEditWrites.by.every((person) => person === BOB),
+			'admin edits an event they did not create, on his own group session; the author is still the GROUP DID',
 			`edit landed as "${afterEdit.value?.name}" at ${afterEdit.uri} (cid ${asPersisted.cid} -> ${afterEdit.cid}); ` +
+				`written on ${[...new Set(adminEditWrites.by)].join(', ') || 'no'} session(s); ` +
 				`author ${authorityOf(afterEdit.uri)}, not the editing admin ${BOB}; ` +
 				`admin's own repo: ${inAdminsRepo.error ?? inAdminsRepo.status} for that rkey, ` +
 				`${adminsCopies.length} copies among ${adminsEvents.records.length} ${EVENT_COLLECTION} record(s)`
@@ -2651,7 +2693,7 @@ async function main() {
 		const wiped = await op('dropGroupRows');
 		let restored;
 		try {
-			restored = await must('rebuildGroup', { groupDid: GROUP_DID });
+			restored = await must('rebuildGroup', { groupDid: GROUP_DID, ownerDid: ALICE });
 		} finally {
 			// Cleanup needs a row: the restored one, or else a bare one on the same DID.
 			group = restored

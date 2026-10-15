@@ -31,7 +31,7 @@ import { ensureInit } from '../src/lib/contrail/index';
 import { splitRuleLines } from '../src/lib/groups/about-record';
 import { reconcileGroupDeclaration } from '../src/lib/groups/server/declaration-writer';
 import { setGroupRules } from '../src/lib/groups/server/about-writer';
-import { groupSpaceReader, readGroupAbout } from '../src/lib/groups/server/about-read';
+import { readGroupAbout, standInHostReader } from '../src/lib/groups/server/about-read';
 
 import { readGroupVisibility } from '../src/lib/groups/server/spaces';
 import { runUpdateGroup } from '../src/lib/groups/update-group';
@@ -72,8 +72,8 @@ import {
 } from '../src/lib/groups/server/space-credential';
 import {
 	groupClient,
-	resolveGroupCredential,
-	GROUP_SESSION_PREFIX
+	groupSessionKey,
+	standInHostCredential
 } from '../src/lib/groups/server/session';
 import {
 	membersOnlyEventForEditing,
@@ -81,7 +81,7 @@ import {
 	readMembersOnlyEvents,
 	membersOnlyEventForDisplay
 } from '../src/lib/groups/server/calendar-read';
-import { setStandInLogin, standInCalls, standInWrites } from './groups-e2e.oauth';
+import { setStandInLogin, standInCalls, standInWriters, standInWrites } from './groups-e2e.oauth';
 import { runCreateGroup, type CreateGroupData } from '../src/lib/groups/create-group';
 import { META_READ_GRANT, scopes } from '../src/lib/atproto/settings';
 import type { GroupSpaceReader } from '../src/lib/groups/server/about-read';
@@ -307,9 +307,8 @@ async function groupReadAt(
 	collection: string,
 	rkey: string
 ) {
-	const cred = await resolveGroupCredential(env, group.group_did);
-	if (!cred) throw new Error(`no credential for ${group.group_did}`);
-	const { handle } = await groupClient(cred, group.group_did);
+	// The host's own read: through the session the stand-in host acts on.
+	const { handle } = await groupClient(await standInHostCredential(env, group), group.group_did);
 	const credential = await spaceCredential(
 		{ did: group.group_did, handle },
 		space,
@@ -370,10 +369,10 @@ async function rosterCtx(env: Env, args: Args, group: GroupRow): Promise<HostBin
 	return { db: env.DB, env, group, callerDid, member, reader };
 }
 
-/** The group's own space reader. The members space is readable only with the
- *  group's session. */
+/** The group's own space reader, through the session the stand-in host acts on,
+ *  the creator's. The members space is readable only as the group. */
 async function spaceReader(env: Env, group: GroupRow) {
-	const reader = await groupSpaceReader(env, group);
+	const reader = await standInHostReader(env, group);
 	if (!reader) throw new Error(`no credential for ${group.group_did}`);
 	return reader;
 }
@@ -400,13 +399,17 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 		};
 	},
 
-	/** Marks the group linked, as its owner's link would. The app finds a linked
-	 *  session by this key; restoring it is the stand-in's (./groups-e2e.oauth.ts),
-	 *  which logs in with the password the create set. */
+	/** Stores `personDid`'s group session, as their own link would. The app finds
+	 *  it by this key; restoring it is the stand-in's (./groups-e2e.oauth.ts), which
+	 *  logs in with the password the create set, the stand-in's only way in. */
 	linkGroup: async (env, args) => {
-		await env.OAUTH_SESSIONS.put(GROUP_SESSION_PREFIX + String(args.groupDid), '{}');
+		const personDid = String(args.personDid);
+		await env.OAUTH_SESSIONS.put(
+			groupSessionKey(String(args.groupDid), personDid),
+			JSON.stringify({ person: personDid })
+		);
 		setStandInLogin(String(args.groupDid), String(args.password));
-		return { linked: args.groupDid };
+		return { linked: args.groupDid, by: personDid };
 	},
 
 	groupByDid: async (env, args) => {
@@ -512,10 +515,12 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 		calls: args.from == null ? [] : standInCalls.slice(Number(args.from))
 	}),
 
-	/** The writes among those calls, each with its collection or read policy. */
+	/** The writes among those calls, each with its collection or read policy, and
+	 *  whose session sent each. */
 	groupWrites: async (_env, args) => ({
 		total: standInWrites.length,
-		writes: args.from == null ? [] : standInWrites.slice(Number(args.from))
+		writes: args.from == null ? [] : standInWrites.slice(Number(args.from)),
+		by: args.from == null ? [] : standInWriters.slice(Number(args.from))
 	}),
 
 	/** The calendar space check a members-only write makes first, run alone on
@@ -526,7 +531,8 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 		const from = standInCalls.length;
 		let refusal: ReturnType<typeof serializeError> | null = null;
 		try {
-			await checkCalendarSpace(await groupEventLocator(env, group), String(args.space));
+			const person = args.callerDid == null ? group.owner_did : String(args.callerDid);
+			await checkCalendarSpace(await groupEventLocator(env, group, person), String(args.space));
 		} catch (error) {
 			refusal = serializeError(error);
 		}
@@ -538,8 +544,7 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 
 	/** The route's two calls: read the current rules, then reconcile them. */
 	setGroupRules: async (env, args, group) => {
-		const reader = await groupSpaceReader(env, group);
-		if (!reader) throw new Error(`no credential for ${group.group_did}`);
+		const reader = await spaceReader(env, group);
 		const about = await readGroupAbout(reader, group);
 		return setGroupRules({
 			db: env.DB,
@@ -553,14 +558,12 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 
 	/** Read back through the group's own session, the way the app reads it. */
 	readGroupAbout: async (env, args, group) => {
-		const reader = await groupSpaceReader(env, group);
-		if (!reader) throw new Error(`no credential for ${group.group_did}`);
+		const reader = await spaceReader(env, group);
 		return readGroupAbout(reader, group);
 	},
 
 	rebuildGroupCache: async (env, args, group) => {
-		const reader = await groupSpaceReader(env, group);
-		if (!reader) throw new Error(`no credential for ${group.group_did}`);
+		const reader = await spaceReader(env, group);
 		const outcome = await rebuildGroupCache(env.DB, reader, group);
 		// Read again: the row the dispatcher resolved is from before the rebuild.
 		return { ...outcome, row: await groupById(env, args.groupId) };
@@ -1050,7 +1053,10 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 
 	rebuildGroup: async (env, args) => {
 		const groupDid = String(args.groupDid);
-		const reader = await groupSpaceReader(env, { group_did: groupDid });
+		const reader = await standInHostReader(env, {
+			group_did: groupDid,
+			owner_did: String(args.ownerDid)
+		});
 		if (!reader) throw new Error(`no credential for ${groupDid}`);
 		return rebuildGroup(env.DB, reader, groupDid);
 	}
@@ -1059,12 +1065,21 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 /** Refusals travel as data: the class name and the tags the app routes on, so
  *  the driver never matches on message text. */
 function serializeError(error: unknown) {
-	const e = error as { name?: string; message?: string; reason?: string; permission?: string };
+	const e = error as {
+		name?: string;
+		message?: string;
+		reason?: string;
+		permission?: string;
+		personDid?: string;
+		standInHost?: boolean;
+	};
 	return {
 		name: e?.name ?? 'Error',
 		message: e?.message ?? String(error),
 		reason: e?.reason ?? null,
-		permission: e?.permission ?? null
+		permission: e?.permission ?? null,
+		personDid: e?.personDid ?? null,
+		standInHost: e?.standInHost ?? null
 	};
 }
 
