@@ -18,6 +18,7 @@ import {
 	GroupSpaceError,
 	SpacesUnsupportedError,
 	aboutSpaceReadPolicy,
+	groupSpaceUpdater,
 	pdsProvisioner,
 	provisionGroupSpaces,
 	readGroupVisibility,
@@ -27,6 +28,7 @@ import {
 
 import { groupSpaceUris, POLICY_MEMBER_LIST, POLICY_PUBLIC, spaceUri } from '../ids';
 import { GroupPermissionError, pdsWriter } from './group-write';
+import { didSpaceHosts } from './space-credential';
 import { seedGroup, type SeededGroup } from './__fixtures__/seed-group';
 import { authzReader } from './__fixtures__/members-space';
 import { hostDown, spaceReader, type FakeSpaceReader } from './__fixtures__/space-reader';
@@ -443,5 +445,24 @@ describe('readPolicyFor', () => {
 
 	it('is member-list for a missing record, which grants no one', () => {
 		expect(readPolicyFor(null)).toBe(POLICY_MEMBER_LIST);
+	});
+});
+
+describe('groupSpaceUpdater', () => {
+	it('at a group host, moves nothing: the host keeps each policy from its access record', async () => {
+		const hosts = vi.spyOn(didSpaceHosts, 'repoHost').mockResolvedValue('https://grouphost.test');
+		const group = { group_did: GROUP_DID } as Parameters<typeof groupSpaceUpdater>[0]['group'];
+
+		const updater = await groupSpaceUpdater({
+			env: { GROUP_HOST_URL: 'https://grouphost.test' },
+			group
+		});
+		await updater({
+			space: spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self'),
+			readPolicy: POLICY_PUBLIC
+		});
+		hosts.mockRestore();
+
+		expect(sent).toEqual([]);
 	});
 });

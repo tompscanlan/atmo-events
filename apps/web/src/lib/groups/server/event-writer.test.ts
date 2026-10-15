@@ -45,15 +45,23 @@ import { stubPds, type StubPdsOptions } from './__fixtures__/stub-pds';
 import { provisionSpacesFor } from './__fixtures__/provisioned-spaces';
 import {
 	GROUP_EVENT_IMAGE_MAX_BYTES,
+	GroupPlacementError,
+	checkCalendarSpace,
 	deleteGroupEvent,
 	uploadGroupEventImage,
 	writeGroupEvent,
+	type GroupEventLocator,
 	type UploadGroupEventImageInput,
 	type WriteGroupEventInput
 } from './event-writer';
 import type { GroupRow } from '../types';
 
-import { GROUP_EVENT_COLLECTION } from '../ids';
+import {
+	GROUP_EVENT_COLLECTION,
+	POLICY_MANAGING_APP,
+	POLICY_MEMBER_LIST,
+	POLICY_PUBLIC
+} from '../ids';
 import { GroupPermissionError, GroupRecordError } from './group-write';
 import { GroupCredentialError } from './session';
 import { type EventPlacement } from '../event-placement';
@@ -707,5 +715,61 @@ describe('members-only placement', () => {
 		}
 		expect(pds.writes()).toEqual([]);
 		expect(index.told).toEqual([]);
+	});
+});
+
+describe('checkCalendarSpace', () => {
+	const SPACE = 'at://did:plc:groupgroupgroupgroupgrou/space/rsvp.atmo.group.calendar/self';
+	const locator = (
+		readPolicy: string,
+		access?: GroupEventLocator['access']
+	): GroupEventLocator => ({
+		getSpace: async () => ({ readPolicy }),
+		has: async () => false,
+		access
+	});
+	const reason = (e: unknown) => (e instanceof GroupPlacementError ? e.reason : e);
+	const membersOnly = { roles: ['member' as const], public: false, grants: [] };
+
+	it('passes a member-list space, and refuses a public one', async () => {
+		await expect(checkCalendarSpace(locator(POLICY_MEMBER_LIST), SPACE)).resolves.toBeUndefined();
+		expect(reason(await checkCalendarSpace(locator(POLICY_PUBLIC), SPACE).catch((e) => e))).toBe(
+			'calendar-space-readable'
+		);
+	});
+
+	it('at a group host, passes a space whose access record is not public', async () => {
+		await expect(
+			checkCalendarSpace(
+				locator(POLICY_MANAGING_APP, async () => membersOnly),
+				SPACE
+			)
+		).resolves.toBeUndefined();
+	});
+
+	it('at a group host, refuses a public record, a missing one, a failed read, and no way to read it', async () => {
+		const refusals = await Promise.all([
+			checkCalendarSpace(
+				locator(POLICY_MANAGING_APP, async () => ({ ...membersOnly, public: true })),
+				SPACE
+			).catch(reason),
+			checkCalendarSpace(
+				locator(POLICY_MANAGING_APP, async () => null),
+				SPACE
+			).catch(reason),
+			checkCalendarSpace(
+				locator(POLICY_MANAGING_APP, async () => {
+					throw new Error('502');
+				}),
+				SPACE
+			).catch(reason),
+			checkCalendarSpace(locator(POLICY_MANAGING_APP), SPACE).catch(reason)
+		]);
+		expect(refusals).toEqual([
+			'calendar-space-readable',
+			'calendar-space-unchecked',
+			'calendar-space-unchecked',
+			'calendar-space-readable'
+		]);
 	});
 });

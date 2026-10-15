@@ -4,8 +4,19 @@
 import { now as tidNow } from '@atcute/tid';
 import * as v from '@atcute/lexicons/validations';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
-import { GROUP_EVENT_COLLECTION, POLICY_MEMBER_LIST, groupSpaceUris } from '../ids';
+import {
+	GROUP_EVENT_COLLECTION,
+	POLICY_MANAGING_APP,
+	POLICY_MEMBER_LIST,
+	groupSpaceUris
+} from '../ids';
 import type { EventPlacement } from '../event-placement';
+import {
+	GROUP_ACCESS_COLLECTION,
+	GROUP_ACCESS_RKEY,
+	parseGroupAccess,
+	type GroupAccessFields
+} from '../members-record';
 import type { GroupRow } from '../types';
 
 import {
@@ -122,6 +133,10 @@ export interface GroupEventLocator {
 	/** Whether the group's event `rkey` is in `space`, or in the public repo for
 	 *  null. A missing record is false; any other answer throws. */
 	has(space: string | null, rkey: string): Promise<boolean>;
+	/** The space's `access` record, or null when it has none; any other answer
+	 *  throws. Without it, a space a managing app decides is not checked, and so
+	 *  refused. */
+	access?(space: string): Promise<GroupAccessFields | null>;
 }
 
 /** Reads with the group's own session, the one its writes use. */
@@ -129,6 +144,15 @@ export function pdsEventLocator(cred: GroupCredential, groupDid: string): GroupE
 	const spaces = pdsSpaceReader(cred, groupDid);
 	return {
 		getSpace: (space) => spaces.getSpace(space),
+		async access(space) {
+			const found = await spaces.get({
+				space,
+				repo: groupDid,
+				collection: GROUP_ACCESS_COLLECTION,
+				rkey: GROUP_ACCESS_RKEY
+			});
+			return found ? parseGroupAccess(found.value) : null;
+		},
 		async has(space, rkey) {
 			if (space !== null) {
 				const found = await spaces.get({
@@ -160,7 +184,9 @@ export async function groupEventLocator(
 
 /**
  * Before a members-only create or update: the calendar space must exist, and only
- * its members may read it. The host checks neither. A space write into a space
+ * its members may read it. The host checks neither. At a group host the space's
+ * policy is the managing app's, which reads its `access` record, so there the
+ * record must not say public. A space write into a space
  * that was never created succeeds anyway, so a group whose calendar space is
  * missing would take members-only events into a space this app never set up,
  * with no read policy or access record of its choosing. And a space whose read
@@ -179,7 +205,23 @@ export async function checkCalendarSpace(locator: GroupEventLocator, space: stri
 		console.error(`[groups] ${space} could not be checked; a members-only write was refused:`, e);
 		throw new GroupPlacementError('calendar-space-unchecked');
 	}
-	if (readPolicy !== POLICY_MEMBER_LIST) throw new GroupPlacementError('calendar-space-readable');
+	if (readPolicy === POLICY_MEMBER_LIST) return;
+	if (readPolicy === POLICY_MANAGING_APP && locator.access) {
+		let access: GroupAccessFields | null;
+		try {
+			access = await locator.access(space);
+		} catch (e) {
+			console.error(
+				`[groups] ${space}'s access could not be read; a members-only write was refused:`,
+				e
+			);
+			throw new GroupPlacementError('calendar-space-unchecked');
+		}
+		// No record: the host lets nobody read it, and refuses writes to it.
+		if (!access) throw new GroupPlacementError('calendar-space-unchecked');
+		if (!access.public) return;
+	}
+	throw new GroupPlacementError('calendar-space-readable');
 }
 
 /**

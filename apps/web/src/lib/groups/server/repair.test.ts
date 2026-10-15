@@ -53,6 +53,7 @@ import { readGroupMembers, hasAuthzRecords, rolePermissionsFromRecords } from '.
 import { describeRepair, repairGroup } from './repair';
 import { ejectMember } from './roster';
 import { pdsSpaceReader } from './about-read';
+import { didSpaceHosts } from './space-credential';
 import {
 	STUB_PDS_SERVICE,
 	linkGroups,
@@ -987,5 +988,33 @@ describe('Repair moves the host and the declaration to the access records', () =
 		expect(summary).toContain(
 			"Brought the group's PDS in line with its access records, which make it public: closed the calendar space to all but its members."
 		);
+	});
+});
+
+describe('a group at a real group host', () => {
+	// The host keeps a group's records, read policies and lists in step itself,
+	// so repair moves to the host (TS, 2026-10-15).
+	it('only rebuilds this site’s copy, with the caller’s own access, and changes nothing at the host', async () => {
+		await seedComplete('public');
+		// Out of step the way the stand-in's repair would put right: the owner off
+		// the members space's list, and no declaration for a public group.
+		await hostList('removeMember', MEMBERS, OWNER);
+		pds.clearLog();
+		const hosts = vi.spyOn(didSpaceHosts, 'repoHost').mockResolvedValue(STUB_PDS_SERVICE);
+
+		const result = await repairGroup({
+			db,
+			env: { ...env, GROUP_HOST_URL: STUB_PDS_SERVICE },
+			group: (await getGroupByDid(db, GROUP_DID))!,
+			callerDid: GROUP_DID,
+			ownReader: hostReader()
+		});
+		hosts.mockRestore();
+
+		expect(result.atHost).toBe(true);
+		expect(pds.writes()).toEqual([]);
+		expect(memberListCalls()).toEqual([]);
+		expect(result.policy).toEqual({ visibility: 'public', readPolicies: {}, declaration: null });
+		expect(describeRepair(result)).toMatch(/^The group's host keeps its records/);
 	});
 });

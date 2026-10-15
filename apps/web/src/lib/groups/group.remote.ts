@@ -55,14 +55,17 @@ export const updateGroupForm = form(
 export const repairGroupForm = form(
 	v.object({ groupDid: didField }),
 	async (data): Promise<GroupFormResult<{ summary: string }>> => {
-		const { db, env, group, membership, callerDid } = await groupRequestContext(data.groupDid);
+		const { db, env, group, membership, callerDid, reader } = await groupRequestContext(
+			data.groupDid
+		);
 		if (!can(membership.permissions, 'MANAGE_GROUP')) {
 			return notAllowed(membership, 'MANAGE_GROUP');
 		}
 		try {
 			// Repair reads as the group, every step: it exists to put right member
-			// lists that may no longer let the caller's own access in.
-			const result = await repairGroup({ db, env, group, callerDid });
+			// lists that may no longer let the caller's own access in. A group at a
+			// real host keeps its own lists, so its rebuild reads with the caller's.
+			const result = await repairGroup({ db, env, group, callerDid, ownReader: reader });
 			return { ok: true, summary: describeRepair(result) };
 		} catch (e) {
 			// Otherwise the PDS or the database failed partway. Every repair write

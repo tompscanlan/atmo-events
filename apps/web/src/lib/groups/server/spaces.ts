@@ -41,6 +41,7 @@ import {
 } from '../ids';
 
 import { requireGroupWrite, type GroupGateInput } from './group-write';
+import { isHostGroup } from './host-kind';
 import { VISIBILITY_WRITE } from '../grants';
 const APP_ACCESS_OPEN = 'com.atproto.simplespace.defs#open';
 
@@ -233,6 +234,10 @@ export function pdsSpaceUpdater(cred: GroupCredential, groupDid: string): GroupS
 	};
 }
 
+/** A group host keeps each space's policy from its `access` record itself, and
+ *  refuses `updateSpace` from anyone else, so there is nothing to move. */
+const hostKeepsPolicy: GroupSpaceUpdater = async () => {};
+
 /** The updater for a group, unless one is given: through the session the stand-in
  *  host acts on, since a space's read policy follows its `access` record on the
  *  host's side, which a real host keeps itself. */
@@ -240,6 +245,7 @@ export async function groupSpaceUpdater(
 	input: Pick<GroupGateInput, 'env' | 'group'> & { updater?: GroupSpaceUpdater }
 ): Promise<GroupSpaceUpdater> {
 	if (input.updater) return input.updater;
+	if (await isHostGroup(input.env, input.group.group_did)) return hostKeepsPolicy;
 	const cred = await standInHostCredential(input.env, input.group);
 	return pdsSpaceUpdater(cred, input.group.group_did);
 }

@@ -39,7 +39,8 @@ import {
 	requireGroupCredential
 } from './session';
 import { pdsProvisioner, type GroupSpaceProvisioner, type SpaceProvision } from './spaces';
-import { isHostGroup, realGroupHost } from './real-host';
+import { isHostGroup } from './host-kind';
+import { realGroupHost } from './real-host';
 
 /** The group a host call is about. */
 export interface HostBinding {

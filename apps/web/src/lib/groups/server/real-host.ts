@@ -35,8 +35,8 @@ import type { GroupHost, HostBinding, HostCaller } from './host';
 import { dropGroupMembership, putGroupMembership } from './members-writer';
 import { readMembership } from './members-read';
 import { accept, unaccept, type RosterContext } from './roster';
-import { groupClient, requireGroupCredential, type CredentialStoreEnv } from './session';
-import { didSpaceHosts, type SpaceHosts } from './space-credential';
+import { groupClient, requireGroupCredential } from './session';
+export { groupHostOrigin, isHostGroup } from './host-kind';
 import { GroupSpaceError } from './spaces';
 import { describeFailure, readXrpc, xrpc, type XrpcAnswer, type XrpcRequest } from './xrpc';
 
@@ -44,28 +44,6 @@ const NS = 'group.opensocial';
 
 /** The most join requests a page lists, 100 to a page. */
 const MAX_LISTED_REQUESTS = 1000;
-
-/** The group host this deployment is set up with, by origin, or null. */
-export function groupHostOrigin(
-	env: Pick<CredentialStoreEnv, 'GROUP_HOST_URL'> | undefined
-): string | null {
-	const url = env?.GROUP_HOST_URL?.trim();
-	return url ? new URL(url).origin : null;
-}
-
-/** Whether `groupDid` lives at this deployment's group host: its DID document
- *  names the host as its PDS. With no host set up, no group does, and nothing is
- *  resolved. A DID that cannot be resolved throws: which host serves a group is
- *  not something to guess. */
-export async function isHostGroup(
-	env: Pick<CredentialStoreEnv, 'GROUP_HOST_URL'> | undefined,
-	groupDid: string,
-	hosts: Pick<SpaceHosts, 'repoHost'> = didSpaceHosts
-): Promise<boolean> {
-	const origin = groupHostOrigin(env);
-	if (!origin) return false;
-	return new URL(await hosts.repoHost(groupDid)).origin === origin;
-}
 
 /** The group host refused a call, by a name this app has no message of its own
  *  for. Only the name is kept: a host's message can carry what a user typed. */

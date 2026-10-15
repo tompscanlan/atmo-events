@@ -16,6 +16,9 @@ export type RsvpStatus = (typeof RSVP_STATUSES)[number];
 
 export const POLICY_PUBLIC = 'com.atproto.simplespace.defs#publicPolicy';
 export const POLICY_MEMBER_LIST = 'com.atproto.simplespace.defs#memberListPolicy';
+/** A group host's spaces: the host, as the managing app, decides each read from
+ *  the space's `access` record. */
+export const POLICY_MANAGING_APP = 'com.atproto.simplespace.defs#managingAppPolicy';
 
 /** Every space is keyed `self`, the atproto singleton convention. A group owns
  *  one space of each type, so its space URIs follow from the DID alone. Never key

@@ -29,6 +29,11 @@
 // follows it. A second run writes nothing. The repair cannot help a group whose
 // authz config exists while the owner has no membership record, because
 // MANAGE_GROUP then refuses the owner too.
+//
+// A group at a real group host (./real-host.ts) gets step 4 only. The host keeps
+// its records, read policies and member lists in step itself, so repair moves to
+// the host (TS, 2026-10-15), and here it only rebuilds this site's copy, reading
+// with the caller's own access like every other read.
 import { declarationRequired } from '../declaration-record';
 import { GROUP_ROLES, type GroupPermission, type GroupRoleName } from '../permissions';
 import { MEMBERS_SPACE_TYPE, type GroupRow, type GroupVisibility } from '../types';
@@ -81,6 +86,7 @@ import {
 } from '../members-record';
 import { rolePermissions } from './db/groups';
 import { listMembers } from './db/roster';
+import { isHostGroup } from './host-kind';
 export interface RepairGroupInput {
 	db: D1Database;
 	env: CredentialStoreEnv;
@@ -92,6 +98,8 @@ export interface RepairGroupInput {
 	reader?: GroupSpaceReader | null;
 	/** Moves a space's read policy. Built from the credential if absent. */
 	updater?: GroupSpaceUpdater;
+	/** The caller's own reader, which a group at a real host is rebuilt with. */
+	ownReader?: GroupSpaceReader | null;
 }
 
 export interface GroupRepairResult {
@@ -115,6 +123,9 @@ export interface GroupRepairResult {
 	/** What step 3 changed on each space's member list. */
 	lists: Record<GroupSpaceKind, SpaceMemberAlignment>;
 	rebuild: GroupRebuildResult;
+	/** The group is at a real host, which keeps its records itself: only the
+	 *  rebuild ran. */
+	atHost?: boolean;
 }
 
 export interface PolicyAlignment {
@@ -129,6 +140,7 @@ export interface PolicyAlignment {
 
 export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairResult> {
 	const { db, env, group } = input;
+	if (await isHostGroup(env, group.group_did)) return rebuildAtHost(input);
 	// Repair reads as the group until the real host (TS, 2026-10-15), through the
 	// caller's own group session; an anonymous caller is refused by the gate.
 	const reader =
@@ -239,6 +251,38 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 	return { wrote, unrecordedMembers, authzHeldBack, lists, policy, rebuild };
 }
 
+/** Step 4 alone, for a group at a real host, behind the same gate, read with the
+ *  caller's own access. */
+async function rebuildAtHost(input: RepairGroupInput): Promise<GroupRepairResult> {
+	const reader = input.ownReader ?? null;
+	await requireGroupWrite(
+		{ ...input, reader },
+		spaceWrite(MEMBERS_SPACE_TYPE, GROUP_PERMISSIONS_COLLECTION, 'update')
+	);
+	if (!reader) throw new GroupCredentialError(input.group.group_did, actingPerson(input));
+	const nothing = { added: [], removed: [] };
+	return {
+		wrote: {
+			access: false,
+			calendarAccess: false,
+			aboutAccess: false,
+			spaceIndex: false,
+			ownerMembership: false,
+			authz: false
+		},
+		unrecordedMembers: [],
+		authzHeldBack: null,
+		policy: {
+			visibility: visibilityFromAccess(await readAboutAccess(reader, input.group)),
+			readPolicies: {},
+			declaration: null
+		},
+		lists: { about: nothing, members: nothing, calendar: nothing },
+		rebuild: await rebuildGroup(input.db, reader, input.group.group_did),
+		atHost: true
+	};
+}
+
 /** Step 2. Moves each space's read policy to what its `access` calls for, then
  *  publishes or withdraws the declaration by the about space's. Writes only on a
  *  disagreement, and never a record. The read policies go first, so a space the
@@ -297,6 +341,9 @@ async function bundlesFromRows(
 
 /** What the repair did, in sentences an owner can read. */
 export function describeRepair(result: GroupRepairResult): string {
+	if (result.atHost) {
+		return "The group's host keeps its records, member lists and access in step itself, so nothing there was changed. Rebuilt this site's copy of the group from its records.";
+	}
 	const { wrote } = result;
 	const written = [
 		wrote.ownerMembership && "owner's membership record",
