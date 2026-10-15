@@ -38,16 +38,20 @@ export function formError(e: unknown): GroupFormFailure {
 }
 
 /** The refusal for a caller who lacks `permission`. When the members space
- *  could not be read, or cannot be because the group is not linked, their
- *  permissions are unknown rather than missing, and "Not allowed" would send an
- *  owner looking for a role they already hold. */
+ *  could not be read, or cannot be with the caller's sign-in, their permissions
+ *  are unknown rather than missing, and "Not allowed" would send an owner
+ *  looking for a role they already hold. */
 export function notAllowed(
-	membership: Pick<CallerMembership, 'unreadable' | 'unlinked'>,
+	membership: Pick<CallerMembership, 'unreadable' | 'noSpaceAccess'>,
 	permission: GroupPermission
 ): GroupFormFailure {
-	// The same refusal the write gate gives an unlinked group, which these forms
-	// would otherwise never reach.
-	if (membership.unlinked) return { ...NOT_LINKED };
+	if (membership.noSpaceAccess) {
+		return {
+			ok: false,
+			error:
+				'Your permissions in this group could not be checked: your sign-in does not let this site read the group’s spaces. Nothing was changed; signing in again may fix it.'
+		};
+	}
 	if (membership.unreadable) {
 		return {
 			ok: false,

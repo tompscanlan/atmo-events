@@ -4,6 +4,7 @@ import {
 	readMembersOnlyEvents,
 	unionGroupEvents
 } from '$lib/groups/server/calendar-read';
+import { gateCaller } from '$lib/groups/server/acceptance';
 import { listGroupEvents } from '$lib/groups/server/events-index';
 
 import { groupHeader, groupRouteContext } from '$lib/groups/server/route-context';
@@ -12,17 +13,16 @@ import type { PageServerLoad } from './$types';
 /** The group's events, in two slices. The public slice is read from the app's
  *  index like any other actor's, so the page renders for a visitor who is not
  *  signed in, and a failed index read gives an empty list rather than a 500.
- *  The members-only slice is read from the group's calendar space, and only
- *  for a roster member: anyone else causes no read of it, and gets back exactly
+ *  The members-only slice is read from the group's calendar space, with the
+ *  member's own access, and only for a roster member: anyone else causes no read of it, and gets back exactly
  *  what the page returned before that slice existed. The name comes from the
  *  profile record, as on the group page. */
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
 	const { group, membership, reader } = await groupRouteContext(
-		platform!.env,
 		db,
 		params.actor,
-		locals.did
+		await gateCaller(locals.did, locals.session)
 	);
 
 	const [header, events, membersOnly] = await Promise.all([

@@ -61,6 +61,14 @@ export interface FakeSpaceReader extends GroupSpaceReader {
 	put(record: SpaceRecordInput): void;
 	/** Drops the record at an address, if there is one. */
 	remove(address: { space: string; repo?: string; collection: string; rkey: string }): void;
+	/** The record at an address, without logging a call: what the host itself
+	 *  knows when it decides whom to let in (./reader-host.ts). */
+	peek(address: {
+		space: string;
+		repo?: string;
+		collection: string;
+		rkey: string;
+	}): GroupSpaceRecord | null;
 }
 
 const NSID = {
@@ -129,6 +137,12 @@ export function spaceReader(repo: string, options: SpaceReaderOptions = {}): Fak
 		},
 		remove(address) {
 			held.delete(key(address.space, address.repo ?? repo, address.collection, address.rkey));
+		},
+		peek(address) {
+			const found = held.get(
+				key(address.space, address.repo ?? repo, address.collection, address.rkey)
+			);
+			return found ? recordOf(found) : null;
 		},
 		async get(q) {
 			answer({ method: 'get', ...q });

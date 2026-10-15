@@ -35,66 +35,17 @@ export interface BrowseEntry {
 	declared: boolean;
 }
 
-/** Most membership-record checks one browse view runs at once. */
-const ROSTER_CHECKS_IN_FLIGHT = 6;
-
-/** The candidates `check` confirms, newest first, stopping at `wanted`. A
- *  check starts only while confirmed plus running is below `wanted`, so a
- *  rejection frees its slot for the next candidate. An unchecked candidate is
- *  never returned: listing it is the leak the check exists to close.
- *
- *  The first failure fails the listing. It is recorded, not left to the race,
- *  where a sibling that settles first would drop it. No check starts after a
- *  failure, and running checks are awaited before it is thrown. */
-async function confirmNewest(
-	candidates: GroupRow[],
-	check: (row: GroupRow) => Promise<boolean>,
-	wanted: number
-): Promise<GroupRow[]> {
-	const queue = [...candidates].sort((a, b) => b.created_at - a.created_at);
-	const confirmed = new Set<GroupRow>();
-	const running = new Set<Promise<void>>();
-	// An array, not a nullable local: a callback sets it, which narrowing cannot see.
-	const failures: unknown[] = [];
-	let next = 0;
-	for (;;) {
-		while (
-			failures.length === 0 &&
-			next < queue.length &&
-			running.size < ROSTER_CHECKS_IN_FLIGHT &&
-			confirmed.size + running.size < wanted
-		) {
-			const row = queue[next++];
-			const run: Promise<void> = check(row)
-				.then(
-					(ok) => {
-						if (ok) confirmed.add(row);
-					},
-					(error: unknown) => {
-						if (failures.length === 0) failures.push(error);
-					}
-				)
-				.finally(() => running.delete(run));
-			running.add(run);
-		}
-		if (running.size === 0) break;
-		await Promise.race(running);
-	}
-	if (failures.length > 0) throw failures[0];
-	return queue.filter((row) => confirmed.has(row));
-}
-
 /** Browse listing: the declaration index plus the caller's own groups.
  *
  *  A public group publishes a declaration and a private one withdraws it, so
  *  no visibility filter is needed. A declared group with no row here is still
  *  listed, because another app may have created it.
  *
- *  A signed-in caller also sees the groups they own or are a member
- *  of, so a private group stays reachable by its members. A row can outlive
- *  its membership record, so an undeclared group the caller does not own is
- *  kept only when `onRoster` confirms them. `confirmNewest` bounds those
- *  checks, since anyone who may admit members can add a DID to many rosters.
+ *  A signed-in caller also sees the groups they own or are a member of, by the
+ *  rows, so a private group stays reachable by its members. No space is read:
+ *  a row that outlived its membership record lists a group whose page then
+ *  answers 404, since the page reads the caller's standing with their own
+ *  access (TS 2026-10-15).
  *
  *  Names and descriptions come from the row, not records: the about space is
  *  never anonymously readable, so no indexer can supply them. */
@@ -104,9 +55,6 @@ export async function listGroups(
 		callerDid?: string | null;
 		declared: DeclaredGroup[];
 		limit?: number;
-		/** Whether the caller's membership record confirms them. When absent,
-		 *  the membership row is trusted. */
-		onRoster?: (row: GroupRow) => Promise<boolean>;
 	}
 ): Promise<BrowseEntry[]> {
 	await ensureGroupsSchema(db);
@@ -150,17 +98,7 @@ export async function listGroups(
 		});
 	}
 
-	const undeclared = own.filter((row) => !entries.has(row.group_did));
-	const onRoster = opts.onRoster;
-	const unchecked = undeclared.filter((row) => row.owner_did === caller || !onRoster);
-	const confirmed = onRoster
-		? await confirmNewest(
-				undeclared.filter((row) => row.owner_did !== caller),
-				onRoster,
-				limit
-			)
-		: [];
-	for (const row of [...unchecked, ...confirmed]) {
+	for (const row of own.filter((row) => !entries.has(row.group_did))) {
 		entries.set(row.group_did, {
 			group_did: row.group_did,
 			row,

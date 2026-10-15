@@ -7,7 +7,7 @@
 // stubbed fetch; the wire shapes themselves are about-read.test.ts's.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-	MEMBERS_ONLY_UNLINKED,
+	MEMBERS_ONLY_NO_ACCESS,
 	MEMBERS_ONLY_UNREADABLE,
 	membersOnlyEventForDisplay,
 	readMembersOnlyEvent,
@@ -193,10 +193,10 @@ describe('readMembersOnlyEvents: failing gracefully, for a member', () => {
 
 	afterEach(() => logged.mockRestore());
 
-	it('with no reader, the slice is empty and says an organizer has to relink the group', async () => {
-		const slice = await readMembersOnlyEvents(viewer(true, { unlinked: true }), null, GROUP);
+	it("with no reader, the slice is empty and says the member's sign-in reads no spaces", async () => {
+		const slice = await readMembersOnlyEvents(viewer(true, { noSpaceAccess: true }), null, GROUP);
 
-		expect(slice).toStrictEqual({ events: [], notice: MEMBERS_ONLY_UNLINKED });
+		expect(slice).toStrictEqual({ events: [], notice: MEMBERS_ONLY_NO_ACCESS });
 		expect(logged).not.toHaveBeenCalled();
 	});
 
@@ -539,10 +539,10 @@ describe('readMembersOnlyEvent', () => {
 			notice: MEMBERS_ONLY_UNREADABLE
 		});
 
-		// With no reader, the group is unlinked, and a member is told why.
+		// With no reader, the member's sign-in reads no spaces, and they are told why.
 		expect(
-			await readMembersOnlyEvent(viewer(true, { unlinked: true }), null, GROUP, '3lmeeting')
-		).toStrictEqual({ status: 'unlinked', notice: MEMBERS_ONLY_UNLINKED });
+			await readMembersOnlyEvent(viewer(true, { noSpaceAccess: true }), null, GROUP, '3lmeeting')
+		).toStrictEqual({ status: 'no-access', notice: MEMBERS_ONLY_NO_ACCESS });
 	});
 
 	it("the display copy of a members-only event drops its image and leaves the record's", () => {

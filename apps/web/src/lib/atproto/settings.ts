@@ -1,5 +1,6 @@
 import { dev } from '$app/environment';
 import { scope } from '@atcute/oauth-node-client';
+import { ABOUT_SPACE_TYPE } from '$lib/groups/types';
 
 // writable collections — declared as a standalone scope because their NSIDs
 // (`community.lexicon.*`) sit outside our namespace, so they can't go in
@@ -13,6 +14,11 @@ export const collections = [
 export const allowedCollections = [...collections, 'app.bsky.feed.post'];
 
 export type AllowedCollection = (typeof allowedCollections)[number];
+
+/** Reading any group's meta space with one's own access, so a signed-in person
+ *  reads a public group's profile and rules, and the group's authority decides
+ *  who may (TS 2026-10-15; `$lib/groups/server/member-grants.ts`). */
+export const META_READ_GRANT = `space:${ABOUT_SPACE_TYPE}?authority=*&action=read`;
 
 // OAuth scopes. `include:rsvp.atmo.permissionSet?aud=*` bundles every rpc method
 // the deployment exposes; `aud=*` lets the same consent cover dev (tunnel DID)
@@ -29,7 +35,8 @@ export const scopes = [
 	// com.atproto.server.getServiceAuth) to ask for/revoke notification consent.
 	// `send` itself needs no user scope (it's signed with our app key).
 	'rpc?lxm=pub.atmo.notify.requestPermission&aud=*',
-	'rpc?lxm=pub.atmo.notify.revokeSelf&aud=*'
+	'rpc?lxm=pub.atmo.notify.revokeSelf&aud=*',
+	META_READ_GRANT
 ];
 
 // set to false to disable signup

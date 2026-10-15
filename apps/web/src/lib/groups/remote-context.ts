@@ -11,7 +11,7 @@ import type { Did } from '@atcute/lexicons';
 import { servesClientMetadata } from '$lib/atproto/server/oauth';
 import type { CallerMembership, GroupRow, GroupVisibility } from './types';
 import type { GroupSpaceReader } from './server/about-read';
-import { memberSession, type MemberSession } from './server/acceptance';
+import { callerSession, gateCaller, type MemberSession } from './server/acceptance';
 import { reauthorizeForGroup } from './server/member-grants';
 import { groupRouteContext } from './server/route-context';
 import { authorizeWithGrants } from './server/sign-in-grants';
@@ -25,7 +25,8 @@ export interface GroupRequestContext {
 	membership: CallerMembership;
 	/** The host's visibility, when the gate asked. The join refusal reads it. */
 	visibility: GroupVisibility | null;
-	/** The gate's reader, so an act reads through the same session. */
+	/** The caller's own reader, from the gate, so an act reads with the caller's
+	 *  access. Null when their sign-in reads no spaces. */
 	reader: GroupSpaceReader | null;
 	/** Never null: `groupRequestContext` throws 401 before returning. */
 	callerDid: string;
@@ -34,31 +35,25 @@ export interface GroupRequestContext {
 /** Throws 401 when not signed in, and the route's own 404 for every other
  *  refusal. It uses the pages' lookup (`server/route-context.ts`): anyone
  *  signed in can POST a remote form with any group key, so a separate lookup
- *  could reveal that a private group exists. */
+ *  could reveal that a private group exists. Every read an act makes goes
+ *  through the caller's own reader, built there. */
 export async function groupRequestContext(actor: string): Promise<GroupRequestContext> {
 	const { locals, platform } = getRequestEvent();
 	if (!locals.did) error(401, 'Sign in to do that');
 	const db = platform!.env.DB;
 	const { group, membership, visibility, reader } = await groupRouteContext(
-		platform!.env,
 		db,
 		actor,
-		locals.did
+		await gateCaller(locals.did, locals.session)
 	);
 	return { db, env: platform!.env, group, membership, visibility, reader, callerDid: locals.did };
 }
 
-/** The caller's own session, for their acceptance (./server/acceptance.ts). Null
- *  when there is none to read, and then no acceptance is touched. */
+/** The caller's own session, for their acceptance and their RSVP
+ *  (./server/acceptance.ts). Null when there is none to use. */
 export async function callerMember(): Promise<MemberSession | null> {
 	const { locals } = getRequestEvent();
-	if (!locals.session) return null;
-	try {
-		return await memberSession(locals.session);
-	} catch (e) {
-		console.warn('[groups] no member session for the acceptance:', e);
-		return null;
-	}
+	return callerSession(locals.session);
 }
 
 /** Where to send a member who just joined or asked to join, so their session

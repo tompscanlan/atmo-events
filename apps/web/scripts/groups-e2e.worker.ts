@@ -65,8 +65,8 @@ import {
 } from '../src/lib/groups/server/member-rsvp';
 
 import {
+	credentialAcceptanceReader,
 	didSpaceHosts,
-	groupAcceptanceReader,
 	spaceCredential,
 	spaceSigHeaders
 } from '../src/lib/groups/server/space-credential';
@@ -83,7 +83,8 @@ import {
 } from '../src/lib/groups/server/calendar-read';
 import { setStandInLogin, standInCalls, standInWrites } from './groups-e2e.oauth';
 import { runCreateGroup, type CreateGroupData } from '../src/lib/groups/create-group';
-import { scopes } from '../src/lib/atproto/settings';
+import { META_READ_GRANT, scopes } from '../src/lib/atproto/settings';
+import type { GroupSpaceReader } from '../src/lib/groups/server/about-read';
 
 import { groupSpaceUris, type RsvpStatus } from '../src/lib/groups/ids';
 
@@ -97,9 +98,9 @@ import {
 	updateGroup
 } from '../src/lib/groups/server/db/groups';
 import { listJoinRequests, listMembers } from '../src/lib/groups/server/db/roster';
-import { getCallerMembership } from '../src/lib/groups/server/standing';
+import { readStanding } from '../src/lib/groups/server/standing';
 import { isHttpError } from '@sveltejs/kit';
-import { groupRouteContext } from '../src/lib/groups/server/route-context';
+import { callerReader, groupRouteContext } from '../src/lib/groups/server/route-context';
 import { groupEditorPage } from '../src/lib/groups/server/editor-page';
 interface Env {
 	DB: D1Database;
@@ -115,6 +116,9 @@ interface Env {
 	E2E_GROUP_SERVICE: string;
 	/** The admin's login, for the stand-in of their own session (`adminSession`). */
 	E2E_ADMIN_PASSWORD: string;
+	/** Each person's login by DID, as JSON, for the stand-in of the session they
+	 *  read with (`ownSession`). Never logged. */
+	E2E_PASSWORDS: string;
 }
 
 /** Args are already-parsed JSON from the driver, which is the only caller. */
@@ -133,37 +137,48 @@ async function groupById(env: Env, groupId: unknown): Promise<GroupRow> {
 	return row;
 }
 
-// One admin login per isolate, as the group's stand-in does.
-let adminLogin: Promise<{ did: string; accessJwt: string }> | null = null;
+// One login per person per isolate, as the group's stand-in does.
+const logins = new Map<string, Promise<{ did: string; accessJwt: string }>>();
 
-/** The stand-in for the admin's own session, for their acceptance and their
- *  RSVP. A sign-in would carry the group's grant in its scope; a password
- *  session needs none at the PDS, so the scope here is that grant, as the app
- *  builds it. What it cannot show is a real sign-in's consent, or the PDS
- *  holding an OAuth session to that grant; a walk through a deployed site
- *  covers that. */
-async function adminSession(env: Env, did: string, group: GroupRow): Promise<MemberSession> {
-	adminLogin ??= (async () => {
-		const res = await fetch(
-			new URL('/xrpc/com.atproto.server.createSession', env.E2E_GROUP_SERVICE),
-			{
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ identifier: did, password: env.E2E_ADMIN_PASSWORD })
-			}
-		);
-		// The DID is safe to name; the password never is.
-		if (!res.ok) throw new Error(`stand-in login for ${did} was refused (${res.status})`);
-		return (await res.json()) as { did: string; accessJwt: string };
-	})().catch((e) => {
-		adminLogin = null;
-		throw e;
-	});
-	const { did: loggedIn, accessJwt } = await adminLogin;
-	if (loggedIn !== did) throw new Error(`the admin login is ${loggedIn}, not ${did}`);
+/** The scope a fresh sign-in carries for a member of `group`: the base scope,
+ *  the meta read grant in it, and the group's member grant. */
+function signInScope(group: GroupRow): string {
+	return [...scopes, memberGrant(group.group_did)].join(' ');
+}
+
+/** The stand-in for a person's own session, which their reads and their
+ *  acceptance and RSVP go through. A sign-in would carry the grants in its scope;
+ *  a password session needs none at the PDS, so the scope here is what a fresh
+ *  sign-in asks for, as the app builds it. What it cannot show is a real
+ *  sign-in's consent, or the PDS holding an OAuth session to those grants; the
+ *  day-5.2a probe (OKF runs/2026-10-15-member-own-credential-probe) showed that
+ *  half. */
+async function ownSession(env: Env, did: string, group: GroupRow): Promise<MemberSession> {
+	let login = logins.get(did);
+	if (!login) {
+		const password = (JSON.parse(env.E2E_PASSWORDS) as Record<string, string>)[did];
+		if (!password) throw new Error(`no stand-in login for ${did}`);
+		login = (async () => {
+			const res = await fetch(
+				new URL('/xrpc/com.atproto.server.createSession', env.E2E_GROUP_SERVICE),
+				{
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ identifier: did, password })
+				}
+			);
+			// The DID is safe to name; the password never is.
+			if (!res.ok) throw new Error(`stand-in login for ${did} was refused (${res.status})`);
+			return (await res.json()) as { did: string; accessJwt: string };
+		})();
+		logins.set(did, login);
+		login.catch(() => logins.delete(did));
+	}
+	const { did: loggedIn, accessJwt } = await login;
+	if (loggedIn !== did) throw new Error(`the login for ${did} is ${loggedIn}`);
 	return {
 		did,
-		scope: memberGrant(group.group_did),
+		scope: signInScope(group),
 		handle: (pathname, init) => {
 			const headers = new Headers(init.headers);
 			headers.set('authorization', `Bearer ${accessJwt}`);
@@ -172,19 +187,24 @@ async function adminSession(env: Env, did: string, group: GroupRow): Promise<Mem
 	};
 }
 
+/** The admin's own session, for their acceptance and their RSVP. */
+async function adminSession(env: Env, did: string, group: GroupRow): Promise<MemberSession> {
+	return ownSession(env, did, group);
+}
+
 // Every request the app sent through a no-spaces member's session. The driver
 // expects none.
 const noSpacesCalls: string[] = [];
 
 /** The stand-in for the session of a member whose PDS serves no spaces. Its
- *  scope is what atmo asks for with the group's space grant dropped, as a stock
- *  PDS drops a space grant it does not know. It never logs in, because the run
- *  writes nothing to their repo: a request sent through it is recorded and
- *  refused, so none reaches their PDS. */
+ *  scope is what atmo asks for with every space grant dropped, the meta read
+ *  grant too, as a stock PDS drops a space grant it does not know. It never logs
+ *  in, because the run writes nothing to their repo: a request sent through it
+ *  is recorded and refused, so none reaches their PDS. */
 function noSpacesSession(did: string): MemberSession {
 	return {
 		did,
-		scope: scopes.join(' '),
+		scope: scopes.filter((scope) => !scope.startsWith('space:')).join(' '),
 		handle: async (pathname) => {
 			noSpacesCalls.push(pathname);
 			throw new Error(`the no-spaces member's session was asked for ${pathname}`);
@@ -217,6 +237,64 @@ function recorded(member: MemberSession, calls: string[]): MemberSession {
 	};
 }
 
+/** Every request a read sent with someone's own access, in order, as its path
+ *  and query: each delegation token asked of a person's PDS, each credential
+ *  exchange (with the space it names) and each read signed with a credential. A
+ *  worker op hands the driver the slice it caused, as with `standInCalls`, so
+ *  "nothing was read" is a count. */
+const ownCalls: string[] = [];
+
+const sendFetch = globalThis.fetch.bind(globalThis);
+globalThis.fetch = (input, init) => {
+	const url = new URL(input instanceof Request ? input.url : String(input));
+	const authorization = new Headers(init?.headers).get('authorization') ?? '';
+	if (
+		url.pathname === '/xrpc/com.atproto.space.getSpaceCredential' &&
+		typeof init?.body === 'string'
+	) {
+		const { space } = JSON.parse(init.body) as { space?: unknown };
+		ownCalls.push(`${url.pathname}?${new URLSearchParams({ space: String(space) })}`);
+	} else if (authorization.startsWith('Atproto-Space ')) {
+		ownCalls.push(url.pathname + url.search);
+	}
+	return sendFetch(input, init);
+};
+
+/** The caller the driver names, as a page builds it from the sign-in: null for
+ *  `did: null`, else their own session, by the kind `session` names: `own` (the
+ *  default), `no-spaces` for a member whose PDS serves none, or `no-read`, a
+ *  sign-in without the meta read grant, as one made before it was asked for.
+ *  The delegation tokens it asks for are recorded in `ownCalls`. */
+async function callerFor(env: Env, args: Args, group: GroupRow): Promise<MemberSession | null> {
+	if (args.did == null) return null;
+	const did = String(args.did);
+	const kind = args.session ?? 'own';
+	if (kind === 'no-spaces') return noSpacesSession(did);
+	if (kind !== 'own' && kind !== 'no-read')
+		throw new Error(`unknown caller session ${String(kind)}`);
+	const own = await ownSession(env, did, group);
+	const scope =
+		kind === 'no-read'
+			? own.scope
+					.split(' ')
+					.filter((token) => token !== META_READ_GRANT)
+					.join(' ')
+			: own.scope;
+	return {
+		...own,
+		scope,
+		handle: (pathname, init) => {
+			ownCalls.push(pathname);
+			return own.handle(pathname, init);
+		}
+	};
+}
+
+/** The caller's own reader, as the page's gate builds it, or null. */
+async function readerFor(env: Env, args: Args, group: GroupRow): Promise<GroupSpaceReader | null> {
+	return callerReader(await callerFor(env, args, group));
+}
+
 /** One of a member's records in one of the group's spaces, read the way the
  *  roster reads an acceptance: the group's space credential, signed, at the
  *  member's PDS, by DID. Made here without the app's reader so the driver sees
@@ -233,7 +311,7 @@ async function groupReadAt(
 	if (!cred) throw new Error(`no credential for ${group.group_did}`);
 	const { handle } = await groupClient(cred, group.group_did);
 	const credential = await spaceCredential(
-		handle,
+		{ did: group.group_did, handle },
 		space,
 		await didSpaceHosts.spaceHost(group.group_did)
 	);
@@ -269,7 +347,8 @@ async function standInSession(
 ): Promise<MemberSession> {
 	switch (kind ?? 'admin') {
 		case 'admin':
-			return recorded(await adminSession(env, did, group), calls);
+		case 'own':
+			return recorded(await ownSession(env, did, group), calls);
 		case 'no-spaces':
 			return recorded(noSpacesSession(did), calls);
 		case 'outsider':
@@ -285,7 +364,10 @@ async function standInSession(
 async function rosterCtx(env: Env, args: Args, group: GroupRow): Promise<HostBinding & HostCaller> {
 	const callerDid = String(args.callerDid);
 	const member = args.asMember ? await standInSession(env, args.session, callerDid, group) : null;
-	return { db: env.DB, env, group, callerDid, member };
+	// The gate reads with the caller's own access, as the forms' does.
+	const session = args.session === 'no-spaces' ? 'no-spaces' : 'own';
+	const reader = await readerFor(env, { did: callerDid, session }, group);
+	return { db: env.DB, env, group, callerDid, member, reader };
 }
 
 /** The group's own space reader. The members space is readable only with the
@@ -359,14 +441,15 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 			? listJoinRequests(env.DB, String(args.groupId), 'all')
 			: groupHost({ db: env.DB, env, group }).listJoinRequests(),
 
-	/** The app's own permission answer, plus `can()` for each probed name. Once
-	 *  the members space holds an authz config, it comes from the records. */
+	/** The app's own permission answer, read with the caller's own access, plus
+	 *  `can()` for each probed name. Once the members space holds an authz config,
+	 *  it comes from the records. */
 	membership: async (env, args, group) => {
-		const membership = await getCallerMembership(
+		const membership = await readStanding(
 			env.DB,
 			group,
 			args.did == null ? null : String(args.did),
-			await groupSpaceReader(env, group)
+			await readerFor(env, args, group)
 		);
 		const probe = (args.probe as GroupPermission[]) ?? [];
 		return {
@@ -389,6 +472,7 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 			env,
 			group,
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			reader: await readerFor(env, { did: args.callerDid }, group),
 			intent: args.intent as 'create' | 'update',
 			rkey: args.rkey as string | undefined,
 			placement: args.placement as EventPlacement,
@@ -403,6 +487,7 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 			env,
 			group,
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			reader: await readerFor(env, { did: args.callerDid }, group),
 			intent: args.intent as 'create' | 'update',
 			bytes: new Uint8Array(args.bytes as number[]),
 			mimeType: String(args.mimeType)
@@ -415,6 +500,7 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 			env,
 			group,
 			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			reader: await readerFor(env, { did: args.callerDid }, group),
 			rkey: String(args.rkey),
 			placement: args.placement as EventPlacement
 		}),
@@ -487,7 +573,11 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 	saveSettings: async (env, args, group) => {
 		const reader = await spaceReader(env, group);
 		const { rules } = await readGroupAbout(reader, group);
-		return runUpdateGroup(env, env.DB, group, String(args.callerDid), {
+		const caller = {
+			did: String(args.callerDid),
+			reader: await readerFor(env, { did: args.callerDid }, group)
+		};
+		return runUpdateGroup(env, env.DB, group, caller, {
 			name: group.name,
 			description: group.description ?? undefined,
 			visibility: chosenVisibility(args),
@@ -586,14 +676,21 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 	 *  grant and refuses any request. `stamp` stands for the session's own (0 when
 	 *  absent), `asked` is the marker the page would carry back (null when
 	 *  absent), and a put sends `cid` as the version of the event the page
-	 *  showed. The put reads the event with the group's own space reader, as the
+	 *  showed. The put reads the event with the caller's own reader, as the
 	 *  command does. reauthorize() is a stand-in that answers `reauthorizeUrl`
 	 *  (null when absent) and is never followed. Returns the module's answer,
 	 *  every request sent through the caller's session, and how many times
 	 *  reauthorize() was called. */
 	membersOnlyRsvp: async (env, args, group) => {
 		const did = String(args.did);
-		const { membership, reader } = await groupRouteContext(env, env.DB, group.group_did, did);
+		// The gate reads with the caller's own sign-in, a real one even for the
+		// outsider, whose RSVP session below refuses everything.
+		const session = args.session === 'no-spaces' ? 'no-spaces' : 'own';
+		const { membership, reader } = await groupRouteContext(
+			env.DB,
+			group.group_did,
+			await callerFor(env, { did, session }, group)
+		);
 		const calls: string[] = [];
 		const member = await standInSession(env, args.session, did, group, calls);
 		let reauthorized = 0;
@@ -616,7 +713,7 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 				...target,
 				status: args.status as RsvpStatus,
 				cid: typeof args.cid === 'string' ? args.cid : null,
-				groupReader: async () => reader
+				reader: async () => reader
 			});
 		} else if (args.action === 'delete') {
 			result = await deleteMembersOnlyRsvp(target);
@@ -628,16 +725,22 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 		return { onRoster: membership.onRoster, result, calls, reauthorized };
 	},
 
-	/** The roster as the members page shows it: the records, each entry marked
-	 *  confirmed or not from the acceptances read by DID with the group's
-	 *  credential. `confirmed` is null when they could not be read. */
+	/** The roster as the members page shows it to `did` (the owner unless the
+	 *  driver names someone): the records, read with the viewer's own access,
+	 *  each entry marked confirmed or not from the acceptances read by DID with
+	 *  the viewer's own credential. `confirmed` is null when they could not be
+	 *  read. */
 	confirmedRoster: async (env, args, group) => {
-		const members = await readGroupMembers(await spaceReader(env, group), group);
+		const viewer = await callerFor(env, { did: args.did ?? group.owner_did }, group);
+		const reader = callerReader(viewer);
+		if (!viewer || !reader) throw new Error('the roster viewer has no reader');
+		const members = await readGroupMembers(reader, group);
 		const dids = members.memberships.map((record) => record.subject);
-		const acceptances = await groupAcceptanceReader(env, group);
 		const space = group.members_space_uri;
 		const accepted =
-			acceptances && space && dids.length > 0 ? await acceptances.accepted(space, dids) : null;
+			space && dids.length > 0
+				? await credentialAcceptanceReader(viewer, group.group_did).accepted(space, dids)
+				: null;
 		return {
 			roster: rosterFromRecords(members, accepted).map((entry) => ({
 				did: entry.did,
@@ -647,25 +750,38 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 		};
 	},
 
-	/** The gate every group page runs, for one caller (`groupRouteContext`).
-	 *  `canSee` is false for its 404. `visibility` is null for a caller on the
-	 *  roster, whom the gate lets in without asking the host. */
+	/** The gate every group page runs, for one caller (`groupRouteContext`),
+	 *  with their own sign-in (`callerFor`). `canSee` is false for its 404.
+	 *  `visibility` is null for a caller on the roster, whom the gate lets in
+	 *  without asking the host, and `public` for a signed-out visitor shown a
+	 *  group by its declaration. `groupCalls` is every request the gate sent
+	 *  through the group's own session: none, since no one reads as the group. */
 	gate: async (env, args, group) => {
+		const from = standInCalls.length;
+		const ownFrom = ownCalls.length;
 		try {
 			const context = await groupRouteContext(
-				env,
 				env.DB,
 				group.group_did,
-				args.did == null ? null : String(args.did)
+				await callerFor(env, args, group)
 			);
 			return {
 				canSee: true,
 				onRoster: context.membership.onRoster,
-				visibility: context.visibility
+				visibility: context.visibility,
+				reads: context.reader !== null,
+				groupCalls: standInCalls.slice(from),
+				calls: ownCalls.slice(ownFrom)
 			};
 		} catch (e) {
 			if (isHttpError(e) && e.status === 404) {
-				return { canSee: false, onRoster: false, visibility: null };
+				return {
+					canSee: false,
+					onRoster: false,
+					visibility: null,
+					groupCalls: standInCalls.slice(from),
+					calls: ownCalls.slice(ownFrom)
+				};
 			}
 			throw e;
 		}
@@ -673,86 +789,88 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 
 	/** The events tab's members-only slice for one viewer, or null for a viewer
 	 *  off the roster: the gate the events tab runs (`groupRouteContext`), then the
-	 *  same $lib function its loader calls. It returns every request sent through the
-	 *  group's session: `calls` for the whole op, standing included, and
-	 *  `sliceCalls` for the slice read alone. With `unlinked`, the group's stored
-	 *  session is taken away for the read, as a lapsed link leaves it, and put
-	 *  back before the op returns. */
+	 *  same $lib function its loader calls, with the viewer's own sign-in
+	 *  (`callerFor`, `session` as it names). It returns every request made with
+	 *  the viewer's own access: `calls` for the whole op, standing included, and
+	 *  `sliceCalls` for the slice read alone; and `groupCalls`, every request
+	 *  through the group's own session, which a page read makes none of. */
 	membersOnlySlice: async (env, args, group) => {
-		const did = args.did == null ? null : String(args.did);
-		const key = GROUP_SESSION_PREFIX + group.group_did;
-		const stored = args.unlinked ? await env.OAUTH_SESSIONS.get(key) : null;
-		if (args.unlinked) await env.OAUTH_SESSIONS.delete(key);
-		try {
-			const from = standInCalls.length;
-			const { membership, reader } = await groupRouteContext(env, env.DB, group.group_did, did);
-			const sliceFrom = standInCalls.length;
-			const read = await readMembersOnlyEvents(membership, reader, group);
-			// As the events tab shows it: each event without its image.
-			const slice = read && { ...read, events: read.events.map(membersOnlyEventForDisplay) };
-			return {
-				linked: reader !== null,
-				onRoster: membership.onRoster,
-				slice,
-				calls: standInCalls.slice(from),
-				sliceCalls: standInCalls.slice(sliceFrom)
-			};
-		} finally {
-			if (args.unlinked && stored !== null) await env.OAUTH_SESSIONS.put(key, stored);
-		}
+		const from = standInCalls.length;
+		const ownFrom = ownCalls.length;
+		const { membership, reader } = await groupRouteContext(
+			env.DB,
+			group.group_did,
+			await callerFor(env, args, group)
+		);
+		const sliceFrom = ownCalls.length;
+		const read = await readMembersOnlyEvents(membership, reader, group);
+		// As the events tab shows it: each event without its image.
+		const slice = read && { ...read, events: read.events.map(membersOnlyEventForDisplay) };
+		return {
+			reads: reader !== null,
+			onRoster: membership.onRoster,
+			slice,
+			groupCalls: standInCalls.slice(from),
+			calls: ownCalls.slice(ownFrom),
+			sliceCalls: ownCalls.slice(sliceFrom)
+		};
 	},
 
 	/** One members-only event by its key for one viewer, as its page reads it.
 	 *  The gate the event page runs (`groupRouteContext`), then the same $lib
-	 *  function its loader calls. It returns every request sent through the group's
-	 *  session: `calls` for the whole op, standing included, and `readCalls` for
-	 *  the event read alone. */
+	 *  function its loader calls, with the viewer's own sign-in. It returns every
+	 *  request made with the viewer's own access: `calls` for the whole op, and
+	 *  `readCalls` for the event read alone; and `groupCalls`, as for the slice. */
 	membersOnlyEvent: async (env, args, group) => {
-		const did = args.did == null ? null : String(args.did);
 		const from = standInCalls.length;
-		const { membership, reader } = await groupRouteContext(env, env.DB, group.group_did, did);
-		const readFrom = standInCalls.length;
+		const ownFrom = ownCalls.length;
+		const { membership, reader } = await groupRouteContext(
+			env.DB,
+			group.group_did,
+			await callerFor(env, args, group)
+		);
+		const readFrom = ownCalls.length;
 		const read = await readMembersOnlyEvent(membership, reader, group, String(args.rkey));
 		return {
-			linked: reader !== null,
+			reads: reader !== null,
 			onRoster: membership.onRoster,
 			read,
-			calls: standInCalls.slice(from),
-			readCalls: standInCalls.slice(readFrom)
+			groupCalls: standInCalls.slice(from),
+			calls: ownCalls.slice(ownFrom),
+			readCalls: ownCalls.slice(readFrom)
 		};
 	},
 
 	/** The edit page's read of one members-only event for one caller: the editor
 	 *  gate the page runs (`groupEditorPage`), then for a caller it lets through
-	 *  the same $lib read and edit copy the loader calls. `allowed` is false for
-	 *  the gate's 403; the caller's standing is then read afterwards, only to
-	 *  report it. It returns every request sent through the group's session:
-	 *  `calls` for the whole op, and `readCalls` for what came after the gate. */
+	 *  the same $lib read and edit copy the loader calls, with the caller's own
+	 *  sign-in. `allowed` is false for the gate's 403; the caller's standing is
+	 *  then read afterwards, only to report it. It returns every request made with
+	 *  the caller's own access: `calls` for the whole op, and `readCalls` for what
+	 *  came after the gate; and `groupCalls`, as for the slice. */
 	membersOnlyEditRead: async (env, args, group) => {
-		const did = args.did == null ? null : String(args.did);
 		const from = standInCalls.length;
+		const ownFrom = ownCalls.length;
+		const caller = await callerFor(env, args, group);
 		let page;
 		try {
-			page = await groupEditorPage(env, group.group_did, did, 'MANAGE_EVENTS');
+			page = await groupEditorPage(env.DB, group.group_did, caller, 'MANAGE_EVENTS');
 		} catch (e) {
 			if (!(isHttpError(e) && e.status === 403)) throw e;
-			const calls = standInCalls.slice(from);
-			const standing = await getCallerMembership(
-				env.DB,
-				group,
-				did,
-				await groupSpaceReader(env, group)
-			);
+			const calls = ownCalls.slice(ownFrom);
+			const groupCalls = standInCalls.slice(from);
+			const standing = await readStanding(env.DB, group, caller?.did ?? null, callerReader(caller));
 			return {
 				onRoster: standing.onRoster,
 				allowed: false,
 				read: null,
 				eventData: null,
+				groupCalls,
 				calls,
 				readCalls: []
 			};
 		}
-		const readFrom = standInCalls.length;
+		const readFrom = ownCalls.length;
 		const read = await readMembersOnlyEvent(
 			page.membership,
 			page.reader,
@@ -765,8 +883,9 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 			read,
 			eventData:
 				read.status === 'found' ? membersOnlyEventForEditing(read.event, page.group) : null,
-			calls: standInCalls.slice(from),
-			readCalls: standInCalls.slice(readFrom)
+			groupCalls: standInCalls.slice(from),
+			calls: ownCalls.slice(ownFrom),
+			readCalls: ownCalls.slice(readFrom)
 		};
 	},
 

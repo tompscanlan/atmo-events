@@ -96,8 +96,9 @@ export interface RosterContext {
 	env: CredentialStoreEnv;
 	group: GroupRow;
 	callerDid: string;
-	/** The route's reader, so the act reads through the request's session.
-	 *  Built from the credential if absent. */
+	/** The caller's own reader, for the permission gates: an admin's read before
+	 *  a write uses their own access (TS 2026-10-15). Built from the group's
+	 *  credential if absent. */
 	reader?: GroupSpaceReader | null;
 	/** The visibility the route read from the access record, or `null` if it did
 	 *  not ask. When absent, a join reads the record itself. */
@@ -139,20 +140,26 @@ function memberListOnFirstUse(build: () => Promise<GroupMemberList>): GroupMembe
 	};
 }
 
-/** An act's context, with the gate's reader, and the writer and member list
- *  built from the group's credential on first use. Every step of an act then
- *  talks through one session, and the gate reads the caller's standing once.
- *  An act that never writes a record never asks for the credential. */
+/** An act's context, with the gate's reader, the stand-in host's own reader,
+ *  and the writer and member list built from the group's credential on first
+ *  use. The gate reads the caller's standing once, with their access. What the
+ *  stand-in reads to keep its own state (a join's visibility and date, the
+ *  member lists, an unfinished removal) it reads as the group, as a real host
+ *  reads its own records: a joiner cannot read the members space they are
+ *  joining. An act that never writes a record never asks for the credential. */
 type PreparedRoster = RosterContext & {
 	reader: GroupSpaceReader | null;
+	hostReader: GroupSpaceReader | null;
 	writer: GroupRepoWriter;
 	memberList: GroupMemberList;
 };
 
 async function prepared(ctx: RosterContext): Promise<PreparedRoster> {
+	const hostReader = await groupSpaceReader(ctx.env, ctx.group);
 	return {
 		...ctx,
-		reader: ctx.reader !== undefined ? ctx.reader : await groupSpaceReader(ctx.env, ctx.group),
+		reader: ctx.reader !== undefined ? ctx.reader : hostReader,
+		hostReader,
 		writer: writerOnFirstUse(() => groupWriter(ctx.env, ctx.group)),
 		memberList: memberListOnFirstUse(() => groupMemberList(ctx.env, ctx.group))
 	};
@@ -171,12 +178,12 @@ async function listed(
 		'list',
 		subject,
 		async () => {
-			if (!ctx.reader) {
+			if (!ctx.hostReader) {
 				throw new GroupRecordError(
 					`${ctx.group.group_did} is not linked, so its access records cannot be read`
 				);
 			}
-			const access = await readSpaceAccess(ctx.reader, ctx.group);
+			const access = await readSpaceAccess(ctx.hostReader, ctx.group);
 			await placeMember(ctx.memberList, ctx.group, subject, roles, access);
 		},
 		change
@@ -257,9 +264,9 @@ async function changeableRow(ctx: RosterContext, did: string): Promise<MemberRow
  *  the missing record, as Repair advises. A read that fails propagates, so
  *  nothing is written. */
 async function requireFinished(ctx: PreparedRoster, did: string): Promise<void> {
-	if (!ctx.reader) return;
-	if (await readMembership(ctx.reader, ctx.group, did)) return;
-	if (!isUnfinishedRow(await readGroupMembers(ctx.reader, ctx.group))) return;
+	if (!ctx.hostReader) return;
+	if (await readMembership(ctx.hostReader, ctx.group, did)) return;
+	if (!isUnfinishedRow(await readGroupMembers(ctx.hostReader, ctx.group))) return;
 	throw new GroupRuleError(
 		'unfinished-removal',
 		`${did} has no membership record, so their removal or admission did not finish. Remove them under "Not finished" on the members page; to keep them, add them again after that.`
@@ -279,7 +286,9 @@ function removesAccess(from: GroupRoleName, to: GroupRoleName): boolean {
  * because a date from the row would overwrite a published one.
  */
 export async function joinedAt(ctx: PreparedRoster, subject: string): Promise<string | undefined> {
-	const published = ctx.reader ? await readMembership(ctx.reader, ctx.group, subject) : null;
+	const published = ctx.hostReader
+		? await readMembership(ctx.hostReader, ctx.group, subject)
+		: null;
 	if (published?.createdAt) return published.createdAt;
 	const row = await getMemberRow(ctx.db, ctx.group.id, subject);
 	return row ? new Date(row.created_at).toISOString() : undefined;
@@ -289,7 +298,7 @@ export async function joinedAt(ctx: PreparedRoster, subject: string): Promise<st
  *  credential for the group it is `null`, which refuses a stranger. */
 async function joinVisibility(ctx: PreparedRoster): Promise<GroupVisibility | null> {
 	if (ctx.visibility !== undefined) return ctx.visibility;
-	return ctx.reader ? readGroupVisibility(ctx.reader, ctx.group) : null;
+	return ctx.hostReader ? readGroupVisibility(ctx.hostReader, ctx.group) : null;
 }
 
 /** Self-service join. Only `joined` is published: the groups standard models

@@ -26,7 +26,8 @@ import { VISIBILITY_WRITE } from '../grants';
 const aboutSpace = (group: GroupRow) =>
 	ownSpace(group, 'about', group.about_space_uri, 'it cannot be declared to the network');
 import { type CredentialStoreEnv, groupClient, requireGroupCredential } from './session';
-import { repoRecordExists } from './xrpc';
+import { didSpaceHosts, type SpaceHosts } from './space-credential';
+import { repoRecordExists, type XrpcHandle } from './xrpc';
 export interface WriteGroupDeclarationInput {
 	db: D1Database;
 	env: CredentialStoreEnv;
@@ -145,5 +146,18 @@ export async function reconcileGroupDeclaration(
  *  it could not read. */
 export async function groupDeclared(env: CredentialStoreEnv, groupDid: string): Promise<boolean> {
 	const { handle } = await groupClient(await requireGroupCredential(env, groupDid), groupDid);
+	return repoRecordExists(handle, groupDid, GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY);
+}
+
+/** Whether the group's public repo holds its declaration, read with no session,
+ *  as anyone may. A signed-out visitor's gate asks it: no space can be read for
+ *  them, and a group publishes its declaration exactly while its meta space is
+ *  public (declaration.json). An unreachable PDS throws. */
+export async function publiclyDeclared(
+	groupDid: string,
+	hosts: Pick<SpaceHosts, 'repoHost'> = didSpaceHosts
+): Promise<boolean> {
+	const pds = await hosts.repoHost(groupDid);
+	const handle: XrpcHandle = (pathname, init) => fetch(new URL(pathname, pds), init);
 	return repoRecordExists(handle, groupDid, GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY);
 }

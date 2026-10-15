@@ -198,7 +198,7 @@ function rsvpInput(
 		...target(member, reauthorize),
 		status: 'going' as 'going' | 'interested' | 'notgoing',
 		cid: MEETING_CID as string | null,
-		groupReader: vi.fn(async () => host as GroupSpaceReader | null)
+		reader: vi.fn(async () => host as GroupSpaceReader | null)
 	};
 }
 
@@ -332,7 +332,7 @@ describe('the event an RSVP names', () => {
 
 		// One read of the event by its key, as the group, in the calendar space,
 		// and then the one write, from the member's session.
-		expect(input.groupReader).toHaveBeenCalledTimes(1);
+		expect(input.reader).toHaveBeenCalledTimes(1);
 		expect(sequence).toEqual([
 			`group get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmeeting`,
 			'member com.atproto.space.putRecord'
@@ -395,7 +395,7 @@ describe('the event an RSVP names', () => {
 		expect(pds.records.size).toBe(0);
 	});
 
-	it('an event read that fails, or a group with no session, writes nothing and says to try again', async () => {
+	it('an event read that fails writes nothing and says to try again', async () => {
 		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const member = pds.session(GRANTED);
 		const failing = groupHost();
@@ -405,13 +405,7 @@ describe('the event an RSVP names', () => {
 		// A host that answers the event without a cid gives the RSVP nothing to cite.
 		const noCid = groupHost({ '3lmeeting': '' });
 
-		const unlinked = rsvpInput(member);
-		unlinked.groupReader.mockResolvedValue(null);
-		for (const input of [
-			unlinked,
-			rsvpInput(member, failing),
-			{ ...rsvpInput(member, noCid), cid: '' }
-		]) {
+		for (const input of [rsvpInput(member, failing), { ...rsvpInput(member, noCid), cid: '' }]) {
 			expect(await putMembersOnlyRsvp(input)).toEqual({
 				ok: false,
 				reason: 'retry-later',
@@ -420,6 +414,21 @@ describe('the event an RSVP names', () => {
 		}
 		expect(pds.calls).toEqual([]);
 		expect(logged).toHaveBeenCalled();
+	});
+
+	it('a member whose sign-in reads no spaces is sent to re-authorize, and nothing is written', async () => {
+		const url = 'https://pds.test/oauth/authorize?request_uri=urn:ietf:params:oauth:request_uri:x';
+		const putting = reauthorizer(url);
+		const put = rsvpInput(pds.session(GRANTED), groupHost(), putting);
+		put.reader.mockResolvedValue(null);
+		expect(await putMembersOnlyRsvp(put)).toEqual({
+			ok: false,
+			reason: 'reauthorize',
+			url,
+			marker: expect.any(String)
+		});
+		expect(putting).toHaveBeenCalledTimes(1);
+		expect(pds.calls).toEqual([]);
 	});
 });
 
@@ -435,7 +444,7 @@ describe('who sends nothing', () => {
 			expect(await putMembersOnlyRsvp(put)).toEqual({ ok: false, reason: 'not-member' });
 			expect(await deleteMembersOnlyRsvp(cancel)).toEqual({ ok: false, reason: 'not-member' });
 			expect(await readOwnMembersOnlyRsvp(offRoster, group, member, '3lmeeting')).toBeNull();
-			expect(put.groupReader).not.toHaveBeenCalled();
+			expect(put.reader).not.toHaveBeenCalled();
 		}
 		expect(pds.calls).toEqual([]);
 		expect(sequence).toEqual([]);
@@ -452,7 +461,7 @@ describe('who sends nothing', () => {
 			const first = await putMembersOnlyRsvp(put);
 			expect(first).toEqual({ ok: false, reason: 'reauthorize', url, marker: expect.any(String) });
 			expect(putting).toHaveBeenCalledTimes(1);
-			expect(put.groupReader).not.toHaveBeenCalled();
+			expect(put.reader).not.toHaveBeenCalled();
 
 			const cancelling = reauthorizer(url);
 			const cancel = await deleteMembersOnlyRsvp(target(member, cancelling));

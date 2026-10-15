@@ -1,9 +1,13 @@
 // Reads a group's records back out of its spaces.
 //
 // A space refuses anonymous reads even under a public read policy (401
-// AuthMissing), so every read uses the group's own session (./session.ts). An
-// account can read its own records in a space over Bearer, with no DPoP, space
-// scope or sync engine, and every record here is the group's own.
+// AuthMissing), so every read needs someone's access. A page reads with the
+// caller's own: a space credential from their own session
+// (`credentialSpaceReader`), so the authority decides what they may see and no
+// one's session reads for anyone else (TS 2026-10-15). A signed-out visitor has
+// no reader. The group's own session (`pdsSpaceReader`) reads only where the
+// group itself acts. An account reads its own records in a space over Bearer,
+// with no DPoP, space scope or sync engine, and every record here is the group's.
 import {
 	GROUP_PROFILE_COLLECTION,
 	GROUP_PROFILE_RKEY,
@@ -22,7 +26,15 @@ import { spaceRecordUri, splitRecordUri } from '../ids';
 import type { GroupRow } from '../types';
 
 import { groupClient, type CredentialStoreEnv, resolveGroupCredential } from './session';
-import { isRecordNotFound, xrpc, xrpcError } from './xrpc';
+import {
+	credentialRequest,
+	didSpaceHosts,
+	spaceAuthority,
+	type ExchangesUnderWay,
+	type SpaceHolder,
+	type SpaceHosts
+} from './space-credential';
+import { isRecordNotFound, xrpc, xrpcError, type XrpcAnswer } from './xrpc';
 
 export interface GroupSpaceRecord {
 	uri: string;
@@ -109,15 +121,13 @@ export function isSpaceNotFound(e: unknown): boolean {
 	return e instanceof Error && /\bSpaceNotFound\b/.test(e.message);
 }
 
-/** Reads with the group's own session, through the raw `handle`, since the
- *  space methods are not in the generated lexicon set. */
-export function pdsSpaceReader(
-	cred: Parameters<typeof groupClient>[0],
-	groupDid: string
-): GroupSpaceReader {
+/** One space query, answered as it came back. */
+type SpaceQuery = (nsid: string, params: Record<string, string>) => Promise<XrpcAnswer>;
+
+/** A reader over one transport. */
+function readerOver(query: SpaceQuery): GroupSpaceReader {
 	const send = async (nsid: string, params: Record<string, string>) => {
-		const { handle } = await groupClient(cred, groupDid);
-		const answer = await xrpc(handle, nsid, { query: params });
+		const answer = await query(nsid, params);
 		// RecordNotFound is the only 400 that means absent. Anything else throws,
 		// so the gate fails closed rather than read "no records".
 		if (isRecordNotFound(answer)) return null;
@@ -168,8 +178,7 @@ export function pdsSpaceReader(
 		},
 		// Every failure throws, `SpaceNotFound` included: the gate must not guess.
 		async getSpace(space) {
-			const { handle } = await groupClient(cred, groupDid);
-			const answer = await xrpc(handle, GET_SPACE, { query: { space } });
+			const answer = await query(GET_SPACE, { space });
 			if (!answer.ok) throw xrpcError(GET_SPACE, answer);
 			const policy = asRecord(answer.data.readPolicy);
 			if (typeof policy.$type !== 'string') {
@@ -178,6 +187,39 @@ export function pdsSpaceReader(
 			return { readPolicy: policy.$type };
 		}
 	};
+}
+
+/** Reads with the group's own session, through the raw `handle`, since the
+ *  space methods are not in the generated lexicon set. */
+export function pdsSpaceReader(
+	cred: Parameters<typeof groupClient>[0],
+	groupDid: string
+): GroupSpaceReader {
+	return readerOver(async (nsid, params) => {
+		const { handle } = await groupClient(cred, groupDid);
+		return xrpc(handle, nsid, { query: params });
+	});
+}
+
+/** Reads with the holder's own space credential: a record read at the repo's
+ *  PDS, signed for the repo's DID, and `getSpace` at the authority's space host,
+ *  signed for the authority. A space the authority will not let the holder into
+ *  throws `SpaceAccessDenied` (./space-credential.ts), which callers read as no
+ *  access, not as an outage. */
+export function credentialSpaceReader(
+	holder: SpaceHolder,
+	hosts: SpaceHosts = didSpaceHosts
+): GroupSpaceReader {
+	// A reader is built for one request, so its reads share exchanges only there.
+	const underWay: ExchangesUnderWay = new Map();
+	return readerOver(async (nsid, params) => {
+		const { space } = params;
+		const audience = nsid === GET_SPACE ? spaceAuthority(space) : params.repo;
+		const host =
+			nsid === GET_SPACE ? await hosts.spaceHost(audience) : await hosts.repoHost(audience);
+		const call = { host, audience, nsid, query: params };
+		return credentialRequest(holder, hosts, space, call, underWay);
+	});
 }
 
 /** The reader for a group, or null when this deployment holds no credential for

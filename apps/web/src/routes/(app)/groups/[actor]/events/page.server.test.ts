@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // The events tab shows two slices of a public group's events: the public slice
 // from the app's index, which every visitor gets, and the members-only slice
 // from the group's calendar space, which only a roster member may cause to be
-// read. The index read is stubbed at its module boundary, since what is under
+// read, with their own access. The index read is stubbed at its module boundary, since what is under
 // test is the union and the gate, not the index. The space reader is a fake
 // host that logs every call, so "made no space read" is a count, not a reading
 // of the page.
@@ -25,7 +25,9 @@ import {
 	type SpaceRecordInput
 } from '$lib/groups/server/__fixtures__/space-reader';
 import {
+	admitOnly,
 	fixtureSessions,
+	readerSession,
 	resetReaderHost,
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
@@ -116,6 +118,10 @@ beforeEach(async () => {
 	}));
 	publicSlice = [PUBLIC_PADDLE];
 	vi.mocked(listGroupEvents).mockImplementation(async () => publicSlice);
+	// The members space holds no records, so the host's lists hold whom the rows
+	// name, on every space; the about space is public.
+	const listed = [GROUP_DID, OWNER, MEMBER];
+	admitOnly(GROUP_DID, (did, space) => listed.includes(did) || space === ABOUT);
 });
 
 afterEach(() => {
@@ -150,10 +156,11 @@ function publicHost(
 const FULL_CALENDAR = () => publicHost([ACCESS_SELF, MEETING]);
 const EMPTY_CALENDAR = () => publicHost([]);
 
+/** The page as `did` sees it, signed in with their own session, or signed out. */
 async function openAs(did: string | null) {
 	return (await load({
 		params: { actor: GROUP_DID },
-		locals: { did },
+		locals: { did, session: did ? readerSession(did) : null },
 		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } },
 		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events`)
 	} as unknown as Parameters<typeof load>[0])) as Record<string, unknown> & {
@@ -234,6 +241,8 @@ describe('/groups/[actor]/events load: a member sees both slices', () => {
 		const data = await openAs(MEMBER);
 
 		expect(host.callsIn(CALENDAR)).toEqual([`list ${CALENDAR} ${GROUP_DID} ${EVENT}`]);
+		// Read with the member's own access: the group's session is never looked up.
+		expect(fixtureSessions.reads).toBe(0);
 		expect(data.events).toStrictEqual([
 			{
 				uri: `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self/${GROUP_DID}/${EVENT}/3lmeeting`,

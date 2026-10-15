@@ -14,30 +14,34 @@ import {
 } from '$lib/groups/server/members-read';
 import { listMembers } from '$lib/groups/server/db/roster';
 import { loadPeople } from '$lib/groups/server/people';
-import { groupAcceptanceReader } from '$lib/groups/server/space-credential';
+import { gateCaller, type MemberSession } from '$lib/groups/server/acceptance';
+import {
+	credentialAcceptanceReader,
+	isSpaceAccessDenied
+} from '$lib/groups/server/space-credential';
 import { groupHeader, groupRouteContext, pageRoster } from '$lib/groups/server/route-context';
 
+import type { GroupSpaceReader } from '$lib/groups/server/about-read';
 import type { GroupRow } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
 
 import { spaceRecordUri } from '$lib/groups/ids';
 import { rolePermissions } from '$lib/groups/server/db/groups';
 import { groupHost } from '$lib/groups/server/host';
-/** Whether each member wrote their acceptance, read by DID with the group's space
- *  credential. Null when it cannot be read: the group has no linked session, or
- *  no credential could be had. The page then shows no state rather than a guess,
- *  and access is unaffected either way, since it comes from membership alone. */
+/** Whether each member wrote their acceptance, read by DID with the viewer's own
+ *  space credential. Null when it cannot be read: the viewer's sign-in reads no
+ *  spaces, or no credential could be had. The page then shows no state rather
+ *  than a guess, and access is unaffected either way, since it comes from
+ *  membership alone. */
 async function readConfirmations(
-	env: App.Platform['env'],
-	db: D1Database,
+	viewer: MemberSession | null,
 	group: GroupRow,
 	dids: string[]
 ): Promise<Map<string, boolean> | null> {
 	const space = group.members_space_uri;
-	if (!space || dids.length === 0) return null;
+	if (!viewer || !space || dids.length === 0) return null;
 	try {
-		const reader = await groupAcceptanceReader(env, group);
-		return reader ? await reader.accepted(space, dids) : null;
+		return await credentialAcceptanceReader(viewer, group.group_did).accepted(space, dids);
 	} catch (e) {
 		console.error(`[groups] ${group.group_did}: acceptances could not be read:`, e);
 		return null;
@@ -60,39 +64,50 @@ async function unfinishedRemovals(
 		.filter((did) => !recorded.has(did) && did !== group.owner_did);
 }
 
+/** The members space as the caller may read it: the records, or none when the
+ *  host does not let them in, which the gate already read as off the roster. */
+async function readRosterSpace(
+	reader: GroupSpaceReader | null,
+	group: GroupRow
+): Promise<GroupMembers> {
+	if (!reader) return NO_MEMBER_RECORDS;
+	try {
+		return await readGroupMembers(reader, group);
+	} catch (e) {
+		if (isSpaceAccessDenied(e)) return NO_MEMBER_RECORDS;
+		throw e;
+	}
+}
+
 /** The roster is `membership` records in the members space, with the
- *  `memberships` rows as a copy. The page reads the records and falls back to
- *  the rows only when there are none to read. The gate uses the same source:
- *  when records exist, a DID with no membership record cannot see the roster,
- *  whatever a stale row says. The group's own account is the exception, as in
- *  `getCallerMembership`: it has no record and needs none. (Spec: FR-213.) */
+ *  `memberships` rows as a copy, read with the caller's own access. The page
+ *  reads the records and falls back to the rows only when there are none to
+ *  read. The gate uses the same source: when records exist, a DID with no
+ *  membership record cannot see the roster, whatever a stale row says. A caller
+ *  off the roster is refused before anything is read with their access. The
+ *  group's own account is the exception, as in `getCallerMembership`: it has no
+ *  record and needs none. (Spec: FR-213.) */
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
-	const { group, membership, reader } = await groupRouteContext(
-		platform!.env,
-		db,
-		params.actor,
-		locals.did
-	);
+	const viewer = await gateCaller(locals.did, locals.session);
+	const { group, membership, reader } = await groupRouteContext(db, params.actor, viewer);
+
+	const isGroup = locals.did === group.group_did;
+	const refuse = () =>
+		error(403, locals.did ? 'Only members can see this roster' : 'Sign in to see members');
+	if (!isGroup && !canSeeMembers(membership)) refuse();
 
 	// The back-link's name comes from the profile record, as on the group page.
 	const [members, { groupName }] = await Promise.all([
-		reader ? readGroupMembers(reader, group) : NO_MEMBER_RECORDS,
+		readRosterSpace(reader, group),
 		groupHeader(db, group, reader)
 	]);
 	const fromRecords = hasMemberRecords(members);
-
-	const isGroup = locals.did === group.group_did;
-	if (
-		!isGroup &&
-		(fromRecords ? !hasRecordedAccess(members, locals.did) : !canSeeMembers(membership))
-	) {
-		error(403, locals.did ? 'Only members can see this roster' : 'Sign in to see members');
-	}
+	if (!isGroup && fromRecords && !hasRecordedAccess(members, locals.did)) refuse();
 
 	const canAdmitMembers = can(membership.permissions, 'ADMIT_MEMBERS');
 	const { entries: roster } = await pageRoster(db, group, members, (dids) =>
-		readConfirmations(platform!.env, db, group, dids)
+		readConfirmations(viewer, group, dids)
 	);
 	const canEjectMembers = can(membership.permissions, 'EJECT_MEMBERS');
 	const unfinished =

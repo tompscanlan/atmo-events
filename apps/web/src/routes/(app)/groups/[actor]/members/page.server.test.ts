@@ -2,11 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The roster is members-only at every visibility, public included, so the
 // members page refuses everyone off it with a 403, even on a group whose page
-// anyone may open. When the members space holds membership records, they
-// decide: a row the records do not back (a removal whose row delete failed)
-// opens nothing. With no records, the rows decide. The profile lookup and the
-// resolver are stubbed because neither decides anything here, and the host is
-// a fake whose spaces each case sets.
+// anyone may open, and before anything is read with their access. When the
+// members space holds membership records, they decide: a row the records do not
+// back (a removal whose row delete failed) opens nothing. With no records, the
+// rows decide. Every read is the caller's own (TS 2026-10-15). The profile
+// lookup and the resolver are stubbed because neither decides anything here,
+// and the host is a fake whose spaces each case sets.
 vi.mock('$lib/groups/server/people', () => ({ loadPeople: vi.fn(async () => ({})) }));
 vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
@@ -17,7 +18,9 @@ vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 import { load } from './+page.server';
 import { membersSpaceReader } from '$lib/groups/server/__fixtures__/members-space';
 import {
+	admitOnly,
 	fixtureSessions,
+	readerSession,
 	resetReaderHost,
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
@@ -31,6 +34,7 @@ import {
 import { groupSpaceUris } from '$lib/groups/ids';
 import {
 	ABOUT_SPACE_READER_ROLES,
+	GROUP_ACCEPTANCE_COLLECTION,
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
 	groupAccessRecord
@@ -75,8 +79,7 @@ beforeEach(async () => {
 		name: 'Kona',
 		members: { [MEMBER]: 'member', [REMOVED]: 'member' }
 	}));
-	// A member's page reads acceptances through a credential this harness does
-	// not hold, and logs that it could not.
+	// A read the host refuses is logged; no case here should depend on it.
 	vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
@@ -86,10 +89,11 @@ afterEach(() => {
 	resetReaderHost();
 });
 
+/** The page as `did` sees it, signed in with their own session, or signed out. */
 async function openAs(did: string | null) {
 	return (await load({
 		params: { actor: GROUP_DID },
-		locals: { did },
+		locals: { did, session: did ? readerSession(did) : null },
 		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } }
 	} as unknown as Parameters<typeof load>[0])) as {
 		members: { did: string }[];
@@ -101,9 +105,12 @@ async function openAs(did: string | null) {
 
 describe('/groups/[actor]/members load, with membership records', () => {
 	// A public group, so every caller passes the group gate and the members
-	// page's own gate is the only thing between them and the roster.
+	// page's own gate is the only thing between them and the roster. The host
+	// lets into the members space whom its records name.
+	let host: FakeSpaceReader;
 	beforeEach(() => {
-		serveReader(GROUP_DID, asPublic(membersSpaceReader(MEMBERS, GROUP_DID, [MEMBER])));
+		host = asPublic(membersSpaceReader(MEMBERS, GROUP_DID, [MEMBER]));
+		serveReader(GROUP_DID, host);
 	});
 
 	it('shows a member the roster the records hold', async () => {
@@ -113,11 +120,30 @@ describe('/groups/[actor]/members load, with membership records', () => {
 		expect(data.members.map((entry) => entry.did)).toEqual([MEMBER]);
 	});
 
-	it('refuses a signed-in stranger with a 403', async () => {
+	it('refuses a signed-in stranger with a 403, and reads nothing of the members space for them', async () => {
 		await expect(openAs(STRANGER)).rejects.toMatchObject({
 			status: 403,
 			body: { message: 'Only members can see this roster' }
 		});
+		expect(host.callsIn(MEMBERS)).toEqual([]);
+	});
+
+	it("reads the roster and each confirmation with the viewer's own credential, never the group's session", async () => {
+		await openAs(MEMBER);
+
+		const sent = vi.mocked(globalThis.fetch).mock.calls.map(([input, init]) => ({
+			url: new URL(String(input)),
+			as: new Headers(init?.headers).get('authorization') ?? ''
+		}));
+		const delegations = sent.filter(({ url }) => url.pathname.endsWith('getDelegationToken'));
+		expect(delegations.map(({ url }) => url.searchParams.get('space'))).toContain(MEMBERS);
+		expect(delegations.every(({ as }) => as === `Bearer member ${MEMBER}`)).toBe(true);
+		const confirmations = sent.filter(
+			({ url }) => url.searchParams.get('collection') === GROUP_ACCEPTANCE_COLLECTION
+		);
+		expect(confirmations.map(({ url }) => url.searchParams.get('repo'))).toEqual([MEMBER]);
+		expect(confirmations.every(({ as }) => as.startsWith('Atproto-Space '))).toBe(true);
+		expect(fixtureSessions.reads).toBe(0);
 	});
 
 	it('shows the group account the roster, though no record names it (FR-213)', async () => {
@@ -158,9 +184,12 @@ describe('/groups/[actor]/members load, with membership records', () => {
 });
 
 describe('/groups/[actor]/members load, with no membership records', () => {
-	// The members space was never written, so the rows are the roster.
+	// The members space was never written, so the rows are the roster, and the
+	// host's lists hold whom the rows name.
 	beforeEach(() => {
 		serveReader(GROUP_DID, spaceReader(GROUP_DID, { records: [PUBLIC_ACCESS] }));
+		const listed = [GROUP_DID, OWNER, MEMBER, REMOVED];
+		admitOnly(GROUP_DID, (did, space) => listed.includes(did) || space === ABOUT);
 	});
 
 	it('shows a member on the rows the roster', async () => {

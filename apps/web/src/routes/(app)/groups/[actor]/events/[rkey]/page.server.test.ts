@@ -25,10 +25,13 @@ import {
 import type { FakeSpaceReader } from '$lib/groups/server/__fixtures__/space-reader';
 import {
 	fixtureSessions,
+	readerSession,
 	resetReaderHost,
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
-import { MEMBERS_ONLY_UNLINKED, MEMBERS_ONLY_UNREADABLE } from '$lib/groups/server/calendar-read';
+import { META_READ_GRANT } from '$lib/atproto/settings';
+import { callerSession } from '$lib/groups/server/acceptance';
+import { MEMBERS_ONLY_NO_ACCESS, MEMBERS_ONLY_UNREADABLE } from '$lib/groups/server/calendar-read';
 import type { SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { seedGroup } from '$lib/groups/server/__fixtures__/seed-group';
 
@@ -96,10 +99,12 @@ afterEach(() => {
 	resetReaderHost();
 });
 
+/** A request as `did`, signed in with their own session (`readerSession`) unless
+ *  the test hands one. */
 function event(did: string | null, rkey: string, session?: unknown) {
 	return {
 		params: { actor: GROUP_DID, rkey },
-		locals: session === undefined ? { did } : { did, session },
+		locals: { did, session: session !== undefined ? session : did ? readerSession(did) : null },
 		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } },
 		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events/${rkey}`)
 	} as unknown as Parameters<typeof load>[0];
@@ -120,9 +125,9 @@ async function openAs(
 }
 
 /** What the load threw, which must be one of SvelteKit's HTTP errors. */
-async function refusalFor(did: string | null, rkey: string) {
+async function refusalFor(did: string | null, rkey: string, session?: unknown) {
 	try {
-		await load(event(did, rkey));
+		await load(event(did, rkey, session));
 	} catch (e) {
 		if (!isHttpError(e)) throw e;
 		return { status: e.status, body: e.body };
@@ -166,16 +171,15 @@ describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
 		}
 	});
 
-	it("the event page: a caller off the roster sends nothing through the group's session after standing", async () => {
+	it('the event page: a caller off the roster causes no read after standing, and no one reads as the group', async () => {
 		for (const did of [STRANGER, null]) {
 			// What the group's route context sends on its own, for this caller.
 			const alone = eventHost(GROUP_DID, { roster: ROSTER });
 			serveReader(GROUP_DID, alone);
 			await groupRouteContext(
-				{ OAUTH_SESSIONS: fixtureSessions } as never,
 				harness.db,
 				GROUP_DID,
-				did
+				did ? await callerSession(readerSession(did)) : null
 			);
 			fixtureSessions.reads = 0;
 
@@ -186,12 +190,18 @@ describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
 			expect(refusal.status).toBe(404);
 			// The standing read and the visibility check, and not one request more:
 			// no event read, no profile read.
-			expect(h.calls).toEqual(alone.calls);
-			expect(h.calls).toContain(ACCESS_READ);
+			// In any order: once a credential is kept, the standing's parallel reads
+			// can arrive differently, though the same reads are made.
+			expect([...h.calls].sort()).toEqual([...alone.calls].sort());
+			// A signed-in stranger's own access reads the visibility; a signed-out
+			// visitor has none, so nothing in any space is read for them.
+			if (did) expect(h.calls).toContain(ACCESS_READ);
+			else expect(h.calls).toEqual([]);
 			expect(h.callsIn(CALENDAR)).toEqual([]);
 			expect(h.calls.filter((c) => c.includes('group.opensocial.profile'))).toEqual([]);
-			// The route context's reader is the only one made: one session lookup.
-			expect(fixtureSessions.reads).toBe(1);
+			// Everything is read with the caller's own access: the group's session is
+			// never looked up.
+			expect(fixtureSessions.reads).toBe(0);
 		}
 	});
 });
@@ -231,12 +241,14 @@ describe('/groups/[actor]/events/[rkey] load: when the event cannot be read', ()
 		// One attempt at the space and nothing read in its place.
 		expect(down.callsIn(CALENDAR)).toEqual([`get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmeeting`]);
 
-		// A group whose session is gone tells a member why, and reads nothing.
-		serveReader(GROUP_DID, null);
-		expect(await refusalFor(MEMBER, '3lmeeting')).toStrictEqual({
+		// A member whose sign-in reads no spaces is told why, and nothing is read.
+		const blind = eventHost(GROUP_DID, { roster: ROSTER });
+		serveReader(GROUP_DID, blind);
+		expect(await refusalFor(MEMBER, '3lmeeting', readerSession(MEMBER, 'atproto'))).toStrictEqual({
 			status: 503,
-			body: { message: MEMBERS_ONLY_UNLINKED }
+			body: { message: MEMBERS_ONLY_NO_ACCESS }
 		});
+		expect(blind.calls).toEqual([]);
 
 		expect(cache.match).not.toHaveBeenCalled();
 		expect(cache.put).not.toHaveBeenCalled();
@@ -261,12 +273,18 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 	const RSVP = 'community.lexicon.calendar.rsvp';
 
 	/** The member's signed-in session. Its requests go into `log`, beside the
-	 *  group host's, so the order of the two is a fact of the test. */
+	 *  group host's, so the order of the two is a fact of the test. Its delegation
+	 *  tokens, for the page's reads, come from the fixture's PDS and are not
+	 *  logged. */
 	function memberSession(scope: string, log: string[]) {
+		const own = readerSession(MEMBER, scope);
 		return {
 			did: MEMBER,
 			getTokenInfo: async () => ({ scope }),
 			handle: async (pathname: string, init?: RequestInit) => {
+				if (pathname.startsWith('/xrpc/com.atproto.space.getDelegationToken')) {
+					return own.handle(pathname, init);
+				}
 				log.push(`member ${init?.method ?? 'GET'} ${pathname}`);
 				return Response.json({
 					uri: `${CALENDAR}/${MEMBER}/${RSVP}/3lmeeting`,
@@ -301,7 +319,7 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 		const data = await openAs(
 			MEMBER,
 			'3lmeeting',
-			memberSession(`atproto ${memberGrant(GROUP_DID)}`, log)
+			memberSession(`atproto ${META_READ_GRANT} ${memberGrant(GROUP_DID)}`, log)
 		);
 
 		expect(data.viewerRsvpStatus).toBe('going');
@@ -318,7 +336,11 @@ describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
 		const absent: string[] = [];
 		serveReader(GROUP_DID, sharedHost(absent));
 		await expect(
-			openAs(MEMBER, '3lmadeup', memberSession(`atproto ${memberGrant(GROUP_DID)}`, absent))
+			openAs(
+				MEMBER,
+				'3lmadeup',
+				memberSession(`atproto ${META_READ_GRANT} ${memberGrant(GROUP_DID)}`, absent)
+			)
 		).rejects.toMatchObject({ status: 404 });
 		expect(absent.filter((line) => line.startsWith('member '))).toEqual([]);
 	});

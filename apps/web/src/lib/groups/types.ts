@@ -78,15 +78,16 @@ export interface CallerMembership {
 	 *  `eventPermissions`. (Spec: FR-213.) */
 	grants: WriteGrants;
 	/** The only question the read gate asks. From the caller's `membership` record
-	 *  when the members space can be read, from the row when it cannot be asked, and
-	 *  false when it errors (`readStanding`). `role` is always the row's. */
+	 *  when the members space can be read with their own access, from the row when
+	 *  their sign-in reads no spaces, and false when the space errors or the host
+	 *  does not let them in (`readStanding`). `role` is always the row's. */
 	onRoster: boolean;
 	/** The read error when the members space failed. `permissions` is then unknown. */
 	unreadable?: string;
-	/** Set when the group has a members space and its owner has not linked the
-	 *  group's account, so the space cannot be read. `permissions` is then
-	 *  unknown, and only the owner's link fixes it. */
-	unlinked?: true;
+	/** Set when the caller is signed in but their sign-in reads no spaces: their
+	 *  PDS serves none, or it was granted before reads were asked for. Nothing is
+	 *  read for them, so `permissions` is unknown. */
+	noSpaceAccess?: true;
 }
 
 /** A DID as a page shows it. Display only: links and forms keep the DID. A null

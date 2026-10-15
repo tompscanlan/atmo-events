@@ -194,6 +194,22 @@
 		<p class="mt-3 text-sm text-red-600 dark:text-red-400">{leaveError}</p>
 	{/if}
 
+	<!-- Nothing could be read with the caller's own access, so the page shows the
+	     stored name, description and location, and no rules (spec 003,
+	     Amendments 2026-10-15). -->
+	{#if data.hiddenDetails === 'signed-out'}
+		<p class="text-base-500 dark:text-base-400 mt-6 text-sm">
+			Some details, like the group's rules, are hidden until you
+			<a href={resolve('/login')} class="text-accent-600 dark:text-accent-400 underline">sign in</a
+			>.
+		</p>
+	{:else if data.hiddenDetails === 'no-access'}
+		<p class="text-base-500 dark:text-base-400 mt-6 text-sm">
+			Some details, like the group's rules, can't be shown: your sign-in doesn't let this site read
+			the group's spaces. Signing in again may fix it.
+		</p>
+	{/if}
+
 	{#if about.rules.length > 0}
 		<section class="ring-base-200 dark:ring-base-800 mt-10 rounded-2xl p-5 ring-1">
 			<h2 class="text-lg font-semibold">Group rules</h2>

@@ -41,6 +41,38 @@ export async function memberSession(session: OAuthSession): Promise<MemberSessio
 	return { did: session.did, scope, handle: (pathname, init) => session.handle(pathname, init) };
 }
 
+/** The caller's own session, for their reads in a group and their acceptance.
+ *  Null when there is none, or when its scope cannot be read, which is logged. */
+export async function callerSession(session: OAuthSession | null): Promise<MemberSession | null> {
+	if (!session) return null;
+	try {
+		return await memberSession(session);
+	} catch (e) {
+		console.warn('[groups] the caller’s session scope could not be read:', e);
+		return null;
+	}
+}
+
+/** The caller as a group's gate reads them: their own session, or, signed in
+ *  with none this site can use, one that holds no grant, so nothing is read with
+ *  it and the rows say whether they are on a roster, as for a sign-in that reads
+ *  no spaces. Null only when no one is signed in. */
+export async function gateCaller(
+	did: string | null,
+	session: OAuthSession | null
+): Promise<MemberSession | null> {
+	if (!did) return null;
+	return (
+		(await callerSession(session)) ?? {
+			did,
+			scope: '',
+			handle: async () => {
+				throw new Error(`no usable session for ${did}`);
+			}
+		}
+	);
+}
+
 type AcceptanceGroup = Pick<GroupRow, 'group_did' | 'members_space_uri'>;
 
 /** Writes the member's acceptance unless it exists. `skipped` when the group has

@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The edit page's loader, for one of the group's events. With no placement in
 // its link it reads a public event from the index, as it always has. With
-// ?placement=members it reads the event from the group's calendar space, after
-// the editor gate, and hands the editor the record whole: the editor saves what
+// ?placement=members it reads the event from the group's calendar space, with
+// the editor's own access, after the editor gate, and hands the editor the record whole: the editor saves what
 // it loads, so a field the loader left out would be deleted by the next save,
 // and a field it added would be written into the event.
 //
@@ -45,9 +45,11 @@ import {
 import type { FakeSpaceReader } from '$lib/groups/server/__fixtures__/space-reader';
 import {
 	fixtureSessions,
+	readerSession,
 	resetReaderHost,
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
+import { callerSession } from '$lib/groups/server/acceptance';
 import { MEMBERS_ONLY_UNREADABLE } from '$lib/groups/server/calendar-read';
 import type { SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
 import { seedGroup } from '$lib/groups/server/__fixtures__/seed-group';
@@ -114,10 +116,12 @@ afterEach(() => {
 	resetReaderHost();
 });
 
-function event(did: string | null, rkey: string, query: string) {
+/** A request as `did`, signed in with their own session (`readerSession`)
+ *  unless the test hands one. */
+function event(did: string | null, rkey: string, query: string, session?: unknown) {
 	return {
 		params: { actor: GROUP_DID, rkey },
-		locals: { did },
+		locals: { did, session: session !== undefined ? session : did ? readerSession(did) : null },
 		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } },
 		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events/${rkey}/edit${query}`)
 	} as unknown as Parameters<typeof load>[0];
@@ -130,9 +134,9 @@ async function openAs(did: string | null, rkey: string, query = ''): Promise<Pag
 }
 
 /** What the load threw, which must be one of SvelteKit's HTTP errors. */
-async function refusalFor(did: string | null, rkey: string, query = '') {
+async function refusalFor(did: string | null, rkey: string, query = '', session?: unknown) {
 	try {
-		await load(event(did, rkey, query));
+		await load(event(did, rkey, query, session));
 	} catch (e) {
 		if (!isHttpError(e)) throw e;
 		return { status: e.status, body: e.body };
@@ -272,13 +276,17 @@ describe('/groups/[actor]/events/[rkey]/edit load: a members-only event', () => 
 		});
 		expect(down.callsIn(CALENDAR)).toEqual([`get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmeeting`]);
 		expect(logged).toHaveBeenCalled();
-		// A group whose session is gone: the editor gate cannot read the caller's
-		// grants and refuses first, as it does for every edit of such a group.
-		serveReader(GROUP_DID, null);
-		expect(await refusalFor(OWNER, '3lmeeting', MEMBERS_ONLY)).toStrictEqual({
+		// An editor whose sign-in reads no spaces: the editor gate cannot read
+		// their grants and refuses first, and nothing is read for them.
+		const blind = eventHost(GROUP_DID, { roster: ROSTER });
+		serveReader(GROUP_DID, blind);
+		expect(
+			await refusalFor(OWNER, '3lmeeting', MEMBERS_ONLY, readerSession(OWNER, 'atproto'))
+		).toStrictEqual({
 			status: 403,
 			body: { message: 'Not allowed: MANAGE_EVENTS required' }
 		});
+		expect(blind.calls).toEqual([]);
 
 		// Nothing in place of the space: the index is never asked.
 		expect(getEventRecordFromContrail).not.toHaveBeenCalled();
@@ -312,10 +320,9 @@ describe('/groups/[actor]/events/[rkey]/edit load: who may edit', () => {
 			const alone = eventHost(GROUP_DID, { roster: ROSTER });
 			serveReader(GROUP_DID, alone);
 			await groupRouteContext(
-				{ OAUTH_SESSIONS: fixtureSessions } as never,
 				harness.db,
 				GROUP_DID,
-				did
+				did ? await callerSession(readerSession(did)) : null
 			);
 
 			for (const [rkey, query] of urls) {
@@ -327,10 +334,13 @@ describe('/groups/[actor]/events/[rkey]/edit load: who may edit', () => {
 					expected
 				);
 				// The standing read, the visibility check for a caller off the roster,
-				// and not one request more: no event read, no profile read.
-				expect(h.calls, `${who} at ${rkey}${query}`).toEqual(alone.calls);
+				// and not one request more: no event read, no profile read. All of it
+				// with the caller's own access: the group's session is never looked up.
+				// Sorted, since parallel reads land in whatever order their kept or
+				// fresh credentials let them.
+				expect([...h.calls].sort(), `${who} at ${rkey}${query}`).toEqual([...alone.calls].sort());
 				expect(h.callsIn(CALENDAR)).toEqual([]);
-				expect(fixtureSessions.reads).toBe(1);
+				expect(fixtureSessions.reads).toBe(0);
 			}
 		}
 		expect(getEventRecordFromContrail).not.toHaveBeenCalled();

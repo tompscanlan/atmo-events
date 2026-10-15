@@ -67,7 +67,9 @@ import { writeAboutAccess } from './about-writer';
 import { pdsWriter } from './group-write';
 import { SPACE_MEMBER_ACCESS } from './member-list';
 import { rosterFailure } from '../form-error';
+import { META_READ_GRANT } from '$lib/atproto/settings';
 import { memberGrant } from './member-grants';
+import { clearSpaceCredentials } from './space-credential';
 import type { MemberSession } from './acceptance';
 
 import { POLICY_MEMBER_LIST, spaceUri } from '../ids';
@@ -181,6 +183,50 @@ async function membershipRecord(did: string): Promise<{ value: Record<string, un
 
 function granted(role: GroupRoleName): string[] {
 	return [...DEFAULT_ROLE_PERMISSIONS[role]].sort();
+}
+
+/** `did`'s own signed-in session, for the page gate. Its PDS grants a delegation
+ *  token for any space, and the host (the stub, behind a wrapped `fetch`) issues
+ *  a credential to whoever its member list for that space lets read: the lists
+ *  are the host state a partial exit leaves behind. DIDs resolve to the stub. */
+function ownSession(did: string): MemberSession {
+	const inner = globalThis.fetch;
+	vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
+		const url = new URL(String(input));
+		if (url.origin === 'https://plc.directory' && !url.pathname.endsWith('/data')) {
+			const id = decodeURIComponent(url.pathname.slice(1));
+			return Response.json({
+				id,
+				service: [
+					{
+						id: '#atproto_pds',
+						type: 'AtprotoPersonalDataServer',
+						serviceEndpoint: STUB_PDS_SERVICE
+					}
+				]
+			});
+		}
+		if (url.pathname === '/xrpc/com.atproto.space.getSpaceCredential') {
+			const space = String(JSON.parse(String(init?.body)).space);
+			const holder = (new Headers(init?.headers).get('authorization') ?? '').split(' ')[2];
+			if (!pds.members(space).some((entry) => entry.did === holder && entry.read)) {
+				return Response.json({ error: 'UserNotAuthorized' }, { status: 400 });
+			}
+			const payload = Buffer.from(
+				JSON.stringify({ sub: holder, space, exp: Math.floor(Date.now() / 1000) + 600 })
+			).toString('base64url');
+			return Response.json({ credential: `e30.${payload}.sig` });
+		}
+		return inner(input, init);
+	});
+	return {
+		did,
+		scope: `atproto ${META_READ_GRANT} space:*?authority=*&action=read`,
+		handle: async (pathname) => {
+			const space = new URL(pathname, 'https://own.pds.test').searchParams.get('space');
+			return Response.json({ token: `delegation ${did} ${space}` });
+		}
+	};
 }
 
 async function gate(did: string): Promise<string[]> {
@@ -356,6 +402,7 @@ beforeEach(async () => {
 afterEach(() => {
 	vi.unstubAllGlobals();
 	unlinkAllGroups();
+	clearSpaceCredentials();
 	harness.close();
 });
 
@@ -478,14 +525,27 @@ describe("atmo's gate closes before an exit touches the host", () => {
 		}
 	);
 
+	// The page reads with the admin's own access. The host still lists them on
+	// the spaces whose entries the eject did not reach, so it still lets them in,
+	// and the gate must close on the records alone.
 	it("a private group's page and its members-only events refuse an admin whose eject stopped partway", async () => {
 		await makePrivate();
 		fails['about list entry']();
 		await ejectMember(ctx(OWNER), ADMIN).catch(() => {});
+		expect(pds.listed(ABOUT)).toContain(ADMIN);
+		pds.clearLog();
 
-		await expect(groupRouteContext(env, harness.db, GROUP_DID, ADMIN)).rejects.toMatchObject({
-			status: 404
-		});
+		const page = groupRouteContext(harness.db, GROUP_DID, ownSession(ADMIN));
+		await expect(page).rejects.toMatchObject({ status: 404 });
+		// The host let them in, and the access record, read with their own
+		// credential, is what refused them.
+		const accessRead = pds.requests.find(
+			(r) =>
+				r.nsid === 'com.atproto.space.getRecord' &&
+				r.params.space === ABOUT &&
+				r.params.collection === GROUP_ACCESS_COLLECTION
+		);
+		expect(accessRead?.token).toMatch(/^Atproto-Space /);
 		const standing = await readStanding(harness.db, group, ADMIN, hostReader());
 		expect(await readMembersOnlyEvents(standing, hostReader(), group)).toBeNull();
 	});

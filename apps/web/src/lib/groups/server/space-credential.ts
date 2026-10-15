@@ -1,18 +1,24 @@
 // A space credential for one of a group's spaces, and the reads made with it.
 //
-// The group's own session (the one seam, ./session.ts) asks the group's PDS for a
-// delegation token, and the space authority's host exchanges that token for a
-// credential bound to a fresh P-256 key. Every request made with the credential is
-// signed with that key over its `authorization` and `atproto-space-audience`
-// headers (HTTP Message Signatures, RFC 9421). One credential reads every repo host
-// in the space, so each member's acceptance is read at that member's own PDS, by
-// their DID. (Spec: FR-207, FR-211.)
+// A holder's own session (./acceptance.ts `MemberSession`, or the group's own,
+// ./session.ts) asks its PDS for a delegation token, and the space authority's
+// host exchanges that token for a credential bound to a fresh P-256 key. Every
+// request made with the credential is signed with that key over its
+// `authorization` and `atproto-space-audience` headers (HTTP Message Signatures,
+// RFC 9421). One credential reads every repo host in the space, so each member's
+// acceptance is read at that member's own PDS, by their DID. (Spec: FR-207,
+// FR-211.)
 //
-// A credential lasts 600 s unless the host says otherwise. It is kept per isolate
-// until shortly before its `exp`, then replaced with a new key and a new delegation
-// token: a credential is never refreshed. The PDS issues a delegation token only
-// to a full-access or OAuth session, and the one this app keeps for a group is the
-// linked session (./linked-session.ts), so an unlinked group gets none.
+// Each person reads with their own credential, so no one's session reads for
+// anyone else (TS 2026-10-15). The authority decides who gets one: a refusal is
+// `SpaceAccessDenied`, which a page reads as "not let in", never as "unreachable".
+//
+// A credential lasts 600 s unless the host says otherwise. Once issued, it is kept
+// per isolate, per holder and space, until shortly before its `exp`, then
+// replaced with a new key and a new delegation token: a credential is never
+// refreshed. The PDS issues
+// a delegation token only to a full-access or OAuth session, and an OAuth session
+// only when its scope reads the space.
 import { P256PrivateKeyExportable, type P256PrivateKey } from '@atcute/crypto';
 import {
 	CompositeDidDocumentResolver,
@@ -21,12 +27,15 @@ import {
 } from '@atcute/identity-resolver';
 import type { Did } from '@atcute/lexicons';
 import { GROUP_ACCEPTANCE_COLLECTION, GROUP_ACCEPTANCE_RKEY } from '../members-record';
-import type { GroupRow } from '../types';
-
-import { groupClient, resolveGroupCredential, type CredentialStoreEnv } from './session';
-
 import { splitRecordUri } from '../ids';
-import { describeFailure, isRecordNotFound, readXrpc, xrpcError } from './xrpc';
+import {
+	describeFailure,
+	isRecordNotFound,
+	readXrpc,
+	xrpcError,
+	type XrpcAnswer,
+	type XrpcHandle
+} from './xrpc';
 const SIGNATURE_LABEL = 'atproto-space';
 
 /** The key a credential is bound to. `keyId` is its P-256 did:key, which the host
@@ -45,8 +54,36 @@ export interface SpaceCredential {
 	expiresAt: number | null;
 }
 
-/** The group's session as the seam hands it out. */
-export type GroupHandle = (pathname: string, init: RequestInit) => Promise<Response>;
+/** Whose session asks for a credential, and the session's request function. */
+export interface SpaceHolder {
+	did: string;
+	handle: XrpcHandle;
+}
+
+/** The space's authority refused the holder a credential: the holder's session
+ *  does not read the space (`ScopeMissingError`), or the authority does not let
+ *  the holder or the app in (`UserNotAuthorized`, `AppNotAuthorized`). It is an
+ *  answer, not an outage: the holder may not read the space. */
+export class SpaceAccessDenied extends Error {
+	constructor(
+		readonly space: string,
+		readonly reason: string
+	) {
+		super(`not let into ${space}: ${reason}`);
+		this.name = 'SpaceAccessDenied';
+	}
+}
+
+export function isSpaceAccessDenied(e: unknown): e is SpaceAccessDenied {
+	return e instanceof SpaceAccessDenied;
+}
+
+/** The refusals that say the holder may not read the space. */
+const DENIED: Record<string, true> = {
+	ScopeMissingError: true,
+	UserNotAuthorized: true,
+	AppNotAuthorized: true
+};
 
 /** Where a DID's services are. Injectable, because the DID resolvers keep the
  *  `fetch` they were built with. */
@@ -109,19 +146,25 @@ export function credentialExpiry(jwt: string): number | null {
 	}
 }
 
-/** A delegation token from the group's PDS, then a credential for `space` from the
- *  authority's host, bound to a key made for it. Throws on any refusal. */
+/** A delegation token from the holder's PDS, then a credential for `space` from
+ *  the authority's host, bound to a key made for it. A refusal that names the
+ *  holder throws `SpaceAccessDenied`; any other throws as it is. */
 export async function exchangeSpaceCredential(
-	handle: GroupHandle,
+	holder: SpaceHolder,
 	space: string,
 	authorityHost: string
 ): Promise<SpaceCredential> {
-	const delegated = await handle(
+	const delegated = await holder.handle(
 		`/xrpc/com.atproto.space.getDelegationToken?${new URLSearchParams({ space })}`,
 		{ method: 'GET' }
 	);
 	const delegation = await readXrpc(delegated);
-	if (!delegation.ok) throw xrpcError('com.atproto.space.getDelegationToken', delegation);
+	if (!delegation.ok) {
+		if (delegation.error && DENIED[delegation.error]) {
+			throw new SpaceAccessDenied(space, describeFailure(delegation));
+		}
+		throw xrpcError('com.atproto.space.getDelegationToken', delegation);
+	}
 	const { token } = delegation.data;
 	if (typeof token !== 'string') {
 		throw new Error('com.atproto.space.getDelegationToken returned no token');
@@ -138,7 +181,12 @@ export async function exchangeSpaceCredential(
 		body: JSON.stringify({ space })
 	});
 	const issued = await readXrpc(res);
-	if (!issued.ok) throw xrpcError('com.atproto.space.getSpaceCredential', issued);
+	if (!issued.ok) {
+		if (issued.error && DENIED[issued.error]) {
+			throw new SpaceAccessDenied(space, describeFailure(issued));
+		}
+		throw xrpcError('com.atproto.space.getSpaceCredential', issued);
+	}
 	const { credential } = issued.data;
 	if (typeof credential !== 'string') {
 		throw new Error('com.atproto.space.getSpaceCredential returned no credential');
@@ -150,37 +198,48 @@ export async function exchangeSpaceCredential(
  *  read's own round trip. */
 const EXPIRY_MARGIN_MS = 30_000;
 
-// Keyed by space URI, which names the group. A pending exchange is kept too, so
-// reads that start together share one delegation token.
-const kept = new Map<string, Promise<SpaceCredential>>();
+// Keyed by holder and space URI, so no holder is ever served another's
+// credential. Only a credential already issued is kept, never an exchange still
+// under way: the Workers runtime ends a request's I/O with the request, so an
+// exchange kept past the request that started it may never settle, and the next
+// request to wait on it would wait forever.
+const kept = new Map<string, SpaceCredential>();
 
 // Credentials a host called spent. Marked at once, so the retry that follows
 // cannot pick the same one back up.
 let spent = new WeakSet<SpaceCredential>();
 
-/** A credential for `space`, the kept one while it has time left. */
+/** Exchanges under way, for one request's reads: reads that start together
+ *  share one delegation token. Made per request (`credentialSpaceReader`) and
+ *  never kept past it. */
+export type ExchangesUnderWay = Map<string, Promise<SpaceCredential>>;
+
+/** A credential for `space`, the holder's kept one while it has time left, else
+ *  the exchange `underWay` holds for it, else a new one. A refusal reaches every
+ *  read that shared the exchange, and none of them asks again. */
 export async function spaceCredential(
-	handle: GroupHandle,
+	holder: SpaceHolder,
 	space: string,
-	authorityHost: string
+	authorityHost: string,
+	underWay?: ExchangesUnderWay
 ): Promise<SpaceCredential> {
-	const pending = kept.get(space);
-	if (pending) {
-		const held = await pending.catch(() => null);
-		if (held?.expiresAt && !spent.has(held) && held.expiresAt - EXPIRY_MARGIN_MS > Date.now()) {
-			return held;
-		}
-		if (kept.get(space) === pending) kept.delete(space);
+	const key = `${holder.did} ${space}`;
+	const held = kept.get(key);
+	if (held?.expiresAt && !spent.has(held) && held.expiresAt - EXPIRY_MARGIN_MS > Date.now()) {
+		return held;
 	}
-	const exchange = exchangeSpaceCredential(handle, space, authorityHost);
-	kept.set(space, exchange);
-	try {
-		const fresh = await exchange;
-		if (!fresh.expiresAt && kept.get(space) === exchange) kept.delete(space);
+	if (held) kept.delete(key);
+	const shared = underWay?.get(key);
+	if (shared) return shared;
+	const exchange = exchangeSpaceCredential(holder, space, authorityHost).then((fresh) => {
+		if (fresh.expiresAt) kept.set(key, fresh);
 		return fresh;
-	} catch (e) {
-		if (kept.get(space) === exchange) kept.delete(space);
-		throw e;
+	});
+	underWay?.set(key, exchange);
+	try {
+		return await exchange;
+	} finally {
+		if (underWay?.get(key) === exchange) underWay.delete(key);
 	}
 }
 
@@ -198,7 +257,39 @@ const SPENT: Record<string, true> = { JwtExpired: true, CredentialRevoked: true 
 
 type AcceptanceRead = 'accepted' | 'absent' | 'spent';
 
-/** One member's acceptance, at their PDS, with the group's credential. A failure
+/** The DID a space URI names, `at://<authority>/space/<type>/<skey>`. */
+export function spaceAuthority(space: string): string {
+	const did = space.startsWith('at://') ? space.slice('at://'.length).split('/')[0] : '';
+	if (!did.startsWith('did:')) throw new Error(`not a space URI: ${space}`);
+	return did;
+}
+
+/** One request made with the holder's credential for `space`: a GET at `host`,
+ *  signed for `audience` (the repo owner's DID for a repo read, the authority's
+ *  for a space-host call). A credential the host calls spent is replaced once.
+ *  Throws `SpaceAccessDenied` when the authority issues none. */
+export async function credentialRequest(
+	holder: SpaceHolder,
+	hosts: SpaceHosts,
+	space: string,
+	call: { host: string; audience: string; nsid: string; query: Record<string, string> },
+	underWay?: ExchangesUnderWay
+): Promise<XrpcAnswer> {
+	const authorityHost = await hosts.spaceHost(spaceAuthority(space));
+	const url = new URL(`/xrpc/${call.nsid}?${new URLSearchParams(call.query)}`, call.host);
+	for (let attempt = 0; ; attempt++) {
+		const cred = await spaceCredential(holder, space, authorityHost, underWay);
+		const res = await fetch(url, {
+			method: 'GET',
+			headers: await spaceSigHeaders(cred.signer, `Atproto-Space ${cred.token}`, call.audience)
+		});
+		const answer = await readXrpc(res);
+		if (answer.ok || attempt > 0 || !answer.error || !SPENT[answer.error]) return answer;
+		spent.add(cred);
+	}
+}
+
+/** One member's acceptance, at their PDS, with the reader's credential. A failure
  *  other than a spent credential reads as absent and is logged: the roster then
  *  shows the member unconfirmed, which is also how it shows a member whose PDS
  *  serves no spaces. (Spec: FR-204.) */
@@ -244,12 +335,12 @@ export interface AcceptanceReader {
 	accepted(space: string, dids: readonly string[]): Promise<Map<string, boolean>>;
 }
 
-/** The reader over one group's session. A credential the hosts call spent is
- *  replaced once, and those DIDs read again. */
+/** The reader over the holder's own session. A credential the hosts call spent
+ *  is replaced once, and those DIDs read again. */
 export function credentialAcceptanceReader(
-	handle: GroupHandle,
+	holder: SpaceHolder,
 	authorityDid: string,
-	hosts: SpaceHosts
+	hosts: SpaceHosts = didSpaceHosts
 ): AcceptanceReader {
 	return {
 		async accepted(space, dids) {
@@ -257,7 +348,7 @@ export function credentialAcceptanceReader(
 			const answers = new Map<string, boolean>();
 			let pending = [...new Set(dids)];
 			for (let attempt = 0; attempt < 2 && pending.length > 0; attempt++) {
-				const cred = await spaceCredential(handle, space, authorityHost);
+				const cred = await spaceCredential(holder, space, authorityHost);
 				const reads = await Promise.all(
 					pending.map(async (did) => [did, await readAcceptance(cred, hosts, space, did)] as const)
 				);
@@ -274,8 +365,14 @@ export function credentialAcceptanceReader(
 	};
 }
 
+// Each resolver calls the global `fetch` when it resolves, not the one there was
+// when it was built, so a test's stubbed `fetch` answers it.
+const liveFetch: typeof fetch = (input, init) => fetch(input, init);
 const didResolver = new CompositeDidDocumentResolver({
-	methods: { plc: new PlcDidDocumentResolver(), web: new WebDidDocumentResolver() }
+	methods: {
+		plc: new PlcDidDocumentResolver({ fetch: liveFetch }),
+		web: new WebDidDocumentResolver({ fetch: liveFetch })
+	}
 });
 
 /** How long a resolved endpoint is kept. A roster page reads one per member. */
@@ -305,15 +402,3 @@ export const didSpaceHosts: SpaceHosts = {
 	repoHost: (did) => serviceEndpoint(did, ['#atproto_pds']),
 	spaceHost: (did) => serviceEndpoint(did, ['#atproto_space_host', '#atproto_pds'])
 };
-
-/** The acceptance reader for a group, or null when its owner has not linked it. */
-export async function groupAcceptanceReader(
-	env: CredentialStoreEnv,
-	group: Pick<GroupRow, 'group_did'>,
-	hosts: SpaceHosts = didSpaceHosts
-): Promise<AcceptanceReader | null> {
-	const cred = await resolveGroupCredential(env, group.group_did);
-	if (!cred) return null;
-	const { handle } = await groupClient(cred, group.group_did);
-	return credentialAcceptanceReader(handle, group.group_did, hosts);
-}

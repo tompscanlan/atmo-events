@@ -2,6 +2,7 @@ import { error } from '@sveltejs/kit';
 import { flattenEventRecord, getEventRecordFromContrail } from '$lib/contrail';
 import { getServerClient } from '$lib/contrail/index';
 import { membersOnlyEventForEditing, readMembersOnlyEvent } from '$lib/groups/server/calendar-read';
+import { gateCaller } from '$lib/groups/server/acceptance';
 import { groupEditorPage } from '$lib/groups/server/editor-page';
 import type { PageServerLoad } from './$types';
 
@@ -13,8 +14,8 @@ const EVENT_NOT_FOUND = 'Event not found';
  * atmo's event editor on one of the group's events, behind MANAGE_EVENTS.
  *
  * A public event is read from the index as atmo's own edit page reads a
- * person's. A members-only event is read from the group's calendar space, and
- * only when the link says so with ?placement=members: a public and a
+ * person's. A members-only event is read from the group's calendar space, with
+ * the caller's own access, and only when the link says so with ?placement=members: a public and a
  * members-only event can share a key, so the page never guesses, and a link
  * without the param reads the index. Any other value is a
  * 404 with no read, so a mangled link never falls through to the public read.
@@ -30,7 +31,12 @@ const EVENT_NOT_FOUND = 'Event not found';
  */
 export const load: PageServerLoad = async ({ params, locals, platform, url }) => {
 	const { group, membership, reader, groupDid, groupName, handle, canDelete } =
-		await groupEditorPage(platform!.env, params.actor, locals.did, 'MANAGE_EVENTS');
+		await groupEditorPage(
+			platform!.env.DB,
+			params.actor,
+			await gateCaller(locals.did, locals.session),
+			'MANAGE_EVENTS'
+		);
 
 	const placement = url.searchParams.get('placement');
 	if (placement === 'members') {

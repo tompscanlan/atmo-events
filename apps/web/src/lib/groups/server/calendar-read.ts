@@ -2,14 +2,14 @@
 // calendar space instead of its public repo.
 //
 // Only a roster member may cause this read. The check runs before the reader is
-// touched, so a viewer who may not see the slice costs the group's PDS nothing
+// touched, so a viewer who may not see the slice costs the group's host nothing
 // and the records never leave it on their behalf. A filter applied after the
 // fetch would render the same page, but it would already have pulled the
 // records out, and the next refactor could drop it. (Spec: FR-106.)
 //
-// The read goes through the group's own space reader, the one the roster read
-// uses, on the group's session: the group authors its events, and a space lets
-// an account read its own records with no member credential. Nothing here goes
+// The read goes through the caller's own reader, the one the roster read uses:
+// a credential from the member's own session, which the group's host issues only
+// to someone on the calendar space's list (TS 2026-10-15). Nothing here goes
 // through the index, which cannot see a space, and nothing is kept between
 // requests, so one member's read can never be served to anyone else.
 // (Spec: FR-105.)
@@ -20,10 +20,11 @@ import type { CallerMembership, GroupEventRecord, GroupRow } from '../types';
 import { isSpaceNotFound, type GroupSpaceReader } from './about-read';
 
 import { GROUP_EVENT_COLLECTION, groupSpaceUris, membersOnlyEventUri } from '../ids';
-/** A member's notice when the group's session is gone: nothing can read the
- *  space until an organizer links the group's account again. (Spec: FR-121.) */
-export const MEMBERS_ONLY_UNLINKED =
-	"Members-only events can't be shown until an organizer relinks the group.";
+/** A member's notice when their sign-in reads no spaces: their PDS serves none,
+ *  or they signed in before reads were asked for. Nothing reads the space for
+ *  them. (Spec: FR-121.) */
+export const MEMBERS_ONLY_NO_ACCESS =
+	"Members-only events can't be shown: your sign-in doesn't let this site read the group's spaces.";
 
 /** A member's notice when the space read failed for any other reason. */
 export const MEMBERS_ONLY_UNREADABLE = "Members-only events couldn't be loaded right now.";
@@ -39,7 +40,7 @@ export interface MembersOnlySlice {
  *  means for its own page. */
 type CalendarRead<T> =
 	| { status: 'hidden' }
-	| { status: 'unlinked' }
+	| { status: 'no-access' }
 	| { status: 'no-space' }
 	| { status: 'unreadable' }
 	| { status: 'read'; space: string; value: T };
@@ -61,7 +62,7 @@ async function readCalendarSpace<T>(
 	// The roster, never the group's visibility: a public group lets everyone see
 	// it, and only its members see its members-only events.
 	if (!canSeeMembers(membership)) return { status: 'hidden' };
-	if (!reader) return { status: 'unlinked' };
+	if (!reader) return { status: 'no-access' };
 	const space = groupSpaceUris(group.group_did).calendarSpaceUri;
 	try {
 		return { status: 'read', space, value: await read(reader, space) };
@@ -73,6 +74,8 @@ async function readCalendarSpace<T>(
 			);
 			return { status: 'no-space' };
 		}
+		// A member the host will not let into the calendar space is off its list,
+		// which a repair puts right; the member sees what any failed read shows.
 		console.error(`[groups] ${group.group_did}: ${log.failed}:`, e);
 		return { status: 'unreadable' };
 	}
@@ -103,7 +106,7 @@ export async function readMembersOnlyEvents(
 		(r, space) => r.list({ space, repo: group.group_did, collection: GROUP_EVENT_COLLECTION })
 	);
 	if (read.status === 'hidden') return null;
-	if (read.status === 'unlinked') return { events: [], notice: MEMBERS_ONLY_UNLINKED };
+	if (read.status === 'no-access') return { events: [], notice: MEMBERS_ONLY_NO_ACCESS };
 	if (read.status === 'no-space') return { events: [], notice: null };
 	if (read.status === 'unreadable') return { events: [], notice: MEMBERS_ONLY_UNREADABLE };
 
@@ -128,7 +131,7 @@ export async function readMembersOnlyEvents(
 /** What one members-only event's read comes to, for its page and its edit page.
  *
  *  - `hidden`: the caller is off the roster, and nothing was read.
- *  - `unlinked`: a member, but the group's session is gone, so nothing could be.
+ *  - `no-access`: a member, but their sign-in reads no spaces, so nothing could be.
  *  - `absent`: the calendar space holds no event at that key, or the group has
  *    no calendar space at all.
  *  - `unreadable`: the read failed, and the error went to the log.
@@ -139,17 +142,17 @@ export async function readMembersOnlyEvents(
  *  cannot tell an event that exists from one that does not. */
 export type MembersOnlyEventRead =
 	| { status: 'hidden' }
-	| { status: 'unlinked'; notice: string }
+	| { status: 'no-access'; notice: string }
 	| { status: 'absent' }
 	| { status: 'unreadable'; notice: string }
 	| { status: 'found'; event: GroupEventRecord & { space: string } };
 
 /**
- * One members-only event by its key, read from the calendar space as the group,
- * for a roster member only.
+ * One members-only event by its key, read from the calendar space with the
+ * caller's own access, for a roster member only.
  *
  * The roster check is the first thing it does, before the reader is touched, as
- * for the whole slice: a caller who may not see the event costs the group's PDS
+ * for the whole slice: a caller who may not see the event costs the group's host
  * nothing, and a check moved after the read could be dropped by the next
  * refactor. (Spec: FR-106, FR-117.)
  *
@@ -182,7 +185,7 @@ export async function readMembersOnlyEvent(
 				: Promise.resolve(null)
 	);
 	if (read.status === 'hidden') return { status: 'hidden' };
-	if (read.status === 'unlinked') return { status: 'unlinked', notice: MEMBERS_ONLY_UNLINKED };
+	if (read.status === 'no-access') return { status: 'no-access', notice: MEMBERS_ONLY_NO_ACCESS };
 	if (read.status === 'no-space') return { status: 'absent' };
 	if (read.status === 'unreadable')
 		return { status: 'unreadable', notice: MEMBERS_ONLY_UNREADABLE };

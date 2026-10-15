@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // What the group page shows as the group's visibility: the badge and the
 // settings form's selected value. It is the about space's access record, read
-// from the host, for every caller, including the owner, whom the gate itself
-// never asks about. The handle cache, the profile lookup and the resolver are
-// stubbed because none of them decides anything here, and the space reader is a
-// fake host whose access record each case sets. (Spec: FR-214.)
+// from the host with the caller's own access, for every caller, including the
+// owner, whom the gate itself never asks about. A signed-out visitor reads
+// nothing and sees only the row and the declaration. The handle cache, the
+// profile lookup and the resolver are stubbed because none of them decides
+// anything here, and the space reader is a fake host whose access record each
+// case sets. (Spec: FR-214; spec 003, Amendments 2026-10-15.)
 vi.mock('$lib/groups/server/handles', () => ({
 	refreshGroupHandle: vi.fn(async () => null)
 }));
@@ -27,7 +29,9 @@ import {
 	type SpaceRecordInput
 } from '$lib/groups/server/__fixtures__/space-reader';
 import {
+	admitOnly,
 	fixtureSessions,
+	readerSession,
 	resetReaderHost,
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
@@ -38,6 +42,7 @@ import { GROUP_NOT_FOUND, GROUP_VISIBILITY_UNCHECKED } from '$lib/groups/server/
 import { linkGroups, unlinkAllGroups } from '$lib/groups/server/__fixtures__/linked-group';
 
 import { ABOUT_SPACE_TYPE, type CallerMembership, type GroupVisibility } from '$lib/groups/types';
+import { GROUP_PROFILE_COLLECTION, GROUP_RULE_COLLECTION } from '$lib/groups/about-record';
 import {
 	ABOUT_SPACE_READER_ROLES,
 	GROUP_ACCESS_COLLECTION,
@@ -114,21 +119,54 @@ function visibilityReads(host: FakeSpaceReader): string[] {
 	return host.calls.filter((call) => call === ACCESS_READ);
 }
 
-async function openAs(did: string | null, env: Record<string, unknown> = {}) {
-	return (await load({
-		params: { actor: GROUP_DID },
-		locals: { did },
-		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions, ...env } },
-		url: new URL(`https://atmo.test/groups/${GROUP_DID}`)
-	} as unknown as Parameters<typeof load>[0])) as {
-		visibility: string | null;
-		about: { name: string; joinPolicy: string };
-		membership: CallerMembership;
-		canSeeMembers: boolean;
-		canManageGroup: boolean;
-		canAdmitMembers: boolean;
-		groupLinked: boolean | null;
+/** The stand-in's member lists, for a host with no membership records: `listed`
+ *  on every space, and anyone on the about space unless the group is private.
+ *  The rows then say who is on the roster, as they do when the members space
+ *  holds no records. */
+function listsHold(listed: readonly string[], visibility: GroupVisibility | Error) {
+	admitOnly(
+		GROUP_DID,
+		(did, space) => listed.includes(did) || (space === ABOUT && visibility !== 'private')
+	);
+}
+
+type GroupPage = {
+	visibility: string | null;
+	about: {
+		name: string;
+		joinPolicy: string;
+		source: string;
+		rules: { text: string; uri: string }[];
 	};
+	membership: CallerMembership;
+	canSeeMembers: boolean;
+	canManageGroup: boolean;
+	canAdmitMembers: boolean;
+	groupLinked: boolean | null;
+	hiddenDetails: 'signed-out' | 'no-access' | null;
+	rosterPreview: { did: string }[];
+	ownerDid: string | null;
+};
+
+/** The page as `did` sees it, signed in with their own session
+ *  (`readerSession`) unless the test hands one, or signed out. */
+async function openAs(
+	did: string | null,
+	env: Record<string, unknown> = {},
+	session?: unknown,
+	actor: string = GROUP_DID
+): Promise<GroupPage> {
+	return (await load({
+		params: { actor },
+		locals: { did, session: session !== undefined ? session : did ? readerSession(did) : null },
+		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions, ...env } },
+		url: new URL(`https://atmo.test/groups/${actor}`)
+	} as unknown as Parameters<typeof load>[0])) as GroupPage;
+}
+
+/** The URLs the page sent, through the stubbed `fetch`. */
+function sent(): string[] {
+	return vi.mocked(globalThis.fetch).mock.calls.map(([input]) => String(input));
 }
 
 describe('/groups/[actor] load', () => {
@@ -143,6 +181,7 @@ describe('/groups/[actor] load', () => {
 		] as const) {
 			const host = hostReading(visibility);
 			serveReader(GROUP_DID, host);
+			listsHold([OWNER, MEMBER], visibility);
 
 			const data = await openAs(did);
 
@@ -153,8 +192,13 @@ describe('/groups/[actor] load', () => {
 			expect(data.about.joinPolicy).toBe(joinPolicy);
 		}
 
-		serveReader(GROUP_DID, null);
-		expect((await openAs(OWNER)).visibility).toBeNull();
+		// An owner whose sign-in reads no spaces is shown no visibility, and why.
+		const host = hostReading('public');
+		serveReader(GROUP_DID, host);
+		const blind = await openAs(OWNER, {}, readerSession(OWNER, 'atproto'));
+		expect(blind.visibility).toBeNull();
+		expect(blind.hiddenDetails).toBe('no-access');
+		expect(host.calls).toEqual([]);
 	});
 
 	// The gate never asks the host about visibility for a member whose standing
@@ -163,7 +207,9 @@ describe('/groups/[actor] load', () => {
 	// with no visibility, and the join policy fails closed.
 	it("a member's page loads with no visibility when the host cannot say", async () => {
 		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
-		serveReader(GROUP_DID, hostReading(new Error('com.atproto.space.getRecord failed: 502')));
+		const down = new Error('com.atproto.space.getRecord failed: 502');
+		serveReader(GROUP_DID, hostReading(down));
+		listsHold([OWNER, MEMBER], down);
 
 		const data = await openAs(MEMBER);
 
@@ -189,7 +235,10 @@ describe('what a caller off the roster sees on a public group', () => {
 		return { ...data, looked };
 	}
 
-	beforeEach(() => serveReader(GROUP_DID, hostReading('public')));
+	beforeEach(() => {
+		serveReader(GROUP_DID, hostReading('public'));
+		listsHold([OWNER, MEMBER], 'public');
+	});
 
 	it('a member sees the faces and the owner', async () => {
 		const shown = await rosterShownTo(MEMBER);
@@ -237,8 +286,11 @@ describe('a members space that cannot be read', () => {
 
 	/** A host whose members space fails every read while its about space
 	 *  answers with a private profile, and whose about space's access record
-	 *  says `visibility`, or fails its read with the error. */
+	 *  says `visibility`, or fails its read with the error. Its lists still hold
+	 *  REMOVED, so their own access reaches the host and only the failed read
+	 *  stands between the row and the group. */
 	function membersDown(visibility: GroupVisibility | Error): FakeSpaceReader {
+		listsHold([OWNER, MEMBER, REMOVED], visibility);
 		const membersFail = hostDown(502, MEMBERS);
 		const accessFail = visibility instanceof Error ? accessReadFails(visibility) : undefined;
 		return spaceReader(GROUP_DID, {
@@ -326,26 +378,32 @@ describe('a members space that cannot be read', () => {
 
 // Until the owner links the group's account, every write as the group fails, so
 // the page puts the link step in front of the owner, and only the owner: nobody
-// else can link it. Unlinked, the deployment holds no session to read the
-// group's spaces with, so the host here has no reader either.
+// else can link it. Reads never use the group's session, so an unlinked group's
+// page is read with the caller's own access as any other is; a write refuses
+// with the link step when it runs (`knownFormError`).
 describe('the link prompt', () => {
 	afterEach(() => unlinkAllGroups());
 
-	it('asks the owner to link a group whose account is not linked, and the forms say the same', async () => {
-		serveReader(GROUP_DID, null);
+	/** A sessions store with no group's link in it. */
+	const NO_LINK = { OAUTH_SESSIONS: { get: async () => null } as unknown as KVNamespace };
 
-		const data = await openAs(OWNER, linkGroups([]));
+	it("asks the owner to link a group whose account is not linked, and reads the page with the owner's own access", async () => {
+		const host = hostReading('public');
+		serveReader(GROUP_DID, host);
+		listsHold([OWNER, MEMBER], 'public');
+
+		// The host serves the reads; the sessions store holds no link.
+		const data = await openAs(OWNER, NO_LINK);
 
 		expect(data.groupLinked).toBe(false);
-		// The settings stay hidden, and a form posted anyway names the same fix.
-		expect(data.canManageGroup).toBe(false);
-		expect(notAllowed(data.membership, 'MANAGE_GROUP').error).toMatch(
-			/owner has to link the group’s account/
-		);
+		expect(data.visibility).toBe('public');
+		expect(visibilityReads(host)).toEqual([ACCESS_READ]);
+		expect(data.membership.onRoster).toBe(true);
 	});
 
 	it('shows the owner of a linked group no prompt', async () => {
 		serveReader(GROUP_DID, hostReading('public'));
+		listsHold([OWNER, MEMBER], 'public');
 
 		const data = await openAs(OWNER, linkGroups([GROUP_DID]));
 
@@ -353,13 +411,110 @@ describe('the link prompt', () => {
 	});
 
 	it('answers null for everyone but the owner, linked or not', async () => {
-		serveReader(GROUP_DID, null);
-		expect((await openAs(MEMBER, linkGroups([]))).groupLinked).toBeNull();
-
 		serveReader(GROUP_DID, hostReading('public'));
+		listsHold([OWNER, MEMBER], 'public');
+		expect((await openAs(MEMBER, NO_LINK)).groupLinked).toBeNull();
+
 		const linked = linkGroups([GROUP_DID]);
 		expect((await openAs(MEMBER, linked)).groupLinked).toBeNull();
 		expect((await openAs(STRANGER, linked)).groupLinked).toBeNull();
 		expect((await openAs(null, linked)).groupLinked).toBeNull();
+	});
+});
+
+// Each person reads with their own access, and a visitor sees only what is
+// public (TS 2026-10-15). A signed-out visitor has no access to read with, so
+// the page shows the row and the public events, and says some details need a
+// sign-in; a signed-in person reads the about space with a credential from
+// their own session, which the group's host issues only where the group lets
+// them in. (Spec 003, Amendments 2026-10-15.)
+describe('what each caller reads with', () => {
+	const PROFILE: SpaceRecordInput = {
+		space: ABOUT,
+		collection: GROUP_PROFILE_COLLECTION,
+		rkey: 'self',
+		value: { displayName: 'Kona Paddlers', joinPolicy: 'approval' }
+	};
+	const RULE: SpaceRecordInput = {
+		space: ABOUT,
+		collection: GROUP_RULE_COLLECTION,
+		rkey: '3lrule',
+		value: { text: 'Wear a leash', order: 1 }
+	};
+
+	/** A host whose about space holds a profile, a rule and an access record
+	 *  saying `visibility`, under the default rule: the host lets in whom its
+	 *  records name. */
+	function aboutHost(visibility: GroupVisibility): FakeSpaceReader {
+		return spaceReader(GROUP_DID, { records: [aboutAccess(visibility), PROFILE, RULE] });
+	}
+
+	/** The load's refusal, as a status and body. */
+	async function refusal(did: string | null, actor: string = GROUP_DID) {
+		try {
+			await openAs(did, {}, undefined, actor);
+		} catch (e) {
+			const { status, body } = e as { status: number; body: unknown };
+			return { status, body };
+		}
+		throw new Error(`the page loaded for ${did} at ${actor}`);
+	}
+
+	it('a signed-out visitor reads nothing with anyone’s access, and sees only the row, no rules or roster, and the notice', async () => {
+		const host = aboutHost('public');
+		serveReader(GROUP_DID, host);
+
+		const data = await openAs(null);
+
+		// No space was read and no credential asked for, and the group's session
+		// was never looked up.
+		expect(host.calls).toEqual([]);
+		expect(sent().filter((url) => /getDelegationToken|getSpaceCredential/.test(url))).toEqual([]);
+		expect(fixtureSessions.reads).toBe(0);
+		// Only what is public: the row's name, no rules, no faces, no owner.
+		expect(data.about.source).toBe('cache');
+		expect(data.about.name).toBe('Kona');
+		expect(data.about.rules).toEqual([]);
+		expect(data.rosterPreview).toEqual([]);
+		expect(data.ownerDid).toBeNull();
+		expect(data.visibility).toBe('public');
+		expect(data.hiddenDetails).toBe('signed-out');
+	});
+
+	it('a private group answers a signed-out visitor and a signed-in non-member with the 404 a missing group gets', async () => {
+		serveReader(GROUP_DID, aboutHost('private'));
+
+		const missing = await refusal(STRANGER, 'did:plc:nosuchgroup');
+		expect(missing).toStrictEqual({ status: 404, body: { message: GROUP_NOT_FOUND } });
+		expect(await refusal(null)).toStrictEqual(missing);
+		expect(await refusal(STRANGER)).toStrictEqual(missing);
+	});
+
+	it("a signed-in non-member reads a public group's profile and rules through a credential from their own session", async () => {
+		const host = aboutHost('public');
+		serveReader(GROUP_DID, host);
+
+		const data = await openAs(STRANGER);
+
+		expect(data.about.source).toBe('records');
+		expect(data.about.name).toBe('Kona Paddlers');
+		expect(data.about.rules.map((rule) => rule.text)).toEqual(['Wear a leash']);
+		expect(data.hiddenDetails).toBeNull();
+		// The about space's delegation token came from the stranger's own PDS, as
+		// the stranger, and the group's session was never looked up.
+		const asked = vi
+			.mocked(globalThis.fetch)
+			.mock.calls.filter(([input]) => String(input).includes('getDelegationToken'))
+			.map(([input, init]) => ({
+				space: new URL(String(input)).searchParams.get('space'),
+				as: new Headers(init?.headers).get('authorization')
+			}));
+		expect(asked).toContainEqual({ space: ABOUT, as: `Bearer member ${STRANGER}` });
+		expect(asked.every((request) => request.as === `Bearer member ${STRANGER}`)).toBe(true);
+		expect(fixtureSessions.reads).toBe(0);
+		// Not let into the members space, so they stand as a non-member, which is
+		// an answer, not a failure.
+		expect(data.membership.onRoster).toBe(false);
+		expect(data.membership.unreadable).toBeUndefined();
 	});
 });

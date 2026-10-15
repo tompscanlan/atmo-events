@@ -41,7 +41,6 @@
 
 import { approvalRefusal, groupFace, splitRuleLines } from './about-record';
 import {
-	groupSpaceReader,
 	readAboutAccess,
 	readGroupAbout,
 	type GroupAbout,
@@ -67,7 +66,7 @@ import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from './types';
 
 import { groupWriter, type GroupRepoWriter } from './server/group-write';
 import { errorText } from './server/errors';
-import { type CredentialStoreEnv, GroupCredentialError } from './server/session';
+import { type CredentialStoreEnv } from './server/session';
 import { updateGroup } from './server/db/groups';
 export interface UpdateGroupData {
 	name: string;
@@ -83,6 +82,9 @@ export interface UpdateGroupData {
 }
 
 const STILL_LISTED = 'Its declaration was not withdrawn, so it is still listed in browse.';
+
+const NO_READ_ACCESS =
+	'Nothing was saved: your sign-in does not let this site read the group’s spaces, so the save cannot see what it would change. Signing in again may fix it.';
 
 const SHOWN_UNKNOWN =
 	'This save cannot tell which visibility the page showed: either the page could not read it when it opened, or the page was opened before this site was updated. So it cannot tell whether you changed the visibility. Nothing was saved. Reload the page and save again.';
@@ -387,25 +389,26 @@ export async function runUpdateGroup(
 	env: CredentialStoreEnv,
 	db: D1Database,
 	group: GroupRow,
-	callerDid: string,
+	caller: { did: string; reader: GroupSpaceReader | null },
 	data: UpdateGroupData
 ): Promise<GroupFormResult> {
 	// A private group must require approval to join.
 	const approval = approvalRefusal(data.visibility, data.requireApproval);
 	if (approval) return { ok: false, error: approval };
 
+	// What the save reads first, it reads with the caller's own access (TS
+	// 2026-10-15); only the writes go as the group.
+	const { did: callerDid, reader } = caller;
+	if (!reader) return { ok: false, error: NO_READ_ACCESS };
+
 	// `failed` names the read in progress, for the error message.
 	const noCredential = 'this site holds no credential it can use for the group';
 	let failed = noCredential;
-	let reader: GroupSpaceReader;
 	let access: GroupAccessFields | null;
 	let hostPolicy: string;
 	let about: GroupAbout;
 	let writer: GroupRepoWriter;
 	try {
-		const found = await groupSpaceReader(env, group);
-		if (!found) throw new GroupCredentialError(group.group_did);
-		reader = found;
 		if (!group.about_space_uri) throw new Error(`${group.group_did} has no about space yet`);
 		failed = "the group's access record could not be read from its PDS";
 		access = await readAboutAccess(reader, group);
@@ -416,7 +419,8 @@ export async function runUpdateGroup(
 		failed = noCredential;
 		writer = await groupWriter(env, group);
 	} catch (e) {
-		return nothingSaved(failed, e);
+		// An unlinked group is the owner's to fix, not a save to retry.
+		return knownFormError(e) ?? nothingSaved(failed, e);
 	}
 
 	// See the table in the header.

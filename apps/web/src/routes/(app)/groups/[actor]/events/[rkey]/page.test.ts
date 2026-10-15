@@ -85,6 +85,7 @@ import {
 } from '$lib/groups/server/__fixtures__/members-only-event';
 import {
 	fixtureSessions,
+	readerSession,
 	resetReaderHost,
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
@@ -148,7 +149,7 @@ type PageData = Record<string, unknown> & {
 async function openAs(did: string | null, rkey = '3lmeeting'): Promise<PageData> {
 	return (await load({
 		params: { actor: GROUP_DID, rkey },
-		locals: { did },
+		locals: { did, session: did ? readerSession(did) : null },
 		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } },
 		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events/${rkey}`)
 	} as unknown as Parameters<typeof load>[0])) as PageData;

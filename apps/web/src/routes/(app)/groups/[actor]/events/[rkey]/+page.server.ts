@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import { canSeeMembers } from '$lib/groups/access';
 import { can } from '$lib/groups/permissions';
 import { readGroupAbout } from '$lib/groups/server/about-read';
-import { memberSession, type MemberSession } from '$lib/groups/server/acceptance';
+import { gateCaller } from '$lib/groups/server/acceptance';
 import { membersOnlyEventForDisplay, readMembersOnlyEvent } from '$lib/groups/server/calendar-read';
 import { readOwnMembersOnlyRsvp } from '$lib/groups/server/member-rsvp';
 import { groupPath, groupRouteContext } from '$lib/groups/server/route-context';
@@ -15,15 +15,16 @@ import type { PageServerLoad } from './$types';
 const EVENT_NOT_FOUND = 'Event not found';
 
 /**
- * One members-only event, read from the group's calendar space as the group.
+ * One members-only event, read from the group's calendar space with the
+ * caller's own access.
  * This route serves members-only events only; a public event's page is the
  * person-style event page.
  *
  * Membership is checked before any read of the space. The route context reads
  * the caller's standing, as every group page does, and a caller off the roster
  * stops there with the same 404 as a key the space does not hold, so the page
- * says nothing about whether the event exists. No further request goes through
- * the group's session on their behalf. (Spec: FR-117.)
+ * says nothing about whether the event exists. No further request is made on
+ * their behalf. (Spec: FR-117.)
  *
  * Nothing is stored between requests or read from a shared store: a member's
  * failed read is a 503 that says why, never an earlier copy, which would be
@@ -31,9 +32,9 @@ const EVENT_NOT_FOUND = 'Event not found';
  * never holds a members-only event. (Spec: FR-111a, FR-117.)
  */
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
-	const env = platform!.env;
-	const db = env.DB;
-	const { group, membership, reader } = await groupRouteContext(env, db, params.actor, locals.did);
+	const db = platform!.env.DB;
+	const viewer = await gateCaller(locals.did, locals.session);
+	const { group, membership, reader } = await groupRouteContext(db, params.actor, viewer);
 
 	// The roster, never the group's visibility: a public group shows itself to
 	// everyone, and only its members see its members-only events.
@@ -67,14 +68,6 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	// the calendar space, after the event read and only for a page that will
 	// render. Nothing is read for a session without the read grant, and a
 	// failed read shows no RSVP rather than failing the page. (Spec: FR-113.)
-	let viewer: MemberSession | null = null;
-	if (locals.session) {
-		try {
-			viewer = await memberSession(locals.session);
-		} catch (e) {
-			console.warn(`[groups] ${group.group_did}: no session to read the viewer's RSVP:`, e);
-		}
-	}
 	const own = await readOwnMembersOnlyRsvp(membership, group, viewer, shown.rkey);
 
 	const canManageEvents = can(membership.permissions, 'MANAGE_EVENTS');
@@ -92,8 +85,9 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		/** The space form, which an RSVP to this event names. (Spec: FR-120.) */
 		eventUri: shown.uri,
 		spaceUri: shown.space,
-		// Who is going is read as the group, member by member, which is not built
-		// yet. Until then the page shows no one and reads nothing for it.
+		// Who is going would be read member by member, with the viewer's own
+		// credential, which is not built yet. Until then the page shows no one and
+		// reads nothing for it.
 		attendees: { going: [], interested: [], goingCount: 0, interestedCount: 0 },
 		viewerRsvpStatus: own?.status ?? null,
 		viewerRsvpRkey: own?.rkey ?? null,

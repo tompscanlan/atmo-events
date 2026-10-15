@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// What this route decides for /groups: that the record check `listGroups` asks
-// for an undeclared group is the signed-in caller's own standing, read from the
-// group's members space. The listing rules are pinned in
+// What this route decides for /groups: that it reads no group's space and looks
+// up no group's session (TS 2026-10-15), so the caller's rows alone list an
+// undeclared group, and its page, which reads their standing with their own
+// access, is what refuses a stale one. The listing rules are pinned in
 // lib/groups/server/browse.test.ts; the index and the handle cache are stubbed
-// here because neither decides anything about the check.
+// here because neither decides anything about what is read.
 vi.mock('$lib/groups/server/browse', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/groups/server/browse')>()),
 	listDeclaredGroups: vi.fn(async () => [])
@@ -75,20 +76,16 @@ async function browse() {
 }
 
 describe('/groups load', () => {
-	it("checks an undeclared group against the signed-in caller's membership record", async () => {
+	it("lists an undeclared group by the caller's row, reading none of its spaces", async () => {
 		const readers = new Map([
 			['did:plc:kept', await joined('Kept', 'did:plc:kept', true)],
 			['did:plc:gone', await joined('Gone', 'did:plc:gone', false)]
 		]);
 		for (const [did, reader] of readers) serveReader(did, reader);
 
-		const data = (await load({
-			locals: { did: ALICE },
-			platform: { env: { DB: db, OAUTH_SESSIONS: fixtureSessions } }
-		} as unknown as Parameters<typeof load>[0])) as { groups: { name: string | null }[] };
-
-		expect(data.groups.map((g) => g.name)).toEqual(['Kept']);
-		expect(readers.get('did:plc:gone')!.calls).not.toEqual([]);
+		expect((await browse()).groups.map((g) => g.name).sort()).toEqual(['Gone', 'Kept']);
+		for (const reader of readers.values()) expect(reader.calls).toEqual([]);
+		expect(fixtureSessions.reads).toBe(0);
 	});
 
 	// Browse shows what placement says, with no host read per row: a group in
@@ -115,26 +112,23 @@ describe('/groups load', () => {
 		expect(fixtureSessions.reads).toBe(0);
 	});
 
-	// A row alone does not list a group the caller does not own: it may be the
-	// trace of a removal whose row delete failed. When the membership record
-	// cannot be read, because the members space errors or no reader can be
-	// built, the check answers no, and the rest of browse is as it would be.
+	// Nothing is read, so a members space that errors or a session that cannot
+	// be restored changes nothing about the list: the row answers.
 	it.each([
 		['whose members space errors', () => serveReader('did:plc:stale', down('did:plc:stale'))],
-		['whose reader cannot be built', () => breakSession('did:plc:stale')]
-	])('leaves out an undeclared group %s', async (_, failStale) => {
+		['whose session cannot be restored', () => breakSession('did:plc:stale')]
+	])('lists an undeclared group %s, as its row says', async (_, failStale) => {
 		const kept = await joined('Kept', 'did:plc:kept', true);
 		await joined('Stale', 'did:plc:stale', false);
 		serveReader('did:plc:kept', kept);
 		failStale();
-		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-		expect((await browse()).groups.map((g) => g.name)).toEqual(['Kept']);
-		logged.mockRestore();
+		expect((await browse()).groups.map((g) => g.name).sort()).toEqual(['Kept', 'Stale']);
+		expect(kept.calls).toEqual([]);
 	});
 
-	// A group this deployment holds no credential for has no reader, and that
-	// is not a failed read: its row answers, as it does on the group page.
+	// A group this deployment holds no credential for is listed as any other:
+	// its row answers.
 	it('lets the row answer for an undeclared group this deployment holds no credential for', async () => {
 		await joined('Uncredentialed', 'did:plc:uncredentialed', false);
 		serveReader('did:plc:uncredentialed', null);
@@ -142,8 +136,8 @@ describe('/groups load', () => {
 		expect((await browse()).groups.map((g) => g.name)).toEqual(['Uncredentialed']);
 	});
 
-	// The caller's own groups are never checked, so a members space that is
-	// down cannot hide a group from its owner.
+	// A members space that is down cannot hide a group from its owner, since
+	// none is read.
 	it("lists the caller's own undeclared group without reading its members space", async () => {
 		await seedGroup({ harness, groupDid: 'did:plc:mine', ownerDid: ALICE, name: 'Mine' });
 		serveReader('did:plc:mine', down('did:plc:mine'));

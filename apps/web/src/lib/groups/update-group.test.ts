@@ -28,6 +28,12 @@
 // The host is the same fake the create is tested against
 // (./server/__fixtures__/stub-pds.ts), reached through the real transports, so
 // the bodies asserted here are the bodies a PDS would receive.
+//
+// The save reads what it would change with the caller's own access (TS
+// 2026-10-15) and writes as the group. The owner is on every space's list, so
+// their own access reads what the group's session reads; the fake answers
+// space reads, not credential exchanges, so the owner's reads reach it over the
+// group's transport here. With no reader at all, nothing is saved.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
@@ -221,18 +227,27 @@ function writeAboutAccessDirect(isPublic: boolean) {
 	});
 }
 
+/** The owner's own reads, which reach every space of the group (see the header). */
+const ownerReader = () => pdsSpaceReader(CRED, GROUP_DID);
+
 /** The owner saving the settings form. `shownVisibility`, what the form showed
  *  when it opened, defaults to the chosen visibility: a select left alone. A
  *  case that changes the visibility says what the form showed, because without
  *  it the save is an untouched one and changes nothing at the host. */
 function save(group: GroupRow, visibility: GroupVisibility, extra: Partial<UpdateGroupData> = {}) {
-	return runUpdateGroup(env, harness.db, group, OWNER, {
-		name: 'Kona Trail Runners',
-		visibility,
-		shownVisibility: visibility,
-		requireApproval: true,
-		...extra
-	});
+	return runUpdateGroup(
+		env,
+		harness.db,
+		group,
+		{ did: OWNER, reader: ownerReader() },
+		{
+			name: 'Kona Trail Runners',
+			visibility,
+			shownVisibility: visibility,
+			requireApproval: true,
+			...extra
+		}
+	);
 }
 
 /** A form whose page could not read the access record when it opened, so it
@@ -401,6 +416,35 @@ describe('a save moves a host that disagrees with the access record', () => {
 // is two fields of this form, and visibility is the about space's access record,
 // which no trigger on our tables can see. So the save refuses it in app code,
 // before the host, the row or any record is written.
+describe('the save reads with the caller’s own access', () => {
+	it('an owner whose sign-in reads no spaces is told so, and nothing is read or written', async () => {
+		const pds = host();
+		const group = await givenGroup('public', pds);
+		const before = rowWhole();
+
+		const result = await runUpdateGroup(
+			env,
+			harness.db,
+			group,
+			{ did: OWNER, reader: null },
+			{
+				name: 'Renamed',
+				visibility: 'private',
+				shownVisibility: 'public',
+				requireApproval: true
+			}
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error: expect.stringMatching(/^Nothing was saved: your sign-in does not let this site read/)
+		});
+		expect(pds.calls).toEqual([]);
+		expect(rowWhole()).toEqual(before);
+		expect(index.told).toEqual([]);
+	});
+});
+
 describe('a private group must require approval', () => {
 	it('a settings save refuses a private group that is open to join before any write', async () => {
 		const pds = host();

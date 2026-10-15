@@ -11,11 +11,11 @@
 // back, for them or for the group, is one lookup. (Spec: FR-120.)
 //
 // The subject also names the version of the event the RSVP answers: its cid,
-// from a read of the event as the group just before the write. An RSVP to an
-// event that is gone saves nothing. The page sends the cid it showed, which is
-// compared and never written: when the event has changed since, nothing is
-// saved and the member is told to reload, so no one answers a version they
-// never saw. A cancel reads no event, since it removes whatever the RSVP named.
+// from a read of the event with the member's own access just before the write.
+// An RSVP to an event that is gone saves nothing. The page sends the cid it
+// showed, which is compared and never written: when the event has changed
+// since, nothing is saved and the member is told to reload, so no one answers a
+// version they never saw. A cancel reads no event, since it removes whatever the RSVP named.
 //
 // A request goes to the member's PDS only when their session holds the group's
 // grant for it (./member-grants.ts). Without it, the member is sent to
@@ -94,9 +94,9 @@ export interface MembersOnlyRsvpInput extends MembersOnlyRsvpTarget {
 	/** The event's cid as the page showed it, or null. Compared with the event's
 	 *  current cid, never written. */
 	cid: string | null;
-	/** The group's own space reader, or null for a group with no session. Asked
-	 *  for only once the RSVP is about to be written. */
-	groupReader: () => Promise<GroupSpaceReader | null>;
+	/** The caller's own space reader, or null when their sign-in reads no
+	 *  spaces. Asked for only once the RSVP is about to be written. */
+	reader: () => Promise<GroupSpaceReader | null>;
 }
 
 /** Every way an RSVP or a cancel can fail, one shape each. */
@@ -156,25 +156,21 @@ async function withoutGrant(target: MembersOnlyRsvpTarget): Promise<MembersOnlyR
 	return { ok: false, reason: 'retry-later', message: RSVP_RETRY_LATER };
 }
 
-/** The event's current cid, read as the group, or the failure that stops the
- *  write: no event at the key, or one that could not be read. */
+/** The event's current cid, read with the caller's own access, or the failure
+ *  that stops the write: no event at the key, or one that could not be read. */
 async function currentEventCid(
 	input: MembersOnlyRsvpInput
 ): Promise<{ ok: true; cid: string } | MembersOnlyRsvpFailure> {
 	const read = await readMembersOnlyEvent(
 		input.membership,
-		await input.groupReader(),
+		await input.reader(),
 		input.group,
 		input.rkey
 	);
 	if (read.status === 'hidden') return { ok: false, reason: 'not-member' };
 	if (read.status === 'absent') return { ok: false, reason: 'refused', message: RSVP_NO_EVENT };
-	if (read.status === 'unlinked') {
-		console.error(
-			`[groups] ${input.group.group_did}: no group session to read the event an RSVP names`
-		);
-		return { ok: false, reason: 'retry-later', message: RSVP_RETRY_LATER };
-	}
+	// The sign-in reads no spaces, so it lacks what a re-authorization asks for.
+	if (read.status === 'no-access') return withoutGrant(input);
 	// The read logged its own failure.
 	if (read.status === 'unreadable') {
 		return { ok: false, reason: 'retry-later', message: RSVP_RETRY_LATER };

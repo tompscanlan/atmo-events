@@ -12,6 +12,7 @@ import {
 	allowsMembershipWrite,
 	allowsWrite,
 	membershipAction,
+	NO_GRANTS,
 	rolesTouched,
 	withAccess,
 	type MembershipChange,
@@ -40,6 +41,7 @@ import { xrpc, xrpcError } from './xrpc';
 
 import { readMembership } from './members-read';
 import { getCallerMembership } from './standing';
+import { isSpaceAccessDenied } from './space-credential';
 /** The error name in a typed client's failed answer, if it has one. */
 function errorOf(data: unknown): string | null {
 	const error = data && typeof data === 'object' && 'error' in data ? data.error : null;
@@ -209,7 +211,13 @@ function standingFor(
 	const key = `${group.group_did} ${callerDid}`;
 	let standing = kept.get(key);
 	if (!standing) {
-		standing = getCallerMembership(db, group, callerDid, reader);
+		standing = getCallerMembership(db, group, callerDid, reader).catch(async (e) => {
+			// The host does not let the caller into the members space: they hold
+			// nothing there, which the gate refuses as it refuses any non-member.
+			if (!isSpaceAccessDenied(e)) throw e;
+			const row = await getCallerMembership(db, group, callerDid, null);
+			return { ...row, permissions: new Set(), grants: NO_GRANTS, onRoster: false };
+		});
 		kept.set(key, standing);
 		standing.catch(() => kept.delete(key));
 	}

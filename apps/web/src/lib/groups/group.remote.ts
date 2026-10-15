@@ -40,11 +40,13 @@ export const updateGroupForm = form(
 		shownVisibility: shownVisibilityField
 	}),
 	async (data): Promise<GroupFormResult> => {
-		const { db, env, group, membership, callerDid } = await groupRequestContext(data.groupDid);
+		const { db, env, group, membership, callerDid, reader } = await groupRequestContext(
+			data.groupDid
+		);
 		if (!can(membership.permissions, 'MANAGE_GROUP')) {
 			return notAllowed(membership, 'MANAGE_GROUP');
 		}
-		return runUpdateGroup(env, db, group, callerDid, data);
+		return runUpdateGroup(env, db, group, { did: callerDid, reader }, data);
 	}
 );
 
@@ -53,14 +55,14 @@ export const updateGroupForm = form(
 export const repairGroupForm = form(
 	v.object({ groupDid: didField }),
 	async (data): Promise<GroupFormResult<{ summary: string }>> => {
-		const { db, env, group, membership, callerDid, reader } = await groupRequestContext(
-			data.groupDid
-		);
+		const { db, env, group, membership, callerDid } = await groupRequestContext(data.groupDid);
 		if (!can(membership.permissions, 'MANAGE_GROUP')) {
 			return notAllowed(membership, 'MANAGE_GROUP');
 		}
 		try {
-			const result = await repairGroup({ db, env, group, callerDid, reader });
+			// Repair reads as the group, every step: it exists to put right member
+			// lists that may no longer let the caller's own access in.
+			const result = await repairGroup({ db, env, group, callerDid });
 			return { ok: true, summary: describeRepair(result) };
 		} catch (e) {
 			// Otherwise the PDS or the database failed partway. Every repair write

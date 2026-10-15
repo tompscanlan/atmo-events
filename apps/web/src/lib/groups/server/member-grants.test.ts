@@ -1,9 +1,10 @@
-// The per-group grant a member's sign-in asks for, what the client metadata
-// declares, and the retry when a PDS still holds older metadata. Each case is a
-// rule sign-in trusts: a wrong grant set either fails consent or locks someone out.
+// The grant every sign-in asks for to read group meta spaces, the per-group grant
+// a member's sign-in asks for, what the client metadata declares, and the retry
+// when a PDS still holds older metadata. Each case is a rule sign-in trusts: a
+// wrong grant set either fails consent or locks someone out.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OAuthResponseError } from '@atcute/oauth-node-client';
-import { scopes } from '$lib/atproto/settings';
+import { META_READ_GRANT, scopes } from '$lib/atproto/settings';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 
 import {
@@ -12,6 +13,7 @@ import {
 	declaredGrants,
 	firstAcceptedScope,
 	holdsAcceptanceGrant,
+	holdsMetaRead,
 	holdsRsvpGrant,
 	reauthorizeForGroup,
 	signInGrantAttempts
@@ -57,16 +59,46 @@ function invalidScope(message: string) {
 	return new OAuthResponseError(new Response(null, { status: 400 }), 'invalid_scope', message);
 }
 
+describe('holdsMetaRead', () => {
+	// Every sign-in asks for it, so a signed-in person reads a group's meta space
+	// with their own access. Written out, so a changed grant fails here first.
+	it('every sign-in asks to read any group’s meta space, read-only', () => {
+		expect(META_READ_GRANT).toBe('space:group.opensocial.meta?authority=*&action=read');
+		expect(scopes).toContain(META_READ_GRANT);
+		expect(holdsMetaRead(scopes.join(' '))).toBe(true);
+	});
+
+	// The PDS hands a typed grant back with the type's collections written in,
+	// so the grant is read by parameter, not compared as a string.
+	it('reads the grant as the PDS hands it back, and nothing narrower', () => {
+		const expanded = `atproto space:group.opensocial.meta?authority=*&collection=com.atproto.label.label&collection=group.opensocial.access&collection=group.opensocial.profile&collection=group.opensocial.rule&action=read`;
+		expect(holdsMetaRead(expanded)).toBe(true);
+		// One group's meta space, or every space's writes, is not this grant.
+		expect(holdsMetaRead(`atproto space:group.opensocial.meta?authority=${KONA}&action=read`)).toBe(
+			false
+		);
+		expect(holdsMetaRead('atproto space:group.opensocial.meta?authority=*&action=create')).toBe(
+			false
+		);
+		// Another type, and a stock PDS that dropped the grant, hold none.
+		expect(holdsMetaRead('atproto space:group.opensocial.members?authority=*&action=read')).toBe(
+			false
+		);
+		expect(holdsMetaRead('atproto')).toBe(false);
+	});
+});
+
 describe('memberGrant', () => {
 	// One token per group covers both of the member's own records in its spaces:
-	// the acceptance, and an RSVP to a members-only event. Writing the RSVP needs
-	// create and update with its collection in the same grant, and reading it back
-	// from the member's own session needs read_self. Written out, so a changed
-	// grant fails here before any consent screen shows it.
-	it("the member grant lets a member write and read back their own RSVP in the group's spaces", () => {
+	// the acceptance, and an RSVP to a members-only event, and reads every space
+	// of the group. Writing the RSVP needs create and update with its collection
+	// in the same grant; a delegation token for a read needs read, which also
+	// covers reading the RSVP back (read implies read_self). Written out, so a
+	// changed grant fails here before any consent screen shows it.
+	it("the member grant lets a member read the group's spaces and write and read back their own RSVP", () => {
 		const grant = memberGrant(KONA);
 		expect(grant).toBe(
-			`space:*?authority=${KONA}&collection=group.opensocial.acceptance&collection=community.lexicon.calendar.rsvp&action=read_self&action=create&action=update&action=delete`
+			`space:*?authority=${KONA}&collection=group.opensocial.acceptance&collection=community.lexicon.calendar.rsvp&action=read&action=create&action=update&action=delete`
 		);
 		const scope = `atproto ${grant}`;
 		expect(holdsRsvpGrant(scope, KONA, 'put')).toBe(true);

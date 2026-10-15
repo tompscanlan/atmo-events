@@ -7,13 +7,33 @@
 // stay real, so a test depends on the wire format and the linked-session seam,
 // never on which module builds the reader.
 //
+// Pages read with the caller's own access (TS 2026-10-15), so a signed-in caller
+// is `readerSession(did)`, put in `locals.session`: their own PDS here grants a
+// delegation token for a space their scope reads, and the host grants a
+// credential to whom it lets in. By default that is what the stand-in's member
+// lists hold: anyone for a meta space whose access record is public, the group's
+// roster (its membership records) for every other space, and the group itself.
+// `admitOnly` replaces the rule for one group. DIDs resolve to the stub PDS.
+//
 // A test file opts in to the session seam as ./linked-group.ts describes, gives
 // its platform env `OAUTH_SESSIONS: fixtureSessions`, and calls `serveReader` in
-// each test. `serveReader(did, null)` leaves the group unlinked: no reader.
+// each test. `serveReader(did, null)` leaves the group unlinked: no reader as the
+// group, and no host for anyone's reads.
 import { vi } from 'vitest';
+import type { OAuthSession } from '@atcute/oauth-node-client';
+import { META_READ_GRANT } from '$lib/atproto/settings';
+import { groupSpaceUris } from '../../ids';
+import { GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY } from '../../declaration-record';
+import {
+	GROUP_ACCESS_COLLECTION,
+	GROUP_ACCESS_RKEY,
+	GROUP_MEMBERSHIP_COLLECTION
+} from '../../members-record';
 import type { GroupSpaceReader } from '../about-read';
+import { clearSpaceCredentials } from '../space-credential';
 import { linkedServices } from './linked-oauth-stub';
 import { STUB_PDS_SERVICE } from './linked-group';
+import type { FakeSpaceReader } from './space-reader';
 
 import { GROUP_SESSION_PREFIX } from '../session';
 /** Groups whose stored session cannot be restored (`breakSession`). */
@@ -92,6 +112,153 @@ async function answer(host: GroupSpaceReader, url: URL): Promise<Response> {
 	throw new Error(`reader-host: no answer for ${url.pathname}`);
 }
 
+/** Where a fixture person's own PDS answers: it hands out their delegation
+ *  tokens. */
+export const MEMBER_PDS_SERVICE = 'https://member-pds.stub.test';
+
+/** A sign-in that reads every group's meta space and every space of any group,
+ *  so only the host decides what it gets. */
+export const READ_EVERYTHING = `atproto ${META_READ_GRANT} space:*?authority=*&action=read`;
+
+/** What each fixture person's sign-in was granted, by DID. */
+const granted = new Map<string, string>();
+
+/** A person's own signed-in session, as `locals.session` carries it. Each
+ *  request goes to their PDS, here, with their DID on it. */
+export function readerSession(did: string, scope: string = READ_EVERYTHING): OAuthSession {
+	granted.set(did, scope);
+	return {
+		did,
+		getTokenInfo: async () => ({ scope, expiresAt: new Date(Date.now() + 3_600_000) }),
+		handle: (pathname: string, init?: RequestInit) => {
+			const headers = new Headers(init?.headers);
+			headers.set('authorization', `Bearer member ${did}`);
+			return fetch(new URL(pathname, MEMBER_PDS_SERVICE), { ...init, headers });
+		}
+	} as unknown as OAuthSession;
+}
+
+/** A space URI's parts, `at://<authority>/space/<type>/<skey>`. */
+function spaceParts(space: string): { authority: string; type: string } {
+	const m = /^at:\/\/([^/]+)\/space\/([^/]+)\/[^/]+$/.exec(space);
+	if (!m) throw new Error(`reader-host: not a space URI: ${space}`);
+	return { authority: m[1], type: m[2] };
+}
+
+/** Whether `scope` reads `space` for `holder`, as getDelegationToken asks. */
+function scopeReads(scope: string, holder: string, space: string): boolean {
+	const { authority, type } = spaceParts(space);
+	return scope.split(' ').some((token) => {
+		const m = /^space:([^?]+)(?:\?(.*))?$/.exec(token);
+		if (!m) return false;
+		const params = new URLSearchParams(m[2] ?? '');
+		const wanted = params.get('authority') ?? 'self';
+		const actions = params.getAll('action');
+		return (
+			(m[1] === '*' || m[1] === type) &&
+			(wanted === '*' || wanted === authority || (wanted === 'self' && authority === holder)) &&
+			(actions.length === 0 || actions.includes('read'))
+		);
+	});
+}
+
+const b64url = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+
+/** A credential the reader can read an `exp` from, naming its holder and space. */
+function credentialFor(holder: string, space: string): string {
+	const exp = Math.floor(Date.now() / 1000) + 600;
+	return `${b64url({ alg: 'none' })}.${b64url({ sub: holder, space, exp })}.sig`;
+}
+
+function credentialSpace(authorization: string): string | null {
+	const payload = authorization.replace(/^Atproto-Space /, '').split('.')[1];
+	try {
+		return JSON.parse(Buffer.from(payload, 'base64url').toString()).space ?? null;
+	} catch {
+		return null;
+	}
+}
+
+/** The member's PDS: a delegation token for a space their sign-in reads. */
+function memberPds(url: URL, headers: Headers): Response {
+	if (url.pathname !== '/xrpc/com.atproto.space.getDelegationToken') {
+		throw new Error(`reader-host: the member PDS has no answer for ${url.pathname}`);
+	}
+	const holder = (headers.get('authorization') ?? '').replace(/^Bearer member /, '');
+	const space = url.searchParams.get('space') ?? '';
+	if (!scopeReads(granted.get(holder) ?? '', holder, space)) {
+		return json(403, { error: 'ScopeMissingError', message: `Missing required scope` });
+	}
+	return json(200, { token: `delegation ${holder} ${space}` });
+}
+
+/** Whether each group's public repo holds its declaration, when a test says. */
+const declarations = new Map<string, boolean>();
+
+/** Says whether `groupDid`'s public repo holds its declaration, in place of the
+ *  default: it does exactly while its meta space's access record is public, as
+ *  atmo keeps it (FR-214). */
+export function declare(groupDid: string, declared: boolean): void {
+	declarations.set(groupDid, declared);
+}
+
+/** The group's public repo, which anyone may read: its declaration only. */
+function publicRepo(host: GroupSpaceReader, url: URL): Response {
+	const group = url.searchParams.get('repo') ?? '';
+	if (
+		url.searchParams.get('collection') !== GROUP_DECLARATION_COLLECTION ||
+		url.searchParams.get('rkey') !== GROUP_DECLARATION_RKEY
+	) {
+		throw new Error(`reader-host: the public repo has no answer for ${url.search}`);
+	}
+	let declared = declarations.get(group);
+	if (declared === undefined) {
+		const access =
+			'peek' in host
+				? (host as FakeSpaceReader).peek({
+						space: groupSpaceUris(group).aboutSpaceUri,
+						repo: group,
+						collection: GROUP_ACCESS_COLLECTION,
+						rkey: GROUP_ACCESS_RKEY
+					})
+				: null;
+		declared = access?.value.public === true;
+	}
+	if (!declared) return json(400, { error: 'RecordNotFound' });
+	const uri = `at://${group}/${GROUP_DECLARATION_COLLECTION}/${GROUP_DECLARATION_RKEY}`;
+	return json(200, { uri, cid: 'bafydeclaration', value: {} });
+}
+
+/** Who the host lets into a space, by group, when a test says. */
+const admitRules = new Map<string, (did: string, space: string) => boolean>();
+
+/** Replaces the default rule for `groupDid`: only `admits` decides. */
+export function admitOnly(groupDid: string, admits: (did: string, space: string) => boolean) {
+	admitRules.set(groupDid, admits);
+}
+
+/** The stand-in's member lists, from the host's own records: a public meta space
+ *  lets anyone in, and every space lets in the group and its roster. */
+function admits(host: GroupSpaceReader, did: string, space: string): boolean {
+	const group = spaceParts(space).authority;
+	const rule = admitRules.get(group);
+	if (rule) return rule(did, space);
+	if (did === group || !('peek' in host)) return true;
+	const fake = host as FakeSpaceReader;
+	const { aboutSpaceUri, membersSpaceUri } = groupSpaceUris(group);
+	if (space === aboutSpaceUri) {
+		const access = fake.peek({
+			space,
+			repo: group,
+			collection: GROUP_ACCESS_COLLECTION,
+			rkey: GROUP_ACCESS_RKEY
+		});
+		if (access?.value.public === true) return true;
+	}
+	const record = { space: membersSpaceUri, repo: group, collection: GROUP_MEMBERSHIP_COLLECTION };
+	return fake.peek({ ...record, rkey: did }) !== null;
+}
+
 /** Each served group's host, by DID. A read names its group in `space`. */
 const hosts = new Map<string, GroupSpaceReader>();
 
@@ -108,12 +275,48 @@ export function serveReader(groupDid: string, host: GroupSpaceReader | null): vo
 	linkedServices.set(groupDid, STUB_PDS_SERVICE);
 	vi.stubGlobal(
 		'fetch',
-		vi.fn(async (input: RequestInfo | URL) => {
+		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = new URL(input instanceof Request ? input.url : String(input));
+			const headers = new Headers(init?.headers);
+			if (url.origin === 'https://plc.directory') {
+				const did = decodeURIComponent(url.pathname.slice(1));
+				return json(200, {
+					id: did,
+					service: [
+						{
+							id: '#atproto_pds',
+							type: 'AtprotoPersonalDataServer',
+							serviceEndpoint: STUB_PDS_SERVICE
+						}
+					]
+				});
+			}
+			if (url.origin === MEMBER_PDS_SERVICE) return memberPds(url, headers);
 			if (url.origin !== new URL(STUB_PDS_SERVICE).origin) {
 				throw new Error(`reader-host: unexpected request to ${url.href}`);
 			}
-			const did = /^at:\/\/([^/]+)\//.exec(url.searchParams.get('space') ?? '')?.[1] ?? '';
+			if (url.pathname === '/xrpc/com.atproto.space.getSpaceCredential') {
+				const space = String(JSON.parse(String(init?.body ?? '{}')).space ?? '');
+				const served = hosts.get(spaceParts(space).authority);
+				if (!served) throw new Error(`reader-host: no host served for ${space}`);
+				const [, holder, named] = (headers.get('authorization') ?? '').split(' ').slice(1);
+				if (named !== space) return json(400, { error: 'InvalidToken' });
+				if (!admits(served, holder, space)) {
+					return json(400, { error: 'UserNotAuthorized', message: 'User not authorized' });
+				}
+				return json(200, { credential: credentialFor(holder, space) });
+			}
+			if (url.pathname === '/xrpc/com.atproto.repo.getRecord') {
+				const served = hosts.get(url.searchParams.get('repo') ?? '');
+				if (!served) throw new Error(`reader-host: no host served for ${url.href}`);
+				return publicRepo(served, url);
+			}
+			const space = url.searchParams.get('space') ?? '';
+			const authorization = headers.get('authorization') ?? '';
+			if (authorization.startsWith('Atproto-Space ') && credentialSpace(authorization) !== space) {
+				return json(401, { error: 'InvalidToken' });
+			}
+			const did = /^at:\/\/([^/]+)\//.exec(space)?.[1] ?? '';
 			const served = hosts.get(did);
 			if (!served) throw new Error(`reader-host: no host served for ${did || url.href}`);
 			return answer(served, url);
@@ -121,10 +324,15 @@ export function serveReader(groupDid: string, host: GroupSpaceReader | null): vo
 	);
 }
 
-/** For an `afterEach`: no host, link or session count outlives its test. */
+/** For an `afterEach`: no host, link, sign-in, rule, kept credential or session
+ *  count outlives its test. */
 export function resetReaderHost(): void {
 	hosts.clear();
 	broken.clear();
 	linkedServices.clear();
+	granted.clear();
+	admitRules.clear();
+	declarations.clear();
+	clearSpaceCredentials();
 	fixtureSessions.reads = 0;
 }

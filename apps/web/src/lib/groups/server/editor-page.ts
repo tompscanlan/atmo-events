@@ -4,26 +4,24 @@
 import { error } from '@sveltejs/kit';
 import { can, type GroupPermission } from '../permissions';
 
+import type { MemberSession } from './acceptance';
 import { groupHeader, groupRouteContext } from './route-context';
 
-import { type CredentialStoreEnv } from './session';
-
 export async function groupEditorPage(
-	env: CredentialStoreEnv & { DB: D1Database },
+	db: D1Database,
 	actor: string,
-	callerDid: string | null,
+	caller: MemberSession | null,
 	permission: GroupPermission
 ) {
-	const db = env.DB;
-	const { group, membership, reader } = await groupRouteContext(env, db, actor, callerDid);
+	const { group, membership, reader } = await groupRouteContext(db, actor, caller);
 	if (!can(membership.permissions, permission)) {
-		error(403, callerDid ? `Not allowed: ${permission} required` : 'Sign in to publish as a group');
+		error(403, caller ? `Not allowed: ${permission} required` : 'Sign in to publish as a group');
 	}
 	const { groupName, handle } = await groupHeader(db, group, reader);
 	return {
 		group,
 		/** For a page that goes on to read a members-only event: the caller's
-		 *  standing and the group's reader, so it reads neither again. */
+		 *  standing and their own reader, so it reads neither again. */
 		membership,
 		reader,
 		groupDid: group.group_did,

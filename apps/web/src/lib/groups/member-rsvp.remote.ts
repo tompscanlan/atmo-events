@@ -50,7 +50,7 @@ export const rsvpToMembersOnlyEvent = command(
 			rkey: data.rkey,
 			status: data.status,
 			cid: data.cid,
-			groupReader: async () => ctx.reader
+			reader: async () => ctx.reader
 		});
 	}
 );

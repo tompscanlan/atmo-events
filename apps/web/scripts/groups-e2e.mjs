@@ -62,11 +62,13 @@
  *   E2E_PDS            the devnet PDS that serves spaces, where the run mints its group
  *   E2E_HANDLE_DOMAIN  the domain the group's handle is minted under (GROUP_HANDLE_DOMAIN)
  *   E2E_INVITE_CODE    an invite code for E2E_PDS, one use per run (GROUP_PDS_INVITE_CODE), or
- *   E2E_CREDENTIALS    an env file that holds E2E_INVITE_CODE and E2E_ADMIN_PASSWORD
+ *   E2E_CREDENTIALS    an env file that holds E2E_INVITE_CODE and the three passwords below
  *   E2E_OWNER_DID      the person who owns the group
+ *   E2E_OWNER_PASSWORD their password, for the sign-in they read with
  *   E2E_ADMIN_DID      a person who joins and is promoted to admin, on E2E_PDS
- *   E2E_ADMIN_PASSWORD their password, for their acceptance (checks 18b-18d)
+ *   E2E_ADMIN_PASSWORD their password, for their acceptance (checks 18b-18d) and their reads
  *   E2E_OUTSIDER_DID   a person who is never a member
+ *   E2E_OUTSIDER_PASSWORD their password, for the sign-in they read with
  *   E2E_NOSPACES_DID   a person on a devnet PDS that serves no spaces (not E2E_PDS), for
  *                      checks 13u and 18e; no password, because nothing is written to
  *                      their repo
@@ -214,7 +216,8 @@ const RSVP_NO_SPACES = "Your PDS can't RSVP to members-only events yet, so nothi
 const REAUTHORIZE_STAND_IN = 'http://groups-e2e.invalid/oauth/authorize?request_uri=e2e';
 
 /** What the app tells a member of an unlinked group, written out. */
-const RELINK_NOTICE = "Members-only events can't be shown until an organizer relinks the group.";
+const NO_ACCESS_NOTICE =
+	"Members-only events can't be shown: your sign-in doesn't let this site read the group's spaces.";
 
 /** A calendar space under the group's DID that nothing ever creates: the check
  *  that reads it writes nothing, so the host never makes it. */
@@ -326,7 +329,7 @@ async function must(op, args = {}) {
 }
 
 /** Bundles the Worker (./groups-e2e.build.mjs) and starts it in Miniflare. */
-async function startWorker(stateDir, adminPassword, inviteCode) {
+async function startWorker(stateDir, adminPassword, inviteCode, passwords) {
 	const started = Date.now();
 	const outDir = join(stateDir, 'bundle');
 	await bundleWorker(outDir, PLC_URL);
@@ -363,7 +366,10 @@ async function startWorker(stateDir, adminPassword, inviteCode) {
 			// fetched from it: the stand-in links the group.
 			OAUTH_PUBLIC_URL: ORIGIN,
 			E2E_GROUP_SERVICE: PDS,
-			E2E_ADMIN_PASSWORD: adminPassword
+			E2E_ADMIN_PASSWORD: adminPassword,
+			// Each person's login by DID, for the stand-in of the sign-in they read
+			// with: every page read goes through the reader's own access.
+			E2E_PASSWORDS: JSON.stringify(passwords)
 		},
 		defaultPersistRoot: stateDir
 	});
@@ -483,6 +489,18 @@ async function putSpaceRecord(token, space, collection, rkey, record) {
 function calendarCalls(calls) {
 	return calls.filter(
 		(path) => new URL(path, ORIGIN).searchParams.get('space') === CALENDAR_SPACE_URI
+	);
+}
+
+/** The requests among them that read: every one but the credential exchange a
+ *  read with someone's own access may begin with (a delegation token, then the
+ *  credential), which is kept per person and space and so comes and goes with
+ *  the credential's lifetime. */
+function reads(calls) {
+	return calls.filter(
+		(path) =>
+			!path.startsWith('/xrpc/com.atproto.space.getDelegationToken?') &&
+			!path.startsWith('/xrpc/com.atproto.space.getSpaceCredential?')
 	);
 }
 
@@ -801,7 +819,12 @@ async function main() {
 	/** Set while the admin's RSVP to the seed may exist, so the `finally` deletes it. */
 	let rsvpWritten = false;
 	try {
-		worker = await startWorker(stateDir, adminPassword, inviteCode);
+		const passwords = {
+			[ALICE]: (await loadSecret('E2E_OWNER_PASSWORD')).value,
+			[BOB]: adminPassword,
+			[MALLORY]: (await loadSecret('E2E_OUTSIDER_PASSWORD')).value
+		};
+		worker = await startWorker(stateDir, adminPassword, inviteCode, passwords);
 		note(`worker bundled and ready in ${worker.seconds}s (workerd, empty D1 under ${stateDir})`);
 		console.log('');
 
@@ -1184,13 +1207,15 @@ async function main() {
 				seedRead[0].value?.name === SEED_NAME &&
 				JSON.stringify(memberEvents.map((e) => e.rkey).sort()) === JSON.stringify(listedKeys) &&
 				memberListings.length >= 1 &&
-				memberSlice.sliceCalls.length === memberListings.length,
+				reads(memberSlice.sliceCalls).length === memberListings.length &&
+				memberSlice.groupCalls.length === 0,
 			'the members-only slice of a roster member holds the seed at its space-form URI, read live from the calendar space',
 			`${BOB} on the roster ${memberSlice.onRoster}; ${memberEvents.length} event(s), the seed at ` +
 				`${seedRead[0]?.uri} (space ${seedRead[0]?.space}; cid ` +
 				`${seedRead[0]?.cid === seed.cid ? 'as the PDS has it' : `${seedRead[0]?.cid}, the PDS has ${seed.cid}`}); ` +
 				`the PDS lists ${listedKeys.length} event(s) there; the read sent ` +
-				`${memberSlice.sliceCalls.length} request(s), ${memberListings.length} of them a calendar listRecords`
+				`${reads(memberSlice.sliceCalls).length} read(s) with ${BOB}'s own access, ${memberListings.length} of them ` +
+				`a calendar listRecords, and ${memberSlice.groupCalls.length} request(s) as the group`
 		);
 
 		// 13e. a signed-in non-member causes no read ----------------------------
@@ -1238,25 +1263,22 @@ async function main() {
 				`${notEvents.length ? `: ${notEvents.map((e) => e.uri).join(', ')}` : ''}`
 		);
 
-		// 13h. an unlinked group tells a member why, and reads nothing ------------
-		// The op takes the group's stored session away for the read, as a lapsed link
-		// leaves it, and puts it back; the next op shows the link is back.
-		const unlinkedSlice = await op('membersOnlySlice', {
-			did: BOB,
-			unlinked: true
-		});
-		const relinked = await op('linked');
+		// 13h. a sign-in that reads no spaces is told why, and nothing is read ----
+		// The op signs the member in without the meta read grant, as a sign-in from
+		// before it was asked for: nothing can be read with their access, and no one
+		// reads as the group in their place (TS 2026-10-15).
+		const blindSlice = await op('membersOnlySlice', { did: BOB, session: 'no-read' });
 		record(
-			unlinkedSlice.linked === false &&
-				unlinkedSlice.onRoster === true &&
-				JSON.stringify(unlinkedSlice.slice?.events) === '[]' &&
-				unlinkedSlice.slice?.notice === RELINK_NOTICE &&
-				unlinkedSlice.calls.length === 0 &&
-				relinked.linked === true,
-			'the members-only slice of a member of an unlinked group is empty, says an organizer has to relink, and sends nothing',
-			`linked ${unlinkedSlice.linked}; ${BOB} on the roster ${unlinkedSlice.onRoster} (from the row); ` +
-				`notice "${unlinkedSlice.slice?.notice}"; ${unlinkedSlice.calls.length} request(s) sent; ` +
-				`linked again after: ${relinked.linked}`
+			blindSlice.reads === false &&
+				blindSlice.onRoster === true &&
+				JSON.stringify(blindSlice.slice?.events) === '[]' &&
+				blindSlice.slice?.notice === NO_ACCESS_NOTICE &&
+				blindSlice.calls.length === 0 &&
+				blindSlice.groupCalls.length === 0,
+			'the members-only slice of a member whose sign-in reads no spaces is empty, says why, and sends nothing',
+			`reader ${blindSlice.reads}; ${BOB} on the roster ${blindSlice.onRoster} (from the row); ` +
+				`notice "${blindSlice.slice?.notice}"; ${blindSlice.calls.length} request(s) with their access, ` +
+				`${blindSlice.groupCalls.length} as the group`
 		);
 
 		// 13i-13p. members-only events, written by the app ---------------------------
@@ -1620,24 +1642,26 @@ async function main() {
 				oneEvent.value?.name === `${membersOnlyName}, with an image` &&
 				oneImage !== undefined &&
 				oneImage === moImage?.ref?.$link &&
-				oneForMember.readCalls.length === 1 &&
+				reads(oneForMember.readCalls).length === 1 &&
 				oneGets(oneForMember).length === 1 &&
+				oneForMember.groupCalls.length === 0 &&
 				refusedUnread(oneForStranger) &&
 				refusedUnread(oneForAnonymous) &&
 				oneMadeUp.onRoster === true &&
 				oneMadeUp.read?.status === 'absent' &&
-				oneMadeUp.readCalls.length === 1 &&
+				reads(oneMadeUp.readCalls).length === 1 &&
 				oneGets(oneMadeUp).length === 1,
 			'one members-only event is read by its rkey for a member, image kept, and a non-member and an anonymous caller send no read',
 			`${BOB}: ${oneForMember.read?.status} at ${oneEvent?.uri} (space ${oneEvent?.space}; cid ` +
 				`${oneEvent?.cid === moImageRead.cid ? 'as the PDS has it' : `${oneEvent?.cid}, the PDS has ${moImageRead.cid}`}), ` +
 				`image ${oneImage === undefined ? 'MISSING' : oneImage === moImage?.ref?.$link ? 'kept' : `${oneImage}, uploaded ${moImage?.ref?.$link}`}, ` +
-				`${oneForMember.readCalls.length} request(s) for the read, ${oneGets(oneForMember).length} a calendar getRecord; ` +
+				`${reads(oneForMember.readCalls).length} read(s) with their own access, ${oneGets(oneForMember).length} a calendar getRecord, ` +
+				`${oneForMember.groupCalls.length} as the group; ` +
 				`${MALLORY}: ${oneForStranger.read?.status}, ${oneForStranger.readCalls.length} request(s) for the read, ` +
 				`${calendarCalls(oneForStranger.calls).length} to the calendar space of ${oneForStranger.calls.length}; ` +
 				`anonymous: ${oneForAnonymous.read?.status}, ${oneForAnonymous.readCalls.length} request(s) for the read, ` +
 				`${calendarCalls(oneForAnonymous.calls).length} to the calendar space of ${oneForAnonymous.calls.length}; ` +
-				`${BOB} at ${MADE_UP_RKEY}: ${oneMadeUp.read?.status} after ${oneMadeUp.readCalls.length} request(s)`
+				`${BOB} at ${MADE_UP_RKEY}: ${oneMadeUp.read?.status} after ${reads(oneMadeUp.readCalls).length} read(s)`
 		);
 		// 13s. the edit page's read, saved back ----------------------------------
 		// What the edit page reads for a manager: the same event, whole, as the
@@ -2302,7 +2326,7 @@ async function main() {
 		await op('signInCallback', { did: CAROL });
 		const carolRoster = await op('confirmedRoster');
 		const carolEntry = carolRoster.roster.find((entry) => entry.did === CAROL);
-		const carolGate = await op('gate', { did: CAROL });
+		const carolGate = await op('gate', { did: CAROL, session: 'no-spaces' });
 		const carolRead = await op('spaceReadAt', { did: CAROL });
 		const carolCalls = await must('noSpacesCalls');
 		record(
@@ -2312,13 +2336,16 @@ async function main() {
 				carolEntry?.confirmed === false &&
 				carolGate.onRoster === true &&
 				carolGate.canSee === true &&
+				carolGate.reads === false &&
+				carolGate.groupCalls.length === 0 &&
 				carolCalls.length === 0,
-			'a member whose PDS serves no spaces is approved, shows as unconfirmed, can read the group, and signs in with nothing sent from their session',
+			'a member whose PDS serves no spaces is approved, shows as unconfirmed, sees the group as its row shows it with nothing read for them, and signs in with nothing sent from their session',
 			`their PDS ${carolRead.host} answers the group's space read ${carolRead.status} ` +
 				`${carolRead.error}; request ${carolAsked.outcome}, listed by the host ` +
 				`${carolsRequest !== undefined}; confirmed ` +
 				`${carolEntry ? carolEntry.confirmed : 'not on the roster'}; on the roster ` +
-				`${carolGate.onRoster}, can see ${carolGate.canSee}; sent from their session ` +
+				`${carolGate.onRoster} (from the row), can see ${carolGate.canSee}, a reader ${carolGate.reads}, ` +
+				`${carolGate.groupCalls.length} request(s) as the group; sent from their session ` +
 				`${carolCalls.length > 0 ? carolCalls.join(', ') : 'nothing'}`
 		);
 		await op('leaveGroup', {

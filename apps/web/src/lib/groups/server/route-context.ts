@@ -3,11 +3,21 @@
 // group. Every refusal is the same 404, so a hidden group looks like one that
 // never existed. The exception is a 503 when the host cannot say whether the
 // group is private, since a 404 would hide a public group from its visitors.
+//
+// Everything is read with the caller's own access (TS 2026-10-15): their
+// standing, the visibility and every page read go through a reader built on
+// their own session, so the group's authority decides what each person sees and
+// no one's session reads for anyone else. A signed-out visitor has no reader:
+// they see a group whose declaration is published, as the row and its public
+// events show it (spec 003, Amendments 2026-10-15).
 import { error } from '@sveltejs/kit';
 import { actorToDid } from '$lib/atproto/methods';
 import { canSeeGroup } from '../access';
 import type { CallerMembership, GroupRow, GroupVisibility, RosterEntry } from '../types';
-import { groupSpaceReader, readGroupProfile, type GroupSpaceReader } from './about-read';
+import { credentialSpaceReader, readGroupProfile, type GroupSpaceReader } from './about-read';
+import type { MemberSession } from './acceptance';
+import { publiclyDeclared } from './declaration-writer';
+import { holdsMetaRead } from './member-grants';
 import { knownHandles } from './identities';
 
 import {
@@ -18,10 +28,10 @@ import {
 } from './members-read';
 import { readGroupVisibility } from './spaces';
 
-import { type CredentialStoreEnv } from './session';
 import { getGroupByDid } from './db/groups';
 import { listMembers } from './db/roster';
 import { readStanding } from './standing';
+import { isSpaceAccessDenied } from './space-credential';
 /** Every refusal says this, byte for byte, so the causes cannot be told apart. */
 export const GROUP_NOT_FOUND = 'Group not found';
 
@@ -31,12 +41,21 @@ export interface GroupRouteContext {
 	group: GroupRow;
 	membership: CallerMembership;
 	/** As the host reported it, so a form need not ask again. `null` when the
-	 *  caller is on the roster, since the gate then does not ask. */
+	 *  caller is on the roster, since the gate then does not ask. `public` for a
+	 *  signed-out visitor, read off the declaration. */
 	visibility: GroupVisibility | null;
-	/** The group's space reader, built once for the gate, or null when its owner
-	 *  has not linked the group. Pages and forms read through it rather than
-	 *  building another. */
+	/** The caller's own reader, built once for the gate: every read on the page
+	 *  goes through it. Null when there is no one to read as, a signed-out
+	 *  visitor or a sign-in that reads no spaces, and then only what is public is
+	 *  shown. */
 	reader: GroupSpaceReader | null;
+}
+
+/** The caller's own reader, or null when their sign-in reads no spaces: a PDS
+ *  that serves none drops the grant, as does a sign-in from before it was asked
+ *  for. */
+export function callerReader(caller: MemberSession | null): GroupSpaceReader | null {
+	return caller && holdsMetaRead(caller.scope) ? credentialSpaceReader(caller) : null;
 }
 
 /** A route key to a DID, or null. `actorToDid` cannot tell an unknown handle
@@ -51,10 +70,9 @@ export async function groupActorToDid(actor: string): Promise<string | null> {
 }
 
 export async function groupRouteContext(
-	env: CredentialStoreEnv,
 	db: D1Database,
 	actor: string,
-	callerDid: string | null
+	caller: MemberSession | null
 ): Promise<GroupRouteContext> {
 	const did = await groupActorToDid(actor);
 	if (!did) error(404, GROUP_NOT_FOUND);
@@ -62,20 +80,34 @@ export async function groupRouteContext(
 	const group = await getGroupByDid(db, did);
 	if (!group) error(404, GROUP_NOT_FOUND);
 
-	const reader = await groupSpaceReader(env, group);
+	const reader = callerReader(caller);
 
 	// A caller on the roster sees the group at every visibility, so the host is
 	// not asked, and a failed visibility read cannot lock a member out.
-	const membership = await readStanding(db, group, callerDid, reader);
+	const membership = await readStanding(db, group, caller?.did ?? null, reader);
 	if (membership.onRoster) return { group, membership, visibility: null, reader };
 
-	// Without a credential the host cannot be asked, so nobody else is let in.
-	if (!reader) error(404, GROUP_NOT_FOUND);
+	// No space can be read for this caller, so "public" is the declaration: a
+	// group publishes one exactly while its meta space is public.
+	if (!reader) {
+		let declared: boolean;
+		try {
+			declared = await publiclyDeclared(group.group_did);
+		} catch (e) {
+			console.error(`[groups] ${group.group_did}: the declaration could not be read:`, e);
+			error(503, GROUP_VISIBILITY_UNCHECKED);
+		}
+		if (!declared) error(404, GROUP_NOT_FOUND);
+		return { group, membership, visibility: 'public', reader };
+	}
 
+	// The authority's answer is the visibility: a private group does not let a
+	// non-member into its meta space at all.
 	let visibility: GroupVisibility;
 	try {
 		visibility = await readGroupVisibility(reader, group);
 	} catch (e) {
+		if (isSpaceAccessDenied(e)) error(404, GROUP_NOT_FOUND);
 		console.error(
 			`[groups] ${group.group_did}: the about space's access record could not be read:`,
 			e

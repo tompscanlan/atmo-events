@@ -1,17 +1,25 @@
-// The OAuth grant that lets a member write their own records into a group's
-// spaces (their acceptance, and their RSVPs to members-only events), how sign-in
-// asks for it, and what the client metadata declares.
+// The OAuth grants that let a person read a group's spaces with their own
+// access, and a member write their own records there (their acceptance, and
+// their RSVPs to members-only events): how sign-in asks for them, and what the
+// client metadata declares.
 //
-// The grant names the group as authority, so consent shows no "every space on
-// the network" warning, and only those two collections, so it cannot touch
-// anything else in the group's spaces. It says `space:*` rather than a space
-// type, because the PDS resolves every type a scope names and the
-// group.opensocial lexicons do not resolve yet, so a typed scope fails consent.
-// Like any `space:*` grant, it covers every space of the group. (Spec: FR-208.)
+// Two grants. Every sign-in asks for `META_READ_GRANT` ($lib/atproto/settings):
+// reading any group's meta space, so a signed-in person reads a public group's
+// profile and rules with their own access, and the group's authority decides who
+// gets a credential, which is the group's visibility. It is read-only for this site and names a
+// type, so consent shows no "every space on the network" warning (0016:558-560).
 //
-// It carries `read_self` so the member's own session can read their RSVP back
-// for the event page: a grant with only create, update and delete cannot read
-// its own record. (Spec: FR-113.)
+// Each member's sign-in also asks for `memberGrant` for each of their groups.
+// It names the group as authority, reads every space of the group (the members
+// and calendar spaces), and writes only those two collections, so it cannot
+// touch anything else in the group's spaces. It says `space:*` rather than a
+// space type, because the PDS resolves every type a scope names and the
+// calendar space's type is not published, so a typed scope fails consent. Like
+// any `space:*` grant, it covers every space of the group. (Spec: FR-208.)
+//
+// `read` is what a delegation token needs (getDelegationToken asserts it), and it
+// covers reading back one's own RSVP for the event page (FR-113): read implies
+// read_self.
 //
 // A PDS refuses any requested scope that is not written verbatim in the client
 // metadata, so the metadata declares one grant per group this deployment holds.
@@ -21,17 +29,31 @@
 import { OAuthResponseError } from '@atcute/oauth-node-client';
 import { GROUP_RSVP_COLLECTION } from '../ids';
 import { GROUP_ACCEPTANCE_COLLECTION } from '../members-record';
+import { ABOUT_SPACE_TYPE } from '../types';
 
 import { groupsOfMember } from './db/roster';
 /** How long a PDS may keep serving client metadata it fetched earlier. */
 export const METADATA_CACHE_MS = 10 * 60 * 1000;
 
-/** The scope a member needs in `groupDid`'s spaces: to create, update and
- *  delete their acceptance, and to write, delete and read back their own RSVP
+/** Whether a granted scope reads group meta spaces. Read by parameter, since the
+ *  PDS hands a typed grant back with the type's collections written in. A stock
+ *  PDS drops a space grant it does not know, so a missing grant also means the
+ *  holder's PDS serves no spaces, and nothing can be read with their access. */
+export function holdsMetaRead(scope: string): boolean {
+	const prefix = `space:${ABOUT_SPACE_TYPE}?`;
+	return scope
+		.split(' ')
+		.filter((token) => token.startsWith(prefix))
+		.map((token) => new URLSearchParams(token.slice(prefix.length)))
+		.some((params) => params.get('authority') === '*' && params.getAll('action').includes('read'));
+}
+
+/** The scope a member needs in `groupDid`'s spaces: to read them, to create,
+ *  update and delete their acceptance, and to write and delete their own RSVP
  *  to a members-only event there, and nothing else. One token per group, so a
  *  session never holds half of it. */
 export function memberGrant(groupDid: string): string {
-	return `space:*?authority=${groupDid}&collection=${GROUP_ACCEPTANCE_COLLECTION}&collection=${GROUP_RSVP_COLLECTION}&action=read_self&action=create&action=update&action=delete`;
+	return `space:*?authority=${groupDid}&collection=${GROUP_ACCEPTANCE_COLLECTION}&collection=${GROUP_RSVP_COLLECTION}&action=read&action=create&action=update&action=delete`;
 }
 
 /** Whether a granted scope lets its holder `action` their acceptance in

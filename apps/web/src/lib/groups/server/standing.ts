@@ -14,6 +14,7 @@ import {
 import { ensureGroupsSchema } from './schema';
 import { getMemberRow } from './db/roster';
 import { errorText } from './errors';
+import { isSpaceAccessDenied } from './space-credential';
 
 /** What `did` is to `group`: roster row, pending request, and permissions.
  *  An anonymous caller gets an empty set.
@@ -23,10 +24,10 @@ import { errorText } from './errors';
  *  whoever holds its login may do anything, which is how a group with no admin
  *  left recovers. (Spec: FR-213.)
  *
- *  Permissions come from the records on every call, with no cache. A members
- *  space that cannot be read fails closed: a reader error propagates, and a
- *  space with no reader grants nothing, because reading "unreachable" as "no
- *  config" would leak access. A group with no authz records grants nothing either:
+ *  Permissions come from the records on every call, with no cache, read with the
+ *  caller's own access. A members space that cannot be read fails closed: a
+ *  reader error propagates, and a space with no reader grants nothing, because
+ *  reading "unreachable" as "no config" would leak access. A group with no authz records grants nothing either:
  *  the rows never decide what a member may do.
  *
  *  No row overrides a record. A revocation deletes the record before the row,
@@ -93,12 +94,22 @@ export async function getCallerMembership(
 	};
 }
 
-/** When the members space errors, the caller is off the roster and holds no
+/** The caller's standing, read with their own access.
+ *
+ *  When the members space errors, the caller is off the roster and holds no
  *  permission. The row cannot stand in: after a removal whose row delete failed,
  *  it would let the removed member in. It still supplies what the page shows,
- *  and `unreadable` makes a form say "could not be checked". When there is no
- *  reader because the owner has not linked the group, `unlinked` makes a form
- *  say that instead. */
+ *  and `unreadable` makes a form say "could not be checked".
+ *
+ *  When the host does not let the caller into the members space, that is its
+ *  answer, not an outage: they are not on its list, or their sign-in does not
+ *  read the space, so they stand as a non-member (TS 2026-10-15: a member whose
+ *  sign-in lacks the read grant sees what a non-member sees until they sign in
+ *  again).
+ *
+ *  A signed-in caller with no reader has a sign-in that reads no spaces. The row
+ *  says whether they are on the roster, as when the records cannot be asked, and
+ *  `noSpaceAccess` makes a form say why their permissions are unknown. */
 export async function readStanding(
 	db: D1Database,
 	group: GroupRow,
@@ -107,20 +118,17 @@ export async function readStanding(
 ): Promise<CallerMembership> {
 	try {
 		const membership = await getCallerMembership(db, group, callerDid, reader);
-		return !reader && group.members_space_uri ? { ...membership, unlinked: true } : membership;
+		const blind = !reader && callerDid !== null && callerDid !== group.group_did;
+		return blind && group.members_space_uri ? { ...membership, noSpaceAccess: true } : membership;
 	} catch (e) {
 		if (!reader) throw e;
+		const row = await getCallerMembership(db, group, callerDid, null);
+		const off = { ...row, permissions: new Set<never>(), grants: NO_GRANTS, onRoster: false };
+		if (isSpaceAccessDenied(e)) return off;
 		console.error(
 			`[groups] ${group.group_did}: members space unreadable; the caller is off the roster for this read:`,
 			e
 		);
-		const row = await getCallerMembership(db, group, callerDid, null);
-		return {
-			...row,
-			permissions: new Set(),
-			grants: NO_GRANTS,
-			onRoster: false,
-			unreadable: errorText(e)
-		};
+		return { ...off, unreadable: errorText(e) };
 	}
 }

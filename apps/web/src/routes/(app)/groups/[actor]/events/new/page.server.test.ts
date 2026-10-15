@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The new-event page's loader, behind the real editor gate. The space reader is
 // a fake host whose members space holds the records a create leaves, which a
-// roster caller's standing comes from: the owner's role grants CREATE_EVENT and a
-// plain member's grants nothing. Its about space's access record makes the group
+// roster caller's standing comes from, read with their own access: the owner's
+// role grants CREATE_EVENT and a plain member's grants nothing. Its about space's access record makes the group
 // public, so a caller off the roster reaches the editor gate too.
 vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
@@ -15,6 +15,7 @@ import { load } from './+page.server';
 import { authzReader } from '$lib/groups/server/__fixtures__/members-space';
 import {
 	fixtureSessions,
+	readerSession,
 	resetReaderHost,
 	serveReader
 } from '$lib/groups/server/__fixtures__/reader-host';
@@ -76,10 +77,11 @@ afterEach(() => {
 	resetReaderHost();
 });
 
+/** The page as `did` sees it, signed in with their own session, or signed out. */
 async function openAs(did: string | null) {
 	return load({
 		params: { actor: GROUP_DID },
-		locals: { did },
+		locals: { did, session: did ? readerSession(did) : null },
 		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } },
 		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events/new`)
 	} as unknown as Parameters<typeof load>[0]);
