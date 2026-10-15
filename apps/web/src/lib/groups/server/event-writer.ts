@@ -1,6 +1,7 @@
 // Writing a group's events: where each one goes (its public repo or its
 // members-only calendar space), the checks that keep it there, and its image.
 // The permission gate and the transport are the shared ones in ./group-write.ts.
+import type { GroupBlobRef } from '../about-record';
 import { now as tidNow } from '@atcute/tid';
 import * as v from '@atcute/lexicons/validations';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
@@ -341,12 +342,7 @@ export async function deleteGroupEvent(
 export const GROUP_EVENT_IMAGE_MAX_BYTES = 1_000_000;
 
 /** A blob reference as the PDS returns it, for a record to cite. */
-export interface GroupBlobRef {
-	$type: 'blob';
-	ref: { $link: string };
-	mimeType: string;
-	size: number;
-}
+export type { GroupBlobRef };
 
 export type GroupBlobUploader = (blob: Blob) => Promise<GroupBlobRef>;
 

@@ -288,7 +288,9 @@ async function writeAboutRecords(s: SaveState, visibility: GroupVisibility): Pro
 			// Not on the settings form, so kept. Read from the record when there
 			// is one, so a stale row is not written back.
 			locationName: groupFace(s.about.profile, s.group, visibility).locationName,
-			createdAt: s.about.profile?.createdAt ?? undefined
+			createdAt: s.about.profile?.createdAt ?? undefined,
+			// Not on the settings form either, and the save rewrites the whole record.
+			avatar: s.about.profile?.avatar ?? null
 		}
 	});
 	await setGroupRules({

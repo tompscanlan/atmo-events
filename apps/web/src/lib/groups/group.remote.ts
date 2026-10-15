@@ -9,6 +9,7 @@ import { didField, groupSettingsFields, labelField, shownVisibilityField } from 
 import { runCreateGroup, type CreateGroupOutcome } from './create-group';
 import { hostCreation, startCreateAtHost } from './create-at-host';
 import { groupLinkClient } from './server/session';
+import { kvAvatarStash } from './server/avatar-stash';
 import { GROUP_CREATE_REDIRECT_PATH } from '$lib/atproto/settings';
 import { runUpdateGroup } from './update-group';
 import { groupRequestContext } from './remote-context';
@@ -25,12 +26,16 @@ export const createGroupForm = form(
 		 *  by `runCreateGroup`, so its refusal reads as a sentence. */
 		email: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(254))),
 		/** Underscored so SvelteKit never echoes it back with a failed form. */
-		_password: v.optional(v.pipe(v.string(), v.maxLength(256)))
+		_password: v.optional(v.pipe(v.string(), v.maxLength(256))),
+		/** The group's picture. Its type and size are checked by the create, so the
+		 *  refusal reads as a sentence. An empty file input arrives as no value. */
+		avatar: v.optional(v.file())
 	}),
 	async ({
 		_password: password = '',
 		label = '',
 		email = '',
+		avatar,
 		...data
 	}): Promise<CreateGroupOutcome | GroupFormResult<{ signUpUrl: string }>> => {
 		const { locals, platform } = getRequestEvent();
@@ -46,12 +51,13 @@ export const createGroupForm = form(
 				hostUrl,
 				callerDid: locals.did,
 				fields: data,
-				redirectUri: env.OAUTH_PUBLIC_URL + GROUP_CREATE_REDIRECT_PATH
+				redirectUri: env.OAUTH_PUBLIC_URL + GROUP_CREATE_REDIRECT_PATH,
+				...(avatar ? { avatar: { image: avatar, stash: kvAvatarStash(env.OAUTH_STATES) } } : {})
 			});
 		}
 		// No redirect: the result carries the owner's rotation key, which is shown
 		// once and stored nowhere, so a 303 would lose it.
-		return runCreateGroup(env, locals.did, { ...data, label, email, password });
+		return runCreateGroup(env, locals.did, { ...data, label, email, password, avatar });
 	}
 );
 

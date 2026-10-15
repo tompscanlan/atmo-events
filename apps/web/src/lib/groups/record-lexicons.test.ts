@@ -158,6 +158,19 @@ function violations(
 		}
 		case 'boolean':
 			return typeof value === 'boolean' ? [] : [`${path}: expected a boolean`];
+		case 'blob': {
+			// A blob reference as a record holds it.
+			const ref = isObject(value) && isObject(value.ref) ? value.ref.$link : undefined;
+			if (!isObject(value) || value.$type !== 'blob' || typeof ref !== 'string')
+				return [`${path}: expected a blob reference`];
+			const accept = schema.accept as string[] | undefined;
+			if (typeof value.mimeType !== 'string' || (accept && !accept.includes(value.mimeType)))
+				found.push(`${path}: type ${String(value.mimeType)} not accepted`);
+			if (!Number.isInteger(value.size)) found.push(`${path}: size is not an integer`);
+			else if (n('maxSize') !== undefined && (value.size as number) > n('maxSize')!)
+				found.push(`${path}: over ${n('maxSize')} bytes`);
+			return found;
+		}
 		case 'array': {
 			if (!Array.isArray(value)) return [`${path}: expected an array`];
 			if (n('maxLength') !== undefined && value.length > n('maxLength')!)
@@ -242,9 +255,25 @@ describe('every record builder matches its group.opensocial lexicon', () => {
 			description: 'Weekly rides',
 			joinPolicy: 'approval',
 			locationName: 'Kailua-Kona',
-			createdAt: CREATED_AT
+			createdAt: CREATED_AT,
+			avatar: {
+				$type: 'blob',
+				ref: { $link: 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku' },
+				mimeType: 'image/jpeg',
+				size: 1_999_999
+			}
 		});
 		expect(recordViolations(GROUP_PROFILE_COLLECTION, full)).toEqual([]);
+		// The checker reads the blob's bounds, so an avatar past them would fail.
+		expect(
+			recordViolations(GROUP_PROFILE_COLLECTION, {
+				...full,
+				avatar: { ...(full.avatar as object), mimeType: 'image/gif', size: 2_000_001 }
+			})
+		).toEqual([
+			'group.opensocial.profile.avatar: type image/gif not accepted',
+			'group.opensocial.profile.avatar: over 2000000 bytes'
+		]);
 		const bare = groupProfileRecord({ name: 'Kona', joinPolicy: 'open' });
 		expect(recordViolations(GROUP_PROFILE_COLLECTION, bare)).toEqual([]);
 	});

@@ -36,9 +36,10 @@ import {
 } from './server/members-writer';
 
 import { pdsSpaceReader } from './server/about-read';
+import { credentialBlobUploader } from './server/event-writer';
 import { pdsMemberList, placeMember, readSpaceAccess } from './server/member-list';
 
-import { approvalRefusal, splitRuleLines } from './about-record';
+import { approvalRefusal, groupAvatarRefusal, splitRuleLines } from './about-record';
 import { labelMintRefusal, labelMintRefusalMessage } from './handle-label';
 import { formError } from './form-error';
 import type { GroupFormFailure, GroupFormResult, GroupFormSuccess } from './form-result';
@@ -81,6 +82,8 @@ export interface CreateGroupData {
 	email: string;
 	/** The group account's password. Sent to the PDS once; never stored or logged. */
 	password: string;
+	/** The group's picture, uploaded into its repo once the account exists. */
+	avatar?: Blob;
 }
 
 /** The account a create registered. `recoveryKey` is the owner's rotation key,
@@ -192,6 +195,8 @@ export async function runCreateGroup(
 	// 1. A private group must require approval to join.
 	const approval = approvalRefusal(data.visibility, data.requireApproval);
 	if (approval) return { ok: false, error: approval };
+	const picture = data.avatar ? groupAvatarRefusal(data.avatar) : null;
+	if (picture) return { ok: false, error: picture };
 
 	// 2. The label must be a handle the PDS will accept, so the refusal lands on
 	//    the field the user can edit rather than at the mint.
@@ -405,6 +410,10 @@ async function setUpMintedGroup(
 
 	// The group's public face, as records.
 	try {
+		// Uploaded just before the profile that cites it, so the PDS keeps it.
+		const avatar = data.avatar
+			? await credentialBlobUploader(minted.credential, minted.did)(data.avatar)
+			: null;
 		await writeGroupProfile({
 			...as,
 			visibility: data.visibility,
@@ -412,7 +421,8 @@ async function setUpMintedGroup(
 				name: data.name,
 				description: data.description || null,
 				locationName: data.locationName || null,
-				createdAt
+				createdAt,
+				avatar
 			}
 		});
 		const rules = splitRuleLines(data.rules);

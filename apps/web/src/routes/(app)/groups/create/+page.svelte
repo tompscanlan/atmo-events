@@ -6,6 +6,7 @@
 	import { MINTABLE_LABEL_INPUT_PATTERN, labelFromGroupName } from '$lib/groups/handle-label';
 	import { groupFormError, resetOnSuccess } from '$lib/groups/form-result';
 	import { GROUP_PASSWORD_MIN_LENGTH } from '$lib/groups/form-fields';
+	import { GROUP_AVATAR_MAX_BYTES, GROUP_AVATAR_TYPES } from '$lib/groups/about-record';
 	import { createGroupForm } from '$lib/groups/group.remote';
 	import { FIELD_CLASS } from '$lib/groups/components/field-class';
 	import GroupLinkForm from '$lib/groups/components/GroupLinkForm.svelte';
@@ -155,7 +156,11 @@
 	     under the recovery key reads as an invitation to submit again. A
 	     deployment that cannot create one gets no form, only the notice above. -->
 	{#if data.creationConfigured && !created}
-		<form {...resetOnSuccess(createGroupForm)} class="flex flex-col gap-5">
+		<form
+			{...resetOnSuccess(createGroupForm)}
+			enctype="multipart/form-data"
+			class="flex flex-col gap-5"
+		>
 			<div class="flex flex-col gap-1.5">
 				<Label for="group-name">Name</Label>
 				<Input id="group-name" name="name" bind:value={name} required maxlength={120} />
@@ -227,6 +232,22 @@
 			{/if}
 
 			<div class="flex flex-col gap-1.5">
+				<Label for="group-avatar">Picture</Label>
+				<input
+					id="group-avatar"
+					name="avatar"
+					type="file"
+					accept={GROUP_AVATAR_TYPES.join(',')}
+					class="text-sm"
+				/>
+				<p class="text-base-500 dark:text-base-400 text-xs">
+					Optional. A PNG, JPEG or WebP image of at most {GROUP_AVATAR_MAX_BYTES / 1_000_000} MB, shown
+					beside the group's name. It is kept in the group's about space, so only people who may read
+					the group see it.
+				</p>
+			</div>
+
+			<div class="flex flex-col gap-1.5">
 				<Label for="group-description">Description</Label>
 				<textarea
 					id="group-description"
@@ -286,6 +307,7 @@
 			{#if signUpUrl}
 				<p class="text-sm">
 					Taking you to the group host to sign up the group.
+					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the host's page, not a route here -->
 					<a class="underline" href={signUpUrl}>Continue</a> if nothing happens.
 				</p>
 			{/if}

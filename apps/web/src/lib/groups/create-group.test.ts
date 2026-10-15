@@ -507,6 +507,37 @@ describe('a successful create', () => {
 		});
 	});
 
+	// The account exists before the profile, so the picture goes up on the
+	// minted session and the profile names it.
+	it('uploads the picture into the new repo and names it in the profile', async () => {
+		const { spaceWrites, blobs, requests } = stubPds();
+		const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+		await runCreateGroup(env, OWNER, data({ avatar: new Blob([png], { type: 'image/png' }) }));
+
+		expect(blobs).toEqual([{ mimeType: 'image/png', bytes: png }]);
+		const upload = requests.findIndex((r) => r.nsid === 'com.atproto.repo.uploadBlob');
+		const profile = spaceWrites.find((w) => w.collection === 'group.opensocial.profile');
+		expect(upload).toBeGreaterThanOrEqual(0);
+		expect(profile?.record.avatar).toMatchObject({ $type: 'blob', mimeType: 'image/png' });
+	});
+
+	it('refuses a picture the profile cannot take before anything is minted', async () => {
+		const { requests } = stubPds();
+
+		const result = await runCreateGroup(
+			env,
+			OWNER,
+			data({ avatar: new Blob([new Uint8Array(4)], { type: 'image/gif' }) })
+		);
+
+		expect(result).toMatchObject({
+			ok: false,
+			error: expect.stringContaining('PNG, JPEG or WebP')
+		});
+		expect(requests).toEqual([]);
+	});
+
 	// The roster is records from the first member. A group whose members space
 	// holds no membership record has a roster only this deployment's database
 	// knows about, and the owner is the one membership every new group has.

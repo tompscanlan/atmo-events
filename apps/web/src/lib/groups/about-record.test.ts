@@ -7,12 +7,22 @@
 //      off a PDS and decides whether strangers can walk into a group.
 import { describe, it, expect } from 'vitest';
 import {
+	GROUP_AVATAR_MAX_BYTES,
 	approvalRefusal,
+	groupAvatarRefusal,
 	groupFace,
+	groupProfileRecord,
 	groupRuleRecord,
 	joinPolicyFor,
 	parseGroupProfile
 } from './about-record';
+
+const AVATAR = {
+	$type: 'blob' as const,
+	ref: { $link: 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku' },
+	mimeType: 'image/png',
+	size: 70
+};
 
 describe('joinPolicyFor', () => {
 	// Private means invite-only, so visibility is consulted before
@@ -32,6 +42,30 @@ describe('joinPolicyFor', () => {
 	// refused then.
 	it('reads an unknown visibility as invite', () => {
 		expect(joinPolicyFor(null, 0)).toBe('invite');
+	});
+});
+
+describe('groupProfileRecord', () => {
+	it('writes the avatar when there is one, and no key when there is none', () => {
+		expect(groupProfileRecord({ name: 'Kona', joinPolicy: 'open', avatar: AVATAR }).avatar).toEqual(
+			AVATAR
+		);
+		expect('avatar' in groupProfileRecord({ name: 'Kona', joinPolicy: 'open', avatar: null })).toBe(
+			false
+		);
+	});
+});
+
+describe('groupAvatarRefusal', () => {
+	it("refuses a type or a size the standard's avatar does not take", () => {
+		const image = (type: string, size: number) => new Blob([new Uint8Array(size)], { type });
+		expect(groupAvatarRefusal(image('image/webp', 10))).toBeNull();
+		expect(groupAvatarRefusal(image('image/gif', 10))).toBe(
+			'The group picture must be a PNG, JPEG or WebP image.'
+		);
+		expect(groupAvatarRefusal(image('image/png', GROUP_AVATAR_MAX_BYTES + 1))).toBe(
+			'The group picture must be at most 2 MB.'
+		);
 	});
 });
 
@@ -60,6 +94,18 @@ describe('parseGroupProfile', () => {
 
 	// A page must still render for a record an older build wrote, so tolerance
 	// is the contract. But a record with no name is not a profile.
+	// The route serves what the profile names as an image, so only the
+	// standard's types and size are taken from a record another app may write.
+	it("reads an avatar only of the standard's types and size", () => {
+		const read = (avatar: unknown) => parseGroupProfile({ displayName: 'Kona', avatar })?.avatar;
+		expect(read(AVATAR)).toEqual(AVATAR);
+		expect(read({ ...AVATAR, mimeType: 'image/svg+xml' })).toBeNull();
+		expect(read({ ...AVATAR, size: GROUP_AVATAR_MAX_BYTES + 1 })).toBeNull();
+		expect(read({ ...AVATAR, ref: 'not-a-link' })).toBeNull();
+		expect(read({ ...AVATAR, $type: undefined })).toBeNull();
+		expect(read(undefined)).toBeNull();
+	});
+
 	it('rejects a value with no usable displayName', () => {
 		expect(parseGroupProfile({ displayName: '   ' })).toBeNull();
 		expect(parseGroupProfile({ description: 'no name here' })).toBeNull();
@@ -88,7 +134,8 @@ describe('groupFace', () => {
 				description: null,
 				joinPolicy: 'open',
 				locationName: null,
-				createdAt: null
+				createdAt: null,
+				avatar: null
 			},
 			row,
 			'public'
@@ -98,7 +145,8 @@ describe('groupFace', () => {
 			name: 'Kona',
 			description: null,
 			locationName: null,
-			joinPolicy: 'open'
+			joinPolicy: 'open',
+			avatarCid: null
 		});
 	});
 
@@ -107,8 +155,17 @@ describe('groupFace', () => {
 		description: null,
 		joinPolicy: 'open' as const,
 		locationName: null,
-		createdAt: null
+		createdAt: null,
+		avatar: null
 	};
+
+	// The row caches no picture, so only a record can show one.
+	it("shows the record's avatar by its CID, and none from the row", () => {
+		expect(groupFace({ ...openProfile, avatar: AVATAR }, row, 'public').avatarCid).toBe(
+			AVATAR.ref.$link
+		);
+		expect(groupFace(null, row, 'public').avatarCid).toBeNull();
+	});
 
 	// The join policy is derived, not stored: a group is invite-only when its
 	// host reads it as private, whatever the profile record or the row says. Any

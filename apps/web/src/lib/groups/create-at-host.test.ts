@@ -99,6 +99,28 @@ async function hostWithGroup(fail?: (nsid: string) => Response | undefined) {
 	return host;
 }
 
+/** A PNG's first bytes: enough for a stub host that keeps what it was sent. */
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const picture = (type = 'image/png') => new Blob([PNG], { type });
+
+/** The stash, in memory, taking each image once as the KV one does. */
+function memoryStash() {
+	const kept = new Map<string, Blob>();
+	return {
+		kept,
+		put: vi.fn(async (image: Blob) => {
+			const key = `picture-${kept.size + 1}`;
+			kept.set(key, image);
+			return key;
+		}),
+		take: vi.fn(async (key: string) => {
+			const image = kept.get(key) ?? null;
+			kept.delete(key);
+			return image;
+		})
+	};
+}
+
 const credential = (): LinkedGroupCredential => ({
 	kind: 'linked',
 	person: CREATOR,
@@ -118,22 +140,48 @@ describe('hostCreation', () => {
 });
 
 describe('startCreateAtHost', () => {
-	const start = (overrides: Partial<HostCreateFields> = {}) => {
+	const start = (overrides: Partial<HostCreateFields> = {}, image?: Blob) => {
 		const authorize = vi.fn(async () => ({
 			url: new URL(`${HOST}/oauth/authorize?request_uri=x`)
 		}));
+		const stash = memoryStash();
 		return {
 			authorize,
+			stash,
 			result: startCreateAtHost({
 				db: harness.db,
 				client: { authorize } as never,
 				hostUrl: HOST,
 				callerDid: CREATOR,
 				fields: fields(overrides),
-				redirectUri: 'https://atmo.stub.test/oauth/group-create/callback'
+				redirectUri: 'https://atmo.stub.test/oauth/group-create/callback',
+				...(image ? { avatar: { image, stash } } : {})
 			})
 		};
 	};
+
+	// The state goes to the host and back, so it carries the key, never the image.
+	it('keeps the picture here and sends the host only its key', async () => {
+		const image = picture();
+		const { authorize, stash, result } = start({}, image);
+
+		expect((await result).ok).toBe(true);
+		expect([...stash.kept.values()]).toEqual([image]);
+		const [options] = authorize.mock.calls[0] as unknown as [{ state: HostCreateState }];
+		expect(options.state.avatar).toBe('picture-1');
+		expect(JSON.stringify(options.state)).not.toContain('image/png');
+	});
+
+	it('refuses a picture the profile cannot take before anything is kept or asked', async () => {
+		const { authorize, stash, result } = start({}, picture('image/gif'));
+
+		expect(await result).toEqual({
+			ok: false,
+			error: 'The group picture must be a PNG, JPEG or WebP image.'
+		});
+		expect(stash.put).not.toHaveBeenCalled();
+		expect(authorize).not.toHaveBeenCalled();
+	});
 
 	it("sends the creator to the host's sign-up with the link scope, and makes nothing here", async () => {
 		const { authorize, result } = start({ locationName: 'Kailua-Kona' });
@@ -253,6 +301,42 @@ describe('setUpHostGroup', () => {
 		});
 	});
 
+	it("uploads the picture on the creator's session and names it in the profile", async () => {
+		const host = await hostWithGroup();
+
+		const result = await setUpHostGroup(
+			{ DB: harness.db, GROUP_HOST_URL: HOST },
+			CREATOR,
+			fields(),
+			credential(),
+			HOST,
+			picture()
+		);
+
+		expect(result.ok).toBe(true);
+		expect(host.blobs).toEqual([{ mimeType: 'image/png', bytes: PNG }]);
+		const upload = host.requests.find((r) => r.nsid === 'com.atproto.repo.uploadBlob');
+		expect(upload?.person).toBe(CREATOR);
+		expect(host.record(META, 'group.opensocial.profile', 'self')).toMatchObject({
+			avatar: { $type: 'blob', ref: { $link: 'bafkreiupload1' }, mimeType: 'image/png' }
+		});
+	});
+
+	it('uploads nothing, and the profile names no picture, when the form had none', async () => {
+		const host = await hostWithGroup();
+
+		await setUpHostGroup(
+			{ DB: harness.db, GROUP_HOST_URL: HOST },
+			CREATOR,
+			fields(),
+			credential(),
+			HOST
+		);
+
+		expect(host.blobs).toEqual([]);
+		expect(host.record(META, 'group.opensocial.profile', 'self')).not.toHaveProperty('avatar');
+	});
+
 	it('neither opens nor declares a private group', async () => {
 		const host = await hostWithGroup();
 
@@ -302,6 +386,7 @@ describe('finishCreateAtHost', () => {
 			signedInDid?: string | null;
 			stored?: unknown;
 			callback?: () => Promise<{ session: LinkedGroupCredential['session'] }>;
+			stash?: ReturnType<typeof memoryStash>;
 		} = {}
 	) {
 		const states = {
@@ -331,7 +416,8 @@ describe('finishCreateAtHost', () => {
 				clientFor,
 				states,
 				params: new URLSearchParams({ state: STATE_ID, code: 'c', iss: HOST }),
-				signedInDid: 'signedInDid' in options ? (options.signedInDid ?? null) : CREATOR
+				signedInDid: 'signedInDid' in options ? (options.signedInDid ?? null) : CREATOR,
+				stash: options.stash
 			})
 		};
 	}
@@ -344,6 +430,34 @@ describe('finishCreateAtHost', () => {
 		expect(clientFor).toHaveBeenCalledWith(CREATOR);
 		expect(client.revoke).not.toHaveBeenCalled();
 		expect(await groupRows()).toEqual([{ group_did: GROUP, owner_did: CREATOR }]);
+	});
+
+	it('takes the picture the form left and uploads it into the new group', async () => {
+		const host = await hostWithGroup();
+		const stash = memoryStash();
+		const key = await stash.put(picture());
+
+		const { result } = finish({ stored: { userState: { ...started, avatar: key } }, stash });
+
+		expect(await result).toEqual({ ok: true, groupDid: GROUP });
+		expect(stash.take).toHaveBeenCalledWith(key);
+		expect(stash.kept.size).toBe(0);
+		expect(host.blobs).toHaveLength(1);
+	});
+
+	// The group exists at the host by now, so a lost picture is not worth a
+	// half-made group: it can be added later.
+	it('makes the group without the picture when it is gone', async () => {
+		const host = await hostWithGroup();
+
+		const { result } = finish({
+			stored: { userState: { ...started, avatar: 'picture-lapsed' } },
+			stash: memoryStash()
+		});
+
+		expect(await result).toEqual({ ok: true, groupDid: GROUP });
+		expect(host.blobs).toEqual([]);
+		expect(host.record(META, 'group.opensocial.profile', 'self')).not.toHaveProperty('avatar');
 	});
 
 	it('refuses a browser signed in as someone else before the code is exchanged', async () => {

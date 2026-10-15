@@ -272,9 +272,23 @@ export async function credentialRequest(
 	holder: SpaceHolder,
 	hosts: SpaceHosts,
 	space: string,
-	call: { host: string; audience: string; nsid: string; query: Record<string, string> },
+	call: SpaceCall,
 	underWay?: ExchangesUnderWay
 ): Promise<XrpcAnswer> {
+	return readXrpc(await credentialFetch(holder, hosts, space, call, underWay));
+}
+
+type SpaceCall = { host: string; audience: string; nsid: string; query: Record<string, string> };
+
+/** `credentialRequest`'s response as it came, for a body that is not JSON: a
+ *  blob. A failure's body is still the PDS's JSON error. */
+export async function credentialFetch(
+	holder: SpaceHolder,
+	hosts: SpaceHosts,
+	space: string,
+	call: SpaceCall,
+	underWay?: ExchangesUnderWay
+): Promise<Response> {
 	const authorityHost = await hosts.spaceHost(spaceAuthority(space));
 	const url = new URL(`/xrpc/${call.nsid}?${new URLSearchParams(call.query)}`, call.host);
 	for (let attempt = 0; ; attempt++) {
@@ -283,8 +297,9 @@ export async function credentialRequest(
 			method: 'GET',
 			headers: await spaceSigHeaders(cred.signer, `Atproto-Space ${cred.token}`, call.audience)
 		});
-		const answer = await readXrpc(res);
-		if (answer.ok || attempt > 0 || !answer.error || !SPENT[answer.error]) return answer;
+		if (res.ok || attempt > 0) return res;
+		const answer = await readXrpc(res.clone());
+		if (answer.ok || !answer.error || !SPENT[answer.error]) return res;
 		spent.add(cred);
 	}
 }

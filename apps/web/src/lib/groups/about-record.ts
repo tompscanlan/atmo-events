@@ -33,13 +33,55 @@ export function approvalRefusal(
 	return visibility === 'private' && requireApproval === false ? PRIVATE_NEEDS_APPROVAL : null;
 }
 
-/** The cache columns the profile record is authoritative for. */
+/** The image types and size the standard's `profile.avatar` takes. */
+export const GROUP_AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const;
+export const GROUP_AVATAR_MAX_BYTES = 2_000_000;
+
+/** A blob reference as a record holds it. */
+export interface GroupBlobRef {
+	$type: 'blob';
+	ref: { $link: string };
+	mimeType: string;
+	size: number;
+}
+
+/** A blob reference the profile may hold as its avatar, or null: the standard's
+ *  types and size only, so a page never serves something else as the image. */
+export function groupAvatarRef(value: unknown): GroupBlobRef | null {
+	if (!value || typeof value !== 'object') return null;
+	const raw = value as Record<string, unknown>;
+	const link =
+		raw.ref && typeof raw.ref === 'object' ? (raw.ref as { $link?: unknown }).$link : null;
+	if (raw.$type !== 'blob' || typeof link !== 'string' || !link) return null;
+	const { mimeType, size } = raw;
+	if (typeof mimeType !== 'string' || !(GROUP_AVATAR_TYPES as readonly string[]).includes(mimeType))
+		return null;
+	if (typeof size !== 'number' || !Number.isInteger(size) || size < 1) return null;
+	if (size > GROUP_AVATAR_MAX_BYTES) return null;
+	return { $type: 'blob', ref: { $link: link }, mimeType, size };
+}
+
+/** The refusal for an image the profile cannot take as its avatar, or null.
+ *  Checked before anything is made, so a create never stops halfway on it. */
+export function groupAvatarRefusal(image: Blob): string | null {
+	if (!(GROUP_AVATAR_TYPES as readonly string[]).includes(image.type)) {
+		return 'The group picture must be a PNG, JPEG or WebP image.';
+	}
+	if (image.size > GROUP_AVATAR_MAX_BYTES) {
+		return `The group picture must be at most ${GROUP_AVATAR_MAX_BYTES / 1_000_000} MB.`;
+	}
+	return null;
+}
+
+/** The cache columns the profile record is authoritative for, and its avatar,
+ *  which no column caches. */
 export interface GroupProfileFields {
 	name: string;
 	description: string | null;
 	joinPolicy: GroupJoinPolicy;
 	locationName: string | null;
 	createdAt: string | null;
+	avatar: GroupBlobRef | null;
 }
 
 /** A visibility and an approval setting -> the join policy they encode. Anything but
@@ -72,6 +114,8 @@ export function groupFace(
 	description: string | null;
 	locationName: string | null;
 	joinPolicy: GroupJoinPolicy;
+	/** The avatar's CID. Only a record has one: the row caches no image. */
+	avatarCid: string | null;
 } {
 	if (profile) {
 		return {
@@ -79,7 +123,8 @@ export function groupFace(
 			name: profile.name,
 			description: profile.description,
 			locationName: profile.locationName,
-			joinPolicy: visibility === 'public' ? profile.joinPolicy : 'invite'
+			joinPolicy: visibility === 'public' ? profile.joinPolicy : 'invite',
+			avatarCid: profile.avatar?.ref.$link ?? null
 		};
 	}
 	return {
@@ -87,7 +132,8 @@ export function groupFace(
 		name: group.name,
 		description: group.description,
 		locationName: group.location_name,
-		joinPolicy: joinPolicyFor(visibility, group.require_approval)
+		joinPolicy: joinPolicyFor(visibility, group.require_approval),
+		avatarCid: null
 	};
 }
 
@@ -104,11 +150,13 @@ export interface GroupProfileInput {
 	locationName?: string | null;
 	/** Preserved across an edit so editing a group does not restamp the record. */
 	createdAt?: string;
+	/** An image already uploaded to the group's repo. An edit passes the one it
+	 *  read, so a save keeps it. */
+	avatar?: GroupBlobRef | null;
 }
 
-/** `displayName`, `description` and `joinPolicy` are the standard's fields. `location`
- *  and `createdAt` are ours. There is no `avatar`: moving a blob between repos is its
- *  own problem. */
+/** `displayName`, `description`, `avatar` and `joinPolicy` are the standard's
+ *  fields. `location` and `createdAt` are ours. */
 export function groupProfileRecord(input: GroupProfileInput): Record<string, unknown> {
 	// `$type` is stamped by the writer, which owns the collection name.
 	const record: Record<string, unknown> = {
@@ -120,6 +168,7 @@ export function groupProfileRecord(input: GroupProfileInput): Record<string, unk
 	if (description) record.description = description;
 	const location = input.locationName?.trim();
 	if (location) record.location = { name: location };
+	if (input.avatar) record.avatar = input.avatar;
 	return record;
 }
 
@@ -144,7 +193,8 @@ export function parseGroupProfile(value: unknown): GroupProfileFields | null {
 		description: description || null,
 		joinPolicy: isJoinPolicy(raw.joinPolicy) ? raw.joinPolicy : 'invite',
 		locationName,
-		createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : null
+		createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : null,
+		avatar: groupAvatarRef(raw.avatar)
 	};
 }
 

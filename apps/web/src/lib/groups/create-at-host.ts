@@ -13,11 +13,13 @@
 // host, its `access` naming the host's roles), the event bindings for those roles,
 // the profile and rules as the form gave them, the meta space's `public`, and the
 // declaration of a public group. The creator's session is the one stored by the
-// callback, filed under them like any link (./server/group-link.ts).
+// callback, filed under them like any link (./server/group-link.ts). A picture
+// from the form waits in a stash (./server/avatar-stash.ts) until the group has a
+// repo to upload it into.
 import type { Did } from '@atcute/lexicons';
 import type { OAuthClient, OAuthClientStores } from '@atcute/oauth-node-client';
 
-import { approvalRefusal, splitRuleLines } from './about-record';
+import { approvalRefusal, groupAvatarRefusal, splitRuleLines } from './about-record';
 import { knownFormError } from './form-error';
 import type { GroupFormResult } from './form-result';
 import { POLICY_MEMBER_LIST, SPACE_SKEY, groupSpaceUris } from './ids';
@@ -26,6 +28,7 @@ import { DEFAULT_ROLE_PERMISSIONS } from './permissions';
 import { CALENDAR_SPACE_TYPE, type GroupVisibility } from './types';
 
 import { pdsSpaceReader, readAboutAccess } from './server/about-read';
+import type { AvatarStash } from './server/avatar-stash';
 import { setGroupRules, writeAboutAccess, writeGroupProfile } from './server/about-writer';
 import {
 	createGroup,
@@ -36,6 +39,7 @@ import {
 } from './server/db/groups';
 import { reconcileGroupDeclaration } from './server/declaration-writer';
 import { errorText } from './server/errors';
+import { credentialBlobUploader } from './server/event-writer';
 import { pdsWriter } from './server/group-write';
 import { refreshGroupHandle } from './server/handles';
 import { groupHostOrigin, isHostGroup } from './server/host-kind';
@@ -66,6 +70,8 @@ export interface HostCreateState {
 	create: HostCreateFields;
 	/** The person who started the create, whose session the group's becomes. */
 	by: string;
+	/** The stash key of the form's picture, when it had one. */
+	avatar?: string;
 }
 
 export interface HostCreateEnv extends CredentialStoreEnv {
@@ -97,10 +103,14 @@ export async function startCreateAtHost(input: {
 	callerDid: string;
 	fields: HostCreateFields;
 	redirectUri: string;
+	/** The group's picture, from the form, and where it waits meanwhile. */
+	avatar?: { image: Blob; stash: AvatarStash };
 }): Promise<GroupFormResult<{ signUpUrl: string }>> {
 	const { fields } = input;
 	const approval = approvalRefusal(fields.visibility, fields.requireApproval);
 	if (approval) return { ok: false, error: approval };
+	const pictureRefusal = input.avatar ? groupAvatarRefusal(input.avatar.image) : null;
+	if (pictureRefusal) return { ok: false, error: pictureRefusal };
 	try {
 		await rehearseCreateGroup(input.db, rowFor(input.callerDid, fields));
 	} catch (e) {
@@ -111,7 +121,11 @@ export async function startCreateAtHost(input: {
 			)}), so nothing was made. Please tell an administrator.`
 		};
 	}
-	const state: HostCreateState = { create: hostFields(fields), by: input.callerDid };
+	const state: HostCreateState = {
+		create: hostFields(fields),
+		by: input.callerDid,
+		...(input.avatar ? { avatar: await input.avatar.stash.put(input.avatar.image) } : {})
+	};
 	const { url } = await input.client.authorize({
 		target: { type: 'pds', serviceUrl: input.hostUrl },
 		prompt: 'create',
@@ -148,13 +162,17 @@ function hostFields(fields: HostCreateFields): HostCreateFields {
 
 function createState(value: unknown): HostCreateState | null {
 	if (!value || typeof value !== 'object') return null;
-	const { create, by } = value as Record<string, unknown>;
+	const { create, by, avatar } = value as Record<string, unknown>;
 	if (typeof by !== 'string' || !by.startsWith('did:')) return null;
 	if (!create || typeof create !== 'object') return null;
 	const fields = create as Record<string, unknown>;
 	if (typeof fields.name !== 'string' || !fields.name) return null;
 	if (fields.visibility !== 'public' && fields.visibility !== 'private') return null;
-	return { create: create as HostCreateFields, by };
+	return {
+		create: create as HostCreateFields,
+		by,
+		...(typeof avatar === 'string' && avatar ? { avatar } : {})
+	};
 }
 
 export type HostCreateResult =
@@ -175,6 +193,8 @@ export async function finishCreateAtHost(input: {
 	states: Pick<OAuthClientStores['states'], 'get' | 'delete'>;
 	params: URLSearchParams;
 	signedInDid: string | null;
+	/** Where the form's picture waited, if it had one. */
+	stash?: AvatarStash;
 }): Promise<HostCreateResult> {
 	const stateId = input.params.get('state');
 	const stored = stateId ? await input.states.get(stateId) : undefined;
@@ -234,9 +254,30 @@ export async function finishCreateAtHost(input: {
 		started.by,
 		started.create,
 		{ kind: 'linked', person: started.by, session },
-		groupHostOrigin(input.env)!
+		groupHostOrigin(input.env)!,
+		await takeAvatar(input.stash, started.avatar, groupDid)
 	);
 	return result.ok ? { ok: true, groupDid } : { ok: false, groupDid, error: result.error };
+}
+
+/** The form's picture, or null. One that is gone (it outlived the sign-up, or
+ *  the store failed) does not stop the create: the group is made without it,
+ *  and a picture can be added from its settings. */
+async function takeAvatar(
+	stash: AvatarStash | undefined,
+	key: string | undefined,
+	groupDid: string
+): Promise<Blob | null> {
+	if (!key) return null;
+	try {
+		const image = stash ? await stash.take(key) : null;
+		if (!image)
+			console.error(`[groups] ${groupDid}: the create's picture was gone at the callback`);
+		return image;
+	} catch (e) {
+		console.error(`[groups] ${groupDid}: reading the create's picture failed:`, e);
+		return null;
+	}
 }
 
 /**
@@ -250,7 +291,9 @@ export async function setUpHostGroup(
 	creatorDid: string,
 	fields: HostCreateFields,
 	credential: LinkedGroupCredential,
-	hostOrigin: string
+	hostOrigin: string,
+	/** The group's picture, uploaded into its repo and named by its profile. */
+	avatar: Blob | null = null
 ): Promise<GroupFormResult<{ groupDid: string }>> {
 	const groupDid = credential.session.did;
 	const made = (step: string, detail: string) => ({
@@ -313,6 +356,8 @@ export async function setUpHostGroup(
 	};
 	try {
 		await writeEventPermissions({ ...as, bundles: HOST_ROLE_BUNDLES, createdAt });
+		// Uploaded just before the profile that cites it, so the PDS keeps it.
+		const avatarRef = avatar ? await credentialBlobUploader(credential, groupDid)(avatar) : null;
 		await writeGroupProfile({
 			...as,
 			visibility: fields.visibility,
@@ -320,7 +365,8 @@ export async function setUpHostGroup(
 				name: fields.name,
 				description: fields.description || null,
 				locationName: fields.locationName || null,
-				createdAt
+				createdAt,
+				avatar: avatarRef
 			}
 		});
 		const rules = splitRuleLines(fields.rules);

@@ -71,6 +71,7 @@ import {
 } from './members-record';
 
 import { pdsSpaceReader } from './server/about-read';
+import { writeGroupProfile } from './server/about-writer';
 import {
 	STUB_PDS_SERVICE,
 	linkGroups,
@@ -407,6 +408,32 @@ describe('a save needs the creator’s session only to move the read policy', ()
 		expect(updateSpaceCalls(pds)).toEqual([]);
 		expect(pds.writes().length).toBeGreaterThan(0);
 		expect(new Set(pds.writes().map((w) => w.person))).toEqual(new Set([OWNER]));
+	});
+});
+
+describe('a save keeps what the settings form does not show', () => {
+	// The save rewrites the whole profile, and the form has no picture field.
+	it('keeps the picture the profile names', async () => {
+		const pds = host();
+		const group = await givenGroup('public', pds);
+		const avatar = {
+			$type: 'blob' as const,
+			ref: { $link: 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku' },
+			mimeType: 'image/webp',
+			size: 70
+		};
+		await writeGroupProfile({
+			...asGroup(group),
+			visibility: 'public',
+			profile: { name: 'Kona Trail Runners', avatar }
+		});
+		pds.clearLog();
+
+		const result = await save(group, 'public', { description: 'Dawn runs' });
+
+		expect(result).toEqual({ ok: true });
+		const profile = pds.spaceWrites.find((w) => w.collection === 'group.opensocial.profile');
+		expect(profile?.record).toMatchObject({ description: 'Dawn runs', avatar });
 	});
 });
 

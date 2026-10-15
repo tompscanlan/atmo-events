@@ -74,7 +74,16 @@
 	>
 
 	<header class="flex items-start gap-4">
-		<GroupMonogram name={about.name} class="size-16 text-2xl" />
+		<GroupMonogram
+			name={about.name}
+			src={about.avatarCid
+				? resolve('/(app)/groups/[actor]/avatar/[cid]', {
+						actor: group.group_did,
+						cid: about.avatarCid
+					})
+				: null}
+			class="size-16 text-2xl"
+		/>
 		<div class="min-w-0 flex-1">
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
 				<h1 class="text-3xl font-bold sm:text-4xl">{about.name}</h1>
