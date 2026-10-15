@@ -20,3 +20,5 @@ export { readGroupMembers } from '../src/lib/groups/server/members-read';
 export { repairGroup, describeRepair } from '../src/lib/groups/server/repair';
 export { credentialBlobUploader } from '../src/lib/groups/server/event-writer';
 export { GROUP_SESSION_SCOPES } from '../src/lib/groups/server/session';
+// The group's picture, read back as the page's route reads it.
+export { readGroupAvatar } from '../src/lib/groups/server/avatar-read';
