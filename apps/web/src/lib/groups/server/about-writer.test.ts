@@ -7,11 +7,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { SqliteD1 } from './__fixtures__/d1-sqlite';
 import { seedGroup } from './__fixtures__/seed-group';
 
-import { setGroupRules, writeGroupProfile } from './about-writer';
+import { alignAboutAccess, setGroupRules, writeGroupProfile } from './about-writer';
 import type { GroupRuleRecord } from './about-read';
 
 import { ABOUT_SPACE_TYPE, type GroupRow } from '../types';
 import { GROUP_PROFILE_COLLECTION, GROUP_RULE_COLLECTION } from '../about-record';
+import { GROUP_ACCESS_COLLECTION, parseGroupAccess } from '../members-record';
 
 import { spaceUri } from '../ids';
 import { GroupPermissionError, type GroupRepoWrite } from './group-write';
@@ -106,6 +107,34 @@ describe('writeGroupProfile', () => {
 			profile: { name: 'Kona' }
 		});
 		expect(writes[0].record).toMatchObject({ joinPolicy: 'invite' });
+	});
+});
+
+describe('alignAboutAccess', () => {
+	// A group host writes the meta space's access record at create in its own
+	// roles. A visibility change rewrites `public` and keeps those grants, rather
+	// than replacing them with this app's defaults, which name an `owner` role the
+	// host's group does not declare.
+	it("keeps the record's grants and changes only public", async () => {
+		const hostGrants = [
+			{ role: 'admin', scopes: ['space:group.opensocial.meta?collection=*'] },
+			{ role: 'member', scopes: ['space:group.opensocial.meta?action=read'] }
+		];
+		const current = parseGroupAccess({ public: false, grants: hostGrants });
+
+		const wrote = await alignAboutAccess(
+			{ db, env, group, visibility: 'public', callerDid: OWNER, writer, reader: authz },
+			current
+		);
+
+		expect(wrote).toBe(true);
+		expect(writes).toHaveLength(1);
+		expect(writes[0]).toMatchObject({ space: ABOUT, collection: GROUP_ACCESS_COLLECTION });
+		expect(writes[0].record).toEqual({
+			$type: GROUP_ACCESS_COLLECTION,
+			public: true,
+			grants: hostGrants
+		});
 	});
 });
 

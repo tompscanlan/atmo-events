@@ -346,11 +346,40 @@ export async function writeGroupAuthz(
 		GROUP_PERMISSIONS_RKEY,
 		groupBindingsRecord({ altitude: 'community', bundles })
 	);
-	const eventPermissions = await put(
-		GROUP_EVENT_PERMISSIONS_COLLECTION,
-		GROUP_PERMISSIONS_RKEY,
-		groupBindingsRecord({ altitude: 'modality', bundles, createdAt: input.createdAt })
-	);
+	const eventPermissions = await writeEventPermissions({ ...input, bundles, writer });
 
 	return { roles, permissions, eventPermissions };
+}
+
+/**
+ * Writes `eventPermissions` alone, for a group whose roles and `permissions` are
+ * someone else's: a group host writes those at create, in the proposal's own roles,
+ * and this app adds only its event bindings for them. Needs the scope that writes
+ * `permissions`, as `writeGroupAuthz` does. Idempotent: a put.
+ */
+export async function writeEventPermissions(
+	input: WriteGroupMembersInput & {
+		bundles: Readonly<Partial<Record<GroupRoleName, readonly GroupPermission[]>>>;
+		createdAt?: string;
+	}
+): Promise<{ uri: string; cid: string }> {
+	await requireGroupWrite(
+		input,
+		spaceWrite(MEMBERS_SPACE_TYPE, GROUP_PERMISSIONS_COLLECTION, 'update')
+	);
+	const writer = await gatedWriter(input);
+	const record = groupBindingsRecord({
+		altitude: 'modality',
+		bundles: input.bundles,
+		createdAt: input.createdAt
+	});
+	const result = await writer({
+		repo: input.group.group_did,
+		collection: GROUP_EVENT_PERMISSIONS_COLLECTION,
+		rkey: GROUP_PERMISSIONS_RKEY,
+		record: { ...record, $type: GROUP_EVENT_PERMISSIONS_COLLECTION },
+		intent: 'update',
+		space: membersSpace(input.group)
+	});
+	return { uri: result.uri, cid: result.cid };
 }

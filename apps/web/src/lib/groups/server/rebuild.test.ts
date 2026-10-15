@@ -352,4 +352,22 @@ describe('rebuildGroupMembers', () => {
 		expect(result.skipped.map((s) => s.did)).toEqual([OWNER]);
 		expect((await listMembers(db, row.id)).find((m) => m.did === OWNER)?.role).toBe('owner');
 	});
+
+	// A group host's create: the records declare the proposal's `admin` and
+	// `member` and no `owner`, and the creator holds `admin`. The owner row is
+	// this app's note of who created the group, so the two agree.
+	it('agrees with the owner row when a group that declares no owner role gives its creator admin', async () => {
+		const { row, records } = await appGroup(true);
+		const hostMade = records
+			.filter((r) => !(r.collection === GROUP_ROLE_COLLECTION && r.rkey === 'owner'))
+			.map((r) => (r.rkey === OWNER ? membership(OWNER, 'admin', 0) : r));
+
+		const result = await rebuildGroupMembers(db, readerOver(hostMade), row);
+
+		expect(result.skipped).toEqual([]);
+		expect(result.restored).toEqual([]);
+		expect(result.orphans).toEqual([]);
+		expect(result.unchanged).toContain(OWNER);
+		expect((await listMembers(db, row.id)).find((m) => m.did === OWNER)?.role).toBe('owner');
+	});
 });

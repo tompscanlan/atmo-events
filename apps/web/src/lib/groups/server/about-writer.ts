@@ -28,7 +28,7 @@ import type { GroupRuleRecord, GroupSpaceReader } from './about-read';
 
 import { gatedWriter, requireGroupWrite, type GroupRepoWriter, ownSpace } from './group-write';
 import { VISIBILITY_WRITE, spaceWrite } from '../grants';
-import type { WriteAction } from '../scopes';
+import type { RoleGrant, WriteAction } from '../scopes';
 
 const aboutSpace = (group: GroupRow) =>
 	ownSpace(group, 'about', group.about_space_uri, 'its profile cannot be written');
@@ -83,18 +83,24 @@ export async function writeGroupProfile(
  *  widening writes this first, and one narrowing writes it after the host has
  *  closed. A group with a declaration must have an access record that says
  *  public, so this is written before a declaration is published and after one
- *  is withdrawn. Idempotent, keyed `self`. (Spec: FR-214.) */
+ *  is withdrawn. Idempotent, keyed `self`. `grants`, when the record already has
+ *  some, are kept as they are and only `public` changes: a group host writes the
+ *  record at create in its own roles, which this app's defaults would not name.
+ *  (Spec: FR-214.) */
 export async function writeAboutAccess(
-	input: WriteGroupAboutInput & { visibility: GroupVisibility }
+	input: WriteGroupAboutInput & { visibility: GroupVisibility; grants?: readonly RoleGrant[] }
 ): Promise<{ uri: string; cid: string }> {
 	await requireGroupWrite(input, VISIBILITY_WRITE);
 
+	const isPublic = input.visibility === 'public';
 	const record = {
-		...groupAccessRecord({
-			spaceType: ABOUT_SPACE_TYPE,
-			roles: ABOUT_SPACE_READER_ROLES,
-			public: input.visibility === 'public'
-		}),
+		...(input.grants?.length
+			? { public: isPublic, grants: input.grants.map(({ role, scopes }) => ({ role, scopes })) }
+			: groupAccessRecord({
+					spaceType: ABOUT_SPACE_TYPE,
+					roles: ABOUT_SPACE_READER_ROLES,
+					public: isPublic
+				})),
 		$type: GROUP_ACCESS_COLLECTION
 	};
 
@@ -111,13 +117,14 @@ export async function writeAboutAccess(
 }
 
 /** Writes the about space's access record when `current`, as read, does not
- *  already say `visibility`, and answers whether it wrote. */
+ *  already say `visibility`, and answers whether it wrote. The grants `current`
+ *  holds are kept. */
 export async function alignAboutAccess(
 	input: WriteGroupAboutInput & { visibility: GroupVisibility },
 	current: GroupAccessFields | null
 ): Promise<boolean> {
 	if (accessSays(current, input.visibility === 'public')) return false;
-	await writeAboutAccess(input);
+	await writeAboutAccess({ ...input, grants: current?.grants });
 	return true;
 }
 

@@ -231,6 +231,10 @@ export async function projectGroupMembers(
 
 	const now = Date.now();
 	const recorded = new Set<string>();
+	// A group whose records declare no `owner` role, as a group host makes one, gives
+	// its creator the proposal's `admin`. The owner row is then this app's own
+	// note of who created it, and an `admin` record agrees with it.
+	const ownerless = !members.roles.some((record) => record.id === 'owner');
 
 	for (const record of members.memberships) {
 		const did = record.subject;
@@ -241,11 +245,13 @@ export async function projectGroupMembers(
 		}
 		recorded.add(did);
 
-		const role = primaryRole(record.roles);
-		if (!role) {
+		const recordRole = primaryRole(record.roles);
+		if (!recordRole) {
 			result.skipped.push({ did, reason: 'the record grants no role this build knows' });
 			continue;
 		}
+		const role =
+			ownerless && did === group.owner_did && recordRole === 'admin' ? 'owner' : recordRole;
 		const target = roleId.get(role);
 		if (!target) {
 			result.skipped.push({ did, reason: `this group has no ${role} role row` });
