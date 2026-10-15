@@ -271,7 +271,9 @@ describe('the permission gate', () => {
 				nsid: 'com.atproto.repo.deleteRecord',
 				body: { repo: GROUP_DID, collection: GROUP_EVENT_COLLECTION, rkey: created.rkey },
 				params: {},
-				token: LINKED_TEST_TOKEN
+				token: LINKED_TEST_TOKEN,
+				// The admin's own group session, not anyone else's.
+				person: ADMIN
 			}
 		]);
 		expect(await hostHas(null, created.rkey)).toBe(false);

@@ -28,6 +28,7 @@ import {
 	type SpaceReadCall,
 	type SpaceRecordInput
 } from '$lib/groups/server/__fixtures__/space-reader';
+import { authzRecords } from '$lib/groups/server/__fixtures__/members-space';
 import {
 	admitOnly,
 	fixtureSessions,
@@ -384,35 +385,52 @@ describe('a members space that cannot be read', () => {
 describe('the link prompt', () => {
 	afterEach(() => unlinkAllGroups());
 
-	/** A sessions store with no group's link in it. */
+	/** A sessions store with no one's link in it. */
 	const NO_LINK = { OAUTH_SESSIONS: { get: async () => null } as unknown as KVNamespace };
+	const ADMIN = 'did:plc:admin';
 
-	it("asks the owner to link a group whose account is not linked, and reads the page with the owner's own access", async () => {
-		const host = hostReading('public');
+	/** A public group whose members space holds the authz config: the owner and
+	 *  an admin hold roles that grant writes, a member one that grants none. */
+	async function withRoles(): Promise<FakeSpaceReader> {
+		const row = await getGroupByDid(harness.db, GROUP_DID);
+		await addMember(harness.db, row!.id, ADMIN, 'admin');
+		const host = spaceReader(GROUP_DID, {
+			records: [
+				aboutAccess('public'),
+				...authzRecords(GROUP_DID, { [OWNER]: 'owner', [ADMIN]: 'admin', [MEMBER]: 'member' })
+			]
+		});
 		serveReader(GROUP_DID, host);
-		listsHold([OWNER, MEMBER], 'public');
+		listsHold([OWNER, ADMIN, MEMBER], 'public');
+		return host;
+	}
 
-		// The host serves the reads; the sessions store holds no link.
-		const data = await openAs(OWNER, NO_LINK);
+	// Anyone whose roles grant writes holds a group session of their own, not
+	// only the owner (TS, 2026-10-15).
+	it('asks an admin with no session of their own to link one, reading the page with their own access', async () => {
+		const host = await withRoles();
+
+		const data = await openAs(ADMIN, NO_LINK);
 
 		expect(data.groupLinked).toBe(false);
 		expect(data.visibility).toBe('public');
 		expect(visibilityReads(host)).toEqual([ACCESS_READ]);
 		expect(data.membership.onRoster).toBe(true);
+		expect((await openAs(OWNER, NO_LINK)).groupLinked).toBe(false);
 	});
 
-	it('shows the owner of a linked group no prompt', async () => {
-		serveReader(GROUP_DID, hostReading('public'));
-		listsHold([OWNER, MEMBER], 'public');
+	// Someone else's session is not theirs: the owner's prompt stays while only
+	// the admin has linked.
+	it('shows no prompt to a person who holds their own session, and only to them', async () => {
+		await withRoles();
+		const linked = linkGroups([GROUP_DID], undefined, [ADMIN]);
 
-		const data = await openAs(OWNER, linkGroups([GROUP_DID]));
-
-		expect(data.groupLinked).toBe(true);
+		expect((await openAs(ADMIN, linked)).groupLinked).toBe(true);
+		expect((await openAs(OWNER, linked)).groupLinked).toBe(false);
 	});
 
-	it('answers null for everyone but the owner, linked or not', async () => {
-		serveReader(GROUP_DID, hostReading('public'));
-		listsHold([OWNER, MEMBER], 'public');
+	it('answers null for anyone whose roles grant no writes, linked or not', async () => {
+		await withRoles();
 		expect((await openAs(MEMBER, NO_LINK)).groupLinked).toBeNull();
 
 		const linked = linkGroups([GROUP_DID]);

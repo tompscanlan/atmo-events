@@ -18,7 +18,7 @@ import {
 	type WriteAction,
 	type WriteGrants
 } from './scopes';
-import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from './types';
+import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type CallerMembership } from './types';
 
 /** A record write into the group's space of `spaceType`. Every group space is keyed
  *  `self`. */
@@ -87,6 +87,24 @@ const ASKS: Readonly<
 	EJECT_MEMBERS: (grants, groupDid) => rosterAct(grants, groupDid, 'delete'),
 	ASSIGN_ROLES: (grants, groupDid) => rosterAct(grants, groupDid, 'update')
 };
+
+/** Whether a member's roles let them write anything as the group, which is who
+ *  may hold a group session (TS, 2026-10-15). A grant to read only does not. */
+export function grantsAnyWrite(grants: WriteGrants): boolean {
+	if (grants.group) return true;
+	return [...grants.anywhere, ...Object.values(grants.inSpace).flat()].some(
+		(p) => p.manage.length > 0 || p.actions.some((a) => a !== 'read' && a !== 'read_self')
+	);
+}
+
+/** Whether the caller may link a group session: their roles grant some write,
+ *  by scope or by a named permission (`eventPermissions` grants event writes no
+ *  scope names yet). */
+export function mayHoldGroupSession(
+	membership: Pick<CallerMembership, 'permissions' | 'grants'>
+): boolean {
+	return membership.permissions.size > 0 || grantsAnyWrite(membership.grants);
+}
 
 /** The community names `grants` answer yes to, in vocabulary order. */
 export function communityPermissions(grants: WriteGrants, groupDid: string): CommunityPermission[] {

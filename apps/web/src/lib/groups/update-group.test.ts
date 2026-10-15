@@ -376,6 +376,40 @@ describe('a settings flip moves the about space’s read policy after or before 
 	);
 });
 
+// The read policy is the stand-in host's to keep, on the creator's session, and a
+// person's own writes go on theirs (TS, 2026-10-15). A save that would move the
+// policy finds the creator's session before it writes anything; one that does
+// not move it never asks for it.
+describe('a save needs the creator’s session only to move the read policy', () => {
+	const CREATOR = 'did:plc:creatoraaaaaaaaaaaaaaaaa';
+
+	it('refuses a flip before any write when the creator has linked no session', async () => {
+		const pds = host();
+		const group = await givenGroup('public', pds);
+		env = linkGroups([GROUP_DID], undefined, [OWNER]);
+
+		const result = await save({ ...group, owner_did: CREATOR }, 'private', {
+			shownVisibility: 'public'
+		});
+
+		expect(result).toEqual({ ok: false, error: expect.stringMatching(/its creator has to link/) });
+		expect(pds.writes()).toEqual([]);
+	});
+
+	it('saves a change that leaves the visibility, on the caller’s own session alone', async () => {
+		const pds = host();
+		const group = await givenGroup('public', pds);
+		env = linkGroups([GROUP_DID], undefined, [OWNER]);
+
+		const result = await save({ ...group, owner_did: CREATOR }, 'public', { rules: 'Be kind' });
+
+		expect(result).toEqual({ ok: true });
+		expect(updateSpaceCalls(pds)).toEqual([]);
+		expect(pds.writes().length).toBeGreaterThan(0);
+		expect(new Set(pds.writes().map((w) => w.person))).toEqual(new Set([OWNER]));
+	});
+});
+
 describe('a save that keeps the visibility leaves the host and the access record alone', () => {
 	it('a public group saved as public makes no updateSpace call and no access write', async () => {
 		const pds = host();

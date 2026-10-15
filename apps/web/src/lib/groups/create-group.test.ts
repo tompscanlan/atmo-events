@@ -434,18 +434,18 @@ describe('a successful create', () => {
 	});
 
 	// The mint's session dies with the create request. After it, writing as the
-	// group waits for the owner to link its account, and a write tried before
-	// then is refused rather than served by anything this site kept.
+	// group waits for the owner to link their own session, and a write tried
+	// before then is refused rather than served by anything this site kept.
 	it('leaves the group unlinked, so a later write as the group is refused', async () => {
 		stubPds();
 
 		const result = await runCreateGroup(env, OWNER, data());
 
 		expect(result.ok).toBe(true);
-		expect(await resolveGroupCredential(noLinks, MINTED_DID)).toBeNull();
+		expect(await resolveGroupCredential(noLinks, MINTED_DID, OWNER)).toBeNull();
 		const group = await getGroupByDid(harness.db, MINTED_DID);
 		expect(group).not.toBeNull();
-		await expect(groupWriter(noLinks, group!)).rejects.toBeInstanceOf(GroupCredentialError);
+		await expect(groupWriter(noLinks, group!, OWNER)).rejects.toBeInstanceOf(GroupCredentialError);
 	});
 
 	// The only record a stranger can read, and the only one in the public repo.

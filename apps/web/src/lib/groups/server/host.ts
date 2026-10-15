@@ -9,8 +9,10 @@
 //
 // Only the methods atmo calls are here, plus the roster acts the standard has
 // no method for: approving a request, adding, ejecting and changing a role are
-// membership writes over the group's session, and a write of the requester's
-// membership is what approves their request. They sit on the binding anyway, so
+// membership writes over the acting admin's own group session, and a write of
+// the requester's membership is what approves their request. What a host does
+// for itself (a member's own join or leave, the member lists) the stand-in does
+// on the session it acts on, its creator's (./session.ts). They sit on the binding anyway, so
 // every roster act reaches the host one way and a real host's adapter takes all
 // of them. (Spec: FR-515.)
 import type { AssignableRole } from '../permissions';
@@ -37,20 +39,22 @@ export interface HostBinding {
 	env: CredentialStoreEnv;
 	group: GroupRow;
 	/** The group's session when the caller holds one the store does not, as a
-	 *  create holds the mint's. Else the store's, read on first use. */
+	 *  create holds the mint's. Else the acting person's from the store, read on
+	 *  first use. */
 	credential?: GroupCredential;
 }
 
-/** Who makes a call: the member behind service auth, or the admin behind the
- *  group-DID session. A handler's own context satisfies it. */
+/** Who makes a call: the member behind service auth, or the admin behind their
+ *  own group-DID session. A handler's own context satisfies it. */
 export type HostCaller = Omit<RosterContext, keyof HostBinding>;
 
 export interface GroupHost {
-	/** Group-DID session, `manage=create`. The space, with its read policy. */
-	createSpace(space: SpaceProvision): Promise<{ uri: string }>;
-	/** Group-DID session. The pending requests, which the host keeps privately. */
+	/** The caller's group-DID session, `manage=create`. The space, with its read
+	 *  policy. */
+	createSpace(caller: HostCaller, space: SpaceProvision): Promise<{ uri: string }>;
+	/** The caller's group-DID session. The pending requests, which the host keeps privately. */
 	listJoinRequests(): Promise<JoinRequestRow[]>;
-	/** Group-DID session. Denies the member's pending request; the standard names
+	/** The caller's group-DID session. Denies the member's pending request; the standard names
 	 *  a request by its member, not by an id. */
 	denyJoinRequest(caller: HostCaller, member: string): Promise<void>;
 	/** Member service auth. A private request, or a join where the group takes one. */
@@ -60,18 +64,18 @@ export interface GroupHost {
 	cancelJoinRequest(caller: HostCaller): Promise<void>;
 	/** Member service auth. Deletes the caller's membership record. */
 	leaveGroup(caller: HostCaller): Promise<void>;
-	/** Group-DID session. Writes the requester's membership, keyed by their DID,
+	/** The caller's group-DID session. Writes the requester's membership, keyed by their DID,
 	 *  which approves the request. No method of the standard's. */
 	approveJoinRequest(
 		caller: HostCaller,
 		member: string,
 		role: AssignableRole
 	): Promise<{ did: string }>;
-	/** Group-DID session. Writes a membership with no request behind it. */
+	/** The caller's group-DID session. Writes a membership with no request behind it. */
 	addMember(caller: HostCaller, did: string, role: AssignableRole): Promise<void>;
-	/** Group-DID session. Deletes the member's membership record. */
+	/** The caller's group-DID session. Deletes the member's membership record. */
 	ejectMember(caller: HostCaller, did: string): Promise<void>;
-	/** Group-DID session. Rewrites the member's membership with the role. */
+	/** The caller's group-DID session. Rewrites the member's membership with the role. */
 	setMemberRole(caller: HostCaller, did: string, role: AssignableRole): Promise<void>;
 }
 
@@ -79,15 +83,21 @@ export interface GroupHost {
 export function groupHost(binding: HostBinding): GroupHost {
 	const { db, env, group } = binding;
 	const act = (caller: HostCaller): RosterContext => ({ ...caller, db, env, group });
-	let provisioner: Promise<GroupSpaceProvisioner> | undefined;
-	const provision = async () =>
+	// One provisioner per caller, since each writes on their own session.
+	const provisioners = new Map<string, Promise<GroupSpaceProvisioner>>();
+	const provision = async (caller: HostCaller) =>
 		pdsProvisioner(
-			binding.credential ?? (await requireGroupCredential(env, group.group_did)),
+			binding.credential ?? (await requireGroupCredential(env, group.group_did, caller.callerDid)),
 			group.group_did
 		);
+	const provisionerFor = (caller: HostCaller) => {
+		let provisioner = provisioners.get(caller.callerDid);
+		if (!provisioner) provisioners.set(caller.callerDid, (provisioner = provision(caller)));
+		return provisioner;
+	};
 
 	return {
-		createSpace: async (space) => (await (provisioner ??= provision()))(space),
+		createSpace: async (caller, space) => (await provisionerFor(caller))(space),
 		listJoinRequests: () => listJoinRequests(db, group.id, 'pending'),
 		denyJoinRequest: (caller, member) => rejectJoinRequest(act(caller), member),
 		requestJoin: (caller, message) => joinGroup(act(caller), message),

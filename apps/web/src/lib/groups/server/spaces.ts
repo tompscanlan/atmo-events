@@ -29,7 +29,7 @@ import {
 import type { GroupAccessFields } from '../members-record';
 import { readAboutAccess, type GroupSpaceReader } from './about-read';
 
-import { groupClient, type GroupCredential, requireGroupCredential } from './session';
+import { groupClient, type GroupCredential, standInHostCredential } from './session';
 import { describeFailure, xrpc } from './xrpc';
 
 import {
@@ -226,12 +226,14 @@ export function pdsSpaceUpdater(cred: GroupCredential, groupDid: string): GroupS
 	};
 }
 
-/** The updater for a group, from its stored credential, unless one is given. */
+/** The updater for a group, unless one is given: through the session the stand-in
+ *  host acts on, since a space's read policy follows its `access` record on the
+ *  host's side, which a real host keeps itself. */
 export async function groupSpaceUpdater(
 	input: Pick<GroupGateInput, 'env' | 'group'> & { updater?: GroupSpaceUpdater }
 ): Promise<GroupSpaceUpdater> {
 	if (input.updater) return input.updater;
-	const cred = await requireGroupCredential(input.env, input.group.group_did);
+	const cred = await standInHostCredential(input.env, input.group);
 	return pdsSpaceUpdater(cred, input.group.group_did);
 }
 

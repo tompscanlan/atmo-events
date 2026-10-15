@@ -20,7 +20,7 @@ import type { GroupSpaceReader } from './about-read';
 import { notifyIndex } from './events-index';
 import { errorText } from './errors';
 
-import { groupWriter, requireGroupWrite, type GroupRepoWriter, ownSpace } from './group-write';
+import { gatedWriter, requireGroupWrite, type GroupRepoWriter, ownSpace } from './group-write';
 import { VISIBILITY_WRITE } from '../grants';
 
 const aboutSpace = (group: GroupRow) =>
@@ -65,7 +65,7 @@ export async function writeGroupDeclaration(
 		$type: GROUP_DECLARATION_COLLECTION
 	};
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.group));
+	const writer = await gatedWriter(input);
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_DECLARATION_COLLECTION,
@@ -111,7 +111,7 @@ export async function dropDeclarationFromIndex(db: D1Database, groupDid: string)
 export async function removeGroupDeclaration(input: WithdrawGroupDeclarationInput): Promise<void> {
 	await requireGroupWrite(input, VISIBILITY_WRITE);
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.group));
+	const writer = await gatedWriter(input);
 	await writer({
 		repo: input.group.group_did,
 		collection: GROUP_DECLARATION_COLLECTION,
@@ -141,11 +141,18 @@ export async function reconcileGroupDeclaration(
 	return null;
 }
 
-/** Whether the group's public repo holds its declaration, read through the
- *  group's session. An unreachable PDS throws, so a repair never acts on a state
- *  it could not read. */
-export async function groupDeclared(env: CredentialStoreEnv, groupDid: string): Promise<boolean> {
-	const { handle } = await groupClient(await requireGroupCredential(env, groupDid), groupDid);
+/** Whether the group's public repo holds its declaration, read through
+ *  `personDid`'s own group session. An unreachable PDS throws, so a repair never
+ *  acts on a state it could not read. */
+export async function groupDeclared(
+	env: CredentialStoreEnv,
+	groupDid: string,
+	personDid: string
+): Promise<boolean> {
+	const { handle } = await groupClient(
+		await requireGroupCredential(env, groupDid, personDid),
+		groupDid
+	);
 	return repoRecordExists(handle, groupDid, GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY);
 }
 

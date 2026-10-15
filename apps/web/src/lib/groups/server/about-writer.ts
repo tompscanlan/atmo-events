@@ -26,7 +26,7 @@ import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from '../types'
 
 import type { GroupRuleRecord, GroupSpaceReader } from './about-read';
 
-import { groupWriter, requireGroupWrite, type GroupRepoWriter, ownSpace } from './group-write';
+import { gatedWriter, requireGroupWrite, type GroupRepoWriter, ownSpace } from './group-write';
 import { VISIBILITY_WRITE, spaceWrite } from '../grants';
 import type { WriteAction } from '../scopes';
 
@@ -66,7 +66,7 @@ export async function writeGroupProfile(
 		$type: GROUP_PROFILE_COLLECTION
 	};
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.group));
+	const writer = await gatedWriter(input);
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_PROFILE_COLLECTION,
@@ -98,7 +98,7 @@ export async function writeAboutAccess(
 		$type: GROUP_ACCESS_COLLECTION
 	};
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.group));
+	const writer = await gatedWriter(input);
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_ACCESS_COLLECTION,
@@ -167,7 +167,7 @@ export async function setGroupRules(
 	for (const action of needs) {
 		await requireGroupWrite(input, spaceWrite(ABOUT_SPACE_TYPE, GROUP_RULE_COLLECTION, action));
 	}
-	const writer = input.writer ?? (await groupWriter(input.env, input.group));
+	const writer = await gatedWriter(input);
 
 	const result: RulesWriteResult = { kept: [], created: [], deleted: [] };
 	const claimed = new Set<string>();

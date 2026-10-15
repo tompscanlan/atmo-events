@@ -31,11 +31,11 @@ import {
 } from '../../members-record';
 import type { GroupSpaceReader } from '../about-read';
 import { clearSpaceCredentials } from '../space-credential';
-import { linkedServices } from './linked-oauth-stub';
+import { holdsSession, linkedServices, storedSession } from './linked-oauth-stub';
 import { STUB_PDS_SERVICE } from './linked-group';
 import type { FakeSpaceReader } from './space-reader';
 
-import { GROUP_SESSION_PREFIX } from '../session';
+import { parseGroupSessionKey } from '../session';
 /** Groups whose stored session cannot be restored (`breakSession`). */
 const broken = new Set<string>();
 
@@ -45,8 +45,10 @@ export const fixtureSessions = {
 	reads: 0,
 	get: async (key: string) => {
 		fixtureSessions.reads++;
-		const did = key.startsWith(GROUP_SESSION_PREFIX) ? key.slice(GROUP_SESSION_PREFIX.length) : '';
-		return linkedServices.has(did) || broken.has(did) ? '{}' : null;
+		const named = parseGroupSessionKey(key);
+		if (!named) return null;
+		const held = holdsSession(named.groupDid, named.personDid) || broken.has(named.groupDid);
+		return held ? storedSession(named.personDid) : null;
 	}
 } as unknown as KVNamespace & { reads: number };
 

@@ -1,5 +1,6 @@
 import { canSeeMembers } from '$lib/groups/access';
 import { groupFace } from '$lib/groups/about-record';
+import { mayHoldGroupSession } from '$lib/groups/grants';
 import { can } from '$lib/groups/permissions';
 import { readGroupAbout, type GroupSpaceReader } from '$lib/groups/server/about-read';
 import { gateCaller } from '$lib/groups/server/acceptance';
@@ -121,12 +122,12 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 			...pendingRequests.map((request) => request.did)
 		]),
 		canManageGroup: can(membership.permissions, 'MANAGE_GROUP'),
-		/** For the owner only, who alone may link the group's account: whether
-		 *  this site writes as the group through a session the owner linked.
-		 *  Null for anyone else. */
+		/** For someone whose roles grant writes, who may link a group session:
+		 *  whether this site holds theirs, the one their writes as the group go
+		 *  out on. Null for anyone else. */
 		groupLinked:
-			locals.did && locals.did === group.owner_did
-				? await hasLinkedSession(platform!.env, group.group_did)
+			locals.did && mayHoldGroupSession(membership)
+				? await hasLinkedSession(platform!.env, group.group_did, locals.did)
 				: null,
 		/** Why the page shows only the stored details, when nothing could be read
 		 *  with the caller's access: they are signed out, or their sign-in reads

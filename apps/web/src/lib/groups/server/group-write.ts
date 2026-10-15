@@ -3,8 +3,9 @@
 // The helpers in $lib/atproto/server/repo.remote.ts write the signed-in user's
 // own repo. A group's records belong to the group, so its admins co-edit one
 // record set, and a repo write must be authored by the repo's own DID. So here
-// the signed-in user is only the subject of a permission check. The credential
-// is the group's (./credentials.ts), and `repo` is always the group DID.
+// the signed-in user is the subject of a permission check and the person whose
+// group session carries the write (./session.ts), and `repo` is always the group
+// DID.
 import { isActorIdentifier } from '@atcute/lexicons/syntax';
 import { MEMBERSHIP_SPACE } from '../grants';
 import { can, type GroupPermission } from '../permissions';
@@ -226,7 +227,7 @@ function standingFor(
 
 /** What the gate needs. `reader` is the request's, so the gate reads through
  *  the same session as everything else the request does; absent, the gate
- *  builds the group's own. */
+ *  reads through the caller's own group session. */
 export interface GroupGateInput {
 	db: D1Database;
 	env: CredentialStoreEnv;
@@ -247,8 +248,10 @@ async function gateStanding(
 	if (!callerDid) throw new GroupPermissionError(refusal, group.group_did);
 	let reader = input.reader;
 	if (reader === undefined) {
-		reader = await groupSpaceReader(input.env, group);
-		if (!reader && group.members_space_uri) throw new GroupCredentialError(group.group_did);
+		reader = await groupSpaceReader(input.env, group, callerDid);
+		if (!reader && group.members_space_uri) {
+			throw new GroupCredentialError(group.group_did, callerDid);
+		}
 	}
 	return { membership: await standingFor(db, group, callerDid, reader), reader };
 }
@@ -333,11 +336,32 @@ export async function requireMembershipWrite(
 	);
 }
 
-/** The transport for the group's repo and its spaces, through its linked session.
- *  Throws GroupCredentialError when the group is not linked. */
+/** The person a gated write goes out for. The gate refuses an anonymous caller
+ *  before this is asked, so the refusal here is only for a caller that skipped
+ *  it. */
+export function actingPerson(input: Pick<GroupGateInput, 'group' | 'callerDid'>): string {
+	if (!input.callerDid) {
+		throw new GroupPermissionError('sign in required', input.group.group_did);
+	}
+	return input.callerDid;
+}
+
+/** The writer a gated write uses: the one given, else the caller's own group
+ *  session's. */
+export function gatedWriter(
+	input: Pick<GroupGateInput, 'env' | 'group' | 'callerDid'> & { writer?: GroupRepoWriter }
+): Promise<GroupRepoWriter> {
+	return input.writer
+		? Promise.resolve(input.writer)
+		: groupWriter(input.env, input.group, actingPerson(input));
+}
+
+/** The transport for the group's repo and its spaces, through `personDid`'s own
+ *  group session. Throws GroupCredentialError when they hold none. */
 export async function groupWriter(
 	env: CredentialStoreEnv,
-	group: GroupRow
+	group: GroupRow,
+	personDid: string
 ): Promise<GroupRepoWriter> {
-	return pdsWriter(await requireGroupCredential(env, group.group_did), group.group_did);
+	return pdsWriter(await requireGroupCredential(env, group.group_did, personDid), group.group_did);
 }

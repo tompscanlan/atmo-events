@@ -37,7 +37,7 @@ import {
 	groupClient,
 	type CredentialStoreEnv,
 	type GroupCredential,
-	requireGroupCredential
+	standInHostCredential
 } from './session';
 import { describeFailure, xrpc } from './xrpc';
 import { GroupSpaceError } from './spaces';
@@ -143,12 +143,13 @@ export function pdsMemberList(cred: GroupCredential, groupDid: string): GroupMem
 	};
 }
 
-/** The transport for a group, from its stored credential. */
+/** The transport for a group, through the session the stand-in host acts on: the
+ *  lists are the host's own state, which a real host keeps itself. */
 export async function groupMemberList(
 	env: CredentialStoreEnv,
 	group: GroupRow
 ): Promise<GroupMemberList> {
-	return pdsMemberList(await requireGroupCredential(env, group.group_did), group.group_did);
+	return pdsMemberList(await standInHostCredential(env, group), group.group_did);
 }
 
 type GroupSpaces = Pick<GroupRow, 'group_did' | 'about_space_uri' | 'members_space_uri'>;

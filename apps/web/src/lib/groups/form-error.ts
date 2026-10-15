@@ -12,18 +12,28 @@ import { GroupSpaceError } from './server/spaces';
 const NOT_LINKED: GroupFormFailure = {
 	ok: false,
 	error:
-		'This site cannot write as this group yet: its owner has to link the group’s account, from the group page. Nothing was changed.'
+		'This site cannot write as this group for you yet: link your access, from the group page. Nothing was changed.'
+};
+
+/** The session the stand-in host acts on is missing, which only the group's
+ *  creator can fix. */
+const HOST_NOT_LINKED: GroupFormFailure = {
+	ok: false,
+	error:
+		'This site cannot write as this group yet: its creator has to link their access, from the group page. Nothing was changed.'
 };
 
 /** The form message for a domain error, or null for any other failure, which a
  *  caller words for what it had done so far. Permission and credential failures
- *  are kept apart: one is the caller's business, the other is the group
- *  owner's. */
+ *  are kept apart: one is about the caller's roles, the other about the session
+ *  the write would go out on. */
 export function knownFormError(e: unknown): GroupFormFailure | null {
 	if (e instanceof GroupPermissionError) {
 		return { ok: false, error: `Not allowed: ${e.reason}` };
 	}
-	if (e instanceof GroupCredentialError) return { ...NOT_LINKED };
+	if (e instanceof GroupCredentialError) {
+		return { ...(e.standInHost ? HOST_NOT_LINKED : NOT_LINKED) };
+	}
 	if (e instanceof GroupRecordError) return { ok: false, error: e.message };
 	if (e instanceof GroupRuleError) return { ok: false, error: e.message };
 	return null;

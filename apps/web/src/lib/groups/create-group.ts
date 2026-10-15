@@ -322,7 +322,10 @@ async function setUpMintedGroup(
 	let calendarUri: string;
 	try {
 		const host = groupHost({ db: env.DB, env, group, credential: minted.credential });
-		const uris = await provisionGroupSpaces(host.createSpace);
+		// The mint's session serves the create, so the group itself is the caller.
+		const uris = await provisionGroupSpaces((space) =>
+			host.createSpace({ callerDid: minted.did }, space)
+		);
 		await recordGroupSpaces(env.DB, group.id, uris);
 		aboutUri = uris.aboutSpaceUri;
 		membersUri = uris.membersSpaceUri;

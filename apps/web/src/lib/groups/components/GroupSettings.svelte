@@ -52,7 +52,7 @@
 
 	{#if linkOutcome === 'linked'}
 		<p class="text-base-500 dark:text-base-400 mt-3 text-sm">
-			Linked. This site now writes as the group through the session you authorized.
+			Linked. This site now writes as the group for you through the session you authorized.
 		</p>
 	{:else if linkOutcome === 'failed'}
 		<p class="mt-3 text-sm text-red-600 dark:text-red-400">
@@ -189,13 +189,13 @@
 				groupDid={group.group_did}
 				class="border-base-200 dark:border-base-800 mt-8 flex flex-col gap-2 border-t pt-6"
 			>
-				<h3 class="text-sm font-semibold">This group's account</h3>
+				<h3 class="text-sm font-semibold">Your access to this group</h3>
 				<p class="text-base-500 dark:text-base-400 text-xs">
-					This site writes as the group through a session you authorized at the group's PDS.
+					This site writes as the group for you through a session you authorized at the group's PDS.
 					Reconnect if you revoked it there or it stopped working.
 				</p>
 				<div>
-					<Button type="submit" variant="secondary">Reconnect the group's account</Button>
+					<Button type="submit" variant="secondary">Reconnect your access</Button>
 				</div>
 			</GroupLinkForm>
 		{/if}

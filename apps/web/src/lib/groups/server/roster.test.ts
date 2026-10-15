@@ -20,9 +20,9 @@
 // afterwards. The requirement is "less access than intended, never more", and
 // only a failing half can show it.
 //
-// The records, the reads and the member lists all go through the group's
-// stored credential to a fake host (./__fixtures__/stub-pds.ts), which fails a
-// half when a case asks. So these cases hold however the transports are wired.
+// The records, the reads and the member lists all go through stored group
+// sessions to a fake host (./__fixtures__/stub-pds.ts), which fails a half when a
+// case asks. So these cases hold however the transports are wired.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
@@ -78,6 +78,7 @@ import { addMember, getMemberRow, requestJoin } from './db/roster';
 import { getCallerMembership, readStanding } from './standing';
 import { groupRouteContext } from './route-context';
 import { readMembersOnlyEvents } from './calendar-read';
+import { GroupCredentialError } from './session';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
@@ -1196,5 +1197,78 @@ describe('the member writes and deletes their own acceptance', () => {
 		await leaveGroup({ ...ctx(OWNER), member: memberSession(OWNER) }).catch(() => {});
 
 		expect(acceptanceSteps()).toEqual([]);
+	});
+});
+
+// Two members whose roles grant writes each hold their own group session, and a
+// write as the group goes out on the session of the person acting: an admin's
+// membership write on the admin's, never the creator's. What the stand-in host
+// keeps for itself, a member's own join and the member lists, goes on the
+// creator's, the session it acts on (TS, 2026-10-15).
+describe('whose session each write goes out on', () => {
+	const membershipWrites = () =>
+		pds.requests.filter(
+			(r) => r.nsid in RECORD_STEP && r.body?.collection === GROUP_MEMBERSHIP_COLLECTION
+		);
+	const listWrites = () =>
+		pds.requests.filter(
+			(r) => r.nsid in LIST_STEP && r.nsid !== 'com.atproto.simplespace.listMembers'
+		);
+	const people = (requests: { person: string | null }[]) => [
+		...new Set(requests.map((r) => r.person))
+	];
+
+	beforeEach(() => {
+		env = linkGroups([GROUP_DID], undefined, [OWNER, ADMIN]);
+	});
+
+	it('writes an admin’s admission on the admin’s own session, and the lists on the creator’s', async () => {
+		await admitMember(ctx(ADMIN), NEWCOMER, 'member');
+
+		expect(membershipWrites()).toHaveLength(1);
+		expect(people(membershipWrites())).toEqual([ADMIN]);
+		expect(listWrites()).toHaveLength(3);
+		expect(people(listWrites())).toEqual([OWNER]);
+	});
+
+	it('writes an admin’s role change and eject on the admin’s own session', async () => {
+		await promoteMember(ctx(ADMIN), MEMBER, 'admin');
+		await ejectMember(ctx(ADMIN), MEMBER);
+
+		expect(membershipWrites()).toHaveLength(2);
+		expect(people(membershipWrites())).toEqual([ADMIN]);
+	});
+
+	it('refuses an admin who has linked no session before anything moves, though the creator’s is stored', async () => {
+		env = linkGroups([GROUP_DID], undefined, [OWNER]);
+
+		await expect(admitMember(ctx(ADMIN), NEWCOMER, 'member')).rejects.toBeInstanceOf(
+			GroupCredentialError
+		);
+
+		expect(order).toEqual([]);
+		expect(await getMemberRow(harness.db, group.id, NEWCOMER)).toBeNull();
+	});
+
+	it('refuses an admin’s act before anything moves when the creator, whose session keeps the lists, has linked none', async () => {
+		env = linkGroups([GROUP_DID], undefined, [ADMIN]);
+
+		await expect(admitMember(ctx(ADMIN), NEWCOMER, 'member')).rejects.toMatchObject({
+			name: 'GroupCredentialError',
+			personDid: OWNER,
+			standInHost: true
+		});
+
+		expect(order).toEqual([]);
+		expect(await getMemberRow(harness.db, group.id, NEWCOMER)).toBeNull();
+	});
+
+	it('writes a member’s own open join on the creator’s session, which the stand-in host acts on', async () => {
+		await setGroup({ require_approval: 0 });
+
+		expect(await joinGroup(ctx(NEWCOMER), null)).toBe('joined');
+
+		expect(people(membershipWrites())).toEqual([OWNER]);
+		expect(people(listWrites())).toEqual([OWNER]);
 	});
 });

@@ -244,7 +244,7 @@ describe('a group whose owner has not linked it', () => {
 			requireApproval: true
 		});
 
-		expect(result).toEqual(formError(new GroupCredentialError(GROUP_DID)));
+		expect(result).toEqual(formError(new GroupCredentialError(GROUP_DID, OWNER)));
 		expect(pds.writes().slice(setUp)).toEqual([]);
 	});
 });

@@ -222,15 +222,26 @@ export function credentialSpaceReader(
 	});
 }
 
-/** The reader for a group, or null when this deployment holds no credential for
- *  it. That is a configuration fact, not an error a page should throw on. */
+/** A reader as the group, through `personDid`'s own group session, or null when
+ *  they hold none. That is a configuration fact, not an error a page should
+ *  throw on. */
 export async function groupSpaceReader(
 	env: CredentialStoreEnv,
-	group: Pick<GroupRow, 'group_did'>
+	group: Pick<GroupRow, 'group_did'>,
+	personDid: string
 ): Promise<GroupSpaceReader | null> {
-	const cred = await resolveGroupCredential(env, group.group_did);
+	const cred = await resolveGroupCredential(env, group.group_did, personDid);
 	if (!cred) return null;
 	return pdsSpaceReader(cred, group.group_did);
+}
+
+/** The stand-in host's reader for its own state, through the session it acts on
+ *  (./session.ts `standInHostCredential`), or null when there is none. */
+export function standInHostReader(
+	env: CredentialStoreEnv,
+	group: Pick<GroupRow, 'group_did' | 'owner_did'>
+): Promise<GroupSpaceReader | null> {
+	return groupSpaceReader(env, group, group.owner_did);
 }
 
 export interface GroupAbout {

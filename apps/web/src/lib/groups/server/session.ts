@@ -1,22 +1,24 @@
-// Writing as a group: the one credential this app keeps for a group, and the
-// one seam every request as the group goes through (`groupClient`).
+// Writing as a group: the credentials this app keeps for a group, and the one
+// seam every request as the group goes through (`groupClient`).
 //
-// The credential is the group's linked session: an OAuth session on the group's
-// own account, which its owner grants by signing in as the group and authorizing
-// this app. This app stores no password for a group account. The creator holds
-// its login, and a group nobody has linked cannot be written as. The one other
+// A credential is a group session: an OAuth session on the group's own account,
+// which a person whose roles grant writes approves by signing in at the group's
+// host and authorizing this app. A person holds one per group, filed under the
+// person signed in to this app who started it, and it writes as the group within
+// that person's roles: the host checks them on every request (proposal.md:93-99,
+// per-user sessions). No one's session writes for anyone else. The one other
 // credential is the session `createAccount` returns, which the create flow uses
 // to set the new group up inside that one request and never stores.
 //
-// Linked sessions live in their own store, under `group:session:` in the sign-in
-// sessions namespace. A sign-in session is keyed by DID too, so sharing that store
-// would let a sign-in as the group overwrite the linked session with one that
-// lacks the group's scope, and a link would leave a session a `did` cookie could
-// restore.
+// Group sessions live in their own store, under `group:session:<person>/` in the
+// sign-in sessions namespace, keyed by group DID. A sign-in session is keyed by
+// DID too, so sharing that store would let a sign-in as the group overwrite a
+// group session with one that lacks the group's scope, and a link would leave a
+// session a `did` cookie could restore.
 //
 // Every request as the group goes through `groupClient`. The human's OAuth
 // session would author under the human's DID, and a repo write needs repo === the
-// authenticated DID. A linked session manages its own tokens. The minted session
+// authenticated DID. A group session manages its own tokens. The minted session
 // is used well inside its token's lifetime, so it is sent as it is and never
 // renewed.
 import { Client } from '@atcute/client';
@@ -29,30 +31,109 @@ import {
 import type { Did } from '@atcute/lexicons';
 import { KVStore } from '$lib/atproto/server/kv-store';
 import { createOAuthClientWithSessions } from '$lib/atproto/server/oauth';
+import { GROUP_PROFILE_COLLECTION, GROUP_RULE_COLLECTION } from '../about-record';
 import { GROUP_DECLARATION_COLLECTION } from '../declaration-record';
 import { GROUP_EVENT_COLLECTION } from '../ids';
+import {
+	GROUP_ACCESS_COLLECTION,
+	GROUP_EVENT_PERMISSIONS_COLLECTION,
+	GROUP_MEMBERSHIP_COLLECTION,
+	GROUP_PERMISSIONS_COLLECTION,
+	GROUP_ROLE_COLLECTION,
+	GROUP_SPACE_COLLECTION
+} from '../members-record';
+import { ABOUT_SPACE_TYPE, CALENDAR_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 
 /** The parts of the platform env a group session reads: the sessions namespace,
- *  and for restoring a link, the OAuth client's settings. */
+ *  and for restoring a session, the OAuth client's settings. */
 export type CredentialStoreEnv = Partial<App.Platform['env']>;
 
 export const GROUP_SESSION_PREFIX = 'group:session:';
 
-/** What the group's session may do, and nothing else: its public-repo records
- *  (the declaration and public group events), its own spaces and their records,
- *  and image uploads. `authority=self` is the group's own spaces, resolved to
- *  its DID when the token is issued. The type is `*` because the PDS resolves
- *  every type a scope names, and the group.opensocial lexicons do not resolve
- *  yet, so a typed scope would fail consent. */
+/** The prefix of `personDid`'s group sessions. A DID holds no `/`. */
+function personPrefix(personDid: string): string {
+	return `${GROUP_SESSION_PREFIX}${personDid}/`;
+}
+
+/** Where `personDid`'s session on `groupDid` is stored. */
+export function groupSessionKey(groupDid: string, personDid: string): string {
+	return personPrefix(personDid) + groupDid;
+}
+
+/** The group and the person a stored key names, or null for any other key. */
+export function parseGroupSessionKey(key: string): { groupDid: string; personDid: string } | null {
+	if (!key.startsWith(GROUP_SESSION_PREFIX)) return null;
+	const [personDid, groupDid, ...rest] = key.slice(GROUP_SESSION_PREFIX.length).split('/');
+	if (rest.length > 0 || !personDid?.startsWith('did:') || !groupDid?.startsWith('did:')) {
+		return null;
+	}
+	return { groupDid, personDid };
+}
+
+const SELF = 'authority=self';
+
+/** The group's own methods on its join requests, which take a group session. */
+const LIST_JOIN_REQUESTS = 'group.opensocial.listJoinRequests';
+const DENY_JOIN_REQUEST = 'group.opensocial.denyJoinRequest';
+
+/** Reading a group space as the group. Reads are collection-independent. */
+const readSpace = (spaceType: string) => `space:${spaceType}?${SELF}&action=read`;
+
+/** Writing one collection's records in a group space as the group. */
+const writeSpace = (spaceType: string, collection: string) =>
+	`space:${spaceType}?${SELF}&collection=${collection}&action=create&action=update&action=delete`;
+
+/** What a group session asks for: one item per space and collection atmo writes,
+ *  each naming its space's type. A host keeps a requested item only when the
+ *  person's roles cover all of it and drops the rest one by one, so small items
+ *  leave a person with only some roles the writes those roles allow. `space:*`
+ *  only for creating spaces, as the host grants it (proposal.md:213), and the two
+ *  join-request methods (proposal.md, "Permission sets", manageMembers). The
+ *  public repo's records (the declaration and public group events) and image
+ *  uploads are what the host's `repo:` and `blob:` grants cover. A type named
+ *  here must resolve where the session is asked for, so the calendar space's
+ *  type is published there (devnet only today). */
 export const GROUP_SESSION_SCOPES: readonly string[] = [
+	readSpace(ABOUT_SPACE_TYPE),
+	writeSpace(ABOUT_SPACE_TYPE, GROUP_PROFILE_COLLECTION),
+	writeSpace(ABOUT_SPACE_TYPE, GROUP_RULE_COLLECTION),
+	writeSpace(ABOUT_SPACE_TYPE, GROUP_ACCESS_COLLECTION),
+	readSpace(MEMBERS_SPACE_TYPE),
+	writeSpace(MEMBERS_SPACE_TYPE, GROUP_MEMBERSHIP_COLLECTION),
+	writeSpace(MEMBERS_SPACE_TYPE, GROUP_ROLE_COLLECTION),
+	writeSpace(MEMBERS_SPACE_TYPE, GROUP_PERMISSIONS_COLLECTION),
+	writeSpace(MEMBERS_SPACE_TYPE, GROUP_EVENT_PERMISSIONS_COLLECTION),
+	writeSpace(MEMBERS_SPACE_TYPE, GROUP_SPACE_COLLECTION),
+	writeSpace(MEMBERS_SPACE_TYPE, GROUP_ACCESS_COLLECTION),
+	readSpace(CALENDAR_SPACE_TYPE),
+	writeSpace(CALENDAR_SPACE_TYPE, GROUP_EVENT_COLLECTION),
+	writeSpace(CALENDAR_SPACE_TYPE, GROUP_ACCESS_COLLECTION),
+	`space:*?${SELF}&manage=create`,
+	`rpc:${LIST_JOIN_REQUESTS}?aud=*`,
+	`rpc:${DENY_JOIN_REQUEST}?aud=*`,
 	scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
-	'space:*?authority=self&manage=create&manage=update&manage=delete',
-	'space:*?authority=self&collection=*',
 	scope.blob({ accept: ['image/*'] })
 ];
 
-/** The scope a link asks for. */
-export const GROUP_SESSION_SCOPE = ['atproto', ...GROUP_SESSION_SCOPES].join(' ');
+/** What the stand-in host's own session asks for past a person's: changing a
+ *  space's member list and read policy (`simplespace` putMember, removeMember,
+ *  updateSpace), which the stand-in keeps as a host would. A real host does that
+ *  itself and grants neither, so these leave with the stand-in. */
+export const STAND_IN_HOST_SCOPES: readonly string[] = [`space:*?${SELF}&manage=update`];
+
+/** Every scope a link may ask for, which the client metadata must list. */
+export const GROUP_LINK_SCOPES: readonly string[] = [
+	...GROUP_SESSION_SCOPES,
+	...STAND_IN_HOST_SCOPES
+];
+
+/** The scope a link asks for. The stand-in host's session also asks for what the
+ *  stand-in needs to keep its own state. */
+export function groupSessionScope(forStandInHost: boolean): string {
+	return ['atproto', ...GROUP_SESSION_SCOPES, ...(forStandInHost ? STAND_IN_HOST_SCOPES : [])].join(
+		' '
+	);
+}
 
 /** Whether this deployment can link a group: it serves its own client metadata,
  *  so a link can ask for the group's scope, and it has a sessions store, so a
@@ -61,52 +142,61 @@ export function groupLinkConfigured(env: CredentialStoreEnv | undefined): boolea
 	return Boolean(env?.OAUTH_PUBLIC_URL && env?.OAUTH_SESSIONS);
 }
 
-// One client per sessions store, kept per isolate like the sign-in client, so its
-// metadata and DPoP nonce caches survive between requests.
-const linkClients = new WeakMap<KVNamespace, OAuthClient>();
+// One client per person and sessions store, kept per isolate like the sign-in
+// client, so its metadata and DPoP nonce caches survive between requests.
+const linkClients = new WeakMap<KVNamespace, Map<string, OAuthClient>>();
 
-/** The client that links groups and restores their sessions. */
-export function groupLinkClient(env: CredentialStoreEnv | undefined): OAuthClient {
+/** The client that links groups for `personDid` and restores their sessions. */
+export function groupLinkClient(
+	env: CredentialStoreEnv | undefined,
+	personDid: string
+): OAuthClient {
 	const kv = env?.OAUTH_SESSIONS;
 	if (!kv) throw new Error('linking a group needs the OAUTH_SESSIONS store');
-	let client = linkClients.get(kv);
+	let clients = linkClients.get(kv);
+	if (!clients) linkClients.set(kv, (clients = new Map()));
+	let client = clients.get(personDid);
 	if (!client) {
 		// The client reads the OAuth settings, which a deployment that links groups has.
 		client = createOAuthClientWithSessions(
 			env as App.Platform['env'],
-			GROUP_SESSION_SCOPES,
-			new KVStore<Did, StoredSession>(kv, { prefix: GROUP_SESSION_PREFIX })
+			GROUP_LINK_SCOPES,
+			new KVStore<Did, StoredSession>(kv, { prefix: personPrefix(personDid) })
 		);
-		linkClients.set(kv, client);
+		clients.set(personDid, client);
 	}
 	return client;
 }
 
-/** Whether `groupDid` has a linked session stored. A read of the store only:
- *  it neither refreshes nor checks the session with the PDS. */
+/** Whether `personDid` has a session on `groupDid` stored. A read of the store
+ *  only: it neither refreshes nor checks the session with the PDS. */
 export async function hasLinkedSession(
 	env: CredentialStoreEnv | undefined,
-	groupDid: string
+	groupDid: string,
+	personDid: string
 ): Promise<boolean> {
 	const kv = env?.OAUTH_SESSIONS;
 	if (!kv) return false;
-	return (await kv.get(GROUP_SESSION_PREFIX + groupDid, 'text')) !== null;
+	return (await kv.get(groupSessionKey(groupDid, personDid), 'text')) !== null;
 }
 
-/** The group's linked session, or null when there is none. Restored without a
- *  refresh: the session refreshes its own token on first use, so a lookup costs
- *  no round trip to the PDS. */
+/** `personDid`'s session on `groupDid`, or null when there is none. Restored
+ *  without a refresh: the session refreshes its own token on first use, so a
+ *  lookup costs no round trip to the PDS. */
 export async function linkedGroupSession(
 	env: CredentialStoreEnv | undefined,
-	groupDid: string
+	groupDid: string,
+	personDid: string
 ): Promise<OAuthSession | null> {
-	if (!(await hasLinkedSession(env, groupDid))) return null;
-	return groupLinkClient(env).restore(groupDid as Did, { refresh: false });
+	if (!(await hasLinkedSession(env, groupDid, personDid))) return null;
+	return groupLinkClient(env, personDid).restore(groupDid as Did, { refresh: false });
 }
 
-/** An OAuth session on the group's account, granted by its owner. */
+/** An OAuth session on the group's account, approved by `person`. */
 export interface LinkedGroupCredential {
 	kind: 'linked';
+	/** Who approved it, and whose roles it writes within. */
+	person: string;
 	session: Pick<OAuthSession, 'did' | 'handle'>;
 }
 
@@ -121,34 +211,58 @@ export interface MintSessionCredential {
 
 export type GroupCredential = LinkedGroupCredential | MintSessionCredential;
 
-/** The credential to write as `groupDid`, or null when its owner has not linked
- *  it. A linked session that cannot be restored is an error, not a null: the
- *  owner linked it, so a silent "not linked" would hide a broken session. */
+/** `personDid`'s credential to write as `groupDid`, or null when they have not
+ *  linked one. A session that cannot be restored is an error, not a null: they
+ *  linked it, so a silent "not linked" would hide a broken session. */
 export async function resolveGroupCredential(
 	env: CredentialStoreEnv,
-	groupDid: string
+	groupDid: string,
+	personDid: string
 ): Promise<GroupCredential | null> {
-	const session = await linkedGroupSession(env, groupDid);
-	return session ? { kind: 'linked', session } : null;
+	const session = await linkedGroupSession(env, groupDid, personDid);
+	return session ? { kind: 'linked', person: personDid, session } : null;
 }
 
-/** The group's owner has not linked its account, so this app cannot author as the
- *  group. Only the owner can fix it, by linking from the group page. */
+/** `personDid` holds no session on the group, so this app cannot write as the
+ *  group for them. Only they can fix it, by linking from the group page. When
+ *  `standInHost`, the session missing is the one the stand-in host acts on, the
+ *  group's creator's. */
 export class GroupCredentialError extends Error {
-	constructor(readonly groupDid: string) {
-		super(`${groupDid} is not linked: its owner has not authorized this app to write as it`);
+	constructor(
+		readonly groupDid: string,
+		readonly personDid: string,
+		readonly standInHost = false
+	) {
+		super(
+			standInHost
+				? `${groupDid}'s creator ${personDid} has linked no group session, which the stand-in host acts on`
+				: `${personDid} has linked no group session for ${groupDid}, so this app cannot write as the group for them`
+		);
 		this.name = 'GroupCredentialError';
 	}
 }
 
-/** The group's credential, for a write. Throws GroupCredentialError when the
- *  group is not linked, which only its owner can fix. */
+/** `personDid`'s credential, for a write as the group. Throws GroupCredentialError
+ *  when they have not linked one, which only they can fix. */
 export async function requireGroupCredential(
 	env: CredentialStoreEnv,
-	groupDid: string
+	groupDid: string,
+	personDid: string
 ): Promise<GroupCredential> {
-	const cred = await resolveGroupCredential(env, groupDid);
-	if (!cred) throw new GroupCredentialError(groupDid);
+	const cred = await resolveGroupCredential(env, groupDid, personDid);
+	if (!cred) throw new GroupCredentialError(groupDid, personDid);
+	return cred;
+}
+
+/** The session the stand-in host acts on for its own acts (a join, a leave, the
+ *  member lists, the spaces' read policies), where nobody acts as the group: the
+ *  creator's (TS, 2026-10-15). A real host does these itself. */
+export async function standInHostCredential(
+	env: CredentialStoreEnv,
+	group: Pick<GroupRow, 'group_did' | 'owner_did'>
+): Promise<GroupCredential> {
+	const cred = await resolveGroupCredential(env, group.group_did, group.owner_did);
+	if (!cred) throw new GroupCredentialError(group.group_did, group.owner_did, true);
 	return cred;
 }
 
@@ -161,7 +275,7 @@ type GroupTransport = {
 /** Which credential served a write as the group: one line per write, never the
  *  token. Reads are not logged: there are many, and the log is about who wrote. */
 function reportWrite(
-	via: GroupCredential['kind'],
+	via: string,
 	did: string,
 	pathname: string,
 	init: RequestInit,
@@ -194,7 +308,7 @@ function linkedClient(cred: LinkedGroupCredential, expectDid: string): GroupTran
 	}
 	const handle = async (pathname: string, init: RequestInit): Promise<Response> => {
 		const res = await session.handle(pathname, init);
-		reportWrite('linked', expectDid, pathname, init, res.status);
+		reportWrite(`linked by ${cred.person}`, expectDid, pathname, init, res.status);
 		return res;
 	};
 	return { client: new Client({ handler: handle }), handle, did: session.did };

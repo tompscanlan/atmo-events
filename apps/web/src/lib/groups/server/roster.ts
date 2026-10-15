@@ -23,7 +23,7 @@
 import { GROUP_ROLES, type GroupRoleName, type AssignableRole } from '../permissions';
 import type { GroupRow, GroupVisibility, MemberRow } from '../types';
 
-import { groupSpaceReader, type GroupSpaceReader } from './about-read';
+import { standInHostReader, type GroupSpaceReader } from './about-read';
 
 import {
 	authorizeMembership,
@@ -45,12 +45,13 @@ import { deleteAcceptance, writeAcceptance, type MemberSession } from './accepta
 import {
 	GroupRecordError,
 	groupWriter,
+	pdsWriter,
 	requireGroupPermission,
 	requireMembershipWrite,
 	type GroupRepoWriter
 } from './group-write';
 import { errorText } from './errors';
-import { type CredentialStoreEnv } from './session';
+import { type CredentialStoreEnv, standInHostCredential } from './session';
 import { isUnfinishedRow, readGroupMembers, readMembership } from './members-read';
 import { GroupRuleError } from './db/rules';
 import {
@@ -97,8 +98,8 @@ export interface RosterContext {
 	group: GroupRow;
 	callerDid: string;
 	/** The caller's own reader, for the permission gates: an admin's read before
-	 *  a write uses their own access (TS 2026-10-15). Built from the group's
-	 *  credential if absent. */
+	 *  a write uses their own access (TS 2026-10-15). The stand-in host's if
+	 *  absent. */
 	reader?: GroupSpaceReader | null;
 	/** The visibility the route read from the access record, or `null` if it did
 	 *  not ask. When absent, a join reads the record itself. */
@@ -141,12 +142,14 @@ function memberListOnFirstUse(build: () => Promise<GroupMemberList>): GroupMembe
 }
 
 /** An act's context, with the gate's reader, the stand-in host's own reader,
- *  and the writer and member list built from the group's credential on first
- *  use. The gate reads the caller's standing once, with their access. What the
- *  stand-in reads to keep its own state (a join's visibility and date, the
- *  member lists, an unfinished removal) it reads as the group, as a real host
- *  reads its own records: a joiner cannot read the members space they are
- *  joining. An act that never writes a record never asks for the credential. */
+ *  and the writer and member list, each built on first use. The gate reads the
+ *  caller's standing once, with their access. What the stand-in reads to keep
+ *  its own state (a join's visibility and date, the member lists, an unfinished
+ *  removal) it reads as the group, as a real host reads its own records: a
+ *  joiner cannot read the members space they are joining. The stand-in host
+ *  reads and keeps the lists on the session it acts on (./session.ts
+ *  `standInHostCredential`). An admin's act looks up both sessions first; a
+ *  member's own act asks for the stand-in host's only when it writes. */
 type PreparedRoster = RosterContext & {
 	reader: GroupSpaceReader | null;
 	hostReader: GroupSpaceReader | null;
@@ -154,14 +157,31 @@ type PreparedRoster = RosterContext & {
 	memberList: GroupMemberList;
 };
 
-async function prepared(ctx: RosterContext): Promise<PreparedRoster> {
-	const hostReader = await groupSpaceReader(ctx.env, ctx.group);
+/** Who writes an act's `membership` as the group: the caller, an admin acting
+ *  within their roles on their own group session, or the stand-in host, for a
+ *  member's own join or leave, which nobody acts as the group for and a real
+ *  host writes itself. */
+type MembershipAuthor = 'caller' | 'stand-in host';
+
+async function prepared(ctx: RosterContext, author: MembershipAuthor): Promise<PreparedRoster> {
+	const hostReader = await standInHostReader(ctx.env, ctx.group);
 	return {
 		...ctx,
 		reader: ctx.reader !== undefined ? ctx.reader : hostReader,
 		hostReader,
-		writer: writerOnFirstUse(() => groupWriter(ctx.env, ctx.group)),
-		memberList: memberListOnFirstUse(() => groupMemberList(ctx.env, ctx.group))
+		// An admin's act looks up both sessions it writes on, theirs and the
+		// stand-in host's, before anything moves, so a missing one is refused
+		// with nothing half done.
+		writer:
+			author === 'caller'
+				? await groupWriter(ctx.env, ctx.group, ctx.callerDid)
+				: writerOnFirstUse(async () =>
+						pdsWriter(await standInHostCredential(ctx.env, ctx.group), ctx.group.group_did)
+					),
+		memberList:
+			author === 'caller'
+				? await groupMemberList(ctx.env, ctx.group)
+				: memberListOnFirstUse(() => groupMemberList(ctx.env, ctx.group))
 	};
 }
 
@@ -180,7 +200,7 @@ async function listed(
 		async () => {
 			if (!ctx.hostReader) {
 				throw new GroupRecordError(
-					`${ctx.group.group_did} is not linked, so its access records cannot be read`
+					`${ctx.group.group_did}'s creator has linked no group session, so the stand-in host cannot read its access records`
 				);
 			}
 			const access = await readSpaceAccess(ctx.hostReader, ctx.group);
@@ -309,7 +329,7 @@ export async function joinGroup(
 	given: RosterContext,
 	message: string | null
 ): Promise<JoinOutcome> {
-	const ctx = await prepared(given);
+	const ctx = await prepared(given, 'stand-in host');
 	const outcome = await requestJoin(
 		ctx.db,
 		ctx.group,
@@ -337,7 +357,7 @@ export async function joinGroup(
 
 /** Self-service leave. The owner cannot leave. */
 export async function leaveGroup(given: RosterContext): Promise<void> {
-	const ctx = await prepared(given);
+	const ctx = await prepared(given, 'stand-in host');
 	await revoke(ctx, ctx.callerDid, 'leave');
 }
 
@@ -349,7 +369,7 @@ export async function admitFromRequest(
 	member: string,
 	role: AssignableRole
 ): Promise<{ did: string }> {
-	const ctx = await prepared(given);
+	const ctx = await prepared(given, 'caller');
 	// Before the row moves, so a refusal changes nothing. A caller who may admit
 	// no one is refused before learning whether the request exists. The gate
 	// checks the role the requester would get.
@@ -378,7 +398,7 @@ export async function admitMember(
 	did: string,
 	role: AssignableRole
 ): Promise<void> {
-	const ctx = await prepared(given);
+	const ctx = await prepared(given, 'caller');
 	// Before the row moves, so a refusal changes nothing.
 	await requireMembershipWrite(ctx, did, [role]);
 	if (await getMemberRow(ctx.db, ctx.group.id, did)) await requireFinished(ctx, did);
@@ -401,7 +421,7 @@ export async function withdrawJoinRequest(ctx: RosterContext): Promise<void> {
 /** Reject a member's pending request, behind the same permission as approving
  *  one. */
 export async function rejectJoinRequest(given: RosterContext, member: string): Promise<void> {
-	const ctx = await prepared(given);
+	const ctx = await prepared(given, 'caller');
 	await requireGroupPermission(ctx, 'ADMIT_MEMBERS');
 	const requestId = await pendingRequestIdOf(ctx.db, ctx.group.id, member);
 	if (!requestId) throw new GroupRuleError('not-found', 'No such pending join request');
@@ -410,7 +430,7 @@ export async function rejectJoinRequest(given: RosterContext, member: string): P
 
 /** Eject, behind the same checks as leave. */
 export async function ejectMember(given: RosterContext, did: string): Promise<void> {
-	await revoke(await prepared(given), did, 'eject');
+	await revoke(await prepared(given, 'caller'), did, 'eject');
 }
 
 /** Assign a role. A promotion is a grant and a demotion a revocation, each in
@@ -421,7 +441,7 @@ export async function promoteMember(
 	did: string,
 	role: AssignableRole
 ): Promise<void> {
-	const ctx = await prepared(given);
+	const ctx = await prepared(given, 'caller');
 	const current = await changeableRow(ctx, did);
 	// Before either half, so a refusal changes nothing.
 	await requireMembershipWrite(ctx, did, [role]);

@@ -238,20 +238,21 @@
 
 	<GroupDataSources {group} source={about.source} rules={about.rules} />
 
-	<!-- Outside the settings toggle: until the owner links, every write as the
-	     group fails, so the one step that fixes it is not left folded away. -->
+	<!-- Outside the settings toggle: until this person links, every write they
+	     make as the group fails, so the one step that fixes it is not left
+	     folded away. -->
 	{#if data.groupLinked === false}
 		<GroupLinkForm
 			groupDid={group.group_did}
 			class="mt-10 rounded-2xl p-4 text-sm ring-1 ring-amber-500/40"
 		>
-			<p class="font-semibold">Link this group's account</p>
+			<p class="font-semibold">Link your access to this group</p>
 			<p class="mt-1">
-				This site cannot write as the group until you do, so its events, settings and member changes
-				wait on it. At the group's PDS you sign in as the group, not as yourself, with the email and
-				password you chose when you created it, and approve this site.
+				This site writes as the group for you only through a session you approve, so your event,
+				settings and member changes wait on it. At the group's PDS you sign in as the group, not as
+				yourself, with the email and password chosen when it was created, and approve this site.
 			</p>
-			<div class="mt-3"><Button type="submit">Link the group's account</Button></div>
+			<div class="mt-3"><Button type="submit">Link your access</Button></div>
 		</GroupLinkForm>
 	{/if}
 

@@ -68,9 +68,9 @@ import {
 	type SpaceReadPolicy
 } from './spaces';
 
-import { GroupRecordError, requireGroupWrite } from './group-write';
+import { actingPerson, requireGroupWrite } from './group-write';
 import { spaceWrite } from '../grants';
-import { type CredentialStoreEnv } from './session';
+import { type CredentialStoreEnv, GroupCredentialError } from './session';
 import { groupSpaceUris, POLICY_PUBLIC } from '../ids';
 import {
 	accessGrantsRead,
@@ -129,7 +129,14 @@ export interface PolicyAlignment {
 
 export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairResult> {
 	const { db, env, group } = input;
-	const reader = input.reader !== undefined ? input.reader : await groupSpaceReader(env, group);
+	// Repair reads as the group until the real host (TS, 2026-10-15), through the
+	// caller's own group session; an anonymous caller is refused by the gate.
+	const reader =
+		input.reader !== undefined
+			? input.reader
+			: input.callerDid
+				? await groupSpaceReader(env, group, input.callerDid)
+				: null;
 	// Repair rewrites the authz config and the member lists, so it takes the scope
 	// that writes `permissions`, which can grant anything (`proposal.md:59`). Each
 	// record write it makes is checked again on its own.
@@ -137,9 +144,8 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 		{ ...input, reader },
 		spaceWrite(MEMBERS_SPACE_TYPE, GROUP_PERMISSIONS_COLLECTION, 'update')
 	);
-	if (!reader) {
-		throw new GroupRecordError(`${group.group_did} is not linked, so its records cannot be read`);
-	}
+	// The caller has linked no group session, which only they can fix.
+	if (!reader) throw new GroupCredentialError(group.group_did, actingPerson(input));
 
 	const members = await readGroupMembers(reader, group);
 	// The row's creation instant, as a create stamps its records.
@@ -254,7 +260,7 @@ async function alignToAccess(
 	}
 
 	const visibility = visibilityFromAccess(access.about);
-	const declared = await groupDeclared(input.env, input.group.group_did);
+	const declared = await groupDeclared(input.env, input.group.group_did, actingPerson(input));
 	const required = declarationRequired(visibility);
 	await reconcileGroupDeclaration({ ...input, visibility, declared });
 	// A withdrawal whose index notice was lost leaves browse listing a private

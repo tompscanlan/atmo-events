@@ -1,15 +1,23 @@
-// The link routes. The start answers a non-owner with the same 404 as a missing
-// group, and the callback never touches the browser's cookies: the sign-in
-// callback sets `did` to whoever authorized, which here would be the group.
+// The link routes. The start answers someone whose roles grant no writes with
+// the same 404 as a missing group, each link runs on the client of the person
+// who started it, which files the session under them, and the callback never
+// touches the browser's cookies: the sign-in callback sets `did` to whoever
+// authorized, which here would be the group.
 //
 // The OAuth client and its state store are stubbed (they talk to the group's
-// PDS); the groups table is the real SQL.
+// PDS), and so is the caller's standing, which the route reads as every group
+// route does (route-context.test.ts covers that read); the groups table is the
+// real SQL.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StoredState } from '@atcute/oauth-node-client';
 
 let authorizedAs: string;
 const states = new Map<string, StoredState>();
 const authorize = vi.hoisted(() => vi.fn());
+/** Whose client each call built, in order. */
+const clientsFor = vi.hoisted(() => [] as string[]);
+/** The named permissions each caller's roles grant. */
+const roles = vi.hoisted(() => new Map<string, string[]>());
 
 vi.mock('$lib/atproto/server/oauth', () => ({
 	oauthStates: () => ({
@@ -21,12 +29,38 @@ vi.mock('$lib/atproto/server/oauth', () => ({
 }));
 vi.mock('$lib/groups/server/session', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/groups/server/session')>()),
-	groupLinkClient: () => ({
-		authorize,
-		callback: async () => ({ session: { did: authorizedAs } }),
-		revoke: async () => {}
-	})
+	groupLinkClient: (_env: unknown, personDid: string) => {
+		clientsFor.push(personDid);
+		return {
+			authorize,
+			callback: async () => ({ session: { did: authorizedAs } }),
+			revoke: async () => {}
+		};
+	}
 }));
+vi.mock('$lib/groups/server/acceptance', () => ({
+	gateCaller: async (did: string | null) => (did ? { did } : null)
+}));
+vi.mock('$lib/groups/server/route-context', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('$lib/groups/server/route-context')>();
+	const { error } = await import('@sveltejs/kit');
+	const { getGroupByDid } = await import('$lib/groups/server/db/groups');
+	const { NO_GRANTS } = await import('$lib/groups/scopes');
+	return {
+		...actual,
+		groupRouteContext: async (db: D1Database, actor: string, caller: { did: string } | null) => {
+			const group = await getGroupByDid(db, actor);
+			if (!group) error(404, actual.GROUP_NOT_FOUND);
+			const permissions = new Set(caller ? (roles.get(caller.did) ?? []) : []);
+			return {
+				group,
+				membership: { permissions, grants: NO_GRANTS },
+				visibility: null,
+				reader: null
+			};
+		}
+	};
+});
 
 import { POST } from './+server';
 import { GET } from './callback/+server';
@@ -36,6 +70,7 @@ import { createGroup } from '$lib/groups/server/db/groups';
 const GROUP = 'did:plc:linkedgroupaaaaaaaaaaaaa';
 const OWNER = 'did:plc:owneraaaaaaaaaaaaaaaaaaa';
 const MEMBER = 'did:plc:memberaaaaaaaaaaaaaaaaaa';
+const ADMIN = 'did:plc:adminaaaaaaaaaaaaaaaaaaa';
 
 let db: D1Database;
 
@@ -44,6 +79,11 @@ beforeEach(async () => {
 	await createGroup(db, { groupDid: GROUP, ownerDid: OWNER, name: 'Kona Trail Runners' });
 	authorizedAs = GROUP;
 	states.clear();
+	clientsFor.length = 0;
+	roles.clear();
+	roles.set(OWNER, ['MANAGE_GROUP', 'CREATE_EVENT']);
+	roles.set(ADMIN, ['ADMIT_MEMBERS']);
+	roles.set(MEMBER, []);
 	authorize.mockReset();
 	authorize.mockResolvedValue({ url: new URL('https://pds.test/oauth/authorize'), stateId: 's' });
 });
@@ -95,19 +135,23 @@ function callback(did: string | null) {
 }
 
 describe('POST /oauth/group-link', () => {
-	it('sends the owner to the group’s PDS', async () => {
-		expect(await start(OWNER)).toMatchObject({
-			status: 303,
-			location: 'https://pds.test/oauth/authorize'
-		});
+	it('sends anyone whose roles grant writes to the group’s PDS, on their own client', async () => {
+		for (const did of [OWNER, ADMIN]) {
+			expect(await start(did)).toMatchObject({
+				status: 303,
+				location: 'https://pds.test/oauth/authorize'
+			});
+		}
+		expect(clientsFor).toEqual([OWNER, ADMIN]);
 	});
 
-	it('answers a member who is not the owner as if the group did not exist', async () => {
+	it('answers a member whose roles grant no writes as if the group did not exist', async () => {
 		expect(await start(MEMBER)).toMatchObject({ status: 404 });
+		expect(authorize).not.toHaveBeenCalled();
 	});
 
-	// Nobody signed in can be the owner, so the link never starts: no request
-	// goes to any PDS.
+	// Nobody signed in has roles, so the link never starts: no request goes to
+	// any PDS.
 	it('asks a signed-out caller to sign in, and starts nothing', async () => {
 		expect(await start(null)).toMatchObject({ status: 401 });
 		expect(authorize).not.toHaveBeenCalled();
@@ -130,12 +174,21 @@ describe('POST /oauth/group-link', () => {
 });
 
 describe('GET /oauth/group-link/callback', () => {
-	it('links the group and leaves the browser signed in as the owner', async () => {
-		states.set('s1', { userState: { groupDid: GROUP, by: OWNER } } as unknown as StoredState);
-		const { result, cookies } = callback(OWNER);
+	it('files the session under the person who started it, and leaves the browser signed in as them', async () => {
+		states.set('s1', { userState: { groupDid: GROUP, by: ADMIN } } as unknown as StoredState);
+		const { result, cookies } = callback(ADMIN);
 		expect(await result).toMatchObject({ status: 303, location: `/groups/${GROUP}?link=linked` });
+		expect(clientsFor).toEqual([ADMIN]);
 		expect(cookies.set).not.toHaveBeenCalled();
 		expect(cookies.delete).not.toHaveBeenCalled();
+	});
+
+	it('refuses a link whose starter’s roles no longer grant writes', async () => {
+		states.set('s1', { userState: { groupDid: GROUP, by: ADMIN } } as unknown as StoredState);
+		roles.set(ADMIN, []);
+		const { result } = callback(ADMIN);
+		expect(await result).toMatchObject({ status: 303, location: `/groups/${GROUP}?link=failed` });
+		expect(clientsFor).toEqual([]);
 	});
 
 	it('sends a refused link back to the group page, with no cookie set either', async () => {

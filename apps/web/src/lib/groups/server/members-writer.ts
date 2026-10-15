@@ -42,7 +42,7 @@ import type { GroupSpaceIndexEntry } from './members-read';
 import {
 	GroupPermissionError,
 	GroupRecordError,
-	groupWriter,
+	gatedWriter,
 	permissionRequired,
 	requireGroupWrite,
 	requireMembershipWrite,
@@ -142,7 +142,7 @@ export async function putGroupMembership(
 		$type: GROUP_MEMBERSHIP_COLLECTION
 	};
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.group));
+	const writer = await gatedWriter(input);
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_MEMBERSHIP_COLLECTION,
@@ -162,7 +162,7 @@ export async function dropGroupMembership(
 	const space = membersSpace(input.group);
 	await authorizeMembership(input);
 	const rkey = membershipRkey(input.subject);
-	const writer = input.writer ?? (await groupWriter(input.env, input.group));
+	const writer = await gatedWriter(input);
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_MEMBERSHIP_COLLECTION,
@@ -199,7 +199,7 @@ export async function writeGroupAccess(
 		$type: GROUP_ACCESS_COLLECTION
 	};
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.group));
+	const writer = await gatedWriter(input);
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_ACCESS_COLLECTION,
@@ -259,7 +259,7 @@ export async function writeGroupSpaceIndex(
 		);
 	}
 
-	const writer = input.writer ?? (await groupWriter(input.env, input.group));
+	const writer = await gatedWriter(input);
 	const result: SpaceIndexWriteResult = { added: [], removed: [] };
 	for (const { space, add, extra } of plan) {
 		if (add) {
@@ -322,7 +322,7 @@ export async function writeGroupAuthz(
 
 	const bundles = input.bundles ?? DEFAULT_ROLE_PERMISSIONS;
 	const space = membersSpace(input.group);
-	const writer = input.writer ?? (await groupWriter(input.env, input.group));
+	const writer = await gatedWriter(input);
 	const put = (collection: string, rkey: string, record: Record<string, unknown>) =>
 		writer({
 			repo: input.group.group_did,

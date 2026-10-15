@@ -38,6 +38,7 @@
 // directory does, so a mint that forgot to send one, or sent it second, still
 // fails.
 import { vi } from 'vitest';
+import { SESSION_PERSON_HEADER } from './linked-oauth-stub';
 
 export interface StubPdsOptions {
 	/** The DID every session on this host authenticates as: the group's. */
@@ -71,6 +72,8 @@ export interface StubPdsRequest {
 	params: Record<string, string>;
 	/** The bearer token the request carried, or null. */
 	token: string | null;
+	/** Whose fixture group session sent it (./linked-oauth-stub.ts), or null. */
+	person: string | null;
 }
 
 /** One entry on a space's member list, as `listMembers` reports it. */
@@ -174,8 +177,10 @@ export function stubPds(options: StubPdsOptions) {
 		const body =
 			typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
 		const query = new URL(url).searchParams;
-		const token = new Headers(init?.headers).get('authorization')?.replace(/^Bearer /, '') ?? null;
-		requests.push({ nsid, body, params: Object.fromEntries(query), token });
+		const headers = new Headers(init?.headers);
+		const token = headers.get('authorization')?.replace(/^Bearer /, '') ?? null;
+		const person = headers.get(SESSION_PERSON_HEADER);
+		requests.push({ nsid, body, params: Object.fromEntries(query), token, person });
 
 		const failed = options.fail?.(nsid, init, query);
 		if (failed) return failed;

@@ -29,14 +29,33 @@ describe('notAllowed', () => {
 });
 
 describe('formError', () => {
-	// A group nobody has linked refuses every write as the group. The way out
-	// is the owner's link step, so the message names it, and says that nothing
-	// was half-done.
-	it('tells the caller the owner has to link the group’s account', () => {
-		const refusal = formError(new GroupCredentialError('did:plc:unlinkedgroupaaaaaaaaaaa'));
+	// A caller with no group session of their own is refused every write as the
+	// group. The way out is their own link step, so the message names it, and
+	// says that nothing was half-done.
+	it('tells the caller to link their own access', () => {
+		const refusal = formError(
+			new GroupCredentialError(
+				'did:plc:unlinkedgroupaaaaaaaaaaa',
+				'did:plc:calleraaaaaaaaaaaaaaaaaaa'
+			)
+		);
 
 		expect(refusal.ok).toBe(false);
-		expect(refusal.error).toMatch(/owner has to link the group’s account/);
+		expect(refusal.error).toMatch(/link your access/);
+		expect(refusal.error).toMatch(/Nothing was changed/);
+	});
+
+	// The stand-in host's session is the creator's, which only they can fix.
+	it('names the creator when the stand-in host’s session is missing', () => {
+		const refusal = formError(
+			new GroupCredentialError(
+				'did:plc:unlinkedgroupaaaaaaaaaaa',
+				'did:plc:creatoraaaaaaaaaaaaaaaaaa',
+				true
+			)
+		);
+
+		expect(refusal.error).toMatch(/its creator has to link their access/);
 		expect(refusal.error).toMatch(/Nothing was changed/);
 	});
 

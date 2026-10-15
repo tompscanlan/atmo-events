@@ -16,6 +16,7 @@ import {
 } from './about-read';
 import { notifyIndexQuietly } from './events-index';
 import {
+	actingPerson,
 	GroupRecordError,
 	groupWriter,
 	requireGroupPermission,
@@ -33,7 +34,8 @@ export interface WriteGroupEventInput {
 	db: D1Database;
 	env: CredentialStoreEnv;
 	group: GroupRow;
-	/** The human pressing the button. Checked, never written as. */
+	/** The human pressing the button. Checked, and their own group session
+	 *  carries the write. */
 	callerDid: string | null;
 	intent: 'create' | 'update';
 	/** Required for `update`. Minted as a TID for `create` if the page has not. */
@@ -143,13 +145,17 @@ export function pdsEventLocator(cred: GroupCredential, groupDid: string): GroupE
 	};
 }
 
-/** The locator for a group's events. Throws GroupCredentialError when the group
- *  is not linked, as `groupWriter` does. */
+/** The locator for a group's events, through `personDid`'s own group session.
+ *  Throws GroupCredentialError when they hold none, as `groupWriter` does. */
 export async function groupEventLocator(
 	env: CredentialStoreEnv,
-	group: GroupRow
+	group: GroupRow,
+	personDid: string
 ): Promise<GroupEventLocator> {
-	return pdsEventLocator(await requireGroupCredential(env, group.group_did), group.group_did);
+	return pdsEventLocator(
+		await requireGroupCredential(env, group.group_did, personDid),
+		group.group_did
+	);
 }
 
 /**
@@ -235,14 +241,14 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 
 	// A public create reads nothing first.
 	if (space !== null || input.intent === 'update') {
-		const locator = await groupEventLocator(input.env, input.group);
+		const locator = await groupEventLocator(input.env, input.group, actingPerson(input));
 		if (space !== null) await checkCalendarSpace(locator, space);
 		if (input.intent === 'update') {
 			await checkPlacement(locator, input.group.group_did, space, rkey, 'update');
 		}
 	}
 
-	const writer = await groupWriter(input.env, input.group);
+	const writer = await groupWriter(input.env, input.group, actingPerson(input));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
@@ -267,9 +273,10 @@ export async function deleteGroupEvent(
 ): Promise<{ uri: string; repo: string }> {
 	const space = eventSpace(input.group.group_did, input.placement);
 	await requireEventPermission(input, 'delete');
-	const locator = await groupEventLocator(input.env, input.group);
+	const person = actingPerson(input);
+	const locator = await groupEventLocator(input.env, input.group, person);
 	await checkPlacement(locator, input.group.group_did, space, input.rkey, 'delete');
-	const writer = await groupWriter(input.env, input.group);
+	const writer = await groupWriter(input.env, input.group, person);
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
@@ -322,7 +329,7 @@ export async function uploadGroupEventImage(
 			`an event image may be at most ${GROUP_EVENT_IMAGE_MAX_BYTES} bytes, not ${input.bytes.byteLength}`
 		);
 	}
-	const upload = await groupBlobUploader(input.env, input.group);
+	const upload = await groupBlobUploader(input.env, input.group, actingPerson(input));
 	return upload(new Blob([input.bytes], { type: input.mimeType }));
 }
 
@@ -336,13 +343,14 @@ function isBlobRef(value: unknown): value is GroupBlobRef {
 	);
 }
 
-/** Uploads into the group's repo through its linked session. Throws
- *  GroupCredentialError when the group is not linked. */
+/** Uploads into the group's repo through `personDid`'s own group session. Throws
+ *  GroupCredentialError when they hold none. */
 export async function groupBlobUploader(
 	env: CredentialStoreEnv,
-	group: GroupRow
+	group: GroupRow,
+	personDid: string
 ): Promise<GroupBlobUploader> {
-	const cred = await requireGroupCredential(env, group.group_did);
+	const cred = await requireGroupCredential(env, group.group_did, personDid);
 	return async (blob) => {
 		const { handle } = await groupClient(cred, group.group_did);
 		const nsid = 'com.atproto.repo.uploadBlob';

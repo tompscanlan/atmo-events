@@ -57,8 +57,10 @@ import { DeclarationIndexError, reconcileGroupDeclaration } from './server/decla
 import { declarationRequired } from './declaration-record';
 import {
 	aboutSpaceReadPolicy,
+	groupSpaceUpdater,
 	setAboutSpaceReadPolicy,
-	visibilityFromAccess
+	visibilityFromAccess,
+	type GroupSpaceUpdater
 } from './server/spaces';
 import { knownFormError } from './form-error';
 import type { GroupFormFailure, GroupFormResult } from './form-result';
@@ -220,7 +222,8 @@ interface SaveState {
 	flipped: boolean;
 	requireApproval: boolean;
 	/** What every write of this save shares: the group as this save describes it,
-	 *  the caller, and the one writer and reader the save built. */
+	 *  the caller, and the one writer and reader the save built. `updater` is set
+	 *  when the save moves the about space's read policy. */
 	as: {
 		db: D1Database;
 		env: CredentialStoreEnv;
@@ -228,6 +231,7 @@ interface SaveState {
 		callerDid: string;
 		writer: GroupRepoWriter;
 		reader: GroupSpaceReader;
+		updater?: GroupSpaceUpdater;
 	};
 }
 
@@ -397,7 +401,8 @@ export async function runUpdateGroup(
 	if (approval) return { ok: false, error: approval };
 
 	// What the save reads first, it reads with the caller's own access (TS
-	// 2026-10-15); only the writes go as the group.
+	// 2026-10-15); only the writes go as the group, on the caller's own group
+	// session.
 	const { did: callerDid, reader } = caller;
 	if (!reader) return { ok: false, error: NO_READ_ACCESS };
 
@@ -417,9 +422,9 @@ export async function runUpdateGroup(
 		failed = "the group's profile and rules could not be read from its PDS";
 		about = await readGroupAbout(reader, group);
 		failed = noCredential;
-		writer = await groupWriter(env, group);
+		writer = await groupWriter(env, group, callerDid);
 	} catch (e) {
-		// An unlinked group is the owner's to fix, not a save to retry.
+		// A caller with no group session is theirs to fix, not a save to retry.
 		return knownFormError(e) ?? nothingSaved(failed, e);
 	}
 
@@ -444,6 +449,18 @@ export async function runUpdateGroup(
 		require_approval: requireApproval ? 1 : 0
 	};
 
+	// The read policy is the stand-in host's to keep, on the session it acts on
+	// (./server/session.ts), so a save that moves it finds that session before
+	// anything is written.
+	let updater: GroupSpaceUpdater | undefined;
+	if (hostPolicy !== aboutSpaceReadPolicy(visibility)) {
+		try {
+			updater = await groupSpaceUpdater({ env, group });
+		} catch (e) {
+			return knownFormError(e) ?? nothingSaved(noCredential, e);
+		}
+	}
+
 	const state: SaveState = {
 		group,
 		fresh,
@@ -453,7 +470,7 @@ export async function runUpdateGroup(
 		hostPolicy,
 		flipped,
 		requireApproval,
-		as: { db, env, group: fresh, callerDid, writer, reader }
+		as: { db, env, group: fresh, callerDid, writer, reader, updater }
 	};
 	return declarationRequired(visibility) ? saveAsPublic(state) : saveAsPrivate(state);
 }

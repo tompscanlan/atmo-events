@@ -47,16 +47,18 @@ describe('groupHost createSpace', () => {
 			credential
 		});
 
-		await expect(host.createSpace(SPACE)).resolves.toEqual({
+		await expect(host.createSpace({ callerDid: GROUP_DID }, SPACE)).resolves.toEqual({
 			uri: `at://${GROUP_DID}/space/${MEMBERS_SPACE_TYPE}/self`
 		});
 		expect(sent).toContain('com.atproto.simplespace.createSpace');
 	});
 
-	it('without one, refuses a group nobody linked before sending anything', async () => {
+	it('without one, refuses a caller who linked no session before sending anything', async () => {
 		const host = groupHost({ db: {} as D1Database, env: linkGroups([]), group: GROUP });
 
-		await expect(host.createSpace(SPACE)).rejects.toBeInstanceOf(GroupCredentialError);
+		await expect(
+			host.createSpace({ callerDid: 'did:plc:calleraaaaaaaaaaaaaaaaaa' }, SPACE)
+		).rejects.toBeInstanceOf(GroupCredentialError);
 		expect(sent).toEqual([]);
 	});
 });

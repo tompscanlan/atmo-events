@@ -1,7 +1,9 @@
-// Who may link a group's account, and which account a link may hold. A link
-// started by anyone but the owner, finished in another browser, or authorized by
-// any account but the group's must store nothing: the refusals before the code
-// exchange never reach the PDS, and a token issued to the wrong account is revoked.
+// Who may link a group session, which account it may hold, and whose it becomes.
+// A link started by someone whose roles grant no writes, finished in another
+// browser, or authorized by any account but the group's must store nothing: the
+// refusals before the code exchange never reach the PDS, and a token issued to
+// the wrong account is revoked. A link finishes through the client of the person
+// who started it, which files the session under them.
 //
 // The OAuth client is the I/O boundary (it talks to the group's PDS), so it is a
 // recording stub. The state store is a Map, as the client's own would be.
@@ -14,7 +16,7 @@ import {
 	type GroupLinkState
 } from './group-link';
 
-import { GROUP_SESSION_SCOPE } from './session';
+import { groupSessionScope, STAND_IN_HOST_SCOPES } from './session';
 const GROUP = 'did:plc:linkedgroupaaaaaaaaaaaaa';
 const OWNER = 'did:plc:owneraaaaaaaaaaaaaaaaaaa';
 const MEMBER = 'did:plc:memberaaaaaaaaaaaaaaaaaa';
@@ -29,6 +31,9 @@ let revoked: string[];
 let authorizedAs: string;
 let callbackError: Error | null;
 let states: Map<string, StoredState>;
+/** Whose client each exchange went through. */
+let clientsUsed: string[];
+let stillMayConnect: boolean;
 
 const client = {
 	authorize: async (options: unknown) => {
@@ -56,14 +61,22 @@ function pending(userState: GroupLinkState) {
 	states.set(STATE_ID, { userState } as unknown as StoredState);
 }
 
-function finish(signedInDid: string | null, owner = OWNER) {
+function finish(signedInDid: string | null) {
 	return finishGroupLink({
-		client,
+		clientFor: (personDid) => {
+			clientsUsed.push(personDid);
+			return client;
+		},
 		states: store,
 		params: new URLSearchParams({ state: STATE_ID, code: 'c', iss: 'https://pds.test' }),
 		signedInDid,
-		findGroup: async (did) => (did === GROUP ? { group_did: GROUP, owner_did: owner } : null)
+		findGroup: async (did) => (did === GROUP ? group : null),
+		mayConnect: async () => stillMayConnect
 	});
+}
+
+function start(signedInDid: string | null, mayConnect = true) {
+	return startGroupLink({ client, group, signedInDid, mayConnect, redirectUri: REDIRECT });
 }
 
 beforeEach(() => {
@@ -73,38 +86,50 @@ beforeEach(() => {
 	authorizedAs = GROUP;
 	callbackError = null;
 	states = new Map();
+	clientsUsed = [];
+	stillMayConnect = true;
 });
 
 describe('starting a link', () => {
-	it('sends the owner to authorize as the group, for the group scope, back to the link callback', async () => {
-		await startGroupLink({ client, group, signedInDid: OWNER, redirectUri: REDIRECT });
+	it('sends a member whose roles grant writes to authorize as the group, back to the link callback', async () => {
+		await start(MEMBER);
 		expect(authorized).toEqual([
 			{
 				// An account target makes the client resolve the group's DID now and
 				// refuse a token issued to anyone else at the callback.
 				target: { type: 'account', identifier: GROUP },
-				scope: GROUP_SESSION_SCOPE,
+				scope: groupSessionScope(false),
 				redirectUri: REDIRECT,
-				state: { groupDid: GROUP, by: OWNER }
+				state: { groupDid: GROUP, by: MEMBER }
 			}
 		]);
 	});
 
-	it('refuses a member who is not the owner, and a caller who is signed out', async () => {
-		for (const did of [MEMBER, null]) {
-			await expect(
-				startGroupLink({ client, group, signedInDid: did, redirectUri: REDIRECT })
-			).rejects.toBeInstanceOf(GroupLinkRefused);
+	// The creator's session is the one the stand-in host acts on, so only their
+	// link asks for what the stand-in needs to keep its member lists.
+	it('asks for the stand-in host’s scopes on the creator’s link only', async () => {
+		await start(OWNER);
+		await start(MEMBER);
+		const [owner, member] = authorized.map((a) => (a as { scope: string }).scope.split(' '));
+		for (const extra of STAND_IN_HOST_SCOPES) {
+			expect(owner).toContain(extra);
+			expect(member).not.toContain(extra);
 		}
+	});
+
+	it('refuses a member whose roles grant no writes, and a caller who is signed out', async () => {
+		await expect(start(MEMBER, false)).rejects.toBeInstanceOf(GroupLinkRefused);
+		await expect(start(null)).rejects.toBeInstanceOf(GroupLinkRefused);
 		expect(authorized).toEqual([]);
 	});
 });
 
 describe('finishing a link', () => {
-	it('links when the owner who started it finishes it and the group authorized', async () => {
-		pending({ groupDid: GROUP, by: OWNER });
-		expect(await finish(OWNER)).toEqual({ ok: true, groupDid: GROUP });
+	it('links through the starter’s own client when they finish it and the group authorized', async () => {
+		pending({ groupDid: GROUP, by: MEMBER });
+		expect(await finish(MEMBER)).toEqual({ ok: true, groupDid: GROUP });
 		expect(exchanged).toBe(1);
+		expect(clientsUsed).toEqual([MEMBER]);
 		expect(revoked).toEqual([]);
 	});
 
@@ -122,7 +147,7 @@ describe('finishing a link', () => {
 		expect(await finish(OWNER)).toEqual({ ok: false, groupDid: GROUP, reason: 'sub mismatch' });
 	});
 
-	it('refuses a browser signed in as anyone but the owner who started it, before any exchange', async () => {
+	it('refuses a browser signed in as anyone but the person who started it, before any exchange', async () => {
 		for (const did of [MEMBER, null]) {
 			pending({ groupDid: GROUP, by: OWNER });
 			expect(await finish(did)).toMatchObject({ ok: false, groupDid: GROUP });
@@ -131,9 +156,10 @@ describe('finishing a link', () => {
 		expect(exchanged).toBe(0);
 	});
 
-	it('refuses a link whose starter no longer owns the group, before any exchange', async () => {
-		pending({ groupDid: GROUP, by: OWNER });
-		expect(await finish(OWNER, MEMBER)).toMatchObject({ ok: false, groupDid: GROUP });
+	it('refuses a link whose starter’s roles no longer grant writes, before any exchange', async () => {
+		pending({ groupDid: GROUP, by: MEMBER });
+		stillMayConnect = false;
+		expect(await finish(MEMBER)).toMatchObject({ ok: false, groupDid: GROUP });
 		expect(exchanged).toBe(0);
 	});
 
