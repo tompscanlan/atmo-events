@@ -34,7 +34,8 @@ describe('createOAuthClient', () => {
 	it('lists the sign-in callback first, so a sign-in returns there, then the group-link callback', () => {
 		expect(createOAuthClient(env).metadata.redirect_uris).toEqual([
 			'https://atmo.example.com/oauth/callback',
-			'https://atmo.example.com/oauth/group-link/callback'
+			'https://atmo.example.com/oauth/group-link/callback',
+			'https://atmo.example.com/oauth/group-create/callback'
 		]);
 	});
 

@@ -2,6 +2,7 @@
 	import { Button, Input, Label } from '@foxui/core';
 
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { MINTABLE_LABEL_INPUT_PATTERN, labelFromGroupName } from '$lib/groups/handle-label';
 	import { groupFormError, resetOnSuccess } from '$lib/groups/form-result';
 	import { GROUP_PASSWORD_MIN_LENGTH } from '$lib/groups/form-fields';
@@ -21,14 +22,27 @@
 	// letting the combination be picked and then refused on submit.
 	let visibility = $state('public');
 	let derivedLabel = $derived(labelTouched ? label : name ? labelFromGroupName(name) : '');
-	let createError = $derived(groupFormError(createGroupForm.result));
+	// A create at a group host comes back from the host's callback with its error
+	// in the address, since the host made the group before this site set it up.
+	let createError = $derived(
+		groupFormError(createGroupForm.result) ?? page.url.searchParams.get('error') ?? undefined
+	);
+	// At a group host the form's success is the host's sign-up page, where the
+	// creator picks the address and approves this site.
+	let signUpUrl = $derived.by(() => {
+		const result = createGroupForm.result;
+		return result?.ok && 'signUpUrl' in result ? result.signUpUrl : undefined;
+	});
+	$effect(() => {
+		if (signUpUrl) window.location.assign(signUpUrl);
+	});
 	// The recovery key comes back once, in the form result: on success, and on a
 	// failure after the mint, which registered the address anyway. It is read from
 	// the result and never fetched again. No route can show it again.
 	let registered = $derived.by(() => {
 		const result = createGroupForm.result;
 		if (!result) return undefined;
-		if (result.ok) return result;
+		if (result.ok) return 'recoveryKey' in result ? result : undefined;
 		return 'registered' in result ? result.registered : undefined;
 	});
 	let created = $derived(createGroupForm.result?.ok ? registered : undefined);
@@ -44,13 +58,23 @@
 	</p>
 	<!-- Says who holds what, since the creator holds all of it: the login, the
 	     recovery key, and the say over what this site may do as the group. -->
-	<p class="text-base-500 dark:text-base-400 mb-8 text-sm">
-		<strong>You hold the group's account.</strong> Its login is the email and password you choose
-		below, and this site keeps neither. Once the group exists, you link its account: you sign in as
-		the group and approve this site to post as it, and you can revoke that at the group's PDS. You
-		also get its <strong>recovery key</strong>, with which you can move the group to a host of your
-		own later, and nobody, including us, can stop you.
-	</p>
+	{#if data.atHost}
+		<!-- The host holds the account: nobody has a password for it, and the
+		     creator approves this site at the host as themselves. -->
+		<p class="text-base-500 dark:text-base-400 mb-8 text-sm">
+			<strong>The group's host makes its account.</strong> After this form you go to the host, choose
+			the group's address there, sign in with your own account and approve this site to act for the group.
+			Nobody holds a password for the group: you act for it as yourself, as its first admin.
+		</p>
+	{:else}
+		<p class="text-base-500 dark:text-base-400 mb-8 text-sm">
+			<strong>You hold the group's account.</strong> Its login is the email and password you choose
+			below, and this site keeps neither. Once the group exists, you link its account: you sign in
+			as the group and approve this site to post as it, and you can revoke that at the group's PDS.
+			You also get its <strong>recovery key</strong>, with which you can move the group to a host of
+			your own later, and nobody, including us, can stop you.
+		</p>
+	{/if}
 
 	{#if !data.creationConfigured}
 		<div
@@ -137,68 +161,70 @@
 				<Input id="group-name" name="name" bind:value={name} required maxlength={120} />
 			</div>
 
-			<!-- Not a URL field. The site's own links carry the group's DID, so this
+			{#if !data.atHost}
+				<!-- Not a URL field. The site's own links carry the group's DID, so this
 		     does not decide an address on atmo.rsvp. It decides the handle the
 		     mint registers, which reserves the group's name on the network, once. -->
-			<div class="flex flex-col gap-1.5">
-				<Label for="group-label">Handle</Label>
-				<Input
-					id="group-label"
-					name="label"
-					value={derivedLabel}
-					oninput={(e) => {
-						labelTouched = true;
-						label = e.currentTarget.value;
-					}}
-					required
-					pattern={MINTABLE_LABEL_INPUT_PATTERN}
-				/>
-				<p class="text-base-500 dark:text-base-400 text-xs">
-					The first part of the group’s handle, under this site’s group domain:
-					<span class="font-mono"
-						>{derivedLabel || 'name'}.{data.handleDomain ?? 'example.com'}</span
-					>. Creating the group registers that handle, and it is the address the group is known by
-					from then on: pick it as carefully as a username, because it is not changeable here
-					afterwards.
-				</p>
-			</div>
+				<div class="flex flex-col gap-1.5">
+					<Label for="group-label">Handle</Label>
+					<Input
+						id="group-label"
+						name="label"
+						value={derivedLabel}
+						oninput={(e) => {
+							labelTouched = true;
+							label = e.currentTarget.value;
+						}}
+						required
+						pattern={MINTABLE_LABEL_INPUT_PATTERN}
+					/>
+					<p class="text-base-500 dark:text-base-400 text-xs">
+						The first part of the group’s handle, under this site’s group domain:
+						<span class="font-mono"
+							>{derivedLabel || 'name'}.{data.handleDomain ?? 'example.com'}</span
+						>. Creating the group registers that handle, and it is the address the group is known by
+						from then on: pick it as carefully as a username, because it is not changeable here
+						afterwards.
+					</p>
+				</div>
 
-			<!-- The group account's login. The creator holds it, so reset mail for the
+				<!-- The group account's login. The creator holds it, so reset mail for the
 			     group goes to them, and this site keeps neither field. -->
-			<div class="flex flex-col gap-1.5">
-				<Label for="group-email">Group account email</Label>
-				<Input
-					id="group-email"
-					name="email"
-					type="email"
-					autocomplete="email"
-					required
-					maxlength={254}
-				/>
-				<p class="text-base-500 dark:text-base-400 text-xs">
-					Password reset mail for the group comes here. Each account on the group's PDS needs its
-					own address, so if yours already has one there, add a tag:
-					<span class="font-mono">you+{derivedLabel || 'mygroup'}@example.com</span>.
-				</p>
-			</div>
+				<div class="flex flex-col gap-1.5">
+					<Label for="group-email">Group account email</Label>
+					<Input
+						id="group-email"
+						name="email"
+						type="email"
+						autocomplete="email"
+						required
+						maxlength={254}
+					/>
+					<p class="text-base-500 dark:text-base-400 text-xs">
+						Password reset mail for the group comes here. Each account on the group's PDS needs its
+						own address, so if yours already has one there, add a tag:
+						<span class="font-mono">you+{derivedLabel || 'mygroup'}@example.com</span>.
+					</p>
+				</div>
 
-			<div class="flex flex-col gap-1.5">
-				<Label for="group-password">Group account password</Label>
-				<!-- Underscored so a failed submit never sends it back to the page. -->
-				<Input
-					id="group-password"
-					name="_password"
-					type="password"
-					autocomplete="new-password"
-					required
-					minlength={GROUP_PASSWORD_MIN_LENGTH}
-					maxlength={256}
-				/>
-				<p class="text-base-500 dark:text-base-400 text-xs">
-					At least {GROUP_PASSWORD_MIN_LENGTH} characters. You sign in as the group with it to link the
-					group to this site. This site does not keep it, so keep it in your password manager.
-				</p>
-			</div>
+				<div class="flex flex-col gap-1.5">
+					<Label for="group-password">Group account password</Label>
+					<!-- Underscored so a failed submit never sends it back to the page. -->
+					<Input
+						id="group-password"
+						name="_password"
+						type="password"
+						autocomplete="new-password"
+						required
+						minlength={GROUP_PASSWORD_MIN_LENGTH}
+						maxlength={256}
+					/>
+					<p class="text-base-500 dark:text-base-400 text-xs">
+						At least {GROUP_PASSWORD_MIN_LENGTH} characters. You sign in as the group with it to link
+						the group to this site. This site does not keep it, so keep it in your password manager.
+					</p>
+				</div>
+			{/if}
 
 			<div class="flex flex-col gap-1.5">
 				<Label for="group-description">Description</Label>
@@ -255,6 +281,13 @@
 					<input type="checkbox" name="requireApproval" checked class="size-4" />
 					Require approval to join
 				</label>
+			{/if}
+
+			{#if signUpUrl}
+				<p class="text-sm">
+					Taking you to the group host to sign up the group.
+					<a class="underline" href={signUpUrl}>Continue</a> if nothing happens.
+				</p>
 			{/if}
 
 			{#if createError}

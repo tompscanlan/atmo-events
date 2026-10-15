@@ -18,7 +18,13 @@ import {
 	WellKnownHandleResolver
 } from '@atcute/identity-resolver';
 import { KVStore } from './kv-store';
-import { DOH_RESOLVER, GROUP_LINK_REDIRECT_PATH, REDIRECT_PATH, scopes } from '../settings';
+import {
+	DOH_RESOLVER,
+	GROUP_CREATE_REDIRECT_PATH,
+	GROUP_LINK_REDIRECT_PATH,
+	REDIRECT_PATH,
+	scopes
+} from '../settings';
 import { DEV_PORT } from '../port';
 import { dev } from '$app/environment';
 
@@ -135,7 +141,11 @@ function confidentialClient(
 	return new OAuthClient({
 		metadata: {
 			client_id: site + '/oauth-client-metadata.json',
-			redirect_uris: [site + REDIRECT_PATH, site + GROUP_LINK_REDIRECT_PATH],
+			redirect_uris: [
+				site + REDIRECT_PATH,
+				site + GROUP_LINK_REDIRECT_PATH,
+				site + GROUP_CREATE_REDIRECT_PATH
+			],
 			// An extra may repeat a base scope; the metadata lists each once.
 			scope: [...new Set([...scopes, ...extras])],
 			jwks_uri: site + '/oauth/jwks.json'

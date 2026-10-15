@@ -7,6 +7,9 @@ import type { GroupFormResult } from './form-result';
 import { knownFormError, notAllowed } from './form-error';
 import { didField, groupSettingsFields, labelField, shownVisibilityField } from './form-fields';
 import { runCreateGroup, type CreateGroupOutcome } from './create-group';
+import { hostCreation, startCreateAtHost } from './create-at-host';
+import { groupLinkClient } from './server/session';
+import { GROUP_CREATE_REDIRECT_PATH } from '$lib/atproto/settings';
 import { runUpdateGroup } from './update-group';
 import { groupRequestContext } from './remote-context';
 import { describeRepair, repairGroup } from './server/repair';
@@ -15,20 +18,40 @@ import { errorText } from './server/errors';
 export const createGroupForm = form(
 	v.object({
 		...groupSettingsFields,
-		label: labelField,
+		/** A mint's only: at a group host the address is chosen at the host. */
+		label: v.optional(labelField),
 		locationName: v.optional(v.pipe(v.string(), v.maxLength(200))),
-		/** The group account's login. Length and shape are checked by
-		 *  `runCreateGroup`, so its refusal reads as a sentence. */
-		email: v.pipe(v.string(), v.trim(), v.maxLength(254)),
+		/** The group account's login, a mint's only. Length and shape are checked
+		 *  by `runCreateGroup`, so its refusal reads as a sentence. */
+		email: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(254))),
 		/** Underscored so SvelteKit never echoes it back with a failed form. */
-		_password: v.pipe(v.string(), v.maxLength(256))
+		_password: v.optional(v.pipe(v.string(), v.maxLength(256)))
 	}),
-	async ({ _password: password, ...data }): Promise<CreateGroupOutcome> => {
+	async ({
+		_password: password = '',
+		label = '',
+		email = '',
+		...data
+	}): Promise<CreateGroupOutcome | GroupFormResult<{ signUpUrl: string }>> => {
 		const { locals, platform } = getRequestEvent();
 		if (!locals.did) error(401, 'Sign in to create a group');
+		const env = platform!.env;
+		// A deployment with a group host creates there: the host signs the creator
+		// up and makes the group, and the page goes on to its sign-up page.
+		const hostUrl = hostCreation(env);
+		if (hostUrl) {
+			return startCreateAtHost({
+				db: env.DB,
+				client: groupLinkClient(env, locals.did),
+				hostUrl,
+				callerDid: locals.did,
+				fields: data,
+				redirectUri: env.OAUTH_PUBLIC_URL + GROUP_CREATE_REDIRECT_PATH
+			});
+		}
 		// No redirect: the result carries the owner's rotation key, which is shown
 		// once and stored nowhere, so a 303 would lose it.
-		return runCreateGroup(platform!.env, locals.did, { ...data, password });
+		return runCreateGroup(env, locals.did, { ...data, label, email, password });
 	}
 );
 
