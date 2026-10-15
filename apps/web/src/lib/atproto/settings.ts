@@ -20,6 +20,15 @@ export type AllowedCollection = (typeof allowedCollections)[number];
  *  who may (TS 2026-10-15; `$lib/groups/server/member-grants.ts`). */
 export const META_READ_GRANT = `space:${ABOUT_SPACE_TYPE}?authority=*&action=read`;
 
+/** A person's own acts at a group host: joining, withdrawing a request and
+ *  leaving go through their own PDS, which forwards each only when the sign-in
+ *  holds that method's `rpc:` scope (`$lib/groups/server/real-host.ts`). Raw
+ *  items rather than `include:group.opensocial.participate`, which also asks to
+ *  create an invites space. */
+export const GROUP_MEMBER_RPC_GRANTS = ['requestJoin', 'cancelJoinRequest', 'leaveGroup'].map(
+	(method) => `rpc:group.opensocial.${method}?aud=*`
+);
+
 // OAuth scopes. `include:rsvp.atmo.permissionSet?aud=*` bundles every rpc method
 // the deployment exposes; `aud=*` lets the same consent cover dev (tunnel DID)
 // and prod (published DID) without re-consenting. Repo writes and blob uploads
@@ -36,7 +45,8 @@ export const scopes = [
 	// `send` itself needs no user scope (it's signed with our app key).
 	'rpc?lxm=pub.atmo.notify.requestPermission&aud=*',
 	'rpc?lxm=pub.atmo.notify.revokeSelf&aud=*',
-	META_READ_GRANT
+	META_READ_GRANT,
+	...GROUP_MEMBER_RPC_GRANTS
 ];
 
 // set to false to disable signup

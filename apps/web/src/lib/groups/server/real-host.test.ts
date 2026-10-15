@@ -11,6 +11,7 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 	...(await import('./__fixtures__/linked-oauth-stub')).linkedOAuthStub
 }));
 
+import { scopes } from '$lib/atproto/settings';
 import type { SqliteD1 } from './__fixtures__/d1-sqlite';
 import { linkGroups, SESSION_PERSON_HEADER, unlinkAllGroups } from './__fixtures__/linked-group';
 import { seedGroup } from './__fixtures__/seed-group';
@@ -168,6 +169,16 @@ describe('a member’s own acts, through their own PDS', () => {
 		expect(thrown).toBeInstanceOf(GroupRuleError);
 		expect(thrown.reason).toBe('not-found');
 		expect(await pendingRequestIdOf(db, group.id, BOB)).toBeNull();
+	});
+
+	it('the sign-in asks for each method a member’s own act sends', () => {
+		expect(scopes).toEqual(
+			expect.arrayContaining(
+				['requestJoin', 'cancelJoinRequest', 'leaveGroup'].map(
+					(method) => `rpc:group.opensocial.${method}?aud=*`
+				)
+			)
+		);
 	});
 
 	it('a sign-in without the rpc: scope is refused at their PDS, as a sign-in to redo', async () => {
