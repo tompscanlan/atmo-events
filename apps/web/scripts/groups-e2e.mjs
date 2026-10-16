@@ -117,7 +117,12 @@
  * group's records name no owner, and who should own a row rebuilt from them is
  * not decided yet. The no-spaces member never signs
  * in: their PDS would refuse the group's grant, so at the host they are added and
- * removed by the owner rather than asking and leaving.
+ * removed by the owner rather than asking and leaving. The app's own write gate
+ * asks nothing for a host group, so the refusals are the host's: the non-member
+ * is refused a group session (check 6), and the demoted admin's writes go out on
+ * his own and are refused there (17b), save one that would first change only this
+ * site's copy of the group, which the app still refuses. Each host refusal is
+ * read back from the host's own record of what it refused (`/spike/state`).
  *   E2E_GROUP_HOST     the group host, e.g. https://grouphost.devnet.internal
  *   E2E_PLAYWRIGHT     the playwright package the sign-ins drive Chromium with
  *   E2E_<OWNER|ADMIN|OUTSIDER>_HANDLE  their handles, for their own PDS's page (in
@@ -518,6 +523,17 @@ async function pdsPost(nsid, input, token, base = PDS) {
 		token
 	);
 	return { status: response.status, body: await response.json().catch(() => ({})) };
+}
+
+/** The group host's own record of the run's group: what it refused (by its write
+ *  gate, its PDS, or its sign-in), and how it cut each session to its person's
+ *  roles. The spike host's devnet-only `/spike/state`. */
+async function hostState() {
+	const url = new URL('/spike/state', GROUP_HOST);
+	url.searchParams.set('group', GROUP_DID);
+	const response = await send(url, { method: 'GET' }, null);
+	if (!response.ok) throw new Error(`the host's state answered ${response.status}`);
+	return response.json();
 }
 
 /** The PDS that holds `repo`'s public records: the group's own, or E2E_PDS. */
@@ -1214,7 +1230,10 @@ async function main() {
 		);
 
 		// 6. a non-member tries the same edit ------------------------------------
-		const refused = await tryOp('writeGroupEvent', {
+		// At a host the app's own gate asks nothing: the non-member holds no group
+		// session, so the app has none to send her edit on, and when she asks the
+		// host for one it refuses her, which its state records.
+		const refused = await tracedOp('writeGroupEvent', {
 			callerDid: MALLORY,
 			placement: 'everyone',
 			intent: 'update',
@@ -1222,15 +1241,40 @@ async function main() {
 			record: eventRecord('e2e sunrise paddle (hijacked)', { country: 'US' })
 		});
 		const afterRefusal = await getRecord(GROUP_DID, created.rkey);
-		record(
-			refused.ok === false &&
-				refused.error.name === 'GroupPermissionError' &&
-				refused.error.reason === 'MANAGE_EVENTS required' &&
-				afterRefusal.cid === afterEdit.cid &&
-				afterRefusal.value?.name === editedName,
-			"non-member's identical edit is refused",
-			`${refused.error?.name}: ${refused.error?.message}; record unchanged at cid ${afterRefusal.cid}`
-		);
+		const unchanged = afterRefusal.cid === afterEdit.cid && afterRefusal.value?.name === editedName;
+		if (AT_HOST) {
+			const { link } = await must('scopes', {});
+			const signInRefusal = await signIns.groupRefused(people.outsider, {
+				groupDid: GROUP_DID,
+				scope: link
+			});
+			const hostRefused = (await hostState()).refusals.filter(
+				(r) => r.by === 'sign-in' && r.personDid === MALLORY
+			);
+			record(
+				refused.ok === false &&
+					refused.error.name === 'GroupCredentialError' &&
+					refused.error.personDid === MALLORY &&
+					writesIn(refused.calls).length === 0 &&
+					unchanged &&
+					signInRefusal.status === 403 &&
+					hostRefused.length === 1,
+				"at the host: a non-member's identical edit has no session to go out on, and the host refuses her one",
+				`${refused.error?.name} for ${refused.error?.personDid}; ${writesIn(refused.calls).length} write(s) sent; ` +
+					`record ${unchanged ? 'unchanged' : 'CHANGED'} at cid ${afterRefusal.cid}; her group sign-in: ` +
+					`${signInRefusal.status} "${signInRefusal.text}"; the host's state records ${hostRefused.length} ` +
+					`sign-in refusal(s) for her`
+			);
+		} else {
+			record(
+				refused.ok === false &&
+					refused.error.name === 'GroupPermissionError' &&
+					refused.error.reason === 'MANAGE_EVENTS required' &&
+					unchanged,
+				"non-member's identical edit is refused",
+				`${refused.error?.name}: ${refused.error?.message}; record unchanged at cid ${afterRefusal.cid}`
+			);
+		}
 
 		// 9. a cover image -----------------------------------------------------------
 		// The editor uploads the image first, into the group's repo, then cites it
@@ -2493,6 +2537,122 @@ async function main() {
 				`(was ${joinedAt}), grants [${demoted.permissions.join(', ')}]; re-promoted: ${repromoted.role}, ` +
 				`EJECT ${repromoted.can.EJECT_MEMBERS}`
 		);
+
+		// 17b. at the host, a member's writes are the host's to refuse -------------
+		// The app's own gate asks nothing for a host group. Demoted to member, the
+		// admin keeps the group session he linked in check 5, which the host cuts to
+		// his roles on its next request. An event edit, a settings save that turns
+		// the group private, and making himself admin each go out on it, and the
+		// host refuses each and records it. One thing stays the app's to refuse: a
+		// save that would first change only this site's copy of the group, which
+		// the host never sees, is refused before anything is sent. Promoted back
+		// after, for check 18.
+		if (AT_HOST) {
+			const before = await hostState();
+			await op('promoteMember', { callerDid: ALICE, did: BOB, role: 'member' });
+			let attempts;
+			try {
+				const eventBefore = await getRecord(GROUP_DID, created.rkey);
+				const edit = await tracedOp('writeGroupEvent', {
+					callerDid: BOB,
+					placement: 'everyone',
+					intent: 'update',
+					rkey: created.rkey,
+					record: eventRecord('e2e sunrise paddle (edited by a member)', {
+						country: 'US',
+						createdAt: eventBefore.value?.createdAt
+					})
+				});
+				const eventAfter = await getRecord(GROUP_DID, created.rkey);
+				// The group is public until check 20: saved as it is, the save's first
+				// write is this site's own row; saved private, the declaration's delete.
+				const ownCopy = await tracedOp('saveSettings', {
+					callerDid: BOB,
+					visibility: 'public',
+					shownVisibility: 'public'
+				});
+				const toPrivate = await tracedOp('saveSettings', {
+					callerDid: BOB,
+					visibility: 'private',
+					shownVisibility: 'public',
+					requireApproval: true
+				});
+				const declaration = await getRecord(GROUP_DID, 'self', 'group.opensocial.declaration');
+				const selfPromotion = await tracedOp('promoteMember', {
+					callerDid: BOB,
+					did: BOB,
+					role: 'admin'
+				});
+				attempts = {
+					eventBefore,
+					edit,
+					eventAfter,
+					ownCopy,
+					toPrivate,
+					declaration,
+					selfPromotion
+				};
+			} finally {
+				await op('promoteMember', { callerDid: ALICE, did: BOB, role: 'admin' });
+			}
+			const { eventBefore, edit, eventAfter, ownCopy, toPrivate, declaration, selfPromotion } =
+				attempts;
+			const after = await hostState();
+			const bobsRefusals = after.refusals
+				.slice(before.refusals.length)
+				.filter((r) => r.personDid === BOB);
+			const cut = after.narrowings.some(
+				(n) => n.personDid === BOB && n.at > (before.narrowings.at(-1)?.at ?? '')
+			);
+			const sentBy = (attempt) => writesIn(attempt.calls);
+			const thrownByHost = (attempt, reason) =>
+				attempt.ok === false &&
+				attempt.error.name === 'GroupPermissionError' &&
+				attempt.error.reason === reason &&
+				sentBy(attempt).length === 1;
+			/** A form's answer: the call went through and the form said no. */
+			const formRefused = (attempt, words) =>
+				attempt.ok === true &&
+				attempt.value?.ok === false &&
+				String(attempt.value.error).includes(words);
+			const sent = [edit, ownCopy, toPrivate, selfPromotion].reduce(
+				(n, attempt) => n + sentBy(attempt).length,
+				0
+			);
+			const told = (label, attempt) =>
+				`${label}: ${
+					attempt.ok === false
+						? `${attempt.error.name}(${attempt.error.reason ?? attempt.error.message})`
+						: attempt.value?.ok === false
+							? `"${attempt.value.error}"`
+							: 'ALLOWED'
+				}, sent [${sentBy(attempt).join(', ')}]`;
+			record(
+				thrownByHost(edit, 'your roles do not allow com.atproto.repo.putRecord') &&
+					eventAfter.cid === eventBefore.cid &&
+					formRefused(ownCopy, 'Not allowed: your roles hold no scope to update') &&
+					sentBy(ownCopy).length === 0 &&
+					formRefused(toPrivate, 'your roles do not allow com.atproto.repo.deleteRecord') &&
+					JSON.stringify(sentBy(toPrivate)) === JSON.stringify(['com.atproto.repo.deleteRecord']) &&
+					declaration.status === 200 &&
+					thrownByHost(selfPromotion, 'your roles may not assign or remove that role') &&
+					sent === 3 &&
+					bobsRefusals.length === sent &&
+					bobsRefusals.filter((r) => r.by === 'pds' && r.error === 'ScopeMissingError').length ===
+						2 &&
+					bobsRefusals.filter((r) => r.by === undefined && r.error === 'NotAssignable').length ===
+						1 &&
+					cut,
+				"at the host: a member's event edit, a save turning the group private and making himself admin each go out on his own group session and are refused by the host; a save that would change only this site's copy is refused here, with nothing sent",
+				`${told('edit', edit)}, event ${eventAfter.cid === eventBefore.cid ? 'unchanged' : 'CHANGED'}; ` +
+					`${told('save as it is', ownCopy)}; ${told('save as private', toPrivate)}, declaration ` +
+					`${declaration.status === 200 ? 'still there' : `GONE (${declaration.error ?? declaration.status})`}; ` +
+					`${told('making himself admin', selfPromotion)}; the host recorded ${bobsRefusals.length} ` +
+					`refusal(s) for him of the ${sent} write(s) sent ` +
+					`[${bobsRefusals.map((r) => `${r.by ?? 'gate'} ${r.nsid} ${r.error}`).join('; ')}]; ` +
+					`his session ${cut ? 'was' : 'was NOT'} cut to his roles`
+			);
+		}
 
 		/** A space's member list on the stand-in. A host keeps none (it reads the
 		 *  records), so there every list check reads as an empty list, and what it

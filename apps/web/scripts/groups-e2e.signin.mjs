@@ -126,6 +126,8 @@ export async function createSignIns({ plcUrl, fetch, ledger, playwright, log }) 
 			const page = await context.newPage();
 			await page.goto(url.toString(), { waitUntil: 'load', timeout: 60_000 });
 			const seen = await pages(page, cb.got);
+			// The host turned them away: no redirect comes back, and none is waited for.
+			if (seen?.refusal) return seen;
 			const params = await Promise.race([
 				cb.got,
 				new Promise((_, reject) =>
@@ -236,6 +238,48 @@ export async function createSignIns({ plcUrl, fetch, ledger, playwright, log }) 
 					`(${consent.kept.length} item(s) offered, ${consent.dropped.length} dropped)`
 			);
 			return out;
+		},
+
+		/**
+		 * `person` asks for a group session they hold no role for: their own PDS
+		 * signs them in, and the host answers its sign-in callback with a refusal
+		 * where its consent would be. Hands back that answer's status and text; a
+		 * redirect back, or no answer, fails the run.
+		 * @param {{ groupDid: string, scope: string }} options
+		 */
+		async groupRefused(person, { groupDid, scope }) {
+			const out = await signIn(person, {
+				target: { type: 'account', identifier: groupDid },
+				scope,
+				pages: async (page, done) => {
+					let answer = null;
+					let stop;
+					const stopped = new Promise((r) => (stop = r));
+					// The host's own sign-in may answer on its loopback address, not the
+					// public one, so its callback is known by path; no PDS serves it.
+					page.on('response', (response) => {
+						if (new URL(response.url()).pathname === '/signin/callback') answer = response;
+					});
+					await page.waitForSelector('input[name=handle]', { timeout: 30_000 });
+					await page.fill('input[name=handle]', person.handle);
+					await page.click('button');
+					/** @type {{ status: number, text: string } | null} */
+					let refusal = null;
+					await ownPdsPages(page, person, Promise.race([done, stopped]), async () => {
+						if (!answer) return false;
+						refusal = { status: answer.status(), text: (await answer.text()).trim() };
+						stop();
+						return true;
+					});
+					if (!refusal) throw new Error(`the host did not refuse ${person.did} a group session`);
+					return { refusal };
+				}
+			});
+			log(
+				`${person.did} asked for a group session on ${groupDid} and the host answered ` +
+					`${out.refusal.status}: ${out.refusal.text}`
+			);
+			return out.refusal;
 		},
 
 		close: () => browser.close()
