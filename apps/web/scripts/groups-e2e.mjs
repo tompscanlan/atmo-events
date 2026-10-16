@@ -2640,7 +2640,7 @@ async function main() {
 					bobsRefusals.length === sent &&
 					bobsRefusals.filter((r) => r.by === 'pds' && r.error === 'ScopeMissingError').length ===
 						2 &&
-					bobsRefusals.filter((r) => r.by === undefined && r.error === 'NotAssignable').length ===
+					bobsRefusals.filter((r) => r.by === undefined && r.error === 'Forbidden').length ===
 						1 &&
 					cut,
 				"at the host: a member's event edit, a save turning the group private and making himself admin each go out on his own group session and are refused by the host; a save that would change only this site's copy is refused here, with nothing sent",

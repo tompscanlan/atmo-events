@@ -327,7 +327,7 @@ describe('membership writes, on the acting person’s own group session', () => 
 		const resolve = vi.spyOn(spaceCredential.didSpaceHosts, 'repoHost').mockResolvedValue(HOST);
 		const reader = authzReader(GROUP_DID, roster);
 		hostReplies = [
-			[403, { error: 'NotAssignable', message: 'your roles cannot assign or remove member' }],
+			[403, { error: 'Forbidden', message: 'your roles cannot assign or remove member' }],
 			[403, { error: 'ScopeMissingError', message: 'Missing required scope "space:…"' }]
 		];
 

@@ -21,7 +21,12 @@ import {
 	type WriteGrants
 } from '../scopes';
 import { spaceUri } from '../ids';
-import { GROUP_ACCESS_COLLECTION, GROUP_ACCESS_RKEY, parseGroupAccess } from '../members-record';
+import {
+	GROUP_ACCESS_COLLECTION,
+	GROUP_ACCESS_RKEY,
+	GROUP_MEMBERSHIP_COLLECTION,
+	parseGroupAccess
+} from '../members-record';
 import {
 	ABOUT_SPACE_TYPE,
 	CALENDAR_SPACE_TYPE,
@@ -69,15 +74,22 @@ export function permissionRequired(permission: GroupPermission): string {
 
 /** A group host's refusal of a write as the group, as the refusal a form shows,
  *  or null for any other answer. The host cuts each session to its person's
- *  current roles, so a missing scope is their roles, not their sign-in, and
- *  `NotAssignable` is its check of `assignable` (`proposal.md:46`). The host's
- *  message is not kept. */
-function hostRefusal(nsid: string, error: string | null, groupDid: string) {
+ *  current roles, so a missing scope is their roles, not their sign-in. Its
+ *  write gate answers `Forbidden` for what the caller's roles do not allow,
+ *  which on a membership is its check of `assignable` (`proposal.md:46`). The
+ *  host's message says which rule, but is not kept: it can carry what a user
+ *  typed. */
+function hostRefusal(nsid: string, error: string | null, groupDid: string, collection: string) {
 	if (error === 'ScopeMissingError') {
 		return new GroupPermissionError(`your roles do not allow ${nsid}`, groupDid);
 	}
-	if (error === 'NotAssignable') {
-		return new GroupPermissionError('your roles may not assign or remove that role', groupDid);
+	if (error === 'Forbidden') {
+		return new GroupPermissionError(
+			collection === GROUP_MEMBERSHIP_COLLECTION
+				? 'your roles may not assign or remove that role'
+				: `the group’s host does not allow ${nsid}`,
+			groupDid
+		);
 	}
 	return null;
 }
@@ -147,9 +159,10 @@ export function pdsWriter(
 	groupDid: string,
 	{ atHost = false } = {}
 ): GroupRepoWriter {
-	const xrpcFailure = (nsid: string, status: number, error: string | null) =>
-		(atHost && hostRefusal(nsid, error, groupDid)) || xrpcError(nsid, { status, error });
 	return async (write) => {
+		const xrpcFailure = (nsid: string, status: number, error: string | null) =>
+			(atHost && hostRefusal(nsid, error, groupDid, write.collection)) ||
+			xrpcError(nsid, { status, error });
 		const { client, handle } = await groupClient(cred, groupDid);
 		const collection = write.collection as `${string}.${string}.${string}`;
 		// `repo` comes off a D1 row. A check, not a cast, makes it an ActorIdentifier,
