@@ -11,10 +11,17 @@
 // transport. What it cannot show is the scope a real link carries, or a host cutting
 // a session to its person's roles; the stand-in's only way in is the group's own
 // login, so every person's session here holds the whole account.
+//
+// Against a real group host (E2E_BRIDGE set) there is no group login: each person
+// linked a real group session from the host, which the driver holds, and `restore`
+// sends each request to the driver's bridge for that group and person
+// (groups-e2e.signin.mjs). What is recorded is the same either way.
 
 /** The Worker binding the driver sets for the stand-in. */
 interface StandInEnv {
 	E2E_GROUP_SERVICE?: string;
+	/** A host run: the driver's bridge to each person's real sessions. */
+	E2E_BRIDGE?: string;
 }
 
 /** The group's login, set by the worker's link op. Never logged. */
@@ -86,21 +93,13 @@ export function createOAuthClientWithSessions(
 	sessions: { get(did: string): Promise<{ person?: string } | undefined> }
 ) {
 	const service = env?.E2E_GROUP_SERVICE;
+	const bridge = env?.E2E_BRIDGE;
 	return {
 		restore: async (groupDid: string) => {
-			if (!service || !standInLogin) {
-				throw new Error('the stand-in linked session has no login: link the group first');
-			}
 			const person = (await sessions.get(groupDid))?.person;
 			if (!person) throw new Error(`the stand-in holds no session on ${groupDid} in this store`);
-			const { identifier, password } = standInLogin;
-			login ??= logIn(service, identifier, password).catch((e) => {
-				login = null;
-				throw e;
-			});
-			const { did, accessJwt } = await login;
-			return {
-				did,
+			const recorded = (send: (pathname: string, init?: RequestInit) => Promise<Response>) => ({
+				did: groupDid,
 				handle: (pathname: string, init?: RequestInit) => {
 					standInCalls.push(pathname);
 					const written = writeLabel(pathname, init?.body);
@@ -108,11 +107,28 @@ export function createOAuthClientWithSessions(
 						standInWrites.push(written);
 						standInWriters.push(person);
 					}
-					const headers = new Headers(init?.headers);
-					headers.set('authorization', `Bearer ${accessJwt}`);
-					return fetch(new URL(pathname, service), { ...init, headers });
+					return send(pathname, init);
 				}
-			};
+			});
+			if (bridge) {
+				const at = `/group/${encodeURIComponent(groupDid)}/${encodeURIComponent(person)}`;
+				return recorded((pathname, init) => fetch(new URL(`${at}${pathname}`, bridge), init));
+			}
+			if (!service || !standInLogin) {
+				throw new Error('the stand-in linked session has no login: link the group first');
+			}
+			const { identifier, password } = standInLogin;
+			login ??= logIn(service, identifier, password).catch((e) => {
+				login = null;
+				throw e;
+			});
+			const { did, accessJwt } = await login;
+			if (did !== groupDid) throw new Error(`the stand-in login is ${did}, not ${groupDid}`);
+			return recorded((pathname, init) => {
+				const headers = new Headers(init?.headers);
+				headers.set('authorization', `Bearer ${accessJwt}`);
+				return fetch(new URL(pathname, service), { ...init, headers });
+			});
 		}
 	};
 }

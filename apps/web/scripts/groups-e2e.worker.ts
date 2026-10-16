@@ -3,7 +3,9 @@
 // the $lib/groups modules, which make every decision.
 //
 // The run makes its group with the app's own create (`runCreateGroup`), which
-// mints a new account on the devnet PDS each run.
+// mints a new account on the devnet PDS each run. A run against a group host
+// (E2E_BRIDGE set) has the host make it, and runs the app's own set-up after
+// (`setUpHostGroup`); every person's session is then a real one the driver holds.
 //
 // Not deployed, not routed, never imported by the app. `scripts/` is outside
 // tsconfig's include, like scripts/geocode-events.ts.
@@ -50,14 +52,18 @@ import {
 	rosterFromRecords,
 	rosterFromRows
 } from '../src/lib/groups/server/members-read';
-import { writeGroupAuthz, writeGroupSpaceIndex } from '../src/lib/groups/server/members-writer';
+import {
+	writeEventPermissions,
+	writeGroupAuthz,
+	writeGroupSpaceIndex
+} from '../src/lib/groups/server/members-writer';
 import { groupHost, type HostBinding, type HostCaller } from '../src/lib/groups/server/host';
 import {
 	acceptOnSignIn,
 	writeMissingAcceptances,
 	type MemberSession
 } from '../src/lib/groups/server/acceptance';
-import { memberGrant } from '../src/lib/groups/server/member-grants';
+import { holdsMetaRead, memberGrant } from '../src/lib/groups/server/member-grants';
 import {
 	deleteMembersOnlyRsvp,
 	putMembersOnlyRsvp,
@@ -73,6 +79,8 @@ import {
 import {
 	groupClient,
 	groupSessionKey,
+	groupSessionScope,
+	resolveGroupCredential,
 	standInHostCredential
 } from '../src/lib/groups/server/session';
 import {
@@ -83,7 +91,9 @@ import {
 } from '../src/lib/groups/server/calendar-read';
 import { setStandInLogin, standInCalls, standInWriters, standInWrites } from './groups-e2e.oauth';
 import { runCreateGroup, type CreateGroupData } from '../src/lib/groups/create-group';
-import { META_READ_GRANT, scopes } from '../src/lib/atproto/settings';
+import { setUpHostGroup, type HostCreateFields } from '../src/lib/groups/create-at-host';
+import { groupHostOrigin, isHostGroup } from '../src/lib/groups/server/host-kind';
+import { scopes } from '../src/lib/atproto/settings';
 import type { GroupSpaceReader } from '../src/lib/groups/server/about-read';
 
 import { groupSpaceUris, type RsvpStatus } from '../src/lib/groups/ids';
@@ -119,6 +129,11 @@ interface Env {
 	/** Each person's login by DID, as JSON, for the stand-in of the session they
 	 *  read with (`ownSession`). Never logged. */
 	E2E_PASSWORDS: string;
+	/** A run against a group host: the driver's bridge to each person's real
+	 *  sessions (groups-e2e.signin.mjs), in place of every password. */
+	E2E_BRIDGE?: string;
+	/** A run against a group host: the host, as on a deployment. */
+	GROUP_HOST_URL?: string;
 }
 
 /** Args are already-parsed JSON from the driver, which is the only caller. */
@@ -154,6 +169,7 @@ function signInScope(group: GroupRow): string {
  *  day-5.2a probe (OKF runs/2026-10-15-member-own-credential-probe) showed that
  *  half. */
 async function ownSession(env: Env, did: string, group: GroupRow): Promise<MemberSession> {
+	if (env.E2E_BRIDGE) return bridgedSession(env.E2E_BRIDGE, did);
 	let login = logins.get(did);
 	if (!login) {
 		const password = (JSON.parse(env.E2E_PASSWORDS) as Record<string, string>)[did];
@@ -184,6 +200,30 @@ async function ownSession(env: Env, did: string, group: GroupRow): Promise<Membe
 			headers.set('authorization', `Bearer ${accessJwt}`);
 			return fetch(new URL(pathname, env.E2E_GROUP_SERVICE), { ...init, headers });
 		}
+	};
+}
+
+// The scope each person's own sign-in was granted, read once from the bridge.
+const grantedScopes = new Map<string, Promise<string>>();
+
+/** On a host run, a person's own session is a real sign-in at their PDS, which
+ *  the driver holds: each request goes to its bridge, and the scope is what
+ *  their PDS granted, not what the app asked for. */
+async function bridgedSession(bridge: string, did: string): Promise<MemberSession> {
+	let scope = grantedScopes.get(did);
+	if (!scope) {
+		scope = fetch(new URL(`/scope/${encodeURIComponent(did)}`, bridge)).then(async (res) => {
+			if (!res.ok) throw new Error(`the driver holds no sign-in for ${did}`);
+			return res.text();
+		});
+		grantedScopes.set(did, scope);
+		scope.catch(() => grantedScopes.delete(did));
+	}
+	const at = `/own/${encodeURIComponent(did)}`;
+	return {
+		did,
+		scope: await scope,
+		handle: (pathname, init) => fetch(new URL(`${at}${pathname}`, bridge), init)
 	};
 }
 
@@ -273,11 +313,13 @@ async function callerFor(env: Env, args: Args, group: GroupRow): Promise<MemberS
 	if (kind !== 'own' && kind !== 'no-read')
 		throw new Error(`unknown caller session ${String(kind)}`);
 	const own = await ownSession(env, did, group);
+	// Read by parameter, as the app reads it: a PDS hands a typed grant back with
+	// the type's collections written in, so the text may not be META_READ_GRANT's.
 	const scope =
 		kind === 'no-read'
 			? own.scope
 					.split(' ')
-					.filter((token) => token !== META_READ_GRANT)
+					.filter((token) => !holdsMetaRead(token))
 					.join(' ')
 			: own.scope;
 	return {
@@ -401,16 +443,59 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 
 	/** Stores `personDid`'s group session, as their own link would. The app finds
 	 *  it by this key; restoring it is the stand-in's (./groups-e2e.oauth.ts), which
-	 *  logs in with the password the create set, the stand-in's only way in. */
+	 *  logs in with the password the create set, the stand-in's only way in. A host
+	 *  run passes no password: the session is the one the driver holds. */
 	linkGroup: async (env, args) => {
 		const personDid = String(args.personDid);
 		await env.OAUTH_SESSIONS.put(
 			groupSessionKey(String(args.groupDid), personDid),
 			JSON.stringify({ person: personDid })
 		);
-		setStandInLogin(String(args.groupDid), String(args.password));
+		if (args.password != null) setStandInLogin(String(args.groupDid), String(args.password));
 		return { linked: args.groupDid, by: personDid };
 	},
+
+	/** What the create's callback runs once the host has made the group: the
+	 *  app's set-up (`setUpHostGroup`), on the creator's session from the host,
+	 *  which `linkGroup` filed under them as the callback files it. The callback's
+	 *  own checks before it (the state, the person, the account at this host) are
+	 *  unit-tested and walked in a browser; `atHost` is the last of them. */
+	setUpHostGroup: async (env, args) => {
+		await ensureInit(env.DB);
+		const groupDid = String(args.groupDid);
+		const ownerDid = String(args.ownerDid);
+		const atHost = await isHostGroup(env, groupDid);
+		const credential = await resolveGroupCredential(env, groupDid, ownerDid);
+		if (!credential || credential.kind !== 'linked') {
+			throw new Error(`no group session of ${ownerDid}'s is stored for ${groupDid}`);
+		}
+		const outcome = await setUpHostGroup(
+			env,
+			ownerDid,
+			args.fields as HostCreateFields,
+			credential,
+			groupHostOrigin(env)!
+		);
+		return { ok: outcome.ok, error: outcome.ok ? null : outcome.error, groupDid, atHost };
+	},
+
+	/** The scope a link asks for (the create's too), and the one a fresh sign-in
+	 *  asks for as a member of the group, as the app builds them. */
+	scopes: async (env, args) => ({
+		link: groupSessionScope(false),
+		signIn: args.groupDid == null ? null : [...scopes, memberGrant(String(args.groupDid))].join(' ')
+	}),
+
+	/** The event bindings alone, as the create writes them for a host group: the
+	 *  host's own roles and `permissions` are not this app's to write. */
+	writeEventPermissions: async (env, args, group) =>
+		writeEventPermissions({
+			db: env.DB,
+			env,
+			group,
+			callerDid: args.callerDid == null ? null : String(args.callerDid),
+			bundles: args.bundles as Record<GroupRoleName, GroupPermission[]>
+		}),
 
 	groupByDid: async (env, args) => {
 		const row = await getGroupByDid(env.DB, String(args.groupDid));
