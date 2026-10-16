@@ -351,7 +351,7 @@ export async function setUpHostGroup(
 		env,
 		group: withSpaces,
 		callerDid: groupDid,
-		writer: pdsWriter(credential, groupDid),
+		writer: pdsWriter(credential, groupDid, { atHost: true }),
 		reader
 	};
 	try {

@@ -22,6 +22,7 @@ import { getMemberRow, pendingRequestIdOf } from './db/roster';
 import { GroupRuleError } from './db/rules';
 import { pendingRequestsFor } from './host';
 import { HostSignInError, isHostGroup, realGroupHost } from './real-host';
+import { GroupPermissionError } from './group-write';
 import { GroupCredentialError } from './session';
 
 const HOST = 'https://grouphost.test';
@@ -316,6 +317,38 @@ describe('membership writes, on the acting person’s own group session', () => 
 			rkey: BOB
 		});
 		expect(await getMemberRow(db, group.id, BOB)).toBeNull();
+	});
+
+	// The host decides: this app's own gate asks nothing, and sends the write on
+	// the member's own session, which the host cuts to their roles. (Spec: SC-503.)
+	it('a plain member’s add and eject go to the host unchecked here, and its refusals read as not allowed', async () => {
+		const env = { ...linkGroups([GROUP_DID], HOST, [BOB]), GROUP_HOST_URL: HOST };
+		const spaceCredential = await import('./space-credential');
+		const resolve = vi.spyOn(spaceCredential.didSpaceHosts, 'repoHost').mockResolvedValue(HOST);
+		const reader = authzReader(GROUP_DID, roster);
+		hostReplies = [
+			[403, { error: 'NotAssignable', message: 'your roles cannot assign or remove member' }],
+			[403, { error: 'ScopeMissingError', message: 'Missing required scope "space:…"' }]
+		];
+
+		const add = await host(env)
+			.addMember({ callerDid: BOB, reader }, ALICE, 'member')
+			.catch((e) => e);
+		const eject = await host(env)
+			.ejectMember({ callerDid: BOB, reader }, ALICE)
+			.catch((e) => e);
+		resolve.mockRestore();
+
+		expect(add).toBeInstanceOf(GroupPermissionError);
+		expect(add.reason).toBe('your roles may not assign or remove that role');
+		expect(eject).toBeInstanceOf(GroupPermissionError);
+		expect(eject.reason).toBe('your roles do not allow com.atproto.space.deleteRecord');
+		expect(hostCalls.map((c) => [c.url.pathname, c.person])).toEqual([
+			['/xrpc/com.atproto.space.putRecord', BOB],
+			['/xrpc/com.atproto.space.deleteRecord', BOB]
+		]);
+		expect(reader.calls).toEqual([]);
+		expect((await getMemberRow(db, group.id, ALICE))?.role).toBeUndefined();
 	});
 
 	it('a role change keeps the published date, read with the caller’s own access', async () => {

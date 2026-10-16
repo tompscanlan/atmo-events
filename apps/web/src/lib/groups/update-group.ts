@@ -39,7 +39,12 @@
 // fresh read of its access still says public. The gap between that read and the
 // write is left to the repair (server/repair.ts).
 
-import { approvalRefusal, groupFace, splitRuleLines } from './about-record';
+import {
+	approvalRefusal,
+	groupFace,
+	GROUP_PROFILE_COLLECTION,
+	splitRuleLines
+} from './about-record';
 import {
 	readAboutAccess,
 	readGroupAbout,
@@ -66,10 +71,13 @@ import { knownFormError } from './form-error';
 import type { GroupFormFailure, GroupFormResult } from './form-result';
 import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from './types';
 
-import { groupWriter, type GroupRepoWriter } from './server/group-write';
+import { groupWriter, requireGroupWrite, type GroupRepoWriter } from './server/group-write';
+import { spaceWrite } from './grants';
 import { errorText } from './server/errors';
 import { type CredentialStoreEnv } from './server/session';
 import { updateGroup } from './server/db/groups';
+const PROFILE_WRITE = spaceWrite(ABOUT_SPACE_TYPE, GROUP_PROFILE_COLLECTION, 'update');
+
 export interface UpdateGroupData {
 	name: string;
 	description?: string;
@@ -235,8 +243,11 @@ interface SaveState {
 	};
 }
 
-function writeRow(s: SaveState): Promise<void> {
-	return updateGroup(s.as.db, s.group.id, {
+/** This site's copy of the group, which a group host never sees, so the gate
+ *  checks it at a host too, on the scope that writes the profile it copies. */
+async function writeRow(s: SaveState): Promise<void> {
+	await requireGroupWrite(s.as, PROFILE_WRITE, { appOnly: true });
+	await updateGroup(s.as.db, s.group.id, {
 		name: s.data.name,
 		description: s.data.description || null,
 		requireApproval: s.requireApproval

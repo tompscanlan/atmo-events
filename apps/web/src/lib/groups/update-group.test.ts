@@ -80,6 +80,7 @@ import {
 } from './server/__fixtures__/linked-group';
 
 import { pdsSpaceUpdater } from './server/spaces';
+import { didSpaceHosts } from './server/space-credential';
 import { POLICY_MEMBER_LIST } from './ids';
 import { pdsMemberList, placeMember, readSpaceAccess } from './server/member-list';
 import {
@@ -1113,5 +1114,36 @@ describe('a stale form and the approval setting', () => {
 		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
 		expect(await declaredNow()).toBe(false);
 		expect(rowWhole().description).toBe('Typo fixed');
+	});
+});
+
+// At a group host the host checks the save's record writes, but this site's copy
+// of the group is its own, and a host never sees it. So a member's save, which
+// would change that copy before any record, is refused before anything is
+// written. (Spec: FR-213.)
+describe('at a group host', () => {
+	it('a member’s save is refused before the row or any record is written', async () => {
+		const pds = host();
+		const group = await givenGroup('public', pds);
+		await givenMember(group, pds);
+		const resolve = vi.spyOn(didSpaceHosts, 'repoHost').mockResolvedValue(STUB_PDS_SERVICE);
+
+		const result = await runUpdateGroup(
+			{ ...env, GROUP_HOST_URL: STUB_PDS_SERVICE },
+			harness.db,
+			group,
+			{ did: MEMBER, reader: pdsSpaceReader(CRED, GROUP_DID) },
+			{
+				name: 'Renamed by a member',
+				visibility: 'public',
+				shownVisibility: 'public',
+				requireApproval: true
+			}
+		);
+		resolve.mockRestore();
+
+		expect(result).toMatchObject({ ok: false });
+		expect((await getGroupByDid(harness.db, GROUP_DID))?.name).toBe('Kona Trail Runners');
+		expect(traced(pds)).toEqual([]);
 	});
 });

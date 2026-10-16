@@ -30,7 +30,7 @@ import {
 } from './db/roster';
 import { GroupRuleError } from './db/rules';
 import { errorText } from './errors';
-import { GroupPermissionError, requireGroupPermission } from './group-write';
+import { GroupPermissionError } from './group-write';
 import type { GroupHost, HostBinding, HostCaller } from './host';
 import { dropGroupMembership, putGroupMembership } from './members-writer';
 import { readMembership } from './members-read';
@@ -258,7 +258,6 @@ export function realGroupHost(binding: HostBinding): GroupHost {
 		},
 
 		async approveJoinRequest(caller, member, role) {
-			await requireGroupPermission(act(caller), 'ADMIT_MEMBERS');
 			await putGroupMembership({ ...act(caller), subject: member, roles: [role], intent: 'admit' });
 			await cacheMember(member, role, caller.callerDid);
 			return { did: member };

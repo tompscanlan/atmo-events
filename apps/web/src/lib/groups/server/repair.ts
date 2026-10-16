@@ -252,12 +252,14 @@ export async function repairGroup(input: RepairGroupInput): Promise<GroupRepairR
 }
 
 /** Step 4 alone, for a group at a real host, behind the same gate, read with the
- *  caller's own access. */
+ *  caller's own access. It writes only this app's rows, which the host never
+ *  sees, so the gate still checks it. */
 async function rebuildAtHost(input: RepairGroupInput): Promise<GroupRepairResult> {
 	const reader = input.ownReader ?? null;
 	await requireGroupWrite(
 		{ ...input, reader },
-		spaceWrite(MEMBERS_SPACE_TYPE, GROUP_PERMISSIONS_COLLECTION, 'update')
+		spaceWrite(MEMBERS_SPACE_TYPE, GROUP_PERMISSIONS_COLLECTION, 'update'),
+		{ appOnly: true }
 	);
 	if (!reader) throw new GroupCredentialError(input.group.group_did, actingPerson(input));
 	const nothing = { added: [], removed: [] };
