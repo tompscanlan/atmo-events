@@ -2258,7 +2258,7 @@ async function main() {
 		const atRequest = await ownAcceptance(bobToken, membersSpaceUri);
 		const listAtRequest = await spaceMemberList(groupToken, membersSpaceUri);
 		const credentialAtRequest = await spaceCredentialRequest(bobToken, membersSpaceUri);
-		const pendingAgain = await op('listJoinRequests');
+		const pendingAgain = await op('listJoinRequests', { callerDid: ALICE });
 		const bobsRequest = pendingAgain.find((request) => request.did === BOB);
 		await op('approveJoinRequest', {
 			callerDid: ALICE,
@@ -2359,7 +2359,9 @@ async function main() {
 			session: 'no-spaces',
 			message: null
 		});
-		const carolsRequest = (await op('listJoinRequests')).find((request) => request.did === CAROL);
+		const carolsRequest = (await op('listJoinRequests', { callerDid: ALICE })).find(
+			(request) => request.did === CAROL
+		);
 		await op('approveJoinRequest', {
 			callerDid: ALICE,
 			member: CAROL,

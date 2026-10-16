@@ -436,13 +436,14 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 
 	listMembers: (env, args) => listMembers(env.DB, String(args.groupId)),
 
-	/** Pending requests through the host, as the members page lists them. `all`
-	 *  reads the stand-in's own rows, closed ones included: a check only the
-	 *  stand-in can answer. */
-	listJoinRequests: async (env, args, group) =>
-		args.status === 'all'
-			? listJoinRequests(env.DB, String(args.groupId), 'all')
-			: groupHost({ db: env.DB, env, group }).listJoinRequests(),
+	/** Pending requests through the host, as the members page lists them for the
+	 *  admin `callerDid`. `all` reads the stand-in's own rows, closed ones
+	 *  included: a check only the stand-in can answer. */
+	listJoinRequests: async (env, args, group) => {
+		if (args.status === 'all') return listJoinRequests(env.DB, String(args.groupId), 'all');
+		const ctx = await rosterCtx(env, args, group);
+		return groupHost(ctx).listJoinRequests(ctx);
+	},
 
 	/** The app's own permission answer, read with the caller's own access, plus
 	 *  `can()` for each probed name. Once the members space holds an authz config,
