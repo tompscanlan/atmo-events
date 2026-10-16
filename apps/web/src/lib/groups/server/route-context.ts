@@ -1,8 +1,10 @@
 // The one way into a group route. The pages and every group remote (../remote-context.ts)
 // gate a group here, since a form with its own lookup could reveal a private
 // group. Every refusal is the same 404, so a hidden group looks like one that
-// never existed. The exception is a 503 when the host cannot say whether the
-// group is private, since a 404 would hide a public group from its visitors.
+// never existed. The exceptions: a 503 when the host cannot say whether the
+// group is private, since a 404 would hide a public group from its visitors;
+// and, on a page that asks for it, a notice for a caller the row lists whose
+// sign-in carries no grant for the group (`signInOnly`).
 //
 // Everything is read with the caller's own access (TS 2026-10-15): their
 // standing, the visibility and every page read go through a reader built on
@@ -49,6 +51,17 @@ export interface GroupRouteContext {
 	 *  visitor or a sign-in that reads no spaces, and then only what is public is
 	 *  shown. */
 	reader: GroupSpaceReader | null;
+	/** The group would be hidden from the caller, but the row lists them and only
+	 *  their own sign-in stands in the way (`membership.signIn`), as for a private
+	 *  group's creator right after the create. Nothing of the group was read for
+	 *  them, and `reader` is null: the page says only when a new sign-in opens it.
+	 *  Set only when the route asked (`signInNotice`). */
+	signInOnly?: true;
+}
+
+export interface GroupRouteOptions {
+	/** The page can show the sign-in notice (`signInOnly`) in place of the 404. */
+	signInNotice?: boolean;
 }
 
 /** The caller's own reader, or null when their sign-in reads no spaces: a PDS
@@ -93,7 +106,8 @@ export async function groupActorToDid(actor: string): Promise<string | null> {
 export async function groupRouteContext(
 	db: D1Database,
 	actor: string,
-	caller: MemberSession | null
+	caller: MemberSession | null,
+	{ signInNotice = false }: GroupRouteOptions = {}
 ): Promise<GroupRouteContext> {
 	const did = await groupActorToDid(actor);
 	if (!did) error(404, GROUP_NOT_FOUND);
@@ -113,6 +127,17 @@ export async function groupRouteContext(
 	);
 	if (membership.onRoster) return { group, membership, visibility: null, reader };
 
+	// The group is hidden from this caller. Someone the row lists whose sign-in
+	// lacks the group was refused by their own PDS, not by the group, so a page
+	// that can say so tells them when a new sign-in opens it. That reveals
+	// nothing they do not hold: the row is their own. Anyone else gets the 404.
+	const hidden = (): GroupRouteContext => {
+		if (signInNotice && membership.signIn) {
+			return { group, membership, visibility: null, reader: null, signInOnly: true };
+		}
+		error(404, GROUP_NOT_FOUND);
+	};
+
 	// No space can be read for this caller, so "public" is the declaration: a
 	// group publishes one exactly while its meta space is public.
 	if (!reader) {
@@ -123,7 +148,7 @@ export async function groupRouteContext(
 			console.error(`[groups] ${group.group_did}: the declaration could not be read:`, e);
 			error(503, GROUP_VISIBILITY_UNCHECKED);
 		}
-		if (!declared) error(404, GROUP_NOT_FOUND);
+		if (!declared) return hidden();
 		return { group, membership, visibility: 'public', reader };
 	}
 
@@ -133,14 +158,14 @@ export async function groupRouteContext(
 	try {
 		visibility = await readGroupVisibility(reader, group);
 	} catch (e) {
-		if (isSpaceAccessDenied(e)) error(404, GROUP_NOT_FOUND);
+		if (isSpaceAccessDenied(e)) return hidden();
 		console.error(
 			`[groups] ${group.group_did}: the about space's access record could not be read:`,
 			e
 		);
 		error(503, GROUP_VISIBILITY_UNCHECKED);
 	}
-	if (!canSeeGroup(visibility, membership)) error(404, GROUP_NOT_FOUND);
+	if (!canSeeGroup(visibility, membership)) return hidden();
 
 	return { group, membership, visibility, reader };
 }

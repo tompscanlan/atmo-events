@@ -8,7 +8,7 @@ import { refreshGroupHandle } from '$lib/groups/server/handles';
 import { readGroupMembers, NO_MEMBER_RECORDS } from '$lib/groups/server/members-read';
 import { loadPeople } from '$lib/groups/server/people';
 
-import { groupRouteContext, pageRoster } from '$lib/groups/server/route-context';
+import { groupHeader, groupRouteContext, pageRoster } from '$lib/groups/server/route-context';
 
 import { readGroupVisibility } from '$lib/groups/server/spaces';
 import type { GroupRow, GroupVisibility, RosterEntry } from '$lib/groups/types';
@@ -68,8 +68,19 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 		group,
 		membership,
 		visibility: gateVisibility,
-		reader
-	} = await groupRouteContext(db, params.actor, await gateCaller(locals.did, locals.session));
+		reader,
+		signInOnly
+	} = await groupRouteContext(db, params.actor, await gateCaller(locals.did, locals.session), {
+		signInNotice: true
+	});
+
+	// A group hidden from the caller, such as a private group's creator right
+	// after the create, whose sign-in carries no grant for it yet: the page says
+	// only when a new sign-in opens it, under the row's name.
+	if (signInOnly && membership.signIn) {
+		const { groupName } = await groupHeader(db, group, null);
+		return { signInOnly: true as const, group, groupName, signIn: membership.signIn };
+	}
 
 	const canAdmitMembers = can(membership.permissions, 'ADMIT_MEMBERS');
 
@@ -98,6 +109,7 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 	const linkOutcome = link === 'linked' || link === 'failed' ? link : null;
 
 	return {
+		signInOnly: false as const,
 		group,
 		membership,
 		/** The host's visibility, or null (`hostVisibility`). */

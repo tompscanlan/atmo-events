@@ -273,4 +273,33 @@ describe('/groups/[actor]/members load, for a member whose sign-in predates the 
 			{ status: 403, body: { message: 'Only members can see this roster' } }
 		);
 	});
+
+	// A private group hides itself from anyone off the roster, and right after the
+	// create its creator is off it, so the gate answered her Group not found.
+	describe('on a private group', () => {
+		beforeEach(() => {
+			host = membersSpaceReader(MEMBERS, GROUP_DID, [OWNER, MEMBER]);
+			host.put({
+				...PUBLIC_ACCESS,
+				value: { ...PUBLIC_ACCESS.value, public: false }
+			});
+			serveReader(GROUP_DID, host);
+		});
+
+		it('tells the creator the same instead of Group not found, and reads none of the roster', async () => {
+			const group = (await getGroupByDid(harness.db, GROUP_DID))!;
+
+			const data = await openAs(OWNER, readerSession(OWNER, BEFORE_THE_GROUP));
+
+			expect(data.signIn).toEqual({ from: group.created_at + METADATA_CACHE_MS });
+			expect(data.members).toBeUndefined();
+			expect(host.callsIn(MEMBERS)).toEqual([]);
+		});
+
+		it('still answers a stranger with Group not found, whatever their sign-in carries', async () => {
+			await expect(
+				openAs(STRANGER, readerSession(STRANGER, BEFORE_THE_GROUP))
+			).rejects.toMatchObject({ status: 404, body: { message: 'Group not found' } });
+		});
+	});
 });

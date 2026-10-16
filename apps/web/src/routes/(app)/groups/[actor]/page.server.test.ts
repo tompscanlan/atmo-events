@@ -410,6 +410,32 @@ describe('a member whose sign-in predates the group', () => {
 		expect(data.canSeeMembers).toBe(false);
 		expect(data.membership.signIn).toBeUndefined();
 	});
+
+	// A private group hides itself from anyone off the roster, so the gate
+	// answered its own creator Group not found until the new sign-in.
+	it('on a private group, tells the creator when a new sign-in opens it, in place of Group not found', async () => {
+		serveReader(GROUP_DID, hostReading('private'));
+		listsHold([OWNER, MEMBER], 'private');
+		const group = (await getGroupByDid(harness.db, GROUP_DID))!;
+
+		const data = (await openAs(OWNER, {}, readerSession(OWNER, BEFORE_THE_GROUP))) as unknown;
+
+		expect(data).toEqual({
+			signInOnly: true,
+			group,
+			groupName: 'Kona',
+			signIn: { from: group.created_at + METADATA_CACHE_MS }
+		});
+	});
+
+	it('on a private group, still answers someone the row does not list with Group not found', async () => {
+		serveReader(GROUP_DID, hostReading('private'));
+		listsHold([OWNER, MEMBER], 'private');
+
+		await expect(
+			openAs(STRANGER, {}, readerSession(STRANGER, BEFORE_THE_GROUP))
+		).rejects.toMatchObject({ status: 404, body: { message: GROUP_NOT_FOUND } });
+	});
 });
 
 // Until the owner links the group's account, every write as the group fails, so

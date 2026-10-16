@@ -90,7 +90,9 @@ async function readRosterSpace(
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
 	const viewer = await gateCaller(locals.did, locals.session);
-	const { group, membership, reader } = await groupRouteContext(db, params.actor, viewer);
+	const { group, membership, reader } = await groupRouteContext(db, params.actor, viewer, {
+		signInNotice: true
+	});
 
 	const isGroup = locals.did === group.group_did;
 	const refuse = () =>
