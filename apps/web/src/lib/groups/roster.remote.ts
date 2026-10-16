@@ -41,7 +41,8 @@ export const joinGroupForm = form(
  *  its copy of this site's client metadata names the group. */
 export const signInForGroup = command(
 	v.object({ groupDid: didField }),
-	async (data): Promise<string | null> => reauthorizeUrl(await groupRequestContext(data.groupDid))
+	async (data): Promise<string | null> =>
+		reauthorizeUrl(await groupRequestContext(data.groupDid, { signInNotice: true }))
 );
 
 /** Leave, or withdraw a pending request: one button, since for the applicant

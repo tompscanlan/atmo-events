@@ -82,7 +82,7 @@ import {
 } from './server/__fixtures__/reader-host';
 import { addMember } from './server/db/roster';
 import { updateGroupForm } from './group.remote';
-import { joinGroupForm, leaveGroupForm } from './roster.remote';
+import { joinGroupForm, leaveGroupForm, signInForGroup } from './roster.remote';
 import { putGroupEvent, removeGroupEvent } from './group-events.remote';
 import { cancelMembersOnlyRsvp, rsvpToMembersOnlyEvent } from './member-rsvp.remote';
 const OWNER = 'did:plc:owner';
@@ -100,6 +100,11 @@ const submitJoin = joinGroupForm as unknown as (
 const submitLeave = leaveGroupForm as unknown as (
 	data: Record<string, unknown>
 ) => Promise<GroupFormResult>;
+
+/** The handler `command()` was given for the sign-in notice's button. */
+const signInAgain = signInForGroup as unknown as (data: {
+	groupDid: string;
+}) => Promise<string | null>;
 
 let harness: SqliteD1;
 
@@ -331,6 +336,51 @@ describe('the gate in front of the group forms', () => {
 		expect(result).toEqual(notAllowed({}, 'MANAGE_GROUP'));
 		expect(asked().filter((path) => !READS.includes(path) && !resolving(path))).toEqual([]);
 		expect((await getGroupByDid(harness.db, LINKED))?.name).toBe(NAME);
+	});
+});
+
+// Right after a create, the creator's sign-in carries no grant for the group, and
+// a private group hides itself from anyone off the roster, so the notice's
+// "Sign in again" was answered Group not found as the pages were.
+describe('the sign-in notice’s button, on a private group', () => {
+	const PRIVATE = 'did:plc:privategroupaaaaaaaaaaaa';
+	const STRANGER = 'did:plc:strangeraaaaaaaaaaaaaaaa';
+	const CONSENT = 'https://pds.stub.test/oauth/authorize?request_uri=consent';
+	/** A sign-in from before the group: every group's meta space and nothing else. */
+	const BEFORE_THE_GROUP = `atproto ${META_READ_GRANT}`;
+
+	beforeEach(async () => {
+		await seedGroup({ harness, groupDid: PRIVATE, ownerDid: OWNER, name: 'Hidden Trail' });
+		serveReader(PRIVATE, spaceReader(PRIVATE));
+		request.platform.env = {
+			DB: harness.db,
+			OAUTH_SESSIONS: fixtureSessions,
+			OAUTH_PUBLIC_URL: 'https://atmo.stub.test'
+		};
+		signIn.authorize = async () => ({ url: new URL(CONSENT) });
+	});
+
+	afterEach(() => resetReaderHost());
+
+	it('starts the creator’s new sign-in, though the group is hidden from her until then', async () => {
+		request.locals = {
+			did: OWNER,
+			session: readerSession(OWNER, BEFORE_THE_GROUP)
+		} as typeof request.locals;
+
+		expect(await signInAgain({ groupDid: PRIVATE })).toBe(CONSENT);
+	});
+
+	it('answers someone the row does not list with Group not found', async () => {
+		request.locals = {
+			did: STRANGER,
+			session: readerSession(STRANGER, BEFORE_THE_GROUP)
+		} as typeof request.locals;
+
+		await expect(signInAgain({ groupDid: PRIVATE })).rejects.toMatchObject({
+			status: 404,
+			body: { message: 'Group not found' }
+		});
 	});
 });
 

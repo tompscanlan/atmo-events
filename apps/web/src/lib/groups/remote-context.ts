@@ -13,7 +13,7 @@ import type { CallerMembership, GroupRow, GroupVisibility } from './types';
 import type { GroupSpaceReader } from './server/about-read';
 import { callerSession, gateCaller, type MemberSession } from './server/acceptance';
 import { reauthorizeForGroup } from './server/member-grants';
-import { groupRouteContext } from './server/route-context';
+import { groupRouteContext, type GroupRouteOptions } from './server/route-context';
 import { authorizeWithGrants } from './server/sign-in-grants';
 
 /** What every handler resolves before it acts: the bindings, the group, and the
@@ -36,15 +36,21 @@ export interface GroupRequestContext {
  *  refusal. It uses the pages' lookup (`server/route-context.ts`): anyone
  *  signed in can POST a remote form with any group key, so a separate lookup
  *  could reveal that a private group exists. Every read an act makes goes
- *  through the caller's own reader, built there. */
-export async function groupRequestContext(actor: string): Promise<GroupRequestContext> {
+ *  through the caller's own reader, built there. `signInNotice` is for the one
+ *  act a group hidden from the caller still allows them: the notice's new
+ *  sign-in, which reads nothing of the group. */
+export async function groupRequestContext(
+	actor: string,
+	options: GroupRouteOptions = {}
+): Promise<GroupRequestContext> {
 	const { locals, platform } = getRequestEvent();
 	if (!locals.did) error(401, 'Sign in to do that');
 	const db = platform!.env.DB;
 	const { group, membership, visibility, reader } = await groupRouteContext(
 		db,
 		actor,
-		await gateCaller(locals.did, locals.session)
+		await gateCaller(locals.did, locals.session),
+		options
 	);
 	return { db, env: platform!.env, group, membership, visibility, reader, callerDid: locals.did };
 }
