@@ -1146,4 +1146,63 @@ describe('at a group host', () => {
 		expect((await getGroupByDid(harness.db, GROUP_DID))?.name).toBe('Kona Trail Runners');
 		expect(traced(pds)).toEqual([]);
 	});
+
+	// A host keeps each space's read policy from its access record, so a switch
+	// to private moves no policy, and the declaration's withdrawal is its first
+	// write. When that fails, nothing has landed.
+	const atHost = async (fail: (nsid: string) => Response | undefined) => {
+		let failing = false;
+		const pds = host((nsid) => (failing ? fail(nsid) : undefined));
+		const group = await givenGroup('public', pds);
+		expect(await save(group, 'public', { description: 'Trail runs at dawn' })).toEqual({
+			ok: true
+		});
+		failing = true;
+		pds.clearLog();
+		const resolve = vi.spyOn(didSpaceHosts, 'repoHost').mockResolvedValue(STUB_PDS_SERVICE);
+		const result = await runUpdateGroup(
+			{ ...env, GROUP_HOST_URL: STUB_PDS_SERVICE },
+			harness.db,
+			group,
+			{ did: OWNER, reader: ownerReader() },
+			{
+				name: 'Kona Trail Runners',
+				visibility: 'private',
+				shownVisibility: 'public',
+				requireApproval: true
+			}
+		);
+		resolve.mockRestore();
+		expect(updateSpaceCalls(pds)).toEqual([]);
+		expect(await declaredNow()).toBe(true);
+		expect((await aboutAccessNow())?.public).toBe(true);
+		return result;
+	};
+
+	it('a switch to private whose withdrawal the host refuses for the caller’s roles says so, and that nothing was saved', async () => {
+		const result = await atHost((nsid) =>
+			nsid === 'com.atproto.repo.deleteRecord'
+				? Response.json({ error: 'ScopeMissingError' }, { status: 403 })
+				: undefined
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error:
+				'Not allowed: your roles do not allow com.atproto.repo.deleteRecord. Nothing was saved: the group is still public and still listed in browse.'
+		});
+	});
+
+	it('a switch to private whose withdrawal fails otherwise says the group is still public, and choosing private again retries it', async () => {
+		const result = await atHost((nsid) =>
+			nsid === 'com.atproto.repo.deleteRecord' ? pdsDown() : undefined
+		);
+
+		expect(result).toMatchObject({ ok: false });
+		const error = !result.ok ? result.error : '';
+		expect(error).toMatch(/^Its declaration could not be withdrawn: /);
+		expect(error).not.toContain('closed it to non-members');
+		expect(error).toContain('so the group is still public');
+		expect(error).toContain('Choose private and save the settings again');
+	});
 });
