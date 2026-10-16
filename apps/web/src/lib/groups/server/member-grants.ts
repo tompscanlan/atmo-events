@@ -29,7 +29,7 @@
 import { OAuthResponseError } from '@atcute/oauth-node-client';
 import { GROUP_RSVP_COLLECTION } from '../ids';
 import { GROUP_ACCEPTANCE_COLLECTION } from '../members-record';
-import { ABOUT_SPACE_TYPE } from '../types';
+import { ABOUT_SPACE_TYPE, type GroupRow } from '../types';
 
 import { groupsOfMember } from './db/roster';
 /** How long a PDS may keep serving client metadata it fetched earlier. */
@@ -110,6 +110,29 @@ export function holdsRsvpGrant(
 	return need === 'put' ? writes('create') && writes('update') : writes('delete');
 }
 
+/** Whether a granted scope reads `groupDid`'s spaces: a `space:*` grant with
+ *  `read` that names the group, or every authority. Read by parameter, like
+ *  `holdsAcceptanceGrant`. Without one, the holder's own PDS refuses them the
+ *  group's members space before the host is asked. */
+export function readsGroupSpaces(scope: string, groupDid: string): boolean {
+	return scope
+		.split(' ')
+		.filter((token) => token.startsWith('space:*?'))
+		.map((token) => new URLSearchParams(token.slice('space:*?'.length)))
+		.some(
+			(params) =>
+				(params.get('authority') === groupDid || params.get('authority') === '*') &&
+				params.getAll('action').includes('read')
+		);
+}
+
+/** When a sign-in can first ask for `group`'s grant: once no PDS still serves a
+ *  copy of the client metadata fetched before the group, which declares none
+ *  for it. */
+export function memberGrantFrom(group: Pick<GroupRow, 'created_at'>): number {
+	return group.created_at + METADATA_CACHE_MS;
+}
+
 /** One grant per group in D1, for the client metadata. A failed read declares
  *  none: the metadata still serves the base scopes, and sign-in falls back to
  *  them. It does not create the groups tables, because a deployment that never
@@ -149,7 +172,7 @@ export async function signInGrantAttempts(
 
 	const all = groups.map((g) => memberGrant(g.group_did));
 	const settled = groups
-		.filter((g) => now - g.created_at >= METADATA_CACHE_MS)
+		.filter((g) => now >= memberGrantFrom(g))
 		.map((g) => memberGrant(g.group_did));
 
 	const attempts = [all];
@@ -184,13 +207,14 @@ export async function firstAcceptedScope<T>(
 	throw refusal;
 }
 
-/** Runs `authorize` once more after `did` joins or asks to join `groupDid`, so
+/** Runs `authorize` once more after `did` joins or asks to join `groupDid`, or
+ *  presses the pages' "Sign in again" when their sign-in lacks the group, so
  *  the member's session carries that group's grant before the next sign-in. It
  *  asks for every grant sign-in would, since the new session replaces the old
  *  one, and only tries the sets that include the new group's grant: a set
  *  without it would reissue what the member already holds. Returns null when
  *  the PDS refuses each such set or anything else fails, and never throws,
- *  because the join already stands and the grant then comes at the next sign-in. */
+ *  because the join already stands and the grant then comes at a later sign-in. */
 export async function reauthorizeForGroup<T>(
 	db: D1Database,
 	did: string,
@@ -205,7 +229,7 @@ export async function reauthorizeForGroup<T>(
 		return await firstAcceptedScope(attempts, authorize);
 	} catch (e) {
 		console.warn(
-			`[groups] no re-authorize after joining ${groupDid}; the grant waits for the next sign-in:`,
+			`[groups] no re-authorize for ${groupDid}; the grant waits for a later sign-in:`,
 			e
 		);
 		return null;

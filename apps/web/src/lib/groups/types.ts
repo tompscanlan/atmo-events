@@ -88,6 +88,13 @@ export interface CallerMembership {
 	 *  PDS serves none, or it was granted before reads were asked for. Nothing is
 	 *  read for them, so `permissions` is unknown. */
 	noSpaceAccess?: true;
+	/** Set when the row lists the caller but their sign-in carries no grant for
+	 *  this group, so their own PDS refused them its members space and the host
+	 *  was never asked: a sign-in from before they joined, or, for the creator,
+	 *  from before the group. `from` is when a new sign-in can carry the grant,
+	 *  or null when one already can. The pages say so rather than only hiding
+	 *  the roster (TS 2026-10-15). */
+	signIn?: { from: number | null };
 }
 
 /** A DID as a page shows it. Display only: links and forms keep the DID. A null

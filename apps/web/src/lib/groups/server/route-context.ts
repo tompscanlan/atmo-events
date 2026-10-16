@@ -17,7 +17,7 @@ import type { CallerMembership, GroupRow, GroupVisibility, RosterEntry } from '.
 import { credentialSpaceReader, readGroupProfile, type GroupSpaceReader } from './about-read';
 import type { MemberSession } from './acceptance';
 import { publiclyDeclared } from './declaration-writer';
-import { holdsMetaRead } from './member-grants';
+import { holdsMetaRead, memberGrantFrom, readsGroupSpaces } from './member-grants';
 import { knownHandles } from './identities';
 
 import {
@@ -58,6 +58,27 @@ export function callerReader(caller: MemberSession | null): GroupSpaceReader | n
 	return caller && holdsMetaRead(caller.scope) ? credentialSpaceReader(caller) : null;
 }
 
+/** `membership`, with `signIn` set when only a new sign-in stands between the
+ *  caller and the roster: the row lists them, they are off the roster, and their
+ *  sign-in carries no grant for the group, so the refusal was their own PDS's.
+ *  A member whose sign-in does carry it was turned away by the host, and a new
+ *  sign-in would not change that. */
+export function withSignIn(
+	membership: CallerMembership,
+	group: GroupRow,
+	caller: MemberSession | null,
+	now: number
+): CallerMembership {
+	if (!caller || membership.onRoster || membership.role === null || membership.unreadable) {
+		return membership;
+	}
+	if (!group.members_space_uri || readsGroupSpaces(caller.scope, group.group_did)) {
+		return membership;
+	}
+	const from = memberGrantFrom(group);
+	return { ...membership, signIn: { from: from > now ? from : null } };
+}
+
 /** A route key to a DID, or null. `actorToDid` cannot tell an unknown handle
  *  from a resolver outage, so an outage also answers 404 for a handle URL. */
 export async function groupActorToDid(actor: string): Promise<string | null> {
@@ -84,7 +105,12 @@ export async function groupRouteContext(
 
 	// A caller on the roster sees the group at every visibility, so the host is
 	// not asked, and a failed visibility read cannot lock a member out.
-	const membership = await readStanding(db, group, caller?.did ?? null, reader);
+	const membership = withSignIn(
+		await readStanding(db, group, caller?.did ?? null, reader),
+		group,
+		caller,
+		Date.now()
+	);
 	if (membership.onRoster) return { group, membership, visibility: null, reader };
 
 	// No space can be read for this caller, so "public" is the declaration: a

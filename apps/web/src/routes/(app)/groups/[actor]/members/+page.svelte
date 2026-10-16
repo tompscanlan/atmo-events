@@ -14,6 +14,7 @@
 		suggestPeople
 	} from '$lib/groups/roster.remote';
 	import JoinRequestItem from '$lib/groups/components/JoinRequestItem.svelte';
+	import GroupSignInNotice from '$lib/groups/components/GroupSignInNotice.svelte';
 
 	let { data } = $props();
 
@@ -63,228 +64,236 @@
 	>
 
 	<h1 class="text-3xl font-bold">Members</h1>
-	<!-- Says where the roster came from, as the group page does for its profile. -->
-	<p class="text-base-500 dark:text-base-400 mt-1 mb-6 text-sm">
-		{#if data.rosterSource === 'records' && group.members_space_uri}
-			Read from the membership records in this group's
-			<PdslsLink to={group.members_space_uri} class="underline">members space</PdslsLink>.
-		{:else}
-			Reading from cache. This group's members space holds no membership records yet.
+	<!-- For a member whose sign-in carries no grant for this group, such as its
+	     creator right after the create: nothing of the roster was read. -->
+	{#if data.signIn}
+		<GroupSignInNotice groupDid={group.group_did} from={data.signIn.from} class="mt-4" />
+	{:else}
+		<!-- Says where the roster came from, as the group page does for its profile. -->
+		<p class="text-base-500 dark:text-base-400 mt-1 mb-6 text-sm">
+			{#if data.rosterSource === 'records' && group.members_space_uri}
+				Read from the membership records in this group's
+				<PdslsLink to={group.members_space_uri} class="underline">members space</PdslsLink>.
+			{:else}
+				Reading from cache. This group's members space holds no membership records yet.
+			{/if}
+		</p>
+
+		{#if addError}
+			<p class="mb-6 text-sm text-red-600 dark:text-red-400">{addError}</p>
 		{/if}
-	</p>
 
-	{#if addError}
-		<p class="mb-6 text-sm text-red-600 dark:text-red-400">{addError}</p>
-	{/if}
+		<ul class="flex flex-col gap-2">
+			{#each data.members as member (member.did)}
+				<li class="ring-base-200 dark:ring-base-800 rounded-xl p-3 ring-1">
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<div class="flex min-w-0 items-center gap-3">
+							<PersonLabel did={member.did} person={data.people[member.did]} />
+							<Badge variant={member.role === 'owner' ? 'primary' : 'secondary'}>
+								{member.role}
+							</Badge>
+							<!-- Whether the member wrote their own acceptance. Access comes from
+							     membership alone, so this is a label, not a gate. Nothing is
+							     shown when it could not be read. -->
+							{#if member.confirmed === true}
+								<span
+									class="text-base-500 dark:text-base-400 shrink-0 text-xs"
+									title="This member accepted the membership from their own account">confirmed</span
+								>
+							{:else if member.confirmed === false}
+								<span
+									class="shrink-0 text-xs text-amber-700 dark:text-amber-400"
+									title="This member has not accepted the membership from their own account yet. They can still read the group."
+									>unconfirmed</span
+								>
+							{/if}
+							{#if member.recordUri}
+								<!-- The membership record itself, in the members space. -->
+								<PdslsLink
+									to={member.recordUri}
+									title="This membership record on pds.ls"
+									class="text-base-400 dark:text-base-500 shrink-0 text-xs hover:underline"
+									>record ↗</PdslsLink
+								>
+							{/if}
+						</div>
 
-	<ul class="flex flex-col gap-2">
-		{#each data.members as member (member.did)}
-			<li class="ring-base-200 dark:ring-base-800 rounded-xl p-3 ring-1">
-				<div class="flex flex-wrap items-center justify-between gap-3">
-					<div class="flex min-w-0 items-center gap-3">
-						<PersonLabel did={member.did} person={data.people[member.did]} />
-						<Badge variant={member.role === 'owner' ? 'primary' : 'secondary'}>
-							{member.role}
-						</Badge>
-						<!-- Whether the member wrote their own acceptance. Access comes from
-						     membership alone, so this is a label, not a gate. Nothing is
-						     shown when it could not be read. -->
-						{#if member.confirmed === true}
-							<span
-								class="text-base-500 dark:text-base-400 shrink-0 text-xs"
-								title="This member accepted the membership from their own account">confirmed</span
-							>
-						{:else if member.confirmed === false}
-							<span
-								class="shrink-0 text-xs text-amber-700 dark:text-amber-400"
-								title="This member has not accepted the membership from their own account yet. They can still read the group."
-								>unconfirmed</span
-							>
-						{/if}
-						{#if member.recordUri}
-							<!-- The membership record itself, in the members space. -->
-							<PdslsLink
-								to={member.recordUri}
-								title="This membership record on pds.ls"
-								class="text-base-400 dark:text-base-500 shrink-0 text-xs hover:underline"
-								>record ↗</PdslsLink
+						{#if canManageAnyMember && member.role !== 'owner'}
+							{@const roleForm = changeMemberRoleForm.for(member.did)}
+							{@const removeForm = removeMemberForm.for(member.did)}
+							{@const rowError =
+								groupFormError(roleForm.result) ?? groupFormError(removeForm.result)}
+							<div class="flex shrink-0 flex-wrap items-center gap-2">
+								{#if data.canAssignRoles}
+									<form {...resetOnSuccess(roleForm)} class="flex items-center gap-1">
+										<input type="hidden" name="groupDid" value={group.group_did} />
+										<input type="hidden" name="did" value={member.did} />
+										<select
+											name="role"
+											class="ring-base-200 dark:ring-base-800 bg-base-100/50 dark:bg-base-900/50 rounded-ui border-0 px-2 py-1 text-xs ring-1 ring-inset"
+										>
+											{#each data.assignableRoles as role (role)}
+												<option value={role} selected={member.role === role}>{role}</option>
+											{/each}
+										</select>
+										<Button type="submit" size="sm" variant="secondary">Set role</Button>
+									</form>
+								{/if}
+								{#if data.canEjectMembers}
+									<form {...resetOnSuccess(removeForm)}>
+										<input type="hidden" name="groupDid" value={group.group_did} />
+										<input type="hidden" name="did" value={member.did} />
+										<button
+											type="submit"
+											class="text-xs text-red-600 hover:underline dark:text-red-400">Remove</button
+										>
+									</form>
+								{/if}
+							</div>
+							{#if rowError}
+								<p class="w-full text-sm text-red-600 dark:text-red-400">{rowError}</p>
+							{/if}
+						{:else if member.role === 'owner'}
+							<span class="text-base-400 dark:text-base-500 shrink-0 text-xs"
+								>owner, cannot be changed</span
 							>
 						{/if}
 					</div>
+				</li>
+			{/each}
+		</ul>
 
-					{#if canManageAnyMember && member.role !== 'owner'}
-						{@const roleForm = changeMemberRoleForm.for(member.did)}
-						{@const removeForm = removeMemberForm.for(member.did)}
-						{@const rowError = groupFormError(roleForm.result) ?? groupFormError(removeForm.result)}
-						<div class="flex shrink-0 flex-wrap items-center gap-2">
-							{#if data.canAssignRoles}
-								<form {...resetOnSuccess(roleForm)} class="flex items-center gap-1">
-									<input type="hidden" name="groupDid" value={group.group_did} />
-									<input type="hidden" name="did" value={member.did} />
-									<select
-										name="role"
-										class="ring-base-200 dark:ring-base-800 bg-base-100/50 dark:bg-base-900/50 rounded-ui border-0 px-2 py-1 text-xs ring-1 ring-inset"
-									>
-										{#each data.assignableRoles as role (role)}
-											<option value={role} selected={member.role === role}>{role}</option>
-										{/each}
-									</select>
-									<Button type="submit" size="sm" variant="secondary">Set role</Button>
-								</form>
-							{/if}
-							{#if data.canEjectMembers}
+		<!-- Rows the records no longer back. The roster above comes from the records,
+		     so a removal that stopped partway would otherwise drop the member from
+		     the page with nothing left to press. Each Remove is the same form
+		     instance as the roster row's (`.for(did)`), so the error that row showed
+		     carries over here. Only those who may eject get this list. -->
+		{#if data.unfinished.length > 0}
+			<section class="mt-10">
+				<h2 class="mb-1 text-xl font-semibold">Not finished</h2>
+				<p class="text-base-500 dark:text-base-400 mb-3 text-sm">
+					These people have no membership record, so they have no access here, but a removal or an
+					addition stopped partway. Remove finishes it. To keep someone, remove them, then add them
+					again.
+				</p>
+				<ul class="flex flex-col gap-2">
+					{#each data.unfinished as did (did)}
+						{@const removeForm = removeMemberForm.for(did)}
+						{@const rowError = groupFormError(removeForm.result)}
+						<li class="ring-base-200 dark:ring-base-800 rounded-xl p-3 ring-1">
+							<div class="flex flex-wrap items-center justify-between gap-3">
+								<PersonLabel {did} person={data.people[did]} />
 								<form {...resetOnSuccess(removeForm)}>
 									<input type="hidden" name="groupDid" value={group.group_did} />
-									<input type="hidden" name="did" value={member.did} />
+									<input type="hidden" name="did" value={did} />
 									<button
 										type="submit"
 										class="text-xs text-red-600 hover:underline dark:text-red-400">Remove</button
 									>
 								</form>
-							{/if}
-						</div>
-						{#if rowError}
-							<p class="w-full text-sm text-red-600 dark:text-red-400">{rowError}</p>
-						{/if}
-					{:else if member.role === 'owner'}
-						<span class="text-base-400 dark:text-base-500 shrink-0 text-xs"
-							>owner, cannot be changed</span
-						>
-					{/if}
-				</div>
-			</li>
-		{/each}
-	</ul>
-
-	<!-- Rows the records no longer back. The roster above comes from the records,
-	     so a removal that stopped partway would otherwise drop the member from
-	     the page with nothing left to press. Each Remove is the same form
-	     instance as the roster row's (`.for(did)`), so the error that row showed
-	     carries over here. Only those who may eject get this list. -->
-	{#if data.unfinished.length > 0}
-		<section class="mt-10">
-			<h2 class="mb-1 text-xl font-semibold">Not finished</h2>
-			<p class="text-base-500 dark:text-base-400 mb-3 text-sm">
-				These people have no membership record, so they have no access here, but a removal or an
-				addition stopped partway. Remove finishes it. To keep someone, remove them, then add them
-				again.
-			</p>
-			<ul class="flex flex-col gap-2">
-				{#each data.unfinished as did (did)}
-					{@const removeForm = removeMemberForm.for(did)}
-					{@const rowError = groupFormError(removeForm.result)}
-					<li class="ring-base-200 dark:ring-base-800 rounded-xl p-3 ring-1">
-						<div class="flex flex-wrap items-center justify-between gap-3">
-							<PersonLabel {did} person={data.people[did]} />
-							<form {...resetOnSuccess(removeForm)}>
-								<input type="hidden" name="groupDid" value={group.group_did} />
-								<input type="hidden" name="did" value={did} />
-								<button type="submit" class="text-xs text-red-600 hover:underline dark:text-red-400"
-									>Remove</button
-								>
-							</form>
-							{#if rowError}
-								<p class="w-full text-sm text-red-600 dark:text-red-400">{rowError}</p>
-							{/if}
-						</div>
-					</li>
-				{/each}
-			</ul>
-		</section>
-	{/if}
-
-	{#if data.canAdmitMembers}
-		<section class="mt-10">
-			<h2 class="mb-3 text-xl font-semibold">Pending requests</h2>
-			{#if data.requestsNeedLink}
-				<p class="text-base-500 dark:text-base-400 text-sm">
-					Link your access to this group, from the group page, to see its join requests.
-				</p>
-			{:else if data.pendingRequests.length === 0}
-				<p class="text-base-500 dark:text-base-400 text-sm">None.</p>
-			{:else}
-				<ul class="flex flex-col gap-2">
-					{#each data.pendingRequests as request (request.id)}
-						<JoinRequestItem
-							groupDid={group.group_did}
-							{request}
-							person={data.people[request.did]}
-							roles={data.assignableRoles}
-						/>
+								{#if rowError}
+									<p class="w-full text-sm text-red-600 dark:text-red-400">{rowError}</p>
+								{/if}
+							</div>
+						</li>
 					{/each}
 				</ul>
-			{/if}
+			</section>
+		{/if}
 
-			<h2 class="mt-8 mb-1 text-xl font-semibold">Add a member directly</h2>
-			<p class="text-base-500 dark:text-base-400 mb-3 text-sm">
-				They join at once, with the role you pick, and show as unconfirmed until they next sign in,
-				if their account's server supports it.
-			</p>
-			<form {...resetOnSuccess(addMemberForm)} class="flex flex-wrap items-end gap-2">
-				<input type="hidden" name="groupDid" value={group.group_did} />
-				<div class="flex flex-col gap-1.5">
-					<Label for="add-actor">Handle or DID</Label>
-					<Input
-						id="add-actor"
-						name="actor"
-						placeholder="alice.bsky.social"
-						autocomplete="off"
-						list="add-actor-suggestions"
-						oninput={(e: Event) => suggest((e.currentTarget as HTMLInputElement).value)}
-						required
-						class="w-72"
-					/>
-					<datalist id="add-actor-suggestions">
-						{#each suggestions as suggestion (suggestion.did)}
-							<option value={suggestion.handle ?? suggestion.did}
-								>{suggestion.displayName ?? ''}</option
-							>
+		{#if data.canAdmitMembers}
+			<section class="mt-10">
+				<h2 class="mb-3 text-xl font-semibold">Pending requests</h2>
+				{#if data.requestsNeedLink}
+					<p class="text-base-500 dark:text-base-400 text-sm">
+						Link your access to this group, from the group page, to see its join requests.
+					</p>
+				{:else if data.pendingRequests.length === 0}
+					<p class="text-base-500 dark:text-base-400 text-sm">None.</p>
+				{:else}
+					<ul class="flex flex-col gap-2">
+						{#each data.pendingRequests as request (request.id)}
+							<JoinRequestItem
+								groupDid={group.group_did}
+								{request}
+								person={data.people[request.did]}
+								roles={data.assignableRoles}
+							/>
 						{/each}
-					</datalist>
-				</div>
-				<div class="flex flex-col gap-1.5">
-					<Label for="add-role">Role</Label>
-					<select
-						id="add-role"
-						name="role"
-						class="ring-base-200 dark:ring-base-800 bg-base-100/50 dark:bg-base-900/50 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
-					>
-						{#each data.assignableRoles as role (role)}
-							<option value={role} selected={role === 'member'}>{role}</option>
-						{/each}
-					</select>
-				</div>
-				<Button type="submit">Add</Button>
-			</form>
-		</section>
-	{/if}
+					</ul>
+				{/if}
 
-	{#if canManageAnyMember}
-		<section class="mt-10">
-			<h2 class="mb-3 text-xl font-semibold">What each role grants</h2>
-			<p class="text-base-500 dark:text-base-400 mb-3 text-sm">
-				Permissions are stored per group, and every name here is enforced.
-			</p>
-			<div class="flex flex-col gap-3">
-				{#each Object.entries(data.rolePermissions) as [role, permissions] (role)}
-					<div class="ring-base-200 dark:ring-base-800 rounded-xl p-3 ring-1">
-						<p class="mb-2 font-semibold">{role}</p>
-						<div class="flex flex-wrap gap-1.5">
-							{#each permissions as permission (permission)}
-								<span
-									class="bg-accent-400/10 text-accent-700 dark:text-accent-400 rounded-full px-2 py-0.5 font-mono text-xs"
-								>
-									{permission}
-								</span>
-							{:else}
-								<span class="text-base-500 dark:text-base-400 text-xs"
-									>nothing. Membership itself is what this role holds.</span
+				<h2 class="mt-8 mb-1 text-xl font-semibold">Add a member directly</h2>
+				<p class="text-base-500 dark:text-base-400 mb-3 text-sm">
+					They join at once, with the role you pick, and show as unconfirmed until they next sign
+					in, if their account's server supports it.
+				</p>
+				<form {...resetOnSuccess(addMemberForm)} class="flex flex-wrap items-end gap-2">
+					<input type="hidden" name="groupDid" value={group.group_did} />
+					<div class="flex flex-col gap-1.5">
+						<Label for="add-actor">Handle or DID</Label>
+						<Input
+							id="add-actor"
+							name="actor"
+							placeholder="alice.bsky.social"
+							autocomplete="off"
+							list="add-actor-suggestions"
+							oninput={(e: Event) => suggest((e.currentTarget as HTMLInputElement).value)}
+							required
+							class="w-72"
+						/>
+						<datalist id="add-actor-suggestions">
+							{#each suggestions as suggestion (suggestion.did)}
+								<option value={suggestion.handle ?? suggestion.did}
+									>{suggestion.displayName ?? ''}</option
 								>
 							{/each}
-						</div>
+						</datalist>
 					</div>
-				{/each}
-			</div>
-		</section>
+					<div class="flex flex-col gap-1.5">
+						<Label for="add-role">Role</Label>
+						<select
+							id="add-role"
+							name="role"
+							class="ring-base-200 dark:ring-base-800 bg-base-100/50 dark:bg-base-900/50 rounded-ui border-0 px-3 py-1.5 text-sm ring-1 ring-inset"
+						>
+							{#each data.assignableRoles as role (role)}
+								<option value={role} selected={role === 'member'}>{role}</option>
+							{/each}
+						</select>
+					</div>
+					<Button type="submit">Add</Button>
+				</form>
+			</section>
+		{/if}
+
+		{#if canManageAnyMember}
+			<section class="mt-10">
+				<h2 class="mb-3 text-xl font-semibold">What each role grants</h2>
+				<p class="text-base-500 dark:text-base-400 mb-3 text-sm">
+					Permissions are stored per group, and every name here is enforced.
+				</p>
+				<div class="flex flex-col gap-3">
+					{#each Object.entries(data.rolePermissions) as [role, permissions] (role)}
+						<div class="ring-base-200 dark:ring-base-800 rounded-xl p-3 ring-1">
+							<p class="mb-2 font-semibold">{role}</p>
+							<div class="flex flex-wrap gap-1.5">
+								{#each permissions as permission (permission)}
+									<span
+										class="bg-accent-400/10 text-accent-700 dark:text-accent-400 rounded-full px-2 py-0.5 font-mono text-xs"
+									>
+										{permission}
+									</span>
+								{:else}
+									<span class="text-base-500 dark:text-base-400 text-xs"
+										>nothing. Membership itself is what this role holds.</span
+									>
+								{/each}
+							</div>
+						</div>
+					{/each}
+				</div>
+			</section>
+		{/if}
 	{/if}
 </div>

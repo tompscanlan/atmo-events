@@ -35,6 +35,15 @@ export const joinGroupForm = form(
 	}
 );
 
+/** Where to send a member whose sign-in carries no grant for the group, such as
+ *  its creator right after the create, so a new sign-in picks it up and brings
+ *  them back to the page. Null when the PDS refuses the grant, as it does until
+ *  its copy of this site's client metadata names the group. */
+export const signInForGroup = command(
+	v.object({ groupDid: didField }),
+	async (data): Promise<string | null> => reauthorizeUrl(await groupRequestContext(data.groupDid))
+);
+
 /** Leave, or withdraw a pending request: one button, since for the applicant
  *  they are the same intent. The owner cannot leave (a GroupRuleError). */
 export const leaveGroupForm = form(

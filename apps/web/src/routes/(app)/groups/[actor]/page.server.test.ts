@@ -54,6 +54,8 @@ import {
 import { groupSpaceUris } from '$lib/groups/ids';
 import { getGroupByDid } from '$lib/groups/server/db/groups';
 import { addMember } from '$lib/groups/server/db/roster';
+import { META_READ_GRANT } from '$lib/atproto/settings';
+import { METADATA_CACHE_MS } from '$lib/groups/server/member-grants';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 const STRANGER = 'did:plc:stranger';
@@ -374,6 +376,39 @@ describe('a members space that cannot be read', () => {
 
 		serveReader(GROUP_DID, membersDown('public'));
 		expect((await openAs(STRANGER)).visibility).toBe('public');
+	});
+});
+
+// Right after a create, the creator's sign-in predates the group, so it carries
+// no grant for the group's spaces and her own PDS refuses the members space. She
+// sees what a non-member sees (TS 2026-10-15), and the page says when a new
+// sign-in opens the members tab, since nothing else would tell her why her own
+// group hides its members from her.
+describe('a member whose sign-in predates the group', () => {
+	/** A sign-in from before the group: every group's meta space and nothing else. */
+	const BEFORE_THE_GROUP = `atproto ${META_READ_GRANT}`;
+
+	it('tells the creator when a new sign-in opens the members tab', async () => {
+		serveReader(GROUP_DID, hostReading('public'));
+		listsHold([OWNER, MEMBER], 'public');
+		const group = (await getGroupByDid(harness.db, GROUP_DID))!;
+
+		const data = await openAs(OWNER, {}, readerSession(OWNER, BEFORE_THE_GROUP));
+
+		expect(data.membership.role).toBe('owner');
+		expect(data.canSeeMembers).toBe(false);
+		expect(data.membership.signIn).toEqual({ from: group.created_at + METADATA_CACHE_MS });
+	});
+
+	it('says nothing of a sign-in to a member the host turned away', async () => {
+		serveReader(GROUP_DID, hostReading('public'));
+		listsHold([OWNER], 'public');
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const data = await openAs(MEMBER);
+
+		expect(data.canSeeMembers).toBe(false);
+		expect(data.membership.signIn).toBeUndefined();
 	});
 });
 

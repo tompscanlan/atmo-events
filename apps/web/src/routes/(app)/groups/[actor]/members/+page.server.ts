@@ -95,6 +95,13 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const isGroup = locals.did === group.group_did;
 	const refuse = () =>
 		error(403, locals.did ? 'Only members can see this roster' : 'Sign in to see members');
+	// A member whose sign-in carries no grant for the group, such as its creator
+	// right after the create, gets a page that says when a new sign-in shows them
+	// the roster. Nothing is read from the members space for them.
+	if (!isGroup && !canSeeMembers(membership) && membership.signIn) {
+		const { groupName } = await groupHeader(db, group, reader);
+		return { group, groupName, signIn: membership.signIn };
+	}
 	if (!isGroup && !canSeeMembers(membership)) refuse();
 
 	// The back-link's name comes from the profile record, as on the group page.
@@ -124,6 +131,7 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		group,
 		membership,
 		groupName,
+		signIn: null,
 		members: roster.map((entry) => ({
 			...entry,
 			/** The `membership` record behind the row, when the roster came from

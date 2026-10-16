@@ -40,6 +40,9 @@ import {
 	groupAccessRecord
 } from '$lib/groups/members-record';
 import { ABOUT_SPACE_TYPE } from '$lib/groups/types';
+import { META_READ_GRANT } from '$lib/atproto/settings';
+import { METADATA_CACHE_MS } from '$lib/groups/server/member-grants';
+import { getGroupByDid } from '$lib/groups/server/db/groups';
 
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
@@ -89,17 +92,19 @@ afterEach(() => {
 	resetReaderHost();
 });
 
-/** The page as `did` sees it, signed in with their own session, or signed out. */
-async function openAs(did: string | null) {
+/** The page as `did` sees it, signed in with their own session (`readerSession`)
+ *  unless the test hands one, or signed out. */
+async function openAs(did: string | null, session?: unknown) {
 	return (await load({
 		params: { actor: GROUP_DID },
-		locals: { did, session: did ? readerSession(did) : null },
+		locals: { did, session: session ?? (did ? readerSession(did) : null) },
 		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } }
 	} as unknown as Parameters<typeof load>[0])) as {
 		members: { did: string }[];
 		rosterSource: 'records' | 'cache';
 		canEjectMembers: boolean;
 		unfinished: string[];
+		signIn?: { from: number | null };
 	};
 }
 
@@ -223,5 +228,49 @@ describe('/groups/[actor]/members load, with no membership records', () => {
 			status: 403,
 			body: { message: 'Sign in to see members' }
 		});
+	});
+});
+
+// Right after a create, the creator's sign-in predates the group, so it carries
+// no grant for the group's spaces: her own PDS refuses the members space, and
+// she stands off the roster (TS 2026-10-15). The grant can be asked for once
+// every PDS's copy of this site's client metadata names the group, so the page
+// says when a new sign-in opens the roster, rather than refusing her.
+describe('/groups/[actor]/members load, for a member whose sign-in predates the group', () => {
+	/** A sign-in from before the group: it reads every group's meta space and
+	 *  nothing else. */
+	const BEFORE_THE_GROUP = `atproto ${META_READ_GRANT}`;
+
+	let host: FakeSpaceReader;
+	beforeEach(() => {
+		host = asPublic(membersSpaceReader(MEMBERS, GROUP_DID, [OWNER, MEMBER]));
+		serveReader(GROUP_DID, host);
+	});
+
+	it('tells the creator when a new sign-in shows her the roster, and reads none of it', async () => {
+		const group = (await getGroupByDid(harness.db, GROUP_DID))!;
+
+		const data = await openAs(OWNER, readerSession(OWNER, BEFORE_THE_GROUP));
+
+		expect(data.signIn).toEqual({ from: group.created_at + METADATA_CACHE_MS });
+		expect(data.members).toBeUndefined();
+		expect(host.callsIn(MEMBERS)).toEqual([]);
+	});
+
+	it('names no time once the wait is over', async () => {
+		await harness.db
+			.prepare(`UPDATE groups SET created_at = ? WHERE group_did = ?`)
+			.bind(Date.now() - METADATA_CACHE_MS - 1, GROUP_DID)
+			.run();
+
+		const data = await openAs(MEMBER, readerSession(MEMBER, BEFORE_THE_GROUP));
+
+		expect(data.signIn).toEqual({ from: null });
+	});
+
+	it('refuses a stranger as before, whatever their sign-in carries', async () => {
+		await expect(openAs(STRANGER, readerSession(STRANGER, BEFORE_THE_GROUP))).rejects.toMatchObject(
+			{ status: 403, body: { message: 'Only members can see this roster' } }
+		);
 	});
 });

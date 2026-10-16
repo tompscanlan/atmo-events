@@ -8,6 +8,7 @@
 	import GroupLinkForm from '$lib/groups/components/GroupLinkForm.svelte';
 	import GroupMonogram from '$lib/groups/components/GroupMonogram.svelte';
 	import GroupSettings from '$lib/groups/components/GroupSettings.svelte';
+	import GroupSignInNotice from '$lib/groups/components/GroupSignInNotice.svelte';
 	import JoinRequestItem from '$lib/groups/components/JoinRequestItem.svelte';
 	import PdslsLink from '$lib/groups/components/PdslsLink.svelte';
 	import PersonLabel from '$lib/groups/components/PersonLabel.svelte';
@@ -201,6 +202,12 @@
 	{/if}
 	{#if leaveError}
 		<p class="mt-3 text-sm text-red-600 dark:text-red-400">{leaveError}</p>
+	{/if}
+
+	<!-- In place of the Members tab, for a member whose sign-in carries no grant
+	     for this group, such as its creator right after the create. -->
+	{#if membership.signIn}
+		<GroupSignInNotice groupDid={group.group_did} from={membership.signIn.from} class="mt-6" />
 	{/if}
 
 	<!-- Nothing could be read with the caller's own access, so the page shows the
