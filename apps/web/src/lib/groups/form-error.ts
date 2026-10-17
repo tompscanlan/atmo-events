@@ -66,12 +66,21 @@ export function formError(e: unknown): GroupFormFailure {
  *  are unknown rather than missing, and "Not allowed" would send an owner
  *  looking for a role they already hold. */
 export function notAllowed(
-	membership: Pick<CallerMembership, 'unreadable' | 'noSpaceAccess'>,
+	membership: Pick<CallerMembership, 'unreadable' | 'noSpaceAccess' | 'signIn'>,
 	permission: GroupPermission
 ): GroupFormFailure {
+	if (membership.signIn) {
+		return {
+			ok: false,
+			reason: 'sign-in-required',
+			error:
+				'Your current sign-in does not include this group. Nothing was changed. Reload this page to sign in again, then try once more.'
+		};
+	}
 	if (membership.noSpaceAccess) {
 		return {
 			ok: false,
+			reason: 'no-space-access',
 			error:
 				'Your permissions in this group could not be checked: your sign-in does not let this site read the group’s spaces. Nothing was changed; signing in again may fix it.'
 		};
@@ -79,10 +88,11 @@ export function notAllowed(
 	if (membership.unreadable) {
 		return {
 			ok: false,
+			reason: 'members-unreadable',
 			error: `Your permissions in this group could not be checked, because its members space did not answer (${membership.unreadable}). Nothing was changed; try again later.`
 		};
 	}
-	return { ok: false, error: `Not allowed: ${permission} required` };
+	return { ok: false, reason: 'permission-denied', error: `Not allowed: ${permission} required` };
 }
 
 /** Maps a roster failure to a form result. The three roster errors mean a

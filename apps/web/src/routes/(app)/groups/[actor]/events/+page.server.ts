@@ -14,16 +14,22 @@ import type { PageServerLoad } from './$types';
  *  index like any other actor's, so the page renders for a visitor who is not
  *  signed in, and a failed index read gives an empty list rather than a 500.
  *  The members-only slice is read from the group's calendar space, with the
- *  member's own access, and only for a roster member: anyone else causes no read of it, and gets back exactly
- *  what the page returned before that slice existed. The name comes from the
- *  profile record, as on the group page. */
+ *  member's own access, and only for a roster member. A listed member missing
+ *  the group grant gets the sign-in notice alongside the public slice, or on
+ *  its own when the group is hidden. The name comes from the profile record,
+ *  as on the group page. */
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
-	const { group, membership, reader } = await groupRouteContext(
+	const { group, membership, reader, signInOnly } = await groupRouteContext(
 		db,
 		params.actor,
-		await gateCaller(locals.did, locals.session)
+		await gateCaller(locals.did, locals.session),
+		{ signInNotice: true }
 	);
+	// A hidden group returns only the notice, before any header or index read.
+	if (signInOnly && membership.signIn) {
+		return { groupDid: group.group_did, signInOnly: true as const, signIn: membership.signIn };
+	}
 
 	const [header, events, membersOnly] = await Promise.all([
 		groupHeader(db, group, reader),
@@ -38,6 +44,7 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	return {
 		group,
 		...header,
+		...(membership.signIn ? { signIn: membership.signIn } : {}),
 		// Each members-only event without its image, as on its own page. (Spec: FR-119.)
 		events: membersOnly
 			? unionGroupEvents(events, membersOnly.events.map(membersOnlyEventForDisplay))

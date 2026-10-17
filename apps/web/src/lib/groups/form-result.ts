@@ -6,6 +6,8 @@
 export interface GroupFormFailure {
 	ok: false;
 	error: string;
+	/** Why the shared permission gate refused, independent of its wording. */
+	reason?: 'sign-in-required' | 'no-space-access' | 'members-unreadable' | 'permission-denied';
 }
 
 export type GroupFormSuccess<TDone extends object = Record<never, never>> = { ok: true } & TDone;

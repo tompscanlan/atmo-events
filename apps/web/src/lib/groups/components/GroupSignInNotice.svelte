@@ -9,7 +9,7 @@
 	// sign-in, which the button starts and which comes back to this page. `from`
 	// is when a new sign-in can carry the grant, or null when one already can
 	// (CallerMembership's `signIn`). `subject` is what the sign-in opens: the
-	// members, or the whole group when it is hidden from the caller until then.
+	// members, the group's members-only events, or the whole group when hidden.
 	let {
 		groupDid,
 		from,
@@ -18,7 +18,7 @@
 	}: {
 		groupDid: string;
 		from: number | null;
-		subject?: 'members' | 'group';
+		subject?: 'members' | 'group' | 'events';
 		class?: string;
 	} = $props();
 
@@ -55,8 +55,11 @@
 
 <div class={className}>
 	<p class="text-base-600 dark:text-base-300 text-sm">
-		You'll see {subject === 'group' ? 'this group' : "this group's members"} after you sign in again{#if fromTime},
-			from
+		You'll see {subject === 'group'
+			? 'this group'
+			: subject === 'events'
+				? "this group's members-only events"
+				: "this group's members"} after you sign in again{#if fromTime}, from
 			<time datetime={new Date(from!).toISOString()}>{fromTime}</time>{/if}. Your current sign-in
 		doesn't include this group.
 	</p>

@@ -8,6 +8,20 @@ import { render } from 'svelte/server';
 vi.mock('@atmo-dev/events-ui', async () => ({
 	EventCard: (await import('@atmo-dev/events-ui/EventCard.svelte')).default
 }));
+vi.mock('$lib/atproto/auth.svelte', () => ({ reauthorize: vi.fn() }));
+vi.mock('$lib/groups/roster.remote', () => ({ signInForGroup: vi.fn() }));
+const notices = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }));
+vi.mock('$lib/groups/components/GroupSignInNotice.svelte', async (original) => {
+	const actual = await original<{
+		default: (renderer: unknown, props: Record<string, unknown>) => unknown;
+	}>();
+	return {
+		default: (renderer: unknown, props: Record<string, unknown>) => {
+			notices.props.push(props);
+			return actual.default(renderer, props);
+		}
+	};
+});
 
 import Page from './+page.svelte';
 import type { GroupEventRecord, GroupRow } from '$lib/groups/types';
@@ -62,6 +76,30 @@ function editLinksIn(body: string): string[] {
 }
 
 describe('/groups/[actor]/events', () => {
+	it('renders the events sign-in notice alongside the public slice, or alone for a hidden group', () => {
+		for (const signInOnly of [false, true]) {
+			notices.props.length = 0;
+			const data = signInOnly
+				? { groupDid: GROUP_DID, signInOnly: true, signIn: { from: null } }
+				: {
+						group: { group_did: GROUP_DID },
+						groupName: 'Kona',
+						handle: null,
+						events: [PUBLIC_PADDLE],
+						canCreateEvent: false,
+						canManageEvents: false,
+						signIn: { from: null }
+					};
+			const { body } = render(Page, { props: { data } as never });
+			expect(notices.props).toHaveLength(1);
+			expect(notices.props[0]).toMatchObject({
+				groupDid: GROUP_DID,
+				from: null,
+				subject: 'events'
+			});
+			expect(cardsIn(body)).toHaveLength(signInOnly ? 0 : 1);
+		}
+	});
 	it('the events tab links a members-only card to its page, and its lock says members only', () => {
 		const { body } = renderTab({ canManageEvents: false });
 		const cards = cardsIn(body);

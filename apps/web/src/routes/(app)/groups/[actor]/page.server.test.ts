@@ -355,9 +355,9 @@ describe('a members space that cannot be read', () => {
 			canManageGroup: false,
 			canAdmitMembers: false
 		});
-		expect(notAllowed(data.membership, 'MANAGE_GROUP')).toEqual({
+		expect(notAllowed(data.membership, 'MANAGE_GROUP')).toMatchObject({
 			ok: false,
-			error: expect.stringContaining('could not be checked')
+			reason: 'members-unreadable'
 		});
 	});
 

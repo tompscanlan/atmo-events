@@ -24,6 +24,7 @@ import {
 } from '$lib/groups/server/__fixtures__/members-only-event';
 import type { FakeSpaceReader } from '$lib/groups/server/__fixtures__/space-reader';
 import {
+	admitOnly,
 	fixtureSessions,
 	readerSession,
 	resetReaderHost,
@@ -203,6 +204,59 @@ describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
 			// never looked up.
 			expect(fixtureSessions.reads).toBe(0);
 		}
+	});
+});
+
+describe('event notice decided on standing alone (FR-117)', () => {
+	it.each([undefined, MEMBER_LIST_POLICY])(
+		'returns identical data for all keys at visibility policy %s',
+		async (policy) => {
+			const answers = [];
+			for (const rkey of ['3lmeeting', '3lmadeup', 'not a key']) {
+				const host = eventHost(GROUP_DID, { roster: ROSTER, policy });
+				serveReader(GROUP_DID, host);
+				const session = readerSession(MEMBER, `atproto ${META_READ_GRANT}`);
+				await groupRouteContext(harness.db, GROUP_DID, await callerSession(session), {
+					signInNotice: true
+				});
+				const gateCalls = [...host.calls].sort();
+				host.calls.length = 0;
+				const data = await openAs(MEMBER, rkey, session);
+				answers.push(data);
+				expect(data).toStrictEqual({ actorDid: GROUP_DID, signIn: { from: expect.any(Number) } });
+				expect([...host.calls].sort()).toEqual(gateCalls);
+				expect(host.callsIn(CALENDAR)).toEqual([]);
+			}
+			expect(answers[1]).toStrictEqual(answers[0]);
+			expect(answers[2]).toStrictEqual(answers[0]);
+		}
+	);
+
+	it('does not even consult the supplied key before returning the notice', async () => {
+		const host = eventHost(GROUP_DID, { roster: ROSTER });
+		serveReader(GROUP_DID, host);
+		const request = event(MEMBER, 'unused', readerSession(MEMBER, `atproto ${META_READ_GRANT}`));
+		const readKey = vi.fn(() => {
+			throw new Error('key consulted before notice');
+		});
+		Object.defineProperty(request.params, 'rkey', { get: readKey });
+		expect(await load(request)).toMatchObject({ signIn: { from: expect.any(Number) } });
+		expect(readKey).not.toHaveBeenCalled();
+		expect(host.callsIn(CALENDAR)).toEqual([]);
+	});
+
+	it('keeps a genuine host refusal with the grant present as a 404', async () => {
+		const host = eventHost(GROUP_DID, { roster: ROSTER });
+		serveReader(GROUP_DID, host);
+		admitOnly(GROUP_DID, (_, space) => space === ABOUT);
+		const answers = [];
+		for (const key of ['3lmeeting', '3lmadeup', 'not a key']) {
+			answers.push(await refusalFor(MEMBER, key));
+		}
+		expect(answers[0]).toMatchObject({ status: 404 });
+		expect(answers[1]).toStrictEqual(answers[0]);
+		expect(answers[2]).toStrictEqual(answers[0]);
+		expect(host.callsIn(CALENDAR)).toEqual([]);
 	});
 });
 

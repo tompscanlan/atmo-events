@@ -49,7 +49,7 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 }));
 
 import { publishAuthz } from './server/__fixtures__/members-space';
-import { sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
+import { isRowWrite, sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { stubPds } from './server/__fixtures__/stub-pds';
 import {
 	STUB_PDS_SERVICE,
@@ -67,9 +67,16 @@ import { SPACE_MEMBER_ACCESS } from './server/member-list';
 import { writeGroupAccess } from './server/members-writer';
 import { GroupPlacementError } from './server/event-writer';
 import { formError, notAllowed } from './form-error';
-import type { GroupFormResult } from './form-result';
+import { resetOnSuccess, type GroupFormResult } from './form-result';
 
 import { GroupCredentialError } from './server/session';
+import { ABOUT_SPACE_TYPE } from './types';
+import {
+	ABOUT_SPACE_READER_ROLES,
+	GROUP_ACCESS_COLLECTION,
+	GROUP_ACCESS_RKEY,
+	groupAccessRecord
+} from './members-record';
 import { createGroup, getGroupByDid, recordGroupSpaces } from './server/db/groups';
 import { seedGroup } from './server/__fixtures__/seed-group';
 import { spaceReader } from './server/__fixtures__/space-reader';
@@ -81,8 +88,17 @@ import {
 	serveReader
 } from './server/__fixtures__/reader-host';
 import { addMember } from './server/db/roster';
-import { updateGroupForm } from './group.remote';
-import { joinGroupForm, leaveGroupForm, signInForGroup } from './roster.remote';
+import { updateGroupForm, repairGroupForm } from './group.remote';
+import {
+	addMemberForm,
+	approveJoinRequestForm,
+	rejectJoinRequestForm,
+	removeMemberForm,
+	changeMemberRoleForm,
+	joinGroupForm,
+	leaveGroupForm,
+	signInForGroup
+} from './roster.remote';
 import { putGroupEvent, removeGroupEvent } from './group-events.remote';
 import { cancelMembersOnlyRsvp, rsvpToMembersOnlyEvent } from './member-rsvp.remote';
 const OWNER = 'did:plc:owner';
@@ -284,7 +300,27 @@ describe('the gate in front of the group forms', () => {
 			name: NAME,
 			members: { [MEMBER]: 'member' }
 		});
-		serveReader(LINKED, spaceReader(LINKED, { policies: { [spaces.aboutSpaceUri]: PUBLIC } }));
+		serveReader(
+			LINKED,
+			spaceReader(LINKED, {
+				policies: { [spaces.aboutSpaceUri]: PUBLIC },
+				records: [
+					{
+						space: spaces.aboutSpaceUri,
+						collection: GROUP_ACCESS_COLLECTION,
+						rkey: GROUP_ACCESS_RKEY,
+						value: {
+							$type: GROUP_ACCESS_COLLECTION,
+							...groupAccessRecord({
+								spaceType: ABOUT_SPACE_TYPE,
+								roles: ABOUT_SPACE_READER_ROLES,
+								public: true
+							})
+						}
+					}
+				]
+			})
+		);
 		admitOnly(LINKED, () => true);
 		request.platform.env = { DB: harness.db, OAUTH_SESSIONS: fixtureSessions };
 	});
@@ -336,6 +372,90 @@ describe('the gate in front of the group forms', () => {
 		expect(result).toEqual(notAllowed({}, 'MANAGE_GROUP'));
 		expect(asked().filter((path) => !READS.includes(path) && !resolving(path))).toEqual([]);
 		expect((await getGroupByDid(harness.db, LINKED))?.name).toBe(NAME);
+	});
+
+	it('a settings save without the group grant writes nothing and keeps every entered value', async () => {
+		request.locals = {
+			did: OWNER,
+			session: readerSession(OWNER, `atproto ${META_READ_GRANT}`)
+		} as typeof request.locals;
+		const stored = await getGroupByDid(harness.db, LINKED);
+		const input = {
+			groupDid: LINKED,
+			name: 'Entered name',
+			description: 'Entered description',
+			visibility: 'private',
+			shownVisibility: 'public',
+			requireApproval: false
+		};
+		const entered = { ...input };
+		let enhance: (opts: { form: HTMLFormElement; submit: () => Promise<void> }) => Promise<void>;
+		const remote = {
+			result: undefined as GroupFormResult | undefined,
+			enhance(callback: typeof enhance) {
+				enhance = callback;
+			}
+		};
+		const reset = vi.fn(() =>
+			Object.assign(input, {
+				name: NAME,
+				description: '',
+				visibility: 'public',
+				requireApproval: true
+			})
+		);
+		resetOnSuccess(remote);
+		harness.statements.length = 0;
+		await enhance!({
+			form: { reset } as unknown as HTMLFormElement,
+			submit: async () => {
+				remote.result = await submitUpdate(input);
+			}
+		});
+
+		expect(remote.result).toMatchObject({ ok: false, reason: 'sign-in-required' });
+		expect(asked().filter((path) => !READS.includes(path) && !resolving(path))).toEqual([]);
+		expect(harness.statements.filter(isRowWrite)).toEqual([]);
+		expect(await getGroupByDid(harness.db, LINKED)).toStrictEqual(stored);
+		expect(reset).not.toHaveBeenCalled();
+		expect(input).toStrictEqual(entered);
+	});
+
+	it.each([
+		['settings', updateGroupForm],
+		['repair', repairGroupForm],
+		['approve', approveJoinRequestForm],
+		['reject', rejectJoinRequestForm],
+		['add member', addMemberForm],
+		['remove member', removeMemberForm],
+		['change role', changeMemberRoleForm]
+	])('%s shares the missing-grant refusal, and private groups keep their 404', async (_, form) => {
+		const submit = form as unknown as (data: Record<string, unknown>) => Promise<GroupFormResult>;
+		const data = {
+			groupDid: LINKED,
+			name: 'Entered',
+			visibility: 'public',
+			shownVisibility: 'public',
+			requireApproval: false,
+			member: MEMBER,
+			did: MEMBER,
+			actor: { did: MEMBER },
+			role: 'member'
+		};
+		request.locals = {
+			did: OWNER,
+			session: readerSession(OWNER, `atproto ${META_READ_GRANT}`)
+		} as typeof request.locals;
+		harness.statements.length = 0;
+		expect(await submit(data)).toMatchObject({ ok: false, reason: 'sign-in-required' });
+		expect(harness.statements.filter(isRowWrite)).toEqual([]);
+		expect(asked().filter((path) => !READS.includes(path) && !resolving(path))).toEqual([]);
+
+		// The private-group gate stays strict, even for a locally listed owner.
+		serveReader(LINKED, spaceReader(LINKED));
+		await expect(submit(data)).rejects.toMatchObject({ status: 404 });
+		expect(harness.statements.filter(isRowWrite)).toEqual([]);
+		expect(asked().filter((path) => !READS.includes(path) && !resolving(path))).toEqual([]);
 	});
 });
 

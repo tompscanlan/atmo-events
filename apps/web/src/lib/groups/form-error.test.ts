@@ -7,24 +7,19 @@ import { GroupCredentialError } from './server/session';
 import { RosterStepError, type RosterChange } from './server/roster';
 import { GroupSpaceError } from './server/spaces';
 describe('notAllowed', () => {
-	it('names the permission when the caller simply lacks it', () => {
-		expect(notAllowed({}, 'MANAGE_GROUP')).toEqual({
-			ok: false,
-			error: 'Not allowed: MANAGE_GROUP required'
-		});
-	});
-
-	// The members space did not answer, so the gate granted nothing. The caller
-	// may well hold the permission; the message must not claim they do not.
-	it('says the permissions could not be checked when the members space was unreadable', () => {
-		const refusal = notAllowed(
-			{ unreadable: 'com.atproto.space.getRecord failed: 400 SpaceNotFound' },
-			'MANAGE_GROUP'
-		);
-		expect(refusal.ok).toBe(false);
-		expect(refusal.error).not.toMatch(/Not allowed/);
-		expect(refusal.error).toMatch(/could not be checked/);
-		expect(refusal.error).toContain('400 SpaceNotFound');
+	it.each([
+		['missing group grant', { signIn: { from: null } }, 'sign-in-required'],
+		['no space access', { noSpaceAccess: true }, 'no-space-access'],
+		['members-space outage', { unreadable: 'host unavailable' }, 'members-unreadable'],
+		['ordinary denial', {}, 'permission-denied'],
+		// A missing group grant can also leave the caller with no space access.
+		[
+			'missing grant takes precedence',
+			{ signIn: { from: 123 }, noSpaceAccess: true },
+			'sign-in-required'
+		]
+	] as const)('identifies %s without depending on message wording', (_, membership, reason) => {
+		expect(notAllowed(membership, 'MANAGE_GROUP')).toMatchObject({ ok: false, reason });
 	});
 });
 

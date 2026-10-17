@@ -24,6 +24,19 @@ const signedIn = vi.hoisted(() => ({
 	reauthorize: vi.fn()
 }));
 vi.mock('$lib/atproto/auth.svelte', () => signedIn);
+vi.mock('$lib/groups/roster.remote', () => ({ signInForGroup: vi.fn() }));
+const notices = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }));
+vi.mock('$lib/groups/components/GroupSignInNotice.svelte', async (original) => {
+	const actual = await original<{
+		default: (renderer: unknown, props: Record<string, unknown>) => unknown;
+	}>();
+	return {
+		default: (renderer: unknown, props: Record<string, unknown>) => {
+			notices.props.push(props);
+			return actual.default(renderer, props);
+		}
+	};
+});
 const login = vi.hoisted(() => ({ atProtoLoginModalState: { show: vi.fn() } }));
 vi.mock('$lib/components/LoginModal.svelte', () => login);
 const PAGE_URL = 'https://atmo.test/groups/did:plc:jcwgw6fcnb5vyoid7nz7sl26/events/3lmeeting';
@@ -176,6 +189,17 @@ function renderPage(data: PageData, before = 0) {
 }
 
 describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
+	it('renders only the group events notice, without mounting the event or RSVP', () => {
+		notices.props.length = 0;
+		const { head } = render(Page, {
+			props: { data: { actorDid: GROUP_DID, signIn: { from: null } } } as never
+		});
+		expect(notices.props).toHaveLength(1);
+		expect(notices.props[0]).toMatchObject({ groupDid: GROUP_DID, from: null, subject: 'events' });
+		expect(rsvp.renders).toEqual([]);
+		expect(share.opened).toEqual([]);
+		expect(head).not.toContain(MEETING_URI);
+	});
 	it('the event page hands EventView the space-form URI and the calendar space, without the image', async () => {
 		const stored = storedMeeting(GROUP_DID);
 		const h = eventHost(GROUP_DID, { roster: ROSTER, calendar: [stored] });

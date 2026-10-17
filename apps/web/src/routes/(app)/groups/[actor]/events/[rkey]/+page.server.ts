@@ -8,7 +8,8 @@ import { readOwnMembersOnlyRsvp } from '$lib/groups/server/member-rsvp';
 import { groupPath, groupRouteContext } from '$lib/groups/server/route-context';
 import type { PageServerLoad } from './$types';
 
-/** Every caller off the roster of a group they can see, and every key the
+/** Except for a listed member missing the group grant, every caller off the
+ *  roster of a group they can see, and every key the
  *  calendar space does not hold, gets this, byte for byte. A caller off the
  *  roster of a group hidden from them gets the route context's 'Group not
  *  found' first, the same for every key. */
@@ -25,6 +26,8 @@ const EVENT_NOT_FOUND = 'Event not found';
  * stops there with the same 404 as a key the space does not hold, so the page
  * says nothing about whether the event exists. No further request is made on
  * their behalf. (Spec: FR-117.)
+ * A listed member missing the group grant gets a notice about the group's
+ * members-only events instead, decided before the key is consulted.
  *
  * Nothing is stored between requests or read from a shared store: a member's
  * failed read is a 503 that says why, never an earlier copy, which would be
@@ -34,7 +37,12 @@ const EVENT_NOT_FOUND = 'Event not found';
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
 	const viewer = await gateCaller(locals.did, locals.session);
-	const { group, membership, reader } = await groupRouteContext(db, params.actor, viewer);
+	const { group, membership, reader } = await groupRouteContext(db, params.actor, viewer, {
+		signInNotice: true
+	});
+	// Standing alone decides this: do not even consult the key, or read any
+	// event, profile or RSVP. Identical for real, absent and malformed keys.
+	if (membership.signIn) return { actorDid: group.group_did, signIn: membership.signIn };
 
 	// The roster, never the group's visibility: a public group shows itself to
 	// everyone, and only its members see its members-only events.

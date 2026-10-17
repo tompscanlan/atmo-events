@@ -18,6 +18,7 @@ vi.mock('$lib/groups/server/events-index', async (importOriginal) => ({
 vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { load } from './+page.server';
+import { META_READ_GRANT } from '$lib/atproto/settings';
 import { type GroupSpaceReader, type GroupSpaceRecord } from '$lib/groups/server/about-read';
 import {
 	spaceReader,
@@ -157,10 +158,10 @@ const FULL_CALENDAR = () => publicHost([ACCESS_SELF, MEETING]);
 const EMPTY_CALENDAR = () => publicHost([]);
 
 /** The page as `did` sees it, signed in with their own session, or signed out. */
-async function openAs(did: string | null) {
+async function openAs(did: string | null, session?: unknown) {
 	return (await load({
 		params: { actor: GROUP_DID },
-		locals: { did, session: did ? readerSession(did) : null },
+		locals: { did, session: session ?? (did ? readerSession(did) : null) },
 		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } },
 		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events`)
 	} as unknown as Parameters<typeof load>[0])) as Record<string, unknown> & {
@@ -169,6 +170,37 @@ async function openAs(did: string | null) {
 		membersOnlyNotice?: string;
 	};
 }
+
+describe('events list for a member whose sign-in lacks the group grant', () => {
+	it('keeps the public slice and returns the sign-in notice without a calendar read', async () => {
+		const host = FULL_CALENDAR();
+		serveReader(GROUP_DID, host);
+		const data = await openAs(MEMBER, readerSession(MEMBER, `atproto ${META_READ_GRANT}`));
+		expect(data).toStrictEqual({ ...asBefore(), signIn: { from: expect.any(Number) } });
+		expect(data.events).toBe(publicSlice);
+		expect(listGroupEvents).toHaveBeenCalledOnce();
+		expect(host.callsIn(CALENDAR)).toEqual([]);
+	});
+
+	it('returns only the notice for a hidden private group, with no index or calendar read', async () => {
+		const host = FULL_CALENDAR();
+		host.put({ ...PUBLIC_ACCESS, value: { ...PUBLIC_ACCESS.value, public: false } });
+		serveReader(GROUP_DID, host);
+		const data = await openAs(MEMBER, readerSession(MEMBER, `atproto ${META_READ_GRANT}`));
+		expect(data).toStrictEqual({
+			groupDid: GROUP_DID,
+			signInOnly: true,
+			signIn: { from: expect.any(Number) }
+		});
+		expect(listGroupEvents).not.toHaveBeenCalled();
+		expect(host.callsIn(CALENDAR)).toEqual([]);
+		expect(host.calls.filter((call) => call.includes('group.opensocial.profile'))).toEqual([]);
+
+		await expect(openAs(STRANGER)).rejects.toMatchObject({ status: 404 });
+		expect(listGroupEvents).not.toHaveBeenCalled();
+		expect(host.callsIn(CALENDAR)).toEqual([]);
+	});
+});
 
 /** What the loader returns for a caller off the roster, written out: the
  *  index's own list, and these six keys and no other. */
