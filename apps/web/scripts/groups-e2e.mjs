@@ -994,7 +994,7 @@ async function main() {
 			// back, then the app's set-up runs on that session, as the callback runs it.
 			const { link } = await must('scopes', {});
 			const made = await signIns.group(people.owner, {
-				create: { label: GROUP_LABEL, displayName: CREATE_DATA.name },
+				create: { label: GROUP_LABEL },
 				scope: link,
 				host: GROUP_HOST
 			});

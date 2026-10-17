@@ -197,7 +197,7 @@ export async function createSignIns({ plcUrl, fetch, ledger, playwright, log }) 
 		 * `person`'s group session from the host: its sign-in page (with the new
 		 * group's address for a create), their own PDS, and the host's consent,
 		 * whose offered and dropped items are handed back.
-		 * @param {{ create?: { label: string, displayName: string }, groupDid?: string, scope: string, host: string }} options
+		 * @param {{ create?: { label: string }, groupDid?: string, scope: string, host: string }} options
 		 */
 		async group(person, { create, groupDid, scope, host }) {
 			const consent = { kept: [], dropped: [] };
@@ -209,10 +209,7 @@ export async function createSignIns({ plcUrl, fetch, ledger, playwright, log }) 
 				prompt: create ? 'create' : undefined,
 				pages: async (page, done) => {
 					await page.waitForSelector('input[name=handle]', { timeout: 30_000 });
-					if (create) {
-						await page.fill('input[name=label]', create.label);
-						await page.fill('input[name=displayName]', create.displayName);
-					}
+					if (create) await page.fill('input[name=label]', create.label);
 					await page.fill('input[name=handle]', person.handle);
 					await page.click('button');
 					await ownPdsPages(page, person, done, async (p) => {
