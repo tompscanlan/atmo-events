@@ -106,7 +106,10 @@ describe('contrailNetwork', () => {
 		expect(c.jetstreams).toEqual(['wss://jetstream.lighthouse.snowglobe.at']);
 		expect(c.relays).toEqual(['https://relay.lighthouse.snowglobe.at']);
 		expect(c.constellation).toBe(false);
-		expect(c.networkOverrides?.slingshotUrl).toBe('https://slingshot.lighthouse.snowglobe.at');
+		// Contrail takes the lookup method's URL and adds ?identifier= to it.
+		expect(c.networkOverrides?.slingshotUrl).toBe(
+			'https://slingshot.lighthouse.snowglobe.at/xrpc/com.bad-example.identity.resolveMiniDoc'
+		);
 		expect(c.networkOverrides?.resolver).toBeDefined();
 	});
 });
@@ -134,6 +137,23 @@ describe('resolvers', () => {
 		expect(asked.filter((u) => !u.includes('lighthouse.snowglobe.at'))).toEqual([]);
 		expect(asked.some((u) => u.startsWith('https://plc.lighthouse.snowglobe.at/'))).toBe(true);
 		expect(asked.some((u) => u.includes('/.well-known/atproto-did'))).toBe(true);
+	});
+
+	it('gives up on a handle lookup that never answers', async () => {
+		const realFetch = globalThis.fetch;
+		globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) =>
+			new Promise((_resolve, reject) => {
+				init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+			})) as typeof fetch;
+		try {
+			const started = Date.now();
+			await expect(
+				createHandleResolver(readNetwork(globe), 50).resolve('bsky.app')
+			).rejects.toBeDefined();
+			expect(Date.now() - started).toBeLessThan(2000);
+		} finally {
+			globalThis.fetch = realFetch;
+		}
 	});
 
 	it('asks the public directory by default', async () => {

@@ -63,6 +63,12 @@
 			<time datetime={new Date(from!).toISOString()}>{fromTime}</time>{/if}. Your current sign-in
 		doesn't include this group.
 	</p>
+	<!-- Gated on `from`, not `fromTime`, so the server render says it too. -->
+	{#if from !== null}
+		<p data-sign-in-wait-reason class="text-base-600 dark:text-base-300 mt-1 text-sm">
+			Your account's server takes up to 10 minutes to learn about a new group.
+		</p>
+	{/if}
 	<Button class="mt-3" variant="secondary" onclick={signIn} disabled={busy}>Sign in again</Button>
 	{#if failed}
 		<p class="mt-2 text-sm text-red-600 dark:text-red-400">
