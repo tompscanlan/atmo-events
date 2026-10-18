@@ -3,7 +3,9 @@ set -eu
 
 # Seed a globe's atmo (seed.mjs) as an operator step from outside, through the public names.
 #
-#   deploy/snowglobe/seed.sh <globe>      e.g. lighthouse
+#   deploy/snowglobe/seed.sh <globe> [script]   e.g. lighthouse; script defaults to seed.mjs
+#
+# walk.mjs, the walk checks on a seeded globe, runs the same way and with the same logins.
 #
 # Reads from the cluster (the current kubectl context, printed first): the globe's invite code
 # (Secret globe-operator-logins) and any logins an earlier run kept (Secret globe-seed-logins,
@@ -17,7 +19,8 @@ set -eu
 # secret is printed. Env passed through: SEED_ONLY, SEED_PLAYWRIGHT, SEED_SHOTS (a directory
 # for screenshots of the browser steps).
 
-GLOBE="${1:?usage: seed.sh <globe>}"
+GLOBE="${1:?usage: seed.sh <globe> [script]}"
+SCRIPT="${2:-seed.mjs}"
 NS="snowglobe-${GLOBE}"
 DOMAIN="${GLOBE}.snowglobe.at"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -55,4 +58,4 @@ SEED_PDS="https://alpha.${DOMAIN}" \
 SEED_DOMAIN="${DOMAIN}" \
 SEED_LOGINS_FILE="${LOGINS}" \
 SEED_INVITE_FILE="${INVITE}" \
-  node "${HERE}/seed.mjs"
+  node "${HERE}/${SCRIPT}"

@@ -22,6 +22,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 const ATMO = need('SEED_ATMO').replace(/\/+$/, '');
 const PDS = need('SEED_PDS').replace(/\/+$/, '');
@@ -439,8 +440,9 @@ const where = (page) => {
 };
 
 /** Their own account server's pages: the handle if it asks, the password, then each
- *  consent (the account server's, and the group host's), until `done()` holds. */
-async function ownPdsPages(page, name, done) {
+ *  consent (the account server's, and the group host's), until `done()` holds. With
+ *  `refuse`, the account server's consent is answered Deny access instead. */
+async function ownPdsPages(page, name, done, { refuse = false } = {}) {
 	const pdsHost = new URL(PDS).host;
 	for (let i = 0; i < 120; i++) {
 		if (await done()) return;
@@ -459,7 +461,8 @@ async function ownPdsPages(page, name, done) {
 			}
 			const accept = page.getByRole('button', { name: /^(accept|authorize|allow)/i }).first();
 			if (await accept.isVisible().catch(() => false)) {
-				await accept.click();
+				if (refuse) await page.getByRole('button', { name: /^deny/i }).first().click();
+				else await accept.click();
 				await page.waitForTimeout(1000);
 				continue;
 			}
@@ -1081,18 +1084,28 @@ const STEPS = {
 	groupRsvps
 };
 
-let failed = false;
-try {
-	for (const [name, step] of Object.entries(STEPS)) {
-		if (ONLY.length && !ONLY.includes(name)) continue;
-		log(`${name}:`);
-		await step();
-	}
-} catch (e) {
-	failed = true;
-	log(`FAILED: ${e instanceof Error ? e.message : String(e)}`);
-} finally {
-	saveLogins();
+// walk.mjs reuses the cast, the logins and the browser helpers; only a direct run seeds.
+export { ATMO, DOMAIN, GROUPS, asPerson, chromium, handleOf, log, ownPdsPages, shot, where };
+export async function closeBrowser() {
 	await browser?.close();
 }
-process.exit(failed ? 1 : 0);
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) await seedAll();
+
+async function seedAll() {
+	let failed = false;
+	try {
+		for (const [name, step] of Object.entries(STEPS)) {
+			if (ONLY.length && !ONLY.includes(name)) continue;
+			log(`${name}:`);
+			await step();
+		}
+	} catch (e) {
+		failed = true;
+		log(`FAILED: ${e instanceof Error ? e.message : String(e)}`);
+	} finally {
+		saveLogins();
+		await browser?.close();
+	}
+	process.exit(failed ? 1 : 0);
+}
