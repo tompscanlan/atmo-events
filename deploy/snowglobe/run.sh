@@ -17,8 +17,17 @@ for f in ${ATMO_ENV_FILES:-/config/vars.env /secrets/secrets.env}; do
   set -- "$@" --env-file "$f"
 done
 
-exec /app/apps/web/node_modules/.bin/wrangler dev \
-  --config /app/apps/web/wrangler.snowglobe.jsonc \
+WRANGLER=/app/apps/web/node_modules/.bin/wrangler
+CONFIG=/app/apps/web/wrangler.snowglobe.jsonc
+
+# The og image's tables are applied by hand on Cloudflare (scripts/og-cache-schema.sql: "apply
+# once before deploying"); here each boot applies them. The file only creates what is missing,
+# so a second run changes nothing.
+"$WRANGLER" d1 execute atmo --local --config "$CONFIG" --persist-to "${ATMO_DATA:-/data}" \
+  --file /app/apps/web/scripts/og-cache-schema.sql >/dev/null
+
+exec "$WRANGLER" dev \
+  --config "$CONFIG" \
   --ip 0.0.0.0 --port 8787 \
   --persist-to "${ATMO_DATA:-/data}" \
   --test-scheduled \
