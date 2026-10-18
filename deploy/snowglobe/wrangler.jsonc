@@ -1,0 +1,19 @@
+// The local-runtime config for a snowglobe atmo. Every binding is local, kept under the
+// --persist-to directory; the ids only name the stores. No vars here: they come from env
+// files (run.sh).
+{
+	"name": "atmo-snowglobe",
+	"main": ".svelte-kit/cloudflare/_worker.js",
+	"compatibility_date": "2025-12-25",
+	"compatibility_flags": ["nodejs_compat_v2"],
+	"assets": {
+		"binding": "ASSETS",
+		"directory": ".svelte-kit/cloudflare"
+	},
+	"d1_databases": [{ "binding": "DB", "database_name": "atmo", "database_id": "local-atmo" }],
+	"r2_buckets": [{ "binding": "OG_IMAGES", "bucket_name": "atmo-og-images" }],
+	"kv_namespaces": [
+		{ "binding": "OAUTH_SESSIONS", "id": "local-oauth-sessions" },
+		{ "binding": "OAUTH_STATES", "id": "local-oauth-states" }
+	]
+}
