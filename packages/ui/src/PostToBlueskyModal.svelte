@@ -11,6 +11,7 @@
 	import type { Readable } from 'svelte/store';
 	import { get } from 'svelte/store';
 	import type { EditorAdapter, EditorViewer } from './editor/adapter.js';
+	import { getAppviewUrl } from './atproto-helpers.js';
 
 	let {
 		open = $bindable(false),
@@ -50,7 +51,8 @@
 		return { type: 'doc', content } as JSONContent;
 	}
 
-	const searchMentions = createBlueskyMentionSearch();
+	const appview = getAppviewUrl();
+	const searchMentions = appview ? createBlueskyMentionSearch(appview) : async () => [];
 
 	// Seed from the initial prop; the $effect below re-pushes it into the editor
 	// each time the modal opens, so only capturing the initial value is intentional.
