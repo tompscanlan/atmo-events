@@ -186,7 +186,11 @@ describe('startCreateAtHost', () => {
 	it("sends the creator to the host's sign-up with the link scope, and makes nothing here", async () => {
 		const { authorize, result } = start({ locationName: 'Kailua-Kona' });
 
-		expect(await result).toEqual({ ok: true, signUpUrl: `${HOST}/oauth/authorize?request_uri=x` });
+		const answer = await result;
+		expect(answer.ok).toBe(true);
+		const signUp = new URL(answer.ok ? answer.signUpUrl : '');
+		expect(signUp.origin + signUp.pathname).toBe(`${HOST}/oauth/authorize`);
+		expect(signUp.searchParams.get('request_uri')).toBe('x');
 		expect(authorize).toHaveBeenCalledOnce();
 		const [options] = authorize.mock.calls[0] as unknown as [Record<string, unknown>];
 		expect(options.target).toEqual({ type: 'pds', serviceUrl: HOST });
@@ -207,6 +211,38 @@ describe('startCreateAtHost', () => {
 			}
 		} satisfies HostCreateState);
 		expect(await groupRows()).toEqual([]);
+	});
+
+	// The host's sign-up page asks for the group's address and the creator's own
+	// handle, and reads these hints off the link to fill both in. They ride on the
+	// URL the browser opens: the authorization request stays as it was, since the
+	// PDS drops any field it does not know.
+	it('hints the typed name and the creator to the host on the sign-up link, and adds nothing to the request', async () => {
+		for (const name of ['Kona Trail Runners', 'Hilo & Kona #1 = "best" <runners>?']) {
+			const { authorize, result } = start({ name });
+
+			const answer = await result;
+			expect(answer.ok).toBe(true);
+			const signUp = new URL(answer.ok ? answer.signUpUrl : '');
+			expect(signUp.searchParams.get('gh_name')).toBe(name);
+			expect(signUp.searchParams.get('gh_person')).toBe(CREATOR);
+			expect(signUp.searchParams.get('request_uri')).toBe('x');
+			expect([...signUp.searchParams.keys()].sort()).toEqual([
+				'gh_name',
+				'gh_person',
+				'request_uri'
+			]);
+
+			const [options] = authorize.mock.calls[0] as unknown as [Record<string, unknown>];
+			expect(Object.keys(options).sort()).toEqual([
+				'prompt',
+				'redirectUri',
+				'scope',
+				'state',
+				'target'
+			]);
+			expect(JSON.stringify(options)).not.toContain('gh_');
+		}
 	});
 
 	it('refuses a private group without approval before the host is asked', async () => {
