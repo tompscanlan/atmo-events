@@ -14,7 +14,8 @@ set -eu
 #   kubectl get secret -n snowglobe-<globe> globe-seed-logins -o json | jq '.data | map_values(@base64d)'
 #
 # Server-side apply, so no copy of the values lands in a last-applied annotation. Nothing
-# secret is printed. Env passed through: SEED_ONLY, SEED_PLAYWRIGHT.
+# secret is printed. Env passed through: SEED_ONLY, SEED_PLAYWRIGHT, SEED_SHOTS (a directory
+# for screenshots of the browser steps).
 
 GLOBE="${1:?usage: seed.sh <globe>}"
 NS="snowglobe-${GLOBE}"
