@@ -352,11 +352,13 @@ export async function getBlobURL({
 
 /**
  * Constructs a Bluesky CDN URL for an image blob.
+ * `feed_thumbnail` is at most 1000px; `avatar_thumbnail` is a 128px square crop.
  */
 export function getCDNImageBlobUrl({
 	did,
 	blob,
-	format = 'webp'
+	format = 'webp',
+	preset = 'feed_thumbnail'
 }: {
 	did?: string;
 	blob: {
@@ -366,10 +368,13 @@ export function getCDNImageBlobUrl({
 		};
 	};
 	format?: 'webp' | 'jpeg' | 'png';
+	preset?: 'feed_thumbnail' | 'avatar_thumbnail';
 }) {
 	did ??= user.did ?? undefined;
 
-	return blobUrl(String(did), blob.ref.$link, format);
+	const url = blobUrl(String(did), blob.ref.$link, format);
+	// The preset is a Bluesky CDN path segment; a network whose template has none serves the blob as is.
+	return preset === 'feed_thumbnail' ? url : url.replace('/img/feed_thumbnail/', `/img/${preset}/`);
 }
 
 /**
