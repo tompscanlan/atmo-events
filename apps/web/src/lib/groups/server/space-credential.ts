@@ -20,12 +20,8 @@
 // a delegation token only to a full-access or OAuth session, and an OAuth session
 // only when its scope reads the space.
 import { P256PrivateKeyExportable, type P256PrivateKey } from '@atcute/crypto';
-import {
-	CompositeDidDocumentResolver,
-	PlcDidDocumentResolver,
-	WebDidDocumentResolver
-} from '@atcute/identity-resolver';
 import type { Did } from '@atcute/lexicons';
+import { createDidDocumentResolver } from '$lib/atproto/identity';
 import { GROUP_ACCEPTANCE_COLLECTION, GROUP_ACCEPTANCE_RKEY } from '../members-record';
 import { splitRecordUri } from '../ids';
 import {
@@ -383,12 +379,10 @@ export function credentialAcceptanceReader(
 // Each resolver calls the global `fetch` when it resolves, not the one there was
 // when it was built, so a test's stubbed `fetch` answers it.
 const liveFetch: typeof fetch = (input, init) => fetch(input, init);
-const didResolver = new CompositeDidDocumentResolver({
-	methods: {
-		plc: new PlcDidDocumentResolver({ fetch: liveFetch }),
-		web: new WebDidDocumentResolver({ fetch: liveFetch })
-	}
-});
+const didResolver = {
+	resolve: (did: Did<'plc'> | Did<'web'>) =>
+		createDidDocumentResolver(undefined, liveFetch).resolve(did)
+};
 
 /** How long a resolved endpoint is kept. A roster page reads one per member. */
 const RESOLVED_TTL_MS = 10 * 60 * 1000;

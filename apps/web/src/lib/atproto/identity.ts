@@ -21,12 +21,21 @@ export function createHandleResolver(settings: NetworkSettings = network()): Han
 	});
 }
 
-/** DID → document, from the deployment's directory for did:plc. */
-export function createDidDocumentResolver(settings: NetworkSettings = network()) {
+/**
+ * DID → document, from the deployment's directory for did:plc. `fetch` is for a
+ * caller that must reach the global `fetch` as it is when the resolver runs.
+ */
+export function createDidDocumentResolver(
+	settings: NetworkSettings = network(),
+	fetch?: typeof globalThis.fetch
+) {
 	return new CompositeDidDocumentResolver({
 		methods: {
-			plc: new PlcDidDocumentResolver(settings.plcUrl ? { apiUrl: settings.plcUrl } : undefined),
-			web: new WebDidDocumentResolver()
+			plc: new PlcDidDocumentResolver({
+				...(settings.plcUrl ? { apiUrl: settings.plcUrl } : {}),
+				...(fetch ? { fetch } : {})
+			}),
+			web: new WebDidDocumentResolver(fetch ? { fetch } : undefined)
 		}
 	});
 }

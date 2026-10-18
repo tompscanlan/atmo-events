@@ -6,6 +6,7 @@
 // The session the PDS returns sets the group up in the same request, and then goes.
 import { Secp256k1PrivateKeyExportable } from '@atcute/crypto';
 
+import { network } from '$lib/atproto/network';
 import { type MintSessionCredential } from './session';
 /** All three are required. The create flow checks them before a step that cannot be undone. */
 export interface MintConfig {
@@ -145,7 +146,7 @@ async function refusal(res: Response): Promise<GroupMintError> {
 export async function assertOwnerHoldsRotationKey(
 	did: string,
 	ownerRotationKey: string,
-	plcDirectory = 'https://plc.directory'
+	plcDirectory = network().plcUrl ?? 'https://plc.directory'
 ): Promise<void> {
 	let rotationKeys: unknown;
 	try {
