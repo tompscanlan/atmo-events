@@ -1,6 +1,7 @@
 import { dev } from '$app/environment';
 import { scope } from '@atcute/oauth-node-client';
 import { ABOUT_SPACE_TYPE } from '$lib/groups/types';
+import { network } from './network';
 
 // writable collections — declared as a standalone scope because their NSIDs
 // (`community.lexicon.*`) sit outside our namespace, so they can't go in
@@ -53,9 +54,12 @@ export const scopes = [
 export const ALLOW_SIGNUP = true;
 
 // which PDS to use for signup (change to your preferred PDS)
+// PUBLIC_ATPROTO_SIGNUP_PDS overrides it (see ./network).
 const devPDS = 'https://pds.rip/';
 const prodPDS = 'https://selfhosted.social/';
-export const signUpPDS = dev ? devPDS : prodPDS;
+export function signUpPDS(): string {
+	return network().signUpPds ?? (dev ? devPDS : prodPDS);
+}
 
 // where to redirect after oauth login/signup
 export const REDIRECT_PATH = '/oauth/callback';
@@ -70,5 +74,3 @@ export const GROUP_CREATE_REDIRECT_PATH = '/oauth/group-create/callback';
 
 // redirect the user back to the page they were on before login
 export const REDIRECT_TO_LAST_PAGE_ON_LOGIN = true;
-
-export const DOH_RESOLVER = 'https://mozilla.cloudflare-dns.com/dns-query';

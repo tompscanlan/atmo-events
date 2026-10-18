@@ -4,6 +4,7 @@
 		blueskyPostToPostData,
 		type PostData
 	} from '@foxui/social';
+	import { getAppviewUrl } from './atproto-helpers.js';
 
 	let { postUri }: { postUri: string } = $props();
 
@@ -33,11 +34,17 @@
 	}
 
 	async function loadThread(uri: string) {
+		const appview = getAppviewUrl();
+		if (!appview) {
+			comments = [];
+			loading = false;
+			return;
+		}
 		loading = true;
 		errorMessage = null;
 		try {
 			const res = await fetch(
-				`https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=6`
+				`${appview}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=6`
 			);
 			if (!res.ok) throw new Error(`Failed to load thread (${res.status})`);
 			const data = (await res.json()) as { thread?: { replies?: unknown[] } };
