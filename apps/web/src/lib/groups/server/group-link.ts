@@ -51,6 +51,8 @@ export async function startGroupLink(input: {
 	group: LinkGroup;
 	signedInDid: string | null;
 	mayConnect: boolean;
+	/** Whether the group lives at this deployment's group host (./host-kind.ts). */
+	atGroupHost: () => Promise<boolean>;
 	redirectUri: string;
 }): Promise<URL> {
 	const by = input.signedInDid;
@@ -66,7 +68,15 @@ export async function startGroupLink(input: {
 		redirectUri: input.redirectUri,
 		state
 	});
-	return url;
+	// The group host's page asks who the person is, and fills in their handle
+	// from this hint, on the link rather than in the request. A stand-in group's
+	// account sits on an ordinary PDS, where the person signs in as the group, so
+	// that PDS is never told who they are; nor is a host the check cannot place.
+	const atHost = await input.atGroupHost().catch(() => false);
+	if (!atHost) return url;
+	const hinted = new URL(url);
+	hinted.searchParams.set('gh_person', by);
+	return hinted;
 }
 
 function linkState(value: unknown): GroupLinkState | null {

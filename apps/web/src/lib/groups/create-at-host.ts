@@ -135,7 +135,14 @@ export async function startCreateAtHost(input: {
 		redirectUri: input.redirectUri,
 		state
 	});
-	return { ok: true, signUpUrl: url.toString() };
+	// Hints for the host's sign-up page, which asks for the group's address and
+	// the creator's own handle: it suggests an address from the name and looks up
+	// the person's handle, and both stay editable there. They go on the link the
+	// browser opens, not in the request, whose unknown fields the PDS drops.
+	const signUp = new URL(url);
+	signUp.searchParams.set('gh_name', fields.name);
+	signUp.searchParams.set('gh_person', input.callerDid);
+	return { ok: true, signUpUrl: signUp.toString() };
 }
 
 function rowFor(ownerDid: string, fields: HostCreateFields): Omit<CreateGroupInput, 'groupDid'> {

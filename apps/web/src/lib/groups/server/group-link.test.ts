@@ -75,8 +75,19 @@ function finish(signedInDid: string | null) {
 	});
 }
 
-function start(signedInDid: string | null, mayConnect = true) {
-	return startGroupLink({ client, group, signedInDid, mayConnect, redirectUri: REDIRECT });
+function start(
+	signedInDid: string | null,
+	mayConnect = true,
+	atGroupHost: () => Promise<boolean> = async () => false
+) {
+	return startGroupLink({
+		client,
+		group,
+		signedInDid,
+		mayConnect,
+		atGroupHost,
+		redirectUri: REDIRECT
+	});
 }
 
 beforeEach(() => {
@@ -121,6 +132,42 @@ describe('starting a link', () => {
 		await expect(start(MEMBER, false)).rejects.toBeInstanceOf(GroupLinkRefused);
 		await expect(start(null)).rejects.toBeInstanceOf(GroupLinkRefused);
 		expect(authorized).toEqual([]);
+	});
+});
+
+describe('the hint a group host reads off the link', () => {
+	// The group host's act-for-group page asks for the person's own handle and
+	// fills it in from the person's DID on the link. There is no name to suggest.
+	it('names the person, and never a group name, to a group at the group host, and adds nothing to the request', async () => {
+		const url = await start(MEMBER, true, async () => true);
+
+		expect(url.searchParams.get('gh_person')).toBe(MEMBER);
+		expect(url.searchParams.get('gh_name')).toBeNull();
+		expect(url.searchParams.get('request_uri')).toBe('x');
+		expect(authorized).toEqual([
+			{
+				target: { type: 'account', identifier: GROUP },
+				scope: groupSessionScope(false),
+				redirectUri: REDIRECT,
+				state: { groupDid: GROUP, by: MEMBER }
+			}
+		]);
+	});
+
+	// A stand-in group's account sits on an ordinary PDS, where the person signs
+	// in as the group, so that PDS is never told who the person is.
+	it('names the person only to a group at the group host: a stand-in group, or one the check cannot place, gets no hint', async () => {
+		const atHost = await start(MEMBER, true, async () => true);
+		const standIn = await start(MEMBER, true, async () => false);
+		const unplaced = await start(MEMBER, true, async () => {
+			throw new Error('the group did not resolve');
+		});
+
+		expect(atHost.searchParams.get('gh_person')).toBe(MEMBER);
+		for (const url of [standIn, unplaced]) {
+			expect([...url.searchParams.keys()]).toEqual(['request_uri']);
+		}
+		expect(authorized).toHaveLength(3);
 	});
 });
 

@@ -38,6 +38,12 @@ vi.mock('$lib/groups/server/session', async (importOriginal) => ({
 		};
 	}
 }));
+/** Whether a group lives at the deployment's group host (it resolves the DID). */
+const isHostGroup = vi.hoisted(() => vi.fn());
+vi.mock('$lib/groups/server/host-kind', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/groups/server/host-kind')>()),
+	isHostGroup
+}));
 vi.mock('$lib/groups/server/acceptance', () => ({
 	gateCaller: async (did: string | null) => (did ? { did } : null)
 }));
@@ -86,6 +92,8 @@ beforeEach(async () => {
 	roles.set(MEMBER, []);
 	authorize.mockReset();
 	authorize.mockResolvedValue({ url: new URL('https://pds.test/oauth/authorize'), stateId: 's' });
+	isHostGroup.mockReset();
+	isHostGroup.mockResolvedValue(false);
 });
 
 const env = (): Record<string, unknown> => ({
@@ -163,6 +171,22 @@ describe('POST /oauth/group-link', () => {
 		});
 		expect(await start(OWNER, env(), null)).toMatchObject({ status: 404 });
 		expect(authorize).not.toHaveBeenCalled();
+	});
+
+	// The group host's act-for-group page fills in the person's handle from the
+	// hint; a stand-in group's PDS is never told who the person is.
+	it('hints the person to the group host only for a group that lives there', async () => {
+		const withHost = { ...env(), GROUP_HOST_URL: 'https://grouphost.test' };
+
+		isHostGroup.mockResolvedValueOnce(true);
+		const hinted = new URL((await start(ADMIN, withHost)).location ?? '');
+		expect(hinted.searchParams.get('gh_person')).toBe(ADMIN);
+		expect(hinted.searchParams.get('gh_name')).toBeNull();
+		expect(isHostGroup).toHaveBeenLastCalledWith(withHost, GROUP);
+
+		isHostGroup.mockResolvedValueOnce(false);
+		const plain = new URL((await start(ADMIN, withHost)).location ?? '');
+		expect([...plain.searchParams.keys()]).toEqual([]);
 	});
 
 	// A link kept nowhere would be lost with the request that made it.
