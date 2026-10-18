@@ -3,6 +3,31 @@
  * on any session/client state — those flow through the EditorAdapter.
  */
 
+export const DEFAULT_BLOB_URL_TEMPLATE =
+	'https://cdn.bsky.app/img/feed_thumbnail/plain/{did}/{cid}@{format}';
+export const DEFAULT_APPVIEW_URL = 'https://public.api.bsky.app';
+
+let blobUrlTemplate = DEFAULT_BLOB_URL_TEMPLATE;
+let appviewUrl: string | null = DEFAULT_APPVIEW_URL;
+
+/**
+ * Points the components at a network other than the public one. The app calls it
+ * once from its root layout. `blobUrlTemplate` fills in `{did}`, `{cid}` and
+ * `{format}`; a null `appviewUrl` turns off the Bluesky features that read from
+ * it (comments).
+ */
+export function configureAtproto(options: {
+	blobUrlTemplate?: string;
+	appviewUrl?: string | null;
+}) {
+	if (options.blobUrlTemplate !== undefined) blobUrlTemplate = options.blobUrlTemplate;
+	if (options.appviewUrl !== undefined) appviewUrl = options.appviewUrl;
+}
+
+export function getAppviewUrl(): string | null {
+	return appviewUrl;
+}
+
 export function getCDNImageBlobUrl({
 	did,
 	blob,
@@ -15,7 +40,10 @@ export function getCDNImageBlobUrl({
 	};
 	format?: 'webp' | 'jpeg' | 'png';
 }) {
-	return `https://cdn.bsky.app/img/feed_thumbnail/plain/${did}/${blob.ref.$link}@${format}`;
+	return blobUrlTemplate
+		.replace('{did}', did)
+		.replace('{cid}', blob.ref.$link)
+		.replace('{format}', format);
 }
 
 export function compressImage(
