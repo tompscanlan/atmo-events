@@ -3,6 +3,7 @@ import { GROUP_LINK_REDIRECT_PATH } from '$lib/atproto/settings';
 import { mayHoldGroupSession } from '$lib/groups/grants';
 import { gateCaller } from '$lib/groups/server/acceptance';
 import { GroupLinkRefused, startGroupLink } from '$lib/groups/server/group-link';
+import { isHostGroup } from '$lib/groups/server/host-kind';
 
 import { GROUP_NOT_FOUND, groupRouteContext } from '$lib/groups/server/route-context';
 import type { RequestHandler } from './$types';
@@ -35,6 +36,7 @@ export const POST: RequestHandler = async ({ request, locals, platform }) => {
 			group,
 			signedInDid: locals.did,
 			mayConnect: mayHoldGroupSession(membership),
+			atGroupHost: () => isHostGroup(env, group.group_did),
 			redirectUri: env.OAUTH_PUBLIC_URL + GROUP_LINK_REDIRECT_PATH
 		});
 	} catch (e) {
