@@ -2,7 +2,15 @@
 // public pages, starts a sign-in up to the account server's own sign-in page and
 // stops there, and writes nothing. A handful of requests, so it can run anytime.
 //
-//   node scripts/smoke.mjs
+//   node scripts/smoke.mjs                       # atmo.rsvp
+//
+//   SMOKE_URL=https://atmo.lighthouse.snowglobe.at \
+//   SMOKE_HANDLE=bob.lighthouse.snowglobe.at SMOKE_OUTSIDE_HANDLE=bsky.app \
+//   SMOKE_HOSTS=lighthouse.snowglobe.at node scripts/smoke.mjs   # a sealed globe
+//
+// On a globe, atmo is at atmo.<globe>; the bare globe name serves nothing.
+// Playwright is not a dependency of this app: install it beside the script's
+// caller, or point SMOKE_PLAYWRIGHT at an installed copy's index.mjs.
 //
 // Settings (environment):
 //   SMOKE_URL             the atmo to check (default https://atmo.rsvp)
@@ -69,19 +77,22 @@ async function startSignIn(handle) {
 	const siteHost = new URL(SITE).host;
 	let left = false;
 	let message = '';
-	while (Date.now() - started < FAIL_WITHIN_MS) {
+	// Short waits on each read: once the browser leaves for the account server the
+	// dialog is gone, and a default (30 s) wait would outlast the whole budget.
+	for (;;) {
 		if (new URL(page.url()).host !== siteHost) {
 			left = true;
 			break;
 		}
+		if (Date.now() - started >= FAIL_WITHIN_MS) break;
 		const button = await page
 			.locator('input[name=atproto-handle]')
 			.locator('xpath=following::button[1]')
-			.innerText()
+			.innerText({ timeout: 500 })
 			.catch(() => '');
 		const text = await page
 			.locator('body')
-			.innerText()
+			.innerText({ timeout: 500 })
 			.catch(() => '');
 		const m = /failed to resolve[^\n"]*/i.exec(text) ?? /could not[^\n"]*/i.exec(text);
 		if (m && !/loading/i.test(button)) {
@@ -124,8 +135,9 @@ try {
 	}
 
 	// s3, s4: the events page lists events, and one opens with its images loaded.
+	// The All tab: the default Popular tab is empty on a small network.
 	{
-		const { page, status } = await open('/events');
+		const { page, status } = await open('/events?filter=all');
 		const links = [
 			...new Set(await page.$$eval('a[href*="/e/"]', (as) => as.map((a) => a.getAttribute('href'))))
 		].filter((h) => h && /\/p\/[^/]+\/e\/[^/]+$/.test(h));
