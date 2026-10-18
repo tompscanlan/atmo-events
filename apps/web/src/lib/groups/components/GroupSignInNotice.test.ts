@@ -16,7 +16,10 @@ function renderNotice(from: number | null) {
 
 describe('GroupSignInNotice', () => {
 	it('gives the reason for the wait when a new sign-in has to wait', () => {
-		expect(renderNotice(Date.now() + 5 * 60_000)).toContain('data-sign-in-wait-reason');
+		// The element has text, so an empty or hidden one would not pass.
+		expect(renderNotice(Date.now() + 5 * 60_000)).toMatch(
+			/<p data-sign-in-wait-reason(?![^>]*\bhidden\b)[^>]*>\s*[^<\s]/
+		);
 	});
 
 	it('gives no reason when a new sign-in can carry the group already', () => {
