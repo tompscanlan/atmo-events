@@ -22,6 +22,10 @@ export async function bundleWorker(outDir, plcUrl) {
 					find: '$app/environment',
 					replacement: join(WEB_DIR, 'scripts/groups-e2e.app-environment.js')
 				},
+				{
+					find: '$env/dynamic/public',
+					replacement: join(WEB_DIR, 'scripts/groups-e2e.env-public.js')
+				},
 				// Exactly this module: the stand-in for the group's linked session.
 				{
 					find: /^\$lib\/atproto\/server\/oauth$/,
