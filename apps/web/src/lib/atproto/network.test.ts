@@ -35,6 +35,7 @@ describe('readNetwork', () => {
 		expect(n.appviewUrl).toBe('https://public.api.bsky.app');
 		expect(n.typeaheadUrl).toBe('https://typeahead.waow.tech');
 		expect(n.statsUrl).toBe('https://ufos-api.microcosm.blue');
+		expect(n.pdslsUrl).toBe('https://pds.ls');
 	});
 
 	it('treats blank values as unset', () => {
@@ -61,6 +62,7 @@ describe('readNetwork', () => {
 		expect(n.typeaheadUrl).toBeNull();
 		expect(n.statsUrl).toBeNull();
 		expect(n.constellationUrl).toBeNull();
+		expect(n.pdslsUrl).toBeNull();
 	});
 
 	it('lets a sealed network name its own stand-in for those services', () => {
@@ -69,6 +71,10 @@ describe('readNetwork', () => {
 			PUBLIC_ATPROTO_APPVIEW_URL: 'https://appview.lighthouse.snowglobe.at'
 		});
 		expect(n.appviewUrl).toBe('https://appview.lighthouse.snowglobe.at');
+		expect(
+			readNetwork({ ...globe, PUBLIC_ATPROTO_PDSLS_URL: 'https://pdsls.lighthouse.snowglobe.at/' })
+				.pdslsUrl
+		).toBe('https://pdsls.lighthouse.snowglobe.at');
 	});
 
 	it('refuses to fall back when sealed and an address is missing', () => {
