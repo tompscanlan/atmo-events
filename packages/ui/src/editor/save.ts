@@ -5,6 +5,7 @@ import { designs, resolveAccentColor } from '../thumbnails/designs.js';
 import type { FlatEventRecord } from '../contrail.js';
 import type { EventTheme } from '../theme.js';
 import type { EventLocation, EventMode, Visibility } from './types.js';
+import { DEFAULT_APP_ORIGIN } from './adapter.js';
 
 export async function tokensToFacets(
 	tokens: Token[],
@@ -131,6 +132,8 @@ export async function buildEventRecord(args: {
 	locationChanged: boolean;
 	media: Array<Record<string, unknown>> | undefined;
 	resolveHandle: (handle: string) => Promise<string>;
+	/** Origin stamped as `createdWith` provenance. Defaults to `DEFAULT_APP_ORIGIN`. */
+	appOrigin?: string;
 }): Promise<Record<string, unknown>> {
 	const {
 		eventData,
@@ -147,7 +150,8 @@ export async function buildEventRecord(args: {
 		location,
 		locationChanged,
 		media,
-		resolveHandle
+		resolveHandle,
+		appOrigin
 	} = args;
 
 	const createdAt = isNew
@@ -158,7 +162,7 @@ export async function buildEventRecord(args: {
 	const record: Record<string, unknown> = {
 		...(eventData ? { ...eventData } : {}),
 		$type: 'community.lexicon.calendar.event',
-		createdWith: 'https://atmo.rsvp',
+		createdWith: appOrigin ?? DEFAULT_APP_ORIGIN,
 		name: name.trim(),
 		mode: `community.lexicon.calendar.event#${mode}`,
 		status: 'community.lexicon.calendar.event#scheduled',

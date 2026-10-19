@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import Avatar from 'svelte-boring-avatars';
 	import { notifyContrailOfUpdate } from '$lib/contrail';
 
@@ -39,7 +40,7 @@
 		window.Blento?.promptLogin();
 	}
 
-	let eventUrl = $derived(`https://atmo.rsvp/p/${data.actorDid}/e/${data.rkey}`);
+	let eventUrl = $derived(`${page.url.origin}/p/${data.actorDid}/e/${data.rkey}`);
 
 	let startDate = $derived(new Date(data.eventData.startsAt));
 	let endDate = $derived(data.eventData.endsAt ? new Date(data.eventData.endsAt) : null);
@@ -87,7 +88,7 @@
 				collection: 'community.lexicon.calendar.rsvp',
 				record: {
 					$type: 'community.lexicon.calendar.rsvp',
-					createdWith: 'https://atmo.rsvp',
+					createdWith: page.url.origin,
 					status: `community.lexicon.calendar.rsvp#${status}`,
 					subject: {
 						uri: data.eventUri,
