@@ -28,13 +28,13 @@ import {
 	DOMAIN,
 	GROUPS,
 	PDS,
-	chromium,
 	closeBrowser,
 	didOf,
 	groupDid,
 	handleOf,
 	log,
 	memberRole,
+	newContext,
 	ownPdsPages,
 	session,
 	shot,
@@ -106,7 +106,7 @@ async function groupSignIn(name, group, scopes = SCOPES) {
 		rs.end('ok');
 	});
 	await new Promise((r) => server.listen(CB_PORT, '127.0.0.1', r));
-	const context = await (await chromium()).newContext();
+	const context = await newContext();
 	const page = await context.newPage();
 	try {
 		await page.goto(url.toString(), { waitUntil: 'load', timeout: 60_000 });

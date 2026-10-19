@@ -12,18 +12,27 @@
 //   w2  jojo starts a group at the group host and presses Deny access at their own account
 //       server: the browser comes back to atmo's create page with its error, nothing along
 //       the way answers 5xx (the host's sign-in callback included), and no group is made
+//   w3  jojo asks to join the Book Circle, which takes members by approval: jojo is left
+//       waiting, not a member; its organizer approves from the members page; jojo is then a
+//       member. jojo leaves at the end, so the group is as it was
+//
+// SEED_DEVICE runs the same checks from an emulated phone (seed.mjs).
 
 import {
 	ATMO,
 	DOMAIN,
+	GROUPS,
 	asPerson,
-	chromium,
 	closeBrowser,
+	didOf,
+	groupPage,
 	handleOf,
 	log,
+	newContext,
 	ownPdsPages,
 	shot,
-	where
+	where,
+	withAccess
 } from './seed.mjs';
 
 const results = [];
@@ -48,7 +57,7 @@ function watch5xx(context) {
 }
 
 async function w1() {
-	const context = await (await chromium()).newContext();
+	const context = await newContext();
 	const bad = watch5xx(context);
 	const page = await context.newPage();
 	try {
@@ -116,9 +125,94 @@ async function w2() {
 	}
 }
 
+/** jojo's standing on a group page, by the buttons it offers. */
+async function standing(page) {
+	for (const [name, state] of [
+		['Leave group', 'member'],
+		['Withdraw request', 'waiting'],
+		['Request to join', 'outside']
+	]) {
+		if (
+			await page
+				.getByRole('button', { name })
+				.isVisible()
+				.catch(() => false)
+		)
+			return state;
+	}
+	return 'unclear';
+}
+
+/** Waits for the page, reloaded, to show `want`; the standing it last saw. */
+async function waitStanding(page, want, ms = 20_000) {
+	let now = await standing(page);
+	for (const end = Date.now() + ms; now !== want && Date.now() < end; ) {
+		await page.waitForTimeout(1000);
+		await page.reload({ waitUntil: 'networkidle' });
+		now = await standing(page);
+	}
+	return now;
+}
+
+async function w3() {
+	const g = 'books';
+	const organizer = GROUPS.find((x) => x.key === g).organizer;
+	const seen = [];
+	let page;
+	try {
+		page = await groupPage('jojo', g);
+		const before = await standing(page);
+		seen.push(`before ${before}`);
+		if (before !== 'outside') throw new Error(`jojo is already ${before} in ${g}`);
+		await page.getByRole('button', { name: 'Request to join' }).click();
+		// A join can come back through the account server to pick up the group's grant.
+		await page
+			.waitForURL((u) => u.host !== atmoHost, { timeout: 5_000 })
+			.then(() => ownPdsPages(page, 'jojo', async () => onAtmo(page)))
+			.catch(() => {});
+		const asked = await waitStanding(page, 'waiting');
+		seen.push(`asked ${asked}`);
+
+		const members = await withAccess(organizer, g, '/members');
+		const form = members
+			.locator(`form:has(input[name=member][value="${didOf('jojo')}"])`)
+			.filter({ has: members.getByRole('button', { name: 'Approve' }) });
+		const listed = (await form.count()) > 0;
+		seen.push(`listed for ${organizer} ${listed}`);
+		if (listed) {
+			await form.getByRole('button', { name: 'Approve' }).click();
+			await form.waitFor({ state: 'detached', timeout: 20_000 }).catch(() => {});
+		}
+		await members.close();
+
+		const after = await waitStanding(page, 'member');
+		seen.push(`after ${after}`);
+		check(
+			'w3 approval-only join',
+			asked === 'waiting' && listed && after === 'member',
+			seen.join(', ')
+		);
+	} catch (e) {
+		if (page) await shot(page, 'w3');
+		check('w3 approval-only join', false, `${e.message}; ${seen.join(', ')}`);
+	} finally {
+		// Put jojo back outside the group, whatever got done.
+		if (page) {
+			const now = await standing(page);
+			const undo = { member: 'Leave group', waiting: 'Withdraw request' }[now];
+			if (undo) {
+				await page.getByRole('button', { name: undo }).click();
+				log(`  w3 undo: ${undo} -> ${await waitStanding(page, 'outside')}`);
+			}
+			await page.close();
+		}
+	}
+}
+
 try {
 	await w1();
 	await w2();
+	await w3();
 } finally {
 	await closeBrowser();
 }

@@ -15,6 +15,9 @@
 //   SEED_ONLY         comma-separated steps to run (default: all), from STEPS below
 //   SEED_PLAYWRIGHT   the playwright package (default: `playwright`)
 //   SEED_SHOTS        a directory for screenshots of the browser steps (unset: none)
+//   SEED_DEVICE       act from an emulated phone, by Playwright device name, e.g. 'Pixel 7'
+//                     (unset: a desktop browser). It is still Chromium, so an Android device
+//                     is the faithful choice; the seeded pictures are drawn the same either way
 //
 // The groups' organizers act as the group only once their account server has learned of it,
 // up to 10 minutes after the group is made: a first run on a fresh globe stops at `organize`
@@ -209,12 +212,27 @@ function log(line) {
 // --- pictures -----------------------------------------------------------------------
 
 let browser;
+let pw;
 async function chromium() {
 	if (!browser) {
-		const pw = await import(process.env.SEED_PLAYWRIGHT ?? 'playwright');
+		pw = await import(process.env.SEED_PLAYWRIGHT ?? 'playwright');
 		browser = await pw.chromium.launch();
 	}
 	return browser;
+}
+
+/** A fresh browser for one person: the phone SEED_DEVICE names, or a desktop one. */
+async function newContext() {
+	const b = await chromium();
+	const name = process.env.SEED_DEVICE;
+	if (!name) return b.newContext();
+	const device = pw.devices[name];
+	if (!device) throw new Error(`SEED_DEVICE: Playwright has no device '${name}'`);
+	if (!newContext.said) {
+		newContext.said = true;
+		log(`  acting from ${name} (${device.viewport.width}x${device.viewport.height}, touch)`);
+	}
+	return b.newContext(device);
 }
 
 /** A plain picture with a word on it, drawn by the browser: no image files to carry. */
@@ -496,7 +514,7 @@ const contexts = new Map();
 /** A browser signed in to atmo as `name`. */
 async function asPerson(name) {
 	if (contexts.has(name)) return contexts.get(name);
-	const context = await (await chromium()).newContext();
+	const context = await newContext();
 	const page = await context.newPage();
 	await page.goto(`${ATMO}/`, { waitUntil: 'networkidle' });
 	await page.getByRole('button', { name: 'Login' }).first().click();
@@ -1095,9 +1113,11 @@ export {
 	chromium,
 	did as didOf,
 	groupDid,
+	groupPage,
 	handleOf,
 	log,
 	memberRole,
+	newContext,
 	ownPdsPages,
 	session,
 	shot,

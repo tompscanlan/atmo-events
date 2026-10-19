@@ -17,7 +17,7 @@ set -eu
 #
 # Server-side apply, so no copy of the values lands in a last-applied annotation. Nothing
 # secret is printed. Env passed through: SEED_ONLY, SEED_PLAYWRIGHT, SEED_SHOTS (a directory
-# for screenshots of the browser steps).
+# for screenshots of the browser steps), SEED_DEVICE (a phone to act from, e.g. 'Pixel 7').
 
 GLOBE="${1:?usage: seed.sh <globe> [script]}"
 SCRIPT="${2:-seed.mjs}"
