@@ -5,16 +5,43 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { dev } from '$app/environment';
+	import { env as publicEnv } from '$env/dynamic/public';
 	import { ModeWatcher } from 'mode-watcher';
 	import LoginModal from '$lib/components/LoginModal.svelte';
 	import CreateEventModal, { createEventModalState } from '$lib/components/CreateEventModal.svelte';
 
 	let { children } = $props();
+
+	// A deployment on a test or demo network says so on every page. Unset, nothing shows.
+	//   PUBLIC_NETWORK_NOTICE      the text
+	//   PUBLIC_NETWORK_NOTICE_URL  a page that says more (optional)
+	const notice = publicEnv.PUBLIC_NETWORK_NOTICE?.trim();
+	const noticeUrl = publicEnv.PUBLIC_NETWORK_NOTICE_URL?.trim();
+	// The strip is fixed above the floating navbar, which moves down by its height. It wraps on a
+	// narrow screen, so the height is measured; the first guess is one line.
+	let noticeHeight = $state(32);
 </script>
 
 <ModeWatcher />
 
-<Navbar class="top-2 right-2 left-2 mx-auto max-w-3xl rounded-full! pr-3 pl-6">
+{#if notice}
+	<div
+		bind:clientHeight={noticeHeight}
+		role="note"
+		class="fixed top-0 right-0 left-0 z-60 bg-amber-100 px-4 py-1.5 text-center text-sm text-amber-950 dark:bg-amber-900 dark:text-amber-50"
+	>
+		{notice}
+		{#if noticeUrl}
+			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- another site -->
+			<a href={noticeUrl} class="ml-1 font-medium whitespace-nowrap underline">More about it</a>
+		{/if}
+	</div>
+{/if}
+
+<Navbar
+	class="top-2 right-2 left-2 mx-auto max-w-3xl rounded-full! pr-3 pl-6"
+	style={notice ? `top: ${noticeHeight + 8}px` : undefined}
+>
 	<div class="flex items-center gap-6">
 		<a
 			href={resolve('/')}
@@ -140,7 +167,7 @@
 	</div>
 </Navbar>
 
-<main class="pt-14">
+<main class="pt-14" style={notice ? `padding-top: ${noticeHeight + 56}px` : undefined}>
 	{@render children()}
 </main>
 
