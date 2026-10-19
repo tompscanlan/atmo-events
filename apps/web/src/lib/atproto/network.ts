@@ -18,14 +18,15 @@ import { env as publicEnv } from '$env/dynamic/public';
  *   PUBLIC_ATPROTO_APPVIEW_URL        public Bluesky API, for profiles
  *   PUBLIC_ATPROTO_TYPEAHEAD_URL      actor search
  *   PUBLIC_ATPROTO_STATS_URL          Microcosm record stats
+ *   PUBLIC_ATPROTO_PDSLS_URL          record browser links point to (default https://pds.ls)
  *   PUBLIC_ATPROTO_BLOB_URL_TEMPLATE  image URL; {did}, {cid} and {format} are filled in
  *
  * PUBLIC_ATPROTO_SEALED=true is for a network that must not reach the public
  * one. The addresses that have a stand-in on a private network (directory,
  * identity resolver, feed, relay, sign-up, image URL) must then all be set, or
  * reading the settings throws. Those with none (DNS lookups, backlinks,
- * profiles, actor search, stats) turn off unless set, so nothing falls back to a
- * public service.
+ * profiles, actor search, stats, the record browser) turn off unless set, so
+ * nothing falls back to a public service.
  */
 export type NetworkSettings = {
 	sealed: boolean;
@@ -49,6 +50,8 @@ export type NetworkSettings = {
 	typeaheadUrl: string | null;
 	/** null: no record stats. */
 	statsUrl: string | null;
+	/** null: no links to a record browser. */
+	pdslsUrl: string | null;
 	blobUrlTemplate: string;
 };
 
@@ -59,6 +62,7 @@ const PUBLIC_DEFAULTS = {
 	appviewUrl: 'https://public.api.bsky.app',
 	typeaheadUrl: 'https://typeahead.waow.tech',
 	statsUrl: 'https://ufos-api.microcosm.blue',
+	pdslsUrl: 'https://pds.ls',
 	blobUrlTemplate: 'https://cdn.bsky.app/img/feed_thumbnail/plain/{did}/{cid}@{format}'
 };
 
@@ -133,6 +137,7 @@ export function readNetwork(env: Env): NetworkSettings {
 		appviewUrl: orDefault('APPVIEW_URL', PUBLIC_DEFAULTS.appviewUrl),
 		typeaheadUrl: orDefault('TYPEAHEAD_URL', PUBLIC_DEFAULTS.typeaheadUrl),
 		statsUrl: orDefault('STATS_URL', PUBLIC_DEFAULTS.statsUrl),
+		pdslsUrl: orDefault('PDSLS_URL', PUBLIC_DEFAULTS.pdslsUrl),
 		blobUrlTemplate: blobUrlTemplate ?? PUBLIC_DEFAULTS.blobUrlTemplate
 	};
 }
