@@ -23,6 +23,8 @@
 //   SMOKE_HOSTS           comma-separated domains the browser may ask; any other
 //                         host fails the run (unset: hosts are listed, not checked)
 //   SMOKE_PLAYWRIGHT      the playwright package (default: `playwright`)
+//   SMOKE_DEVICE          check from an emulated phone, by Playwright device name,
+//                         e.g. 'Pixel 7' (unset: a desktop browser)
 //
 // Exit 0 when every check passes, 1 otherwise. Each check prints PASS or FAIL
 // with what it saw.
@@ -39,7 +41,10 @@ const HOSTS = (process.env.SMOKE_HOSTS ?? '')
 /** How long a sign-in that should fail may take to say so. */
 const FAIL_WITHIN_MS = 20_000;
 
-const { chromium } = await import(process.env.SMOKE_PLAYWRIGHT ?? 'playwright');
+const { chromium, devices } = await import(process.env.SMOKE_PLAYWRIGHT ?? 'playwright');
+const DEVICE = process.env.SMOKE_DEVICE;
+if (DEVICE && !devices[DEVICE])
+	throw new Error(`SMOKE_DEVICE: Playwright has no device '${DEVICE}'`);
 
 const results = [];
 function check(name, ok, detail) {
@@ -48,7 +53,9 @@ function check(name, ok, detail) {
 }
 
 const browser = await chromium.launch();
-const context = await browser.newContext();
+const context = await browser.newContext(DEVICE ? devices[DEVICE] : {});
+if (DEVICE)
+	console.log(`checking from ${DEVICE} (${devices[DEVICE].viewport.width}px wide, touch)`);
 const asked = new Map();
 const pageErrors = [];
 context.on('request', (r) => {
