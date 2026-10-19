@@ -87,6 +87,7 @@ SMOKE_OUTSIDE_HANDLE=bsky.app SMOKE_HOSTS=<globe>.snowglobe.at \
   node apps/web/scripts/smoke.mjs        # read-only, 9 checks
 deploy/snowglobe/seed.sh <globe>          # a no-op when the globe is already seeded
 deploy/snowglobe/seed.sh <globe> walk.mjs # the Deny-at-sign-in checks
+deploy/snowglobe/seed.sh <globe> probe-proposal.mjs # opensocial.group cases, puts back what it changes
 ```
 
 The smoke and walk checks need Playwright; the scripts' headers say where they find it.

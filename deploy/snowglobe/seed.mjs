@@ -1084,8 +1084,26 @@ const STEPS = {
 	groupRsvps
 };
 
-// walk.mjs reuses the cast, the logins and the browser helpers; only a direct run seeds.
-export { ATMO, DOMAIN, GROUPS, asPerson, chromium, handleOf, log, ownPdsPages, shot, where };
+// walk.mjs and probe-proposal.mjs reuse the cast, the logins and the browser helpers; only a
+// direct run seeds.
+export {
+	ATMO,
+	DOMAIN,
+	GROUPS,
+	PDS,
+	asPerson,
+	chromium,
+	did as didOf,
+	groupDid,
+	handleOf,
+	log,
+	memberRole,
+	ownPdsPages,
+	session,
+	shot,
+	where,
+	withAccess
+};
 export async function closeBrowser() {
 	await browser?.close();
 }
