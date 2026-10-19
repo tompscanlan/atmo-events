@@ -86,11 +86,14 @@ SMOKE_URL=https://atmo.<globe>.snowglobe.at SMOKE_HANDLE=bob.<globe>.snowglobe.a
 SMOKE_OUTSIDE_HANDLE=bsky.app SMOKE_HOSTS=<globe>.snowglobe.at \
   node apps/web/scripts/smoke.mjs        # read-only, 9 checks
 deploy/snowglobe/seed.sh <globe>          # a no-op when the globe is already seeded
-deploy/snowglobe/seed.sh <globe> walk.mjs # the Deny-at-sign-in checks
+deploy/snowglobe/seed.sh <globe> walk.mjs # Deny at sign-in and mid group create; an approval-only join
 deploy/snowglobe/seed.sh <globe> probe-proposal.mjs # opensocial.group cases, puts back what it changes
 ```
 
-The smoke and walk checks need Playwright; the scripts' headers say where they find it.
+The smoke and walk checks need Playwright; the scripts' headers say where they find it. To run
+either from a phone instead of a desktop browser, add `SMOKE_DEVICE='Pixel 7'` or
+`SEED_DEVICE='Pixel 7'` (any Playwright device name; it is still Chromium, so an Android device is
+the faithful one). This stands in for walking it on a real phone.
 
 ## Secrets
 
