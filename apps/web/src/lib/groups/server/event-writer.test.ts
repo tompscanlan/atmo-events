@@ -293,9 +293,8 @@ describe('the permission gate', () => {
 	});
 
 	// This site changes a group only through its own group host; a linked session
-	// on a group anywhere else writes nothing. An edit or delete still reads the
-	// event's placement first, with the caller's own access.
-	it('refuses a group not at this site’s group host before any write', async () => {
+	// on a group anywhere else is not used at all.
+	it('refuses a group not at this site’s group host before any request', async () => {
 		const elsewhere = linkGroups([GROUP_DID]);
 		const refused = [
 			() => write({ env: elsewhere, intent: 'create', placement: 'everyone' }),
@@ -303,7 +302,7 @@ describe('the permission gate', () => {
 			() => remove('3abc', 'everyone', { env: elsewhere })
 		];
 		for (const run of refused) await expect(run()).rejects.toBeInstanceOf(GroupNotAtHostError);
-		expect(pds.writes()).toEqual([]);
+		expect(pds.calls).toEqual([]);
 		expect(index.told).toEqual([]);
 	});
 });
