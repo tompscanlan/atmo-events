@@ -177,8 +177,9 @@
 			<input type="hidden" name="groupDid" value={group.group_did} />
 			<h3 class="text-sm font-semibold">Refresh from the group host</h3>
 			<p class="text-base-500 dark:text-base-400 text-xs">
-				Re-reads this group from its host into this site's copy, so members who joined or left
-				elsewhere show here. It changes nothing at the host.
+				Re-reads this group from its host into this site's copy, so members who joined elsewhere
+				show here. Someone who left elsewhere stays in this site's copy for now. It changes nothing
+				at the host.
 			</p>
 			{#if refreshError}
 				<p class="text-sm text-red-600 dark:text-red-400">{refreshError}</p>

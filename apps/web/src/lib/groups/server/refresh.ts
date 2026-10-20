@@ -4,9 +4,10 @@
 // nothing at the host. A second run finds nothing to change.
 //
 // The cached roster decides which groups a sign-in asks grants for and a
-// person's groups on browse, and a join or a leave made at the host through
-// another app reaches it only through this, until this site syncs it on its own
-// (TS, 2026-10-20).
+// person's groups on browse, and a join made at the host through another app
+// reaches it only through this, until this site syncs it on its own (TS,
+// 2026-10-20). A leave does not: the rebuild adds and updates rows but never
+// deletes one, so a member who left elsewhere keeps their row (om-7vdxg).
 import { MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 import type { GroupSpaceReader } from './about-read';
 import { rebuildGroup, type GroupRebuildResult } from './rebuild';
