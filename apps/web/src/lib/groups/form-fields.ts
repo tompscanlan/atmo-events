@@ -4,13 +4,8 @@ import * as v from 'valibot';
 import { isDid, isHandle } from '@atcute/lexicons/syntax';
 import { GROUP_VISIBILITIES } from './types';
 import { ASSIGNABLE_ROLES } from './permissions';
-import { GROUP_LABEL_PATTERN } from './handle-label';
 import { EVENT_PLACEMENTS } from './event-placement';
 import { RSVP_STATUSES } from './ids';
-
-/** The shortest group account password the create form takes. A floor of this
- *  app's choosing: the creator, not this app, guards the account from then on. */
-export const GROUP_PASSWORD_MIN_LENGTH = 8;
 
 /** An HTML checkbox sends `on` when ticked and nothing when not. The `''` default is
  *  required: without it valibot skips a missing key, the transform never runs, and an
@@ -51,13 +46,6 @@ export const memberActorField = v.pipe(
 export const didField = v.pipe(
 	v.string(),
 	v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,300}$/, 'Invalid DID')
-);
-
-/** Shape only. `runCreateGroup` applies the stricter rules for a new label
- *  (`labelMintRefusal`). */
-export const labelField = v.pipe(
-	v.string(),
-	v.regex(GROUP_LABEL_PATTERN, 'Invalid group handle label')
 );
 
 export const idField = v.pipe(v.string(), v.minLength(1), v.maxLength(64));

@@ -176,7 +176,7 @@ export function pdsProvisioner(cred: GroupCredential, groupDid: string): GroupSp
 /** Creates the three spaces in sequence: they share one cached session, and a
  *  later one must not run if an earlier one fails. Every space starts
  *  member-list, a public group's about space included: it holds no `access`
- *  record yet, and opens once one says public (../create-group.ts). */
+ *  record yet, and opens once one says public. */
 export async function provisionGroupSpaces(
 	provisioner: GroupSpaceProvisioner
 ): Promise<GroupSpaceUris> {
