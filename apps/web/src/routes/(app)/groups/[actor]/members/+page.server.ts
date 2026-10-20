@@ -51,8 +51,7 @@ async function readConfirmations(
 /** Rows the records no longer back: a removal or an admission that stopped
  *  partway, which this site cannot tell apart. The roster is drawn from the
  *  records, so without this list such a member vanishes from the page with the
- *  removal still half done. The owner is left out: it cannot be removed, and
- *  Repair writes its record. */
+ *  removal still half done. The owner is left out: it cannot be removed. */
 async function unfinishedRemovals(
 	db: D1Database,
 	group: GroupRow,

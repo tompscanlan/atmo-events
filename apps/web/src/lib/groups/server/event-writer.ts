@@ -30,7 +30,7 @@ import { notifyIndexQuietly } from './events-index';
 import {
 	actingPerson,
 	GroupRecordError,
-	groupWriter,
+	hostGroupWriter,
 	requireGroupPermission,
 	type GroupGateInput
 } from './group-write';
@@ -282,6 +282,8 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 		);
 	}
 
+	// Before any read: a group not at this site's group host is asked nothing.
+	const writer = await hostGroupWriter(input.env, input.group, actingPerson(input));
 	// A public create reads nothing first.
 	if (space !== null || input.intent === 'update') {
 		const locator = await groupEventLocator(input.env, input.group, actingPerson(input));
@@ -291,7 +293,6 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 		}
 	}
 
-	const writer = await groupWriter(input.env, input.group, actingPerson(input));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
@@ -317,9 +318,9 @@ export async function deleteGroupEvent(
 	const space = eventSpace(input.group.group_did, input.placement);
 	await requireEventPermission(input, 'delete');
 	const person = actingPerson(input);
+	const writer = await hostGroupWriter(input.env, input.group, person);
 	const locator = await groupEventLocator(input.env, input.group, person);
 	await checkPlacement(locator, input.group.group_did, space, input.rkey, 'delete');
-	const writer = await groupWriter(input.env, input.group, person);
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,

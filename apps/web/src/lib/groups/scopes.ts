@@ -1,7 +1,7 @@
-// What a group's scopes let a member write as the group. A group host checks every
+// What a group's scopes let a member write as the group. The group host checks every
 // write as the group against the scopes the writer's roles hold (opensocial.group
-// `proposal.md:96-100`). atmo has no host, so it makes the same check itself,
-// before transport. (Spec: FR-213.)
+// `proposal.md:96-100`). atmo asks the same question for a write to its own rows,
+// and for which controls a page shows. (Spec: FR-213.)
 //
 // A scope is a `space:` scope in the grammar of atproto proposal 0016 ("OAuth
 // scopes"), or `include:` of a permission set, expanded from the copy of that set's

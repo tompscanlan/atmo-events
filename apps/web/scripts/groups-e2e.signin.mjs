@@ -1,6 +1,6 @@
-// The groups e2e's real sign-ins, for a run against a group host (E2E_GROUP_HOST).
-// A stand-in run logs in with passwords. A host holds no password for a group and
-// cuts each person's group session to their roles, so this run signs each person
+// The groups e2e's real sign-ins, at the group host (E2E_GROUP_HOST). A host holds
+// no password for a group and cuts each person's group session to their roles, so
+// this run signs each person
 // in as a person does: an OAuth client on this machine (a loopback client, whose
 // metadata is its client id, so no PDS keeps a copy that could go stale), a
 // Chromium on the devnet for the pages, and the person's own password typed into
@@ -9,8 +9,8 @@
 // The sessions stay in this driver. The worker reaches them through a bridge on
 // 127.0.0.1 (`startBridge`): it hands over each request it would have sent, and
 // the driver sends it on that person's session, through the ledger's guarded
-// fetch, so check 24 still counts every request. Imported only by a host run,
-// after the fetch guard is in place.
+// fetch, so check 24 still counts every request. Imported only after the fetch
+// guard is in place.
 import { X509Certificate, createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import http from 'node:http';

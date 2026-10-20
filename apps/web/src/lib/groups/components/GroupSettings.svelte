@@ -1,20 +1,19 @@
 <script lang="ts">
 	import { Button, Input, Label } from '@foxui/core';
 	import { groupFormError, resetOnSuccess } from '../form-result';
-	import { repairGroupForm, updateGroupForm } from '../group.remote';
+	import { refreshGroupForm, updateGroupForm } from '../group.remote';
 	import type { GroupRow, GroupVisibility } from '../types';
 	import { FIELD_CLASS } from './field-class';
 	import GroupLinkForm from './GroupLinkForm.svelte';
 
 	// The owner's settings for a group: its profile, rules and visibility, the
-	// repair, and reconnecting its account. Folded away until asked for.
+	// refresh from its host, and reconnecting its account. Folded away until asked for.
 	let {
 		group,
 		about,
 		visibility,
 		groupLinked,
-		linkOutcome,
-		atHost = false
+		linkOutcome
 	}: {
 		group: Pick<GroupRow, 'group_did' | 'require_approval'>;
 		about: { name: string; description: string | null; rules: { text: string }[] };
@@ -23,14 +22,12 @@
 		groupLinked: boolean | null;
 		/** `linked` or `failed` after a link's callback, else null. */
 		linkOutcome: string | null;
-		/** The group is at a real group host, where a link signs in with one's own account. */
-		atHost?: boolean;
 	} = $props();
 
 	let settingsError = $derived(groupFormError(updateGroupForm.result));
-	let repairError = $derived(groupFormError(repairGroupForm.result));
-	let repairSummary = $derived(
-		repairGroupForm.result?.ok === true ? repairGroupForm.result.summary : undefined
+	let refreshError = $derived(groupFormError(refreshGroupForm.result));
+	let refreshSummary = $derived(
+		refreshGroupForm.result?.ok === true ? refreshGroupForm.result.summary : undefined
 	);
 	let showSettings = $state(false);
 	// The visibility currently selected in the settings form, or null for "not
@@ -59,13 +56,8 @@
 		</p>
 	{:else if linkOutcome === 'failed'}
 		<p class="mt-3 text-sm text-red-600 dark:text-red-400">
-			{#if atHost}
-				The link did not complete, and nothing changed. At the group's host, sign in with your own
-				account and approve the request.
-			{:else}
-				The link did not complete, and nothing changed. At the group's PDS, sign in as the group
-				itself, not as yourself, and approve the request.
-			{/if}
+			The link did not complete, and nothing changed. At the group's host, sign in with your own
+			account and approve the request.
 		</p>
 	{/if}
 
@@ -169,26 +161,24 @@
 			<div><Button type="submit">Save settings</Button></div>
 		</form>
 
-		<!-- A separate form, so repairing never submits the settings above. -->
+		<!-- A separate form, so refreshing never submits the settings above. -->
 		<form
-			{...resetOnSuccess(repairGroupForm)}
+			{...resetOnSuccess(refreshGroupForm)}
 			class="border-base-200 dark:border-base-800 mt-8 flex flex-col gap-2 border-t pt-6"
 		>
 			<input type="hidden" name="groupDid" value={group.group_did} />
-			<h3 class="text-sm font-semibold">Repair this group</h3>
+			<h3 class="text-sm font-semibold">Refresh from the group host</h3>
 			<p class="text-base-500 dark:text-base-400 text-xs">
-				Writes any of this group's member records that are missing and can be written safely, brings
-				the group's member list at its PDS in line with those records, publishes or withdraws its
-				declaration to match the visibility its PDS enforces, then rebuilds this site's copy of the
-				group from its records. It never overwrites a record that exists, and running it twice
-				changes nothing the second time.
+				Re-reads this group from its host into this site's copy, so members who joined elsewhere
+				show here. Someone who left elsewhere stays in this site's copy for now. It changes nothing
+				at the host.
 			</p>
-			{#if repairError}
-				<p class="text-sm text-red-600 dark:text-red-400">{repairError}</p>
-			{:else if repairSummary}
-				<p class="text-base-500 dark:text-base-400 text-sm">{repairSummary}</p>
+			{#if refreshError}
+				<p class="text-sm text-red-600 dark:text-red-400">{refreshError}</p>
+			{:else if refreshSummary}
+				<p class="text-base-500 dark:text-base-400 text-sm">{refreshSummary}</p>
 			{/if}
-			<div><Button type="submit" variant="secondary">Repair this group</Button></div>
+			<div><Button type="submit" variant="secondary">Refresh from the group host</Button></div>
 		</form>
 
 		{#if groupLinked}

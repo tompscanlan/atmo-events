@@ -22,7 +22,7 @@ import type { OAuthClient, OAuthClientStores } from '@atcute/oauth-node-client';
 import { approvalRefusal, groupAvatarRefusal, splitRuleLines } from './about-record';
 import { knownFormError } from './form-error';
 import type { GroupFormResult } from './form-result';
-import { POLICY_MEMBER_LIST, SPACE_SKEY, groupSpaceUris } from './ids';
+import { SPACE_SKEY, groupSpaceUris } from './ids';
 import { spaceReadScope } from './members-record';
 import { DEFAULT_ROLE_PERMISSIONS } from './permissions';
 import { CALENDAR_SPACE_TYPE, type GroupVisibility } from './types';
@@ -131,7 +131,7 @@ export async function startCreateAtHost(input: {
 		prompt: 'create',
 		// The scope any link asks for. Admin's grants at a new group cover it all,
 		// the calendar space included, which does not exist yet.
-		scope: groupSessionScope(false),
+		scope: groupSessionScope(),
 		redirectUri: input.redirectUri,
 		state
 	});
@@ -289,8 +289,8 @@ async function takeAvatar(
 
 /**
  * Everything after the host made the group, on the creator's new session. The
- * gate runs as the group itself, as a mint's set-up does: these are the group's
- * own first writes, and the host checks the creator's roles on every one.
+ * gate runs as the group itself: these are the group's own first writes, and
+ * the host checks the creator's roles on every one.
  * Every failure names the group, which exists at the host whatever happens here.
  */
 export async function setUpHostGroup(
@@ -331,7 +331,6 @@ export async function setUpHostGroup(
 			{
 				type: CALENDAR_SPACE_TYPE,
 				skey: SPACE_SKEY,
-				readPolicy: POLICY_MEMBER_LIST,
 				access: {
 					public: false,
 					grants: Object.keys(HOST_ROLE_BUNDLES).map((role) => ({
@@ -358,7 +357,7 @@ export async function setUpHostGroup(
 		env,
 		group: withSpaces,
 		callerDid: groupDid,
-		writer: pdsWriter(credential, groupDid, { atHost: true }),
+		writer: pdsWriter(credential, groupDid),
 		reader
 	};
 	try {

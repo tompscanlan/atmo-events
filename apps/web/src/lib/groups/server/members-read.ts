@@ -321,7 +321,7 @@ export function hasMemberRecords(members: GroupMembers): boolean {
 /** Whether a roster row with no membership record in `members` is one a removal
  *  or an admission left unfinished, rather than a group whose records were never
  *  fully written: the authz config and other members' records are there. Such a
- *  row grants nothing, and only removing it finishes it (./roster.ts). */
+ *  row grants nothing, and only removing it finishes it. */
 export function isUnfinishedRow(members: GroupMembers): boolean {
 	return hasAuthzRecords(members) && hasMemberRecords(members);
 }

@@ -120,16 +120,10 @@ declare global {
 				/** Min ms between geocoder calls in the drip — the rate limiter. Set to
 				 *  the ceiling the geocoder tier allows; defaults to DEFAULT_GEOCODE_SLEEP_MS. */
 				GEOCODE_SLEEP_MS?: string;
-				/** PDS that new group accounts are created on. It must serve Spaces. */
-				GROUP_PDS_SERVICE?: string;
-				/** Handle suffix for groups, e.g. `groups.example.com`. */
-				GROUP_HANDLE_DOMAIN?: string;
-				/** Invite code for the group PDS (set via `wrangler secret put`). */
-				GROUP_PDS_INVITE_CODE?: string;
-				/** A group host (opensocial.group) this deployment uses, e.g.
+				/** The group host (opensocial.group) this deployment uses, e.g.
 				 *  `https://grouphost.devnet.internal`. A group whose PDS is this host
-				 *  is served by the host's own methods; every other group by the
-				 *  stand-in host. Unset: every group is the stand-in's. */
+				 *  is served by the host's own methods; this site changes no other
+				 *  group. Unset: groups are off. */
 				GROUP_HOST_URL?: string;
 			};
 			/** Cloudflare Worker execution context. Use `ctx.waitUntil(promise)` to

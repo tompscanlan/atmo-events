@@ -1,8 +1,18 @@
-// Which groups live at a real group host: those whose DID document names, as
-// their PDS, the host this deployment is set up with (`GROUP_HOST_URL`). Every
-// other group is the stand-in host's (./host.ts).
+// Which groups live at this deployment's group host: those whose DID document
+// names, as their PDS, the host it is set up with (`GROUP_HOST_URL`). This site
+// changes no other group (./host.ts).
 import type { CredentialStoreEnv } from './session';
 import { didSpaceHosts, type SpaceHosts } from './space-credential';
+
+/** The group is not at the group host this deployment is set up with, so this
+ *  site cannot change it: it changes a group only through its host. Thrown
+ *  before any request. */
+export class GroupNotAtHostError extends Error {
+	constructor(readonly groupDid: string) {
+		super(`${groupDid} is not at this site's group host, so this site cannot change it`);
+		this.name = 'GroupNotAtHostError';
+	}
+}
 
 /** The group host this deployment is set up with, by origin, or null. */
 export function groupHostOrigin(

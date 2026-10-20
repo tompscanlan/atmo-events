@@ -26,7 +26,6 @@ const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const MEMBER = 'did:plc:6cz6dldz42itymdbte47ewcv';
-const STRANGER = 'did:plc:ib2wrjcp4ulwqu35a7rtlckv';
 
 const ABOUT = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self');
 
@@ -230,23 +229,18 @@ describe('every refusal comes before any write', () => {
 
 	it.each([
 		[
-			'a profile from a member without MANAGE_GROUP',
-			() => profile({ callerDid: MEMBER }),
-			GroupPermissionError
-		],
-		[
 			'a profile from an anonymous caller',
 			() => profile({ callerDid: null }),
 			GroupPermissionError
 		],
 		[
-			'rules from a stranger',
+			'rules from an anonymous caller',
 			() =>
 				setGroupRules({
 					db,
 					env,
 					group,
-					callerDid: STRANGER,
+					callerDid: null,
 					writer,
 					reader: authz,
 					desired: ['Anything'],

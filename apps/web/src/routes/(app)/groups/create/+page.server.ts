@@ -7,5 +7,5 @@ import type { PageServerLoad } from './$types';
  *  made at the group host, so that means a host it can link. */
 export const load: PageServerLoad = async ({ locals, platform }) => {
 	if (!locals.did) redirect(303, '/');
-	return { creationConfigured: hostCreation(platform!.env) !== null };
+	return { canCreate: hostCreation(platform!.env) !== null };
 };

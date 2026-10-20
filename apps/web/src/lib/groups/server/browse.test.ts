@@ -91,7 +91,7 @@ describe('browse visibility', () => {
 
 	// No group's space is read for the list (TS 2026-10-15), so the caller's rows
 	// are the whole answer for an undeclared group. A revocation deletes the
-	// membership record before the row (`roster.ts`), so a half-failed one leaves
+	// membership record before the row (`real-host.ts`), so a half-failed one leaves
 	// a row with no record behind it, and that group is listed: its page, which
 	// reads the caller's standing with their own access, is what refuses them.
 	it('lists an undeclared group by the caller’s row alone, even one whose record may be gone', async () => {

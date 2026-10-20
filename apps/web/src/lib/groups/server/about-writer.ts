@@ -79,9 +79,8 @@ export async function writeGroupProfile(
 }
 
 /** Puts the about space's `access` record, which is the group's visibility. The
- *  space's read policy at the host follows it (./spaces.ts), so a caller
- *  widening writes this first, and one narrowing writes it after the host has
- *  closed. A group with a declaration must have an access record that says
+ *  host enforces it for every reader (./spaces.ts). A group with a declaration
+ *  must have an access record that says
  *  public, so this is written before a declaration is published and after one
  *  is withdrawn. Idempotent, keyed `self`. `grants`, when the record already has
  *  some, are kept as they are and only `public` changes: a group host writes the

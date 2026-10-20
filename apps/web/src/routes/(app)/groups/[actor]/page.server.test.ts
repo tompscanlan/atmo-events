@@ -122,7 +122,7 @@ function visibilityReads(host: FakeSpaceReader): string[] {
 	return host.calls.filter((call) => call === ACCESS_READ);
 }
 
-/** The stand-in's member lists, for a host with no membership records: `listed`
+/** Whom the host lets in, for a host with no membership records: `listed`
  *  on every space, and anyone on the about space unless the group is private.
  *  The rows then say who is on the roster, as they do when the members space
  *  holds no records. */

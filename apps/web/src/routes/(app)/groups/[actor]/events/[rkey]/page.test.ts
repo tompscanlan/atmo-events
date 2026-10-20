@@ -8,7 +8,7 @@ import { render } from 'svelte/server';
 // a test asks, to press RSVP as it renders; ShareModal is wrapped to record
 // whether it was opened; and the two media players are stubbed, since they
 // import a stylesheet the test runner cannot load. The space reader is a fake
-// host, as in the loader's tests, and the two RSVP commands are stand-ins that
+// host, as in the loader's tests, and the two RSVP commands are fakes that
 // record what the adapter sent them.
 vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),

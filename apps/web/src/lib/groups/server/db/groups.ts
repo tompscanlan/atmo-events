@@ -13,10 +13,10 @@ import { ensureGroupsSchema } from '../schema';
 import { errorText } from '../errors';
 import { GroupRuleError, constraintMessage, guard } from './rules';
 
-/** A new group's row. Visibility is not here: it is the about space's read
- *  policy. The space URIs start NULL and `recordGroupSpaces` fills them. */
+/** A new group's row. Visibility is not here: it is the about space's access
+ *  record. The space URIs start NULL and `recordGroupSpaces` fills them. */
 export interface CreateGroupInput {
-	/** Minted before this INSERT. The mint reserves the name. */
+	/** Made at the group's host before this INSERT, which reserves the name. */
 	groupDid: string;
 	ownerDid: string;
 	name: string;
@@ -25,8 +25,8 @@ export interface CreateGroupInput {
 	locationName?: string | null;
 }
 
-/** What a settings save may change. Visibility is a host write
- *  (`setAboutSpaceReadPolicy`). Space URIs are not accepted, because one could
+/** What a settings save may change. Visibility is the about space's access
+ *  record, written at the host. Space URIs are not accepted, because one could
  *  point a group at a space it does not own. */
 export interface UpdateGroupInput {
 	name?: string;
@@ -54,7 +54,7 @@ export async function createGroup(db: D1Database, input: CreateGroupInput): Prom
 	return row;
 }
 
-/** `.invalid` is reserved (RFC 2606), so no minted DID can collide with it. */
+/** `.invalid` is reserved (RFC 2606), so no group's DID can collide with it. */
 const REHEARSAL_DID = 'did:web:create-rehearsal.invalid';
 
 const REHEARSAL_LANDED = 'rehearsal-landed';
@@ -308,8 +308,8 @@ export async function recordGroupSpaces(
 /** Overwrites the columns a `profile` record owns, from that record, for the
  *  rebuild. It never touches `owner_did`, which no record owns.
  *  `require_approval` caches the profile's join policy even for a private
- *  group: its host's read policy is what makes it invite-only (`requestJoin`),
- *  and no stored value could keep up with a host any client can change. */
+ *  group: its host's access record is what makes it invite-only, and no stored
+ *  value could keep up with a host any client can change. */
 export async function applyGroupCache(
 	db: D1Database,
 	groupId: string,

@@ -26,7 +26,7 @@ export async function bundleWorker(outDir, plcUrl) {
 					find: '$env/dynamic/public',
 					replacement: join(WEB_DIR, 'scripts/groups-e2e.env-public.js')
 				},
-				// Exactly this module: the stand-in for the group's linked session.
+				// Exactly this module: the e2e's replacement for the group's linked session.
 				{
 					find: /^\$lib\/atproto\/server\/oauth$/,
 					replacement: join(WEB_DIR, 'scripts/groups-e2e.oauth.ts')

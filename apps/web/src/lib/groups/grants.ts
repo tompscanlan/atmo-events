@@ -1,7 +1,8 @@
 // What a member may do in a group, from its records alone: the scopes their roles
 // hold in `permissions` and in each space's `access`, and the roles those grants may
-// assign. The write gate (./server/group-write.ts) asks it of every write as the
-// group, and pages ask it which controls to show. (Spec: FR-213.)
+// assign. The write gate (./server/group-write.ts) asks it of a write to this
+// site's own rows, and pages ask it which controls to show; the group host decides
+// every write as the group. (Spec: FR-213.)
 import { GROUP_PROFILE_COLLECTION } from './about-record';
 import { SPACE_SKEY } from './ids';
 import {

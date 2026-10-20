@@ -136,8 +136,8 @@ export function authzReader(
 
 /** Writes, as the group, the records a create leaves in its members space at a
  *  host: the authz config and a membership for each DID in `roster`. For a test
- *  whose gate reads the host (a stub PDS) rather than an in-memory reader. The
- *  group's own DID passes the gate, as at create. */
+ *  whose gate reads the host (./group-host.ts) rather than an in-memory reader.
+ *  The group's own DID passes the gate, as at create. */
 export async function publishAuthz(input: {
 	db: D1Database;
 	env: CredentialStoreEnv;

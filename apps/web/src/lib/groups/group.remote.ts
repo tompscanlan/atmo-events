@@ -1,4 +1,4 @@
-// Creating a group, its settings, and its repair, as remote forms.
+// Creating a group, its settings, and its refresh from the host, as remote forms.
 import { error } from '@sveltejs/kit';
 import { form, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
@@ -12,7 +12,7 @@ import { kvAvatarStash } from './server/avatar-stash';
 import { GROUP_CREATE_REDIRECT_PATH } from '$lib/atproto/settings';
 import { runUpdateGroup } from './update-group';
 import { groupRequestContext } from './remote-context';
-import { describeRepair, repairGroup } from './server/repair';
+import { describeRefresh, refreshGroup } from './server/refresh';
 import { errorText } from './server/errors';
 
 export const createGroupForm = form(
@@ -62,9 +62,9 @@ export const updateGroupForm = form(
 	}
 );
 
-/** Repairs a group whose records and this site's copy no longer agree
- *  (./server/repair.ts). Needs MANAGE_GROUP. */
-export const repairGroupForm = form(
+/** Re-reads a group from its host into this site's copy (./server/refresh.ts).
+ *  Needs MANAGE_GROUP. */
+export const refreshGroupForm = form(
 	v.object({ groupDid: didField }),
 	async (data): Promise<GroupFormResult<{ summary: string }>> => {
 		const { db, env, group, membership, callerDid, reader } = await groupRequestContext(
@@ -74,20 +74,15 @@ export const repairGroupForm = form(
 			return notAllowed(membership, 'MANAGE_GROUP');
 		}
 		try {
-			// Repair reads as the group, every step: it exists to put right member
-			// lists that may no longer let the caller's own access in. A group at a
-			// real host keeps its own lists, so its rebuild reads with the caller's.
-			const result = await repairGroup({ db, env, group, callerDid, ownReader: reader });
-			return { ok: true, summary: describeRepair(result) };
+			const result = await refreshGroup({ db, env, group, callerDid, reader });
+			return { ok: true, summary: describeRefresh(result) };
 		} catch (e) {
-			// Otherwise the PDS or the database failed partway. Every repair write
-			// is checked first, so a second run continues from there.
+			// Otherwise the host or the database failed partway. Nothing at the host
+			// changed, and running it again starts over.
 			return (
 				knownFormError(e) ?? {
 					ok: false,
-					error: `The repair stopped partway: ${errorText(
-						e
-					)}. Anything it wrote is kept, and running it again continues from there.`
+					error: `The refresh stopped partway: ${errorText(e)}. Nothing at the host was changed. Try it again.`
 				}
 			);
 		}

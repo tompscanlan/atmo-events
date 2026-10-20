@@ -146,9 +146,9 @@ describe('accessSays', () => {
 	});
 });
 
-// A member is listed on a space exactly when a role they hold is granted `read`
-// there, so this is the question every member list is derived from. (Spec:
-// FR-214.) A role atmo does not know still counts: the record is the group's,
+// A member may read a space exactly when a role they hold is granted `read`
+// there, as the host enforces the access record. (Spec: FR-214.) A role atmo
+// does not know still counts: the record is the group's,
 // and a role it grants read is a reader whatever this build calls it.
 describe('accessGrantsRead', () => {
 	const access = (grants: { role: string; scopes: string[] }[]) =>

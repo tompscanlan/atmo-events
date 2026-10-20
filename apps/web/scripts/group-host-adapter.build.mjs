@@ -19,6 +19,10 @@ export async function bundleAdapter(outDir) {
 					find: '$app/environment',
 					replacement: join(WEB_DIR, 'scripts/groups-e2e.app-environment.js')
 				},
+				{
+					find: '$env/dynamic/public',
+					replacement: join(WEB_DIR, 'scripts/groups-e2e.env-public.js')
+				},
 				// Exactly this module, before the general `$lib/` rule: the real one
 				// pulls in the app's Svelte sign-in state.
 				{

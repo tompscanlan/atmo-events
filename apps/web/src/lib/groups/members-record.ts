@@ -55,7 +55,7 @@ export const GROUP_PERMISSIONS_RKEY = 'self';
 export const MEMBERS_SPACE_READER_ROLES: readonly GroupRoleName[] = GROUP_ROLES;
 
 /** Every role may read the about space too: a private group's profile and rules are
- *  for its members, and the space's member list mirrors the whole roster. */
+ *  for its members, and its host lets in every member by this grant. */
 export const ABOUT_SPACE_READER_ROLES: readonly GroupRoleName[] = GROUP_ROLES;
 
 export class MembershipKeyError extends Error {
@@ -175,9 +175,8 @@ function readsSpace(scope: unknown): boolean {
 
 /** A space's access record: whether anyone may read it, and the roles granted
  *  `read` there, one grant each. It is the space's policy. A simplespace host
- *  enforces its own read policy and member list instead, so atmo derives both from
- *  this record (./server/spaces.ts, ./server/member-list.ts). The members space is
- *  never public. (Spec: FR-214.) */
+ *  enforces its own read policy instead, so atmo derives that from this record
+ *  (./server/spaces.ts). The members space is never public. (Spec: FR-214.) */
 export function groupAccessRecord(input: {
 	spaceType: string;
 	roles: readonly GroupRoleName[];

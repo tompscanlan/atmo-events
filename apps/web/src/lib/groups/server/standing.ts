@@ -20,9 +20,8 @@ import { isSpaceAccessDenied } from './space-credential';
  *  An anonymous caller gets an empty set.
  *
  *  The group DID itself passes every check and is always on the roster, with no
- *  `membership` and no row (`proposal.md:44`). Signed in as the group's account,
- *  whoever holds its login may do anything, which is how a group with no admin
- *  left recovers. (Spec: FR-213.)
+ *  `membership` and no row (`proposal.md:44`). Its login is the group host's, not
+ *  this site's. (Spec: FR-213.)
  *
  *  Permissions come from the records on every call, with no cache, read with the
  *  caller's own access. A members space that cannot be read fails closed: a
