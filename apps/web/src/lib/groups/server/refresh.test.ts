@@ -1,9 +1,9 @@
 // The settings page's refresh from the group host. It re-reads the group's
 // records into this site's copy, through the caller's own access, and so it
 // writes nothing at the host: no record, no read policy, no member list. A
-// second run finds nothing to change. Every case runs against the fake host
-// (./__fixtures__/stub-pds.ts) and reads what the host received and what the
-// copy in D1 holds.
+// second run finds nothing to change. Every case runs against the fake group
+// host (./__fixtures__/group-host.ts) and reads what the host received and what
+// the copy in D1 holds.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
@@ -12,7 +12,7 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 }));
 
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { stubPds } from './__fixtures__/stub-pds';
+import { fakeGroupHost } from './__fixtures__/group-host';
 import {
 	putGroupMembership,
 	writeGroupAccess,
@@ -22,16 +22,14 @@ import {
 import { writeAboutAccess } from './about-writer';
 import { pdsSpaceReader, type GroupSpaceReader } from './about-read';
 import { describeRefresh, refreshGroup } from './refresh';
-import { didSpaceHosts } from './space-credential';
+import { didSpaceHosts, SpaceAccessDenied } from './space-credential';
 import {
 	STUB_PDS_SERVICE,
 	linkGroups,
 	linkedCredential,
 	unlinkAllGroups
 } from './__fixtures__/linked-group';
-import { pdsProvisioner, provisionGroupSpaces } from './spaces';
-import { CALENDAR_SPACE_TYPE, type GroupRow } from '../types';
-import { spaceUri } from '../ids';
+import type { GroupRow } from '../types';
 import { GroupPermissionError } from './group-write';
 import { createGroup, getGroupByDid, recordGroupSpaces } from './db/groups';
 import { addMember, getMemberRow } from './db/roster';
@@ -39,16 +37,15 @@ import { addMember, getMemberRow } from './db/roster';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:6cz6dldz42itymdbte47ewcv';
-const CALENDAR = spaceUri(GROUP_DID, CALENDAR_SPACE_TYPE, 'self');
 const CRED = linkedCredential(GROUP_DID);
 
 let harness: SqliteD1;
 let db: D1Database;
 let group: GroupRow;
-let pds: ReturnType<typeof stubPds>;
+let pds: ReturnType<typeof fakeGroupHost>;
 let env: ReturnType<typeof linkGroups>;
 
-/** Every call that would change something at the host: the stub's own list of
+/** Every call that would change something at the host: the fake's own list of
  *  writes, and a batch of record writes, which it does not serve. */
 const hostWrites = () => [
 	...pds.writes().map((r) => r.nsid),
@@ -90,8 +87,8 @@ beforeEach(async () => {
 	db = harness.db;
 	env = linkGroups([GROUP_DID]);
 	group = await createGroup(db, { groupDid: GROUP_DID, ownerDid: OWNER, name: 'Kona' });
-	pds = stubPds({ did: GROUP_DID, handle: 'kona.group.stub.test' });
-	const uris = await provisionGroupSpaces(pdsProvisioner(CRED, GROUP_DID));
+	pds = fakeGroupHost({ did: GROUP_DID });
+	const uris = pds.holdGroup('private');
 	await recordGroupSpaces(db, group.id, uris);
 	group = {
 		...group,
@@ -103,8 +100,8 @@ beforeEach(async () => {
 	// owner's membership and the authz config.
 	const seed = { db, env, group, callerDid: GROUP_DID };
 	await writeGroupAccess(seed);
-	await writeGroupAccess({ ...seed, space: CALENDAR });
-	await writeGroupSpaceIndex({ ...seed, existing: [], calendarSpace: CALENDAR });
+	await writeGroupAccess({ ...seed, space: uris.calendarSpaceUri });
+	await writeGroupSpaceIndex({ ...seed, existing: [], calendarSpace: uris.calendarSpaceUri });
 	await writeAboutAccess({ ...seed, visibility: 'private' });
 	await putGroupMembership({ ...seed, subject: OWNER, roles: ['owner'], intent: 'admit' });
 	await writeGroupAuthz(seed);
@@ -174,6 +171,30 @@ describe('refreshGroup', () => {
 		const before = cache();
 
 		await expect(refresh(OWNER, null)).rejects.toBeInstanceOf(GroupPermissionError);
+
+		expect(cache()).toEqual(before);
+		expect(hostWrites()).toEqual([]);
+	});
+
+	// The caller's own access is what the gate reads their roles with. A host
+	// that will not let them into the members space leaves them holding nothing
+	// there, which the gate refuses as it refuses any non-member.
+	it('refuses the owner when the host will not let their own access into the members space, and changes nothing', async () => {
+		await joinElsewhere();
+		const before = cache();
+		const own = ownReader();
+		const denied = (space: string) => {
+			if (space === group.members_space_uri) {
+				throw new SpaceAccessDenied(space, '400 UserNotAuthorized');
+			}
+		};
+		const refused: GroupSpaceReader = {
+			get: async (query) => (denied(query.space), own.get(query)),
+			list: async (query) => (denied(query.space), own.list(query)),
+			getSpace: async (space) => (denied(space), own.getSpace(space))
+		};
+
+		await expect(refresh(OWNER, refused)).rejects.toBeInstanceOf(GroupPermissionError);
 
 		expect(cache()).toEqual(before);
 		expect(hostWrites()).toEqual([]);
