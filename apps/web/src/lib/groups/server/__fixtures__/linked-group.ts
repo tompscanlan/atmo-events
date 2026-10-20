@@ -6,7 +6,7 @@
 // the store lookup (`linkedGroupSession`), the seam (`groupClient`) and every
 // transport. The stubbed client's `restore` hands back a session that sends each
 // request to the group's PDS with a bearer token, which is where a test's stubbed
-// `fetch` (./stub-pds.ts) answers it.
+// `fetch` (./group-host.ts) answers it.
 //
 // A test file opts in with a partial mock, since `vi.mock` is hoisted per file:
 //
@@ -29,7 +29,7 @@ export { LINKED_TEST_TOKEN, SESSION_PERSON_HEADER } from './linked-oauth-stub';
 /** The stub PDS's address, which every fixture group lives on unless a test says. */
 export const STUB_PDS_SERVICE = 'https://pds.stub.test';
 
-/** An in-memory stand-in for the sessions namespace, read live. Only reads are
+/** An in-memory sessions namespace, read live. Only reads are
  *  needed: the app never writes a group session outside the link callback. */
 const sessionsKv = {
 	get: async (key: string) => {

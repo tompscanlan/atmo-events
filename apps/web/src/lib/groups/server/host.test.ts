@@ -5,7 +5,7 @@
 // through its host.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
-import { POLICY_MEMBER_LIST, SPACE_SKEY } from '../ids';
+import { SPACE_SKEY } from '../ids';
 import {
 	STUB_PDS_SERVICE,
 	linkGroups,
@@ -25,7 +25,6 @@ const MEMBER = 'did:plc:memberaaaaaaaaaaaaaaaaaa';
 const SPACE: SpaceProvision = {
 	type: MEMBERS_SPACE_TYPE,
 	skey: SPACE_SKEY,
-	readPolicy: POLICY_MEMBER_LIST,
 	access: { grants: [{ role: 'member', scopes: ['read'] }] }
 };
 

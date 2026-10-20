@@ -32,7 +32,7 @@ vi.mock('$app/server', () => {
 // pattern as ../search/server/query.test.ts.
 vi.mock('@atmo-dev/events-ui', () => ({ getProfileUrl: vi.fn() }));
 // A linked group's session, so the group's own writes reach the fake host. The
-// sign-in client's authorize is a stand-in too, so a re-authorization can be
+// sign-in client's authorize is faked too, so a re-authorization can be
 // accepted or refused without a PDS.
 const signIn = vi.hoisted(() => ({
 	authorize: null as null | ((grants: readonly string[]) => Promise<{ url: URL }>)
@@ -42,7 +42,7 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 	...(await import('./server/__fixtures__/linked-oauth-stub')).linkedOAuthStub,
 	createOAuthClient: (_env: unknown, grants: readonly string[] = []) => ({
 		authorize: async () => {
-			if (!signIn.authorize) throw new Error('no sign-in stand-in for this test');
+			if (!signIn.authorize) throw new Error('no fake sign-in for this test');
 			return signIn.authorize(grants);
 		}
 	})
@@ -50,7 +50,7 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 
 import { publishAuthz } from './server/__fixtures__/members-space';
 import { isRowWrite, sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
-import { stubPds } from './server/__fixtures__/stub-pds';
+import { fakeGroupHost, type FakeGroupHost } from './server/__fixtures__/group-host';
 import {
 	STUB_PDS_SERVICE,
 	linkGroups,
@@ -58,12 +58,10 @@ import {
 	unlinkAllGroups
 } from './server/__fixtures__/linked-group';
 import { META_READ_GRANT } from '$lib/atproto/settings';
-import { POLICY_PUBLIC, type GroupSpaceUris } from './ids';
 
 import { memberGrant } from './server/member-grants';
 import { didSpaceHosts } from './server/space-credential';
 import { RSVP_NO_SPACES, RSVP_RETRY_LATER } from './server/member-rsvp';
-import { provisionSpacesFor } from './server/__fixtures__/provisioned-spaces';
 import { writeGroupAccess } from './server/members-writer';
 import { GroupPlacementError } from './server/event-writer';
 import { formError, notAllowed } from './form-error';
@@ -75,7 +73,9 @@ import {
 	ABOUT_SPACE_READER_ROLES,
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
-	groupAccessRecord
+	GROUP_MEMBERSHIP_COLLECTION,
+	groupAccessRecord,
+	groupMembershipRecord
 } from './members-record';
 import { createGroup, getGroupByDid, recordGroupSpaces } from './server/db/groups';
 import { seedGroup } from './server/__fixtures__/seed-group';
@@ -155,12 +155,11 @@ function delegation(did: string, scope: string, pathname: string): Response | nu
 		: Response.json({ error: 'ScopeMissingError' }, { status: 403 });
 }
 
-/** Each caller reads with their own access, at a `stubPds` host, which this
- *  wraps, so call it after `stubPds`: a DID resolves to the host, and the host
- *  issues a credential to the group and to whom its member list or a public read
- *  policy lets in, as a simplespace host does. A read made with the credential
- *  goes on to the stub. */
-function serveOwnAccess(pds: ReturnType<typeof stubPds>, groupDid: string): void {
+/** Each caller reads with their own access, at a `fakeGroupHost`, which this
+ *  wraps, so call it after `fakeGroupHost`: a DID resolves to the host, and the
+ *  host issues a credential to whom the space's access record lets in, as a
+ *  group host does. A read made with the credential goes on to the fake. */
+function serveOwnAccess(pds: FakeGroupHost): void {
 	const host = fetch;
 	vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
 		const url = new URL(String(input));
@@ -180,28 +179,13 @@ function serveOwnAccess(pds: ReturnType<typeof stubPds>, groupDid: string): void
 		if (url.pathname === '/xrpc/com.atproto.space.getSpaceCredential') {
 			const { space } = JSON.parse(String(init?.body)) as { space: string };
 			const holder = new Headers(init?.headers).get('authorization')?.split(' ')[2] ?? '';
-			const policy = (pds.spaces.get(space)?.readPolicy as { $type?: string } | undefined)?.$type;
-			const listed = pds.members(space).some((entry) => entry.did === holder && entry.read);
-			if (holder !== groupDid && policy !== POLICY_PUBLIC && !listed) {
+			if (!pds.admits(holder, space)) {
 				return Response.json({ error: 'UserNotAuthorized' }, { status: 400 });
 			}
 			return Response.json({ credential: `credential ${holder} ${space}` });
 		}
 		return host(input, init);
 	});
-}
-
-/** Puts `did` on all three of the group's member lists, read and write, as a
- *  create does for its owner and an admission for a member. */
-async function listOnAll(uris: GroupSpaceUris, did: string): Promise<void> {
-	for (const space of [uris.membersSpaceUri, uris.aboutSpaceUri, uris.calendarSpaceUri]) {
-		const res = await fetch(`${STUB_PDS_SERVICE}/xrpc/com.atproto.simplespace.putMember`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ space, did, read: true, write: true })
-		});
-		expect(res.ok).toBe(true);
-	}
 }
 
 afterEach(() => {
@@ -219,14 +203,14 @@ describe('a group whose owner has not linked it', () => {
 	// allows. "Not allowed" or a retry would send the owner the wrong way; the
 	// way out is the link, which only they can do.
 	it('tells its owner to link the group when they save its settings', async () => {
-		const pds = stubPds({ did: GROUP_DID, handle: 'unlinked.group.stub.test' });
+		const pds = fakeGroupHost({ did: GROUP_DID });
 		const row = await createGroup(harness.db, {
 			groupDid: GROUP_DID,
 			ownerDid: OWNER,
 			name: 'Kona Trail Runners'
 		});
 		// The group as a create leaves it, through a link that is then dropped.
-		const uris = await provisionSpacesFor(linkedCredential(GROUP_DID), GROUP_DID, 'public');
+		const uris = pds.holdGroup('public');
 		await recordGroupSpaces(harness.db, row.id, uris);
 		await publishAuthz({
 			db: harness.db,
@@ -239,9 +223,8 @@ describe('a group whose owner has not linked it', () => {
 			credential: linkedCredential(GROUP_DID),
 			roster: { [OWNER]: 'owner' }
 		});
-		await listOnAll(uris, OWNER);
 		unlinkAllGroups();
-		serveOwnAccess(pds, GROUP_DID);
+		serveOwnAccess(pds);
 		const scope = memberScope(GROUP_DID);
 		const session = {
 			did: OWNER,
@@ -514,7 +497,7 @@ describe('the join and leave buttons, for a member whose session holds the grant
 
 	it('an open join writes the joiner’s acceptance after the host admits them, and leaving deletes it first', async () => {
 		vi.spyOn(console, 'warn').mockImplementation(() => {});
-		const pds = stubPds({ did: LINKED, handle: 'linked.group.stub.test' });
+		const pds = fakeGroupHost({ did: LINKED });
 		const row = await createGroup(harness.db, {
 			groupDid: LINKED,
 			ownerDid: OWNER,
@@ -523,7 +506,7 @@ describe('the join and leave buttons, for a member whose session holds the grant
 		});
 		// A public group, as a create leaves it: its visibility in the about
 		// space's access record, and the other two spaces' records beside it.
-		const uris = await provisionSpacesFor(linkedCredential(LINKED), LINKED, 'public');
+		const uris = pds.holdGroup('public');
 		await recordGroupSpaces(harness.db, row.id, uris);
 		const env = linkGroups([LINKED]);
 		const group = {
@@ -539,7 +522,7 @@ describe('the join and leave buttons, for a member whose session holds the grant
 			callerDid: LINKED,
 			space: uris.calendarSpaceUri
 		});
-		serveOwnAccess(pds, LINKED);
+		serveOwnAccess(pds);
 		vi.spyOn(didSpaceHosts, 'repoHost').mockResolvedValue(STUB_PDS_SERVICE);
 		const asked: { nsid: string; space: unknown; repo: unknown }[] = [];
 		const scope = memberScope(LINKED);
@@ -598,8 +581,8 @@ describe('placement on the event commands', () => {
 		data: Record<string, unknown>
 	) => Promise<EventResult>;
 
-	let pds: ReturnType<typeof stubPds>;
-	let uris: Awaited<ReturnType<typeof provisionSpacesFor>>;
+	let pds: FakeGroupHost;
+	let uris: ReturnType<FakeGroupHost['holdGroup']>;
 
 	const event = () => ({
 		name: 'Linked meetup',
@@ -611,16 +594,15 @@ describe('placement on the event commands', () => {
 
 	beforeEach(async () => {
 		vi.spyOn(console, 'info').mockImplementation(() => {});
-		pds = stubPds({ did: LINKED, handle: 'linked.group.stub.test' });
+		pds = fakeGroupHost({ did: LINKED });
 		const row = await createGroup(harness.db, {
 			groupDid: LINKED,
 			ownerDid: OWNER,
 			name: 'Linked'
 		});
-		uris = await provisionSpacesFor(linkedCredential(LINKED), LINKED, 'public');
+		uris = pds.holdGroup('public');
 		await recordGroupSpaces(harness.db, row.id, uris);
-		await listOnAll(uris, OWNER);
-		serveOwnAccess(pds, LINKED);
+		serveOwnAccess(pds);
 		const scope = memberScope(LINKED);
 		const session = {
 			did: OWNER,
@@ -697,11 +679,21 @@ describe('placement on the event commands', () => {
 	});
 
 	it('a placement refusal reaches the form as a message, not a 500', async () => {
-		const calendar = pds.spaces.get(CALENDAR)!;
-		pds.spaces.set(CALENDAR, {
-			...calendar,
-			readPolicy: { $type: 'com.atproto.simplespace.defs#publicPolicy' }
+		// The calendar space's access record says public, so the host would let
+		// anyone read a members-only event there.
+		const opened = await fetch(`${STUB_PDS_SERVICE}/xrpc/com.atproto.space.putRecord`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				space: CALENDAR,
+				repo: LINKED,
+				collection: GROUP_ACCESS_COLLECTION,
+				rkey: GROUP_ACCESS_RKEY,
+				record: { $type: GROUP_ACCESS_COLLECTION, public: true, grants: [] }
+			})
 		});
+		expect(opened.ok).toBe(true);
+		pds.clearLog();
 
 		// Resolving at all is the point: a throw here would be the 500.
 		await expect(
@@ -759,7 +751,7 @@ describe('the members-only RSVP commands', () => {
 	let asked: { pathname: string; body: Record<string, unknown> | null }[];
 	/** Every token read the commands made, by its refresh argument. */
 	let tokenReads: unknown[];
-	let uris: Awaited<ReturnType<typeof provisionSpacesFor>>;
+	let uris: ReturnType<FakeGroupHost['holdGroup']>;
 
 	/** Signs `did` in with a session granted `scope`, whose token expires at
 	 *  `expiresAt` (none when absent). */
@@ -785,6 +777,26 @@ describe('the members-only RSVP commands', () => {
 		request.locals = { did, session } as typeof request.locals;
 	}
 
+	/** Writes `did`'s membership into the members space, as the group's host
+	 *  holds it once they are admitted: what it lets them into each space by. */
+	async function holdMembership(did: string) {
+		const res = await fetch(`${STUB_PDS_SERVICE}/xrpc/com.atproto.space.putRecord`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				space: uris.membersSpaceUri,
+				repo: LINKED,
+				collection: GROUP_MEMBERSHIP_COLLECTION,
+				rkey: did,
+				record: {
+					...groupMembershipRecord({ subject: did, roles: ['member'] }),
+					$type: GROUP_MEMBERSHIP_COLLECTION
+				}
+			})
+		});
+		expect(res.ok).toBe(true);
+	}
+
 	/** Writes the meeting into the calendar space, as the group's host holds it. */
 	async function seedMeeting() {
 		const res = await fetch('https://linked.group.stub.test/xrpc/com.atproto.space.putRecord', {
@@ -804,20 +816,20 @@ describe('the members-only RSVP commands', () => {
 	beforeEach(async () => {
 		asked = [];
 		tokenReads = [];
-		const pds = stubPds({ did: LINKED, handle: 'linked.group.stub.test' });
+		const pds = fakeGroupHost({ did: LINKED });
 		const row = await createGroup(harness.db, {
 			groupDid: LINKED,
 			ownerDid: OWNER,
 			name: 'Linked'
 		});
-		uris = await provisionSpacesFor(linkedCredential(LINKED), LINKED, 'public');
+		uris = pds.holdGroup('public');
 		await recordGroupSpaces(harness.db, row.id, uris);
 		await addMember(harness.db, row.id, MEMBER, 'member');
 		await addMember(harness.db, row.id, OTHER, 'member');
-		await listOnAll(uris, MEMBER);
-		await listOnAll(uris, OTHER);
+		await holdMembership(MEMBER);
+		await holdMembership(OTHER);
 		await seedMeeting();
-		serveOwnAccess(pds, LINKED);
+		serveOwnAccess(pds);
 		// A deployment that serves client metadata, so a re-authorization is asked for.
 		request.platform.env = {
 			DB: harness.db,

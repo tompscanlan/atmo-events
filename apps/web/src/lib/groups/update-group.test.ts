@@ -1,36 +1,31 @@
-// The settings save, tested against the fake group PDS and the real schema.
+// The settings save, tested against the fake group host and the real schema.
 //
 // A group's visibility is its about space's `access` record: `public` says
-// anyone may read the space. The host enforces its own read policy instead, so
-// the save moves that policy with `com.atproto.simplespace.updateSpace` to
-// follow the record, and no moment may find the space more open than the record
-// says. (Spec: FR-214, SC-208.) A narrowing therefore closes the host first and
-// a widening writes the record first. A save also moves the host whenever it
-// disagrees with the record, so it finishes an earlier save that stopped
-// between the two.
+// anyone may read the space. The host decides every read from that record, so
+// the save sends no read policy and no member list, and the record is all it
+// changes. (Spec: FR-214, SC-208.)
 //
 // These cases pin the order the save writes in, because each failure between
 // two writes leaves a different half-state behind. A group that ends up private
-// closes the host, withdraws its declaration, writes the record, then the row,
-// the profile and the rules: browse shows a declared group's name and
-// description from the row, so new text must not reach the row while the group
-// is still declared, and a declaration exists only while the record says
-// public. A group that ends up public writes the record, opens the host, writes
-// the row, reads the record again, and declares only when that read still says
-// public, then writes the profile and the rules. The row holds no visibility
-// at all.
+// withdraws its declaration, writes the record, then the row, the profile and
+// the rules: browse shows a declared group's name and description from the row,
+// so new text must not reach the row while the group is still declared, and a
+// declaration exists only while the record says public. A group that ends up
+// public writes the record, writes the row, reads the record again, and
+// declares only when that read still says public, then writes the profile and
+// the rules. The row holds no visibility at all.
 //
 // The form sends the visibility it showed as well as the one chosen, and a save
 // changes the visibility only when the two differ. A tab opened before someone
 // else changed the record still shows the old value, and saving it untouched
 // must not put that value back.
 //
-// The host is the same fake the create is tested against
-// (./server/__fixtures__/stub-pds.ts), reached through the real transports, so
-// the bodies asserted here are the bodies a PDS would receive.
+// The host is the fake group host (./server/__fixtures__/group-host.ts),
+// reached through the real transports, so the bodies asserted here are the
+// bodies a host would receive.
 //
 // The save reads what it would change with the caller's own access (TS
-// 2026-10-15) and writes as the group. The owner is on every space's list, so
+// 2026-10-15) and writes as the group. The owner's roles read every space, so
 // their own access reads what the group's session reads; the fake answers
 // space reads, not credential exchanges, so the owner's reads reach it over the
 // group's transport here. With no reader at all, nothing is saved.
@@ -61,8 +56,11 @@ vi.mock('$lib/contrail/index', async (importOriginal) => ({
 
 import { isRowWrite, sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { approvalRefusal } from './about-record';
-import { stubPds, type StubPdsOptions } from './server/__fixtures__/stub-pds';
-import { provisionSpacesFor, tooOpen } from './server/__fixtures__/provisioned-spaces';
+import {
+	fakeGroupHost,
+	type FakeGroupHost,
+	type FakeGroupHostOptions
+} from './server/__fixtures__/group-host';
 import {
 	ABOUT_SPACE_READER_ROLES,
 	GROUP_ACCESS_COLLECTION,
@@ -79,11 +77,6 @@ import {
 	unlinkAllGroups
 } from './server/__fixtures__/linked-group';
 
-import { pdsSpaceUpdater } from './server/spaces';
-import { didSpaceHosts } from './server/space-credential';
-import { POLICY_MEMBER_LIST } from './ids';
-import { groupClient } from './server/session';
-import { xrpc } from './server/xrpc';
 import {
 	ABOUT_SPACE_TYPE,
 	CALENDAR_SPACE_TYPE,
@@ -98,14 +91,13 @@ import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './server/
 import { createGroup, getGroupByDid, recordGroupSpaces } from './server/db/groups';
 const OWNER = 'did:plc:owner';
 const GROUP_DID = 'did:plc:settingsgroupaaaaaaaaaaa';
-const HANDLE = 'kona.group.stub.test';
 const CRED = linkedCredential(GROUP_DID);
 const ABOUT = `at://${GROUP_DID}/space/${ABOUT_SPACE_TYPE}/self`;
 const MEMBERS = `at://${GROUP_DID}/space/${MEMBERS_SPACE_TYPE}/self`;
 const CALENDAR = `at://${GROUP_DID}/space/${CALENDAR_SPACE_TYPE}/self`;
 const MEMBER = 'did:plc:member';
+const STRANGER = 'did:plc:stranger';
 
-const policy = (name: string) => ({ $type: `com.atproto.simplespace.defs#${name}` });
 const pdsDown = () => Response.json({ error: 'InternalServerError' }, { status: 500 });
 
 let harness: SqliteD1;
@@ -124,18 +116,17 @@ afterEach(() => {
 	harness.close();
 });
 
-type Host = ReturnType<typeof stubPds>;
+type Host = FakeGroupHost;
 
-function host(fail?: StubPdsOptions['fail'], afterWrite?: StubPdsOptions['afterWrite']): Host {
-	return stubPds({ did: GROUP_DID, handle: HANDLE, fail, afterWrite });
+function host(fail?: FakeGroupHostOptions['fail']): Host {
+	return fakeGroupHost({ did: GROUP_DID, fail });
 }
 
 /** The background and the scenario's "given": a group whose owner linked its
- *  account, whose three spaces the host holds as a create leaves them for
- *  `visibility`, the choice made then: every space member-list, the about
- *  space's access record saying the choice, and a public group's about space
- *  opened after it. The host's log is cleared afterwards, so a case asserts on
- *  the save alone. */
+ *  account, whose three spaces the host holds as it made them for
+ *  `visibility`, the choice made then: the about space's access record says the
+ *  choice, and the other two are closed. The host's log is cleared afterwards,
+ *  so a case asserts on the save alone. */
 async function givenGroup(
 	visibility: GroupVisibility,
 	pds: Host,
@@ -147,7 +138,7 @@ async function givenGroup(
 		name: 'Kona Trail Runners',
 		requireApproval
 	});
-	const uris = await provisionSpacesFor(CRED, GROUP_DID, visibility);
+	const uris = pds.holdGroup(visibility);
 	await recordGroupSpaces(harness.db, row.id, uris);
 	const group = {
 		...row,
@@ -179,8 +170,7 @@ function asGroup(group: GroupRow) {
 }
 
 /** The rest of what a create and an admission leave: the members and calendar
- *  spaces' access records, and `MEMBER` admitted as a `member` and listed on
- *  all three spaces. */
+ *  spaces' access records, and `MEMBER` admitted as a `member`. */
 async function givenMember(group: GroupRow, pds: Host): Promise<void> {
 	await writeGroupAccess(asGroup(group));
 	await writeGroupAccess({ ...asGroup(group), space: CALENDAR });
@@ -190,20 +180,11 @@ async function givenMember(group: GroupRow, pds: Host): Promise<void> {
 		roles: ['member'],
 		intent: 'admit'
 	});
-	const { handle } = await groupClient(CRED, GROUP_DID);
-	for (const space of [MEMBERS, ABOUT, CALENDAR]) {
-		const listed = await xrpc(handle, 'com.atproto.simplespace.putMember', {
-			body: { space, did: MEMBER, read: true, write: true }
-		});
-		if (!listed.ok) throw new Error(`putMember failed on ${space}`);
-	}
 	pds.clearLog();
 }
 
-/** Another client's narrowing, made the way this save makes one: the host
- *  closes first, then the access record says private. */
+/** Another client's narrowing: the access record says private. */
 async function narrowedElsewhere(): Promise<void> {
-	await pdsSpaceUpdater(CRED, GROUP_DID)({ space: ABOUT, readPolicy: POLICY_MEMBER_LIST });
 	await writeAboutAccessDirect(false);
 }
 
@@ -280,17 +261,10 @@ async function aboutAccessNow(): Promise<Record<string, unknown> | null> {
 	return found?.value ?? null;
 }
 
-/** Every write the host received, in order, named by method and by what it
- *  wrote: the read policy for an `updateSpace`, the collection otherwise. */
+/** Every write the host received, in order, named by method and by the
+ *  collection it wrote. */
 function traced(pds: Host): string[] {
-	return pds.writes().map((w) => {
-		const method = w.nsid.replace('com.atproto.', '');
-		if (w.nsid === 'com.atproto.simplespace.updateSpace') {
-			const readPolicy = w.body?.readPolicy as { $type?: string } | undefined;
-			return `${method} ${readPolicy?.$type?.split('#')[1]}`;
-		}
-		return `${method} ${w.body?.collection}`;
-	});
+	return pds.writes().map((w) => `${w.nsid.replace('com.atproto.', '')} ${w.body?.collection}`);
 }
 
 /** The row's approval, read straight from D1. */
@@ -314,56 +288,41 @@ function rowWhole(): Record<string, unknown> {
 		.get(GROUP_DID) as Record<string, unknown>;
 }
 
-const updateSpaceCalls = (pds: Host) =>
-	pds.requests.filter((r) => r.nsid === 'com.atproto.simplespace.updateSpace');
+/** Every call that would set a space's read policy or member list. The host
+ *  keeps neither apart from the access records, so a save sends none; the fake
+ *  answers none, but logs each before it refuses. */
+const policyCalls = (pds: Host) =>
+	pds.requests.filter((r) =>
+		/^com\.atproto\.simplespace\.(createSpace|updateSpace|putMember|removeMember)$/.test(r.nsid)
+	);
 
 /** A write to a space, a space's configuration or the public repo. The fake
  *  host sees every call before it answers, so this is the moment it arrives. */
 const isHostWrite = (nsid: string, init?: RequestInit) =>
 	init?.method?.toUpperCase() === 'POST' && /^com\.atproto\.(simplespace|space|repo)\./.test(nsid);
 
-describe('a settings flip moves the about space’s read policy after or before its access record', () => {
+describe('a settings flip writes the access record, and no read policy', () => {
 	it.each([
-		['public', 'private', 'memberListPolicy', 'deleteRecord'],
-		['private', 'public', 'publicPolicy', 'putRecord']
+		['public', 'private', 'deleteRecord'],
+		['private', 'public', 'putRecord']
 	] as const)(
-		'a group whose access record says %s, saved as %s, calls updateSpace once on the about space with %s',
-		async (from, to, name, declarationWrite) => {
+		'a group whose access record says %s, saved as %s, sends no read policy or member list',
+		async (from, to, declarationWrite) => {
 			const pds = host();
 			const group = await givenGroup(from, pds);
 
 			const result = await save(group, to, { shownVisibility: from, rules: 'Be kind' });
 
 			expect(result).toEqual({ ok: true });
-			// Once, and with exactly the space and the read policy. Leaving the
-			// write policy and the app access out is what leaves them as
-			// provisioned: `updateSpace` replaces only the fields it is sent.
-			expect(updateSpaceCalls(pds).map((r) => r.body)).toEqual([
-				{ space: ABOUT, readPolicy: policy(name) }
-			]);
-			expect(pds.spaces.get(ABOUT)).toEqual({
-				readPolicy: policy(name),
-				writePolicy: policy('memberListPolicy'),
-				appAccess: policy('open')
-			});
-			// The members space is not part of this: neither its policy nor its
-			// own member list is touched.
-			expect(pds.spaces.get(MEMBERS)?.readPolicy).toEqual(policy('memberListPolicy'));
-			expect(pds.requests.some((r) => r.nsid.startsWith('com.atproto.simplespace.putMember'))).toBe(
-				false
-			);
-			// The host's writes in order. A narrowing closes the host, withdraws the
-			// declaration, then writes the access record; a widening writes the
-			// record, opens the host, then declares. Either way the space is never
-			// more open than the record, and a declared group's record says public.
-			// Where the row falls among them, the order cases below pin.
+			expect(policyCalls(pds)).toEqual([]);
+			// The host's writes in order. A narrowing withdraws the declaration, then
+			// writes the access record; a widening writes the record, then declares.
+			// Either way a declared group's record says public. Where the row falls
+			// among them, the order cases below pin.
 			const access = 'space.putRecord group.opensocial.access';
 			const declaration = `repo.${declarationWrite} group.opensocial.declaration`;
-			const policyWrite = `simplespace.updateSpace ${name}`;
 			expect(traced(pds)).toEqual([
-				...(to === 'public'
-					? [access, policyWrite, declaration]
-					: [policyWrite, declaration, access]),
+				...(to === 'public' ? [access, declaration] : [declaration, access]),
 				'space.putRecord group.opensocial.profile',
 				'space.createRecord group.opensocial.rule'
 			]);
@@ -379,35 +338,23 @@ describe('a settings flip moves the about space’s read policy after or before 
 	);
 });
 
-// The read policy is the stand-in host's to keep, on the creator's session, and a
-// person's own writes go on theirs (TS, 2026-10-15). A save that would move the
-// policy finds the creator's session before it writes anything; one that does
-// not move it never asks for it.
-describe('a save needs the creator’s session only to move the read policy', () => {
+// A person's own writes go on their own group session (TS, 2026-10-15), and a
+// save needs no one else's: not even a flip asks for the creator's.
+describe('a save goes out on the caller’s own session alone', () => {
 	const CREATOR = 'did:plc:creatoraaaaaaaaaaaaaaaaa';
 
-	it('refuses a flip before any write when the creator has linked no session', async () => {
+	it('flips a group the caller did not create, with every write on their session', async () => {
 		const pds = host();
 		const group = await givenGroup('public', pds);
 		env = linkGroups([GROUP_DID], undefined, [OWNER]);
 
 		const result = await save({ ...group, owner_did: CREATOR }, 'private', {
-			shownVisibility: 'public'
+			shownVisibility: 'public',
+			rules: 'Be kind'
 		});
 
-		expect(result).toEqual({ ok: false, error: expect.stringMatching(/its creator has to link/) });
-		expect(pds.writes()).toEqual([]);
-	});
-
-	it('saves a change that leaves the visibility, on the caller’s own session alone', async () => {
-		const pds = host();
-		const group = await givenGroup('public', pds);
-		env = linkGroups([GROUP_DID], undefined, [OWNER]);
-
-		const result = await save({ ...group, owner_did: CREATOR }, 'public', { rules: 'Be kind' });
-
 		expect(result).toEqual({ ok: true });
-		expect(updateSpaceCalls(pds)).toEqual([]);
+		expect(policyCalls(pds)).toEqual([]);
 		expect(pds.writes().length).toBeGreaterThan(0);
 		expect(new Set(pds.writes().map((w) => w.person))).toEqual(new Set([OWNER]));
 	});
@@ -439,39 +386,17 @@ describe('a save keeps what the settings form does not show', () => {
 	});
 });
 
-describe('a save that keeps the visibility leaves the host and the access record alone', () => {
-	it('a public group saved as public makes no updateSpace call and no access write', async () => {
+describe('a save that keeps the visibility leaves the access record alone', () => {
+	it('a public group saved as public writes no access record and sends no read policy', async () => {
 		const pds = host();
 		const group = await givenGroup('public', pds);
 
 		const result = await save(group, 'public');
 
 		expect(result).toEqual({ ok: true });
-		expect(updateSpaceCalls(pds)).toEqual([]);
+		expect(policyCalls(pds)).toEqual([]);
 		expect(traced(pds)).not.toContain('space.putRecord group.opensocial.access');
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
-	});
-});
-
-// A host that disagrees with the access record, because an earlier save stopped
-// between the two or something else moved it, is brought back to the record by
-// the next save, even one that changes nothing. The record is the policy.
-describe('a save moves a host that disagrees with the access record', () => {
-	it('a group whose record says public but whose host is member-list, saved untouched, opens the host and declares', async () => {
-		const pds = host();
-		const group = await givenGroup('public', pds);
-		pds.spaces.get(ABOUT)!.readPolicy = policy('memberListPolicy');
-
-		const result = await save(group, 'public');
-
-		expect(result).toEqual({ ok: true });
-		expect(traced(pds)).toEqual([
-			'simplespace.updateSpace publicPolicy',
-			'repo.putRecord group.opensocial.declaration',
-			'space.putRecord group.opensocial.profile'
-		]);
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
-		expect(await declaredNow()).toBe(true);
+		expect((await aboutAccessNow())?.public).toBe(true);
 	});
 });
 
@@ -523,91 +448,48 @@ describe('a private group must require approval', () => {
 		expect(result).toEqual({ ok: false, error: approvalRefusal('private', false) });
 		expect(pds.writes()).toEqual([]);
 		expect(harness.statements.filter(isRowWrite)).toEqual([]);
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
+		expect((await aboutAccessNow())?.public).toBe(true);
 	});
 });
 
-// A narrowing whose first write, closing the host, fails must leave the row
+// A widening whose first write, the access record, fails must leave the row
 // where it was, and it does so by never writing it.
 describe('a visibility change whose first write fails leaves the row where it was', () => {
-	it('a public open group saved as private, whose updateSpace answers 500, is still public at its host, writes nothing else, and leaves the whole row as it was', async () => {
+	it('a private group saved as public and open, whose access write answers 500, is still private, writes nothing else, and leaves the whole row as it was', async () => {
 		let hostDown = false;
 		const pds = host((nsid) =>
-			hostDown && nsid === 'com.atproto.simplespace.updateSpace' ? pdsDown() : undefined
+			hostDown && nsid === 'com.atproto.space.putRecord' ? pdsDown() : undefined
 		);
-		const group = await givenGroup('public', pds, false);
+		const group = await givenGroup('private', pds, true);
 		const before = rowWhole();
 		hostDown = true;
 
-		const result = await save(group, 'private', {
-			shownVisibility: 'public',
-			requireApproval: true,
+		const result = await save(group, 'public', {
+			shownVisibility: 'private',
+			requireApproval: false,
 			name: 'Kona Night Runners',
 			description: 'After dark',
 			rules: 'Be kind'
 		});
 
 		expect(result.ok).toBe(false);
-		expect(traced(pds)).toEqual(['simplespace.updateSpace memberListPolicy']);
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
-		expect((await aboutAccessNow())?.public).toBe(true);
-		// The whole row, the approval included, though that change was only there
-		// because private requires it: nothing of this save reached the row.
+		expect(traced(pds)).toEqual(['space.putRecord group.opensocial.access']);
+		expect((await aboutAccessNow())?.public).toBe(false);
+		expect(await declaredNow()).toBe(false);
+		// The whole row, the approval included: nothing of this save reached it.
 		expect(rowWhole()).toEqual(before);
-		expect(approvalNow()).toBe(0);
+		expect(approvalNow()).toBe(1);
 		// What failed is the visibility change itself, and the message says so.
 		expect(!result.ok && result.error).toContain('visibility was not changed');
 	});
 });
 
-// The two halves of a visibility change are the access record and the host,
-// and a failure between them leaves the host closed while the record says
-// public, never the other way round. Nothing after the failed half is written,
-// and saving again finishes it.
-describe('a visibility change that stops between the record and the host', () => {
-	it('a switch to public whose updateSpace fails leaves the record public and the host closed, writes nothing else, and saving again opens the host', async () => {
-		let failOpen = true;
-		const pds = host((nsid) =>
-			failOpen && nsid === 'com.atproto.simplespace.updateSpace' ? pdsDown() : undefined
-		);
-		const group = await givenGroup('private', pds);
-		const before = rowWhole();
-
-		const failed = await save(group, 'public', {
-			shownVisibility: 'private',
-			description: 'Trail runs at dawn',
-			rules: 'Be kind'
-		});
-
-		expect(failed.ok).toBe(false);
-		expect(!failed.ok && failed.error).toContain(
-			"The group's access record now says public, but its PDS did not open the group to everyone"
-		);
-		expect(traced(pds)).toEqual([
-			'space.putRecord group.opensocial.access',
-			'simplespace.updateSpace publicPolicy'
-		]);
-		expect((await aboutAccessNow())?.public).toBe(true);
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
-		expect(await declaredNow()).toBe(false);
-		expect(rowWhole()).toEqual(before);
-
-		// The page now shows public, which is what the record says.
-		failOpen = false;
-		pds.clearLog();
-		const again = await save(group, 'public', { description: 'Trail runs at dawn' });
-
-		expect(again).toEqual({ ok: true });
-		expect(updateSpaceCalls(pds).map((r) => r.body)).toEqual([
-			{ space: ABOUT, readPolicy: policy('publicPolicy') }
-		]);
-		expect(traced(pds)).not.toContain('space.putRecord group.opensocial.access');
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
-		expect(await declaredNow()).toBe(true);
-		expect(rowWhole().description).toBe('Trail runs at dawn');
-	});
-
-	it('a switch to private whose access write fails leaves the host closed, the declaration withdrawn and the row as it was, says the group is still public, and choosing private again finishes it', async () => {
+// A narrowing withdraws the declaration before the access record says private,
+// so a failure between the two leaves the group public and undeclared, never
+// declared while private. Nothing after the failed write is written, and
+// choosing private again finishes it.
+describe('a visibility change that stops before the access record', () => {
+	it('a switch to private whose access write fails leaves the declaration withdrawn and the row as it was, says the group is still public, and choosing private again finishes it', async () => {
 		let failAccess = false;
 		const isAccessWrite = (nsid: string, init?: RequestInit) =>
 			nsid === 'com.atproto.space.putRecord' &&
@@ -631,17 +513,15 @@ describe('a visibility change that stops between the record and the host', () =>
 
 		expect(failed.ok).toBe(false);
 		// The record is the visibility, so the group is still public, and an
-		// untouched save would open the host again: the message says to choose
-		// private, not merely to save again.
+		// untouched save would leave it so: the message says to choose private,
+		// not merely to save again.
 		expect(!failed.ok && failed.error).toContain('access record still says public');
 		expect(!failed.ok && failed.error).toContain('so the group is still public');
 		expect(!failed.ok && failed.error).toContain('Choose private and save the settings again');
 		expect(traced(pds)).toEqual([
-			'simplespace.updateSpace memberListPolicy',
 			'repo.deleteRecord group.opensocial.declaration',
 			'space.putRecord group.opensocial.access'
 		]);
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
 		expect((await aboutAccessNow())?.public).toBe(true);
 		expect(await declaredNow()).toBe(false);
 		expect(rowWhole()).toEqual(before);
@@ -656,19 +536,19 @@ describe('a visibility change that stops between the record and the host', () =>
 		});
 
 		expect(again).toEqual({ ok: true });
-		expect(updateSpaceCalls(pds)).toEqual([]);
+		expect(policyCalls(pds)).toEqual([]);
 		expect((await aboutAccessNow())?.public).toBe(false);
 		expect(await declaredNow()).toBe(false);
 		expect(rowWhole().description).toBe('Members only');
 	});
 });
 
-/** Every host write, every read of the about space's read policy, and every
+/** Every host write, every read of the about space's configuration, and every
  *  read of its access record, in the order the host sees them, each with the
  *  row's name at that moment. The row write falls where the name changes. */
 function rowAtEachCall() {
 	const sequence: string[] = [];
-	const observe: StubPdsOptions['fail'] = (nsid, init, query) => {
+	const observe: FakeGroupHostOptions['fail'] = (nsid, init, query) => {
 		const accessRead =
 			nsid === 'com.atproto.space.getRecord' &&
 			query?.get('space') === ABOUT &&
@@ -691,8 +571,8 @@ function rowAtEachCall() {
 // a group going public writes the row before it declares. Declaring also needs a
 // fresh answer: the access record is read again just before it, and only a
 // public answer publishes.
-describe('a visibility change reaches the host and the record before the row', () => {
-	it('a switch to private closes the host, withdraws the declaration, writes the record, then the row, the profile and the rules', async () => {
+describe('a visibility change reaches the record before the row', () => {
+	it('a switch to private withdraws the declaration, writes the record, then the row, the profile and the rules', async () => {
 		const { sequence, observe } = rowAtEachCall();
 		const pds = host(observe);
 		const group = await givenGroup('public', pds);
@@ -706,17 +586,15 @@ describe('a visibility change reaches the host and the record before the row', (
 
 		expect(result).toEqual({ ok: true });
 		expect(traced(pds)).toEqual([
-			'simplespace.updateSpace memberListPolicy',
 			'repo.deleteRecord group.opensocial.declaration',
 			'space.putRecord group.opensocial.access',
 			'space.putRecord group.opensocial.profile',
 			'space.createRecord group.opensocial.rule'
 		]);
-		// The record and the host are each read once, before any write.
+		// The record is read once, before any write, and the space's
+		// configuration not at all.
 		expect(sequence).toEqual([
 			'space.getRecord access (row Kona Trail Runners)',
-			'simplespace.getSpace (row Kona Trail Runners)',
-			'simplespace.updateSpace (row Kona Trail Runners)',
 			'repo.deleteRecord (row Kona Trail Runners)',
 			'space.putRecord (row Kona Trail Runners)',
 			'space.putRecord (row Kona Night Runners)',
@@ -724,7 +602,7 @@ describe('a visibility change reaches the host and the record before the row', (
 		]);
 	});
 
-	it('a switch to public writes the record, opens the host, writes the row, reads the record again, then declares', async () => {
+	it('a switch to public writes the record, writes the row, reads the record again, then declares', async () => {
 		const { sequence, observe } = rowAtEachCall();
 		const pds = host(observe);
 		const group = await givenGroup('private', pds);
@@ -739,16 +617,13 @@ describe('a visibility change reaches the host and the record before the row', (
 		expect(result).toEqual({ ok: true });
 		expect(traced(pds)).toEqual([
 			'space.putRecord group.opensocial.access',
-			'simplespace.updateSpace publicPolicy',
 			'repo.putRecord group.opensocial.declaration',
 			'space.putRecord group.opensocial.profile',
 			'space.createRecord group.opensocial.rule'
 		]);
 		expect(sequence).toEqual([
 			'space.getRecord access (row Kona Trail Runners)',
-			'simplespace.getSpace (row Kona Trail Runners)',
 			'space.putRecord (row Kona Trail Runners)',
-			'simplespace.updateSpace (row Kona Trail Runners)',
 			'space.getRecord access (row Kona Night Runners)',
 			'repo.putRecord (row Kona Night Runners)',
 			'space.putRecord (row Kona Night Runners)',
@@ -757,28 +632,28 @@ describe('a visibility change reaches the host and the record before the row', (
 		expect(await declaredNow()).toBe(true);
 	});
 
-	// Another client narrows the group while this save widens it: it closes the
-	// host and writes its record just before this save opens the host, so this
-	// save's own open lands on a record that says private. The fresh read before
-	// the declaration finds that, and this save closes the host it opened.
-	it('a switch to public during which another client narrows the group closes the host again, withdraws the declaration, and the profile follows the record', async () => {
+	// Another client narrows the group while this save widens it: it writes its
+	// record just after this save's, so this save's own record write is
+	// overtaken. The fresh read before the declaration finds that, and this save
+	// withdraws the declaration instead of publishing one.
+	it('a switch to public during which another client narrows the group withdraws the declaration, and the profile follows the record', async () => {
 		let narrowing = true;
-		const caught: string[] = [];
-		const pds: Host = host(undefined, () => caught.push(...tooOpen(pds, GROUP_DID)));
+		const pds: Host = host();
 		const group = await givenGroup('private', pds);
 		const stubbed = globalThis.fetch;
 		vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
+			const response = await stubbed(input, init);
 			if (
 				narrowing &&
-				String(input).includes('/com.atproto.simplespace.updateSpace') &&
-				JSON.parse(String(init?.body)).readPolicy?.$type?.endsWith('#publicPolicy')
+				String(input).includes('/com.atproto.space.putRecord') &&
+				JSON.parse(String(init?.body)).record?.public === true
 			) {
 				narrowing = false;
 				vi.stubGlobal('fetch', stubbed);
 				await narrowedElsewhere();
 				vi.stubGlobal('fetch', wrapper);
 			}
-			return stubbed(input, init);
+			return response;
 		});
 		const wrapper = globalThis.fetch;
 
@@ -793,24 +668,15 @@ describe('a visibility change reaches the host and the record before the row', (
 		expect(rowWhole().description).toBe('Trail runs at dawn');
 		expect(traced(pds)).toEqual([
 			'space.putRecord group.opensocial.access',
-			'simplespace.updateSpace memberListPolicy',
 			'space.putRecord group.opensocial.access',
-			'simplespace.updateSpace publicPolicy',
-			'simplespace.updateSpace memberListPolicy',
 			'repo.deleteRecord group.opensocial.declaration',
 			'space.putRecord group.opensocial.profile'
 		]);
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
+		expect(policyCalls(pds)).toEqual([]);
 		expect((await aboutAccessNow())?.public).toBe(false);
 		expect(await declaredNow()).toBe(false);
 		const profile = pds.spaceWrites.find((w) => w.collection === 'group.opensocial.profile');
 		expect(profile?.record.joinPolicy).toBe('invite');
-		// The race opened the space past its record for exactly one write, the
-		// one this save closed again, and nothing is too open now.
-		expect(caught).toEqual([
-			'the about space is public while its access record does not say public'
-		]);
-		expect(tooOpen(pds, GROUP_DID)).toEqual([]);
 	});
 
 	it('a switch to public whose record does not answer the second read saves the row, leaves the declaration alone, and says so', async () => {
@@ -839,10 +705,7 @@ describe('a visibility change reaches the host and the record before the row', (
 		);
 		expect(rowWhole().description).toBe('Trail runs at dawn');
 		// Neither a declaration nor a withdrawal, and nothing after them.
-		expect(traced(pds)).toEqual([
-			'space.putRecord group.opensocial.access',
-			'simplespace.updateSpace publicPolicy'
-		]);
+		expect(traced(pds)).toEqual(['space.putRecord group.opensocial.access']);
 		expect(await declaredNow()).toBe(false);
 	});
 
@@ -867,11 +730,10 @@ describe('a visibility change reaches the host and the record before the row', (
 		expect(failed.ok).toBe(false);
 		expect(!failed.ok && failed.error).toContain('so the group is still public');
 		expect(!failed.ok && failed.error).toContain('Choose private and save the settings again');
-		// The host closed and the declaration survived, and so did the record,
-		// which a declared group's must: it still says public. The row never took
-		// the new text, so browse, which joins the surviving declaration to the
-		// row, keeps showing what strangers already saw.
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
+		// The declaration survived, and so did the record, which a declared
+		// group's must: it still says public. The row never took the new text, so
+		// browse, which joins the surviving declaration to the row, keeps showing
+		// what strangers already saw.
 		expect(await declaredNow()).toBe(true);
 		expect((await aboutAccessNow())?.public).toBe(true);
 		expect(rowWhole()).toEqual(before);
@@ -891,7 +753,7 @@ describe('a visibility change reaches the host and the record before the row', (
 		});
 
 		expect(again).toEqual({ ok: true });
-		expect(updateSpaceCalls(pds)).toEqual([]);
+		expect(policyCalls(pds)).toEqual([]);
 		expect(await declaredNow()).toBe(false);
 		expect((await aboutAccessNow())?.public).toBe(false);
 		expect(rowWhole().description).toBe('Never previously public');
@@ -941,47 +803,43 @@ describe('a visibility change reaches the host and the record before the row', (
 	});
 });
 
-// SC-208: a group flipped private to public to private never has a space more
-// open than its access record says, checked between every two writes the host
-// takes, and a member's list entries follow their role's read grants
-// throughout. A member stands on all three lists, so the list half of the check
-// has someone to catch.
-describe('a group flipped private to public to private is never more open than its access records', () => {
-	it('every write of both flips leaves each space no more open than its record, and the member stays listed on all three', async () => {
-		const violations: string[] = [];
-		let checks = 0;
-		const pds: Host = host(undefined, (nsid) => {
-			checks += 1;
-			for (const found of tooOpen(pds, GROUP_DID)) violations.push(`after ${nsid}: ${found}`);
-		});
+// SC-208: a group flipped private to public to private changes only its about
+// space's access record, which is what the host lets people in by. A member
+// is let into all three spaces throughout, and a stranger into the about space
+// only while the record says public.
+describe('a group flipped private to public to private changes only its about space’s access', () => {
+	it('lets a member into every space throughout, and a stranger into the about space only while public', async () => {
+		const pds = host();
 		const group = await givenGroup('private', pds);
 		await givenMember(group, pds);
-		const listedEverywhere = () =>
-			[ABOUT, MEMBERS, CALENDAR].map((space) => pds.listed(space).includes(MEMBER));
-		expect(listedEverywhere()).toEqual([true, true, true]);
-		const setupChecks = checks;
+		const letIn = (did: string) =>
+			[ABOUT, MEMBERS, CALENDAR].map((space) => pds.admits(did, space));
+		expect(letIn(MEMBER)).toEqual([true, true, true]);
+		expect(letIn(STRANGER)).toEqual([false, false, false]);
 
 		const opened = await save(group, 'public', { shownVisibility: 'private' });
 
 		expect(opened).toEqual({ ok: true });
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
 		expect((await aboutAccessNow())?.public).toBe(true);
 		expect(await declaredNow()).toBe(true);
+		expect(letIn(MEMBER)).toEqual([true, true, true]);
+		expect(letIn(STRANGER)).toEqual([true, false, false]);
 
 		const closed = await save(group, 'private', { shownVisibility: 'public' });
 
 		expect(closed).toEqual({ ok: true });
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
 		expect((await aboutAccessNow())?.public).toBe(false);
 		expect(await declaredNow()).toBe(false);
-
-		// Only the about space follows the visibility; the other two stay closed.
-		expect(pds.spaces.get(MEMBERS)?.readPolicy).toEqual(policy('memberListPolicy'));
-		expect(pds.spaces.get(CALENDAR)?.readPolicy).toEqual(policy('memberListPolicy'));
-		expect(listedEverywhere()).toEqual([true, true, true]);
-		// The check ran after each of the flips' writes, not just at the end.
-		expect(checks - setupChecks).toBe(pds.writes().length);
-		expect(violations).toEqual([]);
+		expect(letIn(MEMBER)).toEqual([true, true, true]);
+		expect(letIn(STRANGER)).toEqual([false, false, false]);
+		// Only the about space's record moved; the other two stay closed.
+		expect(
+			pds
+				.writes()
+				.filter((w) => w.body?.collection === GROUP_ACCESS_COLLECTION)
+				.map((w) => w.body?.space)
+		).toEqual([ABOUT, ABOUT]);
+		expect(policyCalls(pds)).toEqual([]);
 	});
 });
 
@@ -1004,9 +862,8 @@ describe('a save changes the visibility only when the owner changed it', () => {
 		const result = await save(group, 'public', { description: 'Typo fixed' });
 
 		expect(result).toEqual({ ok: true });
-		expect(updateSpaceCalls(pds)).toEqual([]);
 		expect(traced(pds)).not.toContain('space.putRecord group.opensocial.access');
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
+		expect((await aboutAccessNow())?.public).toBe(false);
 		expect(await declaredNow()).toBe(false);
 		expect(rowWhole().description).toBe('Typo fixed');
 		// The profile follows the record too.
@@ -1029,7 +886,7 @@ describe('a save changes the visibility only when the owner changed it', () => {
 		let intercept = true;
 		vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
 			const response = await originalFetch(input, init);
-			if (intercept && String(input).includes('/com.atproto.simplespace.getSpace?')) {
+			if (intercept && String(input).includes('/com.atproto.space.listRecords?')) {
 				intercept = false;
 				captured();
 				await held;
@@ -1048,13 +905,11 @@ describe('a save changes the visibility only when the owner changed it', () => {
 		release();
 
 		expect(await older).toEqual({ ok: true });
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
 		expect((await aboutAccessNow())?.public).toBe(false);
 		expect(await declaredNow()).toBe(false);
 		const repoWrites = pds.writes().filter((w) => w.nsid.startsWith('com.atproto.repo.'));
 		expect(repoWrites.at(-1)?.nsid).not.toBe('com.atproto.repo.putRecord');
-		// It read both as public and moved neither, so it has no host to close again.
-		expect(updateSpaceCalls(pds)).toEqual([]);
+		expect(policyCalls(pds)).toEqual([]);
 	});
 
 	it('a form that could not show the visibility is refused when its choice differs from the record', async () => {
@@ -1070,7 +925,7 @@ describe('a save changes the visibility only when the owner changed it', () => {
 		expect(pds.writes()).toEqual([]);
 		expect(harness.statements.filter(isRowWrite)).toEqual([]);
 		expect(rowWhole()).toEqual(before);
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('publicPolicy'));
+		expect((await aboutAccessNow())?.public).toBe(true);
 	});
 });
 
@@ -1111,26 +966,24 @@ describe('a stale form and the approval setting', () => {
 		expect(closed).toEqual({ ok: true });
 		expect(approvalNow()).toBe(1);
 		expect(profileJoinPolicy(pds)).toBe('invite');
-		expect(updateSpaceCalls(pds)).toEqual([]);
-		expect(pds.spaces.get(ABOUT)?.readPolicy).toEqual(policy('memberListPolicy'));
+		expect((await aboutAccessNow())?.public).toBe(false);
 		expect(await declaredNow()).toBe(false);
 		expect(rowWhole().description).toBe('Typo fixed');
 	});
 });
 
-// At a group host the host checks the save's record writes, but this site's copy
-// of the group is its own, and a host never sees it. So a member's save, which
-// would change that copy before any record, is refused before anything is
-// written. (Spec: FR-213.)
-describe('at a group host', () => {
+// The host checks the save's record writes, but this site's copy of the group
+// is its own, and the host never sees it. So a member's save, which would
+// change that copy before any record, is refused before anything is written.
+// (Spec: FR-213.)
+describe('this site’s own copy of the group', () => {
 	it('a member’s save is refused before the row or any record is written', async () => {
 		const pds = host();
 		const group = await givenGroup('public', pds);
 		await givenMember(group, pds);
-		const resolve = vi.spyOn(didSpaceHosts, 'repoHost').mockResolvedValue(STUB_PDS_SERVICE);
 
 		const result = await runUpdateGroup(
-			{ ...env, GROUP_HOST_URL: STUB_PDS_SERVICE },
+			env,
 			harness.db,
 			group,
 			{ did: MEMBER, reader: pdsSpaceReader(CRED, GROUP_DID) },
@@ -1141,17 +994,17 @@ describe('at a group host', () => {
 				requireApproval: true
 			}
 		);
-		resolve.mockRestore();
 
 		expect(result).toMatchObject({ ok: false });
 		expect((await getGroupByDid(harness.db, GROUP_DID))?.name).toBe('Kona Trail Runners');
 		expect(traced(pds)).toEqual([]);
 	});
+});
 
-	// A host keeps each space's read policy from its access record, so a switch
-	// to private moves no policy, and the declaration's withdrawal is its first
-	// write. When that fails, nothing has landed.
-	const atHost = async (fail: (nsid: string) => Response | undefined) => {
+// A switch to private writes the declaration's withdrawal first. When that
+// fails, nothing has landed.
+describe('a switch to private whose withdrawal fails', () => {
+	const failingWithdrawal = async (fail: (nsid: string) => Response | undefined) => {
 		let failing = false;
 		const pds = host((nsid) => (failing ? fail(nsid) : undefined));
 		const group = await givenGroup('public', pds);
@@ -1160,28 +1013,15 @@ describe('at a group host', () => {
 		});
 		failing = true;
 		pds.clearLog();
-		const resolve = vi.spyOn(didSpaceHosts, 'repoHost').mockResolvedValue(STUB_PDS_SERVICE);
-		const result = await runUpdateGroup(
-			{ ...env, GROUP_HOST_URL: STUB_PDS_SERVICE },
-			harness.db,
-			group,
-			{ did: OWNER, reader: ownerReader() },
-			{
-				name: 'Kona Trail Runners',
-				visibility: 'private',
-				shownVisibility: 'public',
-				requireApproval: true
-			}
-		);
-		resolve.mockRestore();
-		expect(updateSpaceCalls(pds)).toEqual([]);
+		const result = await save(group, 'private', { shownVisibility: 'public' });
+		expect(policyCalls(pds)).toEqual([]);
 		expect(await declaredNow()).toBe(true);
 		expect((await aboutAccessNow())?.public).toBe(true);
 		return result;
 	};
 
-	it('a switch to private whose withdrawal the host refuses for the caller’s roles says so, and that nothing was saved', async () => {
-		const result = await atHost((nsid) =>
+	it('says so, and that nothing was saved, when the host refuses it for the caller’s roles', async () => {
+		const result = await failingWithdrawal((nsid) =>
 			nsid === 'com.atproto.repo.deleteRecord'
 				? Response.json({ error: 'ScopeMissingError' }, { status: 403 })
 				: undefined
@@ -1194,8 +1034,8 @@ describe('at a group host', () => {
 		});
 	});
 
-	it('a switch to private whose withdrawal fails otherwise says the group is still public, and choosing private again retries it', async () => {
-		const result = await atHost((nsid) =>
+	it('otherwise says the group is still public, and choosing private again retries it', async () => {
+		const result = await failingWithdrawal((nsid) =>
 			nsid === 'com.atproto.repo.deleteRecord' ? pdsDown() : undefined
 		);
 

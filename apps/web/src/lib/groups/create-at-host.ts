@@ -22,7 +22,7 @@ import type { OAuthClient, OAuthClientStores } from '@atcute/oauth-node-client';
 import { approvalRefusal, groupAvatarRefusal, splitRuleLines } from './about-record';
 import { knownFormError } from './form-error';
 import type { GroupFormResult } from './form-result';
-import { POLICY_MEMBER_LIST, SPACE_SKEY, groupSpaceUris } from './ids';
+import { SPACE_SKEY, groupSpaceUris } from './ids';
 import { spaceReadScope } from './members-record';
 import { DEFAULT_ROLE_PERMISSIONS } from './permissions';
 import { CALENDAR_SPACE_TYPE, type GroupVisibility } from './types';
@@ -331,7 +331,6 @@ export async function setUpHostGroup(
 			{
 				type: CALENDAR_SPACE_TYPE,
 				skey: SPACE_SKEY,
-				readPolicy: POLICY_MEMBER_LIST,
 				access: {
 					public: false,
 					grants: Object.keys(HOST_ROLE_BUNDLES).map((role) => ({
