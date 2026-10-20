@@ -82,7 +82,8 @@ import {
 import { pdsSpaceUpdater } from './server/spaces';
 import { didSpaceHosts } from './server/space-credential';
 import { POLICY_MEMBER_LIST } from './ids';
-import { pdsMemberList, placeMember, readSpaceAccess } from './server/member-list';
+import { groupClient } from './server/session';
+import { xrpc } from './server/xrpc';
 import {
 	ABOUT_SPACE_TYPE,
 	CALENDAR_SPACE_TYPE,
@@ -179,7 +180,7 @@ function asGroup(group: GroupRow) {
 
 /** The rest of what a create and an admission leave: the members and calendar
  *  spaces' access records, and `MEMBER` admitted as a `member` and listed on
- *  every space whose access grants that role read. */
+ *  all three spaces. */
 async function givenMember(group: GroupRow, pds: Host): Promise<void> {
 	await writeGroupAccess(asGroup(group));
 	await writeGroupAccess({ ...asGroup(group), space: CALENDAR });
@@ -189,13 +190,13 @@ async function givenMember(group: GroupRow, pds: Host): Promise<void> {
 		roles: ['member'],
 		intent: 'admit'
 	});
-	await placeMember(
-		pdsMemberList(CRED, GROUP_DID),
-		group,
-		MEMBER,
-		['member'],
-		await readSpaceAccess(pdsSpaceReader(CRED, GROUP_DID), group)
-	);
+	const { handle } = await groupClient(CRED, GROUP_DID);
+	for (const space of [MEMBERS, ABOUT, CALENDAR]) {
+		const listed = await xrpc(handle, 'com.atproto.simplespace.putMember', {
+			body: { space, did: MEMBER, read: true, write: true }
+		});
+		if (!listed.ok) throw new Error(`putMember failed on ${space}`);
+	}
 	pds.clearLog();
 }
 

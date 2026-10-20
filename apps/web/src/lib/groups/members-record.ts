@@ -175,9 +175,8 @@ function readsSpace(scope: unknown): boolean {
 
 /** A space's access record: whether anyone may read it, and the roles granted
  *  `read` there, one grant each. It is the space's policy. A simplespace host
- *  enforces its own read policy and member list instead, so atmo derives both from
- *  this record (./server/spaces.ts, ./server/member-list.ts). The members space is
- *  never public. (Spec: FR-214.) */
+ *  enforces its own read policy instead, so atmo derives that from this record
+ *  (./server/spaces.ts). The members space is never public. (Spec: FR-214.) */
 export function groupAccessRecord(input: {
 	spaceType: string;
 	roles: readonly GroupRoleName[];

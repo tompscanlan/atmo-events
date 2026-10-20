@@ -19,7 +19,7 @@ export class GroupRuleError extends Error {
 			| 'constraint'
 			/** A row whose membership record is gone while others remain: a
 			 *  removal or an admission that stopped partway. Only Remove
-			 *  finishes it (./roster.ts `requireFinished`). */
+			 *  finishes it. */
 			| 'unfinished-removal',
 		message: string
 	) {

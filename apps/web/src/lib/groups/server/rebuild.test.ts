@@ -6,7 +6,7 @@
 //
 // Over a surviving row, two more rules hold. The roster rebuild is additive: a
 // row with no record is the trace of a roster act whose second half failed
-// (`roster.ts`), the gate already denies it, and a rebuild that deleted it would
+// (`real-host.ts`), the gate already denies it, and a rebuild that deleted it would
 // be guessing which failure it was. And the owner's row is immutable in SQL, so
 // the rebuild inserts a missing one and does not fight one that disagrees.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

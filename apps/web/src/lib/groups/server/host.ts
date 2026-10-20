@@ -1,44 +1,23 @@
 // The group host, by the methods the groups standard gives it (proposal.md,
 // "Methods", lex-refactor bce2966). A host is a PDS for group accounts: it hosts
 // the group's spaces, keeps join requests privately, and checks roles. Routes
-// reach the host only through `groupHost`, which picks one of two adapters per
-// group: a real host's methods, for a group at the host this deployment is set
-// up with (./real-host.ts), or the stand-in host, for every other group. The
-// stand-in emulates one: the spaces are simplespaces on the group's own PDS, a
-// join request is a D1 row, and each space's read policy and member list
-// (./spaces.ts, ./member-list.ts), derived from its `access` record, stand in
-// for the host's reading of that record.
+// reach the host only through `groupHost`, which takes a group at the host this
+// deployment is set up with to that host's methods (./real-host.ts), and refuses
+// any other group before sending anything: this site changes a group only
+// through its host.
 //
 // Only the methods atmo calls are here, plus the roster acts the standard has
 // no method for: approving a request, adding, ejecting and changing a role are
 // membership writes over the acting admin's own group session, and a write of
-// the requester's membership is what approves their request. What a host does
-// for itself (a member's own join or leave, the member lists) the stand-in does
-// on the session it acts on, its creator's (./session.ts). They sit on the binding anyway, so
-// every roster act reaches the host one way and a real host's adapter takes all
-// of them. (Spec: FR-515.)
+// the requester's membership is what approves their request. They sit on the
+// binding anyway, so every roster act reaches the host one way. (Spec: FR-515.)
 import type { AssignableRole } from '../permissions';
 import type { GroupRow, JoinRequestRow } from '../types';
 
-import { listJoinRequests, type JoinOutcome } from './db/roster';
-import {
-	admitFromRequest,
-	admitMember,
-	ejectMember,
-	joinGroup,
-	leaveGroup,
-	promoteMember,
-	rejectJoinRequest,
-	withdrawJoinRequest,
-	type RosterContext
-} from './roster';
-import {
-	type CredentialStoreEnv,
-	type GroupCredential,
-	GroupCredentialError,
-	requireGroupCredential
-} from './session';
-import { pdsProvisioner, type GroupSpaceProvisioner, type SpaceProvision } from './spaces';
+import type { JoinOutcome } from './db/roster';
+import type { RosterContext } from './roster';
+import { type CredentialStoreEnv, type GroupCredential, GroupCredentialError } from './session';
+import type { SpaceProvision } from './spaces';
 import { isHostGroup } from './host-kind';
 import { realGroupHost } from './real-host';
 
@@ -47,9 +26,9 @@ export interface HostBinding {
 	db: D1Database;
 	env: CredentialStoreEnv;
 	group: GroupRow;
-	/** The group's session when the caller holds one the store does not, as a
-	 *  create holds the mint's. Else the acting person's from the store, read on
-	 *  first use. */
+	/** The group's session when the caller holds one the store does not, as the
+	 *  create does, after the host's sign-up. Else the acting person's from the
+	 *  store, read on first use. */
 	credential?: GroupCredential;
 }
 
@@ -89,14 +68,26 @@ export interface GroupHost {
 	setMemberRole(caller: HostCaller, did: string, role: AssignableRole): Promise<void>;
 }
 
-/** The group's host: the real one when the group is at the host this deployment
- *  is set up with, else the stand-in. Which one is decided on the first call. */
+/** The group is not at the group host this deployment is set up with, so this
+ *  site cannot change it: it changes a group only through its host. Thrown
+ *  before any request. */
+export class GroupNotAtHostError extends Error {
+	constructor(readonly groupDid: string) {
+		super(`${groupDid} is not at this site's group host, so this site cannot change it`);
+		this.name = 'GroupNotAtHostError';
+	}
+}
+
+/** The group's host, when the group is at the host this deployment is set up
+ *  with. Which host serves it is resolved on the first call; a group at any
+ *  other is refused then, with GroupNotAtHostError. */
 export function groupHost(binding: HostBinding): GroupHost {
 	let chosen: Promise<GroupHost> | undefined;
 	const host = () =>
-		(chosen ??= isHostGroup(binding.env, binding.group.group_did).then((real) =>
-			real ? realGroupHost(binding) : standInHost(binding)
-		));
+		(chosen ??= isHostGroup(binding.env, binding.group.group_did).then((atHost) => {
+			if (!atHost) throw new GroupNotAtHostError(binding.group.group_did);
+			return realGroupHost(binding);
+		}));
 	return {
 		createSpace: async (caller, space) => (await host()).createSpace(caller, space),
 		listJoinRequests: async (caller) => (await host()).listJoinRequests(caller),
@@ -113,7 +104,8 @@ export function groupHost(binding: HostBinding): GroupHost {
 }
 
 /** The pending requests a page lists, or null when the viewer holds no group
- *  session to ask the host with, which only they can fix, by linking one. */
+ *  session to ask the host with, which only they can fix, by linking one. A
+ *  group at no host this site can ask has none to list. */
 export async function pendingRequestsFor(
 	binding: HostBinding,
 	caller: HostCaller
@@ -122,37 +114,7 @@ export async function pendingRequestsFor(
 		return await groupHost(binding).listJoinRequests(caller);
 	} catch (e) {
 		if (e instanceof GroupCredentialError) return null;
+		if (e instanceof GroupNotAtHostError) return [];
 		throw e;
 	}
-}
-
-/** The stand-in host, for a group at no real host. */
-function standInHost(binding: HostBinding): GroupHost {
-	const { db, env, group } = binding;
-	const act = (caller: HostCaller): RosterContext => ({ ...caller, db, env, group });
-	// One provisioner per caller, since each writes on their own session.
-	const provisioners = new Map<string, Promise<GroupSpaceProvisioner>>();
-	const provision = async (caller: HostCaller) =>
-		pdsProvisioner(
-			binding.credential ?? (await requireGroupCredential(env, group.group_did, caller.callerDid)),
-			group.group_did
-		);
-	const provisionerFor = (caller: HostCaller) => {
-		let provisioner = provisioners.get(caller.callerDid);
-		if (!provisioner) provisioners.set(caller.callerDid, (provisioner = provision(caller)));
-		return provisioner;
-	};
-
-	return {
-		createSpace: async (caller, space) => (await provisionerFor(caller))(space),
-		listJoinRequests: () => listJoinRequests(db, group.id, 'pending'),
-		denyJoinRequest: (caller, member) => rejectJoinRequest(act(caller), member),
-		requestJoin: (caller, message) => joinGroup(act(caller), message),
-		cancelJoinRequest: (caller) => withdrawJoinRequest(act(caller)),
-		leaveGroup: (caller) => leaveGroup(act(caller)),
-		approveJoinRequest: (caller, member, role) => admitFromRequest(act(caller), member, role),
-		addMember: (caller, did, role) => admitMember(act(caller), did, role),
-		ejectMember: (caller, did) => ejectMember(act(caller), did),
-		setMemberRole: (caller, did, role) => promoteMember(act(caller), did, role)
-	};
 }

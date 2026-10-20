@@ -61,9 +61,9 @@ import { META_READ_GRANT } from '$lib/atproto/settings';
 import { POLICY_PUBLIC, type GroupSpaceUris } from './ids';
 
 import { memberGrant } from './server/member-grants';
+import { didSpaceHosts } from './server/space-credential';
 import { RSVP_NO_SPACES, RSVP_RETRY_LATER } from './server/member-rsvp';
 import { provisionSpacesFor } from './server/__fixtures__/provisioned-spaces';
-import { SPACE_MEMBER_ACCESS } from './server/member-list';
 import { writeGroupAccess } from './server/members-writer';
 import { GroupPlacementError } from './server/event-writer';
 import { formError, notAllowed } from './form-error';
@@ -505,13 +505,14 @@ describe('the sign-in notice’s button, on a private group', () => {
 });
 
 // The caller's session is what writes their acceptance, so the forms have to
-// hand it to the roster. The group's side runs against the fake host; the
-// member's PDS is a session that records what it was asked.
+// hand it to the roster. The group is at the host this site is set up with (the
+// fake one, here), which the joiner's own PDS forwards their join and leave to;
+// the joiner's session records what it was asked.
 describe('the join and leave buttons, for a member whose session holds the grant', () => {
 	const LINKED = 'did:plc:linkedgroupaaaaaaaaaaaaa';
 	const JOINER = 'did:plc:joineraaaaaaaaaaaaaaaaaa';
 
-	it('an open join writes the joiner’s acceptance, and leaving deletes it', async () => {
+	it('an open join writes the joiner’s acceptance after the host admits them, and leaving deletes it first', async () => {
 		vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const pds = stubPds({ did: LINKED, handle: 'linked.group.stub.test' });
 		const row = await createGroup(harness.db, {
@@ -521,8 +522,7 @@ describe('the join and leave buttons, for a member whose session holds the grant
 			requireApproval: false
 		});
 		// A public group, as a create leaves it: its visibility in the about
-		// space's access record, and the other two spaces' records beside it,
-		// which the join's member-list entries follow.
+		// space's access record, and the other two spaces' records beside it.
 		const uris = await provisionSpacesFor(linkedCredential(LINKED), LINKED, 'public');
 		await recordGroupSpaces(harness.db, row.id, uris);
 		const env = linkGroups([LINKED]);
@@ -539,8 +539,8 @@ describe('the join and leave buttons, for a member whose session holds the grant
 			callerDid: LINKED,
 			space: uris.calendarSpaceUri
 		});
-		const spaces = [uris.membersSpaceUri, uris.aboutSpaceUri, uris.calendarSpaceUri];
 		serveOwnAccess(pds, LINKED);
+		vi.spyOn(didSpaceHosts, 'repoHost').mockResolvedValue(STUB_PDS_SERVICE);
 		const asked: { nsid: string; space: unknown; repo: unknown }[] = [];
 		const scope = memberScope(LINKED);
 		const session = {
@@ -552,20 +552,21 @@ describe('the join and leave buttons, for a member whose session holds the grant
 				if (token) return token;
 				const body = JSON.parse(String(init.body)) as Record<string, unknown>;
 				asked.push({ nsid: pathname, space: body.space, repo: body.repo });
+				if (pathname === '/xrpc/group.opensocial.requestJoin') {
+					return Response.json({ status: 'admitted' });
+				}
 				return Response.json({ uri: 'at://x', cid: 'bafy' });
 			}
 		};
 		request.locals = { did: JOINER, session } as typeof request.locals;
-		request.platform.env = { DB: harness.db, ...env };
+		// The site is set up with the host the group's DID document names.
+		request.platform.env = { DB: harness.db, ...env, GROUP_HOST_URL: STUB_PDS_SERVICE };
 
 		expect(await submitJoin({ groupDid: LINKED })).toMatchObject({ ok: true, outcome: 'joined' });
-		for (const space of spaces) {
-			expect(pds.members(space)).toEqual([{ did: JOINER, ...SPACE_MEMBER_ACCESS }]);
-		}
 		expect(await submitLeave({ groupDid: LINKED })).toMatchObject({ ok: true, outcome: 'left' });
-		for (const space of spaces) expect(pds.listed(space)).toEqual([]);
 
 		expect(asked).toEqual([
+			{ nsid: '/xrpc/group.opensocial.requestJoin', space: undefined, repo: undefined },
 			{
 				nsid: '/xrpc/com.atproto.space.createRecord',
 				space: uris.membersSpaceUri,
@@ -575,7 +576,8 @@ describe('the join and leave buttons, for a member whose session holds the grant
 				nsid: '/xrpc/com.atproto.space.deleteRecord',
 				space: uris.membersSpaceUri,
 				repo: JOINER
-			}
+			},
+			{ nsid: '/xrpc/group.opensocial.leaveGroup', space: undefined, repo: undefined }
 		]);
 	});
 });
