@@ -14,13 +14,9 @@ export class GroupRuleError extends Error {
 			| 'owner-role-reserved'
 			| 'not-found'
 			| 'already-pending'
-			/** A stranger asked to join a group its host reads as private. */
+			/** A stranger asked to join a group its host keeps invite-only. */
 			| 'invite-only'
-			| 'constraint'
-			/** A row whose membership record is gone while others remain: a
-			 *  removal or an admission that stopped partway. Only Remove
-			 *  finishes it. */
-			| 'unfinished-removal',
+			| 'constraint',
 		message: string
 	) {
 		super(message);

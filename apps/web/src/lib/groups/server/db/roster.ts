@@ -1,7 +1,7 @@
 // The D1 rows for who is in a group: memberships and join requests. A row is
 // a member; a pending request is a join request, never a membership.
 import type { AssignableRole } from '../../permissions';
-import type { GroupRow, GroupVisibility, JoinRequestRow, MemberRow } from '../../types';
+import type { GroupRow, MemberRow } from '../../types';
 import { ensureGroupsSchema } from '../schema';
 import { GroupRuleError, constraintMessage, guard } from './rules';
 
@@ -56,23 +56,6 @@ export async function groupsOfMember(
 	return results ?? [];
 }
 
-export async function listJoinRequests(
-	db: D1Database,
-	groupId: string,
-	status: 'pending' | 'all' = 'pending'
-): Promise<JoinRequestRow[]> {
-	await ensureGroupsSchema(db);
-	const { results } = await db
-		.prepare(
-			`SELECT id, did, status, message, created_at FROM join_requests
-			 WHERE group_id = ? AND (? = 'all' OR status = ?)
-			 ORDER BY created_at ASC`
-		)
-		.bind(groupId, status, status)
-		.all<JoinRequestRow>();
-	return results ?? [];
-}
-
 /** Roster size. A page may show the count to someone not allowed the names. */
 export async function countMembers(db: D1Database, groupId: string): Promise<number> {
 	await ensureGroupsSchema(db);
@@ -85,42 +68,8 @@ export async function countMembers(db: D1Database, groupId: string): Promise<num
 
 export type JoinOutcome = 'joined' | 'pending' | 'already-member' | 'already-pending';
 
-/** Self-service join. With `require_approval` this records a pending request
- *  and no roster row, so an applicant is never briefly a member. Without it,
- *  the caller joins at once as `member`.
- *
- *  A private group has no self-service join. Its DID and handle are public in
- *  the PLC audit log, so knowing them proves nothing, and answering a request
- *  tells a stranger the group exists. Members are added with `addMember`. The
- *  refusal comes after the roster check, so a member's retry still answers
- *  `already-member`.
- *
- *  `visibility` is the access record's (`readGroupVisibility`). Only `public`
- *  takes a join. `null` means the record was not read, and it is refused. */
-export async function requestJoin(
-	db: D1Database,
-	group: GroupRow,
-	did: string,
-	message: string | null,
-	visibility: GroupVisibility | null
-): Promise<JoinOutcome> {
-	await ensureGroupsSchema(db);
-	if (await getMemberRow(db, group.id, did)) return 'already-member';
-
-	if (visibility !== 'public') {
-		throw new GroupRuleError('invite-only', 'This group is invite-only');
-	}
-
-	if (group.require_approval) return noteJoinRequest(db, group.id, did, message);
-
-	await addMember(db, group.id, did, 'member');
-	return 'joined';
-}
-
-/** A pending request row for `did`: the stand-in's request itself, or, for a
- *  group at a real host, this app's note that the person asked, since no host
- *  method reads a member's own request back. `already-pending` when one is
- *  there. */
+/** This app's note that `did` asked to join, since no host method reads a
+ *  member's own request back. `already-pending` when one is there. */
 export async function noteJoinRequest(
 	db: D1Database,
 	groupId: string,
@@ -146,8 +95,7 @@ export async function noteJoinRequest(
 }
 
 /** Closes `did`'s pending request row if there is one, and does nothing if not:
- *  for a group at a real host the row is only a note, and the host's answer
- *  decides. */
+ *  the row is only a note, and the host's answer decides. */
 export async function closeJoinRequestNote(
 	db: D1Database,
 	groupId: string,
@@ -165,7 +113,7 @@ export async function closeJoinRequestNote(
 	}
 }
 
-/** Puts `did` on the roster with `role`, for an open join or a direct add. A
+/** Puts `did` on the roster with `role`, as the host admitted them. A
  *  DID already on the roster is refused as `GroupRuleError('constraint')`. A
  *  pending request from `did` is closed as approved in the same batch, by
  *  `decidedBy` (null for an open join), so it does not stay in the queue for a
@@ -199,42 +147,9 @@ export async function addMember(
 	);
 }
 
-/** Approve: the request's DID goes on the roster, and the same batch closes its
- *  pending request (`addMember`), so an approved request always has a member
- *  behind it. A DID already on the roster fails the insert, which rolls back the
- *  close, as `GroupRuleError('constraint')`. Returns the admitted DID, which the
- *  caller's membership record is keyed by. */
-export async function approveJoinRequest(
-	db: D1Database,
-	groupId: string,
-	requestId: string,
-	deciderDid: string,
-	role: AssignableRole = 'member'
-): Promise<{ did: string }> {
-	const did = await pendingRequestDid(db, groupId, requestId);
-	if (!did) throw new GroupRuleError('not-found', 'No such pending join request');
-	await addMember(db, groupId, did, role, deciderDid);
-	return { did };
-}
-
-/** The DID behind a pending request, or null when the group has no such
- *  pending request. */
-export async function pendingRequestDid(
-	db: D1Database,
-	groupId: string,
-	requestId: string
-): Promise<string | null> {
-	await ensureGroupsSchema(db);
-	const row = await db
-		.prepare(`SELECT did FROM join_requests WHERE id = ? AND group_id = ? AND status = 'pending'`)
-		.bind(requestId, groupId)
-		.first<{ did: string }>();
-	return row?.did ?? null;
-}
-
 /** The id of a person's pending request, or null when they have none. A host
  *  names a request by its member (`denyJoinRequest`), and the one-pending index
- *  makes that a single row; the id stays the stand-in's own. */
+ *  makes that a single row; the id is this app's own. */
 export async function pendingRequestIdOf(
 	db: D1Database,
 	groupId: string,

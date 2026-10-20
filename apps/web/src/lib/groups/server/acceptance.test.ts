@@ -22,7 +22,7 @@ import type { OAuthSession } from '@atcute/oauth-node-client';
 import { GROUP_ACCEPTANCE_COLLECTION, GROUP_ACCEPTANCE_RKEY } from '../members-record';
 import { MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
 
-import { addMember, requestJoin } from './db/roster';
+import { addMember, noteJoinRequest } from './db/roster';
 const MEMBER = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const MEMBERS = `at://${GROUP_DID}/space/${MEMBERS_SPACE_TYPE}/self`;
@@ -204,7 +204,7 @@ describe('writeMissingAcceptances', () => {
 		const bare = await aGroup('did:plc:bareaaaaaaaaaaaaaaaaaaaaa', false);
 		const stranger = await aGroup('did:plc:strangeraaaaaaaaaaaaaaaaa');
 		await addMember(harness.db, joined.id, MEMBER, 'member');
-		await requestJoin(harness.db, asked, MEMBER, null, 'public');
+		await noteJoinRequest(harness.db, asked.id, MEMBER, null);
 		await addMember(harness.db, ungranted.id, MEMBER, 'member');
 		await addMember(harness.db, bare.id, MEMBER, 'member');
 		const scope = [
