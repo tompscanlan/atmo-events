@@ -81,9 +81,7 @@ when the PDS is asked and does not answer. Browse shows it from placement instea
 per group: a group the declaration index lists is public, and one the caller sees only through their
 own groups is private. So browse's badge says whether the group is declared and the page's badge
 what its access record says, and the two can differ: a save that changed the record but stopped
-before the declaration leaves them apart until the next save or the repair aligns the declaration.
-The repair moves each space's read policy and the declaration to what the access records say, never
-the other way around.
+before the declaration leaves them apart until the next save.
 
 The settings form sends the visibility it showed as well as the one chosen, and the save changes the
 visibility only when the two differ, so a tab opened before someone else changed it cannot change it
@@ -94,8 +92,7 @@ shows a declared group's text from that row. A save that leaves it public has th
 opens the about space, writes the row, reads the record again, and declares the group only if it
 still says public. A save also moves the about space's read policy when it disagrees with the record,
 so saving again finishes one that stopped between the two. `update-group.ts` has the whole order and
-what each failure leaves behind. There is no lock: the moment between that last read and the
-declaration is the repair's to heal.
+what each failure leaves behind. There is no lock between that last read and the declaration.
 
 Each space's member list holds the members whose roles its access record grants `read`, read and
 write, since reading a space and writing your own records in it are one grant. With the roles the
@@ -124,12 +121,9 @@ running before the declaration collection was added to its config needs a one-ti
 `contrail backfill --only records` to pick up older declarations.
 
 When a record and a D1 row disagree, the record wins. `server/rebuild.ts` can rebuild a group's
-rows from its DID alone, and the settings page has a repair step for a group whose create was
-interrupted (`server/repair.ts`). The repair writes what the create would have, the calendar
-space's access record and index entry included, and an about space record that says private when
-there is none. It also makes each space's member list and read policy, and the declaration, agree
-with the access records. A rebuild restores nothing for the visibility, because nothing in D1 holds
-it.
+rows from its DID alone, and the settings page's "Refresh from the group host" runs it
+(`server/refresh.ts`), reading with the caller's own access and writing nothing at the host. A
+rebuild restores nothing for the visibility, because nothing in D1 holds it.
 
 ## Members-only events
 
@@ -180,7 +174,7 @@ Permissions are read from the members space once per request: every write a requ
 that request's reader, and the write gate keeps the caller's standing for it. Nothing is kept
 across requests. Another space's `access` record is read only for a write there that `permissions`
 does not already allow. A members space that cannot be read grants nothing. D1's `role_permissions`
-is a copy of atmo's bundles, which a repair can republish, and never decides what anyone may do: a
+is a copy of atmo's bundles, and never decides what anyone may do: a
 group with no permission records, or no members space, grants nothing to anyone but itself.
 
 A private group is invite-only. That is derived, not stored: whatever the profile's join policy or
