@@ -18,9 +18,7 @@
 //
 // Every request as the group goes through `groupClient`. The human's OAuth
 // session would author under the human's DID, and a repo write needs repo === the
-// authenticated DID. A group session manages its own tokens. The minted session
-// is used well inside its token's lifetime, so it is sent as it is and never
-// renewed.
+// authenticated DID. A group session manages its own tokens.
 import { Client } from '@atcute/client';
 import {
 	scope,
@@ -200,16 +198,7 @@ export interface LinkedGroupCredential {
 	session: Pick<OAuthSession, 'did' | 'handle'>;
 }
 
-/** The session `createAccount` returned. It lives only for the create request that
- *  minted the account, so it is never refreshed or stored. */
-export interface MintSessionCredential {
-	kind: 'mint-session';
-	service: string;
-	did: string;
-	accessJwt: string;
-}
-
-export type GroupCredential = LinkedGroupCredential | MintSessionCredential;
+export type GroupCredential = LinkedGroupCredential;
 
 /** `personDid`'s credential to write as `groupDid`, or null when they have not
  *  linked one. A session that cannot be restored is an error, not a null: they
@@ -295,9 +284,7 @@ export async function groupClient(
 	cred: GroupCredential,
 	expectDid: string
 ): Promise<GroupTransport> {
-	return cred.kind === 'linked'
-		? linkedClient(cred, expectDid)
-		: mintSessionClient(cred, expectDid);
+	return linkedClient(cred, expectDid);
 }
 
 /** The linked session refreshes its own token and retries once on a rejected one. */
@@ -312,20 +299,4 @@ function linkedClient(cred: LinkedGroupCredential, expectDid: string): GroupTran
 		return res;
 	};
 	return { client: new Client({ handler: handle }), handle, did: session.did };
-}
-
-/** The minted account's own session. A rejected token is the PDS's answer, not a
- *  reason to retry: there is no password to log in again with. */
-function mintSessionClient(cred: MintSessionCredential, expectDid: string): GroupTransport {
-	if (cred.did !== expectDid) {
-		throw new Error(`minted group session authenticates ${cred.did}, not ${expectDid}`);
-	}
-	const handle = async (pathname: string, init: RequestInit): Promise<Response> => {
-		const headers = new Headers(init.headers);
-		headers.set('authorization', `Bearer ${cred.accessJwt}`);
-		const res = await fetch(new URL(pathname, cred.service), { ...init, headers });
-		reportWrite('mint-session', expectDid, pathname, init, res.status);
-		return res;
-	};
-	return { client: new Client({ handler: handle }), handle, did: cred.did };
 }

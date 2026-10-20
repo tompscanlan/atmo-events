@@ -192,51 +192,38 @@ A pending join request is not published as a record.
 
 ## Hosting
 
-Creating a group creates a new `did:plc` account on a PDS the deployment chooses. The creator holds
-the account: they type its email and password on the create form, and the app passes the password
-to the PDS once and keeps neither. Password reset mail for the group goes to the creator. A PDS holds
-one account per email, so a creator with several groups plus-addresses their own address. The owner
-also receives the account's first PLC rotation key, so they can move the group to another host
-without the app.
+A group lives at an opensocial.group group host (`GROUP_HOST_URL`). Creating a group starts the
+app's OAuth flow at the host with `prompt=create` (`create-at-host.ts`): the host signs the creator
+in through their own PDS, makes the group's account, its meta and members spaces and their records
+(the `admin` and `member` roles, `permissions`, the creator's `admin` membership), and hands this
+app a group session the creator approved. No login, no recovery key and no member list passes
+through the app: the host keeps all three. Nobody holds a password for the group; the creator acts
+for it as themselves, as its first admin.
 
-The app writes as the group only through an OAuth session the owner grants: they sign in at the
-group's PDS as the group and approve this app (`server/group-link.ts`), and can revoke it there.
-The session asks only for the group's public-repo records, its own spaces and image uploads
-(`server/session.ts`). Until the owner links, every write as the group fails and the group
-page asks the owner to link. The one exception is the create itself: it sets the new group up with
-the session `createAccount` returns, inside that request, and keeps nothing.
+What the app adds after that is its own: the row, the calendar space (made through the host), the
+event bindings for the host's roles, the profile and rules as the form gave them, the meta space's
+`public`, and the declaration of a public group. Before it sends the creator to the host, the create
+runs its real D1 batch and rolls it back (`rehearseCreateGroup`), so schema drift fails before the
+host has made anything.
 
-The create flow (`create-group.ts`) refuses everything it can before it creates the DID, because a
-DID is permanent. The handle registration is the name reservation, so a taken name fails before
-anything is written. Before the mint, the create also runs its real D1 batch and rolls it back
-(`rehearseCreateGroup`), so schema drift fails before a permanent DID exists.
+The app writes as the group only through a group session the acting person linked from the host,
+cut to their roles (`server/group-link.ts`, `server/session.ts`). Someone who has linked none cannot
+write as the group through this app.
 
 ## Configuration
 
-Set on the web Worker. With `GROUP_PDS_SERVICE` unset, the app hides its groups link.
-`/groups/create` refuses to run when any of them is missing.
+Set on the web Worker. With `GROUP_HOST_URL` unset, the app hides its groups link.
 
-`GROUP_PDS_SERVICE` must be a PDS that serves Spaces (`com.atproto.simplespace.*`). A stock PDS does
-not, and it cannot be told apart from one that does until a create has made the account. On such a
-host the create stops after the account exists and says the PDS does not support Spaces.
+| name             | kind | meaning                                                        |
+| ---------------- | ---- | -------------------------------------------------------------- |
+| `GROUP_HOST_URL` | var  | the group host groups are made at, e.g. `https://host.example` |
 
-| name                    | kind   | meaning                                             |
-| ----------------------- | ------ | --------------------------------------------------- |
-| `GROUP_PDS_SERVICE`     | var    | PDS that new group accounts are created on          |
-| `GROUP_HANDLE_DOMAIN`   | var    | handle suffix for groups, e.g. `groups.example.com` |
-| `GROUP_PDS_INVITE_CODE` | secret | invite code, when the PDS requires one              |
-
-Linking also needs the deployment's own OAuth client metadata (`OAUTH_PUBLIC_URL` and
+Creating and linking also need the deployment's own OAuth client metadata (`OAUTH_PUBLIC_URL` and
 `CLIENT_ASSERTION_KEY`) and the `OAUTH_SESSIONS` store. A deployment without them cannot create a
 group: the create page shows no form and the server refuses.
 
-- Groups get their own handle domain, so a group handle never competes with a person's handle on
-  the same PDS.
-- Accounts that share an invite code share its use count, and deleting an account does not give a
-  use back.
-
-For a local run, set these in `apps/web/.env` with the app's other local settings. `.env.example`
-has them commented out.
+For a local run, set it in `apps/web/.env` with the app's other local settings. `.env.example` has
+it commented out.
 
 ## Checks against a live PDS
 

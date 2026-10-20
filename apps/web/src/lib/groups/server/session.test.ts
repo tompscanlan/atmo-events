@@ -1,16 +1,13 @@
-// Writing as a group: where the credential comes from, and the two transports
-// behind the one seam.
+// Writing as a group: where the credential comes from, and the transport behind
+// the one seam.
 //
 // The only lasting credentials are group sessions, one per person and group,
 // each linked by the person it is filed under. The store is read for real; the OAuth client that restores a session is the fixture's
 // (./__fixtures__/linked-group.ts), which sends each request through the global
 // `fetch` with its own token, so a request it served is one that carries it.
 //
-// The session `createAccount` returns serves only the create request that minted
-// the account. It is sent as it is: there is no password to log in again with
-// and no refresh to attempt, so a rejected token is the PDS's answer and comes
-// back untouched. A linked session renews its own tokens inside the OAuth client,
-// so the seam only checks whose session it is and reports each write.
+// A linked session renews its own tokens inside the OAuth client, so the seam
+// only checks whose session it is and reports each write.
 //
 // Every write logs which credential served it, never the token.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -33,8 +30,7 @@ import {
 	resolveGroupCredential,
 	STAND_IN_HOST_SCOPES,
 	standInHostCredential,
-	type LinkedGroupCredential,
-	type MintSessionCredential
+	type LinkedGroupCredential
 } from './session';
 import { GROUP_DECLARATION_COLLECTION } from '../declaration-record';
 import { GROUP_EVENT_COLLECTION } from '../ids';
@@ -44,7 +40,6 @@ const DID = 'did:plc:sessiontestgroup0000000';
 const OTHER = 'did:plc:someoneelseaaaaaaaaaaaaa';
 const PERSON = 'did:plc:sessionpersonaaaaaaaaaaa';
 const SECOND = 'did:plc:secondpersonaaaaaaaaaaaa';
-const TOKEN = 'mint-access-token';
 const PATH = '/xrpc/com.atproto.space.getRecord?space=s&repo=r';
 const WRITE = '/xrpc/com.atproto.repo.createRecord';
 
@@ -54,13 +49,6 @@ function kv(keys: string[]): KVNamespace {
 		get: async (key: string) => (keys.includes(key) ? '{}' : null)
 	} as unknown as KVNamespace;
 }
-
-const minted: MintSessionCredential = {
-	kind: 'mint-session',
-	service: 'https://pds.stub.test',
-	did: DID,
-	accessJwt: TOKEN
-};
 
 let calls: { url: URL; token: string | null }[];
 let reply: () => Response;
@@ -85,51 +73,6 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
 	unlinkAllGroups();
-});
-
-describe('groupClient: the minted session', () => {
-	it('sends its access token to the service it was minted on', async () => {
-		const { handle } = await groupClient(minted, DID);
-
-		const res = await handle(PATH, { method: 'GET' });
-
-		expect(res.status).toBe(200);
-		expect(calls).toHaveLength(1);
-		expect(calls[0].url.origin).toBe('https://pds.stub.test');
-		expect(calls[0].url.pathname).toBe('/xrpc/com.atproto.space.getRecord');
-		expect(calls[0].token).toBe(TOKEN);
-	});
-
-	it('refuses a session minted for another account, before any request', async () => {
-		await expect(groupClient({ ...minted, did: OTHER }, DID)).rejects.toThrow(
-			/authenticates .*someoneelse/
-		);
-		expect(calls).toEqual([]);
-	});
-
-	// No refreshSession and no createSession: nothing here can renew it.
-	it('returns an expired token untouched, with no retry and no login', async () => {
-		reply = () => Response.json({ error: 'ExpiredToken' }, { status: 400 });
-		const { handle } = await groupClient(minted, DID);
-
-		const res = await handle(PATH, { method: 'GET' });
-
-		expect(res.status).toBe(400);
-		expect(((await res.json()) as { error: string }).error).toBe('ExpiredToken');
-		expect(calls.map((c) => c.url.pathname)).toEqual(['/xrpc/com.atproto.space.getRecord']);
-	});
-
-	it('logs each write as served by the minted session, never the token, and no read', async () => {
-		const { handle } = await groupClient(minted, DID);
-
-		await handle(PATH, { method: 'GET' });
-		await handle(WRITE, { method: 'POST', body: '{}' });
-
-		expect(logged).toEqual([
-			`[group-session] ${DID} com.atproto.repo.createRecord via mint-session: 200`
-		]);
-		expect(logged.join('\n')).not.toContain(TOKEN);
-	});
 });
 
 describe('groupClient: the linked session', () => {

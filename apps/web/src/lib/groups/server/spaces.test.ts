@@ -80,8 +80,7 @@ const writes = () => sent.filter((s) => !s.nsid.startsWith('com.atproto.server.'
 describe('provisionGroupSpaces', () => {
 	// Every space starts member-list, a public group's about space included: it
 	// holds no `access` record yet, and a space is never more open than its
-	// record says, so it opens only once one says public (the create does that,
-	// ../create-group.test.ts). The space types are written out, so a rename of a
+	// record says, so it opens only once one says public. The space types are written out, so a rename of a
 	// constant cannot pass by agreeing with itself: the about and members types
 	// are the standard's, and the calendar type is ours, which a calendar space
 	// URI carries, so a rename strands every record already written under the

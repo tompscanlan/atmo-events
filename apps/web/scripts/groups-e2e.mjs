@@ -1,48 +1,53 @@
 #!/usr/bin/env node
 /**
- * End-to-end test of groups against a live PDS that supports Spaces.
+ * End-to-end test of groups against a live group host and the PDSes that serve
+ * its spaces, on the devnet.
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 53 numbered checks (1, 4 to 6, 9 to 24, plus 5a, 10b, 13b to 13v, 15b,
- * 18b, 18c, 18d, 18e and 20b to 20f), prints one PASS or FAIL line each, and a
- * clean run ends with `SUMMARY: 53 passed, 0 failed`; against a group host, 51,
- * since checks 14 and 23 run against the stand-in only. Setup steps print as notes
- * and are not counted. In order: the app's own create, which mints a new group
- * account for the run, with its seeded roles and member lists (1), events
- * written as the group DID and the edit gate (4-6), a cover image uploaded into
- * the group's repo (9), the profile,
+ * It runs 52 numbered checks (1, 4 to 6, 9 to 13, 15 to 22 and 24, plus 5a, 10b,
+ * 13b to 13v, 15b, 17b, 18b, 18c, 18d, 18e and 20b to 20f), prints one PASS or
+ * FAIL line each, and a clean run ends with `SUMMARY: 52 passed, 0 failed`. Setup
+ * steps print as notes and are not counted. In order: the group made at the
+ * host's own sign-up and the app's set-up after it, with its seeded bundles and
+ * the creator's membership record (1), events written as the group DID and the
+ * edit gate (4-6), a cover image uploaded into the group's repo (9), the profile,
  * rules and access record in the about space (10-12), the roster, the index of
- * the group's three spaces and the authz config as records in the members
- * space, with the calendar space's read policy, access record and member list
- * (13-18), the members-only slice the events tab reads from the calendar
- * space for a member, a non-member, an anonymous visitor and an unlinked group
- * (13d-13h), members-only events written by the app: into the calendar space and
- * nowhere else, edited and deleted there, never moved to or from the public
- * repo, refused for a group without the space, with no field saying who may
- * read them, and with an image kept in the space (13i-13p), that event in a
- * member's slice without its image while the stored record keeps it (13q), the
- * same event read by its key as its page reads it, whole for a member and not
- * at all for a non-member or an anonymous visitor (13r), the same event as its
- * edit page reads it for a manager, whole and with no key naming the space,
- * saved back into the space with its image and no field added, and refused
- * before any read for a member who may not edit and a non-member (13s), a
- * member's RSVP to that seed written from their own session into the calendar
- * space at the event's key, read back by them and by the group, and cancelled
- * (13t), no RSVP request from a non-member or from a member whose PDS serves no
- * spaces, who is sent to re-authorize and told only after asking that their PDS
- * can't do it (13u), that RSVP naming the seed's current cid as the group reads
- * it, and one from a page that showed another version writing nothing (13v),
- * a join request that writes nothing and is refused a members space
- * credential until approved, then confirmed at sign-in, the member's own
- * acceptance deleted at leave, and written at a sign-in after a direct add
- * (18b-18d), a member whose PDS serves no spaces
- * (18e), the discovery declaration (19-20), the group flipped private, public,
- * private and public again by the settings save, with the PDS never more open
- * than the access record and each space credential issued exactly where the
- * caller's roles or a public policy allow (20b-20f), the events index (21-22), a rebuild of the
- * whole group from its DID (23), and, once cleanup is done, that no request
- * left this machine (24).
+ * the group's spaces and the authz config as records in the members space, with
+ * the calendar space's access record (13-18), the members-only slice the events
+ * tab reads from the calendar space for a member, a non-member, an anonymous
+ * visitor and an unlinked group (13d-13h), members-only events written by the
+ * app: into the calendar space and nowhere else, edited and deleted there, never
+ * moved to or from the public repo, refused for a group without the space, with
+ * no field saying who may read them, and with an image kept in the space
+ * (13i-13p), that event in a member's slice without its image while the stored
+ * record keeps it (13q), the same event read by its key as its page reads it,
+ * whole for a member and not at all for a non-member or an anonymous visitor
+ * (13r), the same event as its edit page reads it for a manager, whole and with
+ * no key naming the space, saved back into the space with its image and no field
+ * added, and refused before any read for a member who may not edit and a
+ * non-member (13s), a member's RSVP to that seed written from their own session
+ * into the calendar space at the event's key, read back by them and by the group,
+ * and cancelled (13t), no RSVP request from a non-member or from a member whose
+ * PDS serves no spaces, who is sent to re-authorize and told only after asking
+ * that their PDS can't do it (13u), that RSVP naming the seed's current cid as
+ * the group reads it, and one from a page that showed another version writing
+ * nothing (13v), a member's writes refused by the host once demoted (17b), a join
+ * request that writes nothing and is refused a members space credential until
+ * approved, then confirmed at sign-in, the member's own acceptance deleted at
+ * leave, and written at a sign-in after a direct add (18b-18d), a member whose
+ * PDS serves no spaces (18e), the discovery declaration (19-20), the group
+ * flipped private, public, private and public again by the settings save, with
+ * the host never more open than the access record and each space credential
+ * issued exactly where the caller's roles or a public policy allow (20b-20f), the
+ * events index (21-22), and, once cleanup is done, that no request left this
+ * machine (24).
+ *
+ * There is no check 14 or 23. Check 14 read a space's own member list, which a
+ * host does not keep. Check 23, a rebuild of the whole group from its DID, waits
+ * on a decision: a host group's records name no owner, and who should own a row
+ * rebuilt from them is not decided yet (TS, 2026-10-15). Its rebuild of the
+ * roster alone (check 16) runs.
  *
  * Not covered: a member reading a private group's profile with the credential
  * the PDS issues them (20d asks for the credential only).
@@ -54,85 +59,72 @@
  * because both can hang in a dev container. D1 lives in a temporary directory
  * that is deleted on exit, so every row a check reads was written by this run.
  *
- * Writes are confirmed by reading them back from the PDS, never from the
- * writer's return value: events and the declaration with unauthenticated
+ * Writes are confirmed by reading them back, never from the writer's return
+ * value: events and the declaration with unauthenticated
  * `com.atproto.repo.getRecord` and `listRecords`, and space records with the
- * group's own session.
+ * creator's group session.
+ *
+ * The host makes the group at its own sign-up (`prompt=create`), and check 1 runs
+ * the app's set-up after it on the creator's new session, as the create's
+ * callback does. There is no password for the group and none this run holds for
+ * a person: each signs in for real, through a loopback OAuth client and a
+ * Chromium on the devnet (scripts/groups-e2e.signin.mjs), their own password
+ * typed only into their own PDS's page. The owner and the admin each hold a group
+ * session from the host, cut to their roles, and the owner, the admin and the
+ * non-member a sign-in at their own PDS with the scope the app asks for. The
+ * worker reaches those sessions through a bridge on this machine
+ * (scripts/groups-e2e.oauth.ts, aliased over the OAuth client), and the driver's
+ * own read-backs go out on them too. A host keeps no member lists and
+ * reconfigures no space through simplespace, and its roles are `admin` and
+ * `member`. The no-spaces member never signs in: their PDS would refuse the
+ * group's grant, so they are added and removed by the owner rather than asking
+ * and leaving; a stand-in session answers the scope a stock PDS grants and
+ * refuses any request, so check 18e can show the app sent none. The app's own
+ * write gate asks nothing for a host group, so the refusals are the host's: the
+ * non-member is refused a group session (check 6), and the demoted admin's writes
+ * go out on his own and are refused there (17b), save one that would first
+ * change only this site's copy of the group, which the app still refuses. Each
+ * host refusal is read back from the host's own record of what it refused
+ * (`/spike/state`).
  *
  * Environment:
- *   E2E_PDS            the devnet PDS that serves spaces, where the run mints its group
- *   E2E_HANDLE_DOMAIN  the domain the group's handle is minted under (GROUP_HANDLE_DOMAIN)
- *   E2E_INVITE_CODE    an invite code for E2E_PDS, one use per run (GROUP_PDS_INVITE_CODE), or
- *   E2E_CREDENTIALS    an env file that holds E2E_INVITE_CODE and the three passwords below
- *   E2E_OWNER_DID      the person who owns the group
- *   E2E_OWNER_PASSWORD their password, for the sign-in they read with
+ *   E2E_GROUP_HOST     required: the group host, e.g. https://grouphost.devnet.internal
+ *   E2E_PDS            the devnet PDS that serves spaces, where the owner's and the
+ *                      admin's own repos are read
+ *   E2E_PLAYWRIGHT     the playwright package the sign-ins drive Chromium with
+ *   E2E_OWNER_DID      the person who makes the group at the host
  *   E2E_ADMIN_DID      a person who joins and is promoted to admin, on E2E_PDS
- *   E2E_ADMIN_PASSWORD their password, for their acceptance (checks 18b-18d) and their reads
  *   E2E_OUTSIDER_DID   a person who is never a member
- *   E2E_OUTSIDER_PASSWORD their password, for the sign-in they read with
+ *   E2E_<OWNER|ADMIN|OUTSIDER>_HANDLE and _PASSWORD
+ *                      their handles and passwords, for their own PDS's sign-in page,
+ *                      set directly or in
+ *   E2E_CREDENTIALS    an env file that holds them
  *   E2E_NOSPACES_DID   a person on a devnet PDS that serves no spaces (not E2E_PDS), for
- *                      checks 13u and 18e; no password, because nothing is written to
- *                      their repo
+ *                      checks 13u and 18e; no password, because they never sign in
  *   E2E_PLC_URL        required: devnet's PLC directory, the only place a DID is
  *                      resolved, for a network no relay crawls
- * The run is for devnet only, and no request leaves this machine. E2E_PDS and
- * E2E_PLC_URL must be loopback URLs, or devnet names this run resolves to
- * 127.0.0.1 or ::1 alone (the devnet's scripts/https-run). Outside https-run,
- * checking such a name is a lookup through the system resolver, so a refused run
- * may first send a DNS query for it, and nothing else. Before any login the run
- * asks devnet's PLC for every fixture DID and stops on one it lacks or one hosted
- * off this machine, printing a REFUSED line for each. Then every request is
- * counted: the worker's pass a Miniflare outboundService and this driver's own
- * fetch is wrapped. A request to this machine goes through; any other is refused,
- * never sent, and printed as `REFUSED <driver|worker> <METHOD> <URL without its
- * query>`.
+ * The run is for devnet only, and no request leaves this machine. E2E_GROUP_HOST,
+ * E2E_PDS and E2E_PLC_URL must be loopback URLs, or devnet names this run
+ * resolves to 127.0.0.1 or ::1 alone (the devnet's scripts/https-run). Outside
+ * https-run, checking such a name is a lookup through the system resolver, so a
+ * refused run may first send a DNS query for it, and nothing else. Before any
+ * sign-in the run asks devnet's PLC for every fixture DID and stops on one it
+ * lacks or one hosted off this machine, printing a REFUSED line for each. Then
+ * every request is counted: the worker's pass a Miniflare outboundService and
+ * this driver's own fetch is wrapped. A request to this machine goes through; any
+ * other is refused, never sent, and printed as `REFUSED <driver|worker> <METHOD>
+ * <URL without its query>`.
  * Check 24 reports the count.
- * Each run mints its own group, so nothing an earlier run wrote can stand in
- * for this run's writes, and each run leaves one did:plc behind on the devnet.
- * The app writes as a group only through the session its owner linked, and a
- * real link needs the deployment's OAuth client key. So the run links the group
- * with a stand-in (scripts/groups-e2e.oauth.ts, aliased over the OAuth client):
- * its session logs in with the password the run's create set, and every write
- * still goes through the app's linked branch. The password is made by the run
- * and never printed. The scope a real link carries is not exercised here; a walk through a deployed site with a
- * linked group covers it. The admin's acceptance and RSVP are written the same way,
- * through a stand-in for their own session that logs in with E2E_ADMIN_PASSWORD. The
- * no-spaces member's stand-in never logs in: it answers the scope a stock PDS
- * grants and refuses any request, so check 18e can show the app sent none.
- *
- * A run against a real group host (E2E_GROUP_HOST): the host makes the group at
- * its own sign-up (`prompt=create`), and check 1 runs the app's set-up after it on
- * the creator's new session, as the create's callback does. There is no password
- * for the group and none for a person: each signs in for real, through a loopback
- * OAuth client and a Chromium on the devnet (scripts/groups-e2e.signin.mjs), their
- * own password typed only into their own PDS's page. The owner and the admin each
- * hold a group session from the host, cut to their roles, and the owner, the admin
- * and the non-member a sign-in at their own PDS with the scope the app asks for.
- * The worker reaches those sessions through a bridge on this machine, and the
- * driver's own read-backs go out on them too. A host keeps no member lists and
- * reconfigures no space through simplespace, and its roles are `admin` and
- * `member`, so the checks that read the stand-in's lists or read policies run in
- * their host form (named "at the host" in each label), and check 14, which reads
- * nothing else, runs against the stand-in only. So does check 23 for now: a host
- * group's records name no owner, and who should own a row rebuilt from them is
- * not decided yet. The no-spaces member never signs
- * in: their PDS would refuse the group's grant, so at the host they are added and
- * removed by the owner rather than asking and leaving. The app's own write gate
- * asks nothing for a host group, so the refusals are the host's: the non-member
- * is refused a group session (check 6), and the demoted admin's writes go out on
- * his own and are refused there (17b), save one that would first change only this
- * site's copy of the group, which the app still refuses. Each host refusal is
- * read back from the host's own record of what it refused (`/spike/state`).
- *   E2E_GROUP_HOST     the group host, e.g. https://grouphost.devnet.internal
- *   E2E_PLAYWRIGHT     the playwright package the sign-ins drive Chromium with
- *   E2E_<OWNER|ADMIN|OUTSIDER>_HANDLE  their handles, for their own PDS's page (in
- *                      E2E_CREDENTIALS, with the passwords)
+ * Each run makes its own group at the host, so nothing an earlier run wrote can
+ * stand in for this run's writes, and each run leaves one did:plc behind on the
+ * devnet.
  *
  * Cleanup runs in the `finally`. The group is left behind, so it undoes only
  * what shows outside the group: it deletes the public events, the admin's RSVP
  * to the seed should 13t or 13v stop before its cancel, and the admin's
  * acceptance should 18b-18d stop before they leave, and withdraws the
- * declaration. Then it re-reads each one and prints WARN for anything left.
+ * declaration. Then it re-reads each one and prints WARN for anything left, and
+ * signs out every real session.
  */
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -170,19 +162,15 @@ function required(name) {
 }
 
 const PDS = required('E2E_PDS');
-/** A run against a real group host. Unset, the stand-in host on E2E_PDS. */
-const GROUP_HOST = process.env.E2E_GROUP_HOST?.trim() || null;
-const AT_HOST = GROUP_HOST !== null;
-/** Where the group's repo and spaces live. */
-const GROUP_PDS = GROUP_HOST ?? PDS;
-const PLAYWRIGHT = AT_HOST ? required('E2E_PLAYWRIGHT') : null;
+/** The group host the run makes its group at. */
+const GROUP_HOST = required('E2E_GROUP_HOST');
+/** Where the group's repo and spaces live: the host. */
+const GROUP_PDS = GROUP_HOST;
+const PLAYWRIGHT = required('E2E_PLAYWRIGHT');
 /** Devnet's PLC directory. scripts/groups-e2e.identity-resolver.ts asks it and
  *  nothing else, so a DID it lacks fails to resolve. */
 const PLC_URL = required('E2E_PLC_URL');
 
-/** The domain the run's group is minted under, as GROUP_HANDLE_DOMAIN is for
- *  the app. */
-const HANDLE_DOMAIN = required('E2E_HANDLE_DOMAIN');
 /** The owner, a member promoted to admin, and a non-member. The run writes to one
  *  of their repos only: the admin's acceptance, in the members space, which it
  *  deletes again. */
@@ -192,53 +180,37 @@ const MALLORY = required('E2E_OUTSIDER_DID');
 /** Use case step 4's member, on a PDS that serves no spaces. */
 const CAROL = required('E2E_NOSPACES_DID');
 
-/** The about space's read policies. Expected values are written out, not
- *  imported from the app, so a check cannot pass just by agreeing with the code
- *  under test. The same holds for DECLARATION_COLLECTION and SEEDED_BUNDLE_SIZES. */
+/** The spaces' read policy. Expected values are written out, not imported from
+ *  the app, so a check cannot pass just by agreeing with the code under test.
+ *  The same holds for DECLARATION_COLLECTION and SEEDED_BUNDLE_SIZES. */
 const READ_POLICY = {
-	public: 'com.atproto.simplespace.defs#publicPolicy',
-	private: 'com.atproto.simplespace.defs#memberListPolicy',
 	/** Every space at a group host: the PDS asks the host who may read. */
 	host: 'com.atproto.simplespace.defs#managingAppPolicy'
 };
 
-/** The roles a group declares: the app's three on the stand-in, the proposal's two
- *  at a host, where the creator is an `admin`. */
-const GROUP_ROLES = AT_HOST ? ['admin', 'member'] : ['owner', 'admin', 'member'];
-const CREATOR_ROLE = AT_HOST ? 'admin' : 'owner';
+/** The roles a group declares at a host, the proposal's two, where the creator
+ *  is an `admin`. */
+const GROUP_ROLES = ['admin', 'member'];
+const CREATOR_ROLE = 'admin';
 
 /** The visibility chosen at create. D1 does not store it, so each step that
  *  needs it is passed it. */
 const CREATE_VISIBILITY = 'public';
 
 /** The run's group label: new each run, and within the PDS's 18 characters. */
-const GROUP_LABEL = `e2e${AT_HOST ? 'h' : '-'}${Date.now().toString(36)}`;
-/** Check 1's create, as the create form sends it. The account's password is the
- *  run's own, made here and never printed. */
+const GROUP_LABEL = `e2eh${Date.now().toString(36)}`;
+/** Check 1's create, as the form carries it through the host's sign-up: the
+ *  address is picked at the host and no login is made. */
 const CREATE_DATA = {
 	name: 'groups e2e',
-	label: GROUP_LABEL,
 	description: 'A group made by apps/web/scripts/groups-e2e.mjs for one run.',
 	visibility: CREATE_VISIBILITY,
 	requireApproval: true,
 	locationName: 'e2e group place',
-	rules: 'Be kind\nNo spam\nStay on topic',
-	email: `groups-e2e+${GROUP_LABEL}@example.com`,
-	password: randomBytes(24).toString('base64url')
+	rules: 'Be kind\nNo spam\nStay on topic'
 };
 
-/** Check 1's create at a host, as the form carries it through the host's sign-up:
- *  the address is picked at the host and no login is made. */
-const HOST_CREATE_FIELDS = {
-	name: CREATE_DATA.name,
-	description: CREATE_DATA.description,
-	visibility: CREATE_DATA.visibility,
-	requireApproval: CREATE_DATA.requireApproval,
-	locationName: CREATE_DATA.locationName,
-	rules: CREATE_DATA.rules
-};
-
-/** The run's group, minted by check 1 with the app's own create. Each run leaves
+/** The run's group, made by check 1 at the host. Each run leaves
  *  one did:plc behind on the devnet's PLC, which costs nothing there, and starts
  *  from an account no earlier run has touched. Set by `useGroup`. */
 let GROUP_DID;
@@ -276,7 +248,7 @@ const NO_ACCESS_NOTICE =
  *  that reads it writes nothing, so the host never makes it. */
 let NEVER_CREATED_SPACE;
 
-/** Points the run's written-out URIs at the group check 1 minted. */
+/** Points the run's written-out URIs at the group check 1 made. */
 function useGroup(did, handle) {
 	GROUP_DID = did;
 	GROUP_HANDLE = handle;
@@ -327,34 +299,6 @@ async function loadSecret(name) {
 	throw new Error(`no ${name} in ${CREDENTIALS_PATH}`);
 }
 
-/** Logs in to the PDS, for the driver's direct reads and writes. Returns the
- *  session's DID and token. */
-async function logIn(identifier, password) {
-	const { status, body } = await pdsPost('com.atproto.server.createSession', {
-		identifier,
-		password
-	});
-	if (status !== 200) {
-		const hint = status === 401 ? ' (the password is stale)' : '';
-		throw new Error(`createSession ${identifier} failed: ${status} ${body.error ?? ''}${hint}`);
-	}
-	return { did: body.did, token: body.accessJwt };
-}
-
-/** Logs in as the run's group, with the password the create set. The group's
- *  writes still go through the app's credential path inside the Worker. */
-async function logInAsGroup(password) {
-	return (await logIn(GROUP_DID, password)).token;
-}
-
-/** Fails early if the admin's password is stale. Returns their session token,
- *  for reading and deleting their own acceptance without the app's code. */
-async function checkAdminAccount(password) {
-	const { did, token } = await logIn(BOB, password);
-	if (did !== BOB) throw new Error(`the admin login is ${did}, not ${BOB}`);
-	return token;
-}
-
 let miniflare;
 
 /** Runs one operation on the real modules inside workerd. A refusal comes back
@@ -374,15 +318,12 @@ async function call(op, args = {}) {
 /** `call`, for the ops whose failure stops the run. */
 async function must(op, args = {}) {
 	const body = await call(op, args);
-	if (!body.ok) {
-		const stale = /\(401\)/.test(body.error.message) ? ' (the fixture password is stale)' : '';
-		throw new Error(`${op} failed: ${body.error.name}: ${body.error.message}${stale}`);
-	}
+	if (!body.ok) throw new Error(`${op} failed: ${body.error.name}: ${body.error.message}`);
 	return body.value;
 }
 
 /** Bundles the Worker (./groups-e2e.build.mjs) and starts it in Miniflare. */
-async function startWorker(stateDir, adminPassword, inviteCode, passwords, bridgeUrl = null) {
+async function startWorker(stateDir, bridgeUrl) {
 	const started = Date.now();
 	const outDir = join(stateDir, 'bundle');
 	await bundleWorker(outDir, PLC_URL);
@@ -411,20 +352,13 @@ async function startWorker(stateDir, adminPassword, inviteCode, passwords, bridg
 		d1Databases: { DB: 'groups-e2e' },
 		kvNamespaces: ['OAUTH_SESSIONS'],
 		bindings: {
-			// What the app's create mints with, as on a deployment.
-			GROUP_PDS_SERVICE: PDS,
-			GROUP_HANDLE_DOMAIN: HANDLE_DOMAIN,
-			GROUP_PDS_INVITE_CODE: inviteCode,
 			// Only for the create's check that linking is configured. Nothing is
-			// fetched from it: the stand-in links the group.
+			// fetched from it: the driver's sign-ins link the group.
 			OAUTH_PUBLIC_URL: ORIGIN,
-			E2E_GROUP_SERVICE: PDS,
-			E2E_ADMIN_PASSWORD: adminPassword,
-			// Each person's login by DID, for the stand-in of the sign-in they read
-			// with: every page read goes through the reader's own access.
-			E2E_PASSWORDS: JSON.stringify(passwords),
-			// A host run: the host, and the driver's bridge to every real session.
-			...(AT_HOST ? { GROUP_HOST_URL: GROUP_HOST, E2E_BRIDGE: bridgeUrl } : {})
+			// The host, as on a deployment, and the driver's bridge to every real
+			// session.
+			GROUP_HOST_URL: GROUP_HOST,
+			E2E_BRIDGE: bridgeUrl
 		},
 		defaultPersistRoot: stateDir
 	});
@@ -451,28 +385,20 @@ function notFound(read) {
 function grantsEveryRoleRead(value, spaceUri) {
 	const spaceType = spaceUri?.split('/')[4];
 	if (!value || 'readRoles' in value) return false;
-	if (AT_HOST) {
-		// The host writes the meta and members records at create, each role's grant
-		// in its own words (admin's covers every action), so each role must read.
-		const grants = value.grants ?? [];
-		const roles = grants.map((grant) => grant.role).sort();
-		return (
-			JSON.stringify(roles) === JSON.stringify([...GROUP_ROLES].sort()) &&
-			grants.every((grant) => (grant.scopes ?? []).some((s) => readsSpace(s, spaceType)))
-		);
-	}
-	const expected = GROUP_ROLES.map((role) => ({
-		role,
-		scopes: [`space:${spaceType}?action=read`]
-	}));
-	return JSON.stringify(value.grants) === JSON.stringify(expected);
+	// The host writes the meta and members records at create, each role's grant
+	// in its own words (admin's covers every action), so each role must read.
+	const grants = value.grants ?? [];
+	const roles = grants.map((grant) => grant.role).sort();
+	return (
+		JSON.stringify(roles) === JSON.stringify([...GROUP_ROLES].sort()) &&
+		grants.every((grant) => (grant.scopes ?? []).some((s) => readsSpace(s, spaceType)))
+	);
 }
 
 /** Whether an `access` record keeps its space closed. A host writes the meta and
- *  members records with no `public` at all, which is not public; the app always
- *  writes it. */
+ *  members records with no `public` at all, which is not public. */
 function notPublic(value) {
-	return AT_HOST ? !!value && value.public !== true : value?.public === false;
+	return !!value && value.public !== true;
 }
 
 /** Whether a `space:` scope reads spaces of `type`: it names no action, which is
@@ -493,13 +419,11 @@ function refusesSpaceRead(read) {
 	return refused && !spacesAnswer.includes(read.error);
 }
 
-/** One request on `auth`: a bearer token at E2E_PDS (the stand-in's password
- *  sessions), or a real OAuth session (a host run), which sends it to its own
- *  service. With no `auth`, an anonymous request to `base`. */
+/** One request on `auth`, a real OAuth session, which sends it to its own
+ *  service. With no `auth`, an anonymous request to `url`. */
 function send(url, init, auth) {
-	if (auth && typeof auth === 'object') return auth.handle(url.pathname + url.search, init);
-	const headers = { ...init.headers, ...(auth ? { authorization: `Bearer ${auth}` } : {}) };
-	return fetch(url, { ...init, headers });
+	if (auth) return auth.handle(url.pathname + url.search, init);
+	return fetch(url, init);
 }
 
 /** One XRPC query, as `send` takes `token`. Answers the status and the JSON body,
@@ -717,13 +641,6 @@ async function spaceReadPolicy(token, space) {
 	return { status, readPolicy: body.readPolicy?.$type ?? null, error: body.error };
 }
 
-/** The PDS's own member list for a space, separate from our `membership`
- *  records. `listMembers` is owner-only, and the group is the owner. */
-async function spaceMemberList(token, space) {
-	const { status, body } = await pdsGet('com.atproto.simplespace.listMembers', { space }, token);
-	return { status, members: body.members ?? [], error: body.error };
-}
-
 /** The `at://<authority>/...` a record actually landed under. */
 function authorityOf(uri) {
 	return String(uri).slice('at://'.length).split('/')[0];
@@ -869,7 +786,7 @@ async function refuseOffMachine() {
 	const settings = {
 		E2E_PDS: PDS,
 		E2E_PLC_URL: PLC_URL,
-		...(AT_HOST ? { E2E_GROUP_HOST: GROUP_HOST } : {})
+		E2E_GROUP_HOST: GROUP_HOST
 	};
 	const asked = Object.values(settings).filter((url) => !isLoopback(url) && URL.canParse(url));
 	const hostnames = asked.map((u) => new URL(u).hostname).filter(Boolean);
@@ -902,11 +819,7 @@ async function main() {
 	console.log('groups e2e');
 	console.log(`  pds     ${PDS}`);
 	console.log(`  plc     ${PLC_URL} (devnet only)`);
-	console.log(
-		AT_HOST
-			? `  host    ${GROUP_HOST}, which makes the group ${GROUP_LABEL} for this run`
-			: `  group   ${GROUP_LABEL}.${HANDLE_DOMAIN}, minted by this run`
-	);
+	console.log(`  host    ${GROUP_HOST}, which makes the group ${GROUP_LABEL} for this run`);
 	console.log(`  humans  owner ${ALICE}, admin ${BOB}, non-member ${MALLORY}`);
 	console.log(`          no-spaces member ${CAROL}`);
 	console.log('');
@@ -914,35 +827,33 @@ async function main() {
 	await refuseOffMachine();
 	ledger.startRun();
 
-	const { path, value: adminPassword } = await loadSecret('E2E_ADMIN_PASSWORD');
+	const { path } = await loadSecret('E2E_ADMIN_PASSWORD');
 	note(`fixture credentials loaded from ${path}`);
 	/** The admin's own session, for reading and deleting their own records without
-	 *  the app's code: a password login on the stand-in, their real sign-in at a host. */
-	let bobToken = AT_HOST ? null : await checkAdminAccount(adminPassword);
-	if (!AT_HOST) note(`${BOB} authenticates for their own acceptance`);
-	const inviteCode = AT_HOST ? '' : (await loadSecret('E2E_INVITE_CODE')).value;
+	 *  the app's code: their real sign-in, made once the group exists. */
+	let bobToken = null;
 
-	/** A host run's people, as their own PDS's sign-in page asks for them. */
+	/** The run's people, as their own PDS's sign-in page asks for them. */
 	const person = async (did, prefix) => ({
 		did,
 		handle: (await loadSecret(`${prefix}_HANDLE`)).value,
 		password: (await loadSecret(`${prefix}_PASSWORD`)).value
 	});
-	const people = AT_HOST
-		? {
-				owner: await person(ALICE, 'E2E_OWNER'),
-				admin: await person(BOB, 'E2E_ADMIN'),
-				outsider: await person(MALLORY, 'E2E_OUTSIDER')
-			}
-		: null;
+	const people = {
+		owner: await person(ALICE, 'E2E_OWNER'),
+		admin: await person(BOB, 'E2E_ADMIN'),
+		outsider: await person(MALLORY, 'E2E_OUTSIDER')
+	};
 	// Imported only now, after the fetch guard: the sign-ins' requests are counted.
-	const { createSignIns, startBridge } = AT_HOST
-		? await import('./groups-e2e.signin.mjs')
-		: { createSignIns: null, startBridge: null };
-	const bridge = AT_HOST ? await startBridge() : null;
-	const signIns = AT_HOST
-		? await createSignIns({ plcUrl: PLC_URL, fetch, ledger, playwright: PLAYWRIGHT, log: note })
-		: null;
+	const { createSignIns, startBridge } = await import('./groups-e2e.signin.mjs');
+	const bridge = await startBridge();
+	const signIns = await createSignIns({
+		plcUrl: PLC_URL,
+		fetch,
+		ledger,
+		playwright: PLAYWRIGHT,
+		log: note
+	});
 	/** Every real session the run holds, signed out at the end. */
 	const realSessions = [];
 
@@ -967,31 +878,18 @@ async function main() {
 	/** Set while the admin's RSVP to the seed may exist, so the `finally` deletes it. */
 	let rsvpWritten = false;
 	try {
-		const passwords = AT_HOST
-			? {}
-			: {
-					[ALICE]: (await loadSecret('E2E_OWNER_PASSWORD')).value,
-					[BOB]: adminPassword,
-					[MALLORY]: (await loadSecret('E2E_OUTSIDER_PASSWORD')).value
-				};
-		worker = await startWorker(
-			stateDir,
-			AT_HOST ? '' : adminPassword,
-			inviteCode,
-			passwords,
-			bridge?.url ?? null
-		);
+		worker = await startWorker(stateDir, bridge.url);
 		note(`worker bundled and ready in ${worker.seconds}s (workerd, empty D1 under ${stateDir})`);
 		console.log('');
 
 		// 1. create ------------------------------------------------------------
-		// The create form's own path: it mints the account, makes the three spaces,
-		// writes the profile, rules, access records, space index, the owner's
-		// membership and the authz config, lists the owner, and declares the
-		// public group. The checks after this one read back what it wrote.
-		if (AT_HOST) {
-			// At a host: its sign-up makes the group and hands the creator's session
-			// back, then the app's set-up runs on that session, as the callback runs it.
+		// The create form's own path: the host's sign-up makes the group, its meta
+		// and members spaces, their records and the creator's membership, and hands
+		// the creator's session back. Then the app's set-up runs on that session, as
+		// the callback runs it: the row, the calendar space, the event bindings, the
+		// profile and rules, and the declaration of the public group. The checks
+		// after this one read back what they wrote.
+		{
 			const { link } = await must('scopes', {});
 			const made = await signIns.group(people.owner, {
 				create: { label: GROUP_LABEL },
@@ -1006,7 +904,7 @@ async function main() {
 			const setUp = await must('setUpHostGroup', {
 				groupDid: GROUP_DID,
 				ownerDid: ALICE,
-				fields: HOST_CREATE_FIELDS
+				fields: CREATE_DATA
 			});
 			declared = true;
 			if (!setUp.ok) throw new Error(`the set-up failed: ${setUp.error}`);
@@ -1067,57 +965,10 @@ async function main() {
 				bridge.setOwn(who.did, own.session, own.scope);
 				if (who.did === BOB) bobToken = own.session;
 			}
-		} else {
-			const minted = await must('runCreateGroup', { ownerDid: ALICE, data: CREATE_DATA });
-			if (minted.groupDid) useGroup(minted.groupDid, minted.handle);
-			declared = minted.groupDid !== null;
-			if (!minted.ok) throw new Error(`the create failed: ${minted.error}`);
-			groupToken = await logInAsGroup(CREATE_DATA.password);
-			await must('linkGroup', {
-				groupDid: GROUP_DID,
-				personDid: ALICE,
-				password: CREATE_DATA.password
-			});
-			note(`${GROUP_HANDLE} is ${GROUP_DID}, linked by ${ALICE} through the stand-in session`);
-			group = await must('groupByDid', { groupDid: GROUP_DID });
-			membersSpaceUri = group.members_space_uri;
-			aboutSpaceUri = group.about_space_uri;
-			calendarSpaceUri = CALENDAR_SPACE_URI;
-			const members = await op('listMembers');
-			const bundles = await op('rolePermissions');
-			const sizes = Object.fromEntries(Object.entries(bundles).map(([r, p]) => [r, p.length]));
-			const owners = members.filter((m) => m.role === 'owner');
-			const seededBundles =
-				Object.keys(sizes).length === Object.keys(SEEDED_BUNDLE_SIZES).length &&
-				Object.entries(SEEDED_BUNDLE_SIZES).every(([role, n]) => sizes[role] === n);
-			const ownerLists = await Promise.all(
-				[aboutSpaceUri, membersSpaceUri, calendarSpaceUri].map((space) =>
-					spaceMemberList(groupToken, space)
-				)
-			);
-			const ownerEntries = ownerLists.map((list) => list.members.find((m) => m.did === ALICE));
-			record(
-				minted.hasRecoveryKey === true &&
-					GROUP_HANDLE === `${GROUP_LABEL}.${HANDLE_DOMAIN}` &&
-					members.length === 1 &&
-					owners.length === 1 &&
-					owners[0].did === ALICE &&
-					seededBundles &&
-					aboutSpaceUri?.startsWith(`at://${GROUP_DID}/space/`) &&
-					membersSpaceUri?.startsWith(`at://${GROUP_DID}/space/`) &&
-					ownerEntries.every((entry) => entry?.read === true && entry?.write === true),
-				"the app's create mints the group with one owner, three pared role bundles, and the owner on all three spaces' member lists, read and write",
-				`${GROUP_HANDLE} (${GROUP_DID}), recovery key handed back ${minted.hasRecoveryKey}; ` +
-					`roster ${members.length} (${owners.length} owner: ${owners[0]?.did}), ` +
-					Object.entries(sizes)
-						.map(([role, n]) => `${role} ${n}`)
-						.join(' / ') +
-					`; owner on the about list ${JSON.stringify(ownerEntries[0])}, members list ${JSON.stringify(ownerEntries[1])}, calendar list ${JSON.stringify(ownerEntries[2])}`
-			);
 		}
 
 		// The admin, through the roster as the members page adds and promotes: a
-		// membership record and the three member lists, then the role.
+		// membership record, then the role.
 		await op('admitMember', { callerDid: ALICE, did: BOB, role: 'member' });
 		await op('promoteMember', { callerDid: ALICE, did: BOB, role: 'admin' });
 		note(`${BOB} admitted and promoted to admin through the roster`);
@@ -1172,12 +1023,9 @@ async function main() {
 		);
 
 		// 5. an admin edits an event they did not create -------------------------
-		// Admins edit on their own group session, so the author must not change. On
-		// the stand-in the only way in is the group's own login, so the harness
-		// stores the admin's session as his own link would; a host cutting it to his
-		// roles is for a run against a real group host.
-		if (AT_HOST) {
-			// At a host, his own link: a group session the host cuts to his roles.
+		// Admins edit on their own group session, so the author must not change.
+		// His own link: a group session the host cuts to his roles.
+		{
 			const { link } = await must('scopes', {});
 			const linked = await signIns.group(people.admin, {
 				groupDid: GROUP_DID,
@@ -1187,12 +1035,6 @@ async function main() {
 			realSessions.push(linked.session);
 			bridge.setGroup(GROUP_DID, BOB, linked.session);
 			await must('linkGroup', { groupDid: GROUP_DID, personDid: BOB });
-		} else {
-			await must('linkGroup', {
-				groupDid: GROUP_DID,
-				personDid: BOB,
-				password: CREATE_DATA.password
-			});
 		}
 		const { total: beforeEdit } = await must('groupWrites', {});
 		const editedName = 'e2e sunrise paddle (rescheduled by admin bob)';
@@ -1242,7 +1084,7 @@ async function main() {
 		});
 		const afterRefusal = await getRecord(GROUP_DID, created.rkey);
 		const unchanged = afterRefusal.cid === afterEdit.cid && afterRefusal.value?.name === editedName;
-		if (AT_HOST) {
+		{
 			const { link } = await must('scopes', {});
 			const signInRefusal = await signIns.groupRefused(people.outsider, {
 				groupDid: GROUP_DID,
@@ -1264,15 +1106,6 @@ async function main() {
 					`record ${unchanged ? 'unchanged' : 'CHANGED'} at cid ${afterRefusal.cid}; her group sign-in: ` +
 					`${signInRefusal.status} "${signInRefusal.text}"; the host's state records ${hostRefused.length} ` +
 					`sign-in refusal(s) for her`
-			);
-		} else {
-			record(
-				refused.ok === false &&
-					refused.error.name === 'GroupPermissionError' &&
-					refused.error.reason === 'MANAGE_EVENTS required' &&
-					unchanged,
-				"non-member's identical edit is refused",
-				`${refused.error?.name}: ${refused.error?.message}; record unchanged at cid ${afterRefusal.cid}`
 			);
 		}
 
@@ -1314,7 +1147,7 @@ async function main() {
 		const startPolicy = await spaceReadPolicy(groupToken, aboutSpaceUri);
 		const about = await op('readGroupAbout');
 		record(
-			startPolicy.readPolicy === (AT_HOST ? READ_POLICY.host : READ_POLICY[CREATE_VISIBILITY]) &&
+			startPolicy.readPolicy === READ_POLICY.host &&
 				about.profile?.name === CREATE_DATA.name &&
 				about.profile?.locationName === CREATE_DATA.locationName &&
 				// From the visibility and require_approval, never from the form.
@@ -1326,20 +1159,14 @@ async function main() {
 		);
 
 		// 10b. the about space's access record says the visibility ----------------
-		// The standard keeps visibility in this record, but a simplespace host
-		// enforces the read policy and never reads the record, so the record must
-		// say what the policy says.
+		// The standard keeps visibility in this record, and the host reads it to
+		// answer who may read, so the record must say what the create chose.
 		const aboutAccess = await spaceRecord(groupToken, aboutSpaceUri, ACCESS_COLLECTION, 'self');
 		record(
 			aboutAccess.status === 200 &&
-				aboutAccess.value?.public ===
-					(AT_HOST
-						? CREATE_VISIBILITY === 'public'
-						: startPolicy.readPolicy === READ_POLICY.public) &&
+				aboutAccess.value?.public === (CREATE_VISIBILITY === 'public') &&
 				grantsEveryRoleRead(aboutAccess.value, aboutSpaceUri),
-			AT_HOST
-				? 'at the host: the about space’s access record says the visibility the create chose, and grants every role read'
-				: 'the about space’s access record says what its read policy says, and grants every role read',
+			'at the host: the about space’s access record says the visibility the create chose, and grants every role read',
 			`read policy ${startPolicy.readPolicy}; access public ${aboutAccess.value?.public}, ` +
 				`grants ${JSON.stringify(aboutAccess.value?.grants)}`
 		);
@@ -1421,50 +1248,31 @@ async function main() {
 				`public ${accessRecord.value?.public}`
 		);
 
-		// 13b. the members space indexes all three spaces ----------------------------
-		// One entry per space, the two well-known ones included. The key is a TID,
-		// so a writer that did not list the index first would add a second entry on
-		// every write: a write after the create's must add nothing. At a host, the
-		// index is the host's: a new group starts without entries for meta and
+		// 13b. the members space indexes the calendar space ---------------------------
+		// The index is the host's: a new group starts without entries for meta and
 		// members, which the standard allows ("a discovery aid, not an exhaustive
 		// list"), and the calendar space's entry is the one createSpace wrote. The
 		// app writes no index for a host group, so nothing is written here.
-		const indexWrite = AT_HOST
-			? null
-			: await op('writeSpaceIndex', {
-					callerDid: ALICE,
-					calendarSpaceUri
-				});
 		const spaceIndex = await spaceRecords(groupToken, membersSpaceUri, 'group.opensocial.space');
 		const indexedSpaces = spaceIndex.records.map((entry) => entry.value?.space).sort();
 		const threeSpaces = [aboutSpaceUri, membersSpaceUri, CALENDAR_SPACE_URI].sort();
 		record(
 			spaceIndex.status === 200 &&
-				(AT_HOST
-					? indexedSpaces.filter((space) => space === CALENDAR_SPACE_URI).length === 1 &&
-						indexedSpaces.every((space) => threeSpaces.includes(space)) &&
-						new Set(indexedSpaces).size === indexedSpaces.length
-					: spaceIndex.records.length === 3 &&
-						JSON.stringify(indexedSpaces) === JSON.stringify(threeSpaces) &&
-						indexWrite.added.length === 0 &&
-						indexWrite.removed.length === 0),
-			AT_HOST
-				? 'at the host: the members space indexes the calendar space once, as its createSpace asked, and nothing that is not one of the three'
-				: 'the members space indexes all three spaces, one entry each',
+				indexedSpaces.filter((space) => space === CALENDAR_SPACE_URI).length === 1 &&
+				indexedSpaces.every((space) => threeSpaces.includes(space)) &&
+				new Set(indexedSpaces).size === indexedSpaces.length,
+			'at the host: the members space indexes the calendar space once, as its createSpace asked, and nothing that is not one of the three',
 			`listRecords ${spaceIndex.status}: ${spaceIndex.records.length} group.opensocial.space ` +
-				`record(s) for ${indexedSpaces.join(', ') || 'none'}` +
-				(AT_HOST
-					? ''
-					: `; a second write added ${indexWrite.added.length} and removed ${indexWrite.removed.length}`)
+				`record(s) for ${indexedSpaces.join(', ') || 'none'}`
 		);
 
 		// 13c. the calendar space is the members' alone ------------------------------
-		// It holds members-only events, so its read policy is the member list even
-		// for this public group: the about space's policy here would let any signed-in
-		// account read them. The policy is read from the host, not taken from what
-		// provisioning sent. Its member list holds the same members as the members
-		// space's, read and write, since every role's access grants read there too.
-		// (Spec: FR-214.)
+		// It holds members-only events, so its access record is not public even for
+		// this public group: the about space's here would let any signed-in account
+		// read them. The policy is read from the PDS, not taken from what
+		// provisioning sent: the host's, which asks the host who may read. A host
+		// keeps no member lists: who reads is the access record and the roles, which
+		// 13d-13f read through. (Spec: FR-214.)
 		const calendarPolicy = await spaceReadPolicy(groupToken, calendarSpaceUri);
 		const calendarAccess = await spaceRecord(
 			groupToken,
@@ -1472,42 +1280,18 @@ async function main() {
 			ACCESS_COLLECTION,
 			'self'
 		);
-		const calendarMembers = AT_HOST ? null : await spaceMemberList(groupToken, calendarSpaceUri);
-		const rosterList = AT_HOST ? null : await spaceMemberList(groupToken, membersSpaceUri);
-		const didsOf = (list) =>
-			list.members
-				.map((m) => m.did)
-				.sort()
-				.join(',');
-		// A host keeps no member lists: who reads is the access record and the
-		// roles, which 13d-13f read through.
-		const calendarListed = AT_HOST
-			? true
-			: calendarMembers.status === 200 &&
-				calendarMembers.members.length > 0 &&
-				calendarMembers.members.every((m) => m.read === true && m.write === true) &&
-				didsOf(calendarMembers) === didsOf(rosterList);
 		record(
 			CREATE_VISIBILITY === 'public' &&
 				calendarPolicy.status === 200 &&
-				calendarPolicy.readPolicy === (AT_HOST ? READ_POLICY.host : READ_POLICY.private) &&
+				calendarPolicy.readPolicy === READ_POLICY.host &&
 				calendarAccess.status === 200 &&
 				notPublic(calendarAccess.value) &&
-				grantsEveryRoleRead(calendarAccess.value, calendarSpaceUri) &&
-				calendarListed,
-			AT_HOST
-				? 'at the host: the calendar space is the host’s to answer for a public group, and its access/self is not public and grants every role read'
-				: 'the calendar space is member-list read for a public group, holds access/self not ' +
-						"public, and lists the members space's members, read and write",
+				grantsEveryRoleRead(calendarAccess.value, calendarSpaceUri),
+			'at the host: the calendar space is the host’s to answer for a public group, and its access/self is not public and grants every role read',
 			`${calendarSpaceUri}: getSpace ${calendarPolicy.status} read policy ` +
 				`${calendarPolicy.readPolicy ?? calendarPolicy.error}; access/self ` +
 				`${calendarAccess.status} public ${calendarAccess.value?.public} grants ` +
-				`${JSON.stringify(calendarAccess.value?.grants)}` +
-				(AT_HOST
-					? ''
-					: `; listMembers ${calendarMembers.status}: ` +
-						`${calendarMembers.members.length} member(s), the members space ${rosterList.members.length}` +
-						`${calendarMembers.error ? ` (${calendarMembers.error})` : ''}`)
+				`${JSON.stringify(calendarAccess.value?.grants)}`
 		);
 
 		// 13d-13h. the members-only slice --------------------------------------------
@@ -2125,9 +1909,8 @@ async function main() {
 		// 13t. a member's RSVP to a members-only event ---------------------------
 		// What the event page's RSVP button and its read-back run, through the module
 		// the RSVP commands call: the admin, a roster member, RSVPs going to the seed
-		// from their own session. That session is the password stand-in, whose scope
-		// is the app's member grant, so the PDS's check of a real OAuth grant is not
-		// shown here. The RSVP lands in the admin's repo in the calendar space at the
+		// from their own session, their real sign-in at their PDS, which the driver
+		// holds. The RSVP lands in the admin's repo in the calendar space at the
 		// seed's key, naming the seed's space-form URI. The admin reads it back, and
 		// so does the group, with its space credential at the admin's PDS. Nothing is
 		// in the admin's public repo, and nothing the session sent names
@@ -2197,13 +1980,9 @@ async function main() {
 				`${groupAfterCancel.error ?? groupAfterCancel.status}; com.atproto.repo calls ${repoCalls.length}`
 		);
 
-		/** The no-spaces member off the group again. They leave on the stand-in, which
-		 *  acts on the creator's session; at a host a leave goes through their own PDS,
-		 *  which never got the group's grant, so the owner removes them. */
-		const carolOut = () =>
-			AT_HOST
-				? op('ejectMember', { callerDid: ALICE, did: CAROL })
-				: op('leaveGroup', { callerDid: CAROL, asMember: true, session: 'no-spaces' });
+		/** The no-spaces member off the group again. A leave goes through their own
+		 *  PDS, which never got the group's grant, so the owner removes them. */
+		const carolOut = () => op('ejectMember', { callerDid: ALICE, did: CAROL });
 
 		// 13u. who sends no RSVP request -----------------------------------------
 		// The roster gate comes before the grant: a non-member, whose stand-in
@@ -2212,9 +1991,9 @@ async function main() {
 		// holds no grant. Their first RSVP is sent to re-authorize (a stand-in URL,
 		// never followed) with a marker for the page to carry, and only once the page
 		// hands that marker back under a session issued since (a new stamp) are they
-		// told their PDS can't do it. Neither sends a request through their session. They are admitted for this check and leave right
-		// after, off the rows, the records and both member lists, so 18e's join
-		// still comes back pending.
+		// told their PDS can't do it. Neither sends a request through their session.
+		// They are admitted for this check and removed right after, off the rows and
+		// the records, so 18e starts with them off the group.
 		const outsiderOp = (action, extra = {}) =>
 			op('membersOnlyRsvp', {
 				did: MALLORY,
@@ -2248,17 +2027,9 @@ async function main() {
 		await carolOut();
 		const carolRecords = await op('recordedRoster');
 		const carolRows = await op('listMembers');
-		const carolLists = AT_HOST
-			? []
-			: await Promise.all(
-					[membersSpaceUri, aboutSpaceUri, calendarSpaceUri].map((space) =>
-						spaceMemberList(groupToken, space)
-					)
-				);
 		const carolLeft =
 			!carolRecords.memberships.some((m) => m.subject === CAROL) &&
-			!carolRows.some((m) => m.did === CAROL) &&
-			carolLists.every((list) => list.status === 200 && !list.members.some((m) => m.did === CAROL));
+			!carolRows.some((m) => m.did === CAROL);
 		const outsiderOps = [outsiderPut, outsiderCancel, outsiderRead];
 		record(
 			outsiderOps.every(
@@ -2290,7 +2061,7 @@ async function main() {
 				`${carolFirst.calls.length} request(s)), after asking ${carolAfterAsking.result?.reason} ` +
 				`${JSON.stringify(carolAfterAsking.result?.message)} (${carolAfterAsking.reauthorized} re-authorization, ` +
 				`${carolAfterAsking.calls.length} request(s)); sent from their session ${noSpacesAfter.length - noSpacesBefore.length}; ` +
-				`after leaving: ${carolLeft ? 'off the records, the rows and both member lists' : 'STILL LISTED'}`
+				`after leaving: ${carolLeft ? 'off the records and the rows' : 'STILL LISTED'}`
 		);
 
 		// 13v. the version of the event an RSVP names -----------------------------
@@ -2349,35 +2120,12 @@ async function main() {
 				`${cidGone.error ?? cidGone.status}`
 		);
 
-		// 14. the space's own member list holds the members, read and write -------
-		// Reading a space and writing your own records in it are one grant, and
-		// every role reads the members space, so the owner and an admitted member
-		// are each read:true write:true. The PDS tracks the acceptance each writes.
-		// (Spec: FR-206.)
-		if (AT_HOST) {
-			note('check 14 runs against the stand-in only: a host keeps no member list to read');
-		}
-		const memberList = AT_HOST ? null : await spaceMemberList(groupToken, membersSpaceUri);
-		const readWrite = memberList?.members.every((m) => m.read === true && m.write === true);
-		if (!AT_HOST)
-			record(
-				memberList.status === 200 &&
-					readWrite &&
-					JSON.stringify(memberList.members.map((m) => m.did).sort()) ===
-						JSON.stringify([ALICE, BOB].sort()),
-				'the owner and an admitted member are on the members space’s own member list, read and write',
-				`listMembers ${memberList.status}: ` +
-					`${memberList.members.map((m) => `${m.did} read:${m.read} write:${m.write}`).join('; ') || 'empty'}` +
-					`${memberList.error ? ` (${memberList.error})` : ''}`
-			);
-
 		// 15. the authz config is records ------------------------------------------
 		// Read through the app's reader, which maps actions to our permission names,
 		// and straight from the PDS, which shows the wire form uses the standard's
 		// action identifiers. A role's grant is the union of both binding records.
-		// At a host, the roles and `permissions` are the host's, written at create;
-		// the app writes only its event bindings, which the set-up did.
-		if (!AT_HOST) await op('writeGroupAuthz', { callerDid: ALICE });
+		// The roles and `permissions` are the host's, written at create; the app
+		// writes only its event bindings, which the set-up did.
 		const authz = await op('recordedAuthz', { role: 'admin' });
 		const permissionsRecord = await spaceRecord(
 			groupToken,
@@ -2446,16 +2194,9 @@ async function main() {
 			'CREATE_EVENT'
 		];
 		const withoutCreate = ALL_SIX.filter((p) => p !== 'CREATE_EVENT');
-		// At a host only the event bindings are the app's to write.
-		const writeBindings = (bundles) =>
-			AT_HOST
-				? op('writeEventPermissions', { callerDid: ALICE, bundles })
-				: op('writeGroupAuthz', { callerDid: ALICE, bundles });
-		await writeBindings(
-			AT_HOST
-				? { admin: withoutCreate, member: [] }
-				: { owner: ALL_SIX, admin: withoutCreate, member: [] }
-		);
+		// Only the event bindings are the app's to write.
+		const writeBindings = (bundles) => op('writeEventPermissions', { callerDid: ALICE, bundles });
+		await writeBindings({ admin: withoutCreate, member: [] });
 		const bobEdited = await op('membership', { did: BOB, probe });
 		const editedRecord = await spaceRecord(
 			groupToken,
@@ -2463,8 +2204,7 @@ async function main() {
 			'rsvp.atmo.group.eventPermissions',
 			'self'
 		);
-		if (AT_HOST) await writeBindings({ admin: ALL_SIX, member: [] });
-		else await op('writeGroupAuthz', { callerDid: ALICE });
+		await writeBindings({ admin: ALL_SIX, member: [] });
 		const bobRestored = await op('membership', { did: BOB, probe });
 		const bobRowRole = (await op('listMembers')).find((m) => m.did === BOB)?.role;
 		record(
@@ -2547,7 +2287,7 @@ async function main() {
 		// save that would first change only this site's copy of the group, which
 		// the host never sees, is refused before anything is sent. Promoted back
 		// after, for check 18.
-		if (AT_HOST) {
+		{
 			const before = await hostState();
 			await op('promoteMember', { callerDid: ALICE, did: BOB, role: 'member' });
 			let attempts;
@@ -2640,8 +2380,7 @@ async function main() {
 					bobsRefusals.length === sent &&
 					bobsRefusals.filter((r) => r.by === 'pds' && r.error === 'ScopeMissingError').length ===
 						2 &&
-					bobsRefusals.filter((r) => r.by === undefined && r.error === 'Forbidden').length ===
-						1 &&
+					bobsRefusals.filter((r) => r.by === undefined && r.error === 'Forbidden').length === 1 &&
 					cut,
 				"at the host: a member's event edit, a save turning the group private and making himself admin each go out on his own group session and are refused by the host; a save that would change only this site's copy is refused here, with nothing sent",
 				`${told('edit', edit)}, event ${eventAfter.cid === eventBefore.cid ? 'unchanged' : 'CHANGED'}; ` +
@@ -2654,18 +2393,6 @@ async function main() {
 			);
 		}
 
-		/** A space's member list on the stand-in. A host keeps none (it reads the
-		 *  records), so there every list check reads as an empty list, and what it
-		 *  stood for is the credential the host does or does not issue, checked
-		 *  beside it. */
-		const listedOrHost = (space) =>
-			AT_HOST ? { status: 200, members: [], host: true } : spaceMemberList(groupToken, space);
-		/** Whether `did` is on a list `listedOrHost` read, read and write. At a host,
-		 *  the credential beside it answers instead. */
-		const listedReadWrite = (list, did) =>
-			list.host === true ||
-			list.members.some((m) => m.did === did && m.read === true && m.write === true);
-
 		// 18. no record, no access --------------------------------------------------
 		// An eject deletes the record. Records, not rows, decide access.
 		await op('ejectMember', { callerDid: ALICE, did: BOB });
@@ -2677,25 +2404,21 @@ async function main() {
 			'group.opensocial.membership',
 			BOB
 		);
-		const listAfterEject = await listedOrHost(membersSpaceUri);
 		record(
 			notFound(ejectedRecord) &&
 				afterEject.hasAccess === false &&
 				strangerCheck.hasAccess === false &&
-				afterEject.roster.map((entry) => entry.did).join(',') === ALICE &&
-				listAfterEject.status === 200 &&
-				!listAfterEject.members.some((m) => m.did === BOB),
+				afterEject.roster.map((entry) => entry.did).join(',') === ALICE,
 			'a DID with no membership record has no access, whether ejected or never a member',
 			`${BOB} after eject: record ${ejectedRecord.error ?? ejectedRecord.status}, access ` +
-				`${afterEject.hasAccess}, on the members space list ` +
-				`${listAfterEject.members.some((m) => m.did === BOB)}; never-a-member ${MALLORY}: access ` +
+				`${afterEject.hasAccess}; never-a-member ${MALLORY}: access ` +
 				`${strangerCheck.hasAccess}; roster ${afterEject.roster.length}`
 		);
 
-		// 18b. a join request writes nothing; approval lists them; sign-in confirms --
-		// A requester is not a member, so the request writes no acceptance and puts
-		// them on no list, and the PDS refuses them a members space credential.
-		// Approval lists them read and write, so the same request is granted. The
+		// 18b. a join request writes nothing; approval admits them; sign-in confirms -
+		// A requester is not a member, so the request writes no acceptance, and the
+		// PDS refuses them a members space credential. Approval makes them a member,
+		// so the same request is granted. The
 		// member's own half, the acceptance, is written from their own session at
 		// their next sign-in, and the roster, which reads acceptances by DID with
 		// the group's credential, then shows them confirmed. (Spec: FR-205,
@@ -2707,7 +2430,6 @@ async function main() {
 			message: 'back again'
 		});
 		const atRequest = await ownAcceptance(bobToken, membersSpaceUri);
-		const listAtRequest = await listedOrHost(membersSpaceUri);
 		const credentialAtRequest = await spaceCredentialRequest(bobToken, membersSpaceUri);
 		const pendingAgain = await op('listJoinRequests', { callerDid: ALICE });
 		const bobsRequest = pendingAgain.find((request) => request.did === BOB);
@@ -2716,7 +2438,6 @@ async function main() {
 			member: BOB,
 			role: 'member'
 		});
-		const listApproved = await listedOrHost(membersSpaceUri);
 		const credentialApproved = await spaceCredentialRequest(bobToken, membersSpaceUri);
 		const bobApproved = (await op('confirmedRoster')).roster.find((entry) => entry.did === BOB);
 		await op('signInAcceptances', { did: BOB });
@@ -2726,47 +2447,38 @@ async function main() {
 			asked.outcome === 'pending' &&
 				bobsRequest !== undefined &&
 				notFound(atRequest) &&
-				listAtRequest.status === 200 &&
-				!listAtRequest.members.some((m) => m.did === BOB) &&
 				credentialAtRequest.stage === 'getSpaceCredential' &&
 				credentialAtRequest.status === 400 &&
 				credentialAtRequest.error === 'UserNotAuthorized' &&
 				!credentialAtRequest.issued &&
-				listedReadWrite(listApproved, BOB) &&
 				credentialApproved.status === 200 &&
 				credentialApproved.issued &&
 				bobApproved?.confirmed === false &&
 				afterApprovalSignIn.status === 200 &&
 				bobConfirmed?.confirmed === true,
-			'a join request writes nothing and is refused a members space credential; approval lists them read and write and the credential is issued; their sign-in confirms them',
+			'a join request writes nothing and is refused a members space credential; once approved the credential is issued; their sign-in confirms them',
 			`request ${asked.outcome}, listed by the host ${bobsRequest !== undefined}; ` +
 				`acceptance at request ${atRequest.error ?? atRequest.status}; ` +
-				`on the members list at request ${listAtRequest.members.some((m) => m.did === BOB)}; ` +
-				`credential at request ${JSON.stringify(credentialAtRequest)}; approved entry ` +
-				`${JSON.stringify(listApproved.members.find((m) => m.did === BOB) ?? null)}, credential ` +
+				`credential at request ${JSON.stringify(credentialAtRequest)}; approved, credential ` +
 				`${JSON.stringify(credentialApproved)}, confirmed ${bobApproved?.confirmed}; after sign-in ` +
 				`acceptance ${afterApprovalSignIn.error ?? afterApprovalSignIn.status}, confirmed ${bobConfirmed?.confirmed}`
 		);
 
 		// 18c. leaving deletes it ---------------------------------------------------
-		// From the member's session, before the group takes them off the members
-		// list, so the host still accepts the notice of the delete.
+		// From the member's session, before the host takes them off the group, so
+		// it still accepts the notice of the delete.
 		const beforeLeaving = await ownAcceptance(bobToken, membersSpaceUri);
 		await op('leaveGroup', { callerDid: BOB, asMember: true });
 		const afterLeaving = await ownAcceptance(bobToken, membersSpaceUri);
 		const rosterAfterLeaving = await op('confirmedRoster');
-		const listAfterLeaving = await listedOrHost(membersSpaceUri);
 		record(
 			beforeLeaving.status === 200 &&
 				notFound(afterLeaving) &&
-				!rosterAfterLeaving.roster.some((entry) => entry.did === BOB) &&
-				listAfterLeaving.status === 200 &&
-				!listAfterLeaving.members.some((m) => m.did === BOB),
-			"leaving deletes the member's acceptance, and takes them off the roster and the members list",
+				!rosterAfterLeaving.roster.some((entry) => entry.did === BOB),
+			"leaving deletes the member's acceptance, and takes them off the roster",
 			`acceptance before leave ${beforeLeaving.error ?? beforeLeaving.status}, after ` +
 				`${afterLeaving.error ?? afterLeaving.status}; on the roster ` +
-				`${rosterAfterLeaving.roster.some((entry) => entry.did === BOB)}; on the members list ` +
-				`${listAfterLeaving.members.some((m) => m.did === BOB)}`
+				`${rosterAfterLeaving.roster.some((entry) => entry.did === BOB)}`
 		);
 
 		// 18d. a direct add is unconfirmed until the member's next sign-in -----------
@@ -2804,29 +2516,9 @@ async function main() {
 		// and their sign-in still works. The premise is checked first-hand: their
 		// PDS must refuse the group's space read itself, since a RecordNotFound
 		// would mean it serves spaces and the check proves nothing about step 4.
-		// At a host a request goes through their own PDS, which never got the
-		// group's grant, so the owner adds them; on the stand-in they ask and are
-		// approved.
-		const carolAsked = AT_HOST
-			? null
-			: await op('joinGroup', {
-					callerDid: CAROL,
-					asMember: true,
-					session: 'no-spaces',
-					message: null
-				});
-		const carolsRequest = AT_HOST
-			? null
-			: (await op('listJoinRequests', { callerDid: ALICE })).find(
-					(request) => request.did === CAROL
-				);
-		if (AT_HOST) await op('admitMember', { callerDid: ALICE, did: CAROL, role: 'member' });
-		else
-			await op('approveJoinRequest', {
-				callerDid: ALICE,
-				member: CAROL,
-				role: 'member'
-			});
+		// A request goes through their own PDS, which never got the group's grant,
+		// so the owner adds them.
+		await op('admitMember', { callerDid: ALICE, did: CAROL, role: 'member' });
 		await op('signInCallback', { did: CAROL });
 		const carolRoster = await op('confirmedRoster');
 		const carolEntry = carolRoster.roster.find((entry) => entry.did === CAROL);
@@ -2835,21 +2527,16 @@ async function main() {
 		const carolCalls = await must('noSpacesCalls');
 		record(
 			refusesSpaceRead(carolRead) &&
-				(AT_HOST || (carolAsked.outcome === 'pending' && carolsRequest !== undefined)) &&
 				carolEntry?.confirmed === false &&
 				carolGate.onRoster === true &&
 				carolGate.canSee === true &&
 				carolGate.reads === false &&
 				carolGate.groupCalls.length === 0 &&
 				carolCalls.length === 0,
-			AT_HOST
-				? 'at the host: a member whose PDS serves no spaces, added by the owner, shows as unconfirmed, sees the group as its row shows it with nothing read for them, and signs in with nothing sent from their session'
-				: 'a member whose PDS serves no spaces is approved, shows as unconfirmed, sees the group as its row shows it with nothing read for them, and signs in with nothing sent from their session',
+			'at the host: a member whose PDS serves no spaces, added by the owner, shows as unconfirmed, sees the group as its row shows it with nothing read for them, and signs in with nothing sent from their session',
 			`their PDS ${carolRead.host} answers the group's space read ${carolRead.status} ` +
 				`${carolRead.error}; ` +
-				(AT_HOST
-					? 'added by the owner; '
-					: `request ${carolAsked.outcome}, listed by the host ${carolsRequest !== undefined}; `) +
+				'added by the owner; ' +
 				`confirmed ` +
 				`${carolEntry ? carolEntry.confirmed : 'not on the roster'}; on the roster ` +
 				`${carolGate.onRoster} (from the row), can see ${carolGate.canSee}, a reader ${carolGate.reads}, ` +
@@ -2898,15 +2585,17 @@ async function main() {
 		// 20b-20f. the access record is the policy, and the host follows it --------
 		// SC-208: the group is flipped private, public, private and public again
 		// through the settings save, the way an owner does it. After each flip the
-		// about space's read policy at the PDS says what its access record says,
-		// the declaration exists only while that is public, and a space credential
+		// about space's read policy at the PDS is still the host's, its access
+		// record says the visibility, the declaration exists only while that is
+		// public, and a space credential
 		// is issued exactly where the caller's roles, or a public policy, allow:
 		// asked for first-hand from the PDS by the member, and by the same account
 		// as a stranger once they have left. Each save's writes are read in order
 		// from the group's session, so "the host is never more open than the
-		// record" is seen live, not only in the unit tests: a narrowing closes the
-		// host before the record says private, a widening has the record say public
-		// before the host opens. (Spec: FR-214.)
+		// record" is seen live, not only in the unit tests: the record is the
+		// policy, so no read policy is ever sent, a narrowing withdraws the
+		// declaration before the record says private, and a widening has the record
+		// say public before the declaration. (Spec: FR-214.)
 		const spaceKinds = () => ({
 			about: aboutSpaceUri,
 			members: membersSpaceUri,
@@ -2917,27 +2606,20 @@ async function main() {
 			const policy = await spaceReadPolicy(groupToken, aboutSpaceUri);
 			const access = await spaceRecord(groupToken, aboutSpaceUri, ACCESS_COLLECTION, 'self');
 			const declaration = await getRecord(GROUP_DID, 'self', DECLARATION_COLLECTION);
-			// At a host the other two spaces are closed by their access records, which
-			// is all the host reads; on the stand-in, by their read policies.
+			// The other two spaces are closed by their access records, which is all
+			// the host reads.
 			const others = await Promise.all(
 				[membersSpaceUri, calendarSpaceUri].map((space) =>
-					AT_HOST
-						? spaceRecord(groupToken, space, ACCESS_COLLECTION, 'self')
-						: spaceReadPolicy(groupToken, space)
+					spaceRecord(groupToken, space, ACCESS_COLLECTION, 'self')
 				)
 			);
 			return {
 				readPolicy: policy.readPolicy ?? policy.error ?? policy.status,
 				accessPublic: access.value?.public,
 				declared: declaration.status === 200,
-				othersClosed: others.every((o) =>
-					AT_HOST ? o.status === 200 && notPublic(o.value) : o.readPolicy === READ_POLICY.private
-				)
+				othersClosed: others.every((o) => o.status === 200 && notPublic(o.value))
 			};
 		};
-		/** The read policy the about space should have: the visibility on the
-		 *  stand-in, the host's own at a host. */
-		const policyFor = (visibility) => (AT_HOST ? READ_POLICY.host : READ_POLICY[visibility]);
 		/** Bob's own space credential for each space: `issued`, or why not. */
 		const bobCredentials = async () => {
 			const out = {};
@@ -2967,25 +2649,20 @@ async function main() {
 		const DECLARE = `repo.putRecord ${DECLARATION_COLLECTION}`;
 		const WITHDRAW = `repo.deleteRecord ${DECLARATION_COLLECTION}`;
 		const ISSUED_ALL = { about: 'issued', members: 'issued', calendar: 'issued' };
-		/** A narrowing in order: on the stand-in the host closes first, then the
-		 *  declaration goes, then the record says private. At a host the record is
-		 *  the policy, so no read policy is sent, and the declaration still goes first. */
+		/** A narrowing in order: the record is the policy, so no read policy is
+		 *  sent, and the declaration goes before the record says private. */
 		const narrowedInOrder = (writes) =>
 			at(writes, OPEN) === -1 &&
 			at(writes, WITHDRAW) >= 0 &&
 			at(writes, WITHDRAW) < at(writes, ACCESS_WRITE) &&
-			(AT_HOST
-				? at(writes, CLOSE) === -1
-				: at(writes, CLOSE) >= 0 && at(writes, CLOSE) < at(writes, WITHDRAW));
-		/** A widening in order: the record says public first, then (on the stand-in)
-		 *  the host opens, then the declaration. */
+			at(writes, CLOSE) === -1;
+		/** A widening in order: no read policy is sent, and the record says public
+		 *  before the declaration. */
 		const widenedInOrder = (writes) =>
 			at(writes, CLOSE) === -1 &&
 			at(writes, ACCESS_WRITE) >= 0 &&
 			at(writes, ACCESS_WRITE) < at(writes, DECLARE) &&
-			(AT_HOST
-				? at(writes, OPEN) === -1
-				: at(writes, ACCESS_WRITE) < at(writes, OPEN) && at(writes, OPEN) < at(writes, DECLARE));
+			at(writes, OPEN) === -1;
 		const sameCredentials = (got, want) =>
 			Object.keys(want).every((kind) =>
 				want[kind] === 'issued' ? got[kind] === 'issued' : got[kind] !== 'issued'
@@ -3004,7 +2681,7 @@ async function main() {
 		const strangerCreds = await bobCredentials();
 		record(
 			toPrivate.result.ok === true &&
-				privateState.readPolicy === policyFor('private') &&
+				privateState.readPolicy === READ_POLICY.host &&
 				privateState.accessPublic === false &&
 				!privateState.declared &&
 				privateState.othersClosed &&
@@ -3014,26 +2691,20 @@ async function main() {
 					members: 'refused',
 					calendar: 'refused'
 				}),
-			AT_HOST
-				? 'at the host: saved private, the declaration goes before the access record says private, no read policy is sent, and the host gives a stranger no credential for any space'
-				: 'saved private, the PDS closes the about space before the declaration goes and before the access record says private, and a stranger gets no credential for any space',
+			'at the host: saved private, the declaration goes before the access record says private, no read policy is sent, and the host gives a stranger no credential for any space',
 			describeFlip(privateState, strangerCreds, toPrivate.writes)
 		);
 
 		// 20c. and its door is shut to strangers ---------------------------------
-		// The join is passed no visibility, so it reads the access record.
-		// At a host the join goes through their own PDS, on their own sign-in, and
-		// the requests are the host's, listed for the owner; on the stand-in, every
-		// request row, closed ones included.
+		// The join is passed no visibility, so it reads the access record. It goes
+		// through their own PDS, on their own sign-in, and the requests are the
+		// host's, listed for the owner.
 		const strangerJoin = await tryOp('joinGroup', {
 			callerDid: MALLORY,
 			message: 'let me in',
-			...(AT_HOST ? { asMember: true } : {})
+			asMember: true
 		});
-		const requestsNow = await op(
-			'listJoinRequests',
-			AT_HOST ? { callerDid: ALICE } : { status: 'all' }
-		);
+		const requestsNow = await op('listJoinRequests', { callerDid: ALICE });
 		const ownerGate = await op('gate', { did: ALICE });
 		const strangerGate = await op('gate', { did: MALLORY });
 		const repeated = await op('reconcileDeclaration', { callerDid: ALICE, visibility: 'record' });
@@ -3054,18 +2725,13 @@ async function main() {
 		);
 
 		// 20d. a member of a private group gets a credential for every space -------
-		// Every role reads every space, so admitting Bob lists him on all three.
+		// Every role reads every space, so admitting Bob lets him read all three.
 		await op('admitMember', { callerDid: ALICE, did: BOB, role: 'member' });
-		const memberLists = await Promise.all(Object.values(spaceKinds()).map(listedOrHost));
 		const memberPrivateCreds = await bobCredentials();
 		record(
-			memberLists.every((list) => list.status === 200 && listedReadWrite(list, BOB)) &&
-				sameCredentials(memberPrivateCreds, ISSUED_ALL),
-			AT_HOST
-				? 'at the host: a member admitted to a private group is issued a credential for each of its three spaces'
-				: "a member admitted to a private group is on all three spaces' lists, read and write, and the PDS issues them a credential for each",
-			`${AT_HOST ? '' : `lists ${memberLists.map((list) => JSON.stringify(list.members.find((m) => m.did === BOB) ?? null)).join(', ')}; `}` +
-				`credentials ${JSON.stringify(memberPrivateCreds)}`
+			sameCredentials(memberPrivateCreds, ISSUED_ALL),
+			'at the host: a member admitted to a private group is issued a credential for each of its three spaces',
+			`credentials ${JSON.stringify(memberPrivateCreds)}`
 		);
 
 		// 20e. private to public to private, with the member on board ---------------
@@ -3077,22 +2743,20 @@ async function main() {
 		const memberPrivateAgain = await bobCredentials();
 		record(
 			toPublic.result.ok === true &&
-				publicState.readPolicy === policyFor('public') &&
+				publicState.readPolicy === READ_POLICY.host &&
 				publicState.accessPublic === true &&
 				publicState.declared &&
 				publicState.othersClosed &&
 				widenedInOrder(toPublic.writes) &&
 				sameCredentials(memberPublicCreds, ISSUED_ALL) &&
 				backToPrivate.result.ok === true &&
-				privateAgain.readPolicy === policyFor('private') &&
+				privateAgain.readPolicy === READ_POLICY.host &&
 				privateAgain.accessPublic === false &&
 				!privateAgain.declared &&
 				privateAgain.othersClosed &&
 				narrowedInOrder(backToPrivate.writes) &&
 				sameCredentials(memberPrivateAgain, ISSUED_ALL),
-			AT_HOST
-				? 'at the host: saved public, the access record says public before the declaration; saved private again, the declaration goes first; no read policy is sent, and the member holds a credential for every space throughout'
-				: 'saved public, the access record says public before the PDS opens the about space and before the declaration; saved private again, the PDS closes first; the member holds a credential for every space throughout',
+			'at the host: saved public, the access record says public before the declaration; saved private again, the declaration goes first; no read policy is sent, and the member holds a credential for every space throughout',
 			`public: ${describeFlip(publicState, memberPublicCreds, toPublic.writes)} || ` +
 				`private: ${describeFlip(privateAgain, memberPrivateAgain, backToPrivate.writes)}`
 		);
@@ -3102,7 +2766,6 @@ async function main() {
 		// approval, so checks 21-23 see what 18d left. A stranger to a public group
 		// gets a credential for its about space and for nothing else.
 		await op('leaveGroup', { callerDid: BOB, asMember: true });
-		const leftLists = await Promise.all(Object.values(spaceKinds()).map(listedOrHost));
 		const leftCreds = await bobCredentials();
 		const backAsCreated = await saveVisibility(
 			CREATE_VISIBILITY,
@@ -3112,10 +2775,9 @@ async function main() {
 		const restoredState = await visibilityNow();
 		const strangerPublicCreds = await bobCredentials();
 		record(
-			leftLists.every((list) => list.status === 200 && !list.members.some((m) => m.did === BOB)) &&
-				sameCredentials(leftCreds, { about: 'refused', members: 'refused', calendar: 'refused' }) &&
+			sameCredentials(leftCreds, { about: 'refused', members: 'refused', calendar: 'refused' }) &&
 				backAsCreated.result.ok === true &&
-				restoredState.readPolicy === policyFor('public') &&
+				restoredState.readPolicy === READ_POLICY.host &&
 				restoredState.accessPublic === true &&
 				restoredState.declared &&
 				sameCredentials(strangerPublicCreds, {
@@ -3123,11 +2785,8 @@ async function main() {
 					members: 'refused',
 					calendar: 'refused'
 				}),
-			AT_HOST
-				? 'at the host: a member who leaves a private group is refused every credential; public again, a stranger gets a credential for the about space only'
-				: 'a member who leaves a private group is off every list and refused every credential; public again, a stranger gets a credential for the about space only',
-			`after leaving: on a list ${leftLists.some((list) => list.members.some((m) => m.did === BOB))}, ` +
-				`credentials ${JSON.stringify(leftCreds)}; public again: ` +
+			'at the host: a member who leaves a private group is refused every credential; public again, a stranger gets a credential for the about space only',
+			`after leaving: credentials ${JSON.stringify(leftCreds)}; public again: ` +
 				describeFlip(restoredState, strangerPublicCreds, backAsCreated.writes)
 		);
 		note(`${BOB} left again; the group is ${CREATE_VISIBILITY} again, as created`);
@@ -3180,55 +2839,7 @@ async function main() {
 		// Not at a host yet: a host group's records name no owner, and who the
 		// app should make the owner of a row rebuilt from nothing is not decided
 		// (TS, 2026-10-15). Its rebuild of the roster alone (check 16) runs.
-		if (AT_HOST) {
-			note(
-				'check 23 runs against the stand-in only for now: a host group names no owner to rebuild its row with'
-			);
-		} else {
-			// Last, because it replaces the row the checks above act through. Nothing is
-			// restored for visibility, which stays in the about space's access record.
-			const profileNow = await op('readGroupAbout');
-			const rosterNow = await op('recordedRoster');
-			const beforeDrop = await must('groupSnapshot', { groupDid: GROUP_DID });
-			const wiped = await op('dropGroupRows');
-			let restored;
-			try {
-				restored = await must('rebuildGroup', { groupDid: GROUP_DID, ownerDid: ALICE });
-			} finally {
-				// Cleanup needs a row: the restored one, or else a bare one on the same DID.
-				group = restored
-					? restored.group
-					: await must('bindRow', { groupDid: GROUP_DID, ownerDid: ALICE });
-			}
-			const afterRebuild = await must('groupSnapshot', { groupDid: GROUP_DID });
-			// id and updated_at are regenerated, and created_at comes from the profile.
-			// Every other column must match exactly.
-			const columnsOf = (snap) => {
-				const rest = { ...snap.row };
-				for (const key of ['id', 'created_at', 'updated_at']) delete rest[key];
-				return JSON.stringify(rest);
-			};
-			const rosterOf = (snap) => snap.roster.map((m) => `${m.did}/${m.role}`).join(' ');
-			const recordJoinedAt = Object.fromEntries(
-				rosterNow.roster.map((entry) => [entry.did, entry.created_at])
-			);
-			const sameColumns = columnsOf(afterRebuild) === columnsOf(beforeDrop);
-			const sameGrants = JSON.stringify(afterRebuild.grants) === JSON.stringify(beforeDrop.grants);
-			record(
-				wiped.left === null &&
-					restored?.path === 'restored' &&
-					!('visibility' in afterRebuild.row) &&
-					sameColumns &&
-					afterRebuild.row.created_at === Date.parse(profileNow.profile.createdAt) &&
-					rosterOf(afterRebuild) === rosterOf(beforeDrop) &&
-					afterRebuild.roster.every((m) => m.created_at === recordJoinedAt[m.did]) &&
-					sameGrants,
-				'the group, deleted down to its credential, is rebuilt from its DID alone',
-				`path ${restored?.path}; ` +
-					`columns ${sameColumns ? 'identical' : 'DIFFER'}; roster ${rosterOf(afterRebuild)}; ` +
-					`${afterRebuild.grants.length} role grant row(s) ${sameGrants ? 'identical' : 'DIFFER'}`
-			);
-		}
+		note('check 23 does not run yet: a host group names no owner to rebuild its row with');
 	} finally {
 		// The group is this run's alone and is left behind, so cleanup undoes only
 		// what shows outside it: its public events and its declaration, and the
@@ -3301,7 +2912,7 @@ async function main() {
 				console.log(`WARN  could not withdraw the declaration: ${error.message}`);
 			}
 		}
-		// A host run's real sessions, revoked where they were issued, last because
+		// The run's real sessions, revoked where they were issued, last because
 		// cleanup acts through them.
 		let signedOut = 0;
 		for (const session of realSessions) {

@@ -45,7 +45,7 @@
 		holds a password for the group: you act for it as yourself, as its first admin.
 	</p>
 
-	{#if !data.creationConfigured}
+	{#if !data.canCreate}
 		<div
 			class="ring-base-200 dark:ring-base-800 text-base-600 dark:text-base-300 mb-8 rounded-2xl p-4 text-sm ring-1"
 		>
@@ -59,7 +59,7 @@
 	{/if}
 
 	<!-- A deployment that cannot create one gets no form, only the notice above. -->
-	{#if data.creationConfigured}
+	{#if data.canCreate}
 		<form
 			{...resetOnSuccess(createGroupForm)}
 			enctype="multipart/form-data"

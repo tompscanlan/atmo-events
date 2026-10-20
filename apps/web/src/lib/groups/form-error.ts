@@ -1,5 +1,5 @@
 // Turns the domain errors into the shape a form renders. A plain module, so
-// ./create-group.ts can share it: `*.remote.ts` may export only remote functions.
+// ./create-at-host.ts can share it: `*.remote.ts` may export only remote functions.
 import type { GroupFormFailure } from './form-result';
 import type { GroupPermission } from './permissions';
 import type { CallerMembership } from './types';
