@@ -5,8 +5,7 @@ import * as v from 'valibot';
 import { can } from './permissions';
 import type { GroupFormResult } from './form-result';
 import { knownFormError, notAllowed } from './form-error';
-import { didField, groupSettingsFields, labelField, shownVisibilityField } from './form-fields';
-import { runCreateGroup, type CreateGroupOutcome } from './create-group';
+import { didField, groupSettingsFields, shownVisibilityField } from './form-fields';
 import { hostCreation, startCreateAtHost } from './create-at-host';
 import { groupLinkClient } from './server/session';
 import { kvAvatarStash } from './server/avatar-stash';
@@ -19,45 +18,29 @@ import { errorText } from './server/errors';
 export const createGroupForm = form(
 	v.object({
 		...groupSettingsFields,
-		/** A mint's only: at a group host the address is chosen at the host. */
-		label: v.optional(labelField),
 		locationName: v.optional(v.pipe(v.string(), v.maxLength(200))),
-		/** The group account's login, a mint's only. Length and shape are checked
-		 *  by `runCreateGroup`, so its refusal reads as a sentence. */
-		email: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(254))),
-		/** Underscored so SvelteKit never echoes it back with a failed form. */
-		_password: v.optional(v.pipe(v.string(), v.maxLength(256))),
 		/** The group's picture. Its type and size are checked by the create, so the
 		 *  refusal reads as a sentence. An empty file input arrives as no value. */
 		avatar: v.optional(v.file())
 	}),
-	async ({
-		_password: password = '',
-		label = '',
-		email = '',
-		avatar,
-		...data
-	}): Promise<CreateGroupOutcome | GroupFormResult<{ signUpUrl: string }>> => {
+	async ({ avatar, ...data }): Promise<GroupFormResult<{ signUpUrl: string }>> => {
 		const { locals, platform } = getRequestEvent();
 		if (!locals.did) error(401, 'Sign in to create a group');
 		const env = platform!.env;
-		// A deployment with a group host creates there: the host signs the creator
-		// up and makes the group, and the page goes on to its sign-up page.
+		// The group host signs the creator up and makes the group, and the page
+		// goes on to its sign-up page.
 		const hostUrl = hostCreation(env);
-		if (hostUrl) {
-			return startCreateAtHost({
-				db: env.DB,
-				client: groupLinkClient(env, locals.did),
-				hostUrl,
-				callerDid: locals.did,
-				fields: data,
-				redirectUri: env.OAUTH_PUBLIC_URL + GROUP_CREATE_REDIRECT_PATH,
-				...(avatar ? { avatar: { image: avatar, stash: kvAvatarStash(env.OAUTH_STATES) } } : {})
-			});
-		}
-		// No redirect: the result carries the owner's rotation key, which is shown
-		// once and stored nowhere, so a 303 would lose it.
-		return runCreateGroup(env, locals.did, { ...data, label, email, password, avatar });
+		if (!hostUrl)
+			return { ok: false, error: 'Group creation is not configured on this deployment.' };
+		return startCreateAtHost({
+			db: env.DB,
+			client: groupLinkClient(env, locals.did),
+			hostUrl,
+			callerDid: locals.did,
+			fields: data,
+			redirectUri: env.OAUTH_PUBLIC_URL + GROUP_CREATE_REDIRECT_PATH,
+			...(avatar ? { avatar: { image: avatar, stash: kvAvatarStash(env.OAUTH_STATES) } } : {})
+		});
 	}
 );
 
