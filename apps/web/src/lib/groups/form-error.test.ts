@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { formError, notAllowed, rosterFailure } from './form-error';
 
+import { GroupNotAtHostError } from './server/host';
 import { GroupCredentialError } from './server/session';
 import { RosterStepError, type RosterChange } from './server/roster';
 import { GroupSpaceError } from './server/spaces';
@@ -51,6 +52,16 @@ describe('formError', () => {
 		);
 
 		expect(refusal.error).toMatch(/its creator has to link their access/);
+		expect(refusal.error).toMatch(/Nothing was changed/);
+	});
+
+	// A group at no host this site is set up with cannot be changed from here,
+	// and nothing the caller does on this site changes that.
+	it('says a group not at this site’s host cannot be changed here', () => {
+		const refusal = formError(new GroupNotAtHostError('did:plc:elsewheregroupaaaaaaaaaa'));
+
+		expect(refusal.ok).toBe(false);
+		expect(refusal.error).toMatch(/not at this site’s group host/);
 		expect(refusal.error).toMatch(/Nothing was changed/);
 	});
 

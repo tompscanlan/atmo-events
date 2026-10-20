@@ -9,6 +9,7 @@ import { GroupCredentialError } from './server/session';
 import { GroupRuleError } from './server/db/rules';
 import { RosterStepError } from './server/roster';
 import { GroupSpaceError } from './server/spaces';
+import { GroupNotAtHostError } from './server/host';
 import { GroupHostError, HostSignInError } from './server/real-host';
 const NOT_LINKED: GroupFormFailure = {
 	ok: false,
@@ -42,6 +43,13 @@ export function knownFormError(e: unknown): GroupFormFailure | null {
 			ok: false,
 			error:
 				'Your sign-in does not let this site ask the group’s host for you. Sign in again, then try once more. Nothing was changed.'
+		};
+	}
+	if (e instanceof GroupNotAtHostError) {
+		return {
+			ok: false,
+			error:
+				'This group is not at this site’s group host, so this site cannot change it. Nothing was changed.'
 		};
 	}
 	if (e instanceof GroupHostError) {
