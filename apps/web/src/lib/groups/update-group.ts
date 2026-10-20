@@ -64,7 +64,7 @@ import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from './types';
 
 import {
 	GroupPermissionError,
-	groupWriter,
+	hostGroupWriter,
 	requireGroupWrite,
 	type GroupRepoWriter
 } from './server/group-write';
@@ -387,7 +387,7 @@ export async function runUpdateGroup(
 		failed = "the group's profile and rules could not be read from its PDS";
 		about = await readGroupAbout(reader, group);
 		failed = noCredential;
-		writer = await groupWriter(env, group, callerDid);
+		writer = await hostGroupWriter(env, group, callerDid);
 	} catch (e) {
 		// A caller with no group session is theirs to fix, not a save to retry.
 		return knownFormError(e) ?? nothingSaved(failed, e);

@@ -18,7 +18,8 @@ import type { JoinOutcome } from './db/roster';
 import type { RosterContext } from './roster';
 import { type CredentialStoreEnv, type GroupCredential, GroupCredentialError } from './session';
 import type { SpaceProvision } from './spaces';
-import { isHostGroup } from './host-kind';
+import { GroupNotAtHostError, isHostGroup } from './host-kind';
+export { GroupNotAtHostError };
 import { realGroupHost } from './real-host';
 
 /** The group a host call is about. */
@@ -66,16 +67,6 @@ export interface GroupHost {
 	ejectMember(caller: HostCaller, did: string): Promise<void>;
 	/** The caller's group-DID session. Rewrites the member's membership with the role. */
 	setMemberRole(caller: HostCaller, did: string, role: AssignableRole): Promise<void>;
-}
-
-/** The group is not at the group host this deployment is set up with, so this
- *  site cannot change it: it changes a group only through its host. Thrown
- *  before any request. */
-export class GroupNotAtHostError extends Error {
-	constructor(readonly groupDid: string) {
-		super(`${groupDid} is not at this site's group host, so this site cannot change it`);
-		this.name = 'GroupNotAtHostError';
-	}
 }
 
 /** The group's host, when the group is at the host this deployment is set up

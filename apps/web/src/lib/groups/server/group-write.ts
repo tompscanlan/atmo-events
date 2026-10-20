@@ -42,6 +42,7 @@ import {
 } from './session';
 import { xrpc, xrpcError } from './xrpc';
 
+import { GroupNotAtHostError, isHostGroup } from './host-kind';
 import { getCallerMembership } from './standing';
 import { isSpaceAccessDenied } from './space-credential';
 /** The error name in a typed client's failed answer, if it has one. */
@@ -396,4 +397,19 @@ export async function groupWriter(
 ): Promise<GroupRepoWriter> {
 	const credential = await requireGroupCredential(env, group.group_did, personDid);
 	return pdsWriter(credential, group.group_did);
+}
+
+/** `groupWriter` for a write no group host call stands in front of (an event,
+ *  a settings save): a group not at this site's group host is refused with
+ *  GroupNotAtHostError before any request. The roster's writes come through
+ *  `groupHost`, which refuses it first. */
+export async function hostGroupWriter(
+	env: CredentialStoreEnv,
+	group: GroupRow,
+	personDid: string
+): Promise<GroupRepoWriter> {
+	if (!(await isHostGroup(env, group.group_did))) {
+		throw new GroupNotAtHostError(group.group_did);
+	}
+	return groupWriter(env, group, personDid);
 }

@@ -72,6 +72,7 @@ import { pdsSpaceReader } from './server/about-read';
 import { writeGroupProfile } from './server/about-writer';
 import {
 	STUB_PDS_SERVICE,
+	atGroupHost,
 	linkGroups,
 	linkedCredential,
 	unlinkAllGroups
@@ -105,12 +106,13 @@ let env: ReturnType<typeof linkGroups>;
 
 beforeEach(() => {
 	harness = sqliteD1();
-	env = linkGroups([GROUP_DID]);
+	env = atGroupHost(linkGroups([GROUP_DID]));
 	index.told = [];
 	index.down = null;
 });
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	vi.unstubAllGlobals();
 	unlinkAllGroups();
 	harness.close();
@@ -346,7 +348,7 @@ describe('a save goes out on the caller’s own session alone', () => {
 	it('flips a group the caller did not create, with every write on their session', async () => {
 		const pds = host();
 		const group = await givenGroup('public', pds);
-		env = linkGroups([GROUP_DID], undefined, [OWNER]);
+		env = atGroupHost(linkGroups([GROUP_DID], undefined, [OWNER]));
 
 		const result = await save({ ...group, owner_did: CREATOR }, 'private', {
 			shownVisibility: 'public',
@@ -996,6 +998,34 @@ describe('this site’s own copy of the group', () => {
 		);
 
 		expect(result).toMatchObject({ ok: false });
+		expect((await getGroupByDid(harness.db, GROUP_DID))?.name).toBe('Kona Trail Runners');
+		expect(traced(pds)).toEqual([]);
+	});
+
+	// This site changes a group only through its own group host; an owner's
+	// linked session on a group anywhere else saves nothing.
+	it('a save for a group not at this site’s group host is refused before the row or any record is written', async () => {
+		const pds = host();
+		const group = await givenGroup('public', pds);
+
+		const result = await runUpdateGroup(
+			linkGroups([GROUP_DID]),
+			harness.db,
+			group,
+			{ did: OWNER, reader: pdsSpaceReader(CRED, GROUP_DID) },
+			{
+				name: 'Renamed elsewhere',
+				visibility: 'private',
+				shownVisibility: 'public',
+				requireApproval: true
+			}
+		);
+
+		expect(result).toEqual({
+			ok: false,
+			error:
+				'This group is not at this site’s group host, so this site cannot change it. Nothing was changed.'
+		});
 		expect((await getGroupByDid(harness.db, GROUP_DID))?.name).toBe('Kona Trail Runners');
 		expect(traced(pds)).toEqual([]);
 	});

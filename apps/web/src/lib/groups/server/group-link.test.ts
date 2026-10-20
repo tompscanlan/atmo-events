@@ -78,7 +78,7 @@ function finish(signedInDid: string | null) {
 function start(
 	signedInDid: string | null,
 	mayConnect = true,
-	atGroupHost: () => Promise<boolean> = async () => false
+	atGroupHost: () => Promise<boolean> = async () => true
 ) {
 	return startGroupLink({
 		client,
@@ -151,20 +151,16 @@ describe('the hint a group host reads off the link', () => {
 		]);
 	});
 
-	// Only this site's group host is told who the person is: never a PDS this
-	// site does not know as its host.
-	it('names the person only to a group at the group host: a group elsewhere, or one the check cannot place, gets no hint', async () => {
-		const atHost = await start(MEMBER, true, async () => true);
-		const elsewhere = await start(MEMBER, true, async () => false);
-		const unplaced = await start(MEMBER, true, async () => {
-			throw new Error('the group did not resolve');
-		});
-
-		expect(atHost.searchParams.get('gh_person')).toBe(MEMBER);
-		for (const url of [elsewhere, unplaced]) {
-			expect([...url.searchParams.keys()]).toEqual(['request_uri']);
-		}
-		expect(authorized).toHaveLength(3);
+	// This site links only a group at its own group host, so no other PDS is
+	// asked anything or told who the person is.
+	it('refuses a group elsewhere, or one the check cannot place, before any request', async () => {
+		await expect(start(MEMBER, true, async () => false)).rejects.toBeInstanceOf(GroupLinkRefused);
+		await expect(
+			start(MEMBER, true, async () => {
+				throw new Error('the group did not resolve');
+			})
+		).rejects.toBeInstanceOf(GroupLinkRefused);
+		expect(authorized).toEqual([]);
 	});
 });
 

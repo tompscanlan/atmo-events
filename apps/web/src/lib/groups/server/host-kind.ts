@@ -4,6 +4,16 @@
 import type { CredentialStoreEnv } from './session';
 import { didSpaceHosts, type SpaceHosts } from './space-credential';
 
+/** The group is not at the group host this deployment is set up with, so this
+ *  site cannot change it: it changes a group only through its host. Thrown
+ *  before any request. */
+export class GroupNotAtHostError extends Error {
+	constructor(readonly groupDid: string) {
+		super(`${groupDid} is not at this site's group host, so this site cannot change it`);
+		this.name = 'GroupNotAtHostError';
+	}
+}
+
 /** The group host this deployment is set up with, by origin, or null. */
 export function groupHostOrigin(
 	env: Pick<CredentialStoreEnv, 'GROUP_HOST_URL'> | undefined

@@ -30,7 +30,7 @@ import { notifyIndexQuietly } from './events-index';
 import {
 	actingPerson,
 	GroupRecordError,
-	groupWriter,
+	hostGroupWriter,
 	requireGroupPermission,
 	type GroupGateInput
 } from './group-write';
@@ -291,7 +291,7 @@ export async function writeGroupEvent(input: WriteGroupEventInput): Promise<Grou
 		}
 	}
 
-	const writer = await groupWriter(input.env, input.group, actingPerson(input));
+	const writer = await hostGroupWriter(input.env, input.group, actingPerson(input));
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,
@@ -319,7 +319,7 @@ export async function deleteGroupEvent(
 	const person = actingPerson(input);
 	const locator = await groupEventLocator(input.env, input.group, person);
 	await checkPlacement(locator, input.group.group_did, space, input.rkey, 'delete');
-	const writer = await groupWriter(input.env, input.group, person);
+	const writer = await hostGroupWriter(input.env, input.group, person);
 	const result = await writer({
 		repo: input.group.group_did,
 		collection: GROUP_EVENT_COLLECTION,

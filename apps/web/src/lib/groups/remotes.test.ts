@@ -53,6 +53,7 @@ import { isRowWrite, sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sq
 import { fakeGroupHost, type FakeGroupHost } from './server/__fixtures__/group-host';
 import {
 	STUB_PDS_SERVICE,
+	atGroupHost,
 	linkGroups,
 	linkedCredential,
 	unlinkAllGroups
@@ -236,7 +237,7 @@ describe('a group whose owner has not linked it', () => {
 			}
 		};
 		request.locals = { did: OWNER, session } as typeof request.locals;
-		request.platform.env = { DB: harness.db, ...linkGroups([]) };
+		request.platform.env = { DB: harness.db, ...atGroupHost(linkGroups([])) };
 		// The create's writes are setup; the save is to write nothing.
 		const setUp = pds.writes().length;
 
@@ -614,7 +615,7 @@ describe('placement on the event commands', () => {
 			}
 		};
 		request.locals = { did: OWNER, session } as typeof request.locals;
-		request.platform.env = { DB: harness.db, ...linkGroups([LINKED]) };
+		request.platform.env = { DB: harness.db, ...atGroupHost(linkGroups([LINKED])) };
 		// The owner's standing, as the create publishes it.
 		await publishAuthz({
 			db: harness.db,
@@ -834,7 +835,7 @@ describe('the members-only RSVP commands', () => {
 		request.platform.env = {
 			DB: harness.db,
 			OAUTH_PUBLIC_URL: 'https://atmo.stub.test',
-			...linkGroups([LINKED])
+			...atGroupHost(linkGroups([LINKED]))
 		};
 	});
 

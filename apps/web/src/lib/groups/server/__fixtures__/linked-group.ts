@@ -15,6 +15,8 @@
 //   	...(await import('./__fixtures__/linked-oauth-stub')).linkedOAuthStub
 //   }));
 
+import { vi } from 'vitest';
+
 import {
 	holdsSession,
 	linkedHolders,
@@ -24,6 +26,7 @@ import {
 } from './linked-oauth-stub';
 
 import { parseGroupSessionKey, type LinkedGroupCredential } from '../session';
+import { didSpaceHosts } from '../space-credential';
 export { LINKED_TEST_TOKEN, SESSION_PERSON_HEADER } from './linked-oauth-stub';
 
 /** The stub PDS's address, which every fixture group lives on unless a test says. */
@@ -53,6 +56,18 @@ export function linkGroups(
 		linkedHolders.set(did, people ? new Set(people) : 'anyone');
 	}
 	return { OAUTH_SESSIONS: sessionsKv };
+}
+
+/** `env` with every group at this deployment's group host, `service`: the env
+ *  names it, and each group's DID document names it as the group's PDS. For the
+ *  writes that refuse a group anywhere else (`hostGroupWriter`). The DID spy
+ *  lasts until `vi.restoreAllMocks`. */
+export function atGroupHost<E extends object>(
+	env: E,
+	service: string = STUB_PDS_SERVICE
+): E & { GROUP_HOST_URL: string } {
+	vi.spyOn(didSpaceHosts, 'repoHost').mockResolvedValue(service);
+	return { ...env, GROUP_HOST_URL: service };
 }
 
 /** For an `afterEach`: no link outlives the test that made it. */

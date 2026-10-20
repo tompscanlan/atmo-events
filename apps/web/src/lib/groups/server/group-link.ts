@@ -3,8 +3,9 @@
 // under that person (./session.ts). Running it again reconnects a session that
 // was revoked or has lapsed.
 //
-// Three checks. Only someone whose roles grant writes may start a link, and they
-// still must when it finishes. Only the browser that started it, still signed in
+// Four checks. Only someone whose roles grant writes may start a link, and they
+// still must when it finishes. Only a group at this site's group host is linked:
+// any other, or one the check cannot place, is refused before a request is made. Only the browser that started it, still signed in
 // as that person, may finish it; that is checked before the code is exchanged,
 // so a refused link never stores a session. And the account that authorized must
 // be the group: the client resolves the group's DID when the link starts and
@@ -55,6 +56,9 @@ export async function startGroupLink(input: {
 			`only someone whose roles in ${input.group.group_did} grant writes can link a group session`
 		);
 	}
+	if (!(await input.atGroupHost().catch(() => false))) {
+		throw new GroupLinkRefused(`${input.group.group_did} is not at this site's group host`);
+	}
 	const state: GroupLinkState = { groupDid: input.group.group_did, by };
 	const { url } = await input.client.authorize({
 		target: { type: 'account', identifier: input.group.group_did as Did },
@@ -63,11 +67,7 @@ export async function startGroupLink(input: {
 		state
 	});
 	// The group host's page asks who the person is, and fills in their handle
-	// from this hint, on the link rather than in the request. Only this site's
-	// group host is told who they are: never a PDS this site does not know as its
-	// host, nor a host the check cannot place.
-	const atHost = await input.atGroupHost().catch(() => false);
-	if (!atHost) return url;
+	// from this hint, on the link rather than in the request.
 	const hinted = new URL(url);
 	hinted.searchParams.set('gh_person', by);
 	return hinted;

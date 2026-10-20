@@ -34,7 +34,12 @@ vi.mock('$lib/contrail/index', async (importOriginal) => ({
 }));
 
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
-import { LINKED_TEST_TOKEN, linkGroups, unlinkAllGroups } from './__fixtures__/linked-group';
+import {
+	LINKED_TEST_TOKEN,
+	atGroupHost,
+	linkGroups,
+	unlinkAllGroups
+} from './__fixtures__/linked-group';
 import {
 	fakeGroupHost,
 	type FakeGroupHost,
@@ -60,6 +65,7 @@ import {
 	POLICY_PUBLIC
 } from '../ids';
 import { GroupPermissionError, GroupRecordError } from './group-write';
+import { GroupNotAtHostError } from './host-kind';
 import { GroupCredentialError } from './session';
 import { type EventPlacement } from '../event-placement';
 import { createGroup } from './db/groups';
@@ -97,7 +103,7 @@ function validRecord(name = 'Kona weekly ride') {
  *  log starts empty. */
 async function onHost(options: Partial<FakeGroupHostOptions> = {}) {
 	pds = fakeGroupHost({ did: GROUP_DID, ...options });
-	linkedEnv = linkGroups([GROUP_DID]);
+	linkedEnv = atGroupHost(linkGroups([GROUP_DID]));
 	pds.holdGroup('public');
 }
 
@@ -285,6 +291,21 @@ describe('the permission gate', () => {
 		await write({ intent: 'update', placement: 'everyone', rkey: '3abc' });
 		expect(pds.calls).not.toEqual([]);
 	});
+
+	// This site changes a group only through its own group host; a linked session
+	// on a group anywhere else writes nothing. An edit or delete still reads the
+	// event's placement first, with the caller's own access.
+	it('refuses a group not at this site’s group host before any write', async () => {
+		const elsewhere = linkGroups([GROUP_DID]);
+		const refused = [
+			() => write({ env: elsewhere, intent: 'create', placement: 'everyone' }),
+			() => write({ env: elsewhere, intent: 'update', placement: 'members', rkey: '3abc' }),
+			() => remove('3abc', 'everyone', { env: elsewhere })
+		];
+		for (const run of refused) await expect(run()).rejects.toBeInstanceOf(GroupNotAtHostError);
+		expect(pds.writes()).toEqual([]);
+		expect(index.told).toEqual([]);
+	});
 });
 
 describe('record validation', () => {
@@ -382,7 +403,7 @@ describe('credentials', () => {
 		beforeEach(() => unlinkAllGroups());
 
 		// Another group is linked, so the sessions namespace exists and answers.
-		const unlinked = () => linkGroups(['did:plc:anothergroupaaaaaaaaaaaa']);
+		const unlinked = () => atGroupHost(linkGroups(['did:plc:anothergroupaaaaaaaaaaaa']));
 
 		it('refuses an admin’s event through the real writer, and sends nothing', async () => {
 			await expect(
