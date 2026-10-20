@@ -14,9 +14,9 @@ import {
 } from './server/event-writer';
 
 // The group's side of atmo's event editor (./editor-adapter.ts). The editor
-// builds the record; these write it as the group. The writer checks the
-// permission from a fresh membership read (CREATE_EVENT for a create,
-// MANAGE_EVENTS otherwise) and the record against the event lexicon.
+// builds the record; these write it as the group. The writer refuses a group
+// not at this site's group host and checks the record against the event
+// lexicon; the host decides whether the person's roles allow the write.
 //
 // Both take the event's placement, `everyone` or `members`, never optional, so a
 // page that forgets it gets a validation error rather than a public post. The

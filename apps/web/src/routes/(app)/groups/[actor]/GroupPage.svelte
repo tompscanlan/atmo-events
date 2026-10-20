@@ -275,14 +275,9 @@
 			<p class="font-semibold">Link your access to this group</p>
 			<p class="mt-1">
 				This site writes as the group for you only through a session you approve, so your event,
-				settings and member changes wait on it.
-				{#if data.atHost}
-					At the group's host you sign in with your own account, and approve this site. The host
-					lets it act for the group only as far as your roles in the group allow.
-				{:else}
-					At the group's PDS you sign in as the group, not as yourself, with the email and password
-					chosen when it was created, and approve this site.
-				{/if}
+				settings and member changes wait on it. At the group's host you sign in with your own
+				account, and approve this site. The host lets it act for the group only as far as your roles
+				in the group allow.
 			</p>
 			<div class="mt-3"><Button type="submit">Link your access</Button></div>
 		</GroupLinkForm>
@@ -295,7 +290,6 @@
 			{visibility}
 			groupLinked={data.groupLinked}
 			linkOutcome={data.linkOutcome}
-			atHost={data.atHost}
 		/>
 	{/if}
 </div>

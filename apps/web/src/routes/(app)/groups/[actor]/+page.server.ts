@@ -16,7 +16,6 @@ import type { PageServerLoad } from './$types';
 
 import { countMembers } from '$lib/groups/server/db/roster';
 import { pendingRequestsFor } from '$lib/groups/server/host';
-import { isHostGroup } from '$lib/groups/server/host-kind';
 import { hasLinkedSession } from '$lib/groups/server/session';
 /** The visibility the page shows: the about space's access record's, since the
  *  row holds none. The gate's answer is reused. For a caller on the roster the
@@ -139,10 +138,6 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 			...(pendingRequests ?? []).map((request) => request.did)
 		]),
 		canManageGroup: can(membership.permissions, 'MANAGE_GROUP'),
-		/** Whether the group is at a real group host, where a link signs the person
-		 *  in with their own account. Wording only, so a lookup that fails reads as
-		 *  the stand-in. */
-		atHost: await isHostGroup(platform!.env, group.group_did).catch(() => false),
 		/** For someone whose roles grant writes, who may link a group session:
 		 *  whether this site holds theirs, the one their writes as the group go
 		 *  out on. Null for anyone else. */

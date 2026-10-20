@@ -1,4 +1,4 @@
-// The e2e's stand-in for `$lib/atproto/methods`, aliased over it in the Vite build
+// The e2e's replacement for `$lib/atproto/methods`, aliased over it in the Vite build
 // (groups-e2e.build.mjs). The real module pulls in the app's identity resolver, a
 // Svelte module this bundle cannot take. The group pages' gate imports it to turn a
 // handle URL into a DID, and the run names its group by DID, so it never asks. A

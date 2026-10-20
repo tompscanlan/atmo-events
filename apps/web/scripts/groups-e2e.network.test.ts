@@ -16,7 +16,7 @@ function quietLedger() {
 	return { ledger: createLedger((line: string) => lines.push(line)), lines };
 }
 
-/** A stand-in resolver, so no test sends a DNS query: each name's addresses, or
+/** A fake resolver, so no test sends a DNS query: each name's addresses, or
  *  ENOTFOUND for a name it lacks. */
 function resolver(addressesByName: Record<string, string[]>) {
 	return vi.fn(async (name: string, options: { all: true }) => {
@@ -222,7 +222,7 @@ describe('fixtureCheck', () => {
 	const PLC = 'http://localhost:2592';
 	const SPACES_PDS = 'http://localhost:3010';
 
-	/** A stand-in devnet PLC: each DID's PDS, or absent. */
+	/** A fake devnet PLC: each DID's PDS, or absent. */
 	function devnetPlc(pdsByDid: Record<string, string>) {
 		return vi.fn(async (input: RequestInfo | URL) => {
 			const did = decodeURIComponent(new URL(String(input)).pathname.slice(1));

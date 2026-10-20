@@ -10,8 +10,8 @@
 // Pages read with the caller's own access (TS 2026-10-15), so a signed-in caller
 // is `readerSession(did)`, put in `locals.session`: their own PDS here grants a
 // delegation token for a space their scope reads, and the host grants a
-// credential to whom it lets in. By default that is what the stand-in's member
-// lists hold: anyone for a meta space whose access record is public, the group's
+// credential to whom it lets in. By default that is whom a host lets in by its
+// records: anyone for a meta space whose access record is public, the group's
 // roster (its membership records) for every other space, and the group itself.
 // `admitOnly` replaces the rule for one group. DIDs resolve to the stub PDS.
 //
@@ -239,8 +239,8 @@ export function admitOnly(groupDid: string, admits: (did: string, space: string)
 	admitRules.set(groupDid, admits);
 }
 
-/** The stand-in's member lists, from the host's own records: a public meta space
- *  lets anyone in, and every space lets in the group and its roster. */
+/** Whom the host lets in, from its own records: a public meta space lets anyone
+ *  in, and every space lets in the group and its roster. */
 function admits(host: GroupSpaceReader, did: string, space: string): boolean {
 	const group = spaceParts(space).authority;
 	const rule = admitRules.get(group);

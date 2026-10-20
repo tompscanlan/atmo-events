@@ -285,14 +285,11 @@ describe('every refusal comes before any write', () => {
 		});
 
 	it.each([
+		// Who may admit, assign or eject is the group's host's to decide; with
+		// nobody signed in there is nobody to send the write as.
 		[
-			'an admit by a member who holds no ADMIT_MEMBERS',
-			() => membership({ callerDid: MEMBER }),
-			GroupPermissionError
-		],
-		[
-			'a role change by a member who holds no ASSIGN_ROLES',
-			() => membership({ callerDid: MEMBER, subject: MEMBER, roles: ['admin'], intent: 'assign' }),
+			'an admit from an anonymous caller',
+			() => membership({ callerDid: null }),
 			GroupPermissionError
 		],
 		[
@@ -325,20 +322,8 @@ describe('every refusal comes before any write', () => {
 		],
 		['a leave aimed at somebody else', () => drop({}), GroupPermissionError],
 		[
-			'an eject by a member who holds no EJECT_MEMBERS',
-			() => drop({ intent: 'eject' }),
-			GroupPermissionError
-		],
-		// Configuration takes MANAGE_GROUP. A member who could write the authz
-		// config could bind their own role to ASSIGN_ROLES and take over the group.
-		[
-			'the access record, from a member',
-			() => writeGroupAccess({ db, env, callerDid: MEMBER, group, writer, reader }),
-			GroupPermissionError
-		],
-		[
-			'the authz config, from a member',
-			() => writeGroupAuthz({ db, env, callerDid: MEMBER, group, writer, reader }),
+			'the authz config, from an anonymous caller',
+			() => writeGroupAuthz({ db, env, callerDid: null, group, writer, reader }),
 			GroupPermissionError
 		]
 	] as const)('refuses %s', async (_case, run, refusal) => {

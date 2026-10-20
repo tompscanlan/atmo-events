@@ -1,11 +1,11 @@
-// A create at a group host, against a stub host and the real schema. The host
+// A create at a group host, against a fake host and the real schema. The host
 // makes the group's account and its meta and members records at sign-up; these
 // cases cover what this app does around that: the refusals before anything
 // exists at the host, the checks at the callback, and what it writes on the
 // creator's new session afterwards, and above all what it leaves to the host.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
-import { stubPds } from './server/__fixtures__/stub-pds';
+import { fakeGroupHost } from './server/__fixtures__/group-host';
 import { stubSession } from './server/__fixtures__/linked-oauth-stub';
 
 vi.mock('./server/handles', () => ({ refreshGroupHandle: vi.fn(async () => null) }));
@@ -69,12 +69,11 @@ const HOST_META_GRANTS = [
 	{ role: 'member', scopes: ['space:group.opensocial.meta?action=read'] }
 ];
 
-/** The stub host with the group the host made: its meta `access` record, and
- *  the host's own `createSpace`, which the stub does not serve. */
+/** The fake host with the group the host made: its meta `access` record, and
+ *  the host's own `createSpace`, which the fake does not serve. */
 async function hostWithGroup(fail?: (nsid: string) => Response | undefined) {
-	const host = stubPds({
+	const host = fakeGroupHost({
 		did: GROUP,
-		handle: 'kona.grouphost.stub.test',
 		fail: (nsid) =>
 			fail?.(nsid) ??
 			(nsid === 'group.opensocial.createSpace'
@@ -99,7 +98,7 @@ async function hostWithGroup(fail?: (nsid: string) => Response | undefined) {
 	return host;
 }
 
-/** A PNG's first bytes: enough for a stub host that keeps what it was sent. */
+/** A PNG's first bytes: enough for a fake host that keeps what it was sent. */
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const picture = (type = 'image/png') => new Blob([PNG], { type });
 
@@ -195,7 +194,7 @@ describe('startCreateAtHost', () => {
 		const [options] = authorize.mock.calls[0] as unknown as [Record<string, unknown>];
 		expect(options.target).toEqual({ type: 'pds', serviceUrl: HOST });
 		expect(options.prompt).toBe('create');
-		expect(options.scope).toBe(groupSessionScope(false));
+		expect(options.scope).toBe(groupSessionScope());
 		// The calendar space does not exist yet, and its items are asked for anyway:
 		// the host's admin grant covers every space, ones made later included.
 		expect(options.scope).toContain(`space:${CALENDAR_SPACE_TYPE}?`);

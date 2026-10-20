@@ -93,7 +93,7 @@ beforeEach(async () => {
 	authorize.mockReset();
 	authorize.mockResolvedValue({ url: new URL('https://pds.test/oauth/authorize'), stateId: 's' });
 	isHostGroup.mockReset();
-	isHostGroup.mockResolvedValue(false);
+	isHostGroup.mockResolvedValue(true);
 });
 
 const env = (): Record<string, unknown> => ({
@@ -147,7 +147,7 @@ describe('POST /oauth/group-link', () => {
 		for (const did of [OWNER, ADMIN]) {
 			expect(await start(did)).toMatchObject({
 				status: 303,
-				location: 'https://pds.test/oauth/authorize'
+				location: `https://pds.test/oauth/authorize?gh_person=${encodeURIComponent(did)}`
 			});
 		}
 		expect(clientsFor).toEqual([OWNER, ADMIN]);
@@ -174,8 +174,9 @@ describe('POST /oauth/group-link', () => {
 	});
 
 	// The group host's act-for-group page fills in the person's handle from the
-	// hint; a stand-in group's PDS is never told who the person is.
-	it('hints the person to the group host only for a group that lives there', async () => {
+	// hint. A group anywhere else is not linked: no PDS this site does not know
+	// as its host is asked anything or told who the person is.
+	it('hints the person to the group host, and answers a group elsewhere with the 404', async () => {
 		const withHost = { ...env(), GROUP_HOST_URL: 'https://grouphost.test' };
 
 		isHostGroup.mockResolvedValueOnce(true);
@@ -184,9 +185,10 @@ describe('POST /oauth/group-link', () => {
 		expect(hinted.searchParams.get('gh_name')).toBeNull();
 		expect(isHostGroup).toHaveBeenLastCalledWith(withHost, GROUP);
 
+		authorize.mockClear();
 		isHostGroup.mockResolvedValueOnce(false);
-		const plain = new URL((await start(ADMIN, withHost)).location ?? '');
-		expect([...plain.searchParams.keys()]).toEqual([]);
+		expect(await start(ADMIN, withHost)).toMatchObject({ status: 404 });
+		expect(authorize).not.toHaveBeenCalled();
 	});
 
 	// A link kept nowhere would be lost with the request that made it.

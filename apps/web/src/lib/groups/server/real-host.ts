@@ -74,7 +74,7 @@ export class HostSignInError extends Error {
 type Failed = Extract<XrpcAnswer, { ok: false }>;
 
 /** The refusals the standard names for these methods, as this app's own errors,
- *  so a form words them as it does the stand-in's. */
+ *  so a form words them as it does the app's own rules. */
 function refusal(nsid: string, answer: Failed): Error {
 	if (answer.error === 'JoinClosed')
 		return new GroupRuleError('invite-only', 'This group is invite-only');

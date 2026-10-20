@@ -2,8 +2,8 @@
 // default bundles, the owner's membership, the roster rows a test names, and
 // its about and members space URIs.
 //
-// It stands in for the create flow, which mints the group's DID and provisions
-// its spaces at the host first. Only the D1 half is done here, through the
+// It stands in for the create flow, whose group and spaces the host makes
+// first. Only the D1 half is done here, through the
 // app's own db helpers, in the SQLite harness of ./d1-sqlite.ts, so the
 // schema's triggers and checks still run. Nothing is written to any space: a
 // test that needs records gives a reader of its own (./space-reader.ts).

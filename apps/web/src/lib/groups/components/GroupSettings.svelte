@@ -13,8 +13,7 @@
 		about,
 		visibility,
 		groupLinked,
-		linkOutcome,
-		atHost = false
+		linkOutcome
 	}: {
 		group: Pick<GroupRow, 'group_did' | 'require_approval'>;
 		about: { name: string; description: string | null; rules: { text: string }[] };
@@ -23,8 +22,6 @@
 		groupLinked: boolean | null;
 		/** `linked` or `failed` after a link's callback, else null. */
 		linkOutcome: string | null;
-		/** The group is at a real group host, where a link signs in with one's own account. */
-		atHost?: boolean;
 	} = $props();
 
 	let settingsError = $derived(groupFormError(updateGroupForm.result));
@@ -59,13 +56,8 @@
 		</p>
 	{:else if linkOutcome === 'failed'}
 		<p class="mt-3 text-sm text-red-600 dark:text-red-400">
-			{#if atHost}
-				The link did not complete, and nothing changed. At the group's host, sign in with your own
-				account and approve the request.
-			{:else}
-				The link did not complete, and nothing changed. At the group's PDS, sign in as the group
-				itself, not as yourself, and approve the request.
-			{/if}
+			The link did not complete, and nothing changed. At the group's host, sign in with your own
+			account and approve the request.
 		</p>
 	{/if}
 

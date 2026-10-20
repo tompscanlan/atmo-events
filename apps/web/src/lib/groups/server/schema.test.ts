@@ -264,7 +264,7 @@ describe('the owner cannot be demoted, removed or leave', () => {
 
 describe('one row per group DID', () => {
 	// The group's only uniqueness. There is no second name to reserve: the handle
-	// registered at mint is the reservation, and it lives on a PDS, not in this
+	// registered at the host is the reservation, and it lives on a PDS, not in this
 	// table.
 	it('keeps group_did unique', () => {
 		insertGroup('g1', 'did:plc:owner');

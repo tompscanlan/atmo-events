@@ -20,7 +20,7 @@ import {
 } from './member-grants';
 
 import { createGroup } from './db/groups';
-import { addMember, decideJoinRequest, requestJoin } from './db/roster';
+import { addMember, decideJoinRequest, noteJoinRequest } from './db/roster';
 const OWNER = 'did:plc:owner';
 const ALICE = 'did:plc:alice';
 const BOB = 'did:plc:bob';
@@ -182,9 +182,9 @@ describe('signInGrantAttempts', () => {
 		for (const g of [KONA, HILO, PUNA]) await age(g, now, METADATA_CACHE_MS);
 
 		await addMember(db, kona.id, ALICE, 'member');
-		expect(await requestJoin(db, hilo, ALICE, null, 'public')).toBe('pending');
+		expect(await noteJoinRequest(db, hilo.id, ALICE, null)).toBe('pending');
 		// A decided request is not a pending one.
-		expect(await requestJoin(db, puna, ALICE, null, 'public')).toBe('pending');
+		expect(await noteJoinRequest(db, puna.id, ALICE, null)).toBe('pending');
 		await rejectOnly(puna.id, ALICE);
 		// Someone else's membership asks nothing of Alice's sign-in.
 		await addMember(db, puna.id, BOB, 'member');
@@ -314,7 +314,7 @@ describe('reauthorizeForGroup', () => {
 	it("asks for the new group's grant after an open join", async () => {
 		const kona = await group(KONA);
 		await age(KONA, now, METADATA_CACHE_MS);
-		expect(await requestJoin(db, kona, ALICE, null, 'public')).toBe('joined');
+		await addMember(db, kona.id, ALICE, 'member');
 
 		const asked = await reauthorizeForGroup(db, ALICE, KONA, now, async (grants) => grants);
 		expect(asked).toEqual([memberGrant(KONA)]);
@@ -326,7 +326,7 @@ describe('reauthorizeForGroup', () => {
 		await age(KONA, now, METADATA_CACHE_MS * 3);
 		await age(HILO, now, METADATA_CACHE_MS);
 		await addMember(db, kona.id, ALICE, 'member');
-		expect(await requestJoin(db, hilo, ALICE, null, 'public')).toBe('joined');
+		await addMember(db, hilo.id, ALICE, 'member');
 
 		const asked = await reauthorizeForGroup(db, ALICE, HILO, now, async (grants) => grants);
 		expect(asked).toEqual([memberGrant(KONA), memberGrant(HILO)]);
@@ -335,7 +335,7 @@ describe('reauthorizeForGroup', () => {
 	it('gives up after one refusal when the new group is younger than the metadata cache', async () => {
 		const kona = await group(KONA);
 		await age(KONA, now, 60_000);
-		await requestJoin(db, kona, ALICE, null, 'public');
+		await addMember(db, kona.id, ALICE, 'member');
 
 		let calls = 0;
 		const asked = await reauthorizeForGroup(db, ALICE, KONA, now, async () => {
@@ -353,7 +353,7 @@ describe('reauthorizeForGroup', () => {
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const kona = await group(KONA);
 		await age(KONA, now, METADATA_CACHE_MS);
-		await requestJoin(db, kona, ALICE, null, 'public');
+		await addMember(db, kona.id, ALICE, 'member');
 
 		for (const failure of [invalidScope('refused'), new Error('PDS unreachable')]) {
 			const asked = await reauthorizeForGroup(db, ALICE, KONA, now, async () => {

@@ -74,8 +74,8 @@ async function readCalendarSpace<T>(
 			);
 			return { status: 'no-space' };
 		}
-		// A member the host will not let into the calendar space is off its list,
-		// which a repair puts right; the member sees what any failed read shows.
+		// A member the host will not let into the calendar space holds no role its
+		// access record grants a read; the member sees what any failed read shows.
 		console.error(`[groups] ${group.group_did}: ${log.failed}:`, e);
 		return { status: 'unreadable' };
 	}

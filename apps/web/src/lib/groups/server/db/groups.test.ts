@@ -91,9 +91,9 @@ describe('createGroup', () => {
 	});
 });
 
-// The create path runs this before the mint, so it must cost nothing: a
-// rehearsal that left a row behind would be a worse bug than the one it
-// prevents.
+// The create runs this before it sends anyone to the host, so it must cost
+// nothing: a rehearsal that left a row behind would be a worse bug than the one
+// it prevents.
 describe('rehearseCreateGroup', () => {
 	function counts() {
 		return ['groups', 'roles', 'role_permissions', 'memberships'].map(
@@ -128,7 +128,7 @@ describe('rehearseCreateGroup', () => {
 	// Drift that loses the owner without a refusal: with the owner-role trigger
 	// gone, the batch inserts the row and no owner membership, and no statement
 	// fails. Only the rehearsal's closing check can see it, and a create that went
-	// ahead would mint a group nobody owns.
+	// ahead would leave a group nobody owns.
 	it('refuses when the row would land without its owner membership', async () => {
 		// The schema self-heal runs once per isolate and would put the trigger
 		// back, so it has run before the trigger goes.

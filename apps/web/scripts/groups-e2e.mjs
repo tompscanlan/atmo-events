@@ -78,14 +78,14 @@
  * reconfigures no space through simplespace, and its roles are `admin` and
  * `member`. The no-spaces member never signs in: their PDS would refuse the
  * group's grant, so they are added and removed by the owner rather than asking
- * and leaving; a stand-in session answers the scope a stock PDS grants and
+ * and leaving; a fake session answers the scope a stock PDS grants and
  * refuses any request, so check 18e can show the app sent none. The app's own
- * write gate asks nothing for a host group, so the refusals are the host's: the
- * non-member is refused a group session (check 6), and the demoted admin's writes
- * go out on his own and are refused there (17b), save one that would first
- * change only this site's copy of the group, which the app still refuses. Each
- * host refusal is read back from the host's own record of what it refused
- * (`/spike/state`).
+ * write gate asks nothing about a write as the group, so the refusals are the
+ * host's: the non-member is refused a group session (check 6), and the demoted
+ * admin's writes go out on his own and are refused there (17b), save one that
+ * would first change only this site's copy of the group, which the app still
+ * refuses. Each host refusal is read back from the host's own record of what it
+ * refused (`/spike/state`).
  *
  * Environment:
  *   E2E_GROUP_HOST     required: the group host, e.g. https://grouphost.devnet.internal
@@ -237,8 +237,8 @@ const RSVP_COLLECTION = 'community.lexicon.calendar.rsvp';
 /** What the app tells a member whose PDS can't RSVP to a members-only event,
  *  written out. */
 const RSVP_NO_SPACES = "Your PDS can't RSVP to members-only events yet, so nothing was saved.";
-/** The URL a stand-in reauthorize() answers. Never fetched. */
-const REAUTHORIZE_STAND_IN = 'http://groups-e2e.invalid/oauth/authorize?request_uri=e2e';
+/** The URL a faked reauthorize() answers. Never fetched. */
+const REAUTHORIZE_URL = 'http://groups-e2e.invalid/oauth/authorize?request_uri=e2e';
 
 /** What the app tells a member of an unlinked group, written out. */
 const NO_ACCESS_NOTICE =
@@ -1014,7 +1014,6 @@ async function main() {
 			unlinked.ok === false &&
 				unlinked.error.name === 'GroupCredentialError' &&
 				unlinked.error.personDid === BOB &&
-				unlinked.error.standInHost === false &&
 				unlinkedWrites.writes.length === 0 &&
 				afterUnlinked.cid === asPersisted.cid,
 			"an admin who has linked no group session is refused, and the creator's session writes nothing for him",
@@ -1924,7 +1923,7 @@ async function main() {
 				rkey: SEED_RKEY,
 				action,
 				asked: null,
-				reauthorizeUrl: REAUTHORIZE_STAND_IN,
+				reauthorizeUrl: REAUTHORIZE_URL,
 				...extra
 			});
 		const nsidsOf = (op) => op.calls.map((path) => path.split('?')[0].replace(/^\/xrpc\//, ''));
@@ -1985,10 +1984,10 @@ async function main() {
 		const carolOut = () => op('ejectMember', { callerDid: ALICE, did: CAROL });
 
 		// 13u. who sends no RSVP request -----------------------------------------
-		// The roster gate comes before the grant: a non-member, whose stand-in
+		// The roster gate comes before the grant: a non-member, whose fake
 		// session holds the grant and refuses any request, is turned away with
 		// nothing sent and no re-authorization. A member whose PDS serves no spaces
-		// holds no grant. Their first RSVP is sent to re-authorize (a stand-in URL,
+		// holds no grant. Their first RSVP is sent to re-authorize (a fake URL,
 		// never followed) with a marker for the page to carry, and only once the page
 		// hands that marker back under a session issued since (a new stamp) are they
 		// told their PDS can't do it. Neither sends a request through their session.
@@ -2001,7 +2000,7 @@ async function main() {
 				action,
 				asked: null,
 				session: 'outsider',
-				reauthorizeUrl: REAUTHORIZE_STAND_IN,
+				reauthorizeUrl: REAUTHORIZE_URL,
 				...extra
 			});
 		const outsiderPut = await outsiderOp('put', { status: 'going' });
@@ -2019,7 +2018,7 @@ async function main() {
 				asked,
 				stamp,
 				session: 'no-spaces',
-				reauthorizeUrl: REAUTHORIZE_STAND_IN
+				reauthorizeUrl: REAUTHORIZE_URL
 			});
 		const carolFirst = await carolOp(null, 1);
 		const carolAfterAsking = await carolOp(carolFirst.result?.marker ?? null, 2);
@@ -2042,7 +2041,7 @@ async function main() {
 				outsiderRead.result === null &&
 				carolFirst.onRoster === true &&
 				carolFirst.result?.reason === 'reauthorize' &&
-				carolFirst.result.url === REAUTHORIZE_STAND_IN &&
+				carolFirst.result.url === REAUTHORIZE_URL &&
 				typeof carolFirst.result.marker === 'string' &&
 				carolFirst.reauthorized === 1 &&
 				carolFirst.calls.length === 0 &&

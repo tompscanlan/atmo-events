@@ -1,15 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-// The write gate asks the group's records for the caller's standing once per
+// The write gate. The group's host decides every write as the group, so the
+// gate checks only a write to this app's own rows, which the host never sees.
+// For those it asks the group's records for the caller's standing once per
 // request: every write a request makes passes the request's one reader, so a
-// create or a settings save that writes nine records reads the standing once.
+// save that writes several rows reads the standing once.
 import type { GroupRow } from '../types';
 import type { GroupSpaceReader } from './about-read';
 import { hostDown, type FakeSpaceReader } from './__fixtures__/space-reader';
 import { authzReader } from './__fixtures__/members-space';
 import type { SqliteD1 } from './__fixtures__/d1-sqlite';
 import { seedGroup } from './__fixtures__/seed-group';
-import { didSpaceHosts } from './space-credential';
 import {
 	GroupPermissionError,
 	requireGroupPermission,
@@ -18,7 +19,6 @@ import {
 } from './group-write';
 import { spaceWrite } from '../grants';
 import { GROUP_PROFILE_COLLECTION } from '../about-record';
-import { GROUP_MEMBERSHIP_COLLECTION } from '../members-record';
 import { ABOUT_SPACE_TYPE } from '../types';
 
 const GROUP_DID = 'did:plc:gatetestgroupaaaaaaaaaaa';
@@ -59,54 +59,62 @@ const gate = (reader: GroupSpaceReader, callerDid: string) => ({
 	reader
 });
 
-describe('requireGroupPermission', () => {
+// A write to this app's own rows: the one kind the gate checks itself.
+const appOnly = { appOnly: true };
+
+describe('the standing the gate reads', () => {
+	const profile = spaceWrite(ABOUT_SPACE_TYPE, GROUP_PROFILE_COLLECTION, 'update');
+	const rules = spaceWrite(ABOUT_SPACE_TYPE, 'group.opensocial.rule', 'create');
+
 	it('reads the caller’s standing once for every write that shares a reader', async () => {
 		const reader = countingReader();
-		await requireGroupPermission(gate(reader, OWNER), 'MANAGE_GROUP');
+		await requireGroupWrite(gate(reader, OWNER), profile, appOnly);
 		const once = reader.calls.length;
 		expect(once).toBeGreaterThan(0);
 
-		await requireGroupPermission(gate(reader, OWNER), 'MANAGE_GROUP');
-		await requireGroupPermission(gate(reader, OWNER), 'CREATE_EVENT');
+		await requireGroupWrite(gate(reader, OWNER), profile, appOnly);
+		await requireGroupWrite(gate(reader, OWNER), rules, appOnly);
 		expect(reader.calls.length).toBe(once);
 	});
 
 	it('reads again for another caller, or for another request’s reader', async () => {
 		const reader = countingReader();
-		await requireGroupPermission(gate(reader, OWNER), 'MANAGE_GROUP');
+		await requireGroupWrite(gate(reader, OWNER), profile, appOnly);
 		const once = reader.calls.length;
 
-		await expect(requireGroupPermission(gate(reader, MEMBER), 'MANAGE_GROUP')).rejects.toThrow(
+		// The member's standing is read afresh; their refusal may also read the
+		// about space's `access`, which the owner's write never needed.
+		await expect(requireGroupWrite(gate(reader, MEMBER), profile, appOnly)).rejects.toThrow(
 			GroupPermissionError
 		);
-		expect(reader.calls.length).toBe(2 * once);
+		expect(reader.calls.length).toBeGreaterThanOrEqual(2 * once);
 
 		const next = countingReader();
-		await requireGroupPermission(gate(next, OWNER), 'MANAGE_GROUP');
+		await requireGroupWrite(gate(next, OWNER), profile, appOnly);
 		expect(next.calls.length).toBe(once);
 	});
 
 	it('does not keep a failed read, so the next write asks again', async () => {
 		const reader = countingReader({ failFirst: true });
-		await expect(requireGroupPermission(gate(reader, OWNER), 'MANAGE_GROUP')).rejects.toThrow(
+		await expect(requireGroupWrite(gate(reader, OWNER), profile, appOnly)).rejects.toThrow(
 			/failed: 502/
 		);
-		await expect(
-			requireGroupPermission(gate(reader, OWNER), 'MANAGE_GROUP')
-		).resolves.toBeUndefined();
+		await expect(requireGroupWrite(gate(reader, OWNER), profile, appOnly)).resolves.toBeUndefined();
 	});
 });
 
-// Every write as the group is checked against the caller's scopes, and a
-// membership write also against the roles their grants may assign. (Spec: FR-213.)
-describe('requireGroupWrite', () => {
+// A write to this app's own rows is checked against the caller's scopes, as the
+// host would check a write as the group. (Spec: FR-213.)
+describe('requireGroupWrite, for this app’s own rows', () => {
 	const profile = spaceWrite(ABOUT_SPACE_TYPE, GROUP_PROFILE_COLLECTION, 'update');
 
 	it("lets a write through when a role's scope covers it, and refuses it otherwise", async () => {
 		await expect(
-			requireGroupWrite(gate(countingReader(), ADMIN), profile)
+			requireGroupWrite(gate(countingReader(), ADMIN), profile, appOnly)
 		).resolves.toBeUndefined();
-		await expect(requireGroupWrite(gate(countingReader(), MEMBER), profile)).rejects.toMatchObject({
+		await expect(
+			requireGroupWrite(gate(countingReader(), MEMBER), profile, appOnly)
+		).rejects.toMatchObject({
 			reason: `your roles hold no scope to update ${GROUP_PROFILE_COLLECTION} records in the ${ABOUT_SPACE_TYPE} space`
 		});
 	});
@@ -130,100 +138,54 @@ describe('requireGroupWrite', () => {
 				]
 			}
 		});
-		await requireGroupWrite(gate(reader, ADMIN), profile);
+		await requireGroupWrite(gate(reader, ADMIN), profile, appOnly);
 		expect(reader.callsIn(about)).toEqual([]);
 
-		await expect(requireGroupWrite(gate(reader, MEMBER), profile)).resolves.toBeUndefined();
+		await expect(
+			requireGroupWrite(gate(reader, MEMBER), profile, appOnly)
+		).resolves.toBeUndefined();
 		expect(reader.callsIn(about)).toHaveLength(1);
 	});
 
 	it('lets the group itself through with nothing read', async () => {
 		const reader = countingReader();
-		await requireGroupWrite(gate(reader, GROUP_DID), profile);
+		await requireGroupWrite(gate(reader, GROUP_DID), profile, appOnly);
 		expect(reader.calls).toEqual([]);
 	});
 });
 
-describe('requireMembershipWrite', () => {
-	it('lets an admin admit a member and promote one to admin', async () => {
-		await expect(
-			requireMembershipWrite(gate(countingReader(), ADMIN), 'did:plc:newcomer', ['member'])
-		).resolves.toBeUndefined();
-		await expect(
-			requireMembershipWrite(gate(countingReader(), ADMIN), MEMBER, ['admin'])
-		).resolves.toBeUndefined();
-	});
-
-	// The owner is on no admin's `assignable`, so an admin can neither make an
-	// owner nor remove one: the record says what the owner holds, whatever the row.
-	it("refuses an admin any change that touches the owner's role", async () => {
-		await expect(
-			requireMembershipWrite(gate(countingReader(), ADMIN), MEMBER, ['owner'])
-		).rejects.toMatchObject({ reason: 'your roles may not assign or remove owner' });
-		const reader = countingReader();
-		await expect(requireMembershipWrite(gate(reader, ADMIN), OWNER, [])).rejects.toMatchObject({
-			reason: 'your roles may not assign or remove owner'
-		});
-		// The owner's record was read for the roles it would remove.
-		expect(
-			reader.calls.some((call) => call.endsWith(`${GROUP_MEMBERSHIP_COLLECTION} ${OWNER}`))
-		).toBe(true);
-	});
-
-	it('refuses a member any membership write, naming the scope', async () => {
-		await expect(
-			requireMembershipWrite(gate(countingReader(), MEMBER), 'did:plc:newcomer', ['member'])
-		).rejects.toMatchObject({
-			reason: `your roles hold no scope to create ${GROUP_MEMBERSHIP_COLLECTION} records in the group.opensocial.members space`
-		});
-	});
-});
-
-// A group at the group host this deployment is set up with: the host cuts each
-// session to its person's roles and checks `assignable`, so the gate asks
-// nothing and the refusal a person sees is the host's. (Spec: FR-213, SC-503.)
-describe('at a group host', () => {
-	const HOST = 'https://grouphost.test';
+// The group's host cuts each session to its person's roles and checks
+// `assignable`, so the gate asks nothing about a write as the group and the
+// refusal a person sees is the host's. (Spec: FR-213, SC-503.)
+describe('a write as the group', () => {
 	const profile = spaceWrite(ABOUT_SPACE_TYPE, GROUP_PROFILE_COLLECTION, 'update');
-	const atHost = (reader: GroupSpaceReader, callerDid: string | null) => ({
-		...gate(reader, callerDid as string),
-		callerDid,
-		env: { GROUP_HOST_URL: HOST }
+	const anonymous = (reader: GroupSpaceReader) => ({
+		...gate(reader, OWNER),
+		callerDid: null
 	});
-	let resolve: MockInstance;
-	beforeEach(() => {
-		resolve = vi.spyOn(didSpaceHosts, 'repoHost').mockResolvedValue(HOST);
-	});
-	afterEach(() => resolve.mockRestore());
 
-	it('is not consulted: a member’s writes pass it with nothing read', async () => {
+	it('is the host’s to decide: a member’s writes pass the gate with nothing read', async () => {
 		const reader = countingReader();
-		await expect(requireGroupWrite(atHost(reader, MEMBER), profile)).resolves.toBeUndefined();
+		await expect(requireGroupWrite(gate(reader, MEMBER), profile)).resolves.toBeUndefined();
+		await expect(requireMembershipWrite(gate(reader, MEMBER), [])).resolves.toBeUndefined();
 		await expect(
-			requireMembershipWrite(atHost(reader, MEMBER), OWNER, [])
-		).resolves.toBeUndefined();
-		await expect(
-			requireGroupPermission(atHost(reader, MEMBER), 'MANAGE_EVENTS')
+			requireGroupPermission(gate(reader, MEMBER), 'MANAGE_EVENTS')
 		).resolves.toBeUndefined();
 		expect(reader.calls).toEqual([]);
 	});
 
 	it('still refuses an anonymous caller, who has nothing to send the write as', async () => {
-		await expect(requireGroupWrite(atHost(countingReader(), null), profile)).rejects.toThrow(
+		await expect(requireGroupWrite(anonymous(countingReader()), profile)).rejects.toThrow(
 			GroupPermissionError
 		);
-	});
-
-	it('still checks a write to this app’s own rows, which the host never sees', async () => {
 		await expect(
-			requireGroupWrite(atHost(countingReader(), MEMBER), profile, { appOnly: true })
-		).rejects.toThrow(GroupPermissionError);
-	});
-
-	it('checks a group at any other PDS as before', async () => {
-		resolve.mockResolvedValue('https://pds.stub.test');
-		await expect(requireGroupWrite(atHost(countingReader(), MEMBER), profile)).rejects.toThrow(
-			GroupPermissionError
-		);
+			requireMembershipWrite(anonymous(countingReader()), ['member'])
+		).rejects.toMatchObject({
+			reason:
+				'your roles hold no scope to create group.opensocial.membership records in the group.opensocial.members space'
+		});
+		await expect(
+			requireGroupPermission(anonymous(countingReader()), 'MANAGE_EVENTS')
+		).rejects.toMatchObject({ reason: 'MANAGE_EVENTS required' });
 	});
 });
