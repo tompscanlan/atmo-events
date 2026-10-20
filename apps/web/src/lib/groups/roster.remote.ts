@@ -1,12 +1,11 @@
 // Joining and leaving a group, and an admin's changes to its roster, as remote
-// forms. Every act goes through the group's host (./server/host.ts); the
-// emulated one runs ./server/roster.ts, which the e2e harness shares, so both
-// run the same sequence.
+// forms. Every act goes through the group's host (./server/host.ts), as the e2e
+// harness's do, so both run the same sequence.
 import { command, form, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
 import { can } from './permissions';
 import type { GroupFormResult } from './form-result';
-import { notAllowed, rosterFailure } from './form-error';
+import { formError, notAllowed } from './form-error';
 import { assignableRoleField, didField, memberActorField } from './form-fields';
 import { callerMember, groupRequestContext, reauthorizeUrl } from './remote-context';
 import { searchPeopleByHandle } from './server/people-search';
@@ -28,7 +27,7 @@ export const joinGroupForm = form(
 				data.message || null
 			);
 		} catch (e) {
-			return rosterFailure(e);
+			return formError(e);
 		}
 		const changed = outcome === 'joined' || outcome === 'pending';
 		return { ok: true, outcome, reauthorize: changed ? await reauthorizeUrl(ctx) : null };
@@ -53,8 +52,7 @@ export const leaveGroupForm = form(
 		const ctx = { ...(await groupRequestContext(data.groupDid)), member: await callerMember() };
 		const host = groupHost(ctx);
 		try {
-			// A pending applicant has no record and no list entry: only the
-			// request closes.
+			// A pending applicant has no membership: only the request closes.
 			if (ctx.membership.pendingRequestId) {
 				await host.cancelJoinRequest(ctx);
 				return { ok: true, outcome: 'withdrawn' };
@@ -62,7 +60,7 @@ export const leaveGroupForm = form(
 			await host.leaveGroup(ctx);
 			return { ok: true, outcome: 'left' };
 		} catch (e) {
-			return rosterFailure(e);
+			return formError(e);
 		}
 	}
 );
@@ -82,7 +80,7 @@ export const approveJoinRequestForm = form(
 			await groupHost(ctx).approveJoinRequest(ctx, data.member, data.role ?? 'member');
 			return { ok: true };
 		} catch (e) {
-			return rosterFailure(e);
+			return formError(e);
 		}
 	}
 );
@@ -95,12 +93,12 @@ export const rejectJoinRequestForm = form(
 			return notAllowed(ctx.membership, 'ADMIT_MEMBERS');
 		}
 		try {
-			// A rejected request never granted anything, so there is no record
-			// or list entry, only the request itself.
+			// A rejected request never granted anything, so there is no
+			// membership, only the request itself.
 			await groupHost(ctx).denyJoinRequest(ctx, data.member);
 			return { ok: true };
 		} catch (e) {
-			return rosterFailure(e);
+			return formError(e);
 		}
 	}
 );
@@ -133,7 +131,7 @@ export const addMemberForm = form(
 			await groupHost(ctx).addMember(ctx, did, data.role ?? 'member');
 			return { ok: true };
 		} catch (e) {
-			return rosterFailure(e);
+			return formError(e);
 		}
 	}
 );
@@ -158,7 +156,7 @@ export const removeMemberForm = form(
 			await groupHost(ctx).ejectMember(ctx, data.did);
 			return { ok: true };
 		} catch (e) {
-			return rosterFailure(e);
+			return formError(e);
 		}
 	}
 );
@@ -174,7 +172,7 @@ export const changeMemberRoleForm = form(
 			await groupHost(ctx).setMemberRole(ctx, data.did, data.role);
 			return { ok: true };
 		} catch (e) {
-			return rosterFailure(e);
+			return formError(e);
 		}
 	}
 );

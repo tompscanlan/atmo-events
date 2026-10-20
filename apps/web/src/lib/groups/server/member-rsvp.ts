@@ -31,7 +31,7 @@
 // back to a session that can't be read. Nothing loops and nothing is retried.
 // (Spec: FR-114.)
 //
-// Shared with the e2e harness, like ./roster.ts, so both run the same sequence.
+// Shared with the e2e harness, like ./host.ts, so both run the same sequence.
 import { canSeeMembers } from '../access';
 import type { CallerMembership, GroupRow } from '../types';
 import type { GroupSpaceReader } from './about-read';

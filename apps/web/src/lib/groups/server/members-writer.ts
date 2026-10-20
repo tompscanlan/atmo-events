@@ -6,7 +6,7 @@
 // Nothing here writes the members space's own member list. A read policy covers
 // the whole space, so a listed DID could read every roster record from the PDS,
 // around the app's gate. The list stays empty. The about space's list mirrors
-// the roster instead (./roster.ts). The calendar space's list stays empty too:
+// the roster instead. The calendar space's list stays empty too:
 // the app reads that space as the group, so listing members would only let
 // their own apps read members-only events around the gate. (Spec: FR-101b.)
 import { now as tidNow } from '@atcute/tid';
