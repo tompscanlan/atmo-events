@@ -8,15 +8,12 @@
 // DID.
 import { isActorIdentifier } from '@atcute/lexicons/syntax';
 import { MEMBERSHIP_SPACE } from '../grants';
-import { can, type GroupPermission } from '../permissions';
+import type { GroupPermission } from '../permissions';
 import {
-	allowsMembershipWrite,
 	allowsWrite,
 	membershipAction,
 	NO_GRANTS,
-	rolesTouched,
 	withAccess,
-	type MembershipChange,
 	type SpaceWrite,
 	type WriteGrants
 } from '../scopes';
@@ -45,8 +42,6 @@ import {
 } from './session';
 import { xrpc, xrpcError } from './xrpc';
 
-import { isHostGroup } from './host-kind';
-import { readMembership } from './members-read';
 import { getCallerMembership } from './standing';
 import { isSpaceAccessDenied } from './space-credential';
 /** The error name in a typed client's failed answer, if it has one. */
@@ -152,17 +147,13 @@ export type GroupRepoWriter = (write: GroupRepoWrite) => Promise<{ uri: string; 
 
 /** Writes as the group. `groupDid` is checked against the session, so a
  *  credential stored under the wrong group cannot write elsewhere. In a space,
- *  `repo` names the author's part of the space, which is the group itself.
- *  `atHost`: the group is at a group host, whose refusals are its roles'. */
-export function pdsWriter(
-	cred: GroupCredential,
-	groupDid: string,
-	{ atHost = false } = {}
-): GroupRepoWriter {
+ *  `repo` names the author's part of the space, which is the group itself. The
+ *  group's host refuses what the caller's roles do not allow, and its refusal
+ *  is the one a form shows. */
+export function pdsWriter(cred: GroupCredential, groupDid: string): GroupRepoWriter {
 	return async (write) => {
 		const xrpcFailure = (nsid: string, status: number, error: string | null) =>
-			(atHost && hostRefusal(nsid, error, groupDid, write.collection)) ||
-			xrpcError(nsid, { status, error });
+			hostRefusal(nsid, error, groupDid, write.collection) || xrpcError(nsid, { status, error });
 		const { client, handle } = await groupClient(cred, groupDid);
 		const collection = write.collection as `${string}.${string}.${string}`;
 		// `repo` comes off a D1 row. A check, not a cast, makes it an ActorIdentifier,
@@ -273,30 +264,25 @@ export interface GroupGateInput {
 }
 
 /** `appOnly`: the write is to this app's own rows, which the group's host never
- *  sees (repair at a host, a settings save's copy of the group). The host cannot
- *  refuse it, so the gate checks it at a host too. */
+ *  sees (a refresh, a settings save's copy of the group). The host cannot refuse
+ *  it, so the gate checks it here. */
 export interface GateOptions {
 	appOnly?: boolean;
 }
 
-/** Whether the group's host decides the write, so the gate asks nothing: a group
- *  at the group host this deployment is set up with, which cuts every session to
- *  its person's current roles and checks `assignable` on a membership write. The
- *  refusal a person sees is then the host's. An anonymous caller is refused here
- *  either way, since there is nobody to send the write as. (Spec: FR-213, SC-503.) */
-async function hostDecides(
-	input: GroupGateInput,
-	refusal: string,
-	options: GateOptions
-): Promise<boolean> {
+/** The group's host decides every write as the group, so the gate asks nothing
+ *  about one: the host cuts every session to its person's current roles and
+ *  checks `assignable` on a membership write, and the refusal a person sees is
+ *  the host's. An anonymous caller is refused here, since there is nobody to
+ *  send the write as. (Spec: FR-213, SC-503.) */
+function requireCaller(input: GroupGateInput, refusal: string): void {
 	if (!input.callerDid) throw new GroupPermissionError(refusal, input.group.group_did);
-	return !options.appOnly && isHostGroup(input.env, input.group.group_did);
 }
 
 /** The caller's standing and the reader it came through. Refuses an anonymous
- *  caller before any read. A group with a members space that its owner has not
- *  linked cannot be read, so nobody's grants can be checked, and the refusal says
- *  what would fix it. */
+ *  caller before any read. A group with a members space that the caller holds
+ *  no group session for cannot be read without a reader, so their grants cannot
+ *  be checked, and the refusal says what would fix it. */
 async function gateStanding(
 	input: GroupGateInput,
 	refusal: string
@@ -313,33 +299,29 @@ async function gateStanding(
 	return { membership: await standingFor(db, group, callerDid, reader), reader };
 }
 
-/** The gate for a named permission: the questions pages ask (../grants.ts) and the
- *  event actions, which `eventPermissions` grants until events move to scopes. At
- *  a host the event's scope decides, which the host holds (FR-216). */
+/** The gate for a named permission: the event actions, which `eventPermissions`
+ *  grants until events move to scopes. The event's scope decides, which the
+ *  group's host holds (FR-216), so only an anonymous caller is refused here. */
 export async function requireGroupPermission(
 	input: GroupGateInput,
 	permission: GroupPermission
 ): Promise<void> {
-	const refusal = permissionRequired(permission);
-	if (await hostDecides(input, refusal, {})) return;
-	const { membership } = await gateStanding(input, refusal);
-	if (!can(membership.permissions, permission)) {
-		throw new GroupPermissionError(refusal, input.group.group_did);
-	}
+	requireCaller(input, permissionRequired(permission));
 }
 
-/** The gate for one record or space write as the group: a scope one of the
- *  caller's roles holds, in `permissions` or in the target space's `access`, must
- *  cover it. Called before anything the write depends on moves, so a refusal
- *  changes nothing. At a group host the host checks it instead, unless it is a
- *  write to this app's own rows. (Spec: FR-213.) */
+/** The gate for one record or space write as the group. The group's host checks
+ *  it, so here only a write to this app's own rows (`appOnly`) is checked: a
+ *  scope one of the caller's roles holds, in `permissions` or in the target
+ *  space's `access`, must cover it. Called before anything the write depends on
+ *  moves, so a refusal changes nothing. (Spec: FR-213.) */
 export async function requireGroupWrite(
 	input: GroupGateInput,
 	write: SpaceWrite,
 	options: GateOptions = {}
 ): Promise<void> {
 	const refusal = noScopeFor(write);
-	if (await hostDecides(input, refusal, options)) return;
+	requireCaller(input, refusal);
+	if (!options.appOnly) return;
 	const { membership, reader } = await gateStanding(input, refusal);
 	const groupDid = input.group.group_did;
 	if (allowsWrite(membership.grants, groupDid, write)) return;
@@ -370,33 +352,18 @@ async function withTargetAccess(
 	return access ? withAccess(grants, write.spaceType, access.grants) : null;
 }
 
-/** The gate for a write of `subject`'s `membership` that leaves it holding `to`,
- *  empty for an ejection. The scope must cover the write, and every role it adds or
- *  removes must be one the caller's roles may assign (`proposal.md:46`). What the
- *  member holds now is their record's roles, read through the gate's reader, since
- *  the record, not the row, is what the write changes. (Spec: FR-213.) */
+/** The gate for a write of a `membership` that leaves it holding `to`, empty
+ *  for an ejection. The group's host checks the scope, and that every role the
+ *  write adds or removes is one the caller's roles may assign
+ *  (`proposal.md:46`), so only an anonymous caller is refused here.
+ *  (Spec: FR-213.) */
 export async function requireMembershipWrite(
 	input: GroupGateInput,
-	subject: string,
 	to: readonly string[]
 ): Promise<void> {
-	const groupDid = input.group.group_did;
-	const refusal = noScopeFor({ ...MEMBERSHIP_SPACE, action: membershipAction({ from: [], to }) });
-	if (await hostDecides(input, refusal, {})) return;
-	const { membership, reader } = await gateStanding(input, refusal);
-	const grants = membership.grants;
-	if (grants.group) return;
-	const current = reader ? await readMembership(reader, input.group, subject) : null;
-	const change: MembershipChange = { from: current?.roleIds ?? [], to };
-	if (allowsMembershipWrite(grants, groupDid, MEMBERSHIP_SPACE, change)) return;
-	// Name the scope when it is missing, since no role would help without it.
-	const write = { ...MEMBERSHIP_SPACE, action: membershipAction(change) };
-	const unassignable = rolesTouched(change).filter((role) => !grants.assignable.has(role));
-	throw new GroupPermissionError(
-		allowsWrite(grants, groupDid, write)
-			? `your roles may not assign or remove ${unassignable.join(', ')}`
-			: noScopeFor(write),
-		groupDid
+	requireCaller(
+		input,
+		noScopeFor({ ...MEMBERSHIP_SPACE, action: membershipAction({ from: [], to }) })
 	);
 }
 
@@ -428,7 +395,5 @@ export async function groupWriter(
 	personDid: string
 ): Promise<GroupRepoWriter> {
 	const credential = await requireGroupCredential(env, group.group_did, personDid);
-	return pdsWriter(credential, group.group_did, {
-		atHost: await isHostGroup(env, group.group_did)
-	});
+	return pdsWriter(credential, group.group_did);
 }

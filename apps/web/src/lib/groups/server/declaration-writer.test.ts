@@ -233,15 +233,16 @@ describe('every refusal comes before any write', () => {
 	// Where the declaration may point is checked by the helper the about writer
 	// shares, and ./about-writer.test.ts refuses each wrong space.
 	it.each([
-		// Announcing a group, or withdrawing it, changes its face: MANAGE_GROUP.
+		// The group's host decides who may announce a group or withdraw it; with
+		// nobody signed in there is nobody to send either as.
 		[
-			'a declaration from a member',
-			() => writeGroupDeclaration({ db, env, group, callerDid: MEMBER, writer, reader: authz }),
+			'a declaration from an anonymous caller',
+			() => writeGroupDeclaration({ db, env, group, callerDid: null, writer, reader: authz }),
 			GroupPermissionError
 		],
 		[
-			'a withdrawal from a member',
-			() => removeGroupDeclaration({ db, env, group, callerDid: MEMBER, writer, reader: authz }),
+			'a withdrawal from an anonymous caller',
+			() => removeGroupDeclaration({ db, env, group, callerDid: null, writer, reader: authz }),
 			GroupPermissionError
 		]
 	] as const)('refuses %s', async (_case, run, refusal) => {

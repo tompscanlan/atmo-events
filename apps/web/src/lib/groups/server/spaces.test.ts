@@ -345,11 +345,6 @@ describe('setAboutSpaceReadPolicy', () => {
 		]);
 	});
 
-	it('refuses a member without MANAGE_GROUP, and changes no policy', async () => {
-		await expect(flip(MEMBER)).rejects.toBeInstanceOf(GroupPermissionError);
-		expect(updated).toEqual([]);
-	});
-
 	it('refuses an anonymous caller before reading anything', async () => {
 		await expect(flip(null)).rejects.toBeInstanceOf(GroupPermissionError);
 		expect(reader.calls).toEqual([]);

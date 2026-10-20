@@ -77,7 +77,6 @@ const OWNER = 'did:plc:owner';
  *  actor the co-editing requirement is about. */
 const ADMIN = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const MEMBER = 'did:plc:6cz6dldz42itymdbte47ewcv';
-const STRANGER = 'did:plc:ib2wrjcp4ulwqu35a7rtlckv';
 
 let harness: SqliteD1;
 let db: D1Database;
@@ -252,25 +251,12 @@ describe('authorship', () => {
 	});
 });
 
+// The group's host decides who may write an event, on the caller's own group
+// session, so the gate stops only a caller with nothing to send the write as.
 describe('the permission gate', () => {
-	it('refuses a plain member: no CREATE_EVENT, no MANAGE_EVENTS', async () => {
-		await expect(
-			write({ callerDid: MEMBER, intent: 'create', placement: 'everyone' })
-		).rejects.toMatchObject({ reason: 'CREATE_EVENT required' });
-		await expect(
-			write({ callerDid: MEMBER, intent: 'update', placement: 'everyone', rkey: '3abc' })
-		).rejects.toMatchObject({ reason: 'MANAGE_EVENTS required' });
-		expect(pds.calls).toEqual([]);
-	});
-
-	it('gates deletion on MANAGE_EVENTS and deletes from the group repo', async () => {
+	it('deletes from the group repo, on the admin’s own session', async () => {
 		const created = await write({ intent: 'create', placement: 'everyone' });
 		pds.clearLog();
-
-		await expect(remove(created.rkey, 'everyone', { callerDid: MEMBER })).rejects.toMatchObject({
-			reason: 'MANAGE_EVENTS required'
-		});
-		expect(pds.calls).toEqual([]);
 
 		const deleted = await remove(created.rkey, 'everyone');
 		expect(deleted.repo).toBe(GROUP_DID);
@@ -287,17 +273,14 @@ describe('the permission gate', () => {
 		expect(await hostHas(null, created.rkey)).toBe(false);
 	});
 
-	// MEMBER holds neither event permission, STRANGER is off the roster, and
-	// null is anonymous. The gate answers from D1 here, so any call the host
-	// logs would be a calendar space check, a placement read or a write made
-	// before the gate. The admin's edit at the end does reach the host, so the
-	// silence is the gate's.
-	it('a caller without the permission is refused before any PDS read or write', async () => {
+	// Any call the host logs would be a calendar space check, a placement read
+	// or a write made before the gate. The admin's edit at the end does reach
+	// the host, so the silence is the gate's.
+	it('an anonymous caller is refused before any PDS read or write', async () => {
 		const refused = [
-			() => write({ callerDid: MEMBER, intent: 'create', placement: 'members' }),
-			() => write({ callerDid: STRANGER, intent: 'update', placement: 'members', rkey: '3abc' }),
+			() => write({ callerDid: null, intent: 'create', placement: 'members' }),
 			() => write({ callerDid: null, intent: 'update', placement: 'everyone', rkey: '3abc' }),
-			() => remove('3abc', 'members', { callerDid: STRANGER })
+			() => remove('3abc', 'members', { callerDid: null })
 		];
 		for (const run of refused) await expect(run()).rejects.toBeInstanceOf(GroupPermissionError);
 		expect(pds.calls).toEqual([]);
@@ -379,8 +362,8 @@ describe('records from the event editor', () => {
 });
 
 describe('credentials', () => {
-	it('checks the permission before the credential', async () => {
-		// Order matters: a member must be told they lack the permission, not that
+	it('checks for a caller before the credential', async () => {
+		// Order matters: a signed-out caller must be told to sign in, not that
 		// the group is not linked.
 		await expect(
 			writeGroupEvent({
@@ -388,7 +371,7 @@ describe('credentials', () => {
 				env: {},
 				// No members space, so there is nothing to read and no link to need.
 				group: { ...group, members_space_uri: null },
-				callerDid: MEMBER,
+				callerDid: null,
 				placement: 'everyone',
 				intent: 'create',
 				record: validRecord()
@@ -465,16 +448,15 @@ describe('event images', () => {
 		});
 	});
 
-	it('gates the upload on the permission its write needs', async () => {
+	it('refuses an anonymous upload before the transport', async () => {
 		for (const [intent, permission] of [
 			['create', 'CREATE_EVENT'],
 			['update', 'MANAGE_EVENTS']
 		] as const) {
-			await expect(upload({ callerDid: MEMBER, intent })).rejects.toMatchObject({
+			await expect(upload({ callerDid: null, intent })).rejects.toMatchObject({
 				reason: `${permission} required`
 			});
 		}
-		await expect(upload({ callerDid: null })).rejects.toBeInstanceOf(GroupPermissionError);
 		expect(pds.calls).toEqual([]);
 	});
 

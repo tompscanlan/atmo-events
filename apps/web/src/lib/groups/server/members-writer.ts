@@ -3,12 +3,9 @@
 // roster intent needs its own grant, so a member who may admit still cannot eject
 // or promote. The other records need MANAGE_GROUP, like any configuration write.
 //
-// Nothing here writes the members space's own member list. A read policy covers
-// the whole space, so a listed DID could read every roster record from the PDS,
-// around the app's gate. The list stays empty. The about space's list mirrors
-// the roster instead. The calendar space's list stays empty too:
-// the app reads that space as the group, so listing members would only let
-// their own apps read members-only events around the gate. (Spec: FR-101b.)
+// Nothing here writes a space's member list: the group's host lets a member into
+// a space by the roles its `access` record grants, and keeps no list apart from
+// the records. (Spec: FR-101b.)
 import { now as tidNow } from '@atcute/tid';
 import {
 	GROUP_ACCESS_COLLECTION,
@@ -81,11 +78,11 @@ const SELF_SERVICE: readonly MembershipIntent[] = ['join', 'leave'];
 /** The calendar space a caller passed, checked like `membersSpace`. No column
  *  holds it, so it comes from the caller, which today is only the create. */
 
-/** The gate for one roster intent. Exported because the roster must refuse the
- *  caller before it edits the about space's member list. `roles` is what the
- *  record will hold, and an exit holds none. Anything but a join or a leave is
- *  checked against the caller's scopes and `assignable` (Spec: FR-213). */
-export async function authorizeMembership(
+/** The gate for one roster intent. `roles` is what the record will hold, and an
+ *  exit holds none. A join or a leave must be the caller's own; anything else
+ *  the group's host checks against the caller's scopes and `assignable`
+ *  (Spec: FR-213). */
+async function authorizeMembership(
 	input: WriteGroupMembersInput & {
 		subject: string;
 		intent: MembershipIntent;
@@ -102,7 +99,7 @@ export async function authorizeMembership(
 		}
 		return;
 	}
-	await requireMembershipWrite(input, input.subject, input.roles ?? []);
+	await requireMembershipWrite(input, input.roles ?? []);
 }
 
 export interface MembershipWriteResult {

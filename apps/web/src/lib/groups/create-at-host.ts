@@ -289,8 +289,8 @@ async function takeAvatar(
 
 /**
  * Everything after the host made the group, on the creator's new session. The
- * gate runs as the group itself, as a mint's set-up does: these are the group's
- * own first writes, and the host checks the creator's roles on every one.
+ * gate runs as the group itself: these are the group's own first writes, and
+ * the host checks the creator's roles on every one.
  * Every failure names the group, which exists at the host whatever happens here.
  */
 export async function setUpHostGroup(
@@ -358,7 +358,7 @@ export async function setUpHostGroup(
 		env,
 		group: withSpaces,
 		callerDid: groupDid,
-		writer: pdsWriter(credential, groupDid, { atHost: true }),
+		writer: pdsWriter(credential, groupDid),
 		reader
 	};
 	try {
