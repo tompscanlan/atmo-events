@@ -174,7 +174,8 @@ describe('POST /oauth/group-link', () => {
 	});
 
 	// The group host's act-for-group page fills in the person's handle from the
-	// hint; a stand-in group's PDS is never told who the person is.
+	// hint; a PDS this site does not know as its host is never told who the
+	// person is.
 	it('hints the person to the group host only for a group that lives there', async () => {
 		const withHost = { ...env(), GROUP_HOST_URL: 'https://grouphost.test' };
 

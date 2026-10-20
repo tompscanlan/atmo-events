@@ -55,7 +55,7 @@ export const GROUP_PERMISSIONS_RKEY = 'self';
 export const MEMBERS_SPACE_READER_ROLES: readonly GroupRoleName[] = GROUP_ROLES;
 
 /** Every role may read the about space too: a private group's profile and rules are
- *  for its members, and the space's member list mirrors the whole roster. */
+ *  for its members, and its host lets in every member by this grant. */
 export const ABOUT_SPACE_READER_ROLES: readonly GroupRoleName[] = GROUP_ROLES;
 
 export class MembershipKeyError extends Error {

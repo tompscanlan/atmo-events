@@ -7,7 +7,7 @@
 // instead.
 //
 // The PDS is a stub behind `fetch`. The index resolves a DID to its PDS through
-// the `identities` row the mint writes, and then asks that PDS for the record,
+// the `identities` row the create writes, and then asks that PDS for the record,
 // so the stub answers `com.atproto.repo.getRecord` and refuses anything else.
 // What matters is the index's rule: a record the PDS does not return is
 // deleted, whatever the reason the PDS gave.
@@ -86,7 +86,7 @@ const writer: GroupRepoWriter = async (write) => {
 	return { uri, cid: 'bafytest' };
 };
 
-/** A public group we host, its identity registered the way the mint does it,
+/** A public group we host, its identity registered the way the create does it,
  *  and its declaration both on the PDS and in our index. */
 async function declaredGroup(groupDid: string, createdAt?: string): Promise<GroupRow> {
 	const created = await createGroup(db, { groupDid, ownerDid: OWNER, name: 'Kona' });
@@ -122,7 +122,7 @@ async function declaredDids(): Promise<string[]> {
 beforeAll(async () => {
 	harness = sqliteD1();
 	db = harness.db;
-	// The index's own tables, `identities` among them, which the mint writes to
+	// The index's own tables, `identities` among them, which the create writes to
 	// before anything has queried the index.
 	await ensureInit(db);
 	vi.stubGlobal(

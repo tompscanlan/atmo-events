@@ -3,7 +3,7 @@
 // and the groups lookup is never what stops a sign-in. The fallback when the PDS
 // refuses a grant is member-grants' (firstAcceptedScope in its tests).
 //
-// The OAuth client is a stand-in that records each authorize; the groups table
+// The OAuth client is a fake that records each authorize; the groups table
 // is the real SQL.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { scopes } from '$lib/atproto/settings';

@@ -70,7 +70,7 @@ export type MembershipIntent = MembershipPut | MembershipDrop;
 
 /** Authorized by identity, not by a grant: the caller must be the subject. A
  *  plain member holds no roster grant but may join and leave. `join` does not
- *  apply the join policy here; `requestJoin` (./db/roster.ts) already did. */
+ *  apply the join policy here; the group's host does. */
 const SELF_SERVICE: readonly MembershipIntent[] = ['join', 'leave'];
 
 /** Read off the row, and checked like `aboutSpace` in ./about-writer.ts. */
@@ -219,8 +219,7 @@ export interface SpaceIndexWriteResult {
  * Leaves exactly one `space` entry for each space it is given: the about and
  * members spaces always, and the calendar space when the caller passes it. It
  * adds one for a space with none, and deletes all but the oldest for a space with
- * several. An entry for any other space is left alone. The create and the repair
- * both pass the calendar space.
+ * several. An entry for any other space is left alone.
  * `existing` is passed in, as for rules, so a new group passes `[]` and reads
  * nothing. Needs a scope for each kind of write it makes: creating an entry,
  * deleting one, or neither when the index is already whole.
