@@ -16,7 +16,7 @@ import {
 	type GroupLinkState
 } from './group-link';
 
-import { groupSessionScope, STAND_IN_HOST_SCOPES } from './session';
+import { groupSessionScope } from './session';
 const GROUP = 'did:plc:linkedgroupaaaaaaaaaaaaa';
 const OWNER = 'did:plc:owneraaaaaaaaaaaaaaaaaaa';
 const MEMBER = 'did:plc:memberaaaaaaaaaaaaaaaaaa';
@@ -109,23 +109,20 @@ describe('starting a link', () => {
 				// An account target makes the client resolve the group's DID now and
 				// refuse a token issued to anyone else at the callback.
 				target: { type: 'account', identifier: GROUP },
-				scope: groupSessionScope(false),
+				scope: groupSessionScope(),
 				redirectUri: REDIRECT,
 				state: { groupDid: GROUP, by: MEMBER }
 			}
 		]);
 	});
 
-	// The creator's session is the one the stand-in host acts on, so only their
-	// link asks for what the stand-in needs to keep its member lists.
-	it('asks for the stand-in host’s scopes on the creator’s link only', async () => {
+	// The group's host keeps each space's member list and read policy, so the
+	// creator's link asks for no more than anyone else's.
+	it('asks the creator for the same scope as anyone else', async () => {
 		await start(OWNER);
 		await start(MEMBER);
-		const [owner, member] = authorized.map((a) => (a as { scope: string }).scope.split(' '));
-		for (const extra of STAND_IN_HOST_SCOPES) {
-			expect(owner).toContain(extra);
-			expect(member).not.toContain(extra);
-		}
+		const [owner, member] = authorized.map((a) => (a as { scope: string }).scope);
+		expect(owner).toBe(member);
 	});
 
 	it('refuses a member whose roles grant no writes, and a caller who is signed out', async () => {
@@ -147,24 +144,24 @@ describe('the hint a group host reads off the link', () => {
 		expect(authorized).toEqual([
 			{
 				target: { type: 'account', identifier: GROUP },
-				scope: groupSessionScope(false),
+				scope: groupSessionScope(),
 				redirectUri: REDIRECT,
 				state: { groupDid: GROUP, by: MEMBER }
 			}
 		]);
 	});
 
-	// A stand-in group's account sits on an ordinary PDS, where the person signs
-	// in as the group, so that PDS is never told who the person is.
-	it('names the person only to a group at the group host: a stand-in group, or one the check cannot place, gets no hint', async () => {
+	// Only this site's group host is told who the person is: never a PDS this
+	// site does not know as its host.
+	it('names the person only to a group at the group host: a group elsewhere, or one the check cannot place, gets no hint', async () => {
 		const atHost = await start(MEMBER, true, async () => true);
-		const standIn = await start(MEMBER, true, async () => false);
+		const elsewhere = await start(MEMBER, true, async () => false);
 		const unplaced = await start(MEMBER, true, async () => {
 			throw new Error('the group did not resolve');
 		});
 
 		expect(atHost.searchParams.get('gh_person')).toBe(MEMBER);
-		for (const url of [standIn, unplaced]) {
+		for (const url of [elsewhere, unplaced]) {
 			expect([...url.searchParams.keys()]).toEqual(['request_uri']);
 		}
 		expect(authorized).toHaveLength(3);

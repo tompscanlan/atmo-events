@@ -38,12 +38,6 @@ export class GroupLinkRefused extends Error {
 	}
 }
 
-/** The scope `personDid`'s link to `group` asks for. The creator's session is the
- *  one the stand-in host acts on, so it asks for that too. */
-export function groupLinkScope(group: LinkGroup, personDid: string): string {
-	return groupSessionScope(personDid === group.owner_did);
-}
-
 /** The authorization URL to send the person to. `mayConnect` is whether their
  *  roles grant writes, as their own access read them. */
 export async function startGroupLink(input: {
@@ -64,14 +58,14 @@ export async function startGroupLink(input: {
 	const state: GroupLinkState = { groupDid: input.group.group_did, by };
 	const { url } = await input.client.authorize({
 		target: { type: 'account', identifier: input.group.group_did as Did },
-		scope: groupLinkScope(input.group, by),
+		scope: groupSessionScope(),
 		redirectUri: input.redirectUri,
 		state
 	});
 	// The group host's page asks who the person is, and fills in their handle
-	// from this hint, on the link rather than in the request. A stand-in group's
-	// account sits on an ordinary PDS, where the person signs in as the group, so
-	// that PDS is never told who they are; nor is a host the check cannot place.
+	// from this hint, on the link rather than in the request. Only this site's
+	// group host is told who they are: never a PDS this site does not know as its
+	// host, nor a host the check cannot place.
 	const atHost = await input.atGroupHost().catch(() => false);
 	if (!atHost) return url;
 	const hinted = new URL(url);

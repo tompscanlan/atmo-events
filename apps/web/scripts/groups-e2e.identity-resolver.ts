@@ -1,4 +1,4 @@
-// The e2e's stand-in for `@atcute/identity-resolver`, aliased over it in the
+// The e2e's replacement for `@atcute/identity-resolver`, aliased over it in the
 // Vite build (groups-e2e.mjs) on every run.
 //
 // The app resolves did:plc at plc.directory, so a sandbox network with its own

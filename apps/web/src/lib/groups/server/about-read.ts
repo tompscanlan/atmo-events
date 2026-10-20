@@ -235,15 +235,6 @@ export async function groupSpaceReader(
 	return pdsSpaceReader(cred, group.group_did);
 }
 
-/** The stand-in host's reader for its own state, through the session it acts on
- *  (./session.ts `standInHostCredential`), or null when there is none. */
-export function standInHostReader(
-	env: CredentialStoreEnv,
-	group: Pick<GroupRow, 'group_did' | 'owner_did'>
-): Promise<GroupSpaceReader | null> {
-	return groupSpaceReader(env, group, group.owner_did);
-}
-
 export interface GroupAbout {
 	profile: GroupProfileFields | null;
 	rules: GroupRuleRecord[];

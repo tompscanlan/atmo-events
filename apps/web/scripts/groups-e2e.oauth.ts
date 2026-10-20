@@ -1,4 +1,4 @@
-// The e2e's stand-in for the OAuth client, aliased over `$lib/atproto/server/oauth`
+// The e2e's replacement for the OAuth client, aliased over `$lib/atproto/server/oauth`
 // in its Vite build (groups-e2e.mjs).
 //
 // The app writes as a group only through a group session someone with write roles
@@ -12,7 +12,7 @@
 // every transport.
 
 /** The Worker binding the driver sets. */
-interface StandInEnv {
+interface BridgeEnv {
 	/** The driver's bridge to each person's real sessions. */
 	E2E_BRIDGE?: string;
 }
@@ -20,15 +20,15 @@ interface StandInEnv {
 /** Every request the app sent through a group session, in order, as its path
  *  and query. A worker op hands the driver the slice it caused, so a "no read"
  *  is a count of requests sent, not an inference from a result. */
-export const standInCalls: string[] = [];
+export const groupSessionCalls: string[] = [];
 
-/** Each write among `standInCalls`, as `<method> <collection or read policy>`:
+/** Each write among `groupSessionCalls`, as `<method> <collection or read policy>`:
  *  what the path alone does not say. Kept apart, so the paths stay as they were
  *  sent. (Spec: SC-208, the order of a visibility change.) */
-export const standInWrites: string[] = [];
+export const groupSessionWrites: string[] = [];
 
-/** Whose stored session sent each of `standInWrites`, by the same index. */
-export const standInWriters: string[] = [];
+/** Whose stored session sent each of `groupSessionWrites`, by the same index. */
+export const groupSessionWriters: string[] = [];
 
 function writeLabel(pathname: string, body: unknown): string | null {
 	const nsid = pathname.split('?')[0].replace(/^\/xrpc\//, '');
@@ -49,7 +49,7 @@ function writeLabel(pathname: string, body: unknown): string | null {
  *  app builds one client per person over that person's store, so what the store
  *  holds under the group says whose session this is. */
 export function createOAuthClientWithSessions(
-	env: StandInEnv | undefined,
+	env: BridgeEnv | undefined,
 	_scopes: unknown,
 	sessions: { get(did: string): Promise<{ person?: string } | undefined> }
 ) {
@@ -57,16 +57,18 @@ export function createOAuthClientWithSessions(
 	return {
 		restore: async (groupDid: string) => {
 			const person = (await sessions.get(groupDid))?.person;
-			if (!person) throw new Error(`the stand-in holds no session on ${groupDid} in this store`);
-			if (!bridge) throw new Error('the stand-in has no bridge to the driver: set E2E_BRIDGE');
+			if (!person)
+				throw new Error(`the e2e's OAuth client holds no session on ${groupDid} in this store`);
+			if (!bridge)
+				throw new Error("the e2e's OAuth client has no bridge to the driver: set E2E_BRIDGE");
 			const recorded = (send: (pathname: string, init?: RequestInit) => Promise<Response>) => ({
 				did: groupDid,
 				handle: (pathname: string, init?: RequestInit) => {
-					standInCalls.push(pathname);
+					groupSessionCalls.push(pathname);
 					const written = writeLabel(pathname, init?.body);
 					if (written) {
-						standInWrites.push(written);
-						standInWriters.push(person);
+						groupSessionWrites.push(written);
+						groupSessionWriters.push(person);
 					}
 					return send(pathname, init);
 				}

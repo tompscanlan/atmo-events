@@ -194,7 +194,7 @@ describe('startCreateAtHost', () => {
 		const [options] = authorize.mock.calls[0] as unknown as [Record<string, unknown>];
 		expect(options.target).toEqual({ type: 'pds', serviceUrl: HOST });
 		expect(options.prompt).toBe('create');
-		expect(options.scope).toBe(groupSessionScope(false));
+		expect(options.scope).toBe(groupSessionScope());
 		// The calendar space does not exist yet, and its items are asked for anyway:
 		// the host's admin grant covers every space, ones made later included.
 		expect(options.scope).toContain(`space:${CALENDAR_SPACE_TYPE}?`);

@@ -131,7 +131,7 @@ export async function startCreateAtHost(input: {
 		prompt: 'create',
 		// The scope any link asks for. Admin's grants at a new group cover it all,
 		// the calendar space included, which does not exist yet.
-		scope: groupSessionScope(false),
+		scope: groupSessionScope(),
 		redirectUri: input.redirectUri,
 		state
 	});

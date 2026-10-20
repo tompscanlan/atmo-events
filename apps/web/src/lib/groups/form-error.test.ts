@@ -39,20 +39,6 @@ describe('formError', () => {
 		expect(refusal.error).toMatch(/Nothing was changed/);
 	});
 
-	// The stand-in host's session is the creator's, which only they can fix.
-	it('names the creator when the stand-in host’s session is missing', () => {
-		const refusal = formError(
-			new GroupCredentialError(
-				'did:plc:unlinkedgroupaaaaaaaaaaa',
-				'did:plc:creatoraaaaaaaaaaaaaaaaaa',
-				true
-			)
-		);
-
-		expect(refusal.error).toMatch(/its creator has to link their access/);
-		expect(refusal.error).toMatch(/Nothing was changed/);
-	});
-
 	// A group at no host this site is set up with cannot be changed from here,
 	// and nothing the caller does on this site changes that.
 	it('says a group not at this site’s host cannot be changed here', () => {

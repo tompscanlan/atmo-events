@@ -19,17 +19,13 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 
 import { linkGroups, unlinkAllGroups } from './__fixtures__/linked-group';
 import {
-	GROUP_LINK_SCOPES,
 	GROUP_SESSION_PREFIX,
 	GROUP_SESSION_SCOPES,
-	GroupCredentialError,
 	groupClient,
 	groupSessionKey,
 	groupSessionScope,
 	parseGroupSessionKey,
 	resolveGroupCredential,
-	STAND_IN_HOST_SCOPES,
-	standInHostCredential,
 	type LinkedGroupCredential
 } from './session';
 import { GROUP_DECLARATION_COLLECTION } from '../declaration-record';
@@ -175,27 +171,8 @@ describe('resolveGroupCredential', () => {
 	});
 });
 
-describe('standInHostCredential', () => {
-	it('is the creator’s session, whoever else holds one', async () => {
-		const env = linkGroups([DID], undefined, [PERSON, SECOND]);
-
-		const cred = await standInHostCredential(env, { group_did: DID, owner_did: SECOND });
-
-		expect(cred.kind === 'linked' && cred.person).toBe(SECOND);
-	});
-
-	it('names the creator when they hold none', async () => {
-		const env = linkGroups([DID], undefined, [PERSON]);
-
-		const refused = standInHostCredential(env, { group_did: DID, owner_did: SECOND });
-
-		await expect(refused).rejects.toBeInstanceOf(GroupCredentialError);
-		await expect(refused).rejects.toMatchObject({ personDid: SECOND, standInHost: true });
-	});
-});
-
 describe('the scope a link asks for', () => {
-	const asked = groupSessionScope(false).split(' ');
+	const asked = groupSessionScope().split(' ');
 	const spaces = asked.filter((s) => s.startsWith('space:'));
 
 	it('covers every public-repo collection the group writes', () => {
@@ -223,12 +200,10 @@ describe('the scope a link asks for', () => {
 		expect(asked.some((s) => s.startsWith('space:') && s.includes('manage=create'))).toBe(true);
 	});
 
-	// What only the stand-in host needs stays out of a person's session.
-	it('asks for the stand-in host’s scopes only for its session', () => {
-		for (const extra of STAND_IN_HOST_SCOPES) {
-			expect(asked).not.toContain(extra);
-			expect(groupSessionScope(true).split(' ')).toContain(extra);
-		}
-		expect(GROUP_LINK_SCOPES).toEqual([...GROUP_SESSION_SCOPES, ...STAND_IN_HOST_SCOPES]);
+	// The group's host keeps each space's member list and read policy from its
+	// access records, so no session asks to change either.
+	it('asks for no space reconfiguration, and is every scope a link may ask for', () => {
+		expect(asked.some((s) => s.startsWith('space:') && s.includes('manage=update'))).toBe(false);
+		expect(asked).toEqual(['atproto', ...GROUP_SESSION_SCOPES]);
 	});
 });

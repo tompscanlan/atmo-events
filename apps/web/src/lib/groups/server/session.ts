@@ -40,7 +40,7 @@ import {
 	GROUP_ROLE_COLLECTION,
 	GROUP_SPACE_COLLECTION
 } from '../members-record';
-import { ABOUT_SPACE_TYPE, CALENDAR_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupRow } from '../types';
+import { ABOUT_SPACE_TYPE, CALENDAR_SPACE_TYPE, MEMBERS_SPACE_TYPE } from '../types';
 
 /** The parts of the platform env a group session reads: the sessions namespace,
  *  and for restoring a session, the OAuth client's settings. */
@@ -113,24 +113,11 @@ export const GROUP_SESSION_SCOPES: readonly string[] = [
 	scope.blob({ accept: ['image/*'] })
 ];
 
-/** What the stand-in host's own session asks for past a person's: changing a
- *  space's member list and read policy (`simplespace` putMember, removeMember,
- *  updateSpace), which the stand-in keeps as a host would. A real host does that
- *  itself and grants neither, so these leave with the stand-in. */
-export const STAND_IN_HOST_SCOPES: readonly string[] = [`space:*?${SELF}&manage=update`];
-
-/** Every scope a link may ask for, which the client metadata must list. */
-export const GROUP_LINK_SCOPES: readonly string[] = [
-	...GROUP_SESSION_SCOPES,
-	...STAND_IN_HOST_SCOPES
-];
-
-/** The scope a link asks for. The stand-in host's session also asks for what the
- *  stand-in needs to keep its own state. */
-export function groupSessionScope(forStandInHost: boolean): string {
-	return ['atproto', ...GROUP_SESSION_SCOPES, ...(forStandInHost ? STAND_IN_HOST_SCOPES : [])].join(
-		' '
-	);
+/** The scope a link asks for, the create's included. Nobody's asks for a
+ *  space's member list or read policy: the group's host keeps neither apart from
+ *  the access records. */
+export function groupSessionScope(): string {
+	return ['atproto', ...GROUP_SESSION_SCOPES].join(' ');
 }
 
 /** Whether this deployment can link a group: it serves its own client metadata,
@@ -158,7 +145,7 @@ export function groupLinkClient(
 		// The client reads the OAuth settings, which a deployment that links groups has.
 		client = createOAuthClientWithSessions(
 			env as App.Platform['env'],
-			GROUP_LINK_SCOPES,
+			GROUP_SESSION_SCOPES,
 			new KVStore<Did, StoredSession>(kv, { prefix: personPrefix(personDid) })
 		);
 		clients.set(personDid, client);
@@ -213,19 +200,14 @@ export async function resolveGroupCredential(
 }
 
 /** `personDid` holds no session on the group, so this app cannot write as the
- *  group for them. Only they can fix it, by linking from the group page. When
- *  `standInHost`, the session missing is the one the stand-in host acts on, the
- *  group's creator's. */
+ *  group for them. Only they can fix it, by linking from the group page. */
 export class GroupCredentialError extends Error {
 	constructor(
 		readonly groupDid: string,
-		readonly personDid: string,
-		readonly standInHost = false
+		readonly personDid: string
 	) {
 		super(
-			standInHost
-				? `${groupDid}'s creator ${personDid} has linked no group session, which the stand-in host acts on`
-				: `${personDid} has linked no group session for ${groupDid}, so this app cannot write as the group for them`
+			`${personDid} has linked no group session for ${groupDid}, so this app cannot write as the group for them`
 		);
 		this.name = 'GroupCredentialError';
 	}
@@ -240,18 +222,6 @@ export async function requireGroupCredential(
 ): Promise<GroupCredential> {
 	const cred = await resolveGroupCredential(env, groupDid, personDid);
 	if (!cred) throw new GroupCredentialError(groupDid, personDid);
-	return cred;
-}
-
-/** The session the stand-in host acts on for its own acts (a join, a leave, the
- *  member lists, the spaces' read policies), where nobody acts as the group: the
- *  creator's (TS, 2026-10-15). A real host does these itself. */
-export async function standInHostCredential(
-	env: CredentialStoreEnv,
-	group: Pick<GroupRow, 'group_did' | 'owner_did'>
-): Promise<GroupCredential> {
-	const cred = await resolveGroupCredential(env, group.group_did, group.owner_did);
-	if (!cred) throw new GroupCredentialError(group.group_did, group.owner_did, true);
 	return cred;
 }
 

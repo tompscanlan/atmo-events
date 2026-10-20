@@ -9,18 +9,13 @@ import { GroupCredentialError } from './server/session';
 import { GroupRuleError } from './server/db/rules';
 import { GroupNotAtHostError } from './server/host';
 import { GroupHostError, HostSignInError } from './server/real-host';
+
+/** The caller holds no group session for the write to go out on, which only
+ *  they can fix. */
 const NOT_LINKED: GroupFormFailure = {
 	ok: false,
 	error:
 		'This site cannot write as this group for you yet: link your access, from the group page. Nothing was changed.'
-};
-
-/** The session the stand-in host acts on is missing, which only the group's
- *  creator can fix. */
-const HOST_NOT_LINKED: GroupFormFailure = {
-	ok: false,
-	error:
-		'This site cannot write as this group yet: its creator has to link their access, from the group page. Nothing was changed.'
 };
 
 /** The form message for a domain error, or null for any other failure, which a
@@ -32,7 +27,7 @@ export function knownFormError(e: unknown): GroupFormFailure | null {
 		return { ok: false, error: `Not allowed: ${e.reason}` };
 	}
 	if (e instanceof GroupCredentialError) {
-		return { ...(e.standInHost ? HOST_NOT_LINKED : NOT_LINKED) };
+		return { ...NOT_LINKED };
 	}
 	if (e instanceof GroupRecordError) return { ok: false, error: e.message };
 	if (e instanceof GroupRuleError) return { ok: false, error: e.message };
