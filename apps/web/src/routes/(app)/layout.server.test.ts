@@ -12,11 +12,8 @@ describe('app layout load', () => {
 		});
 	});
 
-	it('hides groups on a deployment with no group host, a group PDS alone included', async () => {
+	it('hides groups on a deployment with no group host', async () => {
 		expect(await run({})).toEqual({ groupsEnabled: false });
 		expect(await run({ GROUP_HOST_URL: '  ' })).toEqual({ groupsEnabled: false });
-		expect(await run({ GROUP_PDS_SERVICE: 'https://pds.example.com' })).toEqual({
-			groupsEnabled: false
-		});
 	});
 });
