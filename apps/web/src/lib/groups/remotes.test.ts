@@ -88,7 +88,7 @@ import {
 	serveReader
 } from './server/__fixtures__/reader-host';
 import { addMember } from './server/db/roster';
-import { updateGroupForm, repairGroupForm } from './group.remote';
+import { updateGroupForm, refreshGroupForm } from './group.remote';
 import {
 	addMemberForm,
 	approveJoinRequestForm,
@@ -423,7 +423,7 @@ describe('the gate in front of the group forms', () => {
 
 	it.each([
 		['settings', updateGroupForm],
-		['repair', repairGroupForm],
+		['refresh', refreshGroupForm],
 		['approve', approveJoinRequestForm],
 		['reject', rejectJoinRequestForm],
 		['add member', addMemberForm],
