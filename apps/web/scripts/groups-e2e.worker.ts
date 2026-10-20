@@ -592,7 +592,7 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 		return { left: args.callerDid };
 	},
 
-	/** The approve button's roster act: row, record and both member lists. */
+	/** The approve button's roster act: the host's membership record, then the row. */
 	approveJoinRequest: async (env, args, group) => {
 		const ctx = await rosterCtx(env, args, group);
 		return groupHost(ctx).approveJoinRequest(

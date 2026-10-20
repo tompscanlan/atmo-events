@@ -9,8 +9,8 @@
 //                    membership, because `memberships.role_id` is a composite
 //                    FK into `roles (id, group_id)`.
 //
-// Nothing is restored for visibility: it is the about space's read policy at
-// the host, and no row holds it.
+// Nothing is restored for visibility: it is the about space's `access` record,
+// and no row holds it.
 //
 // A restore refuses, before any write, a group with no profile (`name` is NOT
 // NULL), no authz records (no member could be restored), or no `membership`

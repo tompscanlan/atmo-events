@@ -1,8 +1,8 @@
 -- Groups, roles, roster and join requests. The groups, roles and memberships rows cache
 -- each group's records on its PDS: where they disagree the record wins, and
--- server/rebuild.ts restores the rows from the records. join_requests is not a cache. A
--- pending request is not published as a record, so its row is the only copy.
--- There is no visibility column. Visibility is the about space's read policy at the host.
+-- server/rebuild.ts restores the rows from the records. join_requests is not a cache: the
+-- group host keeps each request, and a row is this site's note of one it sent.
+-- There is no visibility column. Visibility is the about space's `access` record.
 -- The app splits statements on `-- @statement`, not `;`, because D1 runs one statement
 -- per prepare() and the triggers contain `;`. Each statement also ends in `;`, so the
 -- file runs as is with `wrangler d1 execute --file` or `wrangler d1 migrations apply`.

@@ -1,26 +1,30 @@
 # Groups
 
-A group is an AT Protocol account that the app creates and runs for its owner. Its public events
-are ordinary `community.lexicon.calendar.*` records in the group's own repo, so they are indexed and
-shown like any other account's events. Its members-only events are the same records in the group's
-calendar space, which only its members see. Everything else about the group is also records on the
-group's PDS, except a pending join request, which only D1 holds. D1 also holds a cache of the
-records that the app can query.
+A group is an AT Protocol account at an opensocial.group group host, which makes the account and
+runs it. Its public events are ordinary `community.lexicon.calendar.*` records in the group's own
+repo, so they are indexed and shown like any other account's events. Its members-only events are the
+same records in the group's calendar space, which only its members see. Everything else about the
+group is also records in its spaces. The host keeps the group's join requests and decides who may
+read each space. D1 holds a cache of the records that the app can query, and a note of each join
+request sent from this site.
 
 ## Where a group's data lives
 
-| what                                                | where                                                   | read policy            |
-| --------------------------------------------------- | ------------------------------------------------------- | ---------------------- |
-| public events                                       | the group's public repo                                 | anyone                 |
-| declaration (makes the group findable)              | the group's public repo, only while the group is public | anyone                 |
-| profile, rules, access                              | the about space, of type `group.opensocial.meta`        | the group's visibility |
-| roles, permissions, membership, access, space index | the members space, of type `group.opensocial.members`   | member list            |
-| members-only events, members' RSVPs to them, access | the calendar space, of type `rsvp.atmo.group.calendar`  | member list            |
-| a cache of the records above, and join requests     | D1, `migrations/0001_groups.sql`                        | the app                |
-| the session the owner linked                        | the sessions KV namespace, under `group:session:`       | the app                |
+| what                                                       | where                                                     | who may read           |
+| ---------------------------------------------------------- | --------------------------------------------------------- | ---------------------- |
+| public events                                              | the group's public repo                                   | anyone                 |
+| declaration (makes the group findable)                     | the group's public repo, only while the group is public   | anyone                 |
+| profile, rules, access                                     | the about space, of type `group.opensocial.meta`          | the group's visibility |
+| roles, permissions, `eventPermissions`, membership, access | the members space, of type `group.opensocial.members`     | its `access` record    |
+| members-only events, members' RSVPs to them, access        | the calendar space, of type `rsvp.atmo.group.calendar`    | `admin` and `member`   |
+| join requests                                              | the group host                                            | the host decides       |
+| a cache of the records above, and a note of each request   | D1, `migrations/0001_groups.sql`                          | the app                |
+| the group sessions people linked                           | the `OAUTH_SESSIONS` KV namespace, under `group:session:` | the app                |
 
-The app reads the group's spaces as the group, through the session the group's owner linked. A
-space needs a login whatever its read policy.
+The app reads the group's spaces with each caller's own access: a space credential from their own
+sign-in, so the host decides what each person sees (`server/about-read.ts`,
+`server/route-context.ts`). A signed-out visitor reads no space, since a space needs a login
+whatever its policy.
 
 ## The records
 
@@ -41,21 +45,14 @@ Some records carry a field the standard does not declare. Each is one the app re
 - `createdAt` on the declaration, which the declaration index sorts by.
 
 A rule's required `title` is the first 64 graphemes of its line, and its `text` is the whole line.
-A role's required `displayName` is its id with a capital, so `owner` shows as "Owner".
 
 Each space has an `access` record, and it is the space's policy: whether anyone may read the space,
-and which roles may. The standard has the host enforce it. A simplespace PDS enforces its own read
-policy and member list instead and never reads the record, so the app derives both from it: the read
-policy is public exactly when `access.public` is, and a member is on the space's list exactly when
-one of their roles is granted `read` there. The app writes every role a reader in every space, and
-the members and calendar spaces' records not public. No moment may find a space more open than its
-record: a change that narrows a space moves the PDS first, and one that widens it writes the record
-first. A group with a declaration must have an access record that says public, so the record is
-written before a declaration is published and after one is withdrawn. The members space also holds
-`space`, the standard's index of the group's spaces: one entry each for the about, members and
-calendar spaces.
-Its key is a TID, so a put cannot land on an existing entry. The writer lists the index and adds
-only what is missing, and it deletes all but the oldest entry for a space that has several.
+and which roles may. The host enforces it for every app, so this site writes no read policy and no
+member list (`server/spaces.ts`). The host writes the about and members spaces' records when it
+makes the group. This site changes only the about record's `public`, keeping its grants
+(`server/about-writer.ts`), and writes the calendar space's when it makes that space. A group with a
+declaration must have an about `access` record that says public, so the record is written before a
+declaration is published and after one is withdrawn.
 
 The group.opensocial lexicons do not resolve, so they cannot be pulled. Unchanged copies of the
 ones the app writes are in `lexicons/reference/group/opensocial`, and `record-lexicons.test.ts`
@@ -70,49 +67,41 @@ list contrail-lex generate writes into `lex.config.js`, because the NSID does no
 the lexicon tooling reads `space-ref`, and the pull-list step when the NSID resolves. Once both
 hold, delete the copy, the script, its test and its two steps in `pnpm generate`.
 
-A group's visibility is its about space's `access.public`, and a missing record means private. D1
-has no column for it. The group pages read the record from the PDS, so every app sees the same
-answer, and the about space's read policy follows it. A member on the roster is
-let in without the question, and the page then asks only to show the visibility. When the members
-space errors, nobody is on the roster for that read, whatever the D1 rows say, so until the space
-answers a member is treated like anyone else. Anyone else gets the ordinary 404 when the group's
-owner has not linked it, since then the PDS cannot be asked, and a 503 rather than a guess
-when the PDS is asked and does not answer. Browse shows it from placement instead, with no PDS read
-per group: a group the declaration index lists is public, and one the caller sees only through their
-own groups is private. So browse's badge says whether the group is declared and the page's badge
-what its access record says, and the two can differ: a save that changed the record but stopped
-before the declaration leaves them apart until the next save.
+A group's visibility is its about space's `access.public`, and a missing record means private
+(`server/spaces.ts`). D1 has no column for it. The host decides every read of the about space from
+that record, so every app sees the same answer. A member on the roster is let in without the
+question. When the members space errors, nobody is on the roster for that read, whatever the D1
+rows say, so until the space answers a member is treated like anyone else. Anyone else gets the
+ordinary 404 when the record says private or the host will not let them read it, and a 503 rather
+than a guess when the host does not answer. A caller with no reader sees the group only while it is
+declared, and gets the 503 when the declaration cannot be read. Browse shows it from placement
+instead, with no space read per group: a group the declaration index lists is public, and one the
+caller sees only through their own groups is private. So browse's badge says whether the group is
+declared and the page's badge what its access record says, and the two can differ: a save that
+changed the record but stopped before the declaration leaves them apart until the next save.
 
 The settings form sends the visibility it showed as well as the one chosen, and the save changes the
 visibility only when the two differ, so a tab opened before someone else changed it cannot change it
-back. A form that could not show one is refused if its choice differs from the record. A save that
-leaves the group private closes the about space at the PDS, withdraws the declaration, and only then
-has the record say private, all before the D1 row takes the new name and description, because browse
-shows a declared group's text from that row. A save that leaves it public has the record say public,
-opens the about space, writes the row, reads the record again, and declares the group only if it
-still says public. A save also moves the about space's read policy when it disagrees with the record,
-so saving again finishes one that stopped between the two. `update-group.ts` has the whole order and
-what each failure leaves behind. There is no lock between that last read and the declaration.
+back. A form that could not show one is refused if its choice differs from the record. Every read
+comes before the first write. A save that leaves the group private withdraws the declaration and
+only then has the record say private, both before the D1 row takes the new name and description,
+because browse shows a declared group's text from that row. The profile and rules come last. A save
+that leaves it public has the record say public, writes the row, reads the record again, declares
+the group only if it still says public, and then writes the profile and rules. Saving again finishes
+one that stopped part way. `update-group.ts` has the whole order and what each failure leaves
+behind. There is no lock between that last read and the declaration.
 
-Each space's member list holds the members whose roles its access record grants `read`, read and
-write, since reading a space and writing your own records in it are one grant. With the roles the
-app writes, that is every member on all three lists. Joining or being admitted puts a member on
-them, a role change moves them by the new role, and leaving or being removed takes them off, always
-on the side of less access: the membership record is written before the list entries and removed
-after them (`server/roster.ts`). Under a member-list read policy the lists are what let a member
-read the group's face, its roster and its members-only events with their own credential, from any
-app, and the PDS tracks the acceptance a member writes in the members space. The about space's list
-does not depend on the visibility, so going private needs no backfill. A join requester is not a
-member, so a request puts nothing on any list.
+A roster act goes to the host (`server/host.ts`, `server/real-host.ts`). Joining, cancelling a
+request and leaving are sent through the person's own PDS. Approving, adding, ejecting and changing
+a role are `membership` writes on the acting person's own group session. D1's roster rows follow
+each act the host accepted, and its `join_requests` rows are only a note that a person asked: no
+method reads a member's own request back, so the note is how a page knows to offer a cancel.
 
 A member's acceptance is their own half of the membership: a record they write from their own
 session into their repo in the members space, at an open join, or at a later sign-in that carries
-the group's grant (`server/acceptance.ts`). A join request writes none. Leaving deletes it. It decides only whether the roster shows them confirmed. Access comes from the membership record
-alone, so a member whose PDS serves no spaces can read the group and stays unconfirmed.
-
-All three spaces use a member-list write policy and `open` app access. The write policy governs only
-other users' writes, and the group always writes as the space owner. `open` leaves for later the
-choice of which other apps may read a group.
+the group's grant (`server/acceptance.ts`). A join request writes none. Leaving deletes it before
+the host drops the member (`server/roster.ts`). It decides only whether the roster shows them
+confirmed, not what they may do.
 
 The declaration is a pointer to the group, with no name or avatar, so no page should promise an
 anonymous reader a group's name. The declaration index holds every declaration on the network, not
@@ -120,26 +109,29 @@ only this deployment's groups, and `listGroups` decides what each one may show. 
 running before the declaration collection was added to its config needs a one-time
 `contrail backfill --only records` to pick up older declarations.
 
-When a record and a D1 row disagree, the record wins. `server/rebuild.ts` can rebuild a group's
-rows from its DID alone, and the settings page's "Refresh from the group host" runs it
-(`server/refresh.ts`), reading with the caller's own access and writing nothing at the host. A
-rebuild restores nothing for the visibility, because nothing in D1 holds it.
+When a record and a D1 row disagree, the record wins. `server/rebuild.ts` rebuilds a group's rows
+from its records, and the settings page's "Refresh from the group host" runs it
+(`server/refresh.ts`), reading with the caller's own access and writing nothing at the host. It adds
+and updates rows but deletes none, so a member who left through another app keeps their row. A
+group with no row left cannot be restored from its records yet: the restore needs a `membership`
+record granting `owner`, and a host's roles are `admin` and `member`. A rebuild restores nothing
+for the visibility, because nothing in D1 holds it.
 
 ## Members-only events
 
 A members-only event is the same `community.lexicon.calendar.event` record as a public one, written
 into the group's calendar space instead of its public repo. Nothing on the record says which: the
-container is the fact, because the host enforces it for every reader. The calendar space's read
-policy is its member list whatever the group's visibility, and its list holds the members, so a
-member can read it with their own credential. The app reads it as the group, and only for a caller
-on the roster. The roster check runs before the read, so a non-member's visit costs the group's PDS
-nothing (`server/calendar-read.ts`). The space's type is the app's own, not the standard's, and its
-name is provisional.
+container is the fact, because the host enforces it for every reader. The calendar space's `access`
+record is not public and grants `admin` and `member` a read there, whatever the group's visibility
+(`create-at-host.ts`). The app reads the space with the caller's own access, and only for a caller
+on the roster. The roster check runs before the read, so a non-member's visit costs the host nothing
+(`server/calendar-read.ts`). The space's type is the app's own, not the standard's, and renaming it
+would strand what was written under the old name.
 
 Every event command takes the event's placement, `everyone` or `members`, and never a default
-(`event-placement.ts`). Before a members-only write, the writer checks the calendar space's read
-policy at the host and refuses when more than the members could read it (`server/event-writer.ts`).
-An event cannot move between public and members-only yet.
+(`event-placement.ts`). Before a members-only write, the writer reads the calendar space at the host
+and refuses when the space is missing or its policy lets more than the members read it
+(`server/event-writer.ts`). An event cannot move between public and members-only yet.
 
 A member's RSVP to a members-only event is a standard `community.lexicon.calendar.rsvp` that they
 write from their own session into the calendar space, in their own repo there, under the event's
@@ -149,40 +141,45 @@ them read their RSVP back.
 
 ## Roles and permissions
 
-There are three roles: `owner`, `admin` and `member`. What a role may do is data, written as records
-in the members space, and a member may do the union of what their roles are granted. The owner
-cannot be demoted, removed or leave; the schema enforces that as well as the code. The published
-`permissions` record says so too: each role lists the roles it may assign and eject, and only the
-owner's list holds `owner`. A new member gets `member`, the role whose record says `default`.
+A group host makes two roles, `admin` and `member`, and the creator's membership is `admin`. What a
+role may do is data, written as records in the members space: scopes on the group DID in
+`permissions` and in each space's `access` record, as the standard has it, and the event actions in
+`eventPermissions`. A member may do the union of what their roles are granted.
 
-A role's grant is OAuth scopes on the group DID, in `permissions` and in each space's `access`
-record, as the standard has it. Every write as the group is checked against them before it is sent
-(`scopes.ts`, `grants.ts`, and the gate in `server/group-write.ts`), the way a group host would check
-it. A permission set named with `include:` is expanded from its lexicon, copied into
-`lexicons/reference`. A `membership` write also needs every role it adds or removes, and every role
-of a member it ejects, to be one the writer's roles may assign. The group DID itself may do anything,
-with no record, which is how a group with no admin left recovers: sign in as the group's account.
+The host checks every write as the group. It cuts each group session to its person's current roles,
+and on a `membership` write it checks that every role the write adds or removes is one the writer's
+roles may assign. Its refusal is the one a form shows (`server/group-write.ts`). This site's gate
+refuses only an anonymous caller for those writes. It checks the caller's scopes itself only for a
+write to its own D1 rows, which the host never sees: the settings save's copy of the group and the
+refresh (`appOnly`, with `scopes.ts` and `grants.ts`). A permission set named with `include:` is
+expanded from its lexicon, copied into `lexicons/reference`.
+
+D1 keeps a third role, `owner`, for the person who created the group here (`groups.owner_did`). It
+is this site's own note of who that was, and a rebuild reads the creator's `admin` record as
+agreeing with it. The schema keeps the owner's row from being demoted, removed or leaving, and the
+roster acts refuse to change, eject or let leave anyone whose row says `owner` before anything is
+sent to the host (`server/real-host.ts`).
 
 The pages ask by name, from a fixed vocabulary in `permissions.ts`: `MANAGE_GROUP`, `ADMIT_MEMBERS`,
 `EJECT_MEMBERS`, `ASSIGN_ROLES`, `MANAGE_EVENTS` and `CREATE_EVENT`. The first four are questions
 asked of the scopes: settings are writing the profile and the about space's `access`, and the roster
-acts are creating, deleting and updating a `membership`. The two event names are granted by
-`eventPermissions`. atmo still publishes its own roles' scopes from bundles of these names, through
-one table in `permissions.ts`. Each space's `access` record grants every role `read` there.
+acts are creating, deleting and updating a `membership` (`grants.ts`). The two event names are
+granted by `eventPermissions`, which the create writes for the host's roles from this site's
+default bundles.
 
-Permissions are read from the members space once per request: every write a request makes shares
-that request's reader, and the write gate keeps the caller's standing for it. Nothing is kept
-across requests. Another space's `access` record is read only for a write there that `permissions`
-does not already allow. A members space that cannot be read grants nothing. D1's `role_permissions`
-is a copy of atmo's bundles, and never decides what anyone may do: a
-group with no permission records, or no members space, grants nothing to anyone but itself.
+Permissions are read from the members space once per request: every check a request makes shares
+that request's reader, and nothing is kept across requests. Another space's `access` record is read
+only for a write there that `permissions` does not already allow. A members space that cannot be
+read grants nothing. D1's `role_permissions` is a copy of this site's default bundles, and never
+decides what anyone may do: a group with no permission records, or no members space, grants nothing
+to anyone but itself.
 
 A private group is invite-only. That is derived, not stored: whatever the profile's join policy or
-D1's approval flag says, a group whose PDS reads it as private, or cannot be asked, shows
-invite-only and refuses a self-service join. D1's `require_approval` is a plain cache of the
-profile's join policy. The create and the settings save also refuse a private group with approval
-off, before any write. There is no suspension: removing someone deletes their membership record.
-A pending join request is not published as a record.
+D1's approval flag says, a group whose visibility was not read as public shows invite-only
+(`about-record.ts`). D1's `require_approval` is a plain cache of the profile's join policy. The
+create and the settings save also refuse a private group with approval off, before any write. A join
+is the host's to decide, and its `JoinClosed` refusal shows as invite-only. There is no suspension:
+removing someone deletes their membership record.
 
 ## Hosting
 
@@ -202,7 +199,10 @@ host has made anything.
 
 The app writes as the group only through a group session the acting person linked from the host,
 cut to their roles (`server/group-link.ts`, `server/session.ts`). Someone who has linked none cannot
-write as the group through this app.
+write as the group through this app. A group not at this site's group host is refused before any
+write: the roster acts by `groupHost` (`server/host.ts`), event writes and the settings save by
+`hostGroupWriter` (`server/group-write.ts`), a link by `startGroupLink`, and a create's callback
+when the account that came back is not at the host.
 
 ## Configuration
 
@@ -219,8 +219,8 @@ group: the create page shows no form and the server refuses.
 For a local run, set it in `apps/web/.env` with the app's other local settings. `.env.example` has
 it commented out.
 
-## Checks against a live PDS
+## Checks against a live group host
 
-Unit tests run with `vitest` and need no network. An end-to-end run of the same code against PDSes on
-a local atproto-devnet sandbox needs that sandbox's hosts and accounts, so it is kept out of this
-repository, on the `test/groups-e2e` branch of `tompscanlan/atmo-events`.
+Unit tests run with `vitest` and need no network. `scripts/groups-e2e.mjs` runs the same modules
+against a live group host on a local devnet (`E2E_GROUP_HOST`), with real sign-ins. `pnpm check:e2e`
+type-checks and bundles its Worker with no devnet, so a module it imports that moved fails there.

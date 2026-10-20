@@ -6,9 +6,9 @@
 // host and authorizing this app. A person holds one per group, filed under the
 // person signed in to this app who started it, and it writes as the group within
 // that person's roles: the host checks them on every request (proposal.md:93-99,
-// per-user sessions). No one's session writes for anyone else. The one other
-// credential is the session `createAccount` returns, which the create flow uses
-// to set the new group up inside that one request and never stores.
+// per-user sessions). No one's session writes for anyone else. The create's
+// session is one of these too: the host's sign-up hands it back and the callback
+// files it under the creator, like any link (../create-at-host.ts).
 //
 // Group sessions live in their own store, under `group:session:<person>/` in the
 // sign-in sessions namespace, keyed by group DID. A sign-in session is keyed by
