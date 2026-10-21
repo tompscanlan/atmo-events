@@ -7,8 +7,8 @@ set -eu
 #
 # walk.mjs, the walk checks on a seeded globe, runs the same way and with the same logins.
 #
-# Reads from the cluster (the current kubectl context, printed first): the globe's invite code
-# (Secret globe-operator-logins) and any logins an earlier run kept (Secret globe-seed-logins,
+# Reads from the cluster (the current kubectl context, printed first): the seed's invite code
+# (Secret globe-seed-invite, which reset.sh makes, else the operator's in globe-operator-logins) and any logins an earlier run kept (Secret globe-seed-logins,
 # both in namespace snowglobe-<globe>). Writes the logins back to globe-seed-logins on the way
 # out, failed run or not, so an account made here is never left without its password. Read
 # them with:
@@ -50,7 +50,10 @@ if kubectl get secret -n "${NS}" globe-seed-logins >/dev/null 2>&1; then
 else
   : >"${LOGINS}"
 fi
-kubectl get secret -n "${NS}" globe-operator-logins -o json \
+# reset.sh mints the seed its own invite (Secret globe-seed-invite), since the operator's runs out.
+INVITE_SECRET=globe-operator-logins
+kubectl get secret -n "${NS}" globe-seed-invite >/dev/null 2>&1 && INVITE_SECRET=globe-seed-invite
+kubectl get secret -n "${NS}" "${INVITE_SECRET}" -o json \
   | jq -r '"SEED_INVITE_CODE=\(.data.INVITE_CODE | @base64d)"' >"${INVITE}"
 
 SEED_ATMO="https://atmo.${DOMAIN}" \
