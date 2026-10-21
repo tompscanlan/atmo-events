@@ -10,12 +10,14 @@ set -eu
 #     the pds pod, so the admin password never leaves the cluster;
 #   - every group at the group host, by emptying its disk (grouphost-data): the host's own tables
 #     go with the groups' accounts. Its keys are in globe-secrets and stay;
+#   - the network's index: the relay, jetstream, tap and slingshot disks, then asks the relay to
+#     crawl the PDS and the group host again (neither PDS asks on its own: PDS_CRAWLERS is empty);
 #   - atmo's disk (atmo-data): D1, KV and R2. atmo makes its tables again on boot;
 #   - the seed's kept logins (Secret globe-seed-logins), and mints the seed a new invite
 #     (Secret globe-seed-invite), one use per person.
 # Keeps every other account at the PDS (the operator's, the lexicon authority's) and the rest of
 # the globe. The deleted DIDs stay in the globe's PLC; a new seed makes new ones under the same
-# handles. Argo (selfHeal) puts each deleted disk back empty, and the script waits for both pods.
+# handles. Argo (selfHeal) puts each deleted disk back empty, and the script waits for each pod.
 
 GLOBE="${1:?usage: RESET_OK=<globe> reset.sh <globe>}"
 [ "${RESET_OK:-}" = "${GLOBE}" ] || { echo "reset.sh: set RESET_OK=${GLOBE} to delete ${GLOBE}'s demo data" >&2; exit 2; }
@@ -90,8 +92,28 @@ empty_disk() {
   echo "  ${ns}/${pvc}: empty (was ${old}, now ${uid})"
 }
 
+# The network's index (relay, jetstream, tap, slingshot) is emptied with the group host: each
+# keeps a position in the one before it, and a host whose disk is emptied starts its sequence
+# again, which the relay refuses as a future cursor. A fresh atmo replays jetstream's backlog,
+# so emptying jetstream is also what keeps the deleted accounts' records out of atmo. Relay first,
+# so the rest come back against the empty one; atmo last.
+crawl() {
+  code=$(curl -s -m 20 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+    -d "{\"hostname\":\"$1\"}" "https://relay.${DOMAIN}/xrpc/com.atproto.sync.requestCrawl")
+  echo "  relay asked to crawl $1 (${code})"
+  [ "${code}" = 200 ] || exit 1
+}
+
 mint_seed_invite
+empty_disk "${NS}" relay relay-data
+empty_disk "${NS}" jetstream jetstream-data
+empty_disk "${NS}" tap tap-data
+empty_disk "${NS}" slingshot slingshot-data
 empty_disk "${NS}" grouphost grouphost-data
+crawl "alpha.${DOMAIN}"
+crawl "grouphost.${DOMAIN}"
 empty_disk "${ANS}" atmo atmo-data
+curl -s -m 20 "https://relay.${DOMAIN}/xrpc/com.atproto.sync.listHosts" \
+  | jq -r '.hosts[] | "  relay follows \(.hostname): \(.status)"'
 
 echo "reset.sh: done; next: deploy/snowglobe/seed.sh ${GLOBE}"
