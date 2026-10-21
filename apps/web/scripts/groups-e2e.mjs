@@ -44,10 +44,10 @@
  * machine (24).
  *
  * There is no check 14 or 23. Check 14 read a space's own member list, which a
- * host does not keep. Check 23, a rebuild of the whole group from its DID, waits
- * on a decision: a host group's records name no owner, and who should own a row
- * rebuilt from them is not decided yet (TS, 2026-10-15). Its rebuild of the
- * roster alone (check 16) runs.
+ * host does not keep. Check 23, a rebuild of the whole group from its DID, is
+ * held (om-3r2nx.13). The restore no longer needs an owner: it records the
+ * earliest admin as the creator (TS, 2026-10-20), so what is left is to write the
+ * check and release it. Its rebuild of the roster alone (check 16) runs.
  *
  * Not covered: a member reading a private group's profile with the credential
  * the PDS issues them (20d asks for the credential only).
@@ -263,8 +263,9 @@ const AUDIENCE_KEYS = ['visibility', 'privacy', 'private', 'audience', 'isPrivat
 /** The record in the group's public repo that lets other apps find it. */
 const DECLARATION_COLLECTION = 'group.opensocial.declaration';
 
-/** Owner and admin hold all six permissions, a member holds none. */
-const SEEDED_BUNDLE_SIZES = { owner: 6, admin: 6, member: 0 };
+/** An admin holds all six permissions, a member holds none. There is no owner role
+ *  (TS, 2026-10-20): the creator is an ordinary admin. */
+const SEEDED_BUNDLE_SIZES = { admin: 6, member: 0 };
 
 /** Only fills `request.url`. The host never resolves and is never connected to. */
 const ORIGIN = 'http://groups-e2e.invalid';
@@ -2167,7 +2168,7 @@ async function main() {
 				!('roles' in (permissionsRecord.value ?? {})) &&
 				Array.isArray(adminGrant?.scopes) &&
 				adminGrant.scopes.length > 0 &&
-				// No admin may assign or eject the owner.
+				// An admin may assign and eject either role, the creator included.
 				JSON.stringify(adminGrant?.assignable) === JSON.stringify(['admin', 'member']) &&
 				JSON.stringify(modalityActions) === JSON.stringify(['manageEvents', 'createEvent']) &&
 				authz.effective.permissions.join(',') ===
@@ -2222,7 +2223,8 @@ async function main() {
 		);
 
 		// 16. drop the roster rows, rebuild from records ---------------------------
-		// A trigger protects the owner's row, so only the other rows are dropped.
+		// Only the other rows are dropped, so the creator's row stays as the one
+		// that agrees with its record.
 		const dropped = await op('dropMembershipRows');
 		const rosterWhileDropped = await op('recordedRoster', { did: BOB });
 		const rebuiltMembers = await op('rebuildGroupMembers');
@@ -2233,7 +2235,7 @@ async function main() {
 				rebuiltMembers.orphans.length === 0 &&
 				rebuiltMembers.skipped.length === 0 &&
 				rebuiltMembers.roster.map((entry) => `${entry.did}/${entry.role}`).join(' ') ===
-					`${ALICE}/owner ${BOB}/admin`,
+					`${ALICE}/${CREATOR_ROLE} ${BOB}/admin`,
 			'the roster survives dropping its D1 rows: records render it, and rebuild restores them',
 			`dropped ${dropped.dropped} row(s); roster from records while dropped ` +
 				`${rosterWhileDropped.roster.length}; rebuilt ${rebuiltMembers.restored.length} ` +
@@ -2835,10 +2837,10 @@ async function main() {
 		);
 
 		// 23. the whole group, rebuilt from no row ---------------------------------
-		// Not at a host yet: a host group's records name no owner, and who the
-		// app should make the owner of a row rebuilt from nothing is not decided
-		// (TS, 2026-10-15). Its rebuild of the roster alone (check 16) runs.
-		note('check 23 does not run yet: a host group names no owner to rebuild its row with');
+		// Held (om-3r2nx.13). The restore records the earliest admin as the creator
+		// now (TS, 2026-10-20), so nothing in the app still blocks it; the check is
+		// not written yet. Its rebuild of the roster alone (check 16) runs.
+		note('check 23 does not run yet: held until it is written and released (om-3r2nx.13)');
 	} finally {
 		// The group is this run's alone and is left behind, so cleanup undoes only
 		// what shows outside it: its public events and its declaration, and the

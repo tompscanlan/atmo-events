@@ -98,11 +98,10 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 			? pendingRequestsFor({ db, env: platform!.env, group }, { callerDid: locals.did!, reader })
 			: []
 	]);
-	// The owner is on the roster, so only a caller who may see the roster sees
-	// who it is: as the records name them, else the row's.
-	const ownerDid = showRoster
-		? (roster?.find((entry) => entry.role === 'owner')?.did ?? group.owner_did)
-		: null;
+	// Who created the group here (`groups.owner_did`), which grants nothing and
+	// outlives their leaving. It names a person, so only a caller who may see the
+	// roster sees it.
+	const ownerDid = showRoster ? group.owner_did : null;
 	const preview = roster?.slice(0, ROSTER_PREVIEW) ?? [];
 	const link = url.searchParams.get('link');
 	const linkOutcome = link === 'linked' || link === 'failed' ? link : null;
@@ -149,7 +148,7 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 		 *  with the caller's access: they are signed out, or their sign-in reads
 		 *  no spaces. Null when the page was read with their own access. */
 		hiddenDetails: reader ? null : locals.did ? ('no-access' as const) : ('signed-out' as const),
-		/** How a link the owner just ran ended, from the link callback. */
+		/** How a link the caller just ran ended, from the link callback. */
 		linkOutcome,
 		canAdmitMembers,
 		canSeeMembers: showRoster

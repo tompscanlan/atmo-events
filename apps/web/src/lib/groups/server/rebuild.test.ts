@@ -7,8 +7,7 @@
 // Over a surviving row, two more rules hold. The roster rebuild is additive: a
 // row with no record is the trace of a roster act whose second half failed
 // (`real-host.ts`), the gate already denies it, and a rebuild that deleted it would
-// be guessing which failure it was. And the owner's row is immutable in SQL, so
-// the rebuild inserts a missing one and does not fight one that disagrees.
+// be guessing which failure it was. The creator's row is one like any other.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { spaceReader, type SpaceRecordInput } from './__fixtures__/space-reader';
@@ -44,7 +43,7 @@ import { seedGroup } from './__fixtures__/seed-group';
 import { getGroupById } from './db/groups';
 import { listMembers } from './db/roster';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
-const OWNER = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
+const CREATOR = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
 const ADMIN = 'did:plc:6cz6dldz42itymdbte47ewcv';
 const MEMBER = 'did:plc:ib2wrjcp4ulwqu35a7rtlckv';
 const { aboutSpaceUri: ABOUT, membersSpaceUri: MEMBERS } = groupSpaceUris(GROUP_DID);
@@ -102,7 +101,7 @@ function membership(did: string, role: GroupRoleName, createdAt: number): SpaceR
 /** The authz config a create writes: a `role` record per seeded role and both
  *  binding records over the seeded bundles. */
 const AUTHZ: SpaceRecordInput[] = [
-	...(['owner', 'admin', 'member'] as const).map((id) => ({
+	...(['admin', 'member'] as const).map((id) => ({
 		space: MEMBERS,
 		collection: GROUP_ROLE_COLLECTION,
 		rkey: id,
@@ -170,7 +169,7 @@ async function appGroup(
 	const { group: row } = await seedGroup({
 		harness,
 		groupDid: GROUP_DID,
-		ownerDid: OWNER,
+		ownerDid: CREATOR,
 		name: 'Kona Surf Club',
 		description: 'Dawn patrol, every day',
 		requireApproval,
@@ -178,6 +177,17 @@ async function appGroup(
 		members: { [ADMIN]: 'admin', [MEMBER]: 'member' }
 	});
 
+	// Later than the creator, so the creator is the earliest admin, whatever the
+	// clock did between the inserts.
+	for (const [did, after] of [
+		[ADMIN, 1000],
+		[MEMBER, 2000]
+	] as const) {
+		await db
+			.prepare(`UPDATE memberships SET created_at = created_at + ? WHERE group_id = ? AND did = ?`)
+			.bind(after, row.id, did)
+			.run();
+	}
 	const joined = await db
 		.prepare(`SELECT did, created_at FROM memberships WHERE group_id = ?`)
 		.bind(row.id)
@@ -189,7 +199,7 @@ async function appGroup(
 			profile(requireApproval ? 'approval' : 'open', row.created_at),
 			rule,
 			...AUTHZ,
-			membership(OWNER, 'owner', at.get(OWNER)!),
+			membership(CREATOR, 'admin', at.get(CREATOR)!),
 			membership(ADMIN, 'admin', at.get(ADMIN)!),
 			membership(MEMBER, 'member', at.get(MEMBER)!)
 		]
@@ -214,18 +224,38 @@ describe('rebuildGroup: a group with no row', () => {
 
 		expect(result.path).toBe('restored');
 		expect(await snapshot(GROUP_DID)).toEqual(before);
-		// The owner went in with the row; the projection restored the other two.
-		expect(result.members.unchanged).toEqual([OWNER]);
+		// The creator went in with the row; the projection restored the other two.
+		expect(result.members.unchanged).toEqual([CREATOR]);
 		expect(result.members.restored.sort()).toEqual([ADMIN, MEMBER].sort());
 	});
 
-	// Each refusal comes before any write. The owner one matters most: owner_did
-	// can never be corrected once written, so a guessed owner is permanent.
+	// No owner (TS, 2026-10-20): a host group's records name no owner, so the
+	// restore records the earliest admin as the creator, which grants nothing.
+	it('restores a group whose creator left, recording the earliest remaining admin as creator', async () => {
+		const { row, records } = await appGroup(true);
+		await dropGroupRows(row.id);
+
+		const result = await rebuildGroup(
+			db,
+			readerOver(records.filter((r) => r.rkey !== CREATOR)),
+			GROUP_DID
+		);
+
+		expect(result.path).toBe('restored');
+		expect(result.group.owner_did).toBe(ADMIN);
+		expect(result.members.unchanged).toEqual([ADMIN]);
+		expect(result.members.restored).toEqual([MEMBER]);
+		expect(
+			(await listMembers(db, result.group.id)).map((m) => `${m.did}/${m.role}`).sort()
+		).toEqual([`${ADMIN}/admin`, `${MEMBER}/member`].sort());
+	});
+
+	// Each refusal comes before any write.
 	it.each([
 		[
-			'no membership record grants owner',
-			'no-owner-record',
-			(r: SpaceRecordInput) => r.rkey !== OWNER
+			'no membership record grants admin',
+			'no-admin-record',
+			(r: SpaceRecordInput) => r.rkey !== CREATOR && r.rkey !== ADMIN
 		],
 		[
 			'there is no profile record, so no name to restore',
@@ -274,7 +304,7 @@ describe('rebuildGroupCache', () => {
 			await seedGroup({
 				harness,
 				groupDid: GROUP_DID,
-				ownerDid: OWNER,
+				ownerDid: CREATOR,
 				name: 'Stale name',
 				description: 'Stale description',
 				locationName: 'Stale location'
@@ -294,7 +324,7 @@ describe('rebuildGroupCache', () => {
 			description: 'Dawn patrol, every day',
 			location_name: 'Kailua-Kona',
 			require_approval: 0,
-			owner_did: OWNER
+			owner_did: CREATOR
 		});
 	});
 
@@ -310,8 +340,7 @@ describe('rebuildGroupCache', () => {
 	});
 });
 
-// The roster half of a repair over a surviving row: additive, and never at war
-// with the owner's row.
+// The roster half of a repair over a surviving row: additive.
 describe('rebuildGroupMembers', () => {
 	it('corrects a row whose role drifted from its record', async () => {
 		const { row, records } = await appGroup(true);
@@ -341,33 +370,16 @@ describe('rebuildGroupMembers', () => {
 		expect((await listMembers(db, row.id)).some((m) => m.did === MEMBER)).toBe(true);
 	});
 
-	// A record claiming the owner is merely an admin: the schema pins the owner
-	// role to groups.owner_did, so this can only be reported.
-	it('refuses to fight the immutable owner row when a record disagrees with it', async () => {
+	// No owner (TS, 2026-10-20): the creator's row follows their record like
+	// anyone's, so a demotion made at the host comes back as a demotion.
+	it("corrects the creator's row like anyone's when the records demote them", async () => {
 		const { row, records } = await appGroup(true);
-		const demoted = records.map((r) => (r.rkey === OWNER ? membership(OWNER, 'admin', 0) : r));
+		const demoted = records.map((r) => (r.rkey === CREATOR ? membership(CREATOR, 'member', 0) : r));
 
 		const result = await rebuildGroupMembers(db, readerOver(demoted), row);
 
-		expect(result.skipped.map((s) => s.did)).toEqual([OWNER]);
-		expect((await listMembers(db, row.id)).find((m) => m.did === OWNER)?.role).toBe('owner');
-	});
-
-	// A group host's create: the records declare the proposal's `admin` and
-	// `member` and no `owner`, and the creator holds `admin`. The owner row is
-	// this app's note of who created the group, so the two agree.
-	it('agrees with the owner row when a group that declares no owner role gives its creator admin', async () => {
-		const { row, records } = await appGroup(true);
-		const hostMade = records
-			.filter((r) => !(r.collection === GROUP_ROLE_COLLECTION && r.rkey === 'owner'))
-			.map((r) => (r.rkey === OWNER ? membership(OWNER, 'admin', 0) : r));
-
-		const result = await rebuildGroupMembers(db, readerOver(hostMade), row);
-
 		expect(result.skipped).toEqual([]);
-		expect(result.restored).toEqual([]);
-		expect(result.orphans).toEqual([]);
-		expect(result.unchanged).toContain(OWNER);
-		expect((await listMembers(db, row.id)).find((m) => m.did === OWNER)?.role).toBe('owner');
+		expect(result.restored).toEqual([CREATOR]);
+		expect((await listMembers(db, row.id)).find((m) => m.did === CREATOR)?.role).toBe('member');
 	});
 });

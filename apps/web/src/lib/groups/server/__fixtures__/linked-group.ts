@@ -1,4 +1,4 @@
-// A group whose owner has linked its account: the one way this app writes as a
+// A group whose admin has linked its account: the one way this app writes as a
 // group outside the create request.
 //
 // Restoring a real linked session needs the group's PDS and this deployment's

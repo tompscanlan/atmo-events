@@ -64,7 +64,7 @@ export function formError(e: unknown): GroupFormFailure {
 
 /** The refusal for a caller who lacks `permission`. When the members space
  *  could not be read, or cannot be with the caller's sign-in, their permissions
- *  are unknown rather than missing, and "Not allowed" would send an owner
+ *  are unknown rather than missing, and "Not allowed" would send an admin
  *  looking for a role they already hold. */
 export function notAllowed(
 	membership: Pick<CallerMembership, 'unreadable' | 'noSpaceAccess' | 'signIn'>,

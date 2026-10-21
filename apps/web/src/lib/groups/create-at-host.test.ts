@@ -24,6 +24,7 @@ import {
 } from './create-at-host';
 import { isHostGroup } from './server/host-kind';
 import { getGroupByDid } from './server/db/groups';
+import { listMembers } from './server/db/roster';
 import { groupSessionScope, type LinkedGroupCredential } from './server/session';
 import { groupSpaceUris } from './ids';
 import { CALENDAR_SPACE_TYPE } from './types';
@@ -327,13 +328,17 @@ describe('setUpHostGroup', () => {
 			grants: HOST_META_GRANTS
 		});
 		expect(host.repoWrites.map((w) => w.collection)).toEqual(['group.opensocial.declaration']);
-		// The row, owned by the creator, with the host's spaces recorded.
+		// The row, created by the creator, with the host's spaces recorded, and
+		// the creator on the roster as an ordinary admin, as the host has them.
 		const row = await getGroupByDid(harness.db, GROUP);
 		expect(row).toMatchObject({
 			owner_did: CREATOR,
 			about_space_uri: META,
 			members_space_uri: MEMBERS
 		});
+		expect(await listMembers(harness.db, row!.id)).toEqual([
+			expect.objectContaining({ did: CREATOR, role: 'admin' })
+		]);
 	});
 
 	it("uploads the picture on the creator's session and names it in the profile", async () => {

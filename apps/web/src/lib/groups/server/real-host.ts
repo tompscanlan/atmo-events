@@ -151,15 +151,14 @@ export function realGroupHost(binding: HostBinding): GroupHost {
 		return { nsid, answer };
 	}
 
-	/** The roster cache follows a membership the host now holds. A failure is
-	 *  logged, not thrown: the record is in, and access follows the record. */
+	/** The roster cache follows a membership the host now holds, the creator's as
+	 *  anyone's. A failure is logged, not thrown: the record is in, and access
+	 *  follows the record. */
 	async function cacheMember(did: string, role: AssignableRole, decidedBy: string | null) {
 		try {
 			const row = await getMemberRow(db, group.id, did);
 			if (!row) await addMember(db, group.id, did, role, decidedBy);
-			else if (row.role !== role && row.role !== 'owner') {
-				await changeMemberRole(db, group.id, did, role);
-			}
+			else if (row.role !== role) await changeMemberRole(db, group.id, did, role);
 		} catch (e) {
 			console.warn(`[groups] ${groupDid}'s roster cache missed ${did}:`, errorText(e));
 		}
@@ -171,16 +170,6 @@ export function realGroupHost(binding: HostBinding): GroupHost {
 		} catch (e) {
 			console.warn(`[groups] ${groupDid}'s roster cache still lists ${did}:`, errorText(e));
 		}
-	}
-
-	/** A group with an owner row keeps it: an app's own rule, which the host
-	 *  does not hold. */
-	async function refuseOwner(did: string) {
-		const row = await getMemberRow(db, group.id, did);
-		if (row?.role === 'owner') {
-			throw new GroupRuleError('owner-protected', 'The group owner cannot be changed');
-		}
-		return row;
 	}
 
 	return {
@@ -248,8 +237,9 @@ export function realGroupHost(binding: HostBinding): GroupHost {
 			if (!answer.ok) throw refusal(nsid, answer);
 		},
 
+		// The host decides who may leave, eject and change a role: any admin may
+		// remove another, the creator included, and the last admin may leave.
 		async leaveGroup(caller) {
-			await refuseOwner(caller.callerDid);
 			await unaccept(act(caller));
 			const { nsid, answer } = await asMember(caller, 'leaveGroup', {});
 			if (!answer.ok) throw refusal(nsid, answer);
@@ -269,13 +259,11 @@ export function realGroupHost(binding: HostBinding): GroupHost {
 		},
 
 		async ejectMember(caller, did) {
-			await refuseOwner(did);
 			await dropGroupMembership({ ...act(caller), subject: did, intent: 'eject' });
 			await uncacheMember(did);
 		},
 
 		async setMemberRole(caller, did, role) {
-			await refuseOwner(did);
 			// The published date stays: read with the caller's own access, and a
 			// failed read throws rather than stamping a new one.
 			const published = caller.reader ? await readMembership(caller.reader, group, did) : null;

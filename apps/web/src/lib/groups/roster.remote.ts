@@ -45,7 +45,7 @@ export const signInForGroup = command(
 );
 
 /** Leave, or withdraw a pending request: one button, since for the applicant
- *  they are the same intent. The owner cannot leave (a GroupRuleError). */
+ *  they are the same intent. Anyone may leave, the group's creator included. */
 export const leaveGroupForm = form(
 	v.object({ groupDid: didField }),
 	async (data): Promise<GroupFormResult<{ outcome: 'withdrawn' | 'left' }>> => {

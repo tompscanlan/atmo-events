@@ -50,8 +50,8 @@ export const didField = v.pipe(
 
 export const idField = v.pipe(v.string(), v.minLength(1), v.maxLength(64));
 
-/** No `owner`: a SQL trigger pins it to `groups.owner_did`. A picklist, not a
- *  `v.check`, so the output type is the role union the roster calls take. */
+/** A picklist, not a `v.check`, so the output type is the role union the roster
+ *  calls take. */
 export const assignableRoleField = v.picklist(ASSIGNABLE_ROLES, 'Unknown role');
 
 export const rkeyField = v.pipe(

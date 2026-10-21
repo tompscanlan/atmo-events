@@ -13,14 +13,12 @@ import {
 	GROUP_PERMISSIONS_COLLECTION,
 	GROUP_PERMISSIONS_RKEY,
 	GROUP_ROLE_COLLECTION,
-	GROUP_SPACE_COLLECTION,
 	isMembershipKey,
 	parseEventBindings,
 	parseGroupAccess,
 	parseGroupGrants,
 	parseGroupMembership,
 	parseGroupRole,
-	parseGroupSpace,
 	type GroupAccessFields,
 	type GroupBindingsFields
 } from '../members-record';
@@ -164,34 +162,6 @@ export async function readMembership(
 	);
 }
 
-/** One entry in the group's index of its spaces. */
-export interface GroupSpaceIndexEntry {
-	rkey: string;
-	space: string;
-}
-
-/** The group's index of its spaces, oldest entry first. Read only by the writer that
- *  keeps it whole, so it is not one of `readGroupMembers`' reads. */
-export async function readGroupSpaceIndex(
-	reader: GroupSpaceReader,
-	group: Pick<GroupRow, 'group_did' | 'members_space_uri'>
-): Promise<GroupSpaceIndexEntry[]> {
-	const space = group.members_space_uri;
-	if (!space) return [];
-	const entries: GroupSpaceIndexEntry[] = [];
-	for (const record of await reader.list({
-		space,
-		repo: group.group_did,
-		collection: GROUP_SPACE_COLLECTION
-	})) {
-		if (record.collection !== GROUP_SPACE_COLLECTION) continue;
-		const parsed = parseGroupSpace(record.value);
-		if (parsed) entries.push({ rkey: record.rkey, space: parsed.space });
-	}
-	// A TID sorts by time, so the first entry for a space is its oldest.
-	return entries.sort((a, b) => a.rkey.localeCompare(b.rkey));
-}
-
 /** The grants every held role gets in `permissions` and in the `access` records
  *  read, for the write gate. A role id this build does not know still counts. */
 export function grantsForRoles(
@@ -326,12 +296,18 @@ export function isUnfinishedRow(members: GroupMembers): boolean {
 	return hasAuthzRecords(members) && hasMemberRecords(members);
 }
 
-/** The owner DID, from the record that grants the owner role. A cold rebuild
- *  (`./rebuild.ts`) needs it, and the schema makes a guessed owner permanent,
- *  so `null` means refuse, never guess. */
-export function ownerDidFromRecords(members: GroupMembers): string | null {
-	const owner = members.memberships.find((record) => record.roles.includes('owner'));
-	return owner ? owner.subject : null;
+/** Who a cold rebuild (`./rebuild.ts`) records as the group's creator: the
+ *  member whose `admin` record is the earliest, a record with no date after any
+ *  with one, and the DID breaking a tie. `null` when no record grants `admin`, so
+ *  the rebuild refuses. The creator is an ordinary admin, so a later admin
+ *  standing in for one who left grants nothing extra. */
+export function creatorDidFromRecords(members: GroupMembers): string | null {
+	const when = (record: GroupMembershipRecord) =>
+		createdAtMs(record.createdAt) || Number.POSITIVE_INFINITY;
+	const admins = members.memberships
+		.filter((record) => record.roles.includes('admin'))
+		.sort((a, b) => when(a) - when(b) || a.subject.localeCompare(b.subject));
+	return admins[0]?.subject ?? null;
 }
 
 /** The strongest role held, in `GROUP_ROLES` order. A D1 row holds one role,
@@ -346,11 +322,11 @@ export function createdAtMs(value: string | null): number {
 	return Number.isFinite(parsed) ? parsed : 0;
 }
 
-/** The order `listMembers` gets from SQL, so records and cache render alike.
- *  DID breaks a tie between records written in the same millisecond. */
+/** The order `listMembers` gets from SQL, by join time, so records and cache
+ *  render alike. DID breaks a tie between records written in the same
+ *  millisecond. */
 function byRosterOrder(a: RosterEntry, b: RosterEntry): number {
-	const rank = (entry: RosterEntry) => (entry.role === 'owner' ? 0 : 1);
-	return rank(a) - rank(b) || a.created_at - b.created_at || a.did.localeCompare(b.did);
+	return a.created_at - b.created_at || a.did.localeCompare(b.did);
 }
 
 /**

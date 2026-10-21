@@ -78,12 +78,9 @@ export interface HostCreateEnv extends CredentialStoreEnv {
 	DB: D1Database;
 }
 
-/** The roles a group host declares at create (`admin`, `member`), with this app's
- *  default event bundles. */
-const HOST_ROLE_BUNDLES = {
-	admin: DEFAULT_ROLE_PERMISSIONS.admin,
-	member: DEFAULT_ROLE_PERMISSIONS.member
-};
+/** The roles a group host declares at create (`admin`, `member`), which are this
+ *  app's roles too, with this app's default event bundles. */
+const HOST_ROLE_BUNDLES = DEFAULT_ROLE_PERMISSIONS;
 
 /** The host's origin when this deployment creates groups there: it names a group
  *  host and can link what the host makes. Null otherwise. */

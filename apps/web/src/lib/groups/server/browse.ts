@@ -66,10 +66,9 @@ export async function listGroups(
 				await db
 					.prepare(
 						`SELECT ${GROUP_COLUMNS} FROM groups
-						 WHERE owner_did = ?
-						    OR id IN (SELECT group_id FROM memberships WHERE did = ?)`
+						 WHERE id IN (SELECT group_id FROM memberships WHERE did = ?)`
 					)
-					.bind(caller, caller)
+					.bind(caller)
 					.all<GroupRow>()
 			).results ?? [])
 		: [];

@@ -51,7 +51,7 @@ async function readConfirmations(
 /** Rows the records no longer back: a removal or an admission that stopped
  *  partway, which this site cannot tell apart. The roster is drawn from the
  *  records, so without this list such a member vanishes from the page with the
- *  removal still half done. The owner is left out: it cannot be removed. */
+ *  removal still half done. */
 async function unfinishedRemovals(
 	db: D1Database,
 	group: GroupRow,
@@ -60,7 +60,7 @@ async function unfinishedRemovals(
 	const recorded = new Set(members.memberships.map((record) => record.subject));
 	return (await listMembers(db, group.id))
 		.map((row) => row.did)
-		.filter((did) => !recorded.has(did) && did !== group.owner_did);
+		.filter((did) => !recorded.has(did));
 }
 
 /** The members space as the caller may read it: the records, or none when the

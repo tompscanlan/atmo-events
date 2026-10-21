@@ -10,7 +10,7 @@ import { listMembers } from './roster';
 import { getCallerMembership } from '../standing';
 import { ensureGroupsSchema } from '../schema';
 
-const OWNER = 'did:plc:owner';
+const CREATOR = 'did:plc:creator';
 const ALICE = 'did:plc:alice';
 
 let harness: SqliteD1;
@@ -26,25 +26,27 @@ afterEach(() => harness.close());
 function group(overrides: Partial<Parameters<typeof createGroup>[1]> = {}) {
 	return createGroup(db, {
 		groupDid: 'did:plc:jcwgw6fcnb5vyoid7nz7sl26',
-		ownerDid: OWNER,
+		ownerDid: CREATOR,
 		name: 'Kona',
 		...overrides
 	});
 }
 
 describe('createGroup', () => {
-	it('seeds the three roles with their bundles and exactly one active owner', async () => {
+	// No owner (TS, 2026-10-20): the creator is an ordinary admin, as at the host.
+	it('seeds the two roles with their bundles and the creator as an admin', async () => {
 		const created = await group();
 
 		const bundles = await rolePermissions(db, created.id);
-		expect(Object.keys(bundles).sort()).toEqual(['admin', 'member', 'owner']);
+		expect(Object.keys(bundles).sort()).toEqual(['admin', 'member']);
 		for (const [role, expected] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
 			expect(bundles[role].slice().sort(), role).toEqual([...expected].sort());
 		}
 
 		const members = await listMembers(db, created.id);
 		expect(members).toHaveLength(1);
-		expect(members[0]).toMatchObject({ did: OWNER, role: 'owner' });
+		expect(members[0]).toMatchObject({ did: CREATOR, role: 'admin' });
+		expect(created.owner_did).toBe(CREATOR);
 		expect(created.require_approval).toBe(1);
 		// createGroup does not provision: the spaces are a PDS call the caller makes
 		// next, so a fresh row says "not yet" rather than claiming a space exists.
@@ -54,12 +56,12 @@ describe('createGroup', () => {
 
 	// The rows say who is on the roster. What anyone may do comes from the
 	// group's records alone, and these rows have none behind them. (Spec: FR-213.)
-	it('puts the owner on the roster, and grants nobody anything from the rows', async () => {
+	it('puts the creator on the roster, and grants nobody anything from the rows', async () => {
 		const created = await group();
-		const owner = await getCallerMembership(db, created, OWNER, null);
-		expect(owner.role).toBe('owner');
-		expect(owner.onRoster).toBe(true);
-		expect(owner.permissions.size).toBe(0);
+		const creator = await getCallerMembership(db, created, CREATOR, null);
+		expect(creator.role).toBe('admin');
+		expect(creator.onRoster).toBe(true);
+		expect(creator.permissions.size).toBe(0);
 
 		const stranger = await getCallerMembership(db, created, ALICE, null);
 		expect(stranger.role).toBeNull();
@@ -78,7 +80,7 @@ describe('createGroup', () => {
 		await expect(group()).rejects.toThrow(GroupRuleError);
 		const rows = harness.raw.prepare('SELECT COUNT(*) AS n FROM groups').get();
 		expect(rows).toEqual({ n: 1 });
-		expect(harness.raw.prepare('SELECT COUNT(*) AS n FROM roles').get()).toEqual({ n: 3 });
+		expect(harness.raw.prepare('SELECT COUNT(*) AS n FROM roles').get()).toEqual({ n: 2 });
 		expect(harness.raw.prepare('SELECT COUNT(*) AS n FROM memberships').get()).toEqual({ n: 1 });
 	});
 
@@ -119,24 +121,26 @@ describe('rehearseCreateGroup', () => {
 			`CREATE TRIGGER drifted BEFORE INSERT ON groups
 			 BEGIN SELECT RAISE(ABORT, 'NOT NULL constraint failed: groups.legacy'); END`
 		);
-		await expect(rehearseCreateGroup(db, { ownerDid: OWNER, name: 'Kona' })).rejects.toThrow(
+		await expect(rehearseCreateGroup(db, { ownerDid: CREATOR, name: 'Kona' })).rejects.toThrow(
 			/groups\.legacy/
 		);
 		expect(counts()).toEqual([0, 0, 0, 0]);
 	});
 
-	// Drift that loses the owner without a refusal: with the owner-role trigger
-	// gone, the batch inserts the row and no owner membership, and no statement
-	// fails. Only the rehearsal's closing check can see it, and a create that went
-	// ahead would leave a group nobody owns.
-	it('refuses when the row would land without its owner membership', async () => {
-		// The schema self-heal runs once per isolate and would put the trigger
-		// back, so it has run before the trigger goes.
+	// Drift that loses the creator's membership without a refusal: here the admin
+	// role vanishes as it is inserted, so the membership finds no role to take and
+	// no statement fails. Only the rehearsal's closing check can see it, and a
+	// create that went ahead would leave a group with no admin row.
+	it("refuses when the row would land without its creator's membership", async () => {
+		// The schema self-heal runs once per isolate, so it has run before the drift.
 		await ensureGroupsSchema(db);
-		harness.raw.exec('DROP TRIGGER groups_seed_owner_role');
+		harness.raw.exec(
+			`CREATE TRIGGER drifted AFTER INSERT ON roles WHEN NEW.name = 'admin'
+			 BEGIN DELETE FROM roles WHERE id = NEW.id; END`
+		);
 
-		await expect(rehearseCreateGroup(db, { ownerDid: OWNER, name: 'Kona' })).rejects.toThrow(
-			/owner membership/
+		await expect(rehearseCreateGroup(db, { ownerDid: CREATOR, name: 'Kona' })).rejects.toThrow(
+			/creator's membership/
 		);
 		expect(counts()).toEqual([0, 0, 0, 0]);
 	});

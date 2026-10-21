@@ -45,7 +45,7 @@ const MEETING_VALUE = {
 };
 const ACCESS_VALUE = {
 	public: false,
-	grants: ['owner', 'admin', 'member'].map((role) => ({
+	grants: ['admin', 'member'].map((role) => ({
 		role,
 		scopes: ['space:rsvp.atmo.group.calendar?action=read']
 	}))

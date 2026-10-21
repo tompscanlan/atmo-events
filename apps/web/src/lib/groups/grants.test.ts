@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import example from './__fixtures__/opensocial-example-records.json';
-import { MEMBERSHIP_SPACE, communityPermissions, memberGrants } from './grants';
+import { communityPermissions, memberGrants } from './grants';
 import {
 	GROUP_ACCESS_COLLECTION,
 	GROUP_PERMISSIONS_COLLECTION,
@@ -14,7 +14,6 @@ import {
 	GROUP_ROLES,
 	type GroupPermission
 } from './permissions';
-import { allowsMembershipWrite, type MembershipChange } from './scopes';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from './types';
 
 const GROUP = 'did:plc:group';
@@ -97,29 +96,27 @@ describe("upstream's example group", () => {
 	const aboutAccess = parseGroupAccess(find(GROUP_ACCESS_COLLECTION, ABOUT_SPACE_TYPE));
 	const grantsOf = (role: string) =>
 		memberGrants({ roles: [role], permissions, membersAccess, aboutAccess });
-	const may = (role: string, change: MembershipChange) =>
-		allowsMembershipWrite(grantsOf(role), garden, MEMBERSHIP_SPACE, change);
+	const names = (role: string) => communityPermissions(grantsOf(role), garden);
 
 	it('is the group the primer reads', () => {
 		expect(permissions?.map((grant) => grant.role)).toEqual(['admin', 'moderator']);
 		expect(membersAccess?.grants.map((grant) => grant.role)).toEqual(['member', 'moderator']);
 	});
 
-	it('refuses a member any membership write', () => {
-		expect(may('member', { from: [], to: ['moderator'] })).toBe(false);
-		expect(may('member', { from: ['member'], to: ['moderator'] })).toBe(false);
-		expect(may('member', { from: ['member'], to: [] })).toBe(false);
+	it('gives a member no roster act', () => {
+		expect(names('member')).toEqual([]);
 	});
 
-	it("lets an admin delete a moderator's membership", () => {
-		expect(may('admin', { from: ['moderator'], to: [] })).toBe(true);
+	it("lets an admin eject, a moderator's holder included", () => {
+		expect(names('admin')).toContain('EJECT_MEMBERS');
+		expect(grantsOf('admin').assignable.has('moderator')).toBe(true);
 	});
 
 	// `assignable` names member, but no scope of the moderator's reaches
-	// `membership`, and both checks must pass.
-	it("refuses a moderator a member's membership", () => {
+	// `membership`, and both are needed.
+	it("gives a moderator no roster act on a member's membership", () => {
 		expect(grantsOf('moderator').assignable.has('member')).toBe(true);
-		expect(may('moderator', { from: ['member'], to: [] })).toBe(false);
+		expect(names('moderator')).not.toContain('EJECT_MEMBERS');
 	});
 
 	// Before this check, a grant of `include:` read as no permission at all.

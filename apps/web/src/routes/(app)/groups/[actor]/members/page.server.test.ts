@@ -161,9 +161,9 @@ describe('/groups/[actor]/members load, with membership records', () => {
 	it('lists a row the records do not back as not finished, for whoever may eject', async () => {
 		const data = await openAs(GROUP_DID);
 
-		// The owner's row has no record in this fixture either, but the owner
-		// cannot be removed, so only Repair finishes theirs.
-		expect(data.unfinished).toEqual([REMOVED]);
+		// The creator's row has no record in this fixture either. With no owner
+		// (TS, 2026-10-20) it is a row like any other, so it is listed too.
+		expect(data.unfinished).toEqual([OWNER, REMOVED]);
 		expect(data.members.map((entry) => entry.did)).not.toContain(REMOVED);
 	});
 

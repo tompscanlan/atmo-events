@@ -2,12 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
 	GROUP_ITSELF,
 	NO_GRANTS,
-	allowsMembershipWrite,
 	allowsWrite,
 	membershipAction,
 	parseSpaceScope,
 	permits,
-	rolesTouched,
 	spacePermissions,
 	withAccess,
 	writeGrants,
@@ -129,16 +127,6 @@ describe('spacePermissions', () => {
 });
 
 describe('membership changes', () => {
-	it('touches what a create adds, what an ejection removes, and what an update moves', () => {
-		expect(rolesTouched({ from: [], to: ['member'] })).toEqual(['member']);
-		expect(rolesTouched({ from: ['admin', 'member'], to: [] })).toEqual(['admin', 'member']);
-		expect(rolesTouched({ from: ['admin', 'member'], to: ['member', 'moderator'] })).toEqual([
-			'admin',
-			'moderator'
-		]);
-		expect(rolesTouched({ from: ['member'], to: ['member'] })).toEqual([]);
-	});
-
 	it('is a create, an update or a delete by what the member holds before and after', () => {
 		expect(membershipAction({ from: [], to: ['member'] })).toBe('create');
 		expect(membershipAction({ from: ['member'], to: ['admin'] })).toBe('update');
@@ -151,8 +139,6 @@ describe('writeGrants', () => {
 		{ role: 'admin', scopes: ['include:group.opensocial.manageMembers'], assignable: ['member'] },
 		{ role: 'helper', scopes: [`space:${MEMBERS}?collection=${MEMBERSHIP}&action=create`] }
 	];
-	const space = { spaceType: MEMBERS, skey: 'self', collection: MEMBERSHIP };
-
 	it('unions the grants of every role held, and nothing else', () => {
 		const grants = writeGrants({ roles: ['admin', 'helper'], permissions });
 		expect([...grants.assignable]).toEqual(['member']);
@@ -160,14 +146,6 @@ describe('writeGrants', () => {
 			...NO_GRANTS,
 			roles: ['member']
 		});
-	});
-
-	it('needs the scope and assignable both', () => {
-		const helper = writeGrants({ roles: ['helper'], permissions });
-		expect(allowsMembershipWrite(helper, GROUP, space, { from: [], to: ['member'] })).toBe(false);
-		const admin = writeGrants({ roles: ['admin'], permissions });
-		expect(allowsMembershipWrite(admin, GROUP, space, { from: [], to: ['member'] })).toBe(true);
-		expect(allowsMembershipWrite(admin, GROUP, space, { from: [], to: ['admin'] })).toBe(false);
 	});
 
 	it("keeps an access record's grants to its own space", () => {
@@ -182,9 +160,7 @@ describe('writeGrants', () => {
 
 	it('lets the group itself write anything, with no roles', () => {
 		expect(allowsWrite(GROUP_ITSELF, GROUP, recordWrite(META, 'x.y.z', 'delete'))).toBe(true);
-		expect(allowsMembershipWrite(GROUP_ITSELF, GROUP, space, { from: ['admin'], to: [] })).toBe(
-			true
-		);
+		expect(allowsWrite(GROUP_ITSELF, GROUP, recordWrite(MEMBERS, MEMBERSHIP, 'delete'))).toBe(true);
 	});
 });
 

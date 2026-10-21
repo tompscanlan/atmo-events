@@ -88,7 +88,8 @@ import {
 import { runUpdateGroup, type UpdateGroupData } from './update-group';
 
 import { pdsWriter } from './server/group-write';
-import { putGroupMembership, writeGroupAccess, writeGroupAuthz } from './server/members-writer';
+import { putGroupMembership } from './server/members-writer';
+import { writeAuthzRecords, writeClosedAccess } from './server/__fixtures__/members-space';
 import { createGroup, getGroupByDid, recordGroupSpaces } from './server/db/groups';
 const OWNER = 'did:plc:owner';
 const GROUP_DID = 'did:plc:settingsgroupaaaaaaaaaaa';
@@ -149,11 +150,11 @@ async function givenGroup(
 	};
 	// The owner's membership and the authz config, which is what lets the owner
 	// save. Written as the group, as the create writes them.
-	await writeGroupAuthz(asGroup(group));
+	await writeAuthzRecords(asGroup(group));
 	await putGroupMembership({
 		...asGroup(group),
 		subject: OWNER,
-		roles: ['owner'],
+		roles: ['admin'],
 		intent: 'admit'
 	});
 	pds.clearLog();
@@ -174,8 +175,8 @@ function asGroup(group: GroupRow) {
 /** The rest of what a create and an admission leave: the members and calendar
  *  spaces' access records, and `MEMBER` admitted as a `member`. */
 async function givenMember(group: GroupRow, pds: Host): Promise<void> {
-	await writeGroupAccess(asGroup(group));
-	await writeGroupAccess({ ...asGroup(group), space: CALENDAR });
+	await writeClosedAccess(asGroup(group));
+	await writeClosedAccess({ ...asGroup(group), space: CALENDAR });
 	await putGroupMembership({
 		...asGroup(group),
 		subject: MEMBER,
@@ -331,7 +332,7 @@ describe('a settings flip writes the access record, and no read policy', () => {
 			expect(await aboutAccessNow()).toEqual({
 				$type: 'group.opensocial.access',
 				public: to === 'public',
-				grants: ['owner', 'admin', 'member'].map((role) => ({
+				grants: ['admin', 'member'].map((role) => ({
 					role,
 					scopes: ['space:group.opensocial.meta?action=read']
 				}))

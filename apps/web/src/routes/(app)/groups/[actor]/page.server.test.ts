@@ -395,7 +395,7 @@ describe('a member whose sign-in predates the group', () => {
 
 		const data = await openAs(OWNER, {}, readerSession(OWNER, BEFORE_THE_GROUP));
 
-		expect(data.membership.role).toBe('owner');
+		expect(data.membership.role).toBe('admin');
 		expect(data.canSeeMembers).toBe(false);
 		expect(data.membership.signIn).toEqual({ from: group.created_at + METADATA_CACHE_MS });
 	});
@@ -458,7 +458,7 @@ describe('the link prompt', () => {
 		const host = spaceReader(GROUP_DID, {
 			records: [
 				aboutAccess('public'),
-				...authzRecords(GROUP_DID, { [OWNER]: 'owner', [ADMIN]: 'admin', [MEMBER]: 'member' })
+				...authzRecords(GROUP_DID, { [OWNER]: 'admin', [ADMIN]: 'admin', [MEMBER]: 'member' })
 			]
 		});
 		serveReader(GROUP_DID, host);

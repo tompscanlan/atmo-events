@@ -15,7 +15,7 @@
 // host (TS, 2026-10-15): the host still checks the roles of whoever did.
 //
 // Nothing here touches the browser's cookies. The sign-in callback sets the `did`
-// cookie to whoever authorized, which here would sign the owner in as the group.
+// cookie to whoever authorized, which here would sign the admin in as the group.
 import type { Did } from '@atcute/lexicons';
 import type { OAuthClient, OAuthClientStores } from '@atcute/oauth-node-client';
 import type { GroupRow } from '../types';

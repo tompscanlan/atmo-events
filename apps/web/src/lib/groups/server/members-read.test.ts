@@ -8,7 +8,7 @@
 //      must answer the same way as a stranger; otherwise the gate lets in a
 //      member the roster cannot explain.
 //   2. The records-derived roster comes out in the same order the SQL gives
-//      (`is_owner DESC, created_at ASC`), or switching source reshuffles a page.
+//      (by join time), or switching source reshuffles a page.
 //
 // Rebuilding the D1 projection from these records is tested in ./rebuild.test.ts.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -20,6 +20,7 @@ import { hostDown, spaceReader, type SpaceRecordInput } from './__fixtures__/spa
 import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import {
 	NO_MEMBER_RECORDS,
+	creatorDidFromRecords,
 	effectivePermissions,
 	hasAuthzRecords,
 	hasMemberRecords,
@@ -87,7 +88,7 @@ const accessRecord: SpaceRecordInput = {
 	value: {
 		...groupAccessRecord({
 			spaceType: 'group.opensocial.members',
-			roles: ['owner', 'admin', 'member'],
+			roles: ['admin', 'member'],
 			public: false
 		}),
 		$type: GROUP_ACCESS_COLLECTION
@@ -118,7 +119,6 @@ function bindingsRecord(
 }
 
 const AUTHZ: SpaceRecordInput[] = [
-	roleRecord('owner'),
 	roleRecord('admin'),
 	roleRecord('member'),
 	bindingsRecord('community'),
@@ -141,14 +141,14 @@ describe('readGroupMembers', () => {
 		const members = await readGroupMembers(
 			readerOver([
 				accessRecord,
-				membership(OWNER, ['owner'], '2026-09-01T10:00:00.000Z'),
+				membership(OWNER, ['admin'], '2026-09-01T10:00:00.000Z'),
 				membership(ADMIN, ['admin'], '2026-09-02T10:00:00.000Z')
 			]),
 			group
 		);
 
 		expect(members.memberships.map((m) => m.subject)).toEqual([OWNER, ADMIN]);
-		expect(members.access?.roles).toEqual(['owner', 'admin', 'member']);
+		expect(members.access?.roles).toEqual(['admin', 'member']);
 		expect(members.memberships[0].uri).toBe(
 			`${MEMBERS}/${GROUP_DID}/${GROUP_MEMBERSHIP_COLLECTION}/${OWNER}`
 		);
@@ -168,7 +168,7 @@ describe('the authz config as records', () => {
 	it('reads the roles, the permissions grants as written, and the event bindings', async () => {
 		const members = await readGroupMembers(readerOver(AUTHZ), group);
 
-		expect(members.roles.map((role) => role.id)).toEqual(['owner', 'admin', 'member']);
+		expect(members.roles.map((role) => role.id)).toEqual(['admin', 'member']);
 		expect(hasAuthzRecords(members)).toBe(true);
 		// `permissions` stays scopes: the gate evaluates them, and no name is read
 		// off the record.
@@ -199,13 +199,13 @@ describe('the authz config as records', () => {
 		// A member is bound at both altitudes and holds nothing at either, which
 		// is the seeded model rather than a missing record.
 		expect([...effectivePermissions(members, ['member'], GROUP_DID)]).toEqual([]);
-		expect(members.permissions?.map((grant) => grant.role)).toEqual(['owner', 'admin', 'member']);
+		expect(members.permissions?.map((grant) => grant.role)).toEqual(['admin', 'member']);
 	});
 
 	it('grants nothing for a role the caller does not hold, and nothing with no records', async () => {
 		const members = await readGroupMembers(readerOver(AUTHZ), group);
 		expect([...effectivePermissions(members, [], GROUP_DID)]).toEqual([]);
-		expect([...effectivePermissions(NO_MEMBER_RECORDS, ['owner'], GROUP_DID)]).toEqual([]);
+		expect([...effectivePermissions(NO_MEMBER_RECORDS, ['admin'], GROUP_DID)]).toEqual([]);
 	});
 
 	it('drops an event action or an unknown scope in the permissions record', async () => {
@@ -236,30 +236,83 @@ describe('the authz config as records', () => {
 	});
 });
 
-describe('rosterFromRecords', () => {
-	it('orders the roster exactly as the SQL does: owner first, then by join time', async () => {
+describe('creatorDidFromRecords', () => {
+	it('is the earliest admin, a member never, and the DID breaks a tie', async () => {
 		const members = await readGroupMembers(
 			readerOver([
-				membership(MEMBER, ['member'], '2026-09-03T10:00:00.000Z'),
-				membership(OWNER, ['owner'], '2026-09-05T10:00:00.000Z'),
+				membership(MEMBER, ['member'], '2026-09-01T10:00:00.000Z'),
+				membership(OWNER, ['admin'], '2026-09-02T10:00:00.000Z'),
+				membership(ADMIN, ['admin'], '2026-09-03T10:00:00.000Z')
+			]),
+			group
+		);
+		expect(creatorDidFromRecords(members)).toBe(OWNER);
+
+		const tied = await readGroupMembers(
+			readerOver([
+				membership(OWNER, ['admin'], '2026-09-02T10:00:00.000Z'),
 				membership(ADMIN, ['admin'], '2026-09-02T10:00:00.000Z')
 			]),
 			group
 		);
-		// The owner joined last here, so a sort that only used the date would put
-		// them at the end.
-		expect(rosterFromRecords(members).map((entry) => entry.did)).toEqual([OWNER, ADMIN, MEMBER]);
+		expect(creatorDidFromRecords(tied)).toBe([OWNER, ADMIN].sort()[0]);
+	});
+
+	it('puts an admin record with no usable date after every dated one', async () => {
+		const members = await readGroupMembers(
+			readerOver([
+				membership(OWNER, ['admin'], 'not-a-date'),
+				membership(ADMIN, ['admin'], '2026-09-03T10:00:00.000Z')
+			]),
+			group
+		);
+		expect(members.memberships.map((record) => record.subject)).toContain(OWNER);
+		expect(creatorDidFromRecords(members)).toBe(ADMIN);
+	});
+
+	it('is null when no record grants admin', async () => {
+		const members = await readGroupMembers(
+			readerOver([membership(MEMBER, ['member'], '2026-09-01T10:00:00.000Z')]),
+			group
+		);
+		expect(creatorDidFromRecords(members)).toBeNull();
+	});
+});
+
+describe('rosterFromRecords', () => {
+	// No owner (TS, 2026-10-20): the creator sorts by join time like anyone.
+	it('orders the roster exactly as the SQL does: by join time, the creator included', async () => {
+		const joined = {
+			[MEMBER]: '2026-09-03T10:00:00.000Z',
+			[OWNER]: '2026-09-05T10:00:00.000Z',
+			[ADMIN]: '2026-09-02T10:00:00.000Z'
+		};
+		const members = await readGroupMembers(
+			readerOver([
+				membership(MEMBER, ['member'], joined[MEMBER]),
+				membership(OWNER, ['admin'], joined[OWNER]),
+				membership(ADMIN, ['admin'], joined[ADMIN])
+			]),
+			group
+		);
+		for (const [did, at] of Object.entries(joined)) {
+			harness.raw
+				.prepare('UPDATE memberships SET created_at = ? WHERE did = ?')
+				.run(Date.parse(at), did);
+		}
+		// The creator joined last here, so they come last.
+		expect(rosterFromRecords(members).map((entry) => entry.did)).toEqual([ADMIN, MEMBER, OWNER]);
 		expect(rosterFromRows(await listMembers(db, group.id)).map((entry) => entry.did)).toEqual([
-			OWNER,
 			ADMIN,
-			MEMBER
+			MEMBER,
+			OWNER
 		]);
 	});
 
 	it('drops a record that grants no known role instead of rendering it role-less', async () => {
 		const members = await readGroupMembers(
 			readerOver([
-				membership(OWNER, ['owner'], '2026-09-01T10:00:00.000Z'),
+				membership(OWNER, ['admin'], '2026-09-01T10:00:00.000Z'),
 				membership(STRANGER, ['greeter'], '2026-09-02T10:00:00.000Z')
 			]),
 			group
@@ -282,7 +335,7 @@ describe('the roster, with acceptances', () => {
 	async function twoMembers() {
 		return readGroupMembers(
 			readerOver([
-				membership(OWNER, ['owner'], '2026-09-01T10:00:00.000Z'),
+				membership(OWNER, ['admin'], '2026-09-01T10:00:00.000Z'),
 				membership(MEMBER, ['member'], '2026-09-02T10:00:00.000Z')
 			]),
 			group
@@ -309,7 +362,7 @@ describe('the roster, with acceptances', () => {
 // visible which one the gate believed.
 describe('the gate, from records', () => {
 	const sorted = (set: ReadonlySet<string>) => [...set].sort();
-	const ALL = [...DEFAULT_ROLE_PERMISSIONS.owner].sort();
+	const ALL = [...DEFAULT_ROLE_PERMISSIONS.admin].sort();
 
 	it('is a pure function of the records: the union across both binding records', async () => {
 		const members = await readGroupMembers(
@@ -325,7 +378,7 @@ describe('the gate, from records', () => {
 		const members = await readCallerAuthz(
 			readerOver([
 				...AUTHZ,
-				membership(OWNER, ['owner'], '2026-09-01T10:00:00.000Z'),
+				membership(OWNER, ['admin'], '2026-09-01T10:00:00.000Z'),
 				membership(ADMIN, ['admin'], '2026-09-02T10:00:00.000Z')
 			]),
 			group,
@@ -354,11 +407,10 @@ describe('the gate, from records', () => {
 
 	it('grants nothing to a role bound to nothing', async () => {
 		const unbound = [
-			roleRecord('owner'),
 			roleRecord('admin'),
 			roleRecord('member'),
-			bindingsRecord('community', { owner: [], admin: [], member: [] }),
-			bindingsRecord('modality', { owner: [], admin: [], member: [] }),
+			bindingsRecord('community', { admin: [], member: [] }),
+			bindingsRecord('modality', { admin: [], member: [] }),
 			membership(ADMIN, ['admin'], '2026-09-02T10:00:00.000Z')
 		];
 		const admin = await getCallerMembership(db, group, ADMIN, readerOver(unbound));

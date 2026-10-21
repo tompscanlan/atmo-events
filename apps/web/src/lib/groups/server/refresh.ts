@@ -41,7 +41,7 @@ export async function refreshGroup(input: RefreshGroupInput): Promise<GroupRebui
 	return rebuildGroup(input.db, reader, input.group.group_did);
 }
 
-/** What the refresh did, in sentences an owner can read. */
+/** What the refresh did, in sentences an admin can read. */
 export function describeRefresh(result: GroupRebuildResult): string {
 	const sentences = [
 		"Re-read the group from its host into this site's copy. Nothing at the host was changed."

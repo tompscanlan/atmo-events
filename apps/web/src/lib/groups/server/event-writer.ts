@@ -5,12 +5,7 @@ import type { GroupBlobRef } from '../about-record';
 import { now as tidNow } from '@atcute/tid';
 import * as v from '@atcute/lexicons/validations';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
-import {
-	GROUP_EVENT_COLLECTION,
-	POLICY_MANAGING_APP,
-	POLICY_MEMBER_LIST,
-	groupSpaceUris
-} from '../ids';
+import { GROUP_EVENT_COLLECTION, POLICY_MANAGING_APP, groupSpaceUris } from '../ids';
 import type { EventPlacement } from '../event-placement';
 import {
 	GROUP_ACCESS_COLLECTION,
@@ -206,7 +201,6 @@ export async function checkCalendarSpace(locator: GroupEventLocator, space: stri
 		console.error(`[groups] ${space} could not be checked; a members-only write was refused:`, e);
 		throw new GroupPlacementError('calendar-space-unchecked');
 	}
-	if (readPolicy === POLICY_MEMBER_LIST) return;
 	if (readPolicy === POLICY_MANAGING_APP && locator.access) {
 		let access: GroupAccessFields | null;
 		try {

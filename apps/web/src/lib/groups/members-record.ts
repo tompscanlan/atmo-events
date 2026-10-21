@@ -274,7 +274,7 @@ export interface GroupRoleFields {
 }
 
 /** One role's existence. The standard requires a display name, and ours is the id
- *  with a capital, so `owner` shows as "Owner". A role a new member is admitted
+ *  with a capital, so `admin` shows as "Admin". A role a new member is admitted
  *  with says `default`, which is left out, as false, on the rest. */
 export function groupRoleRecord(input: { id: GroupRoleName }): Record<string, unknown> {
 	const displayName = input.id.charAt(0).toUpperCase() + input.id.slice(1);

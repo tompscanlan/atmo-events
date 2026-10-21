@@ -13,12 +13,8 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 
 import { sqliteD1, type SqliteD1 } from './__fixtures__/d1-sqlite';
 import { fakeGroupHost } from './__fixtures__/group-host';
-import {
-	putGroupMembership,
-	writeGroupAccess,
-	writeGroupAuthz,
-	writeGroupSpaceIndex
-} from './members-writer';
+import { putGroupMembership } from './members-writer';
+import { writeAuthzRecords, writeClosedAccess } from './__fixtures__/members-space';
 import { writeAboutAccess } from './about-writer';
 import { pdsSpaceReader, type GroupSpaceReader } from './about-read';
 import { describeRefresh, refreshGroup } from './refresh';
@@ -96,15 +92,14 @@ beforeEach(async () => {
 		members_space_uri: uris.membersSpaceUri
 	};
 
-	// A complete group at the host: its access records, the space index, the
-	// owner's membership and the authz config.
+	// A complete group at the host: its access records, the creator's
+	// membership and the authz config.
 	const seed = { db, env, group, callerDid: GROUP_DID };
-	await writeGroupAccess(seed);
-	await writeGroupAccess({ ...seed, space: uris.calendarSpaceUri });
-	await writeGroupSpaceIndex({ ...seed, existing: [], calendarSpace: uris.calendarSpaceUri });
+	await writeClosedAccess(seed);
+	await writeClosedAccess({ ...seed, space: uris.calendarSpaceUri });
 	await writeAboutAccess({ ...seed, visibility: 'private' });
-	await putGroupMembership({ ...seed, subject: OWNER, roles: ['owner'], intent: 'admit' });
-	await writeGroupAuthz(seed);
+	await putGroupMembership({ ...seed, subject: OWNER, roles: ['admin'], intent: 'admit' });
+	await writeAuthzRecords(seed);
 	pds.clearLog();
 });
 
