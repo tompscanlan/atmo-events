@@ -44,12 +44,12 @@ describe('the published bridge', () => {
 
 describe('the seeded role bundles', () => {
 	// Published as each binding's `assignable`, which bounds both role.assign and
-	// eject. The owner is protected by being on no other role's list.
-	it('lets no role but the owner assign or eject the owner', () => {
-		expect(ASSIGNABLE_BY_ROLE.owner).toContain('owner');
-		for (const role of GROUP_ROLES) {
-			if (role !== 'owner') expect(ASSIGNABLE_BY_ROLE[role], role).not.toContain('owner');
-		}
+	// eject. There is no owner (TS, 2026-10-20): an admin may assign and eject any
+	// admin, the creator included, as at the group host.
+	it('has only the host’s two roles, and lets an admin assign and eject either', () => {
+		expect(GROUP_ROLES).toEqual(['admin', 'member']);
+		expect(ASSIGNABLE_BY_ROLE.admin).toEqual(['admin', 'member']);
+		expect(ASSIGNABLE_BY_ROLE.member).toEqual([]);
 	});
 
 	it('gives a member no permission at all, since membership is what a member holds', () => {

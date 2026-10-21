@@ -113,9 +113,12 @@ When a record and a D1 row disagree, the record wins. `server/rebuild.ts` rebuil
 from its records, and the settings page's "Refresh from the group host" runs it
 (`server/refresh.ts`), reading with the caller's own access and writing nothing at the host. It adds
 and updates rows but deletes none, so a member who left through another app keeps their row. A
-group with no row left cannot be restored from its records yet: the restore needs a `membership`
-record granting `owner`, and a host's roles are `admin` and `member`. A rebuild restores nothing
-for the visibility, because nothing in D1 holds it.
+group with no row left is restored from its records: its row from the profile, its roles from the
+role and permission records, and its roster from the `membership` records, with the earliest
+`admin` recorded as `owner_did`. The restore refuses, before any write, a group with no profile, no
+`membership` granting `admin` (as when the last admin has left, which the host allows), or no role
+and permission records. A rebuild restores nothing for
+the visibility, because nothing in D1 holds it.
 
 ## Members-only events
 
@@ -154,11 +157,12 @@ write to its own D1 rows, which the host never sees: the settings save's copy of
 refresh (`appOnly`, with `scopes.ts` and `grants.ts`). A permission set named with `include:` is
 expanded from its lexicon, copied into `lexicons/reference`.
 
-D1 keeps a third role, `owner`, for the person who created the group here (`groups.owner_did`). It
-is this site's own note of who that was, and a rebuild reads the creator's `admin` record as
-agreeing with it. The schema keeps the owner's row from being demoted, removed or leaving, and the
-roster acts refuse to change, eject or let leave anyone whose row says `owner` before anything is
-sent to the host (`server/real-host.ts`).
+There is no owner (TS, 2026-10-20). The creator is an ordinary `admin`, as at the group host:
+another admin may demote or remove them, and they may leave, even as the last admin. Those are the
+host's rules, and its refusal is the one a form shows; this site adds none of its own
+(`server/real-host.ts`). D1 keeps the same two roles. `groups.owner_did` records who created the
+group here, is never rewritten, and grants nothing: the group page shows it as "Organized by" to whoever may see the roster, even
+after the creator has left.
 
 The pages ask by name, from a fixed vocabulary in `permissions.ts`: `MANAGE_GROUP`, `ADMIT_MEMBERS`,
 `EJECT_MEMBERS`, `ASSIGN_ROLES`, `MANAGE_EVENTS` and `CREATE_EVENT`. The first four are questions

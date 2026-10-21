@@ -10,8 +10,8 @@ export class GroupRuleError extends Error {
 		readonly reason: /** The group DID is already bound. This is the only uniqueness
 			 *  failure a create can hit, since the handle reserves the name. */
 			| 'did-taken'
-			| 'owner-protected'
-			| 'owner-role-reserved'
+			/** `groups.owner_did` or `groups.group_did` was to be rewritten. */
+			| 'identity-immutable'
 			| 'not-found'
 			| 'already-pending'
 			/** A stranger asked to join a group its host keeps invite-only. */
@@ -31,11 +31,8 @@ export class GroupRuleError extends Error {
 export function constraintMessage(e: unknown): GroupRuleError | null {
 	const text = errorText(e);
 	// Triggers first: one statement can fire a trigger and trip a unique index.
-	if (/owner role is reserved/.test(text)) {
-		return new GroupRuleError('owner-role-reserved', 'The owner role is reserved for the owner');
-	}
-	if (/owner cannot be|owner role cannot be|owner must hold|are immutable/.test(text)) {
-		return new GroupRuleError('owner-protected', 'The group owner cannot be changed');
+	if (/are immutable/.test(text)) {
+		return new GroupRuleError('identity-immutable', "A group's DID and creator cannot change");
 	}
 	if (/UNIQUE constraint failed/.test(text)) {
 		if (/groups\.group_did/.test(text)) {

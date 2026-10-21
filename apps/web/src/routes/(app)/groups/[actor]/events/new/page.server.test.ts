@@ -49,7 +49,7 @@ beforeEach(async () => {
 		GROUP_DID,
 		authzReader(
 			GROUP_DID,
-			{ [OWNER]: 'owner', [MEMBER]: 'member' },
+			{ [OWNER]: 'admin', [MEMBER]: 'member' },
 			{
 				records: [
 					{

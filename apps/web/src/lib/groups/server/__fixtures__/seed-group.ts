@@ -1,5 +1,5 @@
-// A group as the create leaves it in D1: its row, its three roles with their
-// default bundles, the owner's membership, the roster rows a test names, and
+// A group as the create leaves it in D1: its row, its two roles with their
+// default bundles, the creator's admin membership, the roster rows a test names, and
 // its about and members space URIs.
 //
 // It stands in for the create flow, whose group and spaces the host makes
@@ -15,7 +15,7 @@ import { addMember } from '../db/roster';
 import { sqliteD1, type SqliteD1 } from './d1-sqlite';
 
 export interface SeedGroupInput extends CreateGroupInput {
-	/** Roster rows beyond the owner's, by DID, in the order they joined. */
+	/** Roster rows beyond the creator's, by DID, in the order they joined. */
 	members?: Record<string, AssignableRole>;
 	/** Whether the about and members space URIs are recorded. On by default;
 	 *  off for a group made before the spaces. */

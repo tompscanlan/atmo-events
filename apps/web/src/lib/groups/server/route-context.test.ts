@@ -140,7 +140,7 @@ describe('one group, two spellings', () => {
 		expect(byHandle.group).toEqual(byDid.group);
 		// The gate runs AFTER the resolve, so which spelling the caller typed
 		// cannot change what they may do once inside.
-		expect(byHandle.membership.role).toBe('owner');
+		expect(byHandle.membership.role).toBe('admin');
 		expect(resolver).toHaveBeenCalledWith(HANDLE);
 	});
 });

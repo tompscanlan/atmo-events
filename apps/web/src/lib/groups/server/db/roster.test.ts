@@ -103,20 +103,19 @@ describe('joining', () => {
 });
 
 describe('roster changes', () => {
-	it('lets a member leave but never the owner', async () => {
+	// No owner (TS, 2026-10-20): the creator's row is one like any other.
+	it('lets a member leave, and the creator too', async () => {
 		const created = await group();
 		await addMember(db, created.id, ALICE, 'member');
 
 		await removeMember(db, created.id, ALICE);
 		expect((await getCallerMembership(db, created, ALICE, null)).role).toBeNull();
 
-		// The trigger refuses; the repo must surface that as a rule, not a 500.
-		await expect(removeMember(db, created.id, OWNER)).rejects.toMatchObject({
-			reason: 'owner-protected'
-		});
+		await removeMember(db, created.id, OWNER);
+		expect((await getCallerMembership(db, created, OWNER, null)).role).toBeNull();
 	});
 
-	it('promotes a member to admin, and refuses to promote anyone to owner', async () => {
+	it('promotes a member to admin, refuses an unknown role, and demotes the creator', async () => {
 		const created = await group();
 		await addMember(db, created.id, ALICE, 'member');
 		await changeMemberRole(db, created.id, ALICE, 'admin');
@@ -128,8 +127,7 @@ describe('roster changes', () => {
 		await expect(
 			changeMemberRole(db, created.id, ALICE, 'owner' as 'admin')
 		).rejects.toBeInstanceOf(Error);
-		await expect(changeMemberRole(db, created.id, OWNER, 'admin')).rejects.toMatchObject({
-			reason: 'owner-protected'
-		});
+		await changeMemberRole(db, created.id, OWNER, 'member');
+		expect((await getCallerMembership(db, created, OWNER, null)).role).toBe('member');
 	});
 });

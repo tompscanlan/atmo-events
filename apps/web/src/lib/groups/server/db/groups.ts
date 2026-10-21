@@ -39,10 +39,11 @@ export const GROUP_COLUMNS = `id, group_did, owner_did, name, description, requi
 	location_name, about_space_uri, members_space_uri,
 	created_at, updated_at`;
 
-/** Creates the group, its three roles with their default bundles, and one
- *  owner membership. D1 runs a batch as one transaction, so a group
- *  never exists without its roles or its owner. The owner role itself comes
- *  from the `groups_seed_owner_role` trigger. */
+/** Creates the group, its two roles with their default bundles, and the
+ *  creator's `admin` membership, as the group host makes them. D1 runs a batch
+ *  as one transaction, so a group never exists without its roles or its first
+ *  admin. The creator is an ordinary admin: `owner_did` records who it was and
+ *  grants nothing. */
 export async function createGroup(db: D1Database, input: CreateGroupInput): Promise<GroupRow> {
 	await ensureGroupsSchema(db);
 	const groupId = crypto.randomUUID();
@@ -59,7 +60,7 @@ const REHEARSAL_DID = 'did:web:create-rehearsal.invalid';
 
 const REHEARSAL_LANDED = 'rehearsal-landed';
 
-const REHEARSAL_NO_OWNER = 'rehearsal-no-owner';
+const REHEARSAL_NO_CREATOR = 'rehearsal-no-creator';
 
 /** Runs `createGroup`'s batch and forces a rollback, so a create learns that
  *  the tables would refuse its row before a did:plc exists. Only the real
@@ -68,7 +69,7 @@ const REHEARSAL_NO_OWNER = 'rehearsal-no-owner';
  *
  *  D1 has no BEGIN/ROLLBACK, and a batch commits unless a statement fails. So
  *  the batch ends in a `json_extract` whose invalid path always fails, and the
- *  path in the error says whether the owner membership landed. An earlier
+ *  path in the error says whether the creator's admin membership landed. An earlier
  *  failure surfaces first, as the refusal the real create would meet.
  *
  *  Throws the mapped `GroupRuleError` for a named schema rule, and anything
@@ -90,8 +91,8 @@ export async function rehearseCreateGroup(
 			.prepare(
 				`SELECT json_extract('{}', CASE WHEN EXISTS (
 					SELECT 1 FROM memberships m JOIN roles r ON r.id = m.role_id
-					WHERE m.group_id = ? AND m.did = ? AND r.is_owner = 1
-				) THEN '${REHEARSAL_LANDED}' ELSE '${REHEARSAL_NO_OWNER}' END)`
+					WHERE m.group_id = ? AND m.did = ? AND r.name = 'admin'
+				) THEN '${REHEARSAL_LANDED}' ELSE '${REHEARSAL_NO_CREATOR}' END)`
 			)
 			.bind(groupId, input.ownerDid)
 	);
@@ -101,8 +102,8 @@ export async function rehearseCreateGroup(
 	} catch (e) {
 		const text = errorText(e);
 		if (text.includes(REHEARSAL_LANDED)) return;
-		if (text.includes(REHEARSAL_NO_OWNER)) {
-			throw new Error('the group row was accepted but its owner membership was not', {
+		if (text.includes(REHEARSAL_NO_CREATOR)) {
+			throw new Error("the group row was accepted but its creator's membership was not", {
 				cause: e
 			});
 		}
@@ -114,8 +115,8 @@ export async function rehearseCreateGroup(
 	throw new Error('the create rehearsal committed instead of rolling back');
 }
 
-/** A group's row, roles and owner membership. A create fills it from the form,
- *  and a cold rebuild fills it from records. */
+/** A group's row, roles and creator's `admin` membership. A create fills it
+ *  from the form, and a cold rebuild fills it from records. */
 interface GroupSeed {
 	groupId: string;
 	groupDid: string;
@@ -128,7 +129,7 @@ interface GroupSeed {
 	membersSpaceUri: string | null;
 	createdAt: number;
 	updatedAt: number;
-	/** An `owner` entry adds only its bundle: a trigger creates the owner role. */
+	/** Must include `admin`, which the creator's membership takes. */
 	roles: readonly { name: GroupRoleName; permissions: readonly GroupPermission[] }[];
 	ownerJoinedAt: number;
 }
@@ -186,16 +187,14 @@ function seedGroupStatements(db: D1Database, seed: GroupSeed): D1PreparedStateme
 	];
 
 	for (const role of seed.roles) {
-		if (role.name !== 'owner') {
-			statements.push(
-				db
-					.prepare(
-						`INSERT INTO roles (id, group_id, name, is_owner) VALUES (?, ?, ?, 0)
-						 ON CONFLICT (group_id, name) DO NOTHING`
-					)
-					.bind(crypto.randomUUID(), seed.groupId, role.name)
-			);
-		}
+		statements.push(
+			db
+				.prepare(
+					`INSERT INTO roles (id, group_id, name) VALUES (?, ?, ?)
+					 ON CONFLICT (group_id, name) DO NOTHING`
+				)
+				.bind(crypto.randomUUID(), seed.groupId, role.name)
+		);
 		statements.push(
 			db
 				.prepare(
@@ -213,7 +212,7 @@ function seedGroupStatements(db: D1Database, seed: GroupSeed): D1PreparedStateme
 			.prepare(
 				`INSERT INTO memberships (id, group_id, did, role_id, created_at, updated_at)
 				 SELECT ?, ?, ?, r.id, ?, ? FROM roles r
-				 WHERE r.group_id = ? AND r.is_owner = 1`
+				 WHERE r.group_id = ? AND r.name = 'admin'`
 			)
 			.bind(
 				crypto.randomUUID(),

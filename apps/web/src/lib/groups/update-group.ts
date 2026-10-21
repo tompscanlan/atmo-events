@@ -116,7 +116,7 @@ function visibilityRefused(e: unknown): GroupFormFailure {
 
 /** A narrowing that stopped before the record said private. The record is the
  *  visibility, so the group is still public, and the page shows it so: an
- *  untouched save would leave it public. The owner chooses private again. */
+ *  untouched save would leave it public. The admin chooses private again. */
 const STILL_PUBLIC =
 	'Its access record still says public, so the group is still public, and its name, description, approval setting, profile and rules were not saved. Choose private and save the settings again to finish making it private.';
 
@@ -211,7 +211,7 @@ interface SaveState {
 	about: GroupAbout;
 	/** The about space's access record as read, then as this save last wrote it. */
 	access: GroupAccessFields | null;
-	/** Whether the owner changed the visibility. */
+	/** Whether the admin changed the visibility. */
 	flipped: boolean;
 	requireApproval: boolean;
 	/** What every write of this save shares: the group as this save describes it,

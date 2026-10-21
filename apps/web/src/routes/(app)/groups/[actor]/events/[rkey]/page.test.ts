@@ -109,7 +109,7 @@ import { groupSpaceUris } from '$lib/groups/ids';
 const OWNER = 'did:plc:owner';
 const MEMBER = signedIn.user.did;
 /** The roster the group's records hold, as `seedGroup`'s rows do. */
-const ROSTER = { [OWNER]: 'owner', [MEMBER]: 'member' } as const;
+const ROSTER = { [OWNER]: 'admin', [MEMBER]: 'member' } as const;
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const { aboutSpaceUri: ABOUT } = groupSpaceUris(GROUP_DID);
 const CALENDAR = calendarSpaceOf(GROUP_DID);

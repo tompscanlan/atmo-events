@@ -51,7 +51,7 @@ import { ABOUT_SPACE_TYPE } from '$lib/groups/types';
 const OWNER = 'did:plc:owner';
 const MEMBER = 'did:plc:member';
 /** The roster the group's records hold, as `seedGroup`'s rows do. */
-const ROSTER = { [OWNER]: 'owner', [MEMBER]: 'member' } as const;
+const ROSTER = { [OWNER]: 'admin', [MEMBER]: 'member' } as const;
 const STRANGER = 'did:plc:stranger';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const { aboutSpaceUri: ABOUT } = groupSpaceUris(GROUP_DID);
