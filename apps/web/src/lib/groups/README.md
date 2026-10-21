@@ -116,7 +116,8 @@ and updates rows but deletes none, so a member who left through another app keep
 group with no row left is restored from its records: its row from the profile, its roles from the
 role and permission records, and its roster from the `membership` records, with the earliest
 `admin` recorded as `owner_did`. The restore refuses, before any write, a group with no profile, no
-`membership` granting `admin`, or no role and permission records. A rebuild restores nothing for
+`membership` granting `admin` (as when the last admin has left, which the host allows), or no role
+and permission records. A rebuild restores nothing for
 the visibility, because nothing in D1 holds it.
 
 ## Members-only events
@@ -160,7 +161,8 @@ There is no owner (TS, 2026-10-20). The creator is an ordinary `admin`, as at th
 another admin may demote or remove them, and they may leave, even as the last admin. Those are the
 host's rules, and its refusal is the one a form shows; this site adds none of its own
 (`server/real-host.ts`). D1 keeps the same two roles. `groups.owner_did` records who created the
-group here, is never rewritten, and grants nothing: the group page shows it as "Organized by" to whoever may see the roster.
+group here, is never rewritten, and grants nothing: the group page shows it as "Organized by" to whoever may see the roster, even
+after the creator has left.
 
 The pages ask by name, from a fixed vocabulary in `permissions.ts`: `MANAGE_GROUP`, `ADMIT_MEMBERS`,
 `EJECT_MEMBERS`, `ASSIGN_ROLES`, `MANAGE_EVENTS` and `CREATE_EVENT`. The first four are questions

@@ -98,9 +98,9 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 			? pendingRequestsFor({ db, env: platform!.env, group }, { callerDid: locals.did!, reader })
 			: []
 	]);
-	// Who created the group here (`groups.owner_did`), which grants nothing. The
-	// creator is on the roster, so only a caller who may see the roster sees who
-	// it is.
+	// Who created the group here (`groups.owner_did`), which grants nothing and
+	// outlives their leaving. It names a person, so only a caller who may see the
+	// roster sees it.
 	const ownerDid = showRoster ? group.owner_did : null;
 	const preview = roster?.slice(0, ROSTER_PREVIEW) ?? [];
 	const link = url.searchParams.get('link');

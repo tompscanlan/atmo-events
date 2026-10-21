@@ -258,6 +258,18 @@ describe('creatorDidFromRecords', () => {
 		expect(creatorDidFromRecords(tied)).toBe([OWNER, ADMIN].sort()[0]);
 	});
 
+	it('puts an admin record with no usable date after every dated one', async () => {
+		const members = await readGroupMembers(
+			readerOver([
+				membership(OWNER, ['admin'], 'not-a-date'),
+				membership(ADMIN, ['admin'], '2026-09-03T10:00:00.000Z')
+			]),
+			group
+		);
+		expect(members.memberships.map((record) => record.subject)).toContain(OWNER);
+		expect(creatorDidFromRecords(members)).toBe(ADMIN);
+	});
+
 	it('is null when no record grants admin', async () => {
 		const members = await readGroupMembers(
 			readerOver([membership(MEMBER, ['member'], '2026-09-01T10:00:00.000Z')]),

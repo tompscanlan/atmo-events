@@ -64,7 +64,7 @@ export function signUpPDS(): string {
 // where to redirect after oauth login/signup
 export const REDIRECT_PATH = '/oauth/callback';
 
-// where to redirect after a group's owner links the group's account. Its own
+// where to redirect after a group's admin links the group's account. Its own
 // path, because the sign-in callback signs the browser in as whoever authorized.
 export const GROUP_LINK_REDIRECT_PATH = '/oauth/group-link/callback';
 
