@@ -279,7 +279,7 @@ async function groupReadAt(
 	collection: string,
 	rkey: string
 ) {
-	// The group's own read: through the owner's own group session, as a write as
+	// The group's own read: through the creator's own group session, as a write as
 	// the group goes out on the acting person's.
 	const { handle } = await groupClient(
 		await requireGroupCredential(env, group.group_did, group.owner_did),
@@ -345,7 +345,7 @@ async function rosterCtx(env: Env, args: Args, group: GroupRow): Promise<HostBin
 	return { db: env.DB, env, group, callerDid, member, reader };
 }
 
-/** The group's own space reader, through the owner's own group session
+/** The group's own space reader, through the creator's own group session
  *  (`groupSpaceReader`), the session a write of theirs goes out on. */
 async function spaceReader(env: Env, group: GroupRow) {
 	const reader = await groupSpaceReader(env, group, group.owner_did);
@@ -712,7 +712,7 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 		return { onRoster: membership.onRoster, result, calls, reauthorized };
 	},
 
-	/** The roster as the members page shows it to `did` (the owner unless the
+	/** The roster as the members page shows it to `did` (the creator unless the
 	 *  driver names someone): the records, read with the viewer's own access,
 	 *  each entry marked confirmed or not from the acceptances read by DID with
 	 *  the viewer's own credential. `confirmed` is null when they could not be
@@ -963,8 +963,8 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 		};
 	},
 
-	/** Drops the non-owner roster rows with raw SQL, because no app path deletes
-	 *  them in bulk. The `memberships_owner_undeletable` trigger keeps the owner's. */
+	/** Drops every roster row but the creator's with raw SQL, because no app path
+	 *  deletes them in bulk. The WHERE clause keeps the creator's; no trigger does. */
 	dropMembershipRows: async (env, args, group) => {
 		const before = await listMembers(env.DB, group.id);
 		await env.DB.prepare(`DELETE FROM memberships WHERE group_id = ? AND did <> ?`)
