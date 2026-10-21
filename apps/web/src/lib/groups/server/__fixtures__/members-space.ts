@@ -33,7 +33,7 @@ import {
 } from './space-reader';
 import type { GroupRow } from '../../types';
 import { pdsSpaceReader } from '../about-read';
-import { gatedWriter, pdsWriter, type GroupRepoWriter } from '../group-write';
+import { gatedWriter, pdsWriter } from '../group-write';
 import { putGroupMembership, type WriteGroupMembersInput } from '../members-writer';
 import type { CredentialStoreEnv, GroupCredential } from '../session';
 
@@ -142,11 +142,7 @@ export function authzReader(
  *  space at create: a `role` record per role and both binding records with atmo's
  *  default bundles (`authzRecords`). No membership. Nothing here checks a scope:
  *  it stands in for the host. */
-export async function writeAuthzRecords(
-	input: Pick<WriteGroupMembersInput, 'env' | 'group' | 'callerDid'> & {
-		writer?: GroupRepoWriter;
-	}
-): Promise<void> {
+export async function writeAuthzRecords(input: WriteGroupMembersInput): Promise<void> {
 	const writer = await gatedWriter(input);
 	for (const record of authzRecords(input.group.group_did, {})) {
 		await writer({
@@ -164,10 +160,7 @@ export async function writeAuthzRecords(
  *  into the members space, or into `space` when it is the calendar space. It
  *  stands in for what the host and the create write. */
 export async function writeClosedAccess(
-	input: Pick<WriteGroupMembersInput, 'env' | 'group' | 'callerDid'> & {
-		writer?: GroupRepoWriter;
-		space?: string;
-	}
+	input: WriteGroupMembersInput & { space?: string }
 ): Promise<void> {
 	const members = input.group.members_space_uri;
 	if (!members) throw new Error('members-space fixture: the group has no members space');
