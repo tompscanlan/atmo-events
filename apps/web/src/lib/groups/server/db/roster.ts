@@ -5,15 +5,16 @@ import type { GroupRow, MemberRow } from '../../types';
 import { ensureGroupsSchema } from '../schema';
 import { GroupRuleError, constraintMessage, guard } from './rules';
 
-/** The roster, owner first, then by join time. Roles come back as names. */
-/** A roster row as `MemberRow`, for the reads below to filter and order. */
+/** A roster row as `MemberRow`, for the reads below to filter and order. Roles
+ *  come back as names. */
 const MEMBER_ROW = `SELECT m.id AS membership_id, m.did, r.name AS role, m.created_at
 	FROM memberships m JOIN roles r ON r.id = m.role_id`;
 
+/** The roster, by join time. */
 export async function listMembers(db: D1Database, groupId: string): Promise<MemberRow[]> {
 	await ensureGroupsSchema(db);
 	const { results } = await db
-		.prepare(`${MEMBER_ROW} WHERE m.group_id = ? ORDER BY r.is_owner DESC, m.created_at ASC`)
+		.prepare(`${MEMBER_ROW} WHERE m.group_id = ? ORDER BY m.created_at ASC, m.did ASC`)
 		.bind(groupId)
 		.all<MemberRow>();
 	return results ?? [];
@@ -184,8 +185,8 @@ export async function decideJoinRequest(
 	}
 }
 
-/** Removes a roster row, for a leave or an eject. A trigger refuses the owner,
- *  as `GroupRuleError('owner-protected')`. */
+/** Removes a roster row, for a leave or an eject. The creator's row is one
+ *  like any other. */
 export async function removeMember(db: D1Database, groupId: string, did: string): Promise<void> {
 	await ensureGroupsSchema(db);
 	const res = await guard(() =>

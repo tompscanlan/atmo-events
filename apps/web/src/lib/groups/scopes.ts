@@ -257,35 +257,9 @@ export interface MembershipChange {
 	to: readonly string[];
 }
 
-/** The roles a membership write must be allowed to assign: every role it adds or
- *  removes, so an ejection touches every role the member held. */
-export function rolesTouched(change: MembershipChange): string[] {
-	const from = new Set(change.from);
-	const to = new Set(change.to);
-	return [...new Set([...change.from, ...change.to])].filter((r) => from.has(r) !== to.has(r));
-}
-
 /** The record action a membership change is: a create for a member with no record,
  *  a delete for an ejection, and an update otherwise. */
 export function membershipAction(change: MembershipChange): WriteAction {
 	if (change.to.length === 0) return 'delete';
 	return change.from.length === 0 ? 'create' : 'update';
-}
-
-/** Whether `grants` may make `change` to a member's `membership` in the members space
- *  `membersSpace` (its type and key): the scope for the write, and every role it
- *  touches in the union of the writer's `assignable` (`proposal.md:46`). Both must
- *  hold, so an `assignable` with no scope to write memberships allows nothing. */
-export function allowsMembershipWrite(
-	grants: WriteGrants,
-	groupDid: string,
-	membersSpace: { spaceType: string; skey: string; collection: string },
-	change: MembershipChange
-): boolean {
-	if (grants.group) return true;
-	const write = { ...membersSpace, action: membershipAction(change) };
-	return (
-		allowsWrite(grants, groupDid, write) &&
-		rolesTouched(change).every((role) => grants.assignable.has(role))
-	);
 }

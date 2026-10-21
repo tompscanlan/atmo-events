@@ -50,9 +50,10 @@ describe('groupMembershipRecord', () => {
 			subject: MEMBER,
 			// `moderator` is not a role in this build, so a caller passing it is
 			// exactly the stale case this filter exists for.
-			roles: ['member', 'moderator', 'owner'] as never
+			// `owner` is no longer one either (TS, 2026-10-20).
+			roles: ['member', 'moderator', 'owner', 'admin'] as never
 		});
-		expect(record.roles).toEqual(['owner', 'member']);
+		expect(record.roles).toEqual(['admin', 'member']);
 	});
 });
 
@@ -100,11 +101,11 @@ describe('parseGroupAccess', () => {
 	it('parses back the roles it writes', () => {
 		const record = groupAccessRecord({
 			spaceType: 'group.opensocial.meta',
-			roles: ['owner', 'admin', 'member'],
+			roles: ['admin', 'member'],
 			public: true
 		});
 		expect(parseGroupAccess(record)).toEqual({
-			roles: ['owner', 'admin', 'member'],
+			roles: ['admin', 'member'],
 			public: true,
 			grants: record.grants
 		});
@@ -122,7 +123,8 @@ describe('parseGroupAccess', () => {
 				{ role: 'guest', scopes: ['space:group.opensocial.members?action=read'] }
 			]
 		});
-		expect(parsed?.roles).toEqual(['owner', 'admin']);
+		// `owner` is outside the vocabulary now, like `guest`.
+		expect(parsed?.roles).toEqual(['admin']);
 		expect(parsed?.public).toBe(false);
 		// Every grant stays, for the write gate, the unknown role's included.
 		expect(parsed?.grants.map((grant) => grant.role)).toEqual([
@@ -224,7 +226,7 @@ describe('parseGroupRole', () => {
 describe('groupBindingsRecord', () => {
 	// `assignable` bounds assigning and ejecting alike. Only the owner's grant
 	// lists `owner`, so no admin can assign or eject the owner.
-	it('lets the owner assign every role, an admin every role but owner, and a member none', () => {
+	it('lets an admin assign every role, and a member none', () => {
 		const record = groupBindingsRecord({
 			altitude: 'community',
 			bundles: DEFAULT_ROLE_PERMISSIONS
@@ -237,7 +239,6 @@ describe('groupBindingsRecord', () => {
 		];
 		expect(record).toEqual({
 			grants: [
-				{ role: 'owner', scopes: manager, assignable: ['owner', 'admin', 'member'] },
 				{ role: 'admin', scopes: manager, assignable: ['admin', 'member'] },
 				{ role: 'member', scopes: [], assignable: [] }
 			]

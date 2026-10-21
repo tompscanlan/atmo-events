@@ -59,7 +59,7 @@ beforeEach(async () => {
 		members: { [ADMIN]: 'admin', [MEMBER]: 'member' }
 	}));
 	// The gate resolves callers from the members space's records, in memory.
-	authz = authzReader(GROUP_DID, { [OWNER]: 'owner', [ADMIN]: 'admin', [MEMBER]: 'member' });
+	authz = authzReader(GROUP_DID, { [OWNER]: 'admin', [ADMIN]: 'admin', [MEMBER]: 'member' });
 
 	writer = recordingWriter();
 	writes = writer.writes;

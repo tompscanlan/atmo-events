@@ -13,9 +13,9 @@
 // and no row holds it.
 //
 // A restore refuses, before any write, a group with no profile (`name` is NOT
-// NULL), no authz records (no member could be restored), or no `membership`
-// record granting `owner`, since `owner_did` can never be corrected once
-// written.
+// NULL), no `membership` record granting `admin` (the creator is restored as the
+// earliest admin, into `owner_did`, which grants nothing and is never rewritten),
+// or no authz records (no member could be restored).
 import { requireApprovalFor, type GroupProfileFields } from '../about-record';
 import { groupSpaceUris } from '../ids';
 import { isMembershipKey } from '../members-record';
@@ -25,8 +25,8 @@ import { readGroupAbout, type GroupSpaceReader } from './about-read';
 import {
 	createdAtMs,
 	effectivePermissions,
+	creatorDidFromRecords,
 	hasAuthzRecords,
-	ownerDidFromRecords,
 	primaryRole,
 	readGroupMembers,
 	type GroupMembers
@@ -38,7 +38,7 @@ import { applyGroupCache, getGroupByDid, restoreGroup } from './db/groups';
  *  so a command can report it without matching the message. */
 export class GroupRebuildRefused extends Error {
 	constructor(
-		readonly reason: 'no-profile' | 'no-owner-record' | 'no-authz-records',
+		readonly reason: 'no-profile' | 'no-admin-record' | 'no-authz-records',
 		message: string
 	) {
 		super(message);
@@ -93,11 +93,11 @@ async function restoreFromRecords(
 			`${groupDid} has no profile record, so there is no name to restore`
 		);
 	}
-	const ownerDid = ownerDidFromRecords(members);
+	const ownerDid = creatorDidFromRecords(members);
 	if (!ownerDid) {
 		throw new GroupRebuildRefused(
-			'no-owner-record',
-			`no membership record in ${groupDid} grants owner; refusing to guess one, since owner_did can never be corrected once written`
+			'no-admin-record',
+			`no membership record in ${groupDid} grants admin, so no member could run the group`
 		);
 	}
 	if (!hasAuthzRecords(members)) {
@@ -106,7 +106,7 @@ async function restoreFromRecords(
 			`${groupDid} has no role or permissions records, so no member could be restored`
 		);
 	}
-	const owner = members.memberships.find((record) => record.subject === ownerDid);
+	const creator = members.memberships.find((record) => record.subject === ownerDid);
 	const now = Date.now();
 
 	const group = await restoreGroup(db, {
@@ -120,21 +120,21 @@ async function restoreFromRecords(
 		membersSpaceUri: spaces.membersSpaceUri,
 		createdAt: timestamp(about.profile.createdAt, now),
 		roles: rolesFromRecords(members, groupDid),
-		ownerJoinedAt: timestamp(owner?.createdAt ?? null, now)
+		ownerJoinedAt: timestamp(creator?.createdAt ?? null, now)
 	});
-	// The owner's row went in with the group. This restores everyone else.
+	// The earliest admin's row went in with the group. This restores everyone else.
 	return { path: 'restored', group, members: await projectGroupMembers(db, members, group) };
 }
 
 /** The roles the records declare, each with the union of what both binding
- *  records grant it. Reading only one would drop every event grant. `owner` is
- *  always present: the schema creates its row, the records only bind it. */
+ *  records grant it. Reading only one would drop every event grant. `admin` is
+ *  always present, since the restored creator's row takes it. */
 function rolesFromRecords(
 	members: GroupMembers,
 	groupDid: string
 ): { name: GroupRoleName; permissions: GroupPermission[] }[] {
 	const declared = new Set<GroupRoleName>(members.roles.map((role) => role.id));
-	declared.add('owner');
+	declared.add('admin');
 	return GROUP_ROLES.filter((name) => declared.has(name)).map((name) => ({
 		name,
 		permissions: [...effectivePermissions(members, [name], groupDid)]
@@ -190,8 +190,7 @@ export interface MembersRebuildResult {
 /**
  * Rebuild the `memberships` projection from the records. It is additive: it
  * writes what the records say and touches nothing else, so dropped rows come
- * back. The owner row is inserted, never updated, because the schema refuses
- * any change to it. A record that disagrees with it is skipped with a reason.
+ * back. The creator's row is one like any other.
  */
 export async function rebuildGroupMembers(
 	db: D1Database,
@@ -202,7 +201,7 @@ export async function rebuildGroupMembers(
 }
 
 /** `rebuildGroupMembers` over records already read, so a cold rebuild that
- *  needed them to find the owner does not read the members space twice. */
+ *  needed them to find the creator does not read the members space twice. */
 export async function projectGroupMembers(
 	db: D1Database,
 	members: GroupMembers,
@@ -231,10 +230,6 @@ export async function projectGroupMembers(
 
 	const now = Date.now();
 	const recorded = new Set<string>();
-	// A group whose records declare no `owner` role, as a group host makes one, gives
-	// its creator the proposal's `admin`. The owner row is then this app's own
-	// note of who created it, and an `admin` record agrees with it.
-	const ownerless = !members.roles.some((record) => record.id === 'owner');
 
 	for (const record of members.memberships) {
 		const did = record.subject;
@@ -245,39 +240,18 @@ export async function projectGroupMembers(
 		}
 		recorded.add(did);
 
-		const recordRole = primaryRole(record.roles);
-		if (!recordRole) {
+		const role = primaryRole(record.roles);
+		if (!role) {
 			result.skipped.push({ did, reason: 'the record grants no role this build knows' });
 			continue;
 		}
-		const role =
-			ownerless && did === group.owner_did && recordRole === 'admin' ? 'owner' : recordRole;
 		const target = roleId.get(role);
 		if (!target) {
 			result.skipped.push({ did, reason: `this group has no ${role} role row` });
 			continue;
 		}
 
-		const rowRole = rows.get(did);
-
-		// The schema decides the owner. A disagreeing record is reported, not
-		// applied, but a missing owner row is still inserted.
-		if (did === group.owner_did) {
-			if (role !== 'owner') {
-				result.skipped.push({ did, reason: `owner_did cannot hold the ${role} role` });
-				continue;
-			}
-			if (rowRole) {
-				if (rowRole === 'owner') result.unchanged.push(did);
-				else {
-					result.skipped.push({
-						did,
-						reason: `the owner's row is ${rowRole} and is immutable`
-					});
-				}
-				continue;
-			}
-		} else if (rowRole === role) {
+		if (rows.get(did) === role) {
 			result.unchanged.push(did);
 			continue;
 		}

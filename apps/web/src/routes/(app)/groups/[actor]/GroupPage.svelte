@@ -23,7 +23,6 @@
 	// with the cache as fallback; `data.about.source` says which.
 	let about = $derived(data.about);
 	let membership = $derived(data.membership);
-	let isOwner = $derived(membership.role === 'owner');
 	let isMember = $derived(membership.role !== null);
 	let isPending = $derived(membership.pendingRequestId !== null);
 	// What the group published, not what our columns imply. `joinPolicy` is the
@@ -177,16 +176,12 @@
 			</form>
 			<span class="text-base-500 dark:text-base-400 text-sm">Request pending approval</span>
 		{:else if isMember}
-			{#if isOwner}
-				<span class="text-base-500 dark:text-base-400 text-sm"
-					>You own this group and cannot leave it.</span
-				>
-			{:else}
-				<form {...resetOnSuccess(leaveGroupForm)}>
-					<input type="hidden" name="groupDid" value={group.group_did} />
-					<Button type="submit" variant="ghost">Leave group</Button>
-				</form>
-			{/if}
+			<!-- Anyone may leave, an admin and the group's creator included, as at
+			     the group host. -->
+			<form {...resetOnSuccess(leaveGroupForm)}>
+				<input type="hidden" name="groupDid" value={group.group_did} />
+				<Button type="submit" variant="ghost">Leave group</Button>
+			</form>
 		{:else}
 			<form {...resetOnSuccess(joinGroupForm)} class="flex items-center gap-2">
 				<input type="hidden" name="groupDid" value={group.group_did} />

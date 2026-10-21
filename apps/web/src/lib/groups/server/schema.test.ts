@@ -39,7 +39,7 @@ function roleId(groupId: string, name: string): string {
 }
 
 function seedRole(groupId: string, name: string) {
-	db.prepare('INSERT INTO roles (id, group_id, name, is_owner) VALUES (?, ?, ?, 0)').run(
+	db.prepare('INSERT INTO roles (id, group_id, name) VALUES (?, ?, ?)').run(
 		`${groupId}-${name}`,
 		groupId,
 		name
@@ -63,10 +63,10 @@ afterEach(() => db.close());
 
 describe('the migration itself', () => {
 	it('splits into statements on the marker, not on semicolons', () => {
-		// A `;`-based split would cut the owner-protection triggers in half, which
-		// is why the marker exists. Every trigger body must survive intact.
+		// A `;`-based split would cut a trigger in half, which is why the marker
+		// exists. Every trigger body must survive intact.
 		const triggers = GROUPS_SCHEMA_STATEMENTS.filter((s) => s.includes('CREATE TRIGGER'));
-		expect(triggers.length).toBeGreaterThanOrEqual(7);
+		expect(triggers.length).toBeGreaterThanOrEqual(1);
 		for (const trigger of triggers) {
 			expect(trigger).toMatch(/BEGIN[\s\S]+END;$/);
 		}
@@ -77,11 +77,9 @@ describe('the migration itself', () => {
 		try {
 			fresh.exec(groupsSql);
 			const triggers = fresh
-				.prepare(`SELECT count(*) AS n FROM sqlite_schema WHERE type = 'trigger'`)
-				.get() as { n: number };
-			expect(triggers.n).toBe(
-				GROUPS_SCHEMA_STATEMENTS.filter((s) => s.includes('CREATE TRIGGER')).length
-			);
+				.prepare(`SELECT name FROM sqlite_schema WHERE type = 'trigger'`)
+				.all() as { name: string }[];
+			expect(triggers.map((t) => t.name)).toEqual(['groups_identity_immutable']);
 		} finally {
 			fresh.close();
 		}
@@ -130,63 +128,29 @@ describe('the migration itself', () => {
 	});
 });
 
-describe('a role is owner, admin or member', () => {
-	beforeEach(() => insertGroup('g1', 'did:plc:owner'));
+describe('a role is admin or member', () => {
+	beforeEach(() => insertGroup('g1', 'did:plc:creator'));
 
-	it('refuses any other name, on insert and on update', () => {
+	it('refuses any other name, owner included, on insert and on update', () => {
 		expect(() => seedRole('g1', 'moderator')).toThrow(/CHECK constraint failed/);
+		expect(() => seedRole('g1', 'owner')).toThrow(/CHECK constraint failed/);
 		seedRole('g1', 'member');
 		expect(() =>
 			db.prepare("UPDATE roles SET name = 'guest' WHERE group_id = ? AND name = 'member'").run('g1')
 		).toThrow(/CHECK constraint failed/);
 	});
-});
 
-describe('exactly one owner role per group', () => {
-	it('creates the owner role as part of the group insert', () => {
-		insertGroup('g1', 'did:plc:owner');
-		const roles = db.prepare('SELECT name, is_owner FROM roles WHERE group_id = ?').all('g1');
-		expect(roles).toEqual([{ name: 'owner', is_owner: 1 }]);
-	});
-
-	it('refuses a second owner role', () => {
-		insertGroup('g1', 'did:plc:owner');
-		expect(() =>
-			db
-				.prepare("INSERT INTO roles (id, group_id, name, is_owner) VALUES ('x', 'g1', 'owner', 1)")
-				.run()
-		).toThrow();
-	});
-
-	it('refuses an is_owner flag that disagrees with the role name', () => {
-		insertGroup('g1', 'did:plc:owner');
-		expect(() =>
-			db
-				.prepare("INSERT INTO roles (id, group_id, name, is_owner) VALUES ('x', 'g1', 'admin', 1)")
-				.run()
-		).toThrow();
-		expect(() =>
-			db
-				.prepare("INSERT INTO roles (id, group_id, name, is_owner) VALUES ('y', 'g1', 'owner', 0)")
-				.run()
-		).toThrow();
-	});
-
-	it('refuses to delete, rename or demote the owner role', () => {
-		insertGroup('g1', 'did:plc:owner');
-		const id = roleId('g1', 'owner');
-		expect(() => db.prepare('DELETE FROM roles WHERE id = ?').run(id)).toThrow(
-			/owner role cannot be deleted/
-		);
-		expect(() => db.prepare("UPDATE roles SET name = 'admin' WHERE id = ?").run(id)).toThrow();
-		expect(() => db.prepare('UPDATE roles SET is_owner = 0 WHERE id = ?').run(id)).toThrow();
+	it('makes no role when a group is inserted', () => {
+		expect(db.prepare('SELECT COUNT(*) AS n FROM roles WHERE group_id = ?').get('g1')).toEqual({
+			n: 0
+		});
 	});
 });
 
 describe("a membership's role belongs to the same group", () => {
 	it('refuses a role id borrowed from another group', () => {
-		insertGroup('g1', 'did:plc:owner1');
-		insertGroup('g2', 'did:plc:owner2');
+		insertGroup('g1', 'did:plc:creator1');
+		insertGroup('g2', 'did:plc:creator2');
 		seedRole('g2', 'admin');
 		const foreignRole = roleId('g2', 'admin');
 
@@ -201,49 +165,33 @@ describe("a membership's role belongs to the same group", () => {
 	});
 });
 
-describe('the owner cannot be demoted, removed or leave', () => {
+describe('the creator is an ordinary admin', () => {
 	beforeEach(() => {
-		insertGroup('g1', 'did:plc:owner');
+		insertGroup('g1', 'did:plc:creator');
 		seedRole('g1', 'admin');
 		seedRole('g1', 'member');
-		addMembership('g1', 'did:plc:owner', 'owner');
+		addMembership('g1', 'did:plc:creator', 'admin');
 	});
 
-	it('refuses to demote the owner', () => {
+	it('may be demoted, removed, or leave', () => {
 		expect(() =>
 			db
 				.prepare('UPDATE memberships SET role_id = ? WHERE did = ?')
-				.run(roleId('g1', 'admin'), 'did:plc:owner')
-		).toThrow(/owner cannot be demoted/);
-	});
-
-	it('refuses to remove the owner, which is also how leaving is refused', () => {
-		expect(() => db.prepare('DELETE FROM memberships WHERE did = ?').run('did:plc:owner')).toThrow(
-			/owner cannot be removed and cannot leave/
-		);
-	});
-
-	it('refuses to hand the owner role to anyone else, on insert or update', () => {
-		expect(() => addMembership('g1', 'did:plc:alice', 'owner')).toThrow(/owner role is reserved/);
-		addMembership('g1', 'did:plc:alice', 'member');
+				.run(roleId('g1', 'member'), 'did:plc:creator')
+		).not.toThrow();
 		expect(() =>
-			db
-				.prepare('UPDATE memberships SET role_id = ? WHERE did = ?')
-				.run(roleId('g1', 'owner'), 'did:plc:alice')
-		).toThrow(/owner role is reserved/);
+			db.prepare('DELETE FROM memberships WHERE did = ?').run('did:plc:creator')
+		).not.toThrow();
+		expect(db.prepare('SELECT COUNT(*) AS n FROM memberships').get()).toEqual({ n: 0 });
 	});
 
-	it('refuses an owner membership that is not the owner role', () => {
-		db.prepare('DELETE FROM groups WHERE id = ?').run('g1');
-		insertGroup('g2', 'did:plc:owner');
-		seedRole('g2', 'member');
-		expect(() => addMembership('g2', 'did:plc:owner', 'member')).toThrow(
-			/owner must hold the owner role|owner role is reserved/
-		);
+	it('may hold any role from the start, and anyone may hold admin', () => {
+		db.prepare('DELETE FROM memberships').run();
+		expect(() => addMembership('g1', 'did:plc:creator', 'member')).not.toThrow();
+		expect(() => addMembership('g1', 'did:plc:alice', 'admin')).not.toThrow();
 	});
 
-	// The protection is anchored on groups.owner_did, so if that column were
-	// writable every trigger above could be sidestepped with one UPDATE.
+	// owner_did is the record of who created the group, and group_did is the group.
 	it('refuses to rewrite owner_did or group_did', () => {
 		expect(() =>
 			db.prepare("UPDATE groups SET owner_did = 'did:plc:alice' WHERE id = 'g1'").run()
@@ -253,8 +201,7 @@ describe('the owner cannot be demoted, removed or leave', () => {
 		).toThrow(/immutable/);
 	});
 
-	// The owner triggers must not turn a group into something undeletable.
-	it('still lets the whole group be deleted, cascading roster and roles', () => {
+	it('lets the whole group be deleted, cascading roster and roles', () => {
 		addMembership('g1', 'did:plc:alice', 'member');
 		expect(() => db.prepare("DELETE FROM groups WHERE id = 'g1'").run()).not.toThrow();
 		expect(db.prepare('SELECT COUNT(*) AS n FROM roles').get()).toEqual({ n: 0 });
@@ -267,15 +214,15 @@ describe('one row per group DID', () => {
 	// registered at the host is the reservation, and it lives on a PDS, not in this
 	// table.
 	it('keeps group_did unique', () => {
-		insertGroup('g1', 'did:plc:owner');
-		expect(() => insertGroup('g2', 'did:plc:owner', { group_did: 'did:plc:group-g1' })).toThrow(
+		insertGroup('g1', 'did:plc:creator');
+		expect(() => insertGroup('g2', 'did:plc:creator', { group_did: 'did:plc:group-g1' })).toThrow(
 			/UNIQUE/
 		);
 	});
 });
 
 describe('one pending join request per (group, did)', () => {
-	beforeEach(() => insertGroup('g1', 'did:plc:owner'));
+	beforeEach(() => insertGroup('g1', 'did:plc:creator'));
 
 	function request(id: string, did: string, status = 'pending') {
 		db.prepare(

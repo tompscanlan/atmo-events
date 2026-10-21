@@ -45,7 +45,7 @@ afterEach(() => harness.close());
 function countingReader({ failFirst = false } = {}): FakeSpaceReader {
 	const reader = authzReader(
 		GROUP_DID,
-		{ [OWNER]: 'owner', [ADMIN]: 'admin', [MEMBER]: 'member' },
+		{ [OWNER]: 'admin', [ADMIN]: 'admin', [MEMBER]: 'member' },
 		{ fail: (call) => (failFirst && reader.calls.length === 1 ? hostDown(502)(call) : undefined) }
 	);
 	return reader;

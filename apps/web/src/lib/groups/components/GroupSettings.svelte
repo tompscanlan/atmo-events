@@ -6,7 +6,7 @@
 	import { FIELD_CLASS } from './field-class';
 	import GroupLinkForm from './GroupLinkForm.svelte';
 
-	// The owner's settings for a group: its profile, rules and visibility, the
+	// An admin's settings for a group: its profile, rules and visibility, the
 	// refresh from its host, and reconnecting its account. Folded away until asked for.
 	let {
 		group,
@@ -118,7 +118,7 @@
 				>
 					<!-- The host did not say. No option is preselected then, because a
 					     save would otherwise send the first one and could move the group
-					     to it; the owner has to pick one. -->
+					     to it; the admin has to pick one. -->
 					{#if visibility === null}
 						<option value="" disabled selected>could not be read from its PDS</option>
 					{/if}

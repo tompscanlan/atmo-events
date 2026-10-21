@@ -89,7 +89,7 @@
 					<div class="flex flex-wrap items-center justify-between gap-3">
 						<div class="flex min-w-0 items-center gap-3">
 							<PersonLabel did={member.did} person={data.people[member.did]} />
-							<Badge variant={member.role === 'owner' ? 'primary' : 'secondary'}>
+							<Badge variant={member.role === 'admin' ? 'primary' : 'secondary'}>
 								{member.role}
 							</Badge>
 							<!-- Whether the member wrote their own acceptance. Access comes from
@@ -118,7 +118,7 @@
 							{/if}
 						</div>
 
-						{#if canManageAnyMember && member.role !== 'owner'}
+						{#if canManageAnyMember}
 							{@const roleForm = changeMemberRoleForm.for(member.did)}
 							{@const removeForm = removeMemberForm.for(member.did)}
 							{@const rowError =
@@ -153,10 +153,6 @@
 							{#if rowError}
 								<p class="w-full text-sm text-red-600 dark:text-red-400">{rowError}</p>
 							{/if}
-						{:else if member.role === 'owner'}
-							<span class="text-base-400 dark:text-base-500 shrink-0 text-xs"
-								>owner, cannot be changed</span
-							>
 						{/if}
 					</div>
 				</li>

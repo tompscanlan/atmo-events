@@ -48,7 +48,7 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 	})
 }));
 
-import { publishAuthz } from './server/__fixtures__/members-space';
+import { publishAuthz, writeClosedAccess } from './server/__fixtures__/members-space';
 import { isRowWrite, sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { fakeGroupHost, type FakeGroupHost } from './server/__fixtures__/group-host';
 import {
@@ -63,7 +63,6 @@ import { META_READ_GRANT } from '$lib/atproto/settings';
 import { memberGrant } from './server/member-grants';
 import { didSpaceHosts } from './server/space-credential';
 import { RSVP_NO_SPACES, RSVP_RETRY_LATER } from './server/member-rsvp';
-import { writeGroupAccess } from './server/members-writer';
 import { GroupPlacementError } from './server/event-writer';
 import { formError, notAllowed } from './form-error';
 import { resetOnSuccess, type GroupFormResult } from './form-result';
@@ -222,7 +221,7 @@ describe('a group whose owner has not linked it', () => {
 				members_space_uri: uris.membersSpaceUri
 			},
 			credential: linkedCredential(GROUP_DID),
-			roster: { [OWNER]: 'owner' }
+			roster: { [OWNER]: 'admin' }
 		});
 		unlinkAllGroups();
 		serveOwnAccess(pds);
@@ -515,8 +514,8 @@ describe('the join and leave buttons, for a member whose session holds the grant
 			about_space_uri: uris.aboutSpaceUri,
 			members_space_uri: uris.membersSpaceUri
 		};
-		await writeGroupAccess({ db: harness.db, env, group, callerDid: LINKED });
-		await writeGroupAccess({
+		await writeClosedAccess({ db: harness.db, env, group, callerDid: LINKED });
+		await writeClosedAccess({
 			db: harness.db,
 			env,
 			group,
@@ -626,7 +625,7 @@ describe('placement on the event commands', () => {
 				members_space_uri: uris.membersSpaceUri
 			},
 			credential: linkedCredential(LINKED),
-			roster: { [OWNER]: 'owner' }
+			roster: { [OWNER]: 'admin' }
 		});
 		pds.clearLog();
 	});

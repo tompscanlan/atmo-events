@@ -25,7 +25,7 @@ import { VISIBILITY_WRITE } from '../grants';
 
 const aboutSpace = (group: GroupRow) =>
 	ownSpace(group, 'about', group.about_space_uri, 'it cannot be declared to the network');
-import { type CredentialStoreEnv, groupClient, requireGroupCredential } from './session';
+import { type CredentialStoreEnv } from './session';
 import { didSpaceHosts, type SpaceHosts } from './space-credential';
 import { repoRecordExists, type XrpcHandle } from './xrpc';
 export interface WriteGroupDeclarationInput {
@@ -139,21 +139,6 @@ export async function reconcileGroupDeclaration(
 	if (input.declared === false) return null;
 	await removeGroupDeclaration(input);
 	return null;
-}
-
-/** Whether the group's public repo holds its declaration, read through
- *  `personDid`'s own group session. An unreachable PDS throws, so a caller never
- *  acts on a state it could not read. */
-export async function groupDeclared(
-	env: CredentialStoreEnv,
-	groupDid: string,
-	personDid: string
-): Promise<boolean> {
-	const { handle } = await groupClient(
-		await requireGroupCredential(env, groupDid, personDid),
-		groupDid
-	);
-	return repoRecordExists(handle, groupDid, GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY);
 }
 
 /** Whether the group's public repo holds its declaration, read with no session,

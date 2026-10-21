@@ -120,7 +120,7 @@ beforeEach(async () => {
 	// The gate resolves callers from the members space's records, held in memory
 	// so that every call the host logs is the write path's own.
 	group = { ...group, members_space_uri: spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self') };
-	authz = authzReader(GROUP_DID, { [OWNER]: 'owner', [ADMIN]: 'admin', [MEMBER]: 'member' });
+	authz = authzReader(GROUP_DID, { [OWNER]: 'admin', [ADMIN]: 'admin', [MEMBER]: 'member' });
 
 	index.told = [];
 	index.down = null;
@@ -752,11 +752,14 @@ describe('checkCalendarSpace', () => {
 	const reason = (e: unknown) => (e instanceof GroupPlacementError ? e.reason : e);
 	const membersOnly = { roles: ['member' as const], public: false, grants: [] };
 
-	it('passes a member-list space, and refuses a public one', async () => {
-		await expect(checkCalendarSpace(locator(POLICY_MEMBER_LIST), SPACE)).resolves.toBeUndefined();
-		expect(reason(await checkCalendarSpace(locator(POLICY_PUBLIC), SPACE).catch((e) => e))).toBe(
-			'calendar-space-readable'
-		);
+	// Only a group host's managing-app policy is checked further. A member-list
+	// policy is one no host space has, so it is refused like a public one.
+	it('refuses a member-list space and a public one', async () => {
+		for (const policy of [POLICY_MEMBER_LIST, POLICY_PUBLIC]) {
+			expect(reason(await checkCalendarSpace(locator(policy), SPACE).catch((e) => e))).toBe(
+				'calendar-space-readable'
+			);
+		}
 	});
 
 	it('at a group host, passes a space whose access record is not public', async () => {

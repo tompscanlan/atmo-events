@@ -21,13 +21,13 @@ import type { MemberSession } from './acceptance';
 import { getMemberRow, pendingRequestIdOf } from './db/roster';
 import { GroupRuleError } from './db/rules';
 import { pendingRequestsFor } from './host';
-import { HostSignInError, isHostGroup, realGroupHost } from './real-host';
+import { GroupHostError, HostSignInError, isHostGroup, realGroupHost } from './real-host';
 import { GroupPermissionError } from './group-write';
 import { GroupCredentialError } from './session';
 
 const HOST = 'https://grouphost.test';
 const GROUP_DID = 'did:plc:66pgsrgfxpd66hpqpneupgo4';
-const OWNER = 'did:plc:ownerownerownerownerowne';
+const CREATOR = 'did:plc:creatorcreatorcreatorcr';
 const BOB = 'did:plc:oyjdc5luxterikvai2ouko4q';
 const ALICE = 'did:plc:miiewq2j3v645ss37hfngpyf';
 
@@ -63,9 +63,17 @@ interface Sent {
 /** Bob's own session at his PDS: records each request and answers with the
  *  next reply. It holds no acceptance grant, so a join writes no acceptance. */
 function bobsSession(...replies: [number, unknown][]): MemberSession & { sent: Sent[] } {
+	return ownSession(BOB, ...replies);
+}
+
+/** `did`'s own session at their PDS, as `bobsSession` is Bob's. */
+function ownSession(
+	did: string,
+	...replies: [number, unknown][]
+): MemberSession & { sent: Sent[] } {
 	const sent: Sent[] = [];
 	return {
-		did: BOB,
+		did,
 		scope: 'atproto',
 		sent,
 		handle: async (pathname, init) => {
@@ -89,7 +97,7 @@ let hostReplies: [number, unknown][];
 beforeEach(async () => {
 	({ harness, db, group } = await seedGroup({
 		groupDid: GROUP_DID,
-		ownerDid: OWNER,
+		ownerDid: CREATOR,
 		name: 'Kona',
 		requireApproval: true
 	}));
@@ -214,6 +222,30 @@ describe('a member’s own acts, through their own PDS', () => {
 		expect(member.sent[1].body).toEqual({ group: GROUP_DID });
 		expect(await getMemberRow(db, group.id, BOB)).toBeNull();
 	});
+
+	// No owner (TS, 2026-10-20): the creator is an ordinary admin, and the host
+	// lets the last admin leave.
+	it('the creator may leave: it goes to the host like anyone’s, then the cache drops their row', async () => {
+		expect((await getMemberRow(db, group.id, CREATOR))?.role).toBe('admin');
+		const member = ownSession(CREATOR, [200, {}]);
+
+		await host().leaveGroup({ callerDid: CREATOR, member });
+
+		expect(member.sent.map((c) => c.pathname)).toEqual(['/xrpc/group.opensocial.leaveGroup']);
+		expect(await getMemberRow(db, group.id, CREATOR)).toBeNull();
+	});
+
+	it('a leave the host refuses surfaces as its refusal, and the creator’s row stays', async () => {
+		const member = ownSession(CREATOR, [400, { error: 'InvalidRequest', message: 'no' }]);
+
+		const refused = await host()
+			.leaveGroup({ callerDid: CREATOR, member })
+			.catch((e) => e);
+
+		expect(refused).toBeInstanceOf(GroupHostError);
+		expect(refused.error).toBe('InvalidRequest');
+		expect((await getMemberRow(db, group.id, CREATOR))?.role).toBe('admin');
+	});
 });
 
 describe('the group’s own methods, on the caller’s group session', () => {
@@ -268,7 +300,7 @@ describe('the group’s own methods, on the caller’s group session', () => {
 
 describe('membership writes, on the acting person’s own group session', () => {
 	const PUBLISHED = '2026-09-01T12:00:00.000Z';
-	const roster = { [OWNER]: 'owner', [ALICE]: 'admin', [BOB]: 'member' } as const;
+	const roster = { [CREATOR]: 'admin', [ALICE]: 'admin', [BOB]: 'member' } as const;
 	const asAlice = () => ({ callerDid: ALICE, reader: authzReader(GROUP_DID, roster) });
 	const ref = {
 		uri: `at://${GROUP_DID}/x/y`,
@@ -293,19 +325,13 @@ describe('membership writes, on the acting person’s own group session', () => 
 		expect((await getMemberRow(db, group.id, BOB))?.role).toBe('member');
 	});
 
-	it('an eject deletes the membership at the host, then the row; the owner is refused with nothing sent', async () => {
+	it('an eject deletes the membership at the host, then the row', async () => {
 		const env = linkGroups([GROUP_DID], HOST, [ALICE]);
 		hostReplies = [
 			[200, ref],
 			[200, {}]
 		];
 		await host(env).addMember(asAlice(), BOB, 'member');
-
-		const owner = await host(env)
-			.ejectMember(asAlice(), OWNER)
-			.catch((e) => e);
-		expect(owner).toBeInstanceOf(GroupRuleError);
-		expect(owner.reason).toBe('owner-protected');
 
 		await host(env).ejectMember(asAlice(), BOB);
 		expect(hostCalls.map((c) => c.url.pathname)).toEqual([
@@ -349,6 +375,57 @@ describe('membership writes, on the acting person’s own group session', () => 
 		]);
 		expect(reader.calls).toEqual([]);
 		expect((await getMemberRow(db, group.id, ALICE))?.role).toBeUndefined();
+	});
+
+	it('another admin may eject the creator: the delete goes to the host, then the row goes', async () => {
+		const env = linkGroups([GROUP_DID], HOST, [ALICE]);
+		hostReplies = [[200, {}]];
+
+		await host(env).ejectMember(asAlice(), CREATOR);
+
+		expect(hostCalls.map((c) => [c.url.pathname, c.person])).toEqual([
+			['/xrpc/com.atproto.space.deleteRecord', ALICE]
+		]);
+		expect(hostCalls[0].body).toMatchObject({
+			collection: 'group.opensocial.membership',
+			rkey: CREATOR
+		});
+		expect(await getMemberRow(db, group.id, CREATOR)).toBeNull();
+	});
+
+	it('another admin may demote the creator, and the cache follows the host', async () => {
+		const env = linkGroups([GROUP_DID], HOST, [ALICE]);
+		hostReplies = [[200, ref]];
+
+		await host(env).setMemberRole(asAlice(), CREATOR, 'member');
+
+		expect(hostCalls.map((c) => c.url.pathname)).toEqual(['/xrpc/com.atproto.space.putRecord']);
+		expect(hostCalls[0].body).toMatchObject({
+			rkey: CREATOR,
+			record: { member: CREATOR, roles: ['member'] }
+		});
+		expect((await getMemberRow(db, group.id, CREATOR))?.role).toBe('member');
+	});
+
+	it('the host’s refusal to eject or demote the creator surfaces unchanged, and the row stays', async () => {
+		const env = linkGroups([GROUP_DID], HOST, [ALICE]);
+		hostReplies = [
+			[403, { error: 'Forbidden', message: 'your roles cannot assign or remove admin' }],
+			[403, { error: 'Forbidden', message: 'your roles cannot assign or remove admin' }]
+		];
+
+		const eject = await host(env)
+			.ejectMember(asAlice(), CREATOR)
+			.catch((e) => e);
+		const demote = await host(env)
+			.setMemberRole(asAlice(), CREATOR, 'member')
+			.catch((e) => e);
+
+		for (const refused of [eject, demote]) {
+			expect(refused).toBeInstanceOf(GroupPermissionError);
+			expect(refused.reason).toBe('your roles may not assign or remove that role');
+		}
+		expect((await getMemberRow(db, group.id, CREATOR))?.role).toBe('admin');
 	});
 
 	it('a role change keeps the published date, read with the caller’s own access', async () => {

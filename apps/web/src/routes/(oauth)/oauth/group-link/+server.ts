@@ -41,7 +41,7 @@ export const POST: RequestHandler = async ({ request, locals, platform }) => {
 		});
 	} catch (e) {
 		// A caller whose roles grant no writes gets the same 404 as a group that
-		// does not exist, as the link has always answered a non-owner.
+		// does not exist, as the link has always answered anyone who may not write.
 		if (e instanceof GroupLinkRefused) error(404, GROUP_NOT_FOUND);
 		throw e;
 	}
