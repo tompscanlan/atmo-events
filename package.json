@@ -16,7 +16,7 @@
 		"version-packages": "changeset version && pnpm install --lockfile-only",
 		"release": "changeset publish",
 		"globe:up": "snowglobe up",
-		"globe:dev": "snowglobe run -- pnpm --filter web dev --host 0.0.0.0 --strictPort"
+		"globe:dev": "pnpm --filter web exec wrangler d1 migrations apply DB --local && snowglobe run -- pnpm --filter web dev --host 0.0.0.0 --strictPort"
 	},
 	"license": "MIT",
 	"devDependencies": {

@@ -1,0 +1,17 @@
+{
+	"lexicon": 1,
+	"id": "rsvp.atmo.group.calendar",
+	"defs": {
+		"main": {
+			"type": "space",
+			"description": "A group's members-only calendar: its events, the access record that says who reads them, and members' RSVPs.",
+			"key": "literal:self",
+			"name": "Group calendar",
+			"collections": [
+				"community.lexicon.calendar.event",
+				"community.lexicon.calendar.rsvp",
+				"group.opensocial.access"
+			]
+		}
+	}
+}
