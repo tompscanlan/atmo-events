@@ -1,0 +1,50 @@
+# A snowglobe for atmo: a sealed atproto network on this machine (@openmeet/snowglobe), with the
+# permissioned-spaces alpha and a current PDS release, so atmo can be signed in to and tested with
+# no account on the real network.
+#
+#   pnpm install
+#   pnpm globe:up        # brings the snowglobe up and makes alice, bob and carol
+#   pnpm globe:dev       # atmo at https://atmo.app.local.snowglobe.at
+#
+# The first time, also run `pnpm --filter web env:setup-dev` for atmo's client key and cookie
+# secret (apps/web/.env). Passwords are in ~/.local/share/snowglobe/atmo/accounts.env.
+
+globe: atmo
+domain: local.snowglobe.at
+
+pds:
+  - name: alpha # https://alpha.local.snowglobe.at, the permissioned-spaces alpha
+    image: spaces-alpha # pinned by digest in snowglobe
+    bare_handles: true # handles <name>.local.snowglobe.at
+    invites: required
+  - name: regular # a current release; handles <name>.regular.local.snowglobe.at
+    image: ghcr.io/bluesky-social/pds:0.4.5037
+
+services:
+  relay: auto # on, since there are two PDSes
+  jetstream: true
+  slingshot: true
+  pdsls: true # https://pdsls.local.snowglobe.at, to browse the records atmo writes
+  tap: false
+
+lexicons:
+  authority: alpha
+  # atmo's OAuth scope includes these two permission sets. Every PDS here resolves NSIDs only
+  # from this snowglobe's authority, so without them the consent page fails. Copied from their
+  # real authorities (atmo.rsvp, bsky.app) on 2026-10-23.
+  publish: snowglobe/lexicons
+
+accounts:
+  - alice@alpha
+  - bob@alpha
+  - carol@regular # someone whose PDS has no spaces
+
+apps:
+  - name: atmo
+    local: { port: 5454 } # DEV_PORT in apps/web/src/lib/atproto/port.ts
+    env:
+      # atmo reads its settings from the Worker's env, which wrangler fills from .env and
+      # wrangler.jsonc. This adds the process environment, so the settings below reach it.
+      CLOUDFLARE_INCLUDE_PROCESS_ENV: 'true'
+      OAUTH_PUBLIC_URL: ${apps.atmo.url}
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: ${apps.atmo.host}
