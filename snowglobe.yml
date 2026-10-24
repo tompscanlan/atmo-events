@@ -15,13 +15,14 @@ globe: atmogh
 domain: local.snowglobe.at
 
 pds:
-  # The alpha of 2026-10-01 (79d6307e). The group host runs this same build as a library.
+  # The alpha of 2026-10-01 (79d6307e).
   - name: alpha
     image: spaces-alpha
     bare_handles: true # handles <name>.local.snowglobe.at
     invites: required
   # The alpha of 2026-10-22 (permissioned-data-alpha ac0c9f15): space commits carry a MAC from
   # the repo host in place of the author's signature, and the space lexicons changed with them.
+  # The group host runs this same build as a library.
   - name: alphanext
     image: ghcr.io/bluesky-social/atproto@sha256:3ebb6d0e2c587adb0142de6e95a9b11d5f4704a418cf1db33576d701688d945a
     invites: required
@@ -82,10 +83,10 @@ apps:
   # atmo's groups e2e (apps/web/scripts/groups-e2e.mjs), its members on the 2026-10-01 alpha:
   #   DEVNET_LEAF_FILE=~/.local/share/snowglobe/atmogh/https/leaf.crt E2E_PLAYWRIGHT=<playwright> \
   #     pnpm exec snowglobe run --app e2e -- node apps/web/scripts/groups-e2e.mjs
-  # e2enext is the same with its members on the 2026-10-22 alpha. On 2026-10-23 e2e passed 52 of 52
-  # and e2enext stopped at the admin's promotion: the newer alpha's delegation tokens name
-  # <authority>#atproto_pds, and a group host built on the older alpha wants
-  # #atproto_space_host, so it refuses them. It passes once the group host and atmo move to it.
+  # e2enext is the same with its members on the 2026-10-22 alpha. With the group host built on that
+  # alpha and atmo sending that alpha's requests, e2enext passed 52 of 52 on 2026-10-23, and e2e
+  # stops at the admin's promotion: the older alpha's delegation tokens name
+  # <authority>#atproto_space_host, and the group host now wants #atproto_pds, so it refuses them.
   - name: e2e
     env:
       E2E_GROUP_HOST: ${grouphosts.gh.url}
