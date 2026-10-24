@@ -1,0 +1,401 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The loader of one members-only event's page, at /groups/<actor>/events/<rkey>.
+// Only a roster member may cause its read, and everyone else, like a key the
+// calendar space does not hold, gets the same 404. The space reader is a fake
+// host that logs every call, so "sent nothing" is a count, not a reading of the
+// page. The page itself, rendered with the shared EventView, is tested in
+// ./page.test.ts.
+vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
+	...(await import('$lib/groups/server/__fixtures__/linked-oauth-stub')).linkedOAuthStub
+}));
+vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
+
+import { isHttpError } from '@sveltejs/kit';
+import { load } from './+page.server';
+import {
+	EVENT_COLLECTION as EVENT,
+	MEETING_VALUE,
+	calendarSpaceOf,
+	eventHost as eventHostWithoutAccess,
+	meetingUri,
+	type EventHostOptions
+} from '$lib/groups/server/__fixtures__/members-only-event';
+import type { FakeSpaceReader } from '$lib/groups/server/__fixtures__/space-reader';
+import {
+	admitOnly,
+	fixtureSessions,
+	readerSession,
+	resetReaderHost,
+	serveReader
+} from '$lib/groups/server/__fixtures__/reader-host';
+import { META_READ_GRANT } from '$lib/atproto/settings';
+import { callerSession } from '$lib/groups/server/acceptance';
+import { MEMBERS_ONLY_NO_ACCESS, MEMBERS_ONLY_UNREADABLE } from '$lib/groups/server/calendar-read';
+import type { SqliteD1 } from '$lib/groups/server/__fixtures__/d1-sqlite';
+import { seedGroup } from '$lib/groups/server/__fixtures__/seed-group';
+
+import { groupRouteContext } from '$lib/groups/server/route-context';
+
+import { memberGrant } from '$lib/groups/server/member-grants';
+
+import { groupSpaceUris } from '$lib/groups/ids';
+import {
+	ABOUT_SPACE_READER_ROLES,
+	GROUP_ACCESS_COLLECTION,
+	GROUP_ACCESS_RKEY,
+	groupAccessRecord
+} from '$lib/groups/members-record';
+import { ABOUT_SPACE_TYPE } from '$lib/groups/types';
+const OWNER = 'did:plc:owner';
+const MEMBER = 'did:plc:member';
+/** The roster the group's records hold, as `seedGroup`'s rows do. */
+const ROSTER = { [OWNER]: 'admin', [MEMBER]: 'member' } as const;
+const STRANGER = 'did:plc:stranger';
+const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
+const { aboutSpaceUri: ABOUT } = groupSpaceUris(GROUP_DID);
+const CALENDAR = calendarSpaceOf(GROUP_DID);
+const MEETING_URI = meetingUri(GROUP_DID);
+const MEMBER_LIST_POLICY = 'com.atproto.simplespace.defs#memberListPolicy';
+/** The read of the about space's access record, which is the group's visibility. */
+const ACCESS_READ = `get ${ABOUT} ${GROUP_DID} ${GROUP_ACCESS_COLLECTION} ${GROUP_ACCESS_RKEY}`;
+
+/** The shared event host, with the about space's access record a create leaves:
+ *  public, unless `policy` names the member list, which makes it private. The
+ *  record, not the policy, is the group's visibility. (Spec: FR-214.) */
+function eventHost(groupDid: string, options: EventHostOptions = {}): FakeSpaceReader {
+	const host = eventHostWithoutAccess(groupDid, options);
+	host.put({
+		space: groupSpaceUris(groupDid).aboutSpaceUri,
+		collection: GROUP_ACCESS_COLLECTION,
+		rkey: GROUP_ACCESS_RKEY,
+		value: {
+			...groupAccessRecord({
+				spaceType: ABOUT_SPACE_TYPE,
+				roles: ABOUT_SPACE_READER_ROLES,
+				public: options.policy !== MEMBER_LIST_POLICY
+			}),
+			$type: GROUP_ACCESS_COLLECTION
+		}
+	});
+	return host;
+}
+
+let harness: SqliteD1;
+
+beforeEach(async () => {
+	({ harness } = await seedGroup({
+		groupDid: GROUP_DID,
+		ownerDid: OWNER,
+		name: 'Kona',
+		members: { [MEMBER]: 'member' }
+	}));
+});
+
+afterEach(() => {
+	harness.close();
+	vi.clearAllMocks();
+	vi.unstubAllGlobals();
+	resetReaderHost();
+});
+
+/** A request as `did`, signed in with their own session (`readerSession`) unless
+ *  the test hands one. */
+function event(did: string | null, rkey: string, session?: unknown) {
+	return {
+		params: { actor: GROUP_DID, rkey },
+		locals: { did, session: session !== undefined ? session : did ? readerSession(did) : null },
+		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } },
+		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events/${rkey}`)
+	} as unknown as Parameters<typeof load>[0];
+}
+
+type PageData = Record<string, unknown> & {
+	eventData: Record<string, unknown>;
+	eventUri: string;
+	spaceUri: string;
+};
+
+async function openAs(
+	did: string | null,
+	rkey = '3lmeeting',
+	session?: unknown
+): Promise<PageData> {
+	return (await load(event(did, rkey, session))) as PageData;
+}
+
+/** What the load threw, which must be one of SvelteKit's HTTP errors. */
+async function refusalFor(did: string | null, rkey: string, session?: unknown) {
+	try {
+		await load(event(did, rkey, session));
+	} catch (e) {
+		if (!isHttpError(e)) throw e;
+		return { status: e.status, body: e.body };
+	}
+	throw new Error(`the page loaded for ${did} at ${rkey}`);
+}
+
+describe('/groups/[actor]/events/[rkey] load: who gets a 404', () => {
+	it('the event page: an absent rkey and a caller off the roster get the same 404', async () => {
+		const refusals: Record<string, unknown> = {};
+		for (const [who, did, rkey] of [
+			['a member, at a key the space does not hold', MEMBER, '3lmadeup'],
+			['a member, at a key no record can have', MEMBER, 'not a key'],
+			['a signed-in non-member, at the real key', STRANGER, '3lmeeting'],
+			['a signed-in non-member, at a made-up key', STRANGER, '3lmadeup'],
+			['an anonymous visitor, at the real key', null, '3lmeeting'],
+			['an anonymous visitor, at a made-up key', null, '3lmadeup']
+		] as const) {
+			serveReader(GROUP_DID, eventHost(GROUP_DID, { roster: ROSTER }));
+			refusals[who] = await refusalFor(did, rkey);
+		}
+
+		const expected = { status: 404, body: { message: 'Event not found' } };
+		for (const refusal of Object.values(refusals)) expect(refusal).toStrictEqual(expected);
+		expect(new Set(Object.values(refusals).map((r) => JSON.stringify(r))).size).toBe(1);
+	});
+
+	// A group whose access record says private is hidden from anyone off its
+	// roster before the event is reached, so the key changes nothing there either.
+	it('in a group hidden from callers off its roster, the real key and a made-up one get the same 404', async () => {
+		for (const did of [STRANGER, null]) {
+			const answers = [];
+			for (const rkey of ['3lmeeting', '3lmadeup']) {
+				const h = eventHost(GROUP_DID, { roster: ROSTER, policy: MEMBER_LIST_POLICY });
+				serveReader(GROUP_DID, h);
+				answers.push(await refusalFor(did, rkey));
+				expect(h.callsIn(CALENDAR)).toEqual([]);
+			}
+			expect(answers[0]).toStrictEqual({ status: 404, body: { message: 'Group not found' } });
+			expect(answers[1]).toStrictEqual(answers[0]);
+		}
+	});
+
+	it('the event page: a caller off the roster causes no read after standing, and no one reads as the group', async () => {
+		for (const did of [STRANGER, null]) {
+			// What the group's route context sends on its own, for this caller.
+			const alone = eventHost(GROUP_DID, { roster: ROSTER });
+			serveReader(GROUP_DID, alone);
+			await groupRouteContext(
+				harness.db,
+				GROUP_DID,
+				did ? await callerSession(readerSession(did)) : null
+			);
+			fixtureSessions.reads = 0;
+
+			const h = eventHost(GROUP_DID, { roster: ROSTER });
+			serveReader(GROUP_DID, h);
+			const refusal = await refusalFor(did, '3lmeeting');
+
+			expect(refusal.status).toBe(404);
+			// The standing read and the visibility check, and not one request more:
+			// no event read, no profile read.
+			// In any order: once a credential is kept, the standing's parallel reads
+			// can arrive differently, though the same reads are made.
+			expect([...h.calls].sort()).toEqual([...alone.calls].sort());
+			// A signed-in stranger's own access reads the visibility; a signed-out
+			// visitor has none, so nothing in any space is read for them.
+			if (did) expect(h.calls).toContain(ACCESS_READ);
+			else expect(h.calls).toEqual([]);
+			expect(h.callsIn(CALENDAR)).toEqual([]);
+			expect(h.calls.filter((c) => c.includes('group.opensocial.profile'))).toEqual([]);
+			// Everything is read with the caller's own access: the group's session is
+			// never looked up.
+			expect(fixtureSessions.reads).toBe(0);
+		}
+	});
+});
+
+describe('event notice decided on standing alone (FR-117)', () => {
+	it.each([undefined, MEMBER_LIST_POLICY])(
+		'returns identical data for all keys at visibility policy %s',
+		async (policy) => {
+			const answers = [];
+			for (const rkey of ['3lmeeting', '3lmadeup', 'not a key']) {
+				const host = eventHost(GROUP_DID, { roster: ROSTER, policy });
+				serveReader(GROUP_DID, host);
+				const session = readerSession(MEMBER, `atproto ${META_READ_GRANT}`);
+				await groupRouteContext(harness.db, GROUP_DID, await callerSession(session), {
+					signInNotice: true
+				});
+				const gateCalls = [...host.calls].sort();
+				host.calls.length = 0;
+				const data = await openAs(MEMBER, rkey, session);
+				answers.push(data);
+				expect(data).toStrictEqual({ actorDid: GROUP_DID, signIn: { from: expect.any(Number) } });
+				expect([...host.calls].sort()).toEqual(gateCalls);
+				expect(host.callsIn(CALENDAR)).toEqual([]);
+			}
+			expect(answers[1]).toStrictEqual(answers[0]);
+			expect(answers[2]).toStrictEqual(answers[0]);
+		}
+	);
+
+	it('does not even consult the supplied key before returning the notice', async () => {
+		const host = eventHost(GROUP_DID, { roster: ROSTER });
+		serveReader(GROUP_DID, host);
+		const request = event(MEMBER, 'unused', readerSession(MEMBER, `atproto ${META_READ_GRANT}`));
+		const readKey = vi.fn(() => {
+			throw new Error('key consulted before notice');
+		});
+		Object.defineProperty(request.params, 'rkey', { get: readKey });
+		expect(await load(request)).toMatchObject({ signIn: { from: expect.any(Number) } });
+		expect(readKey).not.toHaveBeenCalled();
+		expect(host.callsIn(CALENDAR)).toEqual([]);
+	});
+
+	it('keeps a genuine host refusal with the grant present as a 404', async () => {
+		const host = eventHost(GROUP_DID, { roster: ROSTER });
+		serveReader(GROUP_DID, host);
+		admitOnly(GROUP_DID, (_, space) => space === ABOUT);
+		const answers = [];
+		for (const key of ['3lmeeting', '3lmadeup', 'not a key']) {
+			answers.push(await refusalFor(MEMBER, key));
+		}
+		expect(answers[0]).toMatchObject({ status: 404 });
+		expect(answers[1]).toStrictEqual(answers[0]);
+		expect(answers[2]).toStrictEqual(answers[0]);
+		expect(host.callsIn(CALENDAR)).toEqual([]);
+	});
+});
+
+describe('/groups/[actor]/events/[rkey] load: when the event cannot be read', () => {
+	let logged: ReturnType<typeof vi.spyOn>;
+
+	beforeEach(() => {
+		logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+	});
+
+	afterEach(() => logged.mockRestore());
+
+	it('the event page: a failed read is a 503 and never a cached copy', async () => {
+		// A shared cache that holds a copy of the event, as the public event page
+		// would have stored it. The members-only page must never touch it.
+		const cache = {
+			match: vi.fn(async () => Response.json({ uri: MEETING_URI, value: MEETING_VALUE })),
+			put: vi.fn(async () => {})
+		};
+		vi.stubGlobal('caches', { default: cache });
+
+		// A read that works first, so a copy could have been kept.
+		serveReader(GROUP_DID, eventHost(GROUP_DID, { roster: ROSTER }));
+		expect((await openAs(MEMBER)).eventData.name).toBe('Committee call');
+
+		const down = eventHost(GROUP_DID, {
+			roster: ROSTER,
+			calendar: new Error('com.atproto.space.getRecord failed: 502')
+		});
+		serveReader(GROUP_DID, down);
+		expect(await refusalFor(MEMBER, '3lmeeting')).toStrictEqual({
+			status: 503,
+			body: { message: MEMBERS_ONLY_UNREADABLE }
+		});
+		expect(logged).toHaveBeenCalled();
+		// One attempt at the space and nothing read in its place.
+		expect(down.callsIn(CALENDAR)).toEqual([`get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmeeting`]);
+
+		// A member whose sign-in reads no spaces is told why, and nothing is read.
+		const blind = eventHost(GROUP_DID, { roster: ROSTER });
+		serveReader(GROUP_DID, blind);
+		expect(await refusalFor(MEMBER, '3lmeeting', readerSession(MEMBER, 'atproto'))).toStrictEqual({
+			status: 503,
+			body: { message: MEMBERS_ONLY_NO_ACCESS }
+		});
+		expect(blind.calls).toEqual([]);
+
+		expect(cache.match).not.toHaveBeenCalled();
+		expect(cache.put).not.toHaveBeenCalled();
+	});
+});
+
+describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
+	it('an organizer who may manage events gets the Edit link; a member does not', async () => {
+		serveReader(GROUP_DID, eventHost(GROUP_DID, { roster: ROSTER }));
+		expect((await openAs(OWNER)).editHref).toBe(
+			`/groups/${GROUP_DID}/events/3lmeeting/edit?placement=members`
+		);
+		serveReader(GROUP_DID, eventHost(GROUP_DID, { roster: ROSTER }));
+		expect('editHref' in (await openAs(MEMBER))).toBe(false);
+	});
+});
+
+// The viewer's own RSVP, read back through their own session from their repo in
+// the calendar space, at the event's key. Only after the event read, so a page
+// that 404s sends nothing on the member's behalf either. (Spec: FR-113, FR-117.)
+describe("/groups/[actor]/events/[rkey] load: the viewer's own RSVP", () => {
+	const RSVP = 'community.lexicon.calendar.rsvp';
+
+	/** The member's signed-in session. Its requests go into `log`, beside the
+	 *  group host's, so the order of the two is a fact of the test. Its delegation
+	 *  tokens, for the page's reads, come from the fixture's PDS and are not
+	 *  logged. */
+	function memberSession(scope: string, log: string[]) {
+		const own = readerSession(MEMBER, scope);
+		return {
+			did: MEMBER,
+			getTokenInfo: async () => ({ scope }),
+			handle: async (pathname: string, init?: RequestInit) => {
+				if (pathname.startsWith('/xrpc/com.atproto.space.getDelegationToken')) {
+					return own.handle(pathname, init);
+				}
+				log.push(`member ${init?.method ?? 'GET'} ${pathname}`);
+				return Response.json({
+					uri: `${CALENDAR}/${MEMBER}/${RSVP}/3lmeeting`,
+					cid: 'bafyrsvp',
+					value: {
+						$type: RSVP,
+						status: `${RSVP}#going`,
+						subject: { uri: MEETING_URI },
+						createdAt: '2026-10-08T12:00:00.000Z'
+					}
+				});
+			}
+		};
+	}
+
+	/** The group's host, logging into the same list. */
+	function sharedHost(log: string[]): FakeSpaceReader {
+		return eventHost(GROUP_DID, { roster: ROSTER, onCall: (line) => log.push(`group ${line}`) });
+	}
+
+	const ownRead = `member GET /xrpc/com.atproto.space.getRecord?${new URLSearchParams({
+		space: CALENDAR,
+		repo: MEMBER,
+		collection: RSVP,
+		rkey: '3lmeeting'
+	})}`;
+
+	it("the event page reads the viewer's own RSVP through their session, after the event read", async () => {
+		const log: string[] = [];
+		serveReader(GROUP_DID, sharedHost(log));
+
+		const data = await openAs(
+			MEMBER,
+			'3lmeeting',
+			memberSession(`atproto ${META_READ_GRANT} ${memberGrant(GROUP_DID)}`, log)
+		);
+
+		expect(data.viewerRsvpStatus).toBe('going');
+		expect(data.viewerRsvpRkey).toBe('3lmeeting');
+		expect(data.membersOnly).toBe(true);
+		// One read through the member's session, at the event's key, and only once
+		// the event itself was read.
+		expect(log.filter((line) => line.startsWith('member '))).toEqual([ownRead]);
+		const eventRead = log.indexOf(`group get ${CALENDAR} ${GROUP_DID} ${EVENT} 3lmeeting`);
+		expect(eventRead).toBeGreaterThan(-1);
+		expect(log.indexOf(ownRead)).toBeGreaterThan(eventRead);
+
+		// A page that 404s reads nothing through the session.
+		const absent: string[] = [];
+		serveReader(GROUP_DID, sharedHost(absent));
+		await expect(
+			openAs(
+				MEMBER,
+				'3lmadeup',
+				memberSession(`atproto ${META_READ_GRANT} ${memberGrant(GROUP_DID)}`, absent)
+			)
+		).rejects.toMatchObject({ status: 404 });
+		expect(absent.filter((line) => line.startsWith('member '))).toEqual([]);
+	});
+});
