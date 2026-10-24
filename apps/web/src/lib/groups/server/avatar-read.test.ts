@@ -15,7 +15,12 @@ const META = spaceUri(GROUP_DID, ABOUT_SPACE_TYPE, 'self');
 const CID = 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku';
 const GROUP_HOST = 'https://grouphost.stub.test';
 const group = { group_did: GROUP_DID, about_space_uri: META };
-const hosts: SpaceHosts = { repoHost: async () => GROUP_HOST, spaceHost: async () => GROUP_HOST };
+const hosts: SpaceHosts = {
+	repoHost: async () => GROUP_HOST,
+	spaceHost: async () => GROUP_HOST,
+	// A blob read asks for no MAC, so no key is looked up.
+	kemKey: async () => Promise.reject(new Error('a blob read asks for no MAC'))
+};
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
 
 function base64url(text: string): string {
@@ -72,7 +77,7 @@ describe('readGroupAvatar', () => {
 			repo: GROUP_DID,
 			cid: CID
 		});
-		expect(headers.get('authorization')).toMatch(/^Atproto-Space /);
+		expect(headers.get('authorization')).toMatch(/^Atproto-Space-Credential /);
 		expect(headers.get('atproto-space-audience')).toBe(GROUP_DID);
 	});
 

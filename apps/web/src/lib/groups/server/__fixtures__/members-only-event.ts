@@ -33,13 +33,23 @@ export function meetingUri(groupDid: string, rkey = '3lmeeting'): string {
 	return `${calendarSpaceOf(groupDid)}/${groupDid}/${EVENT_COLLECTION}/${rkey}`;
 }
 
+/** The CID of the meeting's thumbnail. A real one, since a host serves a record
+ *  read with a credential only with the CID of its value, and a value citing a
+ *  CID that does not parse has none. */
+export const MEETING_THUMB_CID = 'bafkreidojrsg4kb5pl3xkpc5huql7jbzxepdxvw4neiofieqqlz45s2lpq';
+
 /** The meeting's image as the event editor stores it: a blob in the group's
  *  repo, cited by its CID. */
 export const MEETING_IMAGE = [
 	{
 		role: 'thumbnail',
 		alt: 'The committee',
-		content: { $type: 'blob', ref: { $link: 'bafkreithumb' }, mimeType: 'image/webp', size: 41250 },
+		content: {
+			$type: 'blob',
+			ref: { $link: MEETING_THUMB_CID },
+			mimeType: 'image/webp',
+			size: 41250
+		},
 		aspect_ratio: { width: 800, height: 800 }
 	}
 ];
