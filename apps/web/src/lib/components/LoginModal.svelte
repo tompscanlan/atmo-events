@@ -12,12 +12,17 @@
 
 <script lang="ts">
 	import { login, signup } from '$lib/atproto';
+	import { network } from '$lib/atproto/network';
 
 	import { AtprotoLoginModal } from '@foxui/social';
+
+	const appviewUrl = network().appviewUrl;
 </script>
 
 <AtprotoLoginModal
 	bind:open={atProtoLoginModalState.open}
+	host={appviewUrl ?? undefined}
+	search={appviewUrl ? undefined : async () => []}
 	login={async (handle) => {
 		await login(handle);
 		return true;

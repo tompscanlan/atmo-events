@@ -58,7 +58,13 @@ export {
 export { eventUrl, isEventOngoing, RSVP_GOING, RSVP_INTERESTED } from './contrail.js';
 
 // Atproto helpers (browser-safe, no client/session state)
-export { getCDNImageBlobUrl, compressImage } from './atproto-helpers.js';
+export {
+	getCDNImageBlobUrl,
+	compressImage,
+	configureAtproto,
+	DEFAULT_BLOB_URL_TEMPLATE,
+	DEFAULT_APPVIEW_URL
+} from './atproto-helpers.js';
 export { getProfileUrl } from './profile-url.js';
 
 // Date/time helpers

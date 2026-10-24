@@ -8,34 +8,17 @@ import {
 	type StoredState
 } from '@atcute/oauth-node-client';
 import type { Did } from '@atcute/lexicons';
-import {
-	CompositeDidDocumentResolver,
-	CompositeHandleResolver,
-	DohJsonHandleResolver,
-	LocalActorResolver,
-	PlcDidDocumentResolver,
-	WebDidDocumentResolver,
-	WellKnownHandleResolver
-} from '@atcute/identity-resolver';
+import { LocalActorResolver } from '@atcute/identity-resolver';
 import { KVStore } from './kv-store';
-import { DOH_RESOLVER, REDIRECT_PATH, scopes } from '../settings';
+import { REDIRECT_PATH, scopes } from '../settings';
+import { createDidDocumentResolver, createHandleResolver } from '../identity';
 import { DEV_PORT } from '../port';
 import { dev } from '$app/environment';
 
 function createActorResolver() {
 	return new LocalActorResolver({
-		handleResolver: new CompositeHandleResolver({
-			methods: {
-				dns: new DohJsonHandleResolver({ dohUrl: DOH_RESOLVER }),
-				http: new WellKnownHandleResolver()
-			}
-		}),
-		didDocumentResolver: new CompositeDidDocumentResolver({
-			methods: {
-				plc: new PlcDidDocumentResolver(),
-				web: new WebDidDocumentResolver()
-			}
-		})
+		handleResolver: createHandleResolver(),
+		didDocumentResolver: createDidDocumentResolver()
 	});
 }
 

@@ -1,15 +1,9 @@
 import { parseResourceUri, type Did, type Handle } from '@atcute/lexicons';
 import { isDid } from '@atcute/lexicons/syntax';
 import { user } from './auth.svelte';
-import { DOH_RESOLVER, type AllowedCollection } from './settings';
-import {
-	CompositeDidDocumentResolver,
-	CompositeHandleResolver,
-	DohJsonHandleResolver,
-	PlcDidDocumentResolver,
-	WebDidDocumentResolver,
-	WellKnownHandleResolver
-} from '@atcute/identity-resolver';
+import { type AllowedCollection } from './settings';
+import { blobUrl, network } from './network';
+import { createDidDocumentResolver, createHandleResolver } from './identity';
 import { Client, simpleFetchHandler } from '@atcute/client';
 import { type AppBskyActorDefs } from '@atcute/bluesky';
 
@@ -29,14 +23,7 @@ export function parseUri(uri: string) {
  * Resolves a handle to a DID using DNS and HTTP methods.
  */
 export async function resolveHandle({ handle }: { handle: Handle }) {
-	const handleResolver = new CompositeHandleResolver({
-		methods: {
-			dns: new DohJsonHandleResolver({ dohUrl: DOH_RESOLVER }),
-			http: new WellKnownHandleResolver()
-		}
-	});
-
-	const data = await handleResolver.resolve(handle);
+	const data = await createHandleResolver().resolve(handle);
 	return data;
 }
 
@@ -73,18 +60,11 @@ export async function actorToDid(actor: string): Promise<Did> {
 	throw lastErr;
 }
 
-const didResolver = new CompositeDidDocumentResolver({
-	methods: {
-		plc: new PlcDidDocumentResolver(),
-		web: new WebDidDocumentResolver()
-	}
-});
-
 /**
  * Gets the PDS (Personal Data Server) URL for a given DID.
  */
 export async function getPDS(did: Did) {
-	const doc = await didResolver.resolve(did as Did<'plc'> | Did<'web'>);
+	const doc = await createDidDocumentResolver().resolve(did as Did<'plc'> | Did<'web'>);
 	if (!doc.service) throw new Error('No PDS found');
 	for (const service of doc.service) {
 		if (service.id === '#atproto_pds') {
@@ -102,9 +82,11 @@ export async function getDetailedProfile(data?: { did?: Did; client?: Client }) 
 
 	if (!data.did) throw new Error('Error getting detailed profile: no did');
 
-	data.client ??= new Client({
-		handler: simpleFetchHandler({ service: 'https://public.api.bsky.app' })
-	});
+	if (!data.client) {
+		const service = network().appviewUrl;
+		if (!service) return;
+		data.client = new Client({ handler: simpleFetchHandler({ service }) });
+	}
 
 	const response = await data.client.get('app.bsky.actor.getProfile', {
 		params: { actor: data.did }
@@ -390,7 +372,9 @@ export function getCDNImageBlobUrl({
 }) {
 	did ??= user.did ?? undefined;
 
-	return `https://cdn.bsky.app/img/${preset}/plain/${did}/${blob.ref.$link}@${format}`;
+	const url = blobUrl(String(did), blob.ref.$link, format);
+	// The preset is a Bluesky CDN path segment; a network whose template has none serves the blob as is.
+	return preset === 'feed_thumbnail' ? url : url.replace('/img/feed_thumbnail/', `/img/${preset}/`);
 }
 
 /**
@@ -401,7 +385,8 @@ export async function searchActorsTypeahead(
 	limit: number = 10,
 	host?: string
 ): Promise<{ actors: AppBskyActorDefs.ProfileViewBasic[]; q: string }> {
-	host ??= 'https://typeahead.waow.tech';
+	host ??= network().typeaheadUrl ?? undefined;
+	if (!host) return { actors: [], q };
 
 	// const client = new Client({
 	// 	handler: simpleFetchHandler({ service: host })

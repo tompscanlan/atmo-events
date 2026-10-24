@@ -1,11 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { ServiceJwtVerifier } from '@atcute/xrpc-server/auth';
-import {
-	CompositeDidDocumentResolver,
-	PlcDidDocumentResolver,
-	WebDidDocumentResolver
-} from '@atcute/identity-resolver';
 import type { Did, Nsid } from '@atcute/lexicons';
+import { createDidDocumentResolver } from '$lib/atproto/identity';
 import { LXM_SUBSCRIBER_CHANGED, RELAY_DID } from '$lib/notify/config';
 import { getSenderDid, notifyConfigured } from '$lib/notify/keypair';
 import { ensureNotifySchema, setSubscriber } from '$lib/notify/db';
@@ -20,9 +16,7 @@ function getVerifier(serviceDid: Did): ServiceJwtVerifier {
 	if (!verifier) {
 		verifier = new ServiceJwtVerifier({
 			serviceDid,
-			resolver: new CompositeDidDocumentResolver({
-				methods: { plc: new PlcDidDocumentResolver(), web: new WebDidDocumentResolver() }
-			})
+			resolver: createDidDocumentResolver()
 		});
 	}
 	return verifier;

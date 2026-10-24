@@ -18,7 +18,7 @@ export const oauthLogin = command(
 			const oauth = createOAuthClient(platform?.env);
 
 			const target = input.signup
-				? ({ type: 'pds', serviceUrl: signUpPDS } as const)
+				? ({ type: 'pds', serviceUrl: signUpPDS() } as const)
 				: ({ type: 'account', identifier: input.handle as ActorIdentifier } as const);
 
 			const { url } = await oauth.authorize({
