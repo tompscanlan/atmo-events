@@ -16,12 +16,12 @@
 		"version-packages": "changeset version && pnpm install --lockfile-only",
 		"release": "changeset publish",
 		"globe:up": "snowglobe up",
-		"globe:dev": "pnpm --filter web exec wrangler d1 migrations apply DB --local && snowglobe run -- pnpm --filter web dev --host 0.0.0.0 --strictPort"
+		"globe:dev": "pnpm --filter web exec wrangler d1 migrations apply DB --local && snowglobe run --app atmo -- pnpm --filter web dev --host 0.0.0.0 --strictPort"
 	},
 	"license": "MIT",
 	"devDependencies": {
 		"@changesets/cli": "^2.31.0",
-		"@openmeet/snowglobe": "0.3.0-rc.1",
+		"@openmeet/snowglobe": "^0.3.0",
 		"prettier": "^3.8.1",
 		"prettier-plugin-svelte": "^3.5.1",
 		"prettier-plugin-tailwindcss": "^0.7.2"

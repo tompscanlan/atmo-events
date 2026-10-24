@@ -17,8 +17,8 @@ importers:
         specifier: ^2.31.0
         version: 2.31.0(@types/node@22.20.0)
       '@openmeet/snowglobe':
-        specifier: 0.3.0-rc.1
-        version: 0.3.0-rc.1
+        specifier: ^0.3.0
+        version: 0.3.0
       prettier:
         specifier: ^3.8.1
         version: 3.8.1
@@ -1298,8 +1298,8 @@ packages:
     peerDependencies:
       svelte: ^4 || ^5
 
-  '@openmeet/snowglobe@0.3.0-rc.1':
-    resolution: {integrity: sha512-rbNBw1cgdTT1Dc48NylWCmW2FyZiosDWfZqY69vR5VUtcD7YMAmLxl9OHnB/1O1FunBGo9jfjm4xu3gVRCt5wg==}
+  '@openmeet/snowglobe@0.3.0':
+    resolution: {integrity: sha512-/TCjmn/1i6FCgD6/u/OPM+qzG2xtxyG02OOE/SGQcE8mNC8GsuzKew/yRu2b4CkGO9BpMcpubnVpxS2YIc3iCA==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -4998,7 +4998,7 @@ snapshots:
       number-flow: 0.6.0
       svelte: 5.55.0
 
-  '@openmeet/snowglobe@0.3.0-rc.1':
+  '@openmeet/snowglobe@0.3.0':
     dependencies:
       '@peculiar/asn1-schema': 2.11.0
       '@peculiar/asn1-x509': 2.11.0
