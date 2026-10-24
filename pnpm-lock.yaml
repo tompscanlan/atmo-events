@@ -118,6 +118,12 @@ importers:
       '@atcute/bluesky':
         specifier: ^3.3.0
         version: 3.3.0
+      '@atcute/cbor':
+        specifier: ^2.3.2
+        version: 2.3.2
+      '@atcute/cid':
+        specifier: ^2.4.1
+        version: 2.4.1
       '@atcute/client':
         specifier: ^4.2.1
         version: 4.2.1
