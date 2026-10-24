@@ -1,0 +1,95 @@
+# A snowglobe for developing atmo's groups: a sealed atproto network on this machine
+# (@openmeet/snowglobe) with an opensocial.group group host built from your checkout, the
+# latest permissioned-spaces alpha, and a current PDS release.
+#
+#   pnpm install
+#   pnpm globe:up        # builds the group host from ../atproto-group-host, makes the accounts
+#   pnpm globe:dev       # atmo at https://atmo.app.local.snowglobe.at
+#   pnpm globe:e2e       # up if need be, then the groups e2e; the globe stays up for the next run
+#   pnpm globe:down      # stops it, keeping its accounts
+#
+# The first time, also run `pnpm --filter web env:setup-dev` for atmo's client key and cookie
+# secret (apps/web/.env), and on a machine without Playwright's Chromium,
+# `pnpm --filter web exec playwright install chromium`. Passwords are in
+# ~/.local/share/snowglobe/atmogh/accounts.env.
+# atmo runs sealed: every address it uses is this snowglobe's, and services with no stand-in
+# here (profiles, actor search, record stats) are off.
+
+globe: atmogh
+domain: local.snowglobe.at
+
+pds:
+  # The alpha of 2026-10-22 (permissioned-data-alpha ac0c9f15), the latest; the group host runs
+  # this same build as a library. snowglobe's short name spaces-alpha is still the 2026-10-01
+  # build, which the group host no longer takes, so this names the image itself.
+  - name: alpha
+    image: ghcr.io/bluesky-social/atproto@sha256:3ebb6d0e2c587adb0142de6e95a9b11d5f4704a418cf1db33576d701688d945a
+    bare_handles: true # handles <name>.local.snowglobe.at
+    invites: required
+  - name: regular # a current release, with no spaces
+    image: ghcr.io/bluesky-social/pds:0.4.5037
+
+grouphosts:
+  - name: gh # https://gh.local.snowglobe.at; groups' handles are <group>.gh.local.snowglobe.at
+    kind: opensocial
+    build: ../atproto-group-host # a checkout beside this one
+
+services:
+  relay: auto
+  jetstream: true
+  slingshot: true
+  pdsls: true
+  tap: false
+
+lexicons:
+  authority: alpha
+  # atmo's two permission sets, copied from their real authorities, and the opensocial.group
+  # proposal's lexicons from its main branch (2b41a9b, 2026-10-19), all copied on 2026-10-23.
+  publish: snowglobe/lexicons
+
+# The groups e2e's people: owner, admin and outsider on the alpha, and carol on a PDS with
+# no spaces.
+accounts:
+  - alice@alpha
+  - bob@alpha
+  - mallory@alpha
+  - carol@regular
+
+apps:
+  - name: atmo
+    local: { port: 5454 } # DEV_PORT in apps/web/src/lib/atproto/port.ts
+    env:
+      # atmo's server reads these from the Worker's env, which wrangler fills from .env and
+      # wrangler.jsonc. This adds the process environment, so the settings below reach it.
+      CLOUDFLARE_INCLUDE_PROCESS_ENV: 'true'
+      OAUTH_PUBLIC_URL: ${apps.atmo.url}
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: ${apps.atmo.host}
+      GROUP_HOST_URL: ${grouphosts.gh.url}
+      # apps/web/src/lib/atproto/network.ts
+      PUBLIC_ATPROTO_SEALED: 'true'
+      PUBLIC_ATPROTO_PLC_URL: ${services.plc.url}
+      PUBLIC_ATPROTO_SLINGSHOT_URL: ${services.slingshot.url}
+      PUBLIC_ATPROTO_JETSTREAM_URLS: wss://jetstream.${domain}
+      PUBLIC_ATPROTO_RELAY_URLS: ${services.relay.url}
+      PUBLIC_ATPROTO_SIGNUP_PDS: ${pds.alpha.url}
+      PUBLIC_ATPROTO_PDSLS_URL: ${services.pdsls.url}
+      # No image service runs locally, so images come straight from the alpha; an image held
+      # on another server here does not show.
+      PUBLIC_ATPROTO_BLOB_URL_TEMPLATE: ${pds.alpha.url}/xrpc/com.atproto.sync.getBlob?did={did}&cid={cid}
+
+  # atmo's groups e2e (apps/web/scripts/groups-e2e.mjs): pnpm globe:e2e
+  - name: e2e
+    env:
+      E2E_GROUP_HOST: ${grouphosts.gh.url}
+      E2E_PLC_URL: ${services.plc.url}
+      E2E_PDS: ${pds.alpha.url}
+      E2E_OWNER_DID: ${accounts.alice.did}
+      E2E_OWNER_HANDLE: ${accounts.alice.handle}
+      E2E_OWNER_PASSWORD: ${accounts.alice.password}
+      E2E_ADMIN_DID: ${accounts.bob.did}
+      E2E_ADMIN_HANDLE: ${accounts.bob.handle}
+      E2E_ADMIN_PASSWORD: ${accounts.bob.password}
+      E2E_OUTSIDER_DID: ${accounts.mallory.did}
+      E2E_OUTSIDER_HANDLE: ${accounts.mallory.handle}
+      E2E_OUTSIDER_PASSWORD: ${accounts.mallory.password}
+      E2E_NOSPACES_DID: ${accounts.carol.did}
