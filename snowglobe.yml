@@ -11,8 +11,7 @@
 # The first time, also run `pnpm --filter web env:setup-dev` for atmo's client key and cookie
 # secret (apps/web/.env), and on a machine without Playwright's Chromium,
 # `pnpm --filter web exec playwright install chromium`. Passwords are in
-# ~/.local/share/snowglobe/atmogh/accounts.env. Another worktree or clone of atmo whose file says
-# the same shares this globe (snowglobe/globe.mjs); one that changes the file needs its own globe: name.
+# ~/.local/share/snowglobe/atmogh/accounts.env.
 # atmo runs sealed: every address it uses is this snowglobe's, and services with no stand-in
 # here (profiles, actor search, record stats) are off.
 
