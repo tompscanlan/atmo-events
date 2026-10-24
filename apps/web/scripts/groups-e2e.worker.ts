@@ -66,6 +66,7 @@ import {
 	spaceCredential,
 	spaceSigHeaders
 } from '../src/lib/groups/server/space-credential';
+import { recordMacCheck, WANT_MAC_HEADER } from '../src/lib/groups/server/space-mac';
 import {
 	groupClient,
 	groupSessionKey,
@@ -224,7 +225,7 @@ globalThis.fetch = (input, init) => {
 	) {
 		const { space } = JSON.parse(init.body) as { space?: unknown };
 		ownCalls.push(`${url.pathname}?${new URLSearchParams({ space: String(space) })}`);
-	} else if (authorization.startsWith('Atproto-Space ')) {
+	} else if (authorization.startsWith('Atproto-Space-Credential ')) {
 		ownCalls.push(url.pathname + url.search);
 	}
 	return sendFetch(input, init);
@@ -292,8 +293,21 @@ async function groupReadAt(
 	);
 	const host = await didSpaceHosts.repoHost(did);
 	const query = new URLSearchParams({ space, repo: did, collection, rkey });
+	// A record read with a credential must ask for the record's MAC, or the host
+	// refuses it. The app's reader checks the MAC; this reports the host's answer.
+	// A member who publishes no KEM key is on a PDS that serves no spaces, which
+	// refuses the read either way, so it goes without one and the driver sees that.
+	const kemKey = await didSpaceHosts.kemKey(did).catch(() => null);
+	const mac = kemKey ? await recordMacCheck(kemKey) : null;
 	const res = await fetch(new URL(`/xrpc/com.atproto.space.getRecord?${query}`, host), {
-		headers: await spaceSigHeaders(credential.signer, `Atproto-Space ${credential.token}`, did)
+		headers: {
+			...(await spaceSigHeaders(
+				credential.signer,
+				`Atproto-Space-Credential ${credential.token}`,
+				did
+			)),
+			...(mac ? { [WANT_MAC_HEADER]: mac.header } : {})
+		}
 	});
 	const body = (await res.json().catch(() => ({}))) as {
 		error?: string;

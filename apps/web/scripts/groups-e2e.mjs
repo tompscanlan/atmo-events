@@ -551,8 +551,9 @@ function calendarListings(calls) {
 const ACCEPTANCE_COLLECTION = 'group.opensocial.acceptance';
 
 /** A user's own request for a space credential, as another app would make it:
- *  a delegation token from their session, then `getSpaceCredential` signed by a
- *  key made for the request. Shares no code with the app. (Spec: SC-202.) */
+ *  a delegation token from their session, then `getSpaceCredential` with that
+ *  token and a key made for the request, both in the body, as the 2026-10-22
+ *  spaces alpha takes them. Shares no code with the app. (Spec: SC-202.) */
 async function spaceCredentialRequest(token, space) {
 	const delegated = await pdsGet('com.atproto.space.getDelegationToken', { space }, token);
 	if (delegated.status !== 200) {
@@ -564,23 +565,10 @@ async function spaceCredentialRequest(token, space) {
 	const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
 	const compressed = new Uint8Array([raw[64] & 1 ? 0x03 : 0x02, ...raw.slice(1, 33)]);
 	const keyId = `did:key:z${base58(new Uint8Array([0x80, 0x24, ...compressed]))}`;
-	const authorization = `Bearer ${delegated.body.token}`;
-	const params = `("authorization");keyid="${keyId}"`;
-	const signed = new TextEncoder().encode(
-		`"authorization": ${authorization}\n"@signature-params": ${params}`
-	);
-	const signature = new Uint8Array(
-		await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, signed)
-	);
 	const response = await fetch(new URL('/xrpc/com.atproto.space.getSpaceCredential', GROUP_PDS), {
 		method: 'POST',
-		headers: {
-			'content-type': 'application/json',
-			authorization,
-			'signature-input': `atproto-space=${params}`,
-			signature: `atproto-space=:${Buffer.from(signature).toString('base64')}:`
-		},
-		body: JSON.stringify({ space })
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ space, credentialKid: keyId, delegationToken: delegated.body.token })
 	});
 	const body = await response.json().catch(() => ({}));
 	return {

@@ -51,6 +51,7 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 import { publishAuthz, writeClosedAccess } from './server/__fixtures__/members-space';
 import { isRowWrite, sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { fakeGroupHost, type FakeGroupHost } from './server/__fixtures__/group-host';
+import { fixtureKem } from './server/__fixtures__/space-mac-host';
 import {
 	STUB_PDS_SERVICE,
 	atGroupHost,
@@ -167,6 +168,14 @@ function serveOwnAccess(pds: FakeGroupHost): void {
 		if (url.origin === 'https://plc.directory' && /^\/did:[^/]+$/.test(path)) {
 			return Response.json({
 				id: path.slice(1),
+				verificationMethod: [
+					{
+						id: `${path.slice(1)}#atproto_kem`,
+						type: 'Multikey',
+						controller: path.slice(1),
+						publicKeyMultibase: (await fixtureKem).multibase
+					}
+				],
 				service: [
 					{
 						id: '#atproto_pds',
@@ -177,8 +186,11 @@ function serveOwnAccess(pds: FakeGroupHost): void {
 			});
 		}
 		if (url.pathname === '/xrpc/com.atproto.space.getSpaceCredential') {
-			const { space } = JSON.parse(String(init?.body)) as { space: string };
-			const holder = new Headers(init?.headers).get('authorization')?.split(' ')[2] ?? '';
+			const { space, delegationToken } = JSON.parse(String(init?.body)) as {
+				space: string;
+				delegationToken: string;
+			};
+			const holder = delegationToken.split(' ')[1] ?? '';
 			if (!pds.admits(holder, space)) {
 				return Response.json({ error: 'UserNotAuthorized' }, { status: 400 });
 			}

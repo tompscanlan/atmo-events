@@ -13,7 +13,8 @@
 // credential to whom it lets in. By default that is whom a host lets in by its
 // records: anyone for a meta space whose access record is public, the group's
 // roster (its membership records) for every other space, and the group itself.
-// `admitOnly` replaces the rule for one group. DIDs resolve to the stub PDS.
+// `admitOnly` replaces the rule for one group. DIDs resolve to the stub PDS, and
+// each publishes the one KEM key the host MACs its records with.
 //
 // A test file opts in to the session seam as ./linked-group.ts describes, gives
 // its platform env `OAUTH_SESSIONS: fixtureSessions`, and calls `serveReader` in
@@ -34,6 +35,7 @@ import { clearSpaceCredentials } from '../space-credential';
 import { holdsSession, linkedServices, storedSession } from './linked-oauth-stub';
 import { STUB_PDS_SERVICE } from './linked-group';
 import type { FakeSpaceReader } from './space-reader';
+import { fixtureKem as kem } from './space-mac-host';
 
 import { parseGroupSessionKey } from '../session';
 /** Groups whose stored session cannot be restored (`breakSession`). */
@@ -74,7 +76,7 @@ function failure(e: unknown): Response {
 	return json(named ? Number(named[1]) : 500, { message });
 }
 
-async function answer(host: GroupSpaceReader, url: URL): Promise<Response> {
+async function answer(host: GroupSpaceReader, url: URL, headers: Headers): Promise<Response> {
 	const q = Object.fromEntries(url.searchParams);
 	try {
 		switch (url.pathname) {
@@ -86,7 +88,10 @@ async function answer(host: GroupSpaceReader, url: URL): Promise<Response> {
 					rkey: q.rkey
 				});
 				if (!record) return json(400, { error: 'RecordNotFound' });
-				return json(200, { uri: record.uri, cid: record.cid, value: record.value });
+				const res = json(200, { uri: record.uri, cid: record.cid, value: record.value });
+				const macs = await (await kem).macHeaders(headers, record);
+				for (const [name, value] of Object.entries(macs)) res.headers.set(name, value);
+				return res;
 			}
 			case '/xrpc/com.atproto.space.listRecords': {
 				const records = await host.list({
@@ -173,7 +178,7 @@ function credentialFor(holder: string, space: string): string {
 }
 
 function credentialSpace(authorization: string): string | null {
-	const payload = authorization.replace(/^Atproto-Space /, '').split('.')[1];
+	const payload = authorization.replace(/^Atproto-Space-Credential /, '').split('.')[1];
 	try {
 		return JSON.parse(Buffer.from(payload, 'base64url').toString()).space ?? null;
 	} catch {
@@ -284,6 +289,14 @@ export function serveReader(groupDid: string, host: GroupSpaceReader | null): vo
 				const did = decodeURIComponent(url.pathname.slice(1));
 				return json(200, {
 					id: did,
+					verificationMethod: [
+						{
+							id: `${did}#atproto_kem`,
+							type: 'Multikey',
+							controller: did,
+							publicKeyMultibase: (await kem).multibase
+						}
+					],
 					service: [
 						{
 							id: '#atproto_pds',
@@ -298,11 +311,12 @@ export function serveReader(groupDid: string, host: GroupSpaceReader | null): vo
 				throw new Error(`reader-host: unexpected request to ${url.href}`);
 			}
 			if (url.pathname === '/xrpc/com.atproto.space.getSpaceCredential') {
-				const space = String(JSON.parse(String(init?.body ?? '{}')).space ?? '');
+				const body = JSON.parse(String(init?.body ?? '{}'));
+				const space = String(body.space ?? '');
 				const served = hosts.get(spaceParts(space).authority);
 				if (!served) throw new Error(`reader-host: no host served for ${space}`);
-				const [, holder, named] = (headers.get('authorization') ?? '').split(' ').slice(1);
-				if (named !== space) return json(400, { error: 'InvalidToken' });
+				const [, holder, named] = String(body.delegationToken ?? '').split(' ');
+				if (named !== space) return json(400, { error: 'InvalidDelegationToken' });
 				if (!admits(served, holder, space)) {
 					return json(400, { error: 'UserNotAuthorized', message: 'User not authorized' });
 				}
@@ -315,13 +329,16 @@ export function serveReader(groupDid: string, host: GroupSpaceReader | null): vo
 			}
 			const space = url.searchParams.get('space') ?? '';
 			const authorization = headers.get('authorization') ?? '';
-			if (authorization.startsWith('Atproto-Space ') && credentialSpace(authorization) !== space) {
+			if (
+				authorization.startsWith('Atproto-Space-Credential ') &&
+				credentialSpace(authorization) !== space
+			) {
 				return json(401, { error: 'InvalidToken' });
 			}
 			const did = /^at:\/\/([^/]+)\//.exec(space)?.[1] ?? '';
 			const served = hosts.get(did);
 			if (!served) throw new Error(`reader-host: no host served for ${did || url.href}`);
-			return answer(served, url);
+			return answer(served, url, headers);
 		})
 	);
 }
