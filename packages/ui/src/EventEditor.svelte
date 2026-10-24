@@ -46,6 +46,7 @@
 		adapter,
 		viewer,
 		initialTheme,
+		storedImageUrl,
 		prefill = null
 	}: {
 		eventData: FlatEventRecord | null;
@@ -59,6 +60,7 @@
 		initialTheme?: Partial<EventTheme>;
 		/** Autofill payload for new events (e.g. imported from Luma/Meetup). */
 		prefill?: EventEditorPrefill | null;
+		storedImageUrl?: (blob: { $type: 'blob'; ref: { $link: string } }) => string | null;
 	} = $props();
 
 	let isNew = $derived(eventData === null);
@@ -158,7 +160,9 @@
 		if (eventData.media && eventData.media.length > 0) {
 			const media = eventData.media.find((m) => m.role === 'thumbnail');
 			if (media?.content) {
-				const url = getCDNImageBlobUrl({ did: actorDid, blob: media.content });
+				const url = storedImageUrl
+					? storedImageUrl(media.content)
+					: getCDNImageBlobUrl({ did: actorDid, blob: media.content });
 				if (url) {
 					thumbnailPreview = url;
 					thumbnailChanged = false;
