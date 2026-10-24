@@ -47,5 +47,13 @@ export function signUpPDS(): string {
 // where to redirect after oauth login/signup
 export const REDIRECT_PATH = '/oauth/callback';
 
+// where to redirect after a group's admin links the group's account. Its own
+// path, because the sign-in callback signs the browser in as whoever authorized.
+export const GROUP_LINK_REDIRECT_PATH = '/oauth/group-link/callback';
+
+// where a group host returns after the person signs up a new group there. Its own
+// path for the same reason, and because what comes back is a group to set up.
+export const GROUP_CREATE_REDIRECT_PATH = '/oauth/group-create/callback';
+
 // redirect the user back to the page they were on before login
 export const REDIRECT_TO_LAST_PAGE_ON_LOGIN = true;
