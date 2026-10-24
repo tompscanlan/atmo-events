@@ -38,8 +38,9 @@ export function isLoopback(url) {
 }
 
 /**
- * The names this run resolves to 127.0.0.1 or ::1 alone, as under the devnet's
- * scripts/https-run. The answer decides, never the text; a failed lookup is not local.
+ * The names this run resolves to loopback addresses alone (127.0.0.0/8 or ::1), as
+ * under snowglobe run, which gives each globe its own 127.x address. The answer
+ * decides, never the text; a failed lookup is not local.
  * @param {Iterable<string>} hostnames
  * @param {(name: string, options: { all: true }) => Promise<{ address: string }[]>} [lookup]
  * @returns {Promise<Set<string>>}
@@ -49,7 +50,7 @@ export async function localNames(hostnames, lookup = dns.lookup) {
 	for (const name of hostnames) {
 		try {
 			const answer = await lookup(name, { all: true });
-			const local = answer.every(({ address }) => address === '127.0.0.1' || address === '::1');
+			const local = answer.every(({ address }) => address.startsWith('127.') || address === '::1');
 			if (answer.length > 0 && local) names.add(name);
 		} catch {
 			// No answer here: not this machine.

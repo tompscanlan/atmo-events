@@ -378,7 +378,7 @@ describe('fixtureCheck', () => {
 });
 
 describe('localNames, which admits a devnet name by the answer this run gets for it, never by its text', () => {
-	it('admits a name whose every address is 127.0.0.1 or ::1, asking for all of them', async () => {
+	it('admits a name whose every address is loopback, asking for all of them', async () => {
 		const lookup = resolver({
 			'alpha.devnet.test': ['127.0.0.1'],
 			'plc.directory': ['127.0.0.1', '::1']
@@ -393,10 +393,18 @@ describe('localNames, which admits a devnet name by the answer this run gets for
 		]);
 	});
 
+	it("admits a name on a globe's own loopback address, which snowglobe gives each globe after the first", async () => {
+		const names = await localNames(
+			['alpha.local.snowglobe.at'],
+			resolver({ 'alpha.local.snowglobe.at': ['127.0.0.3'] })
+		);
+
+		expect([...names]).toEqual(['alpha.local.snowglobe.at']);
+	});
+
 	it.each([
 		['a mixed answer', ['127.0.0.1', '203.0.113.7']],
 		['a public answer', ['203.0.113.7']],
-		['another loopback address', ['127.0.0.2']],
 		['a mapped loopback address', ['::ffff:127.0.0.1']],
 		['an empty answer', []]
 	])('refuses %s', async (_, addresses) => {
