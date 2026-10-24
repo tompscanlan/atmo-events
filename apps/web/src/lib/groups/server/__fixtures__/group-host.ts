@@ -28,6 +28,7 @@
 // is caught. A test can shrink the page (`recordPageSize`) to put a record on
 // page two without writing a hundred of them.
 import { vi } from 'vitest';
+import { fixtureKem } from './space-mac-host';
 import {
 	ABOUT_SPACE_READER_ROLES,
 	GROUP_ACCESS_COLLECTION,
@@ -174,11 +175,16 @@ export function fakeGroupHost(options: FakeGroupHostOptions) {
 					recordKey(query.get('space'), query.get('collection'), query.get('rkey'))
 				);
 				if (!hit) return Response.json({ error: 'RecordNotFound' }, { status: 400 });
-				return Response.json({
+				const found = {
 					uri: `${hit.space}/${did}/${hit.collection}/${hit.rkey}`,
-					cid: 'bafycreate',
-					value: hit.record
-				});
+					cid: 'bafycreate'
+				};
+				// A read made with a credential asks for the record's MAC; one through the
+				// group's session does not, and gets none.
+				return Response.json(
+					{ ...found, value: hit.record },
+					{ headers: await (await fixtureKem).macHeaders(headers, found) }
+				);
 			}
 
 			// The reference host's paging: newest URI first, `uri < cursor` after

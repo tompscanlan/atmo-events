@@ -1,9 +1,10 @@
 // A holder's own space credential, and the acceptance reads made with it.
 //
-// Four rules are tested here:
+// Five rules are tested here:
 //
 //   1. The signatures are the alpha's HTTP Message Signatures, byte for byte: the
-//      base is checked against the migration notes' own example and verified with
+//      base and the signature-input are @atproto/space's own (the 2026-10-22
+//      alpha's createSpaceSigHeaders), and each signature is verified with
 //      WebCrypto, not with the code that made it.
 //   2. Acceptances are read by DID, each at that member's own PDS and signed for
 //      that DID, and never found by listing the space's repos.
@@ -14,6 +15,8 @@
 //   4. Each holder reads with their own credential, kept per holder and space, so
 //      no holder is ever served another's. A refusal that names the holder is
 //      `SpaceAccessDenied`, an answer, never an outage.
+//   5. A record read asks the repo's host for the record's MAC, and a record whose
+//      MAC does not verify is not read.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { P256PrivateKeyExportable } from '@atcute/crypto';
@@ -32,6 +35,7 @@ import { credentialSpaceReader } from './about-read';
 import { rosterFromRecords, type GroupMembers } from './members-read';
 import { GROUP_ACCEPTANCE_COLLECTION, GROUP_MEMBERSHIP_COLLECTION } from '../members-record';
 import { MEMBERS_SPACE_TYPE } from '../types';
+import { fakeKemHost } from './__fixtures__/space-mac-host';
 
 import { spaceUri } from '../ids';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -48,10 +52,16 @@ const HOSTS: Record<string, string> = {
 	[CAROL]: 'https://carol.pds.test',
 	[MALLORY]: 'https://mallory.pds.test'
 };
+/** The KEM key every fake repo publishes; its hosts MAC what they serve with it. */
+const kem = await fakeKemHost();
 const hosts: SpaceHosts = {
 	repoHost: async (did) => HOSTS[did] ?? Promise.reject(new Error(`no host for ${did}`)),
-	spaceHost: async () => GROUP_HOST
+	spaceHost: async () => GROUP_HOST,
+	kemKey: async () => kem.did
 };
+
+const CREDENTIAL_SIG_INPUT =
+	'("authorization" "atproto-space-audience");tag="atproto-space-credential"';
 
 function base64url(text: string): string {
 	return btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -84,15 +94,15 @@ function holderOf(credential: string): string | null {
 	return typeof holder === 'string' ? holder : null;
 }
 
-function json(status: number, body: unknown): Response {
+function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
 	return new Response(JSON.stringify(body), {
 		status,
-		headers: { 'content-type': 'application/json' }
+		headers: { 'content-type': 'application/json', ...headers }
 	});
 }
 
 async function verifies(signer: SpaceSigningKey, base: string, header: string): Promise<boolean> {
-	const match = /^atproto-space=:([A-Za-z0-9+/=]+):$/.exec(header);
+	const match = /^atproto-space-credential=:([A-Za-z0-9+/=]+):$/.exec(header);
 	if (!match) return false;
 	const signature = Uint8Array.from(atob(match[1]), (c) => c.charCodeAt(0));
 	expect(signature.length).toBe(64);
@@ -117,40 +127,24 @@ async function newSigner(): Promise<SpaceSigningKey> {
 }
 
 describe('spaceSigHeaders', () => {
-	it('signs a credential use over the authorization and the audience, as the notes spell it', async () => {
+	it('signs a credential use over the authorization and the audience, as @atproto/space does', async () => {
 		const signer = await newSigner();
-		const headers = await spaceSigHeaders(signer, 'Atproto-Space cred.jwt', BOB);
+		const headers = await spaceSigHeaders(signer, 'Atproto-Space-Credential cred.jwt', BOB);
 
-		expect(headers.authorization).toBe('Atproto-Space cred.jwt');
+		expect(headers.authorization).toBe('Atproto-Space-Credential cred.jwt');
 		expect(headers['atproto-space-audience']).toBe(BOB);
-		expect(headers['signature-input']).toBe(
-			'atproto-space=("authorization" "atproto-space-audience")'
-		);
-		// The base, from the migration notes' minimal example.
+		expect(headers['signature-input']).toBe(`atproto-space-credential=${CREDENTIAL_SIG_INPUT}`);
 		const base = [
-			'"authorization": Atproto-Space cred.jwt',
+			'"authorization": Atproto-Space-Credential cred.jwt',
 			`"atproto-space-audience": ${BOB}`,
-			'"@signature-params": ("authorization" "atproto-space-audience")'
-		].join('\n');
-		expect(await verifies(signer, base, headers.signature)).toBe(true);
-	});
-
-	it('signs a delegation token over the authorization alone, and names the key', async () => {
-		const signer = await newSigner();
-		const headers = await spaceSigHeaders(signer, 'Bearer delegation.jwt');
-
-		expect(signer.keyId).toMatch(/^did:key:zDn/);
-		expect(headers['atproto-space-audience']).toBeUndefined();
-		expect(headers['signature-input']).toBe(
-			`atproto-space=("authorization");keyid="${signer.keyId}"`
-		);
-		const base = [
-			'"authorization": Bearer delegation.jwt',
-			`"@signature-params": ("authorization");keyid="${signer.keyId}"`
+			`"@signature-params": ${CREDENTIAL_SIG_INPUT}`
 		].join('\n');
 		expect(await verifies(signer, base, headers.signature)).toBe(true);
 	});
 });
+
+/** A `getSpaceCredential` request's body. */
+type ExchangeBody = { space?: unknown; credentialKid?: unknown; delegationToken?: unknown };
 
 /** A fake of every holder's PDS and every member's: a holder's session answers
  *  `getDelegationToken` with a token naming them, the group's host exchanges it
@@ -159,7 +153,11 @@ describe('spaceSigHeaders', () => {
 function network(options: {
 	accepted?: Set<string>;
 	/** A member host's answer, overriding `accepted`. */
-	answer?: (did: string, credential: string) => Response | null;
+	answer?: (
+		did: string,
+		credential: string,
+		headers: Headers
+	) => Response | null | Promise<Response | null>;
 	/** The holder's PDS's answer to a delegation request, overriding the token. */
 	delegate?: () => Response | null;
 	/** The group host's answer to an exchange, overriding the credential. */
@@ -168,7 +166,7 @@ function network(options: {
 }) {
 	let issued = 0;
 	const delegations: string[] = [];
-	const exchanges: { headers: Headers; body: unknown }[] = [];
+	const exchanges: { headers: Headers; body: ExchangeBody }[] = [];
 	const reads: { url: URL; headers: Headers }[] = [];
 	const others: string[] = [];
 
@@ -187,28 +185,37 @@ function network(options: {
 		const url = new URL(String(input));
 		const headers = new Headers(init?.headers);
 		if (url.pathname === '/xrpc/com.atproto.space.getSpaceCredential') {
-			exchanges.push({ headers, body: JSON.parse(String(init?.body)) });
+			const body = JSON.parse(String(init?.body)) as ExchangeBody;
+			exchanges.push({ headers, body });
 			const refused = options.exchange?.();
 			if (refused) return refused;
 			issued++;
 			const exp = Math.floor((Date.now() + (options.lifetimeMs ?? 600_000)) / 1000);
-			const holder = /^Bearer delegation-(did:[^-]+)-/.exec(
-				headers.get('authorization') ?? ''
-			)?.[1];
+			const holder = /^delegation-(did:[^-]+)-/.exec(String(body.delegationToken))?.[1];
 			return json(200, { credential: jwt({ exp, n: issued, holder }) });
 		}
 		if (url.pathname === '/xrpc/com.atproto.space.getRecord') {
 			reads.push({ url, headers });
 			const did = url.searchParams.get('repo') ?? '';
-			const credential = (headers.get('authorization') ?? '').replace(/^Atproto-Space /, '');
-			const overridden = options.answer?.(did, credential);
+			const credential = (headers.get('authorization') ?? '').replace(
+				/^Atproto-Space-Credential /,
+				''
+			);
+			const overridden = await options.answer?.(did, credential, headers);
 			if (overridden) return overridden;
 			if (options.accepted?.has(did)) {
-				return json(200, {
+				const record = {
 					uri: `${MEMBERS}/${did}/${GROUP_ACCEPTANCE_COLLECTION}/self`,
-					cid: 'bafytest',
-					value: { $type: GROUP_ACCEPTANCE_COLLECTION, createdAt: '2026-10-04T10:00:00.000Z' }
-				});
+					cid: 'bafytest'
+				};
+				return json(
+					200,
+					{
+						...record,
+						value: { $type: GROUP_ACCEPTANCE_COLLECTION, createdAt: '2026-10-04T10:00:00.000Z' }
+					},
+					await kem.macHeaders(headers, record)
+				);
 			}
 			return json(400, { error: 'RecordNotFound', message: 'Could not locate record' });
 		}
@@ -234,7 +241,7 @@ afterEach(() => {
 });
 
 describe('exchangeSpaceCredential', () => {
-	it("gets a delegation token through the holder's own session, then a credential signed for a new key", async () => {
+	it("gets a delegation token through the holder's own session, then a credential for a new key, both named in the body", async () => {
 		const net = network({});
 		const cred = await exchangeSpaceCredential(net.holder, MEMBERS, GROUP_HOST);
 
@@ -243,17 +250,15 @@ describe('exchangeSpaceCredential', () => {
 		]);
 		expect(net.exchanges).toHaveLength(1);
 		const [exchange] = net.exchanges;
-		expect(exchange.body).toEqual({ space: MEMBERS });
-		const token = `delegation-${VIEWER}-1`;
-		expect(exchange.headers.get('authorization')).toBe(`Bearer ${token}`);
-		expect(exchange.headers.get('signature-input')).toBe(
-			`atproto-space=("authorization");keyid="${cred.signer.keyId}"`
-		);
-		const base = [
-			`"authorization": Bearer ${token}`,
-			`"@signature-params": ("authorization");keyid="${cred.signer.keyId}"`
-		].join('\n');
-		expect(await verifies(cred.signer, base, exchange.headers.get('signature') ?? '')).toBe(true);
+		expect(cred.signer.keyId).toMatch(/^did:key:zDn/);
+		expect(exchange.body).toEqual({
+			space: MEMBERS,
+			credentialKid: cred.signer.keyId,
+			delegationToken: `delegation-${VIEWER}-1`
+		});
+		// The token is the body's, so the request carries no authorization to sign.
+		expect(exchange.headers.get('authorization')).toBeNull();
+		expect(exchange.headers.get('signature')).toBeNull();
 		expect(cred.expiresAt).toBeGreaterThan(Date.now());
 		expect(holderOf(cred.token)).toBe(VIEWER);
 	});
@@ -263,7 +268,8 @@ describe('exchangeSpaceCredential', () => {
 	it.each([
 		['the holder’s session does not read the space', 'delegate', 403, 'ScopeMissingError'],
 		['the authority does not let the holder in', 'exchange', 400, 'UserNotAuthorized'],
-		['the authority does not let the app in', 'exchange', 400, 'AppNotAuthorized']
+		['the authority does not let the app in', 'exchange', 400, 'AppNotAuthorized'],
+		['the authority does not say which it refused', 'exchange', 400, 'NotAuthorized']
 	] as const)('throws SpaceAccessDenied when %s', async (_why, step, status, error) => {
 		const refusal = () => json(status, { error, message: 'refused' });
 		const net = network(step === 'delegate' ? { delegate: refusal } : { exchange: refusal });
@@ -308,10 +314,13 @@ describe('reading acceptances by DID', () => {
 			expect(read.url.searchParams.get('space')).toBe(MEMBERS);
 			expect(read.url.searchParams.get('collection')).toBe(GROUP_ACCEPTANCE_COLLECTION);
 			expect(read.url.searchParams.get('rkey')).toBe('self');
-			expect(read.headers.get('authorization')).toMatch(/^Atproto-Space /);
+			expect(read.headers.get('authorization')).toMatch(/^Atproto-Space-Credential /);
 			expect(read.headers.get('atproto-space-audience')).toBe(did);
 			expect(read.headers.get('signature-input')).toBe(
-				'atproto-space=("authorization" "atproto-space-audience")'
+				`atproto-space-credential=${CREDENTIAL_SIG_INPUT}`
+			);
+			expect(read.headers.get('atproto-space-want-mac')).toMatch(
+				/^type="atproto-space-record", ver=1, key_share="did:key:zDn[1-9A-HJ-NP-Za-km-z]+"$/
 			);
 		}
 		// One credential serves every host, and nothing lists the space's repos.
@@ -383,6 +392,38 @@ describe('reading acceptances by DID', () => {
 		expect(net.reads).toHaveLength(1);
 	});
 
+	// The MAC is the host's proof that the record came from that member's repo: an
+	// answer with none, or with one from another key, is no acceptance.
+	it('reads an acceptance with no MAC, or a MAC from another key, as unconfirmed', async () => {
+		const other = await fakeKemHost();
+		const record = {
+			uri: `${MEMBERS}/${BOB}/${GROUP_ACCEPTANCE_COLLECTION}/self`,
+			cid: 'bafytest'
+		};
+		const value = { $type: GROUP_ACCEPTANCE_COLLECTION, createdAt: '2026-10-04T10:00:00.000Z' };
+		for (const mac of [null, other]) {
+			clearSpaceCredentials();
+			const net = network({
+				answer: async (_did, _credential, headers) =>
+					json(200, { ...record, value }, mac ? await mac.macHeaders(headers, record) : {})
+			});
+			const reader = credentialAcceptanceReader(net.holder, GROUP_DID, hosts);
+			expect((await reader.accepted(MEMBERS, [BOB])).get(BOB)).toBe(false);
+			expect(net.reads).toHaveLength(1);
+		}
+	});
+
+	it('reads a member who publishes no KEM key as unconfirmed, without asking their PDS', async () => {
+		const net = network({ accepted: new Set([BOB]) });
+		const noKem: SpaceHosts = {
+			...hosts,
+			kemKey: async (did) => Promise.reject(new Error(`${did} names no #atproto_kem key`))
+		};
+		const reader = credentialAcceptanceReader(net.holder, GROUP_DID, noKem);
+		expect((await reader.accepted(MEMBERS, [BOB])).get(BOB)).toBe(false);
+		expect(net.reads).toEqual([]);
+	});
+
 	it('reads a member whose DID does not resolve as unconfirmed', async () => {
 		const net = network({});
 		const reader = credentialAcceptanceReader(net.holder, GROUP_DID, hosts);
@@ -404,7 +445,7 @@ describe('reading acceptances by DID', () => {
 		vi.setSystemTime(new Date('2026-10-04T10:09:45.000Z'));
 		await reader.accepted(MEMBERS, [BOB]);
 		expect(net.exchanges).toHaveLength(2);
-		const keys = net.exchanges.map((e) => e.headers.get('signature-input'));
+		const keys = net.exchanges.map((e) => e.body.credentialKid);
 		expect(keys[0]).not.toBe(keys[1]);
 		// Each credential took its own delegation token.
 		expect(net.delegations).toHaveLength(2);
@@ -452,12 +493,12 @@ describe('a credential per holder', () => {
 		await mallory.accepted(MEMBERS, [BOB]);
 
 		// One delegation and one exchange each, from each holder's own session.
-		expect(net.exchanges.map((e) => e.headers.get('authorization'))).toEqual([
-			`Bearer delegation-${CAROL}-1`,
-			`Bearer delegation-${MALLORY}-2`
+		expect(net.exchanges.map((e) => e.body.delegationToken)).toEqual([
+			`delegation-${CAROL}-1`,
+			`delegation-${MALLORY}-2`
 		]);
 		const readers = net.reads.map((read) =>
-			holderOf((read.headers.get('authorization') ?? '').replace(/^Atproto-Space /, ''))
+			holderOf((read.headers.get('authorization') ?? '').replace(/^Atproto-Space-Credential /, ''))
 		);
 		expect(readers).toEqual([CAROL, MALLORY, CAROL, MALLORY]);
 	});
@@ -499,5 +540,29 @@ describe('exchanges under way', () => {
 
 		expect(await credentialSpaceReader(holder, groupHosts).get(read)).toBeNull();
 		expect(net.exchanges).toHaveLength(1);
+	});
+});
+
+describe('a record read with a credential', () => {
+	const read = { space: MEMBERS, repo: GROUP_DID, collection: 'x.y.z', rkey: 'self' };
+	const record = { uri: `${MEMBERS}/${GROUP_DID}/x.y.z/self`, cid: 'bafytest' };
+	const groupHosts: SpaceHosts = { ...hosts, repoHost: async () => GROUP_HOST };
+
+	it('returns the record when its MAC verifies, and never when it does not', async () => {
+		const other = await fakeKemHost();
+		for (const [mac, verifies] of [
+			[kem, true],
+			[other, false],
+			[null, false]
+		] as const) {
+			clearSpaceCredentials();
+			const net = network({
+				answer: async (_did, _credential, headers) =>
+					json(200, { ...record, value: {} }, mac ? await mac.macHeaders(headers, record) : {})
+			});
+			const pending = credentialSpaceReader(net.holder, groupHosts).get(read);
+			if (verifies) expect((await pending)?.uri).toBe(record.uri);
+			else await expect(pending).rejects.toThrow();
+		}
 	});
 });

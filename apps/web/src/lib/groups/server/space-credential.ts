@@ -2,12 +2,14 @@
 //
 // A holder's own session (./acceptance.ts `MemberSession`, or the group's own,
 // ./session.ts) asks its PDS for a delegation token, and the space authority's
-// host exchanges that token for a credential bound to a fresh P-256 key. Every
-// request made with the credential is signed with that key over its
-// `authorization` and `atproto-space-audience` headers (HTTP Message Signatures,
-// RFC 9421). One credential reads every repo host in the space, so each member's
-// acceptance is read at that member's own PDS, by their DID. (Spec: FR-207,
-// FR-211.)
+// host exchanges that token for a credential bound to a fresh P-256 key, the token
+// and the key both in the request's body. Every request made with the credential
+// is signed with that key over its `authorization` and `atproto-space-audience`
+// headers (HTTP Message Signatures, RFC 9421), and a record read also asks the
+// repo's host for a MAC of the record and checks it (./space-mac.ts). One
+// credential reads every repo host in the space, so each member's acceptance is
+// read at that member's own PDS, by their DID. This is the request as the
+// 2026-10-22 spaces alpha takes it. (Spec: FR-207, FR-211.)
 //
 // Each person reads with their own credential, so no one's session reads for
 // anyone else (TS 2026-10-15). The authority decides who gets one: a refusal is
@@ -32,7 +34,11 @@ import {
 	type XrpcAnswer,
 	type XrpcHandle
 } from './xrpc';
-const SIGNATURE_LABEL = 'atproto-space';
+import { MAC_HEADER, recordMacCheck, WANT_MAC_HEADER } from './space-mac';
+
+const SIGNATURE_LABEL = 'atproto-space-credential';
+const AUTH_SCHEME = 'Atproto-Space-Credential';
+const GET_RECORD = 'com.atproto.space.getRecord';
 
 /** The key a credential is bound to. `keyId` is its P-256 did:key, which the host
  *  writes into the credential as `cnf.kid`. */
@@ -74,11 +80,13 @@ export function isSpaceAccessDenied(e: unknown): e is SpaceAccessDenied {
 	return e instanceof SpaceAccessDenied;
 }
 
-/** The refusals that say the holder may not read the space. */
+/** The refusals that say the holder may not read the space. `NotAuthorized` is an
+ *  authority's refusal that does not say whether it was the holder or the app. */
 const DENIED: Record<string, true> = {
 	ScopeMissingError: true,
 	UserNotAuthorized: true,
-	AppNotAuthorized: true
+	AppNotAuthorized: true,
+	NotAuthorized: true
 };
 
 /** Where a DID's services are. Injectable, because the DID resolvers keep the
@@ -88,6 +96,9 @@ export interface SpaceHosts {
 	repoHost(did: string): Promise<string>;
 	/** The host that answers for spaces `did` is the authority of. */
 	spaceHost(did: string): Promise<string>;
+	/** The P-256 did:key `did` publishes as `#atproto_kem`, which its repo host
+	 *  derives a record read's MAC from. */
+	kemKey(did: string): Promise<string>;
 }
 
 function toBase64(bytes: Uint8Array): string {
@@ -97,30 +108,27 @@ function toBase64(bytes: Uint8Array): string {
 }
 
 /**
- * The headers that sign a space request. Without an audience they sign a
- * delegation token for `getSpaceCredential` and name the key, which the host binds
- * the credential to. With one they sign a request made with the credential, and
- * the audience is the repo owner's DID for a repo read, or the authority's DID for
- * a space-host call. The signature base is RFC 9421's: each covered field, then
- * `@signature-params`, joined by LF with no trailing LF.
+ * The headers that sign a request made with a credential. The audience is the
+ * repo owner's DID for a repo read, or the authority's DID for a space-host call.
+ * The signature base is RFC 9421's: each covered field, then `@signature-params`,
+ * joined by LF with no trailing LF.
  */
 export async function spaceSigHeaders(
 	signer: SpaceSigningKey,
 	authorization: string,
-	audience?: string
+	audience: string
 ): Promise<Record<string, string>> {
-	const params =
-		audience === undefined
-			? `("authorization");keyid="${signer.keyId}"`
-			: '("authorization" "atproto-space-audience")';
-	const lines = [`"authorization": ${authorization}`];
-	if (audience !== undefined) lines.push(`"atproto-space-audience": ${audience}`);
-	lines.push(`"@signature-params": ${params}`);
+	const params = `("authorization" "atproto-space-audience");tag="${SIGNATURE_LABEL}"`;
+	const lines = [
+		`"authorization": ${authorization}`,
+		`"atproto-space-audience": ${audience}`,
+		`"@signature-params": ${params}`
+	];
 	// ECDSA P-256 over SHA-256, as 64 bytes r || s, which is what WebCrypto returns.
 	const signature = await signer.key.sign(new TextEncoder().encode(lines.join('\n')));
 	return {
 		authorization,
-		...(audience !== undefined ? { 'atproto-space-audience': audience } : {}),
+		'atproto-space-audience': audience,
 		'signature-input': `${SIGNATURE_LABEL}=${params}`,
 		signature: `${SIGNATURE_LABEL}=:${toBase64(signature)}:`
 	};
@@ -170,11 +178,8 @@ export async function exchangeSpaceCredential(
 	const signer: SpaceSigningKey = { key, keyId: await key.exportPublicKey('did') };
 	const res = await fetch(new URL('/xrpc/com.atproto.space.getSpaceCredential', authorityHost), {
 		method: 'POST',
-		headers: {
-			'content-type': 'application/json',
-			...(await spaceSigHeaders(signer, `Bearer ${token}`))
-		},
-		body: JSON.stringify({ space })
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ space, credentialKid: signer.keyId, delegationToken: token })
 	});
 	const issued = await readXrpc(res);
 	if (!issued.ok) {
@@ -276,6 +281,29 @@ export async function credentialRequest(
 
 type SpaceCall = { host: string; audience: string; nsid: string; query: Record<string, string> };
 
+/** One GET made with `cred`. A record read asks the repo's host for the record's
+ *  MAC, and an answer whose MAC does not verify throws: the record cannot be
+ *  shown to have come from that repo's host. */
+async function fetchWithCredential(
+	cred: SpaceCredential,
+	hosts: SpaceHosts,
+	call: SpaceCall
+): Promise<Response> {
+	const url = new URL(`/xrpc/${call.nsid}?${new URLSearchParams(call.query)}`, call.host);
+	const headers = await spaceSigHeaders(cred.signer, `${AUTH_SCHEME} ${cred.token}`, call.audience);
+	const mac =
+		call.nsid === GET_RECORD ? await recordMacCheck(await hosts.kemKey(call.query.repo)) : null;
+	if (mac) headers[WANT_MAC_HEADER] = mac.header;
+	const res = await fetch(url, { method: 'GET', headers });
+	if (!mac || !res.ok) return res;
+	const body = (await res.clone().json()) as { uri?: unknown; cid?: unknown };
+	const record = { uri: String(body.uri ?? ''), cid: String(body.cid ?? '') };
+	if (!(await mac.verify(record, res.headers.get(MAC_HEADER)))) {
+		throw new Error(`${call.nsid} at ${call.host}: the record's MAC does not verify`);
+	}
+	return res;
+}
+
 /** `credentialRequest`'s response as it came, for a body that is not JSON: a
  *  blob. A failure's body is still the PDS's JSON error. */
 export async function credentialFetch(
@@ -286,13 +314,9 @@ export async function credentialFetch(
 	underWay?: ExchangesUnderWay
 ): Promise<Response> {
 	const authorityHost = await hosts.spaceHost(spaceAuthority(space));
-	const url = new URL(`/xrpc/${call.nsid}?${new URLSearchParams(call.query)}`, call.host);
 	for (let attempt = 0; ; attempt++) {
 		const cred = await spaceCredential(holder, space, authorityHost, underWay);
-		const res = await fetch(url, {
-			method: 'GET',
-			headers: await spaceSigHeaders(cred.signer, `Atproto-Space ${cred.token}`, call.audience)
-		});
+		const res = await fetchWithCredential(cred, hosts, call);
 		if (res.ok || attempt > 0) return res;
 		const answer = await readXrpc(res.clone());
 		if (answer.ok || !answer.error || !SPENT[answer.error]) return res;
@@ -311,16 +335,16 @@ async function readAcceptance(
 	did: string
 ): Promise<AcceptanceRead> {
 	try {
-		const host = await hosts.repoHost(did);
-		const query = new URLSearchParams({
-			space,
-			repo: did,
-			collection: GROUP_ACCEPTANCE_COLLECTION,
-			rkey: GROUP_ACCEPTANCE_RKEY
-		});
-		const res = await fetch(new URL(`/xrpc/com.atproto.space.getRecord?${query}`, host), {
-			method: 'GET',
-			headers: await spaceSigHeaders(cred.signer, `Atproto-Space ${cred.token}`, did)
+		const res = await fetchWithCredential(cred, hosts, {
+			host: await hosts.repoHost(did),
+			audience: did,
+			nsid: GET_RECORD,
+			query: {
+				space,
+				repo: did,
+				collection: GROUP_ACCEPTANCE_COLLECTION,
+				rkey: GROUP_ACCEPTANCE_RKEY
+			}
 		});
 		const answer = await readXrpc(res);
 		if (answer.ok) {
@@ -384,30 +408,48 @@ const didResolver = {
 		createDidDocumentResolver(undefined, liveFetch).resolve(did)
 };
 
-/** How long a resolved endpoint is kept. A roster page reads one per member. */
+/** How long a resolved endpoint or key is kept. A roster page reads one per member. */
 const RESOLVED_TTL_MS = 10 * 60 * 1000;
-const resolved = new Map<string, { endpoint: string; at: number }>();
+const resolved = new Map<string, { value: string; at: number }>();
 
 /** The endpoint of the first of `ids` the DID document names. */
 async function serviceEndpoint(did: string, ids: readonly `#${string}`[]): Promise<string> {
 	const cacheKey = `${did}|${ids.join(',')}`;
 	const hit = resolved.get(cacheKey);
-	if (hit && Date.now() - hit.at < RESOLVED_TTL_MS) return hit.endpoint;
+	if (hit && Date.now() - hit.at < RESOLVED_TTL_MS) return hit.value;
 
 	const doc = await didResolver.resolve(did as Did<'plc'> | Did<'web'>);
 	for (const id of ids) {
 		const service = doc.service?.find((s) => s.id === id || s.id === `${doc.id}${id}`);
 		if (service && typeof service.serviceEndpoint === 'string') {
-			resolved.set(cacheKey, { endpoint: service.serviceEndpoint, at: Date.now() });
+			resolved.set(cacheKey, { value: service.serviceEndpoint, at: Date.now() });
 			return service.serviceEndpoint;
 		}
 	}
 	throw new Error(`${did} names no ${ids.join(' or ')} service`);
 }
 
+/** The did:key of the DID document's `#atproto_kem` key. */
+async function kemKey(did: string): Promise<string> {
+	const cacheKey = `${did}|#atproto_kem`;
+	const hit = resolved.get(cacheKey);
+	if (hit && Date.now() - hit.at < RESOLVED_TTL_MS) return hit.value;
+
+	const doc = await didResolver.resolve(did as Did<'plc'> | Did<'web'>);
+	const method = doc.verificationMethod?.find(
+		(m) => m.id === '#atproto_kem' || m.id === `${doc.id}#atproto_kem`
+	);
+	const multibase = method && 'publicKeyMultibase' in method ? method.publicKeyMultibase : null;
+	if (typeof multibase !== 'string') throw new Error(`${did} names no #atproto_kem key`);
+	const key = `did:key:${multibase}`;
+	resolved.set(cacheKey, { value: key, at: Date.now() });
+	return key;
+}
+
 /** Hosts from DID documents. A space authority may name a separate space host,
  *  and its PDS answers when it does not. */
 export const didSpaceHosts: SpaceHosts = {
 	repoHost: (did) => serviceEndpoint(did, ['#atproto_pds']),
-	spaceHost: (did) => serviceEndpoint(did, ['#atproto_space_host', '#atproto_pds'])
+	spaceHost: (did) => serviceEndpoint(did, ['#atproto_space_host', '#atproto_pds']),
+	kemKey
 };

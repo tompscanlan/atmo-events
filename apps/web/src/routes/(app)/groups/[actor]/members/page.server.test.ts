@@ -147,7 +147,7 @@ describe('/groups/[actor]/members load, with membership records', () => {
 			({ url }) => url.searchParams.get('collection') === GROUP_ACCEPTANCE_COLLECTION
 		);
 		expect(confirmations.map(({ url }) => url.searchParams.get('repo'))).toEqual([MEMBER]);
-		expect(confirmations.every(({ as }) => as.startsWith('Atproto-Space '))).toBe(true);
+		expect(confirmations.every(({ as }) => as.startsWith('Atproto-Space-Credential '))).toBe(true);
 		expect(fixtureSessions.reads).toBe(0);
 	});
 
