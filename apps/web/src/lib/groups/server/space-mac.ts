@@ -6,11 +6,14 @@
 // for that one request, the repo's host derives a secret shared with it from the
 // repo's own `#atproto_kem` key, and it answers with `atproto-space-mac`, an HMAC
 // of the record's URI and CID under that secret. A host refuses a credential read
-// that asks for none (`BadSpaceMac`).
+// that asks for none (`BadSpaceMac`). The MAC vouches for the URI and the CID the
+// host names, so a reader also checks the value against that CID (`recordCid`).
 //
 // The secret is ECDH on P-256 put through DHKEM(P-256, HKDF-SHA256), RFC 9180
 // § 4.1, as @atproto/space derives it (kem.ts, mac.ts, on the 2026-10-22 alpha).
-// Everything is WebCrypto, which the Workers runtime has.
+// The cryptography is WebCrypto, which the Workers runtime has.
+import { encode } from '@atcute/cbor';
+import { CODEC_DCBOR, create, fromString, toString } from '@atcute/cid';
 import { P256PublicKey, parseDidKey } from '@atcute/crypto';
 
 export const WANT_MAC_HEADER = 'atproto-space-want-mac';
@@ -79,25 +82,11 @@ export async function sharedSecret(
 	return new Uint8Array(bits);
 }
 
-/** The bytes of a CID in its usual base32 form. */
-function cidBytes(cid: string): Uint8Array {
-	const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
-	if (!cid.startsWith('b')) throw new Error(`not a base32 CID: ${cid}`);
-	const out: number[] = [];
-	let value = 0;
-	let bits = 0;
-	for (const char of cid.slice(1)) {
-		const digit = alphabet.indexOf(char);
-		if (digit < 0) throw new Error(`not a base32 CID: ${cid}`);
-		value = (value << 5) | digit;
-		bits += 5;
-		if (bits >= 8) {
-			bits -= 8;
-			out.push((value >> bits) & 0xff);
-			value &= (1 << bits) - 1;
-		}
-	}
-	return Uint8Array.from(out);
+/** The CID of a record's value: of its DRISL encoding (deterministic CBOR, with
+ *  `$link` and `$bytes` as their CBOR forms). A MAC vouches for the CID a host
+ *  names, so a reader checks the value against it too. */
+export async function recordCid(value: unknown): Promise<string> {
+	return toString(await create(CODEC_DCBOR, encode(value)));
 }
 
 /** HMAC-SHA256 over `atproto-space-record-v1`, the URI with its length, and the
@@ -113,7 +102,7 @@ export async function recordMac(secret: Uint8Array<ArrayBuffer>, uri: string, ci
 	const data = concat([
 		utf8(`${RECORD_MAC_TYPE}-v${RECORD_MAC_VERSION}`),
 		lengthPrefixed(uri),
-		cidBytes(cid)
+		fromString(cid).bytes
 	]);
 	return new Uint8Array(await crypto.subtle.sign('HMAC', key, data));
 }
@@ -163,7 +152,7 @@ export async function recordMacCheck(
 		header: `type="${RECORD_MAC_TYPE}", ver=${RECORD_MAC_VERSION}, key_share="${keyShare}"`,
 		async verify({ uri, cid }, macHeader) {
 			const got = macFromHeader(macHeader);
-			// A CID that is not base32 cannot be the record's, so nothing matches it.
+			// A CID that does not parse cannot be the record's, so nothing matches it.
 			const want = got && (await recordMac(secret, uri, cid).catch(() => null));
 			if (!got || !want) return false;
 			let diff = got.length ^ want.length;

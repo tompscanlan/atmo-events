@@ -42,6 +42,7 @@ import {
 	storedMeeting,
 	type EventHostOptions
 } from '$lib/groups/server/__fixtures__/members-only-event';
+import { recordCid } from '$lib/groups/server/space-mac';
 import type { FakeSpaceReader } from '$lib/groups/server/__fixtures__/space-reader';
 import {
 	fixtureSessions,
@@ -198,7 +199,7 @@ describe('/groups/[actor]/events/[rkey]/edit load: a members-only event', () => 
 			eventData: {
 				...MEETING_VALUE,
 				media: IMAGE,
-				cid: 'bafymeeting',
+				cid: await recordCid(stored.value),
 				did: GROUP_DID,
 				rkey: '3lmeeting',
 				uri: MEETING_URI

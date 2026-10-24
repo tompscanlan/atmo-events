@@ -89,6 +89,7 @@ import { createMembersOnlyEventAdapter } from '$lib/groups/event-page-adapter';
 import {
 	EVENT_COLLECTION as EVENT,
 	MEETING_IMAGE as IMAGE,
+	MEETING_THUMB_CID,
 	MEETING_VALUE,
 	PROFILE_NAME,
 	calendarSpaceOf,
@@ -96,6 +97,7 @@ import {
 	meetingUri,
 	storedMeeting
 } from '$lib/groups/server/__fixtures__/members-only-event';
+import { recordCid } from '$lib/groups/server/space-mac';
 import {
 	fixtureSessions,
 	readerSession,
@@ -210,7 +212,7 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 		expect(data).toStrictEqual({
 			eventData: {
 				...MEETING_VALUE,
-				cid: 'bafymeeting',
+				cid: await recordCid(stored.value),
 				did: GROUP_DID,
 				rkey: '3lmeeting',
 				uri: MEETING_URI,
@@ -241,16 +243,16 @@ describe('/groups/[actor]/events/[rkey]: what a member gets', () => {
 		const page = renderPage(data);
 		expect(page.rsvp.eventUri).toBe(MEETING_URI);
 		expect(page.rsvp.spaceUri).toBe(CALENDAR);
-		expect(page.rsvp.eventCid).toBe('bafymeeting');
+		expect(page.rsvp.eventCid).toBe(await recordCid(stored.value));
 		expect(page.rsvp.initialRsvpStatus).toBeNull();
 		expect(page.rsvp.initialRsvpRkey).toBeNull();
 		// The event shows, and nothing on the page cites its image: not the body,
 		// and not the head, where the page's og and twitter image tags go.
 		expect(page.body).toContain('Committee call');
-		expect(page.body).not.toContain('bafkreithumb');
+		expect(page.body).not.toContain(MEETING_THUMB_CID);
 		expect(page.body).not.toContain('cdn.bsky.app');
 		expect(page.head).toContain('Committee call');
-		expect(page.head).not.toContain('bafkreithumb');
+		expect(page.head).not.toContain(MEETING_THUMB_CID);
 		expect(page.head).not.toContain('cdn.bsky.app');
 	});
 

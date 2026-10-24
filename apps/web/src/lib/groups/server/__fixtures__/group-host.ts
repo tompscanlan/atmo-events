@@ -175,15 +175,15 @@ export function fakeGroupHost(options: FakeGroupHostOptions) {
 					recordKey(query.get('space'), query.get('collection'), query.get('rkey'))
 				);
 				if (!hit) return Response.json({ error: 'RecordNotFound' }, { status: 400 });
-				const found = {
-					uri: `${hit.space}/${did}/${hit.collection}/${hit.rkey}`,
-					cid: 'bafycreate'
-				};
+				const uri = `${hit.space}/${did}/${hit.collection}/${hit.rkey}`;
 				// A read made with a credential asks for the record's MAC; one through the
 				// group's session does not, and gets none.
+				const answered = await (
+					await fixtureKem
+				).recordAnswer(headers, { uri, cid: 'bafycreate', value: hit.record });
 				return Response.json(
-					{ ...found, value: hit.record },
-					{ headers: await (await fixtureKem).macHeaders(headers, found) }
+					{ uri, cid: answered.cid, value: hit.record },
+					{ headers: answered.headers }
 				);
 			}
 

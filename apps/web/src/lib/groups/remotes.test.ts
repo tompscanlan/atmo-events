@@ -5,7 +5,7 @@
 // after that is real: the route gate (`groupRouteContext`), the standing read,
 // the sessions lookup and the schema. Every read is made with the caller's own
 // access (TS 2026-10-15), so a signed-in caller has a session of their own.
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as v from 'valibot';
 
 const request = vi.hoisted(() => ({
@@ -52,6 +52,7 @@ import { publishAuthz, writeClosedAccess } from './server/__fixtures__/members-s
 import { isRowWrite, sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
 import { fakeGroupHost, type FakeGroupHost } from './server/__fixtures__/group-host';
 import { fixtureKem } from './server/__fixtures__/space-mac-host';
+import { recordCid } from './server/space-mac';
 import {
 	STUB_PDS_SERVICE,
 	atGroupHost,
@@ -734,8 +735,13 @@ describe('the members-only RSVP commands', () => {
 	const RSVP = 'community.lexicon.calendar.rsvp';
 	const EVENT = 'community.lexicon.calendar.event';
 	const MEETING_URI = `${CALENDAR}/${LINKED}/${EVENT}/3lmeeting`;
-	/** The cid the fake host gives every record it holds. */
-	const MEETING_CID = 'bafycreate';
+	/** The meeting as the group's host holds it. */
+	const MEETING = { $type: EVENT, name: 'Committee call', startsAt: '2030-11-02T18:00:00.000Z' };
+	/** Its CID, which a read with a credential gets, as from a real host. */
+	let MEETING_CID = '';
+	beforeAll(async () => {
+		MEETING_CID = await recordCid(MEETING);
+	});
 	/** What a sign-in granted before RSVPs joined the grant, written out. */
 	const ACCEPTANCE_ONLY = `atproto space:*?authority=${LINKED}&collection=group.opensocial.acceptance&action=create&action=update&action=delete`;
 	/** When the member's token expires, before a re-authorization and after it. */
@@ -819,7 +825,7 @@ describe('the members-only RSVP commands', () => {
 				repo: LINKED,
 				collection: EVENT,
 				rkey: '3lmeeting',
-				record: { $type: EVENT, name: 'Committee call', startsAt: '2030-11-02T18:00:00.000Z' }
+				record: MEETING
 			})
 		});
 		expect(res.ok).toBe(true);

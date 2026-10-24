@@ -1,10 +1,17 @@
 // A repo host's side of the record MAC (../space-mac.ts), for fakes: one KEM key
-// that every fake repo publishes as `#atproto_kem`, and the `atproto-space-mac`
-// answer to a read's `atproto-space-want-mac`. The derivation itself is checked
-// against @atproto/space in ../space-mac.test.ts.
+// that every fake repo publishes as `#atproto_kem`, and a record read's answer as a
+// host gives it. The derivation itself is checked against @atproto/space in
+// ../space-mac.test.ts.
 import { P256PublicKey } from '@atcute/crypto';
 
-import { ecdhPublicKey, MAC_HEADER, recordMac, sharedSecret, WANT_MAC_HEADER } from '../space-mac';
+import {
+	ecdhPublicKey,
+	MAC_HEADER,
+	recordCid,
+	recordMac,
+	sharedSecret,
+	WANT_MAC_HEADER
+} from '../space-mac';
 
 const ECDH = { name: 'ECDH', namedCurve: 'P-256' } as const;
 
@@ -13,11 +20,13 @@ export interface FakeKemHost {
 	did: string;
 	/** The key as a DID document's `publicKeyMultibase`. */
 	multibase: string;
-	/** The MAC header for this record, or no header when the read asked for none. */
-	macHeaders(
+	/** A record read's CID and headers. A read that asks for a MAC gets what a
+	 *  host serves it: the value's real CID and the MAC over it. Any other keeps
+	 *  the fake's CID and gets no MAC. */
+	recordAnswer(
 		request: Headers,
-		record: { uri: string; cid: string }
-	): Promise<Record<string, string>>;
+		record: { uri: string; cid: string; value: unknown }
+	): Promise<{ cid: string; headers: Record<string, string> }>;
 }
 
 export async function fakeKemHost(): Promise<FakeKemHost> {
@@ -27,9 +36,9 @@ export async function fakeKemHost(): Promise<FakeKemHost> {
 	return {
 		did,
 		multibase: did.slice('did:key:'.length),
-		async macHeaders(request, { uri, cid }): Promise<Record<string, string>> {
+		async recordAnswer(request, { uri, cid, value }): ReturnType<FakeKemHost['recordAnswer']> {
 			const keyShare = /key_share="([^"]+)"/.exec(request.get(WANT_MAC_HEADER) ?? '')?.[1];
-			if (!keyShare) return {};
+			if (!keyShare) return { cid, headers: {} };
 			const reader = await ecdhPublicKey(keyShare);
 			const dh = await crypto.subtle.deriveBits(
 				{ name: 'ECDH', public: reader.key },
@@ -37,8 +46,12 @@ export async function fakeKemHost(): Promise<FakeKemHost> {
 				256
 			);
 			const secret = await sharedSecret(new Uint8Array(dh), reader.point, point);
-			const mac = btoa(String.fromCharCode(...(await recordMac(secret, uri, cid))));
-			return { [MAC_HEADER]: `type="atproto-space-record", ver=1, mac=:${mac}:` };
+			const real = await recordCid(value);
+			const mac = btoa(String.fromCharCode(...(await recordMac(secret, uri, real))));
+			return {
+				cid: real,
+				headers: { [MAC_HEADER]: `type="atproto-space-record", ver=1, mac=:${mac}:` }
+			};
 		}
 	};
 }
