@@ -5,9 +5,13 @@
 
 	let {
 		event,
+		href,
+		lockLabel,
 		actor
 	}: {
 		event: FlatEventRecord;
+		href?: string; // where the card links, when the page knows better than eventUrl
+		lockLabel?: string; // the lock's label, when the event's space is not contrail's own
 		actor?: string;
 	} = $props();
 
@@ -92,7 +96,7 @@
 </script>
 
 <a
-	href={eventUrl(event, actor)}
+	href={href ?? eventUrl(event, actor)}
 	class="group grid grid-cols-[4rem_1fr] gap-3 transition-colors sm:grid-cols-[5rem_1fr] sm:gap-4"
 >
 	<div class="w-full">
@@ -145,7 +149,7 @@
 					stroke-linecap="round"
 					stroke-linejoin="round"
 					class="text-base-500 dark:text-base-400 mt-1 size-3.5 shrink-0"
-					aria-label="Private event"
+					aria-label={lockLabel ?? 'Private event'}
 				>
 					<rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
 					<path d="M7 11V7a5 5 0 0 1 10 0v4" />
