@@ -5,9 +5,14 @@
 #   pnpm install
 #   pnpm globe:up        # builds the group host from ../atproto-group-host, makes the accounts
 #   pnpm globe:dev       # atmo at https://atmo.app.local.snowglobe.at
+#   pnpm globe:e2e       # up if need be, then the groups e2e; the globe stays up for the next run
+#   pnpm globe:down      # stops it, keeping its accounts
 #
 # The first time, also run `pnpm --filter web env:setup-dev` for atmo's client key and cookie
-# secret (apps/web/.env). Passwords are in ~/.local/share/snowglobe/atmogh/accounts.env.
+# secret (apps/web/.env), and on a machine without Playwright's Chromium,
+# `pnpm --filter web exec playwright install chromium`. Passwords are in
+# ~/.local/share/snowglobe/atmogh/accounts.env. Another worktree or clone of atmo whose file says
+# the same shares this globe (snowglobe/globe.mjs); one that changes the file needs its own globe: name.
 # atmo runs sealed: every address it uses is this snowglobe's, and services with no stand-in
 # here (profiles, actor search, record stats) are off.
 
@@ -73,9 +78,7 @@ apps:
       # on another server here does not show.
       PUBLIC_ATPROTO_BLOB_URL_TEMPLATE: ${pds.alpha.url}/xrpc/com.atproto.sync.getBlob?did={did}&cid={cid}
 
-  # atmo's groups e2e (apps/web/scripts/groups-e2e.mjs):
-  #   DEVNET_LEAF_FILE=~/.local/share/snowglobe/atmogh/https/leaf.crt E2E_PLAYWRIGHT=<playwright> \
-  #     pnpm exec snowglobe run --app e2e -- node apps/web/scripts/groups-e2e.mjs
+  # atmo's groups e2e (apps/web/scripts/groups-e2e.mjs): pnpm globe:e2e
   - name: e2e
     env:
       E2E_GROUP_HOST: ${grouphosts.gh.url}

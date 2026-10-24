@@ -15,8 +15,10 @@
 		"changeset": "changeset",
 		"version-packages": "changeset version && pnpm install --lockfile-only",
 		"release": "changeset publish",
-		"globe:up": "snowglobe up",
-		"globe:dev": "pnpm --filter web exec wrangler d1 migrations apply DB --local && snowglobe run --app atmo -- pnpm --filter web dev --host 0.0.0.0 --strictPort"
+		"globe:up": "node snowglobe/globe.mjs up",
+		"globe:dev": "pnpm --filter web exec wrangler d1 migrations apply DB --local && node snowglobe/globe.mjs run --app atmo -- pnpm --filter web dev --host 0.0.0.0 --strictPort",
+		"globe:e2e": "node snowglobe/globe.mjs up && node snowglobe/globe.mjs run --app e2e -- node apps/web/scripts/groups-e2e.mjs",
+		"globe:down": "node snowglobe/globe.mjs down"
 	},
 	"license": "MIT",
 	"devDependencies": {
