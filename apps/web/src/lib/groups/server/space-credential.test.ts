@@ -35,7 +35,8 @@ import { credentialSpaceReader } from './about-read';
 import { rosterFromRecords, type GroupMembers } from './members-read';
 import { GROUP_ACCEPTANCE_COLLECTION, GROUP_MEMBERSHIP_COLLECTION } from '../members-record';
 import { MEMBERS_SPACE_TYPE } from '../types';
-import { fakeKemHost } from './__fixtures__/space-mac-host';
+import { fakeKemHost, type FakeKemHost } from './__fixtures__/space-mac-host';
+import { recordCid } from './space-mac';
 
 import { spaceUri } from '../ids';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -99,6 +100,19 @@ function json(status: number, body: unknown, headers: Record<string, string> = {
 		status,
 		headers: { 'content-type': 'application/json', ...headers }
 	});
+}
+
+/** A record read's answer, as `host` serves it: the value's CID and its MAC. With
+ *  no host, the same answer with no MAC. */
+async function recordResponse(
+	host: FakeKemHost | null,
+	request: Headers,
+	record: { uri: string; value: unknown }
+): Promise<Response> {
+	const answered = host
+		? await host.recordAnswer(request, { ...record, cid: 'bafytest' })
+		: { cid: await recordCid(record.value), headers: {} };
+	return json(200, { ...record, cid: answered.cid }, answered.headers);
 }
 
 async function verifies(signer: SpaceSigningKey, base: string, header: string): Promise<boolean> {
@@ -204,18 +218,10 @@ function network(options: {
 			const overridden = await options.answer?.(did, credential, headers);
 			if (overridden) return overridden;
 			if (options.accepted?.has(did)) {
-				const record = {
+				return recordResponse(kem, headers, {
 					uri: `${MEMBERS}/${did}/${GROUP_ACCEPTANCE_COLLECTION}/self`,
-					cid: 'bafytest'
-				};
-				return json(
-					200,
-					{
-						...record,
-						value: { $type: GROUP_ACCEPTANCE_COLLECTION, createdAt: '2026-10-04T10:00:00.000Z' }
-					},
-					await kem.macHeaders(headers, record)
-				);
+					value: { $type: GROUP_ACCEPTANCE_COLLECTION, createdAt: '2026-10-04T10:00:00.000Z' }
+				});
 			}
 			return json(400, { error: 'RecordNotFound', message: 'Could not locate record' });
 		}
@@ -398,18 +404,17 @@ describe('reading acceptances by DID', () => {
 		const other = await fakeKemHost();
 		const record = {
 			uri: `${MEMBERS}/${BOB}/${GROUP_ACCEPTANCE_COLLECTION}/self`,
-			cid: 'bafytest'
+			value: { $type: GROUP_ACCEPTANCE_COLLECTION, createdAt: '2026-10-04T10:00:00.000Z' }
 		};
-		const value = { $type: GROUP_ACCEPTANCE_COLLECTION, createdAt: '2026-10-04T10:00:00.000Z' };
 		for (const mac of [null, other]) {
 			clearSpaceCredentials();
 			const net = network({
-				answer: async (_did, _credential, headers) =>
-					json(200, { ...record, value }, mac ? await mac.macHeaders(headers, record) : {})
+				answer: (_did, _credential, headers) => recordResponse(mac, headers, record)
 			});
 			const reader = credentialAcceptanceReader(net.holder, GROUP_DID, hosts);
 			expect((await reader.accepted(MEMBERS, [BOB])).get(BOB)).toBe(false);
-			expect(net.reads).toHaveLength(1);
+			// Tried once more with the KEM key read anew, then given up.
+			expect(net.reads).toHaveLength(2);
 		}
 	});
 
@@ -543,26 +548,67 @@ describe('exchanges under way', () => {
 	});
 });
 
+// A record is returned only when it is the one asked for, its MAC verifies, and
+// its value is what its CID names: the checks the 2026-10-22 alpha's migration
+// notes give a reader (alpha-migrations/prompt-10-22-26.md, 4f).
 describe('a record read with a credential', () => {
 	const read = { space: MEMBERS, repo: GROUP_DID, collection: 'x.y.z', rkey: 'self' };
-	const record = { uri: `${MEMBERS}/${GROUP_DID}/x.y.z/self`, cid: 'bafytest' };
+	const record = { uri: `${MEMBERS}/${GROUP_DID}/x.y.z/self`, value: { n: 1 } };
 	const groupHosts: SpaceHosts = { ...hosts, repoHost: async () => GROUP_HOST };
+	const readWith = (answer: Parameters<typeof network>[0]['answer'], at = groupHosts) => {
+		clearSpaceCredentials();
+		const net = network({ answer });
+		return { net, pending: credentialSpaceReader(net.holder, at).get(read) };
+	};
 
-	it('returns the record when its MAC verifies, and never when it does not', async () => {
+	it('returns the record when its MAC verifies and its value is its CID’s', async () => {
+		const { pending } = readWith((_d, _c, headers) => recordResponse(kem, headers, record));
+		expect(await pending).toMatchObject({ uri: record.uri, value: record.value });
+	});
+
+	it('never returns a record with no MAC, or with a MAC from another key', async () => {
 		const other = await fakeKemHost();
-		for (const [mac, verifies] of [
-			[kem, true],
-			[other, false],
-			[null, false]
-		] as const) {
-			clearSpaceCredentials();
-			const net = network({
-				answer: async (_did, _credential, headers) =>
-					json(200, { ...record, value: {} }, mac ? await mac.macHeaders(headers, record) : {})
-			});
-			const pending = credentialSpaceReader(net.holder, groupHosts).get(read);
-			if (verifies) expect((await pending)?.uri).toBe(record.uri);
-			else await expect(pending).rejects.toThrow();
+		for (const mac of [null, other]) {
+			const { pending } = readWith((_d, _c, headers) => recordResponse(mac, headers, record));
+			await expect(pending).rejects.toThrow();
 		}
+	});
+
+	it('never returns a value its CID does not name, though the MAC verifies', async () => {
+		const { pending } = readWith(async (_d, _c, headers) => {
+			const answered = await recordResponse(kem, headers, record);
+			const body = (await answered.json()) as Record<string, unknown>;
+			return json(200, { ...body, value: { n: 2 } }, Object.fromEntries(answered.headers));
+		});
+		await expect(pending).rejects.toThrow();
+	});
+
+	it('never returns another record than the one asked for, though its MAC verifies', async () => {
+		const { pending } = readWith((_d, _c, headers) =>
+			recordResponse(kem, headers, { ...record, uri: `${MEMBERS}/${GROUP_DID}/x.y.z/other` })
+		);
+		await expect(pending).rejects.toThrow();
+	});
+
+	it('reads the KEM key anew once when the MAC does not verify, as after a rotation', async () => {
+		const stale = await fakeKemHost();
+		const asked: boolean[] = [];
+		const rotated: SpaceHosts = {
+			...groupHosts,
+			kemKey: async (_did, fresh = false) => {
+				asked.push(fresh);
+				return fresh ? kem.did : stale.did;
+			}
+		};
+		const { net, pending } = readWith(
+			(_d, _c, headers) => recordResponse(kem, headers, record),
+			rotated
+		);
+		expect(await pending).toMatchObject({ uri: record.uri });
+		expect(asked).toEqual([false, true]);
+		// Each try asks with a key of its own.
+		const shares = net.reads.map((r) => r.headers.get('atproto-space-want-mac'));
+		expect(shares).toHaveLength(2);
+		expect(shares[0]).not.toBe(shares[1]);
 	});
 });

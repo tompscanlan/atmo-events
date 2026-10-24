@@ -25,7 +25,7 @@ import { P256PrivateKeyExportable, type P256PrivateKey } from '@atcute/crypto';
 import type { Did } from '@atcute/lexicons';
 import { createDidDocumentResolver } from '$lib/atproto/identity';
 import { GROUP_ACCEPTANCE_COLLECTION, GROUP_ACCEPTANCE_RKEY } from '../members-record';
-import { splitRecordUri } from '../ids';
+import { spaceRecordUri } from '../ids';
 import {
 	describeFailure,
 	isRecordNotFound,
@@ -34,7 +34,7 @@ import {
 	type XrpcAnswer,
 	type XrpcHandle
 } from './xrpc';
-import { MAC_HEADER, recordMacCheck, WANT_MAC_HEADER } from './space-mac';
+import { MAC_HEADER, recordCid, recordMacCheck, WANT_MAC_HEADER } from './space-mac';
 
 const SIGNATURE_LABEL = 'atproto-space-credential';
 const AUTH_SCHEME = 'Atproto-Space-Credential';
@@ -94,11 +94,13 @@ const DENIED: Record<string, true> = {
 export interface SpaceHosts {
 	/** The PDS that holds `did`'s repo. */
 	repoHost(did: string): Promise<string>;
-	/** The host that answers for spaces `did` is the authority of. */
+	/** The host that answers for spaces `did` is the authority of: its PDS, as for
+	 *  any account. */
 	spaceHost(did: string): Promise<string>;
 	/** The P-256 did:key `did` publishes as `#atproto_kem`, which its repo host
-	 *  derives a record read's MAC from. */
-	kemKey(did: string): Promise<string>;
+	 *  derives a record read's MAC from. `fresh` reads it anew rather than from a
+	 *  copy kept, after a MAC that did not verify: the key may have rotated. */
+	kemKey(did: string, fresh?: boolean): Promise<string>;
 }
 
 function toBase64(bytes: Uint8Array): string {
@@ -281,9 +283,12 @@ export async function credentialRequest(
 
 type SpaceCall = { host: string; audience: string; nsid: string; query: Record<string, string> };
 
-/** One GET made with `cred`. A record read asks the repo's host for the record's
- *  MAC, and an answer whose MAC does not verify throws: the record cannot be
- *  shown to have come from that repo's host. */
+/** One GET made with `cred`. A record read also asks the repo's host for the
+ *  record's MAC, and returns a record only when it is the one asked for, its MAC
+ *  verifies, and its value is what its CID names; otherwise it throws, since the
+ *  record cannot be shown to have come from that repo. A MAC that does not
+ *  verify is tried once more, with the repo's KEM key read anew and a new key of
+ *  the request's own, in case the repo's key rotated. */
 async function fetchWithCredential(
 	cred: SpaceCredential,
 	hosts: SpaceHosts,
@@ -291,17 +296,32 @@ async function fetchWithCredential(
 ): Promise<Response> {
 	const url = new URL(`/xrpc/${call.nsid}?${new URLSearchParams(call.query)}`, call.host);
 	const headers = await spaceSigHeaders(cred.signer, `${AUTH_SCHEME} ${cred.token}`, call.audience);
-	const mac =
-		call.nsid === GET_RECORD ? await recordMacCheck(await hosts.kemKey(call.query.repo)) : null;
-	if (mac) headers[WANT_MAC_HEADER] = mac.header;
-	const res = await fetch(url, { method: 'GET', headers });
-	if (!mac || !res.ok) return res;
-	const body = (await res.clone().json()) as { uri?: unknown; cid?: unknown };
-	const record = { uri: String(body.uri ?? ''), cid: String(body.cid ?? '') };
-	if (!(await mac.verify(record, res.headers.get(MAC_HEADER)))) {
-		throw new Error(`${call.nsid} at ${call.host}: the record's MAC does not verify`);
+	if (call.nsid !== GET_RECORD) return fetch(url, { method: 'GET', headers });
+
+	const { space, repo, collection, rkey } = call.query;
+	const uri = spaceRecordUri(space, repo, collection, rkey);
+	for (let attempt = 0; ; attempt++) {
+		const mac = await recordMacCheck(await hosts.kemKey(repo, attempt > 0));
+		const res = await fetch(url, {
+			method: 'GET',
+			headers: { ...headers, [WANT_MAC_HEADER]: mac.header }
+		});
+		if (!res.ok) return res;
+		const body = (await res.clone().json()) as { uri?: unknown; cid?: unknown; value?: unknown };
+		if (body.uri !== uri) {
+			throw new Error(`${GET_RECORD} at ${call.host} answered ${String(body.uri)} for ${uri}`);
+		}
+		const cid = String(body.cid ?? '');
+		if (await mac.verify({ uri, cid }, res.headers.get(MAC_HEADER))) {
+			if ((await recordCid(body.value).catch(() => null)) !== cid) {
+				throw new Error(`${GET_RECORD} at ${call.host}: the value of ${uri} is not its CID's`);
+			}
+			return res;
+		}
+		if (attempt > 0) {
+			throw new Error(`${GET_RECORD} at ${call.host}: the MAC of ${uri} does not verify`);
+		}
 	}
-	return res;
 }
 
 /** `credentialRequest`'s response as it came, for a body that is not JSON: a
@@ -347,11 +367,8 @@ async function readAcceptance(
 			}
 		});
 		const answer = await readXrpc(res);
-		if (answer.ok) {
-			// Checked, as the other readers do, in case a host ignores the collection.
-			const uri = typeof answer.data.uri === 'string' ? answer.data.uri : '';
-			return splitRecordUri(uri).collection === GROUP_ACCEPTANCE_COLLECTION ? 'accepted' : 'absent';
-		}
+		// The read returns only the acceptance it asked for, checked against its MAC.
+		if (answer.ok) return 'accepted';
 		if (isRecordNotFound(answer)) return 'absent';
 		if (answer.error && SPENT[answer.error]) return 'spent';
 		console.info(`[groups] acceptance read for ${did} in ${space}: ${describeFailure(answer)}`);
@@ -430,10 +447,10 @@ async function serviceEndpoint(did: string, ids: readonly `#${string}`[]): Promi
 }
 
 /** The did:key of the DID document's `#atproto_kem` key. */
-async function kemKey(did: string): Promise<string> {
+async function kemKey(did: string, fresh = false): Promise<string> {
 	const cacheKey = `${did}|#atproto_kem`;
 	const hit = resolved.get(cacheKey);
-	if (hit && Date.now() - hit.at < RESOLVED_TTL_MS) return hit.value;
+	if (!fresh && hit && Date.now() - hit.at < RESOLVED_TTL_MS) return hit.value;
 
 	const doc = await didResolver.resolve(did as Did<'plc'> | Did<'web'>);
 	const method = doc.verificationMethod?.find(
@@ -446,10 +463,10 @@ async function kemKey(did: string): Promise<string> {
 	return key;
 }
 
-/** Hosts from DID documents. A space authority may name a separate space host,
- *  and its PDS answers when it does not. */
+/** Hosts from DID documents. A space authority's space host is its PDS; the
+ *  `#atproto_space_host` entry the 2026-10-01 alpha read is ignored. */
 export const didSpaceHosts: SpaceHosts = {
 	repoHost: (did) => serviceEndpoint(did, ['#atproto_pds']),
-	spaceHost: (did) => serviceEndpoint(did, ['#atproto_space_host', '#atproto_pds']),
+	spaceHost: (did) => serviceEndpoint(did, ['#atproto_pds']),
 	kemKey
 };

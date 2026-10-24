@@ -88,9 +88,9 @@ async function answer(host: GroupSpaceReader, url: URL, headers: Headers): Promi
 					rkey: q.rkey
 				});
 				if (!record) return json(400, { error: 'RecordNotFound' });
-				const res = json(200, { uri: record.uri, cid: record.cid, value: record.value });
-				const macs = await (await kem).macHeaders(headers, record);
-				for (const [name, value] of Object.entries(macs)) res.headers.set(name, value);
+				const answered = await (await kem).recordAnswer(headers, record);
+				const res = json(200, { uri: record.uri, cid: answered.cid, value: record.value });
+				for (const [name, value] of Object.entries(answered.headers)) res.headers.set(name, value);
 				return res;
 			}
 			case '/xrpc/com.atproto.space.listRecords': {
