@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
+import tls from 'node:tls';
 import { MemoryStore, OAuthClient } from '@atcute/oauth-node-client';
 
 /** The devnet's names, which Chromium resolves to 127.0.0.1, where its nginx answers. */
@@ -30,16 +31,45 @@ const DEVNET_NAMES = [
 	'*.devnet.internal'
 ];
 
-/** The devnet's leaf certificate, the one key Chromium is told to trust past its roots. */
-function leafFile() {
-	if (process.env.DEVNET_LEAF_FILE) return process.env.DEVNET_LEAF_FILE;
+/**
+ * The devnet's leaf certificate, the one key Chromium is told to trust past its roots:
+ * SG_LEAF_FILE or DEVNET_LEAF_FILE when set. Else, with an https PLC, the leaf the
+ * devnet serves for the PLC's name, kept only if it checks out against the devnet's CA
+ * alone (DEVNET_CA_FILE, or NODE_EXTRA_CA_CERTS, which snowglobe run sets); one leaf
+ * carries every devnet name. Else the leaf.crt beside the CA, as scripts/https-run lays
+ * them out.
+ * @param {string} plcUrl
+ * @param {{ admit: Function }} ledger
+ * @returns {Promise<X509Certificate>}
+ */
+async function leafCertificate(plcUrl, ledger) {
+	const file = process.env.SG_LEAF_FILE || process.env.DEVNET_LEAF_FILE;
+	if (file) return new X509Certificate(readFileSync(file));
 	const ca = process.env.DEVNET_CA_FILE || process.env.NODE_EXTRA_CA_CERTS;
-	if (!ca) throw new Error("set DEVNET_LEAF_FILE, or run under the devnet's scripts/https-run");
-	return join(dirname(ca), 'leaf.crt');
+	if (!ca) throw new Error('set SG_LEAF_FILE, or run under snowglobe run, which names the CA');
+	const url = new URL(plcUrl);
+	if (url.protocol !== 'https:')
+		return new X509Certificate(readFileSync(join(dirname(ca), 'leaf.crt')));
+	if (!ledger.admit('driver', 'TLS', url))
+		throw new Error(`REFUSED driver TLS ${url.host}: not on this machine`);
+	return new Promise((resolve, reject) => {
+		const socket = tls.connect({
+			host: url.hostname,
+			port: Number(url.port) || 443,
+			servername: url.hostname,
+			ca: readFileSync(ca)
+		});
+		socket.setTimeout(10_000, () => socket.destroy(new Error(`no TLS answer from ${url.host}`)));
+		socket.once('error', reject);
+		socket.once('secureConnect', () => {
+			resolve(socket.getPeerX509Certificate());
+			socket.end();
+		});
+	});
 }
 
-function leafSpki(path) {
-	const cert = new X509Certificate(readFileSync(path));
+/** @param {X509Certificate} cert */
+function leafSpki(cert) {
 	return createHash('sha256')
 		.update(cert.publicKey.export({ type: 'spki', format: 'der' }))
 		.digest('base64');
@@ -100,7 +130,7 @@ export async function createSignIns({ plcUrl, fetch, ledger, playwright, log }) 
 	const browser = await chromium.launch({
 		args: [
 			`--host-resolver-rules=${DEVNET_NAMES.map((n) => `MAP ${n} 127.0.0.1`).join(', ')}`,
-			`--ignore-certificate-errors-spki-list=${leafSpki(leafFile())}`
+			`--ignore-certificate-errors-spki-list=${leafSpki(await leafCertificate(plcUrl, ledger))}`
 		]
 	});
 	const actorResolver = plcActorResolver(plcUrl, fetch);

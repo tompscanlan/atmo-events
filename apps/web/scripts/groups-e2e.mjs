@@ -91,7 +91,8 @@
  *   E2E_GROUP_HOST     required: the group host, e.g. https://grouphost.devnet.internal
  *   E2E_PDS            the devnet PDS that serves spaces, where the owner's and the
  *                      admin's own repos are read
- *   E2E_PLAYWRIGHT     the playwright package the sign-ins drive Chromium with
+ *   E2E_PLAYWRIGHT     the playwright package the sign-ins drive Chromium with; unset,
+ *                      the app's own (a dev dependency)
  *   E2E_OWNER_DID      the person who makes the group at the host
  *   E2E_ADMIN_DID      a person who joins and is promoted to admin, on E2E_PDS
  *   E2E_OUTSIDER_DID   a person who is never a member
@@ -105,8 +106,8 @@
  *                      resolved, for a network no relay crawls
  * The run is for devnet only, and no request leaves this machine. E2E_GROUP_HOST,
  * E2E_PDS and E2E_PLC_URL must be loopback URLs, or devnet names this run
- * resolves to 127.0.0.1 or ::1 alone (the devnet's scripts/https-run). Outside
- * https-run, checking such a name is a lookup through the system resolver, so a
+ * resolves to loopback addresses alone (snowglobe run). Outside snowglobe
+ * run, checking such a name is a lookup through the system resolver, so a
  * refused run may first send a DNS query for it, and nothing else. Before any
  * sign-in the run asks devnet's PLC for every fixture DID and stops on one it
  * lacks or one hosted off this machine, printing a REFUSED line for each. Then
@@ -166,7 +167,7 @@ const PDS = required('E2E_PDS');
 const GROUP_HOST = required('E2E_GROUP_HOST');
 /** Where the group's repo and spaces live: the host. */
 const GROUP_PDS = GROUP_HOST;
-const PLAYWRIGHT = required('E2E_PLAYWRIGHT');
+const PLAYWRIGHT = process.env.E2E_PLAYWRIGHT?.trim() || 'playwright';
 /** Devnet's PLC directory. scripts/groups-e2e.identity-resolver.ts asks it and
  *  nothing else, so a DID it lacks fails to resolve. */
 const PLC_URL = required('E2E_PLC_URL');
