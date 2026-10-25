@@ -64,4 +64,4 @@ it commented out.
 
 Unit tests run with `vitest` and need no network. An end-to-end run of the same code against a live
 group host, with real sign-ins, needs a local test network with its own hosts and accounts, so it is
-kept out of this repository, on the `test/groups-host-e2e` branch of `tompscanlan/atmo-events`.
+kept out of this repository, on the `test/groups-host-e2e-2` branch of `tompscanlan/atmo-events`.
