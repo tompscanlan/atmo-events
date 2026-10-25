@@ -28,6 +28,10 @@ export const HOST_PERMISSIONS = {
 		{
 			role: 'admin',
 			scopes: [
+				'include:group.opensocial.configure',
+				'include:group.opensocial.manageSpaces',
+				'include:group.opensocial.manageMembers',
+				'include:group.opensocial.moderate',
 				'space:*?action=read_self&manage=create&manage=delete',
 				'space:*?collection=*',
 				'repo:*',
