@@ -41,7 +41,7 @@ vi.mock('$lib/groups/server/route-context', async (importOriginal) => {
 	const { error } = await import('@sveltejs/kit');
 	const { getGroupByDid } = await import('$lib/groups/server/db/groups');
 	const { memberGrants } = await import('$lib/groups/grants');
-	const { HOST_PERMISSIONS } = await import('$lib/groups/server/__fixtures__/members-space');
+	const { HOST_PERMISSIONS } = await import('$lib/groups/server/__fixtures__/host-records');
 	return {
 		...actual,
 		groupRouteContext: async (db: D1Database, actor: string, caller: { did: string } | null) => {

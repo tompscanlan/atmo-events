@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { SqliteD1 } from './__fixtures__/d1-sqlite';
 import { seedGroup } from './__fixtures__/seed-group';
-import { authzRecords, HOST_PERMISSIONS } from './__fixtures__/members-space';
+import { authzRecords, HOST_PERMISSIONS } from './__fixtures__/host-records';
 import { hostDown, spaceReader, type SpaceRecordInput } from './__fixtures__/space-reader';
 import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import { pdsSpaceReader } from './about-read';

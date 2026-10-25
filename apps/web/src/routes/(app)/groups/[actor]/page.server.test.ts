@@ -20,7 +20,7 @@ import {
 	type SpaceReadCall,
 	type SpaceRecordInput
 } from '$lib/groups/server/__fixtures__/space-reader';
-import { authzRecords } from '$lib/groups/server/__fixtures__/members-space';
+import { authzRecords } from '$lib/groups/server/__fixtures__/host-records';
 import {
 	admitOnly,
 	declare,

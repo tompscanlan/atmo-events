@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import example from './__fixtures__/opensocial-example-records.json';
-import { HOST_PERMISSIONS } from './server/__fixtures__/members-space';
+import { HOST_PERMISSIONS } from './server/__fixtures__/host-records';
 import { grantsAnyWrite, memberGrants, permissionsFor } from './grants';
 import {
 	GROUP_ACCESS_COLLECTION,
