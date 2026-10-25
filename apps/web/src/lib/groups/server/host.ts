@@ -20,7 +20,7 @@ import {
 } from './db/roster';
 import { GroupRuleError } from './db/rules';
 import { errorText } from './errors';
-import { GroupPermissionError } from './group-write';
+import { GroupPermissionError, groupWriter, type GroupRepoWriter } from './group-write';
 import { dropGroupMembership, putGroupMembership } from './members-writer';
 import { readMembership } from './members-read';
 import {
@@ -317,4 +317,14 @@ export async function pendingRequestsFor(
 		if (e instanceof GroupNotAtHostError) return [];
 		throw e;
 	}
+}
+
+/** For a write no host method stands in front of, such as an event or a settings save. */
+export async function hostGroupWriter(
+	env: CredentialStoreEnv,
+	group: GroupRow,
+	personDid: string
+): Promise<GroupRepoWriter> {
+	if (!(await isHostGroup(env, group.group_did))) throw new GroupNotAtHostError(group.group_did);
+	return groupWriter(env, group, personDid);
 }

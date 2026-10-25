@@ -9,10 +9,10 @@ import { notifyIndexQuietly } from './events-index';
 import {
 	actingPerson,
 	GroupRecordError,
-	hostGroupWriter,
 	requireGroupPermission,
 	type GroupGateInput
 } from './group-write';
+import { hostGroupWriter } from './host';
 import {
 	groupClient,
 	type CredentialStoreEnv,

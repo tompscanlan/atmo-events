@@ -1,13 +1,6 @@
-// Reads a group's records back out of its spaces.
-//
-// A space refuses anonymous reads even under a public read policy (401
-// AuthMissing), so every read needs someone's access. A page reads with the
-// caller's own: a space credential from their own session
-// (`credentialSpaceReader`), so the authority decides what they may see and no
-// one's session reads for anyone else. A signed-out visitor has
-// no reader. The group's own session (`pdsSpaceReader`) reads only where the
-// group itself acts. An account reads its own records in a space over Bearer,
-// with no DPoP, space scope or sync engine, and every record here is the group's.
+// Reads a group's records back out of its spaces. A page reads with the caller's own
+// space credential, so the group's authority decides what each person sees; the group's
+// own session reads only where the group itself acts.
 import {
 	GROUP_PROFILE_COLLECTION,
 	GROUP_PROFILE_RKEY,
@@ -29,7 +22,6 @@ import { groupClient, type CredentialStoreEnv, resolveGroupCredential } from './
 import {
 	credentialRequest,
 	didSpaceHosts,
-	spaceAuthority,
 	type ExchangesUnderWay,
 	type SpaceHolder,
 	type SpaceHosts
@@ -44,21 +36,13 @@ export interface GroupSpaceRecord {
 	value: Record<string, unknown>;
 }
 
-/** A rule as it came back, with the identity a citation depends on. */
 export interface GroupRuleRecord {
 	rkey: string;
 	uri: string;
 	text: string;
 	order: number;
-	createdAt: string | null;
 }
 
-/** From `getSpace`, narrowed to the read policy's `$type`. */
-export interface GroupSpaceConfig {
-	readPolicy: string;
-}
-
-/** The read transport. Injectable, like `GroupRepoWriter`. */
 export interface GroupSpaceReader {
 	get(query: {
 		space: string;
@@ -66,27 +50,17 @@ export interface GroupSpaceReader {
 		collection: string;
 		rkey: string;
 	}): Promise<GroupSpaceRecord | null>;
-	/** Every record in the slice, across all pages, or a throw. Callers act on
-	 *  what is missing, so a partial list must never come back. */
+	/** Every page, or a throw: callers act on what is missing, so a partial list never returns. */
 	list(query: { space: string; repo: string; collection?: string }): Promise<GroupSpaceRecord[]>;
-	/** Throws on failure: the read policy is the group's visibility, so a failed
-	 *  read must never come back as either answer. */
-	getSpace(space: string): Promise<GroupSpaceConfig>;
 }
 
 const LIST_RECORDS_LIMIT = 100;
-
-const GET_SPACE = 'com.atproto.simplespace.getSpace';
 
 function asRecord(value: unknown): Record<string, unknown> {
 	return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
 
-/**
- * One space record from a response. `getRecord` returns `uri` without
- * `collection` and `rkey`, and `listRecords` returns them without `uri`. Both
- * shapes are read, and a listed record's URI is rebuilt for citations.
- */
+// `getRecord` returns `uri` without `collection` and `rkey`, and `listRecords` the reverse.
 function toSpaceRecord(
 	body: unknown,
 	from: { space: string; repo: string }
@@ -114,17 +88,13 @@ function toSpaceRecord(
 	return { uri: body.uri, cid, collection, rkey, value };
 }
 
-/** Whether a read failed because the host never created the space. The reader
- *  names the host's error code in what it throws ("<method> failed: 400
- *  SpaceNotFound"), and this is the one place that reads it back. */
+/** The reader names the host's error code in what it throws, and this reads it back. */
 export function isSpaceNotFound(e: unknown): boolean {
 	return e instanceof Error && /\bSpaceNotFound\b/.test(e.message);
 }
 
-/** One space query, answered as it came back. */
 type SpaceQuery = (nsid: string, params: Record<string, string>) => Promise<XrpcAnswer>;
 
-/** A reader over one transport. */
 function readerOver(query: SpaceQuery): GroupSpaceReader {
 	const send = async (nsid: string, params: Record<string, string>) => {
 		const answer = await query(nsid, params);
@@ -141,7 +111,6 @@ function readerOver(query: SpaceQuery): GroupSpaceReader {
 			return toSpaceRecord(body, query);
 		},
 		async list(query) {
-			// Callers still check each record's collection, in case a host ignores the filter.
 			const records: GroupSpaceRecord[] = [];
 			let cursor: string | undefined;
 			for (;;) {
@@ -157,7 +126,6 @@ function readerOver(query: SpaceQuery): GroupSpaceReader {
 						? body.records
 						: null;
 				if (!page) {
-					// A later page without records means the listing broke partway.
 					if (cursor) throw new Error(`com.atproto.space.listRecords returned no records page`);
 					return records;
 				}
@@ -175,22 +143,11 @@ function readerOver(query: SpaceQuery): GroupSpaceReader {
 				}
 				cursor = next;
 			}
-		},
-		// Every failure throws, `SpaceNotFound` included: the gate must not guess.
-		async getSpace(space) {
-			const answer = await query(GET_SPACE, { space });
-			if (!answer.ok) throw xrpcError(GET_SPACE, answer);
-			const policy = asRecord(answer.data.readPolicy);
-			if (typeof policy.$type !== 'string') {
-				throw new Error(`com.atproto.simplespace.getSpace returned no read policy for ${space}`);
-			}
-			return { readPolicy: policy.$type };
 		}
 	};
 }
 
-/** Reads with the group's own session, through the raw `handle`, since the
- *  space methods are not in the generated lexicon set. */
+/** Through the raw `handle`, since the space methods are not in the generated lexicon set. */
 export function pdsSpaceReader(
 	cred: Parameters<typeof groupClient>[0],
 	groupDid: string
@@ -201,30 +158,22 @@ export function pdsSpaceReader(
 	});
 }
 
-/** Reads with the holder's own space credential: a record read at the repo's
- *  PDS, signed for the repo's DID, and `getSpace` at the authority's space host,
- *  signed for the authority. A space the authority will not let the holder into
- *  throws `SpaceAccessDenied` (./space-credential.ts), which callers read as no
+/** A record read at the repo's PDS, signed for the repo's DID. A space the authority
+ *  will not let the holder into throws `SpaceAccessDenied`, which callers read as no
  *  access, not as an outage. */
 export function credentialSpaceReader(
 	holder: SpaceHolder,
 	hosts: SpaceHosts = didSpaceHosts
 ): GroupSpaceReader {
-	// A reader is built for one request, so its reads share exchanges only there.
+	// One reader per request, so its reads share exchanges only there.
 	const underWay: ExchangesUnderWay = new Map();
 	return readerOver(async (nsid, params) => {
-		const { space } = params;
-		const audience = nsid === GET_SPACE ? spaceAuthority(space) : params.repo;
-		const host =
-			nsid === GET_SPACE ? await hosts.spaceHost(audience) : await hosts.repoHost(audience);
-		const call = { host, audience, nsid, query: params };
-		return credentialRequest(holder, hosts, space, call, underWay);
+		const call = { host: await hosts.repoHost(params.repo), audience: params.repo, nsid, query: params };
+		return credentialRequest(holder, hosts, params.space, call, underWay);
 	});
 }
 
-/** A reader as the group, through `personDid`'s own group session, or null when
- *  they hold none. That is a configuration fact, not an error a page should
- *  throw on. */
+/** Null when `personDid` holds no group session, a fact a page shows rather than throws on. */
 export async function groupSpaceReader(
 	env: CredentialStoreEnv,
 	group: Pick<GroupRow, 'group_did'>,
@@ -240,9 +189,7 @@ export interface GroupAbout {
 	rules: GroupRuleRecord[];
 }
 
-/** A group's profile and rules. A missing record reads as absent. A failed read
- *  throws, so the cache never stands in for records the PDS refused. */
-/** The group's profile record, or null when it has none. One read. */
+
 export async function readGroupProfile(
 	reader: GroupSpaceReader,
 	group: Pick<GroupRow, 'group_did' | 'about_space_uri'>
@@ -276,22 +223,14 @@ export async function readGroupAbout(
 			rkey: record.rkey,
 			uri: record.uri,
 			text: parsed.text,
-			order: parsed.order,
-			createdAt: parsed.createdAt
+			order: parsed.order
 		});
 	}
-	// `createdAt` then `rkey` break ties, so records without `order` sort stably.
-	rules.sort(
-		(a, b) =>
-			a.order - b.order ||
-			(a.createdAt ?? '').localeCompare(b.createdAt ?? '') ||
-			a.rkey.localeCompare(b.rkey)
-	);
+	rules.sort((a, b) => a.order - b.order || a.rkey.localeCompare(b.rkey));
 	return { profile, rules };
 }
 
-/** The about space's access record, or null when there is none. Kept out of
- *  `readGroupAbout`, since only the writers that keep it true read it. */
+/** Kept out of `readGroupAbout`, since only the writers that keep it true read it. */
 export async function readAboutAccess(
 	reader: GroupSpaceReader,
 	group: Pick<GroupRow, 'group_did' | 'about_space_uri'>

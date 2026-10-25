@@ -1,35 +1,24 @@
-// Linking a group session: a person whose roles grant writes signs in at the
-// group's host as the group and authorizes this app, which keeps the session
-// under that person (./session.ts). Running it again reconnects a session that
-// was revoked or has lapsed.
-//
-// Four checks. Only someone whose roles grant writes may start a link, and they
-// still must when it finishes. Only a group at this site's group host is linked:
-// any other, or one the check cannot place, is refused before a request is made. Only the browser that started it, still signed in
-// as that person, may finish it; that is checked before the code is exchanged,
-// so a refused link never stores a session. And the account that authorized must
-// be the group: the client resolves the group's DID when the link starts and
-// revokes a token issued to anyone else, and the result is checked again here.
-//
-// The session is filed under the person signed in here, whoever signed in at the
-// host: the host still checks the roles of whoever did.
-//
-// Nothing here touches the browser's cookies. The sign-in callback sets the `did`
-// cookie to whoever authorized, which here would sign the admin in as the group.
+// Linking a group session: someone whose roles grant writes signs in at the group's
+// host as the group, and this app keeps the session under them. Only a group at this
+// site's host is linked; only the browser that started a link, still signed in as that
+// person, may finish it, checked before the code is exchanged; and the account that
+// authorized must be the group. No cookie is touched: the sign-in callback would sign
+// the admin in as the group.
 import type { Did } from '@atcute/lexicons';
 import type { OAuthClient, OAuthClientStores } from '@atcute/oauth-node-client';
 import type { GroupRow } from '../types';
 
 import { errorText } from './errors';
 import { groupSessionScope } from './session';
+
 /** Carried through the PDS in the authorization's state. */
 export interface GroupLinkState {
 	groupDid: string;
-	/** The person who started the link, whose session it becomes. */
+	/** Whose session it becomes. */
 	by: string;
 }
 
-type LinkGroup = Pick<GroupRow, 'group_did' | 'owner_did'>;
+type LinkGroup = Pick<GroupRow, 'group_did'>;
 type LinkClient = Pick<OAuthClient, 'authorize' | 'callback' | 'revoke'>;
 
 export class GroupLinkRefused extends Error {
@@ -39,14 +28,12 @@ export class GroupLinkRefused extends Error {
 	}
 }
 
-/** The authorization URL to send the person to. `mayConnect` is whether their
- *  roles grant writes, as their own access read them. */
+/** `mayConnect` is whether their roles grant writes, as their own access read them. */
 export async function startGroupLink(input: {
 	client: LinkClient;
 	group: LinkGroup;
 	signedInDid: string | null;
 	mayConnect: boolean;
-	/** Whether the group lives at this deployment's group host (./host-kind.ts). */
 	atGroupHost: () => Promise<boolean>;
 	redirectUri: string;
 }): Promise<URL> {
@@ -66,8 +53,7 @@ export async function startGroupLink(input: {
 		redirectUri: input.redirectUri,
 		state
 	});
-	// The group host's page asks who the person is, and fills in their handle
-	// from this hint, on the link rather than in the request.
+	// A hint for the host's page, on the link rather than in the request.
 	const hinted = new URL(url);
 	hinted.searchParams.set('gh_person', by);
 	return hinted;
@@ -86,17 +72,14 @@ export type GroupLinkResult =
 	/** `groupDid` is null when the state did not say which group. */
 	| { ok: false; groupDid: string | null; reason: string };
 
-/** Finishes a link at the callback. Every failure after the state is read comes
- *  back as a result naming the group, so the person can be sent back to its
- *  page; the reason is for the log. `clientFor` is the client that files a
- *  session under the person who started the link. */
+/** Every failure after the state is read names the group, so the person can be sent
+ *  back to its page; the reason is for the log. */
 export async function finishGroupLink(input: {
 	clientFor: (personDid: string) => LinkClient;
 	states: Pick<OAuthClientStores['states'], 'get' | 'delete'>;
 	params: URLSearchParams;
 	signedInDid: string | null;
 	findGroup: (groupDid: string) => Promise<LinkGroup | null>;
-	/** Whether the person's roles in the group still grant writes. */
 	mayConnect: (groupDid: string) => Promise<boolean>;
 }): Promise<GroupLinkResult> {
 	const stateId = input.params.get('state');
@@ -126,8 +109,6 @@ export async function finishGroupLink(input: {
 	try {
 		({ session } = await client.callback(input.params));
 	} catch (e) {
-		// A cancelled consent, a token issued to another account (the client has
-		// already revoked it), or a PDS that failed the exchange.
 		return {
 			ok: false,
 			groupDid: link.groupDid,
