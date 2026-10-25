@@ -5,7 +5,6 @@ import { groupPath } from '$lib/groups/server/route-context';
 import type { RequestHandler } from './$types';
 
 import { groupLinkClient } from '$lib/groups/server/session';
-import { kvAvatarStash } from '$lib/groups/server/avatar-stash';
 // Where a group host returns after the person signs up a new group there
 // (lib/groups/create-at-host.ts). It sets no cookie: the browser stays signed in
 // as that person, and the group's session is filed under them.
@@ -18,8 +17,7 @@ export const GET: RequestHandler = async ({ url, locals, platform }) => {
 		clientFor: (personDid) => groupLinkClient(env, personDid),
 		states: oauthStates(env),
 		params: url.searchParams,
-		signedInDid: locals.did,
-		stash: kvAvatarStash(env.OAUTH_STATES)
+		signedInDid: locals.did
 	});
 
 	if (!result.ok) {

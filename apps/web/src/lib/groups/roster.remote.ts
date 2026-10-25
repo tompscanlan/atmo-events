@@ -1,57 +1,57 @@
 // Joining and leaving a group, and an admin's changes to its roster, as remote
-// forms. Every act goes through the group's host (./server/host.ts), as the e2e
-// harness's do, so both run the same sequence.
+// forms. Every act goes through the group's host (./server/host.ts).
+import type { Did } from '@atcute/lexicons';
 import { command, form, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
 import { can } from './permissions';
 import type { GroupFormResult } from './form-result';
 import { formError, notAllowed } from './form-error';
 import { assignableRoleField, didField, memberActorField } from './form-fields';
-import { callerMember, groupRequestContext, reauthorizeUrl } from './remote-context';
-import { searchPeopleByHandle } from './server/people-search';
+import { groupRequestContext } from './remote-context';
+import { callerSession } from './server/caller';
 import { groupActorToDid } from './server/route-context';
 import { groupHost } from './server/host';
+import { authorizeSignIn } from './server/sign-in-grants';
 import type { JoinOutcome } from './server/db/roster';
+
+async function asMember(groupDid: string) {
+	const ctx = await groupRequestContext(groupDid);
+	return { ...ctx, member: await callerSession(getRequestEvent().locals.session) };
+}
 
 export const joinGroupForm = form(
 	v.object({
 		groupDid: didField,
 		message: v.optional(v.pipe(v.string(), v.maxLength(1000)))
 	}),
-	async (data): Promise<GroupFormResult<{ outcome: JoinOutcome; reauthorize: string | null }>> => {
-		const ctx = await groupRequestContext(data.groupDid);
-		let outcome: JoinOutcome;
+	async (data): Promise<GroupFormResult<{ outcome: JoinOutcome }>> => {
+		const ctx = await asMember(data.groupDid);
 		try {
-			outcome = await groupHost(ctx).requestJoin(
-				{ ...ctx, member: await callerMember() },
-				data.message || null
-			);
+			const outcome = await (await groupHost(ctx)).requestJoin(ctx, data.message || null);
+			return { ok: true, outcome };
 		} catch (e) {
 			return formError(e);
 		}
-		const changed = outcome === 'joined' || outcome === 'pending';
-		return { ok: true, outcome, reauthorize: changed ? await reauthorizeUrl(ctx) : null };
 	}
 );
 
-/** Where to send a member whose sign-in carries no grant for the group, such as
- *  its creator right after the create, so a new sign-in picks it up and brings
- *  them back to the page. Null when the PDS refuses the grant, as it does until
- *  its copy of this site's client metadata names the group. */
-export const signInForGroup = command(
-	v.object({ groupDid: didField }),
-	async (data): Promise<string | null> =>
-		reauthorizeUrl(await groupRequestContext(data.groupDid, { signInNotice: true }))
-);
+/** A new sign-in, for a member whose sign-in carries no grant for groups. */
+export const signInForGroup = command(v.object({ groupDid: didField }), async (data) => {
+	const ctx = await groupRequestContext(data.groupDid, { signInNotice: true });
+	const { url } = await authorizeSignIn(ctx.env, {
+		target: { type: 'account', identifier: ctx.callerDid as Did }
+	});
+	return url.toString();
+});
 
 /** Leave, or withdraw a pending request: one button, since for the applicant
  *  they are the same intent. Anyone may leave, the group's creator included. */
 export const leaveGroupForm = form(
 	v.object({ groupDid: didField }),
 	async (data): Promise<GroupFormResult<{ outcome: 'withdrawn' | 'left' }>> => {
-		const ctx = { ...(await groupRequestContext(data.groupDid)), member: await callerMember() };
-		const host = groupHost(ctx);
+		const ctx = await asMember(data.groupDid);
 		try {
+			const host = await groupHost(ctx);
 			// A pending applicant has no membership: only the request closes.
 			if (ctx.membership.pendingRequestId) {
 				await host.cancelJoinRequest(ctx);
@@ -77,7 +77,7 @@ export const approveJoinRequestForm = form(
 			return notAllowed(ctx.membership, 'ADMIT_MEMBERS');
 		}
 		try {
-			await groupHost(ctx).approveJoinRequest(ctx, data.member, data.role ?? 'member');
+			await (await groupHost(ctx)).approveJoinRequest(ctx, data.member, data.role ?? 'member');
 			return { ok: true };
 		} catch (e) {
 			return formError(e);
@@ -95,7 +95,7 @@ export const rejectJoinRequestForm = form(
 		try {
 			// A rejected request never granted anything, so there is no
 			// membership, only the request itself.
-			await groupHost(ctx).denyJoinRequest(ctx, data.member);
+			await (await groupHost(ctx)).denyJoinRequest(ctx, data.member);
 			return { ok: true };
 		} catch (e) {
 			return formError(e);
@@ -128,22 +128,13 @@ export const addMemberForm = form(
 			did = resolved;
 		}
 		try {
-			await groupHost(ctx).addMember(ctx, did, data.role ?? 'member');
+			await (await groupHost(ctx)).addMember(ctx, did, data.role ?? 'member');
 			return { ok: true };
 		} catch (e) {
 			return formError(e);
 		}
 	}
 );
-
-/** Handle suggestions for the add-member form, from this deployment's own index
- *  (./server/people-search.ts). Signed-in callers only; the form itself still
- *  checks ADMIT_MEMBERS. */
-export const suggestPeople = command(v.pipe(v.string(), v.maxLength(253)), async (prefix) => {
-	const { locals, platform } = getRequestEvent();
-	if (!locals.did) return [];
-	return searchPeopleByHandle(platform!.env.DB, prefix);
-});
 
 export const removeMemberForm = form(
 	v.object({ groupDid: didField, did: didField }),
@@ -153,7 +144,7 @@ export const removeMemberForm = form(
 			return notAllowed(ctx.membership, 'EJECT_MEMBERS');
 		}
 		try {
-			await groupHost(ctx).ejectMember(ctx, data.did);
+			await (await groupHost(ctx)).ejectMember(ctx, data.did);
 			return { ok: true };
 		} catch (e) {
 			return formError(e);
@@ -169,7 +160,7 @@ export const changeMemberRoleForm = form(
 			return notAllowed(ctx.membership, 'ASSIGN_ROLES');
 		}
 		try {
-			await groupHost(ctx).setMemberRole(ctx, data.did, data.role);
+			await (await groupHost(ctx)).setMemberRole(ctx, data.did, data.role);
 			return { ok: true };
 		} catch (e) {
 			return formError(e);

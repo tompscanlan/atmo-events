@@ -3,23 +3,16 @@
 
 	import { page } from '$app/state';
 	import { groupFormError, resetOnSuccess } from '$lib/groups/form-result';
-	import { GROUP_AVATAR_MAX_BYTES, GROUP_AVATAR_TYPES } from '$lib/groups/about-record';
+	import { GROUP_DESCRIPTION_MAX, GROUP_NAME_MAX } from '$lib/groups/about-record';
 	import { createGroupForm } from '$lib/groups/group.remote';
 	import { FIELD_CLASS } from '$lib/groups/components/field-class';
 
 	let { data } = $props();
 
-	// A private group is invite-only, and the groups table refuses one that does
-	// not require approval, so the form shows approval as fixed-on rather than
-	// letting the combination be picked and then refused on submit.
-	let visibility = $state('public');
-	// A create comes back from the host's callback with its error
-	// in the address, since the host made the group before this site set it up.
+	// The host's callback reports its error in the address.
 	let createError = $derived(
 		groupFormError(createGroupForm.result) ?? page.url.searchParams.get('error') ?? undefined
 	);
-	// The form's success is the host's sign-up page, where the
-	// creator picks the address and approves this site.
 	let signUpUrl = $derived.by(() => {
 		const result = createGroupForm.result;
 		return result?.ok && 'signUpUrl' in result ? result.signUpUrl : undefined;
@@ -37,8 +30,6 @@
 		A group is an account on the network. Creating one registers a new identity. Its address becomes
 		its handle, so the name has to be free.
 	</p>
-	<!-- Says who holds what: the host holds the account, nobody has a password
-	     for it, and the creator approves this site at the host as themselves. -->
 	<p class="text-base-500 dark:text-base-400 mb-8 text-sm">
 		<strong>The group's host makes its account.</strong> After this form you go to the host, choose the
 		group's address there, sign in with your own account and approve this site to act for the group. Nobody
@@ -58,32 +49,11 @@
 		</div>
 	{/if}
 
-	<!-- A deployment that cannot create one gets no form, only the notice above. -->
 	{#if data.canCreate}
-		<form
-			{...resetOnSuccess(createGroupForm)}
-			enctype="multipart/form-data"
-			class="flex flex-col gap-5"
-		>
+		<form {...resetOnSuccess(createGroupForm)} class="flex flex-col gap-5">
 			<div class="flex flex-col gap-1.5">
 				<Label for="group-name">Name</Label>
-				<Input id="group-name" name="name" required maxlength={120} />
-			</div>
-
-			<div class="flex flex-col gap-1.5">
-				<Label for="group-avatar">Picture</Label>
-				<input
-					id="group-avatar"
-					name="avatar"
-					type="file"
-					accept={GROUP_AVATAR_TYPES.join(',')}
-					class="text-sm"
-				/>
-				<p class="text-base-500 dark:text-base-400 text-xs">
-					Optional. A PNG, JPEG or WebP image of at most {GROUP_AVATAR_MAX_BYTES / 1_000_000} MB, shown
-					beside the group's name. It is kept in the group's about space, so only people who may read
-					the group see it.
-				</p>
+				<Input id="group-name" name="name" required maxlength={GROUP_NAME_MAX} />
 			</div>
 
 			<div class="flex flex-col gap-1.5">
@@ -92,7 +62,7 @@
 					id="group-description"
 					name="description"
 					rows="4"
-					maxlength="4000"
+					maxlength={GROUP_DESCRIPTION_MAX}
 					class={FIELD_CLASS}
 				></textarea>
 			</div>
@@ -103,44 +73,35 @@
 					id="group-rules"
 					name="rules"
 					rows="4"
-					maxlength="8000"
 					placeholder="One rule per line"
 					class={FIELD_CLASS}
 				></textarea>
 				<p class="text-base-500 dark:text-base-400 text-xs">
-					Optional, and editable later. Each line becomes its own record in the group’s about space,
-					so a rule keeps one stable address even as the list changes.
+					Optional. Each line becomes its own rule record in the group’s meta space.
 				</p>
 			</div>
 
 			<div class="flex flex-col gap-1.5">
 				<Label for="group-visibility">Visibility</Label>
-				<select id="group-visibility" name="visibility" bind:value={visibility} class={FIELD_CLASS}>
-					<option value="public">public: listed and browsable</option>
+				<select id="group-visibility" name="visibility" class={FIELD_CLASS}>
+					<option value="public">public: anyone can read it</option>
 					<option value="private">private: members only</option>
 				</select>
 			</div>
 
-			<!-- No space URI field: the host makes the group's spaces. The URIs
-		     appear on the group page. -->
+			<div class="flex flex-col gap-1.5">
+				<Label for="group-join-policy">Joining</Label>
+				<select id="group-join-policy" name="joinPolicy" class={FIELD_CLASS}>
+					<option value="approval">Anyone can ask; an admin approves</option>
+					<option value="open">Anyone can join</option>
+					<option value="invite">Invite only</option>
+				</select>
+			</div>
 
-			<!-- A disabled checkbox is never submitted, and an absent checkbox parses as
-		     "off", so the fixed-on case sends its value through a hidden input. -->
-			{#if visibility === 'private'}
-				<input type="hidden" name="requireApproval" value="on" />
-				<label class="flex items-center gap-2 text-sm">
-					<input type="checkbox" checked disabled class="size-4" />
-					Require approval to join
-				</label>
-				<p class="text-base-500 dark:text-base-400 -mt-3 text-xs">
-					A private group is invite-only, so approval is always on.
-				</p>
-			{:else}
-				<label class="flex items-center gap-2 text-sm">
-					<input type="checkbox" name="requireApproval" checked class="size-4" />
-					Require approval to join
-				</label>
-			{/if}
+			<label class="flex items-center gap-2 text-sm">
+				<input type="checkbox" name="listed" checked class="size-4" />
+				List this group in browse (public groups only)
+			</label>
 
 			{#if signUpUrl}
 				<p class="text-sm">

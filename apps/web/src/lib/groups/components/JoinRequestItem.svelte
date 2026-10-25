@@ -2,7 +2,7 @@
 	import { Button } from '@foxui/core';
 	import { groupFormError, resetOnSuccess } from '../form-result';
 	import { approveJoinRequestForm, rejectJoinRequestForm } from '../roster.remote';
-	import type { AssignableRole } from '../permissions';
+	import type { GroupRoleName } from '../permissions';
 	import type { JoinRequestRow, Person } from '../types';
 	import PersonLabel from './PersonLabel.svelte';
 
@@ -17,7 +17,7 @@
 		groupDid: string;
 		request: Pick<JoinRequestRow, 'did' | 'message'>;
 		person?: Person;
-		roles?: readonly AssignableRole[];
+		roles?: readonly GroupRoleName[];
 	} = $props();
 
 	// One form instance per row: a remote form object attaches to one `<form>` only.

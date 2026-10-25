@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { Badge, Button } from '@foxui/core';
-	import PdslsLink from '$lib/groups/components/PdslsLink.svelte';
 	import GroupMonogram from '$lib/groups/components/GroupMonogram.svelte';
 	import { resolve } from '$app/paths';
 
@@ -59,33 +58,23 @@
 										{group.description}
 									</p>
 								{/if}
-								<!-- The group's address. The handle is what someone would type or
-								     say; the DID is shown when contrail has never resolved a
-								     handle, so the row always has an address. -->
 								<p class="text-base-400 dark:text-base-500 mt-2 truncate font-mono text-xs">
 									{group.handle ?? group.group_did}
 								</p>
 							{:else}
-								<!-- Declared on the network, with no page here: a group another
-								     app hosts. Its name is in an about space no anonymous reader
-								     may open, so we only have the address, and a link would only
-								     reach a 404. -->
+								<!-- Declared, with no row here: its name is in a space we cannot read. -->
 								<p class="truncate font-mono text-lg font-semibold">
 									{group.handle ?? group.group_did}
 								</p>
 								<p class="text-base-500 dark:text-base-400 mt-1 text-sm">
 									Declared on the network. This site has no page for it.
-									<PdslsLink to={group.group_did} class="underline"
-										>Its public records are on pds.ls</PdslsLink
-									>.
 								</p>
 							{/if}
 						</div>
 						<div class="flex shrink-0 gap-2">
-							<!-- Placement, not a column: private is a group only the caller's own
-							     groups list, because its public repo does not declare it. -->
-							{#if group.visibility === 'private'}
-								<Badge variant="secondary">{group.visibility}</Badge>
+							<!-- One of the caller's own groups whose repo does not declare it. -->
+							{#if !group.listed}
+								<Badge variant="secondary">not listed</Badge>
 							{/if}
 						</div>
 					</div>

@@ -1,51 +1,45 @@
 <script lang="ts">
 	import { Button, Input, Label } from '@foxui/core';
+	import { GROUP_JOIN_POLICIES, type GroupJoinPolicy } from '../about-record';
 	import { groupFormError, resetOnSuccess } from '../form-result';
-	import { refreshGroupForm, updateGroupForm } from '../group.remote';
-	import type { GroupRow, GroupVisibility } from '../types';
+	import { updateGroupForm } from '../group.remote';
+	import type { GroupVisibility } from '../types';
 	import { FIELD_CLASS } from './field-class';
 	import GroupLinkForm from './GroupLinkForm.svelte';
 
-	// An admin's settings for a group: its profile, rules and visibility, the
-	// refresh from its host, and reconnecting its account. Folded away until asked for.
+	// An admin's settings for a group, folded away until asked for.
 	let {
-		group,
+		groupDid,
 		about,
 		visibility,
+		listed,
 		groupLinked,
 		linkOutcome
 	}: {
-		group: Pick<GroupRow, 'group_did' | 'require_approval'>;
-		about: { name: string; description: string | null; rules: { text: string }[] };
-		/** The host's visibility, or null when it could not be asked. */
+		groupDid: string;
+		about: { name: string; description: string | null; joinPolicy: GroupJoinPolicy | null };
+		/** Null when the host could not be asked. */
 		visibility: GroupVisibility | null;
+		listed: boolean;
 		groupLinked: boolean | null;
-		/** `linked` or `failed` after a link's callback, else null. */
 		linkOutcome: string | null;
 	} = $props();
 
+	const JOIN_LABELS: Record<GroupJoinPolicy, string> = {
+		open: 'Anyone can join',
+		approval: 'Anyone can ask; an admin approves',
+		invite: 'Invite only'
+	};
+
 	let settingsError = $derived(groupFormError(updateGroupForm.result));
-	let refreshError = $derived(groupFormError(refreshGroupForm.result));
-	let refreshSummary = $derived(
-		refreshGroupForm.result?.ok === true ? refreshGroupForm.result.summary : undefined
-	);
 	let showSettings = $state(false);
-	// The visibility currently selected in the settings form, or null for "not
-	// changed yet", in which case the host's applies. A private group is
-	// invite-only and a save refuses one that does not require approval, so the
-	// form shows approval as fixed on while private is picked.
-	let pickedVisibility = $state<string | null>(null);
-	let settingsPrivate = $derived((pickedVisibility ?? visibility) === 'private');
 </script>
 
 <section class="mt-10">
 	<button
 		type="button"
 		class="text-base-500 dark:text-base-400 text-sm hover:underline"
-		onclick={() => {
-			showSettings = !showSettings;
-			pickedVisibility = null;
-		}}
+		onclick={() => (showSettings = !showSettings)}
 	>
 		{showSettings ? 'Hide' : 'Show'} group settings
 	</button>
@@ -63,21 +57,12 @@
 
 	{#if showSettings}
 		<form {...resetOnSuccess(updateGroupForm)} class="mt-4 flex flex-col gap-4">
-			<input type="hidden" name="groupDid" value={group.group_did} />
-			<!-- The visibility this form shows, which is the host's as the page
-			     read it, and empty when the host could not be read. The save
-			     moves the visibility only when the choice below differs from
-			     it, so a tab opened before someone else changed the visibility
-			     does not change it back. A hidden input's value is its default,
-			     so a reset keeps it, and a reload after a save refreshes it. -->
+			<input type="hidden" name="groupDid" value={groupDid} />
+			<!-- The save changes the visibility only when the choice differs from this. -->
 			<input type="hidden" name="shownVisibility" value={visibility ?? ''} />
-			<!-- Default values, not values. A successful remote-form submission
-			     resets the form, and a reset restores each control's default
-			     (`defaultValue` / `defaultChecked`), not the `value` property
-			     Svelte assigns. With `value=`, `description` and `rules` come
-			     back empty after a save, so the next save would write an empty
-			     description and delete every rule record. `<select>` is fine:
-			     its `selected` attribute is the option's default. -->
+			<!-- defaultValue, not value: a remote form resets after a save, and a reset
+			     restores each control's default, so with value= the next save would
+			     write an empty description. -->
 			<div class="flex flex-col gap-1.5">
 				<Label for="settings-name">Name</Label>
 				<Input id="settings-name" name="name" defaultValue={about.name} required />
@@ -93,32 +78,9 @@
 				></textarea>
 			</div>
 			<div class="flex flex-col gap-1.5">
-				<Label for="settings-rules">Rules</Label>
-				<textarea
-					id="settings-rules"
-					name="rules"
-					rows="4"
-					placeholder="One rule per line"
-					defaultValue={about.rules.map((rule) => rule.text).join('\n')}
-					class={FIELD_CLASS}
-				></textarea>
-				<p class="text-base-500 dark:text-base-400 text-xs">
-					One rule per line. Each line is its own record, so editing one rule leaves the others’
-					addresses untouched.
-				</p>
-			</div>
-			<div class="flex flex-col gap-1.5">
 				<Label for="settings-visibility">Visibility</Label>
-				<select
-					id="settings-visibility"
-					name="visibility"
-					required
-					onchange={(e) => (pickedVisibility = e.currentTarget.value)}
-					class={FIELD_CLASS}
-				>
-					<!-- The host did not say. No option is preselected then, because a
-					     save would otherwise send the first one and could move the group
-					     to it; the admin has to pick one. -->
+				<select id="settings-visibility" name="visibility" required class={FIELD_CLASS}>
+					<!-- No default when the host did not say, so a save cannot move the group. -->
 					{#if visibility === null}
 						<option value="" disabled selected>could not be read from its PDS</option>
 					{/if}
@@ -127,32 +89,20 @@
 					{/each}
 				</select>
 			</div>
-			<!-- No space URI field: both spaces are created with the group under
-			     its own DID, so there is nothing to edit. They are listed,
-			     read-only, under "Where this group's data lives". -->
-			<!-- A disabled checkbox is never submitted, and an absent checkbox
-			     parses as "off", so the fixed-on case sends its value through a
-			     hidden input. -->
-			{#if settingsPrivate}
-				<input type="hidden" name="requireApproval" value="on" />
-				<label class="flex items-center gap-2 text-sm">
-					<input type="checkbox" checked disabled class="size-4" />
-					Require approval to join
-				</label>
-				<p class="text-base-500 dark:text-base-400 -mt-2 text-xs">
-					A private group is invite-only, so approval is always on.
-				</p>
-			{:else}
-				<label class="flex items-center gap-2 text-sm">
-					<input
-						type="checkbox"
-						name="requireApproval"
-						defaultChecked={!!group.require_approval}
-						class="size-4"
-					/>
-					Require approval to join
-				</label>
-			{/if}
+			<div class="flex flex-col gap-1.5">
+				<Label for="settings-join-policy">Joining</Label>
+				<select id="settings-join-policy" name="joinPolicy" required class={FIELD_CLASS}>
+					{#each GROUP_JOIN_POLICIES as value (value)}
+						<option {value} selected={(about.joinPolicy ?? 'invite') === value}
+							>{JOIN_LABELS[value]}</option
+						>
+					{/each}
+				</select>
+			</div>
+			<label class="flex items-center gap-2 text-sm">
+				<input type="checkbox" name="listed" defaultChecked={listed} class="size-4" />
+				List this group in browse (public groups only)
+			</label>
 			{#if settingsError}
 				<p class="text-sm text-red-600 dark:text-red-400">{settingsError}</p>
 			{:else if updateGroupForm.result?.ok}
@@ -161,30 +111,10 @@
 			<div><Button type="submit">Save settings</Button></div>
 		</form>
 
-		<!-- A separate form, so refreshing never submits the settings above. -->
-		<form
-			{...resetOnSuccess(refreshGroupForm)}
-			class="border-base-200 dark:border-base-800 mt-8 flex flex-col gap-2 border-t pt-6"
-		>
-			<input type="hidden" name="groupDid" value={group.group_did} />
-			<h3 class="text-sm font-semibold">Refresh from the group host</h3>
-			<p class="text-base-500 dark:text-base-400 text-xs">
-				Re-reads this group from its host into this site's copy, so members who joined elsewhere
-				show here. Someone who left elsewhere stays in this site's copy for now. It changes nothing
-				at the host.
-			</p>
-			{#if refreshError}
-				<p class="text-sm text-red-600 dark:text-red-400">{refreshError}</p>
-			{:else if refreshSummary}
-				<p class="text-base-500 dark:text-base-400 text-sm">{refreshSummary}</p>
-			{/if}
-			<div><Button type="submit" variant="secondary">Refresh from the group host</Button></div>
-		</form>
-
 		{#if groupLinked}
 			<!-- An unlinked group's prompt sits above the settings, on the page. -->
 			<GroupLinkForm
-				groupDid={group.group_did}
+				{groupDid}
 				class="border-base-200 dark:border-base-800 mt-8 flex flex-col gap-2 border-t pt-6"
 			>
 				<h3 class="text-sm font-semibold">Your access to this group</h3>

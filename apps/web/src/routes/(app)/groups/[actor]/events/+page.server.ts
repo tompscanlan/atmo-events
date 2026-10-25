@@ -2,6 +2,7 @@ import { can } from '$lib/groups/permissions';
 import { gateCaller } from '$lib/groups/server/caller';
 import { listGroupEvents } from '$lib/groups/server/events-index';
 import { groupHeader, groupRouteContext } from '$lib/groups/server/route-context';
+import { publicGroup } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
 
 /** The group's public events, read from the index like any other actor's, so the
@@ -15,7 +16,7 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		{ signInNotice: true }
 	);
 	if (signInOnly && membership.signIn) {
-		return { groupDid: group.group_did, signInOnly: true as const, signIn: membership.signIn };
+		return { groupDid: group.group_did, signInOnly: true as const };
 	}
 
 	const [header, events] = await Promise.all([
@@ -27,9 +28,8 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	]);
 
 	return {
-		group,
+		group: publicGroup(group),
 		...header,
-		...(membership.signIn ? { signIn: membership.signIn } : {}),
 		events,
 		canCreateEvent: can(membership.permissions, 'CREATE_EVENT'),
 		canManageEvents: can(membership.permissions, 'MANAGE_EVENTS')

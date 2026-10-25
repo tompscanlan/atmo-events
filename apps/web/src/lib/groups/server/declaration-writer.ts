@@ -1,5 +1,6 @@
 // A group's declaration, in its public repo. A declare never tells the index:
 // `notifyOfUpdate` deletes the entry on any answer that is not a record, a 5xx included.
+import type { ResourceUri } from '@atcute/lexicons/syntax';
 import { getServerClient } from '$lib/contrail/index';
 import {
 	GROUP_DECLARATION_COLLECTION,
@@ -25,7 +26,7 @@ export interface WriteGroupDeclarationInput {
 	reader?: GroupSpaceReader | null;
 }
 
-const declarationUri = (groupDid: string) =>
+const declarationUri = (groupDid: string): ResourceUri =>
 	`at://${groupDid}/${GROUP_DECLARATION_COLLECTION}/${GROUP_DECLARATION_RKEY}`;
 
 /** No permission set names the declaration, so it takes the scope that writes the

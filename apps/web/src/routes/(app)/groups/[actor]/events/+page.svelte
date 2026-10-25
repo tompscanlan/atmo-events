@@ -28,7 +28,7 @@
 
 {#if data.signInOnly}
 	<div class="mx-auto max-w-3xl px-6 py-8 sm:py-12">
-		<GroupSignInNotice groupDid={data.groupDid} from={data.signIn.from} subject="events" />
+		<GroupSignInNotice groupDid={data.groupDid} subject="group" />
 	</div>
 {:else}
 	<div class="mx-auto max-w-3xl px-6 py-8 sm:py-12">
@@ -51,14 +51,6 @@
 			whoever pressed the button.
 		</p>
 
-		{#if data.signIn}
-			<GroupSignInNotice
-				groupDid={group.group_did}
-				from={data.signIn.from}
-				subject="events"
-				class="mb-6"
-			/>
-		{/if}
 		{#if data.events.length === 0}
 			<div class="py-16 text-center">
 				<p class="text-base-500 dark:text-base-400 text-lg">This group has no public events yet.</p>

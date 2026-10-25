@@ -2,6 +2,14 @@
 // export only remote functions, and the remotes and their tests share these.
 import * as v from 'valibot';
 import { isDid, isHandle } from '@atcute/lexicons/syntax';
+import {
+	GROUP_DESCRIPTION_MAX,
+	GROUP_JOIN_POLICIES,
+	GROUP_NAME_MAX,
+	GROUP_RULE_MAX,
+	graphemeLength,
+	splitRuleLines
+} from './about-record';
 import { GROUP_VISIBILITIES } from './types';
 import { ASSIGNABLE_ROLES } from './permissions';
 
@@ -58,11 +66,23 @@ export const rkeyField = v.pipe(
 );
 export const eventIntentField = v.picklist(['create', 'update'] as const);
 
-/** What the create form and the settings form both edit about a group. */
+/** What the create form and the settings form both edit about a group, within the
+ *  lexicon's bounds. */
 export const groupSettingsFields = {
-	name: v.pipe(v.string(), v.trim(), v.minLength(2), v.maxLength(120)),
-	description: v.optional(v.pipe(v.string(), v.maxLength(4000))),
+	name: v.pipe(v.string(), v.trim(), v.nonEmpty('Enter a name.'), v.maxGraphemes(GROUP_NAME_MAX)),
+	description: v.optional(v.pipe(v.string(), v.maxGraphemes(GROUP_DESCRIPTION_MAX))),
 	visibility: v.picklist(GROUP_VISIBILITIES),
-	requireApproval: checkboxField,
-	rules: v.optional(v.pipe(v.string(), v.maxLength(8000)))
+	joinPolicy: v.picklist(GROUP_JOIN_POLICIES),
+	listed: checkboxField
 };
+
+/** The rules a new group starts with, one per line. */
+export const groupRulesField = v.optional(
+	v.pipe(
+		v.string(),
+		v.check(
+			(value) => splitRuleLines(value).every((rule) => graphemeLength(rule) <= GROUP_RULE_MAX),
+			`A rule can be at most ${GROUP_RULE_MAX} characters.`
+		)
+	)
+);

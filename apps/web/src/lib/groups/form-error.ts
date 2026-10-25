@@ -7,8 +7,7 @@ import type { CallerMembership } from './types';
 import { GroupPermissionError, GroupRecordError } from './server/group-write';
 import { GroupCredentialError } from './server/session';
 import { GroupRuleError } from './server/db/rules';
-import { GroupNotAtHostError } from './server/host';
-import { GroupHostError, HostSignInError } from './server/real-host';
+import { GroupHostError, GroupNotAtHostError, HostSignInError } from './server/host';
 
 /** The caller holds no group session for the write to go out on, which only
  *  they can fix. */

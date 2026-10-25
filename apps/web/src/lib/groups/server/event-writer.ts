@@ -1,4 +1,3 @@
-import type { GroupBlobRef } from '../about-record';
 import { now as tidNow } from '@atcute/tid';
 import * as v from '@atcute/lexicons/validations';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
@@ -99,7 +98,13 @@ export async function deleteGroupEvent(
 // The event editor compresses to 900 KB before it uploads.
 export const GROUP_EVENT_IMAGE_MAX_BYTES = 1_000_000;
 
-export type { GroupBlobRef };
+/** A blob reference as a record holds it. */
+export interface GroupBlobRef {
+	$type: 'blob';
+	ref: { $link: string };
+	mimeType: string;
+	size: number;
+}
 
 export type GroupBlobUploader = (blob: Blob) => Promise<GroupBlobRef>;
 
