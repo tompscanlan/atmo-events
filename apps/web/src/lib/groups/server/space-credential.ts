@@ -1,6 +1,6 @@
 // A space credential for one of a group's spaces, and the reads made with it.
 //
-// A holder's own session (./acceptance.ts `MemberSession`, or the group's own,
+// A holder's own session (./acceptance.ts `CallerSession`, or the group's own,
 // ./session.ts) asks its PDS for a delegation token, and the space authority's
 // host exchanges that token for a credential bound to a fresh P-256 key, the token
 // and the key both in the request's body. Every request made with the credential

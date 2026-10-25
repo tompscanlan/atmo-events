@@ -1,7 +1,7 @@
 import { error, redirect } from '@sveltejs/kit';
 import { GROUP_LINK_REDIRECT_PATH } from '$lib/atproto/settings';
 import { mayHoldGroupSession } from '$lib/groups/grants';
-import { gateCaller } from '$lib/groups/server/acceptance';
+import { gateCaller } from '$lib/groups/server/caller';
 import { GroupLinkRefused, startGroupLink } from '$lib/groups/server/group-link';
 import { isHostGroup } from '$lib/groups/server/host-kind';
 

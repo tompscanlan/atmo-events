@@ -1,58 +1,33 @@
-// Sending a member to their PDS with the group grants on top of the base scope:
-// at sign-in (`authorizeSignIn`), and again after a join (remote-context's
-// `reauthorizeUrl`). Which grants to ask for is member-grants'. This file only
-// starts the authorization, so member-grants never imports the OAuth client.
-import type { ActorIdentifier } from '@atcute/lexicons';
-import type { OAuthClient } from '@atcute/oauth-node-client';
-import {
-	createOAuthClient,
-	resolveActorDid,
-	servesClientMetadata
-} from '$lib/atproto/server/oauth';
+// Sign-in asks for the proposal's `participate` set on top of the base scope. A spaces
+// PDS refuses a set whose lexicons do not resolve, with `invalid_scope`, so the sign-in
+// then falls back to the base scope alone.
+import { OAuthResponseError, type OAuthClient } from '@atcute/oauth-node-client';
+import { createOAuthClient, servesClientMetadata } from '$lib/atproto/server/oauth';
 import { scopes } from '$lib/atproto/settings';
-import { firstAcceptedScope, signInGrantAttempts } from './member-grants';
 
-type AuthorizeOptions = Parameters<OAuthClient['authorize']>[0];
+export const GROUP_SIGN_IN_SCOPES = ['include:group.opensocial.participate'] as const;
 
-/** Starts an authorization that asks for the base scope plus `grants`. The client
- *  declares the grants too, since a PDS refuses a scope its metadata lacks. */
-export function authorizeWithGrants(
-	env: App.Platform['env'] | undefined,
-	grants: readonly string[],
-	options: Pick<AuthorizeOptions, 'target' | 'prompt'>
-): ReturnType<OAuthClient['authorize']> {
-	return createOAuthClient(env, grants).authorize({
-		...options,
-		scope: [...scopes, ...grants].join(' ')
-	});
+type AuthorizeOptions = Pick<Parameters<OAuthClient['authorize']>[0], 'target' | 'prompt'>;
+
+export function groupsEnabled(env: App.Platform['env'] | undefined): boolean {
+	return Boolean(env?.GROUP_HOST_URL?.trim());
 }
 
-/** Starts a sign-in as `handle` (none for a signup) that asks for the grants of
- *  the groups it belongs to, dropping them set by set while the PDS refuses
- *  them (see `signInGrantAttempts`). */
 export async function authorizeSignIn(
 	env: App.Platform['env'] | undefined,
-	handle: string | undefined,
-	options: Pick<AuthorizeOptions, 'target' | 'prompt'>
+	options: AuthorizeOptions
 ): ReturnType<OAuthClient['authorize']> {
-	return firstAcceptedScope(await signInGrants(env, handle), (grants) =>
-		authorizeWithGrants(env, grants, options)
-	);
-}
-
-/** The grant sets a sign-in as `handle` tries. A signup, a loopback client, or a
- *  deployment without D1 asks for none. So does a handle that does not resolve
- *  here, and authorize then reports it as it reports any unknown handle. */
-async function signInGrants(
-	env: App.Platform['env'] | undefined,
-	handle: string | undefined
-): Promise<string[][]> {
-	if (!handle || !env?.DB || !servesClientMetadata(env)) return [[]];
+	const authorize = (extras: readonly string[]) =>
+		createOAuthClient(env, extras).authorize({
+			...options,
+			scope: [...scopes, ...extras].join(' ')
+		});
+	if (!groupsEnabled(env) || !servesClientMetadata(env)) return authorize([]);
 	try {
-		const did = await resolveActorDid(handle as ActorIdentifier);
-		return await signInGrantAttempts(env.DB, did, Date.now());
+		return await authorize(GROUP_SIGN_IN_SCOPES);
 	} catch (e) {
-		console.warn('[oauth] sign-in asks for no group grants:', e);
-		return [[]];
+		if (!(e instanceof OAuthResponseError && e.error === 'invalid_scope')) throw e;
+		console.warn(`[groups] signing in without the groups scope: ${e.errorDescription ?? e.error}`);
+		return authorize([]);
 	}
 }

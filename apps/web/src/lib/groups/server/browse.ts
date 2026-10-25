@@ -4,58 +4,39 @@ import type { GroupRow } from '../types';
 import { ensureGroupsSchema } from './schema';
 import { GROUP_COLUMNS } from './db/groups';
 
-/** A group the declaration index lists, with the `createdAt` browse sorts by. */
 export interface DeclaredGroup {
 	did: string;
-	createdAt: string | null;
+	/** When the index saw the declaration, in milliseconds. */
+	indexedAt: number;
 }
 
-/** Every group declared on the network, newest first. Throws if the index fails.
- *  No `actor`, which would backfill that repo on demand, and no `profiles`, since
- *  contrail refetches a missing profile from its PDS on every call. */
+/** Newest first, the index's own order. No `actor`, which would backfill that repo on
+ *  demand, and no `profiles`, which contrail refetches on every call. */
 export async function listDeclaredGroups(db: D1Database, limit = 100): Promise<DeclaredGroup[]> {
 	const res = await getServerClient(db).get('rsvp.atmo.declaration.listRecords', {
-		params: { sort: 'createdAt', order: 'desc', limit: Math.min(Math.max(limit, 1), 200) }
+		params: { limit: Math.min(Math.max(limit, 1), 200) }
 	});
 	if (!res.ok) throw new Error(`the declaration index did not answer: ${res.data.error}`);
-
-	return res.data.records.map((record) => {
-		const createdAt = (record.value as { createdAt?: unknown } | null)?.createdAt;
-		return { did: record.did, createdAt: typeof createdAt === 'string' ? createdAt : null };
-	});
+	return res.data.records.map((record) => ({
+		did: record.did,
+		indexedAt: Math.floor(record.time_us / 1000)
+	}));
 }
 
-/** One row of the browse list. `row` is null when this deployment holds no row
- *  for the group, which then renders without a link. `declared` says whether
- *  the declaration index listed it, so browse can show an undeclared group as
- *  private without asking its host. */
+/** `row` is null when this site holds none for the group, which then renders without
+ *  a link. `declared` lets browse show an undeclared group as private without asking. */
 export interface BrowseEntry {
 	group_did: string;
 	row: GroupRow | null;
 	declared: boolean;
 }
 
-/** Browse listing: the declaration index plus the caller's own groups.
- *
- *  A public group publishes a declaration and a private one withdraws it, so
- *  no visibility filter is needed. A declared group with no row here is still
- *  listed, because another app may have created it.
- *
- *  A signed-in caller also sees the groups they own or are a member of, by the
- *  rows, so a private group stays reachable by its members. No space is read:
- *  a row that outlived its membership record lists a group whose page then
- *  answers 404, since the page reads the caller's standing with their own
- *  access.
- *
- *  Names and descriptions come from the row, not records: the about space is
- *  never anonymously readable, so no indexer can supply them. */
+/** A declared group is listed whoever made it. A signed-in caller also sees the groups
+ *  the rows say they are in, so a private group stays reachable by its members; its
+ *  page still reads their standing with their own access. */
 export async function listGroups(
 	db: D1Database,
-	opts: {
-		callerDid?: string | null;
-		declared: DeclaredGroup[];
-		limit?: number;
-	}
+	opts: { callerDid?: string | null; declared: DeclaredGroup[]; limit?: number }
 ): Promise<BrowseEntry[]> {
 	await ensureGroupsSchema(db);
 	const caller = opts.callerDid ?? null;
@@ -88,15 +69,13 @@ export async function listGroups(
 	const entries = new Map<string, BrowseEntry & { at: number }>();
 	for (const d of opts.declared) {
 		if (entries.has(d.did)) continue;
-		const row = byDid.get(d.did) ?? null;
 		entries.set(d.did, {
 			group_did: d.did,
-			row,
+			row: byDid.get(d.did) ?? null,
 			declared: true,
-			at: Date.parse(d.createdAt ?? '') || row?.created_at || 0
+			at: d.indexedAt
 		});
 	}
-
 	for (const row of own.filter((row) => !entries.has(row.group_did))) {
 		entries.set(row.group_did, {
 			group_did: row.group_did,

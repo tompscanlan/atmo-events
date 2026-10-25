@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { flattenEventRecord, getEventRecordFromContrail } from '$lib/contrail';
 import { getServerClient } from '$lib/contrail/index';
-import { gateCaller } from '$lib/groups/server/acceptance';
+import { gateCaller } from '$lib/groups/server/caller';
 import { groupEditorPage } from '$lib/groups/server/editor-page';
 import type { PageServerLoad } from './$types';
 

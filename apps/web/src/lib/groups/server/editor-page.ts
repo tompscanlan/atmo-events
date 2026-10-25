@@ -2,13 +2,13 @@
 import { error } from '@sveltejs/kit';
 import { can, type GroupPermission } from '../permissions';
 
-import type { MemberSession } from './acceptance';
+import type { CallerSession } from './caller';
 import { groupHeader, groupRouteContext } from './route-context';
 
 export async function groupEditorPage(
 	db: D1Database,
 	actor: string,
-	caller: MemberSession | null,
+	caller: CallerSession | null,
 	permission: GroupPermission
 ) {
 	const { group, membership, reader } = await groupRouteContext(db, actor, caller);

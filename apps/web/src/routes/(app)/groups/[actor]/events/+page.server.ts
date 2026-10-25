@@ -1,5 +1,5 @@
 import { can } from '$lib/groups/permissions';
-import { gateCaller } from '$lib/groups/server/acceptance';
+import { gateCaller } from '$lib/groups/server/caller';
 import { listGroupEvents } from '$lib/groups/server/events-index';
 import { groupHeader, groupRouteContext } from '$lib/groups/server/route-context';
 import type { PageServerLoad } from './$types';

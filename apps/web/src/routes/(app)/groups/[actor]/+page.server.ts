@@ -3,7 +3,7 @@ import { groupFace } from '$lib/groups/about-record';
 import { mayHoldGroupSession } from '$lib/groups/grants';
 import { can } from '$lib/groups/permissions';
 import { readGroupAbout, type GroupSpaceReader } from '$lib/groups/server/about-read';
-import { gateCaller } from '$lib/groups/server/acceptance';
+import { gateCaller } from '$lib/groups/server/caller';
 import { refreshGroupHandle } from '$lib/groups/server/handles';
 import { readGroupMembers, NO_MEMBER_RECORDS } from '$lib/groups/server/members-read';
 import { loadPeople } from '$lib/groups/server/people';

@@ -1,22 +1,10 @@
-// The schema's refusals, reported as `GroupRuleError`. migrations/0001_groups.sql
-// enforces the invariants, so the D1 modules run their writes through `guard`
-// instead of checking the rules again.
+// The schema's refusals, as `GroupRuleError`, so the D1 modules never check its rules again.
 import { errorText } from '../errors';
 
-/** Thrown for a rule the SQL refused. `reason` is a stable machine tag, so a
- *  route can map it to a status code without string matching. */
+/** `reason` is a stable tag, so a route can map it without matching the message. */
 export class GroupRuleError extends Error {
 	constructor(
-		readonly reason: /** The group DID is already bound. This is the only uniqueness
-			 *  failure a create can hit, since the handle reserves the name. */
-			| 'did-taken'
-			/** `groups.owner_did` or `groups.group_did` was to be rewritten. */
-			| 'identity-immutable'
-			| 'not-found'
-			| 'already-pending'
-			/** A stranger asked to join a group its host keeps invite-only. */
-			| 'invite-only'
-			| 'constraint',
+		readonly reason: 'did-taken' | 'not-found' | 'already-pending' | 'invite-only' | 'constraint',
 		message: string
 	) {
 		super(message);
@@ -24,16 +12,10 @@ export class GroupRuleError extends Error {
 	}
 }
 
-/** Maps a schema refusal onto the tags above, so the app never duplicates the
- *  schema's checks. SQLite names the columns of a violated unique index, not
- *  the index, and D1 wraps the same text, so matching is on column names and
- *  on the triggers' RAISE messages. */
+// SQLite names the columns of a violated unique index, not the index, and D1 wraps
+// the same text.
 export function constraintMessage(e: unknown): GroupRuleError | null {
 	const text = errorText(e);
-	// Triggers first: one statement can fire a trigger and trip a unique index.
-	if (/are immutable/.test(text)) {
-		return new GroupRuleError('identity-immutable', "A group's DID and creator cannot change");
-	}
 	if (/UNIQUE constraint failed/.test(text)) {
 		if (/groups\.group_did/.test(text)) {
 			return new GroupRuleError('did-taken', 'That DID is already bound to another group');

@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { gateCaller } from '$lib/groups/server/acceptance';
+import { gateCaller } from '$lib/groups/server/caller';
 import { readGroupAvatar } from '$lib/groups/server/avatar-read';
 import { getGroupByDid } from '$lib/groups/server/db/groups';
 import { holdsMetaRead } from '$lib/groups/server/member-grants';

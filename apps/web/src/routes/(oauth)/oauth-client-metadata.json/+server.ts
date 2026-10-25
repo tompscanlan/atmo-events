@@ -1,15 +1,14 @@
 import { json } from '@sveltejs/kit';
 import { createOAuthClient } from '$lib/atproto/server/oauth';
-import { declaredGrants } from '$lib/groups/server/member-grants';
-
+import { GROUP_SESSION_SCOPES } from '$lib/groups/server/session';
+import { GROUP_SIGN_IN_SCOPES, groupsEnabled } from '$lib/groups/server/sign-in-grants';
 import type { RequestHandler } from './$types';
 
-import { GROUP_SESSION_SCOPES } from '$lib/groups/server/session';
-// Declares each group's member grant and every scope a group session's link asks
-// for, as well as the base scopes, because a PDS refuses any requested
-// scope the metadata does not list. Sign-in never asks for the group scope.
+// A PDS refuses any requested scope the metadata does not list.
 export const GET: RequestHandler = async ({ platform }) => {
-	const grants = platform?.env.DB ? await declaredGrants(platform.env.DB) : [];
-	const oauth = createOAuthClient(platform?.env, [...grants, ...GROUP_SESSION_SCOPES]);
+	const extras = groupsEnabled(platform?.env)
+		? [...GROUP_SIGN_IN_SCOPES, ...GROUP_SESSION_SCOPES]
+		: [];
+	const oauth = createOAuthClient(platform?.env, extras);
 	return json(oauth.metadata);
 };

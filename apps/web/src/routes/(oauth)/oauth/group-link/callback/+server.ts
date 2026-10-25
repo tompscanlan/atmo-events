@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import { oauthStates } from '$lib/atproto/server/oauth';
 import { mayHoldGroupSession } from '$lib/groups/grants';
-import { gateCaller } from '$lib/groups/server/acceptance';
+import { gateCaller } from '$lib/groups/server/caller';
 import { finishGroupLink } from '$lib/groups/server/group-link';
 
 import { groupPath, groupRouteContext } from '$lib/groups/server/route-context';

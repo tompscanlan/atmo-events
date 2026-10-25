@@ -1,8 +1,7 @@
 // Applies the groups migration to D1 on every cold isolate, so each statement must be
-// safe to re-run. The file is imported `?raw`, so wrangler and this runner share one copy.
+// safe to re-run. Imported `?raw`, so wrangler and this runner share one copy.
 import groupsSql from '../../../../migrations/0001_groups.sql?raw';
 
-/** Split on the `-- @statement` marker, never on `;`: the triggers contain `;`. */
 export const GROUPS_SCHEMA_STATEMENTS: readonly string[] = groupsSql
 	.split(/^[ \t]*--[ \t]*@statement[ \t]*$/m)
 	.map((s) => s.trim())
@@ -15,9 +14,8 @@ export function applyGroupsSchemaSync(sqlite: { exec(sql: string): void }): void
 
 let applied: Promise<void> | null = null;
 
-/** Applied once per isolate, as one `batch()` that D1 runs in a single transaction.
- *  `db.prepare` runs inside `.then` so its throw takes the batch's failure path. A
- *  failure is not cached, so the next call retries. */
+/** Once per isolate, as one `batch()`, which D1 runs as a transaction. A failure is
+ *  not cached, so the next call retries. */
 export async function ensureGroupsSchema(db: D1Database): Promise<void> {
 	applied ??= Promise.resolve()
 		.then(() => db.batch(GROUPS_SCHEMA_STATEMENTS.map((sql) => db.prepare(sql))))

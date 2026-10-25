@@ -1,27 +1,20 @@
-// The D1 rows for who is in a group: memberships and join requests. A row is
-// a member; a pending request is a join request, never a membership.
-import type { AssignableRole } from '../../permissions';
-import type { GroupRow, MemberRow } from '../../types';
+// The D1 rows for who is in a group. A pending request is a join request, never a membership.
+import type { MemberRow } from '../../types';
 import { ensureGroupsSchema } from '../schema';
 import { GroupRuleError, constraintMessage, guard } from './rules';
 
-/** A roster row as `MemberRow`, for the reads below to filter and order. Roles
- *  come back as names. */
-const MEMBER_ROW = `SELECT m.id AS membership_id, m.did, r.name AS role, m.created_at
-	FROM memberships m JOIN roles r ON r.id = m.role_id`;
+const MEMBER_ROW = `SELECT id AS membership_id, did, role, created_at FROM memberships`;
 
-/** The roster, by join time. */
+/** By join time. */
 export async function listMembers(db: D1Database, groupId: string): Promise<MemberRow[]> {
 	await ensureGroupsSchema(db);
 	const { results } = await db
-		.prepare(`${MEMBER_ROW} WHERE m.group_id = ? ORDER BY m.created_at ASC, m.did ASC`)
+		.prepare(`${MEMBER_ROW} WHERE group_id = ? ORDER BY created_at ASC, did ASC`)
 		.bind(groupId)
 		.all<MemberRow>();
 	return results ?? [];
 }
 
-/** One roster row, or null, so `roster.ts` can check one member without
- *  loading the whole roster. */
 export async function getMemberRow(
 	db: D1Database,
 	groupId: string,
@@ -29,32 +22,9 @@ export async function getMemberRow(
 ): Promise<MemberRow | null> {
 	await ensureGroupsSchema(db);
 	return db
-		.prepare(`${MEMBER_ROW} WHERE m.group_id = ? AND m.did = ?`)
+		.prepare(`${MEMBER_ROW} WHERE group_id = ? AND did = ?`)
 		.bind(groupId, did)
 		.first<MemberRow>();
-}
-
-/** The groups `did` is on the roster of and, unless `requests` is false, has a
- *  pending request in, oldest first. Unlike the reads above it does not create
- *  the schema: sign-in asks it on every deployment, so one with no groups
- *  tables throws here, and each caller reads that as no groups. */
-export async function groupsOfMember(
-	db: D1Database,
-	did: string,
-	{ requests = true }: { requests?: boolean } = {}
-): Promise<Pick<GroupRow, 'group_did' | 'members_space_uri' | 'created_at'>[]> {
-	const pending = requests
-		? `UNION SELECT group_id FROM join_requests WHERE did = ? AND status = 'pending'`
-		: '';
-	const { results } = await db
-		.prepare(
-			`SELECT group_did, members_space_uri, created_at FROM groups
-			 WHERE id IN (SELECT group_id FROM memberships WHERE did = ? ${pending})
-			 ORDER BY created_at, group_did`
-		)
-		.bind(...(requests ? [did, did] : [did]))
-		.all<Pick<GroupRow, 'group_did' | 'members_space_uri' | 'created_at'>>();
-	return results ?? [];
 }
 
 /** Roster size. A page may show the count to someone not allowed the names. */
@@ -69,8 +39,7 @@ export async function countMembers(db: D1Database, groupId: string): Promise<num
 
 export type JoinOutcome = 'joined' | 'pending' | 'already-member' | 'already-pending';
 
-/** This app's note that `did` asked to join, since no host method reads a
- *  member's own request back. `already-pending` when one is there. */
+/** No host method reads a member's own request back, so this note is how a page knows. */
 export async function noteJoinRequest(
 	db: D1Database,
 	groupId: string,
@@ -95,8 +64,7 @@ export async function noteJoinRequest(
 	}
 }
 
-/** Closes `did`'s pending request row if there is one, and does nothing if not:
- *  the row is only a note, and the host's answer decides. */
+/** Closes `did`'s pending note if there is one: the host's answer decides, not the note. */
 export async function closeJoinRequestNote(
 	db: D1Database,
 	groupId: string,
@@ -114,16 +82,13 @@ export async function closeJoinRequestNote(
 	}
 }
 
-/** Puts `did` on the roster with `role`, as the host admitted them. A
- *  DID already on the roster is refused as `GroupRuleError('constraint')`. A
- *  pending request from `did` is closed as approved in the same batch, by
- *  `decidedBy` (null for an open join), so it does not stay in the queue for a
- *  member. */
+/** A pending note from `did` is closed as approved in the same batch, by `decidedBy`
+ *  (null for an open join). */
 export async function addMember(
 	db: D1Database,
 	groupId: string,
 	did: string,
-	role: AssignableRole,
+	role: string,
 	decidedBy: string | null = null
 ): Promise<void> {
 	await ensureGroupsSchema(db);
@@ -132,11 +97,10 @@ export async function addMember(
 		db.batch([
 			db
 				.prepare(
-					`INSERT INTO memberships (id, group_id, did, role_id, created_at, updated_at)
-					 SELECT ?, ?, ?, r.id, ?, ? FROM roles r
-					 WHERE r.group_id = ? AND r.name = ?`
+					`INSERT INTO memberships (id, group_id, did, role, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?, ?)`
 				)
-				.bind(crypto.randomUUID(), groupId, did, now, now, groupId, role),
+				.bind(crypto.randomUUID(), groupId, did, role, now, now),
 			db
 				.prepare(
 					`UPDATE join_requests SET status = 'approved', decided_by_did = ?, decided_at = ?,
@@ -148,9 +112,7 @@ export async function addMember(
 	);
 }
 
-/** The id of a person's pending request, or null when they have none. A host
- *  names a request by its member (`denyJoinRequest`), and the one-pending index
- *  makes that a single row; the id is this app's own. */
+
 export async function pendingRequestIdOf(
 	db: D1Database,
 	groupId: string,
@@ -185,8 +147,7 @@ export async function decideJoinRequest(
 	}
 }
 
-/** Removes a roster row, for a leave or an eject. The creator's row is one
- *  like any other. */
+
 export async function removeMember(db: D1Database, groupId: string, did: string): Promise<void> {
 	await ensureGroupsSchema(db);
 	const res = await guard(() =>
@@ -201,17 +162,13 @@ export async function changeMemberRole(
 	db: D1Database,
 	groupId: string,
 	did: string,
-	role: AssignableRole
+	role: string
 ): Promise<void> {
 	await ensureGroupsSchema(db);
 	const res = await guard(() =>
 		db
-			.prepare(
-				`UPDATE memberships SET role_id = (SELECT id FROM roles WHERE group_id = ? AND name = ?),
-				   updated_at = ?
-				 WHERE group_id = ? AND did = ?`
-			)
-			.bind(groupId, role, Date.now(), groupId, did)
+			.prepare(`UPDATE memberships SET role = ?, updated_at = ? WHERE group_id = ? AND did = ?`)
+			.bind(role, Date.now(), groupId, did)
 			.run()
 	);
 	if ((res.meta?.changes ?? 0) === 0) {

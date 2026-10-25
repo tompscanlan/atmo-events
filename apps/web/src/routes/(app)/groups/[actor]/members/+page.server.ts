@@ -14,7 +14,7 @@ import {
 } from '$lib/groups/server/members-read';
 import { listMembers } from '$lib/groups/server/db/roster';
 import { loadPeople } from '$lib/groups/server/people';
-import { gateCaller, type MemberSession } from '$lib/groups/server/acceptance';
+import { gateCaller, type CallerSession } from '$lib/groups/server/caller';
 import {
 	credentialAcceptanceReader,
 	isSpaceAccessDenied
@@ -34,7 +34,7 @@ import { pendingRequestsFor } from '$lib/groups/server/host';
  *  than a guess, and access is unaffected either way, since it comes from
  *  membership alone. */
 async function readConfirmations(
-	viewer: MemberSession | null,
+	viewer: CallerSession | null,
 	group: GroupRow,
 	dids: string[]
 ): Promise<Map<string, boolean> | null> {

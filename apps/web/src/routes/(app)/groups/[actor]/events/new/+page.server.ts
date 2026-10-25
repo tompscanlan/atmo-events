@@ -1,5 +1,5 @@
 import { now as tidNow } from '@atcute/tid';
-import { gateCaller } from '$lib/groups/server/acceptance';
+import { gateCaller } from '$lib/groups/server/caller';
 import { groupEditorPage } from '$lib/groups/server/editor-page';
 
 import type { PageServerLoad } from './$types';

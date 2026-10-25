@@ -1,9 +1,3 @@
-// Writes a group's profile, rules and access record into its about space, through
-// the event writer's gate and transport. The permission is always MANAGE_GROUP.
-//
-// A rule must stay citable by URI, so a moderation action can name the rule it
-// enforced. So rules are matched by text rather than rewritten: an unchanged
-// rule keeps its URI, a removed one is deleted and a new one is created.
 import { now as tidNow } from '@atcute/tid';
 import {
 	GROUP_PROFILE_COLLECTION,
@@ -11,7 +5,6 @@ import {
 	GROUP_RULE_COLLECTION,
 	groupProfileRecord,
 	groupRuleRecord,
-	joinPolicyFor,
 	type GroupProfileInput
 } from '../about-record';
 import {
@@ -23,16 +16,15 @@ import {
 	type GroupAccessFields
 } from '../members-record';
 import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from '../types';
-
-import type { GroupRuleRecord, GroupSpaceReader } from './about-read';
-
+import type { GroupSpaceReader } from './about-read';
 import { gatedWriter, requireGroupWrite, type GroupRepoWriter, ownSpace } from './group-write';
 import { VISIBILITY_WRITE, spaceWrite } from '../grants';
-import type { RoleGrant, WriteAction } from '../scopes';
+import type { RoleGrant } from '../scopes';
+import type { CredentialStoreEnv } from './session';
 
 const aboutSpace = (group: GroupRow) =>
 	ownSpace(group, 'about', group.about_space_uri, 'its profile cannot be written');
-import { type CredentialStoreEnv } from './session';
+
 export interface WriteGroupAboutInput {
 	db: D1Database;
 	env: CredentialStoreEnv;
@@ -47,24 +39,11 @@ export interface ProfileWriteResult {
 	cid: string;
 }
 
-/** Puts the group's one `profile` record, keyed `self`. The caller passes the
- *  existing `createdAt`, so an edit keeps the creation date. */
 export async function writeGroupProfile(
-	input: WriteGroupAboutInput & {
-		visibility: GroupVisibility;
-		profile: Omit<GroupProfileInput, 'joinPolicy'>;
-	}
+	input: WriteGroupAboutInput & { profile: GroupProfileInput }
 ): Promise<ProfileWriteResult> {
 	await requireGroupWrite(input, spaceWrite(ABOUT_SPACE_TYPE, GROUP_PROFILE_COLLECTION, 'update'));
-
-	const record = {
-		...groupProfileRecord({
-			...input.profile,
-			// Derived, so a private group's profile says invite-only.
-			joinPolicy: joinPolicyFor(input.visibility, input.group.require_approval)
-		}),
-		$type: GROUP_PROFILE_COLLECTION
-	};
+	const record = { ...groupProfileRecord(input.profile), $type: GROUP_PROFILE_COLLECTION };
 
 	const writer = await gatedWriter(input);
 	const result = await writer({
@@ -78,14 +57,9 @@ export async function writeGroupProfile(
 	return { uri: result.uri, cid: result.cid };
 }
 
-/** Puts the about space's `access` record, which is the group's visibility. The
- *  host enforces it for every reader (./spaces.ts). A group with a declaration
- *  must have an access record that says
- *  public, so this is written before a declaration is published and after one
- *  is withdrawn. Idempotent, keyed `self`. `grants`, when the record already has
- *  some, are kept as they are and only `public` changes: a group host writes the
- *  record at create in its own roles, which this app's defaults would not name.
- *  (Spec: FR-214.) */
+/** The meta space's `access`, which is the group's visibility. Grants already in the
+ *  record are kept and only `public` changes. A declared group's access must say
+ *  public, so this goes before a declaration and after one is withdrawn. */
 export async function writeAboutAccess(
 	input: WriteGroupAboutInput & { visibility: GroupVisibility; grants?: readonly RoleGrant[] }
 ): Promise<{ uri: string; cid: string }> {
@@ -93,7 +67,7 @@ export async function writeAboutAccess(
 
 	const isPublic = input.visibility === 'public';
 	const record = {
-		...(input.grants?.length
+		...(input.grants !== undefined
 			? { public: isPublic, grants: input.grants.map(({ role, scopes }) => ({ role, scopes })) }
 			: groupAccessRecord({
 					spaceType: ABOUT_SPACE_TYPE,
@@ -115,9 +89,7 @@ export async function writeAboutAccess(
 	return { uri: result.uri, cid: result.cid };
 }
 
-/** Writes the about space's access record when `current`, as read, does not
- *  already say `visibility`, and answers whether it wrote. The grants `current`
- *  holds are kept. */
+/** Writes the access record only when `current` does not already say `visibility`. */
 export async function alignAboutAccess(
 	input: WriteGroupAboutInput & { visibility: GroupVisibility },
 	current: GroupAccessFields | null
@@ -127,104 +99,21 @@ export async function alignAboutAccess(
 	return true;
 }
 
-export interface RulesWriteResult {
-	/** Rules that already existed with this exact text, URI untouched. */
-	kept: GroupRuleRecord[];
-	created: { rkey: string; uri: string; text: string }[];
-	deleted: { rkey: string; text: string }[];
-}
-
-/**
- * Reconciles the rule records against `desired`. Duplicate text collapses into
- * one rule. `existing` is passed in, so a test can supply it directly.
- */
-export async function setGroupRules(
-	input: WriteGroupAboutInput & { desired: string[]; existing: GroupRuleRecord[] }
-): Promise<RulesWriteResult> {
-	const space = aboutSpace(input.group);
-
-	const desired: string[] = [];
-	const seen = new Set<string>();
-	for (const text of input.desired) {
-		const trimmed = text.trim();
-		if (!trimmed || seen.has(trimmed)) continue;
-		seen.add(trimmed);
-		desired.push(trimmed);
-	}
-
-	// First wins, so a rule stored twice loses the duplicate on the next save.
-	const byText = new Map<string, GroupRuleRecord>();
-	for (const rule of input.existing) {
-		if (!byText.has(rule.text)) byText.set(rule.text, rule);
-	}
-
-	// Each kind of write the save makes, checked before any is sent.
-	const needs = new Set<WriteAction>();
-	const matched = new Set<string>();
-	for (const [index, text] of desired.entries()) {
-		const match = byText.get(text);
-		if (!match) needs.add('create');
-		else {
-			matched.add(match.rkey);
-			if (match.order !== index) needs.add('update');
-		}
-	}
-	if (input.existing.some((rule) => !matched.has(rule.rkey))) needs.add('delete');
-	for (const action of needs) {
-		await requireGroupWrite(input, spaceWrite(ABOUT_SPACE_TYPE, GROUP_RULE_COLLECTION, action));
-	}
+/** The rules a new group starts with, one record each. */
+export async function createGroupRules(
+	input: WriteGroupAboutInput & { rules: readonly string[] }
+): Promise<void> {
+	if (input.rules.length === 0) return;
+	await requireGroupWrite(input, spaceWrite(ABOUT_SPACE_TYPE, GROUP_RULE_COLLECTION, 'create'));
 	const writer = await gatedWriter(input);
-
-	const result: RulesWriteResult = { kept: [], created: [], deleted: [] };
-	const claimed = new Set<string>();
-
-	for (const [index, text] of desired.entries()) {
-		const match = byText.get(text);
-		if (match) {
-			claimed.add(match.rkey);
-			// A rule that only moved is rewritten in place and keeps its URI. That is
-			// why the order lives on the record, not in the rkey.
-			if (match.order !== index) {
-				await writer({
-					repo: input.group.group_did,
-					collection: GROUP_RULE_COLLECTION,
-					rkey: match.rkey,
-					record: {
-						...groupRuleRecord({ text, order: index, createdAt: match.createdAt ?? undefined }),
-						$type: GROUP_RULE_COLLECTION
-					},
-					intent: 'update',
-					space
-				});
-			}
-			result.kept.push({ ...match, order: index });
-			continue;
-		}
-
-		const rkey = tidNow();
-		const written = await writer({
-			repo: input.group.group_did,
-			collection: GROUP_RULE_COLLECTION,
-			rkey,
-			record: { ...groupRuleRecord({ text, order: index }), $type: GROUP_RULE_COLLECTION },
-			intent: 'create',
-			space
-		});
-		result.created.push({ rkey, uri: written.uri, text });
-	}
-
-	for (const rule of input.existing) {
-		if (claimed.has(rule.rkey)) continue;
+	for (const [order, text] of input.rules.entries()) {
 		await writer({
 			repo: input.group.group_did,
 			collection: GROUP_RULE_COLLECTION,
-			rkey: rule.rkey,
-			record: {},
-			intent: 'delete',
-			space
+			rkey: tidNow(),
+			record: { ...groupRuleRecord({ text, order }), $type: GROUP_RULE_COLLECTION },
+			intent: 'create',
+			space: aboutSpace(input.group)
 		});
-		result.deleted.push({ rkey: rule.rkey, text: rule.text });
 	}
-
-	return result;
 }

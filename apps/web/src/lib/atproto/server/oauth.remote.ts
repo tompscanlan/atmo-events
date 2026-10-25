@@ -20,14 +20,10 @@ export const oauthLogin = command(
 				? ({ type: 'pds', serviceUrl: signUpPDS() } as const)
 				: ({ type: 'account', identifier: input.handle as ActorIdentifier } as const);
 
-			const { url } = await authorizeSignIn(
-				platform?.env,
-				input.signup ? undefined : input.handle,
-				{
-					target,
-					prompt: input.signup ? 'create' : undefined
-				}
-			);
+			const { url } = await authorizeSignIn(platform?.env, {
+				target,
+				prompt: input.signup ? 'create' : undefined
+			});
 
 			return { url: url.toString() };
 		} catch (e) {
