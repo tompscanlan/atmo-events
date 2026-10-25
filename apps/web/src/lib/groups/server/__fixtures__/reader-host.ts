@@ -197,7 +197,7 @@ const declarations = new Map<string, boolean>();
 
 /** Says whether `groupDid`'s public repo holds its declaration, in place of the
  *  default: it does exactly while its meta space's access record is public, as
- *  atmo keeps it (FR-214). */
+ *  atmo keeps it for a listed group. */
 export function declare(groupDid: string, declared: boolean): void {
 	declarations.set(groupDid, declared);
 }
