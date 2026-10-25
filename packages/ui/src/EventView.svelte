@@ -145,7 +145,7 @@
 		buildDescriptionHtml(eventData.description, eventData.facets)
 	);
 
-	let eventUri = $derived(data.eventUri ?? `at://${did}/community.lexicon.calendar.event/${rkey}`);
+	let eventUri = $derived(`at://${did}/community.lexicon.calendar.event/${rkey}`);
 
 	let ogImageUrl = $derived(data.ogImage ?? `${pageUrl.origin}${pageUrl.pathname}/og.png`);
 
@@ -187,7 +187,7 @@
 			handle: viewer.handle,
 			url: `/${viewer.handle || viewer.did}`
 		});
-		if (status === 'interested' || data.membersOnly) return;
+		if (status === 'interested') return;
 		shareModalTitle = "You're going!";
 		shareModalText = `I'm going to "${eventData.name}".\n\n${shareUrl}`;
 		canSetEventComments = false;
@@ -253,16 +253,14 @@
 							/>
 						</div>
 					{/if}
-					{#if isOwner || data.editHref}
-						<Button href={data.editHref ?? `./${rkey}/edit`} class="mt-9 w-full">Edit Event</Button>
-					{/if}
 					{#if isOwner}
+						<Button href="./{rkey}/edit" class="mt-9 w-full">Edit Event</Button>
 						{#if isConference && !data.spaceUri}
 							<Button href="./{rkey}/talks" variant="secondary" class="mt-2 w-full">
 								Manage talks
 							</Button>
 						{/if}
-						{#if data.spaceUri && data.spaceKey}
+						{#if data.spaceUri}
 							<InviteShareFlow
 								spaceUri={data.spaceUri}
 								spaceKey={data.spaceKey}
