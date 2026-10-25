@@ -417,13 +417,6 @@ export function credentialAcceptanceReader(
 	};
 }
 
-// Each resolver calls the global `fetch` when it resolves, not the one there was
-// when it was built, so a test's stubbed `fetch` answers it.
-const liveFetch: typeof fetch = (input, init) => fetch(input, init);
-const didResolver = {
-	resolve: (did: Did<'plc'> | Did<'web'>) =>
-		createDidDocumentResolver(undefined, liveFetch).resolve(did)
-};
 
 /** How long a resolved endpoint or key is kept. A roster page reads one per member. */
 const RESOLVED_TTL_MS = 10 * 60 * 1000;
@@ -435,7 +428,7 @@ async function serviceEndpoint(did: string, ids: readonly `#${string}`[]): Promi
 	const hit = resolved.get(cacheKey);
 	if (hit && Date.now() - hit.at < RESOLVED_TTL_MS) return hit.value;
 
-	const doc = await didResolver.resolve(did as Did<'plc'> | Did<'web'>);
+	const doc = await createDidDocumentResolver().resolve(did as Did<'plc'> | Did<'web'>);
 	for (const id of ids) {
 		const service = doc.service?.find((s) => s.id === id || s.id === `${doc.id}${id}`);
 		if (service && typeof service.serviceEndpoint === 'string') {
@@ -452,7 +445,7 @@ async function kemKey(did: string, fresh = false): Promise<string> {
 	const hit = resolved.get(cacheKey);
 	if (!fresh && hit && Date.now() - hit.at < RESOLVED_TTL_MS) return hit.value;
 
-	const doc = await didResolver.resolve(did as Did<'plc'> | Did<'web'>);
+	const doc = await createDidDocumentResolver().resolve(did as Did<'plc'> | Did<'web'>);
 	const method = doc.verificationMethod?.find(
 		(m) => m.id === '#atproto_kem' || m.id === `${doc.id}#atproto_kem`
 	);
