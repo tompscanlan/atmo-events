@@ -4,8 +4,6 @@ import * as v from 'valibot';
 import { isDid, isHandle } from '@atcute/lexicons/syntax';
 import { GROUP_VISIBILITIES } from './types';
 import { ASSIGNABLE_ROLES } from './permissions';
-import { EVENT_PLACEMENTS } from './event-placement';
-import { RSVP_STATUSES } from './ids';
 
 /** An HTML checkbox sends `on` when ticked and nothing when not. The `''` default is
  *  required: without it valibot skips a missing key, the transform never runs, and an
@@ -59,11 +57,6 @@ export const rkeyField = v.pipe(
 	v.regex(/^[a-zA-Z0-9._:~-]{1,512}$/, 'Invalid record key')
 );
 export const eventIntentField = v.picklist(['create', 'update'] as const);
-export const placementField = v.picklist(EVENT_PLACEMENTS);
-
-export const rsvpStatusField = v.picklist(RSVP_STATUSES);
-/** Shape only: the module reads a marker it did not make as none. */
-export const askedField = v.nullable(v.pipe(v.string(), v.maxLength(2100)));
 
 /** What the create form and the settings form both edit about a group. */
 export const groupSettingsFields = {

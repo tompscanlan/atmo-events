@@ -1,6 +1,4 @@
-// What atmo's event editor needs to publish as a group, for the new-event and
-// edit pages. The pages are only a first gate; every save is checked again by
-// the writer (./event-writer.ts).
+// The pages are only a first gate; the writer checks every save again.
 import { error } from '@sveltejs/kit';
 import { can, type GroupPermission } from '../permissions';
 
@@ -19,13 +17,7 @@ export async function groupEditorPage(
 	}
 	const { groupName, handle } = await groupHeader(db, group, reader);
 	return {
-		group,
-		/** For a page that goes on to read a members-only event: the caller's
-		 *  standing and their own reader, so it reads neither again. */
-		membership,
-		reader,
 		groupDid: group.group_did,
-		/** The editor shows the group as the host, by the profile record's name. */
 		groupName,
 		handle,
 		canDelete: can(membership.permissions, 'MANAGE_EVENTS')

@@ -1,19 +1,15 @@
-// atmo's event editor, writing as a group. The editor builds the record exactly as
-// it does for a person's own event; this adapter hands it to the group's commands,
-// which check the caller's permission and write with the group's credential. The
-// page gives the editor the group as its viewer, so the preview shows the group as
-// the host.
+// atmo's event editor, writing as a group: the editor builds the record as it does
+// for a person's own event, and this adapter hands it to the group's commands.
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { resolveHandle } from '$lib/atproto/methods';
 import { atProtoLoginModalState } from '$lib/components/LoginModal.svelte';
 import type { EditorAdapter, EditorBlobRef } from '$lib/components/editor/adapter';
-import type { EventPlacement } from './event-placement';
 import type { GroupFormResult } from './form-result';
 import { putGroupEvent, putGroupEventImage, removeGroupEvent } from './group-events.remote';
 
-/** A refusal goes to the page in its own words, then becomes a throw, which the
- *  editor reports as a failed save. */
+// The editor shows its own generic line for every failure, so a refusal's words
+// go to the page first.
 function unwrap<T extends object>(
 	result: GroupFormResult<T>,
 	onRefusal: (message: string) => void
@@ -27,77 +23,42 @@ function unwrap<T extends object>(
 
 export function createGroupEditorAdapter(opts: {
 	groupDid: string;
-	/** The event being edited, or null on the new-event page. A write to any
-	 *  other rkey, such as a recurrence, is a create. */
+	/** Null on the new-event page. A write to any other rkey, such as a recurrence, is a create. */
 	editingRkey: string | null;
 	canDelete: boolean;
-	/** Who can see the event. Required and passed on every save and delete, so
-	 *  none of them can fall back to public. (Spec: FR-116.) */
-	placement: EventPlacement;
-	/** Called with a refusal's message before the save, delete or upload fails.
-	 *  The editor shows its own "Please try again" for every failure, so without
-	 *  this the reason, such as a group that has to be re-created, reaches only
-	 *  the console. */
 	onRefusal: (message: string) => void;
-	/** Called when a save is over, with whether it was written: when the write
-	 *  settles, or when the image upload before it fails, which stops the
-	 *  editor's save. Not when a mention's handle fails to resolve, since the
-	 *  editor drops that mention and goes on to the write. The new-event page
-	 *  unlocks its choice here. */
-	onSaveEnd?: (saved: boolean) => void;
 }): EditorAdapter {
-	const { groupDid, editingRkey, placement, onRefusal, onSaveEnd } = opts;
+	const { groupDid, editingRkey, onRefusal } = opts;
 	const intentFor = (rkey: string) => (rkey === editingRkey ? 'update' : 'create');
 	const eventsTab = resolve('/(app)/groups/[actor]/events', { actor: groupDid });
 
 	return {
-		// Recurring copies are off for a members-only event for now, until a copy
-		// can cite its original by the original's members-only URI: the editor
-		// cites it by a URI in the group's repo, where a members-only event isn't.
-		// privateMode stays off: a members-only event goes in the calendar space
-		// through `placement`, not through the editor's own mode.
-		features: { delete: opts.canDelete, recurring: placement === 'everyone', privateMode: false },
+		features: { delete: opts.canDelete, recurring: true, privateMode: false },
 		async putRecord({ rkey, record }) {
-			let saved = false;
-			try {
-				const result = unwrap(
-					await putGroupEvent({ groupDid, rkey, intent: intentFor(rkey), placement, record }),
-					onRefusal
-				);
-				saved = true;
-				return result;
-			} finally {
-				onSaveEnd?.(saved);
-			}
+			return unwrap(
+				await putGroupEvent({ groupDid, rkey, intent: intentFor(rkey), record }),
+				onRefusal
+			);
 		},
 		async createRecord() {
-			// The editor writes public events with putRecord; only its private
-			// mode, which is off here, would call this.
 			throw new Error('a group event is written with putRecord');
 		},
 		async deleteRecord({ rkey }) {
-			unwrap(await removeGroupEvent({ groupDid, rkey, placement }), onRefusal);
+			unwrap(await removeGroupEvent({ groupDid, rkey }), onRefusal);
 		},
 		async uploadBlob(blob) {
-			try {
-				const { blob: ref } = unwrap(
-					await putGroupEventImage({
-						groupDid,
-						intent: editingRkey ? 'update' : 'create',
-						bytes: Array.from(new Uint8Array(await blob.arrayBuffer())),
-						mimeType: blob.type || 'application/octet-stream'
-					}),
-					onRefusal
-				);
-				return ref as EditorBlobRef;
-			} catch (e) {
-				// The editor's save stops here, before any write.
-				onSaveEnd?.(false);
-				throw e;
-			}
+			const { blob: ref } = unwrap(
+				await putGroupEventImage({
+					groupDid,
+					intent: editingRkey ? 'update' : 'create',
+					bytes: Array.from(new Uint8Array(await blob.arrayBuffer())),
+					mimeType: blob.type || 'application/octet-stream'
+				}),
+				onRefusal
+			);
+			return ref as EditorBlobRef;
 		},
 		async getRecord() {
-			// Only the share flow reads a record back, and the editor never opens it.
 			throw new Error('the group event editor reads no record back');
 		},
 		async resolveHandle(handle: string) {
@@ -112,6 +73,5 @@ export function createGroupEditorAdapter(opts: {
 		requestLogin() {
 			atProtoLoginModalState.show();
 		}
-		// No notifyUpdate: the group's writer tells the index about every write.
 	};
 }
