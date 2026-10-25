@@ -120,6 +120,11 @@ declare global {
 				/** Min ms between geocoder calls in the drip — the rate limiter. Set to
 				 *  the ceiling the geocoder tier allows; defaults to DEFAULT_GEOCODE_SLEEP_MS. */
 				GEOCODE_SLEEP_MS?: string;
+				/** The group host (opensocial.group) this deployment uses, e.g.
+				 *  `https://grouphost.devnet.internal`. A group whose PDS is this host
+				 *  is served by the host's own methods; this site changes no other
+				 *  group. Unset: groups are off. */
+				GROUP_HOST_URL?: string;
 			};
 			/** Cloudflare Worker execution context. Use `ctx.waitUntil(promise)` to
 			 *  let the worker keep a fire-and-forget task alive after the response
