@@ -14,11 +14,16 @@
 		"package:ui": "pnpm --filter @atmo-dev/events-ui package",
 		"changeset": "changeset",
 		"version-packages": "changeset version && pnpm install --lockfile-only",
-		"release": "changeset publish"
+		"release": "changeset publish",
+		"globe:up": "snowglobe up",
+		"globe:dev": "pnpm --filter web exec wrangler d1 migrations apply DB --local && snowglobe run --app atmo -- pnpm --filter web dev --host 0.0.0.0 --strictPort",
+		"globe:e2e": "snowglobe up && snowglobe run --app e2e -- node apps/web/scripts/groups-e2e.mjs",
+		"globe:down": "snowglobe down"
 	},
 	"license": "MIT",
 	"devDependencies": {
 		"@changesets/cli": "^2.31.0",
+		"@openmeet/snowglobe": "^0.3.0",
 		"prettier": "^3.8.1",
 		"prettier-plugin-svelte": "^3.5.1",
 		"prettier-plugin-tailwindcss": "^0.7.2"

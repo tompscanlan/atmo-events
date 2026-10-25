@@ -1,0 +1,34 @@
+{
+	"lexicon": 1,
+	"id": "group.opensocial.membership",
+	"defs": {
+		"main": {
+			"type": "record",
+			"description": "Grants a member their roles, in members. The rkey is the member DID. Writes are bounded by the writer's assignable roles. Creating one approves any pending join request; deleting one ejects the member.",
+			"key": "any",
+			"record": {
+				"type": "object",
+				"required": ["member", "roles", "createdAt"],
+				"properties": {
+					"member": {
+						"type": "string",
+						"format": "did"
+					},
+					"roles": {
+						"type": "array",
+						"maxLength": 100,
+						"description": "Distinct roles declared by this group.",
+						"items": {
+							"type": "ref",
+							"ref": "group.opensocial.defs#roleId"
+						}
+					},
+					"createdAt": {
+						"type": "string",
+						"format": "datetime"
+					}
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,26 @@
+{
+	"lexicon": 1,
+	"id": "group.opensocial.space",
+	"defs": {
+		"main": {
+			"type": "record",
+			"description": "One entry in the group's space index, in members. Groups may leave spaces out.",
+			"key": "tid",
+			"record": {
+				"type": "object",
+				"required": ["space", "createdAt"],
+				"properties": {
+					"space": {
+						"type": "string",
+						"format": "space-ref",
+						"description": "A space under this group."
+					},
+					"createdAt": {
+						"type": "string",
+						"format": "datetime"
+					}
+				}
+			}
+		}
+	}
+}
