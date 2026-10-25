@@ -103,7 +103,6 @@ export interface LinkedGroupCredential {
 
 export type GroupCredential = LinkedGroupCredential;
 
-
 export async function resolveGroupCredential(
 	env: CredentialStoreEnv,
 	groupDid: string,
@@ -125,7 +124,6 @@ export class GroupCredentialError extends Error {
 		this.name = 'GroupCredentialError';
 	}
 }
-
 
 export async function requireGroupCredential(
 	env: CredentialStoreEnv,

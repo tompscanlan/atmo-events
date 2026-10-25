@@ -163,7 +163,12 @@ export function credentialSpaceReader(
 	// One reader per request, so its reads share exchanges only there.
 	const underWay: ExchangesUnderWay = new Map();
 	return readerOver(async (nsid, params) => {
-		const call = { host: await hosts.repoHost(params.repo), audience: params.repo, nsid, query: params };
+		const call = {
+			host: await hosts.repoHost(params.repo),
+			audience: params.repo,
+			nsid,
+			query: params
+		};
 		return credentialRequest(holder, hosts, params.space, call, underWay);
 	});
 }
@@ -182,7 +187,6 @@ export interface GroupAbout {
 	profile: GroupProfileFields | null;
 	rules: GroupRuleRecord[];
 }
-
 
 export async function readGroupProfile(
 	reader: GroupSpaceReader,

@@ -5,7 +5,12 @@ import * as v from 'valibot';
 import { can } from './permissions';
 import type { GroupFormResult } from './form-result';
 import { notAllowed } from './form-error';
-import { didField, groupRulesField, groupSettingsFields, shownVisibilityField } from './form-fields';
+import {
+	didField,
+	groupRulesField,
+	groupSettingsFields,
+	shownVisibilityField
+} from './form-fields';
 import { hostCreation, startCreateAtHost } from './create-at-host';
 import { groupLinkClient } from './server/session';
 import { GROUP_CREATE_REDIRECT_PATH } from '$lib/atproto/settings';

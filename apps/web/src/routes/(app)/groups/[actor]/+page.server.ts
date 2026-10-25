@@ -10,7 +10,12 @@ import { readGroupMembers, NO_MEMBER_RECORDS } from '$lib/groups/server/members-
 import { loadPeople } from '$lib/groups/server/people';
 import { groupHeader, groupRouteContext, pageRoster } from '$lib/groups/server/route-context';
 import { readGroupVisibility } from '$lib/groups/server/spaces';
-import { publicGroup, type GroupRow, type GroupVisibility, type RosterEntry } from '$lib/groups/types';
+import {
+	publicGroup,
+	type GroupRow,
+	type GroupVisibility,
+	type RosterEntry
+} from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
 import { countMembers } from '$lib/groups/server/db/roster';
 import { pendingRequestsFor } from '$lib/groups/server/host';

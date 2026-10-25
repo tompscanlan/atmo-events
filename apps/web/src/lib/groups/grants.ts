@@ -60,23 +60,22 @@ function rosterAct(grants: WriteGrants, groupDid: string, action: WriteAction): 
 	);
 }
 
-const ASKS: Readonly<
-	Record<GroupPermission, (grants: WriteGrants, groupDid: string) => boolean>
-> = {
-	MANAGE_GROUP: (grants, groupDid) =>
-		allowsWrite(
-			grants,
-			groupDid,
-			spaceWrite(ABOUT_SPACE_TYPE, GROUP_PROFILE_COLLECTION, 'update')
-		) && allowsWrite(grants, groupDid, VISIBILITY_WRITE),
-	ADMIT_MEMBERS: (grants, groupDid) => rosterAct(grants, groupDid, 'create'),
-	EJECT_MEMBERS: (grants, groupDid) => rosterAct(grants, groupDid, 'delete'),
-	ASSIGN_ROLES: (grants, groupDid) => rosterAct(grants, groupDid, 'update'),
-	CREATE_EVENT: (grants) => allowsRepoWrite(grants, GROUP_EVENT_COLLECTION, 'create'),
-	MANAGE_EVENTS: (grants) =>
-		allowsRepoWrite(grants, GROUP_EVENT_COLLECTION, 'update') &&
-		allowsRepoWrite(grants, GROUP_EVENT_COLLECTION, 'delete')
-};
+const ASKS: Readonly<Record<GroupPermission, (grants: WriteGrants, groupDid: string) => boolean>> =
+	{
+		MANAGE_GROUP: (grants, groupDid) =>
+			allowsWrite(
+				grants,
+				groupDid,
+				spaceWrite(ABOUT_SPACE_TYPE, GROUP_PROFILE_COLLECTION, 'update')
+			) && allowsWrite(grants, groupDid, VISIBILITY_WRITE),
+		ADMIT_MEMBERS: (grants, groupDid) => rosterAct(grants, groupDid, 'create'),
+		EJECT_MEMBERS: (grants, groupDid) => rosterAct(grants, groupDid, 'delete'),
+		ASSIGN_ROLES: (grants, groupDid) => rosterAct(grants, groupDid, 'update'),
+		CREATE_EVENT: (grants) => allowsRepoWrite(grants, GROUP_EVENT_COLLECTION, 'create'),
+		MANAGE_EVENTS: (grants) =>
+			allowsRepoWrite(grants, GROUP_EVENT_COLLECTION, 'update') &&
+			allowsRepoWrite(grants, GROUP_EVENT_COLLECTION, 'delete')
+	};
 
 /** Whether a member's roles let them write anything as the group, which is who may
  *  hold a group session. A grant to read only does not. */

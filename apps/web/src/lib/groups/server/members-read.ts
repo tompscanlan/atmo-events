@@ -193,9 +193,7 @@ export function rosterFromRecords(members: GroupMembers): RosterEntry[] {
 	return members.memberships
 		.flatMap((record) => {
 			const role = primaryRole(record.roles);
-			return role
-				? [{ did: record.subject, role, created_at: createdAtMs(record.createdAt) }]
-				: [];
+			return role ? [{ did: record.subject, role, created_at: createdAtMs(record.createdAt) }] : [];
 		})
 		.sort(byRosterOrder);
 }

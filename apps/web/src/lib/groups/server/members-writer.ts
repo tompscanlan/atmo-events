@@ -1,6 +1,10 @@
 // Writes a group's roster into its members space. The host lets a member into a space
 // by the roles its `access` grants, and keeps no member list apart from the records.
-import { GROUP_MEMBERSHIP_COLLECTION, groupMembershipRecord, membershipRkey } from '../members-record';
+import {
+	GROUP_MEMBERSHIP_COLLECTION,
+	groupMembershipRecord,
+	membershipRkey
+} from '../members-record';
 import type { GroupRow } from '../types';
 import type { GroupSpaceReader } from './about-read';
 import {

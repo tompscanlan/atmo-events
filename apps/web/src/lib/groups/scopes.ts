@@ -238,7 +238,9 @@ export function allowsRepoWrite(
 ): boolean {
 	if (grants.group) return true;
 	return grants.repo.some(
-		(p) => (p.collections.includes('*') || p.collections.includes(collection)) && p.actions.includes(action)
+		(p) =>
+			(p.collections.includes('*') || p.collections.includes(collection)) &&
+			p.actions.includes(action)
 	);
 }
 

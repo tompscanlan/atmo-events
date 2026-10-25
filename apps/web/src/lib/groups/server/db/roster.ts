@@ -112,7 +112,6 @@ export async function addMember(
 	);
 }
 
-
 export async function pendingRequestIdOf(
 	db: D1Database,
 	groupId: string,
@@ -146,7 +145,6 @@ export async function decideJoinRequest(
 		throw new GroupRuleError('not-found', 'No such pending join request');
 	}
 }
-
 
 export async function removeMember(db: D1Database, groupId: string, did: string): Promise<void> {
 	await ensureGroupsSchema(db);

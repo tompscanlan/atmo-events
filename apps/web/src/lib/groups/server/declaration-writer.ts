@@ -39,7 +39,10 @@ export async function writeGroupDeclaration(
 		repo: input.group.group_did,
 		collection: GROUP_DECLARATION_COLLECTION,
 		rkey: GROUP_DECLARATION_RKEY,
-		record: { ...groupDeclarationRecord({ aboutSpaceUri: meta }), $type: GROUP_DECLARATION_COLLECTION },
+		record: {
+			...groupDeclarationRecord({ aboutSpaceUri: meta }),
+			$type: GROUP_DECLARATION_COLLECTION
+		},
 		intent: 'update'
 	});
 	return { uri: result.uri, cid: result.cid };

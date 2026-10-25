@@ -19,7 +19,12 @@ import {
 	GROUP_MEMBERSHIP_COLLECTION,
 	parseGroupAccess
 } from '../members-record';
-import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type CallerMembership, type GroupRow } from '../types';
+import {
+	ABOUT_SPACE_TYPE,
+	MEMBERS_SPACE_TYPE,
+	type CallerMembership,
+	type GroupRow
+} from '../types';
 import { groupSpaceReader, type GroupSpaceReader } from './about-read';
 import {
 	GroupCredentialError,
@@ -215,7 +220,6 @@ export interface GateOptions {
 	appOnly?: boolean;
 }
 
-
 function requireCaller(input: GroupGateInput, refusal: string): void {
 	if (!input.callerDid) throw new GroupPermissionError(refusal, input.group.group_did);
 }
@@ -289,14 +293,12 @@ export async function requireMembershipWrite(
 	);
 }
 
-
 export function actingPerson(input: Pick<GroupGateInput, 'group' | 'callerDid'>): string {
 	if (!input.callerDid) {
 		throw new GroupPermissionError('sign in required', input.group.group_did);
 	}
 	return input.callerDid;
 }
-
 
 export function gatedWriter(
 	input: Pick<GroupGateInput, 'env' | 'group' | 'callerDid'> & { writer?: GroupRepoWriter }

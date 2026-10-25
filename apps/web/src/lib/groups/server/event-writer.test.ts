@@ -127,8 +127,6 @@ const remove = (rkey: string, input: Partial<Parameters<typeof deleteGroupEvent>
 		...input
 	});
 
-const nsids = () => pds.requests.map((r) => r.nsid);
-const repoCalls = () => nsids().filter((nsid) => nsid.startsWith('com.atproto.repo.'));
 
 async function hostRecord(rkey: string) {
 	const [requests, calls] = [pds.requests.length, pds.calls.length];

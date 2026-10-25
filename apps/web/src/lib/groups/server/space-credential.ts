@@ -99,7 +99,6 @@ export function credentialExpiry(jwt: string): number | null {
 	}
 }
 
-
 export async function exchangeSpaceCredential(
 	holder: SpaceHolder,
 	space: string,
@@ -199,7 +198,6 @@ export function spaceAuthority(space: string): string {
 	if (!did.startsWith('did:')) throw new Error(`not a space URI: ${space}`);
 	return did;
 }
-
 
 type SpaceCall = { host: string; audience: string; nsid: string; query: Record<string, string> };
 
