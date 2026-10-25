@@ -38,29 +38,6 @@
           "inviteToken": {
             "type": "string",
             "description": "Read-grant invite token for anonymous bearer access. Replaces JWT auth when supplied."
-          },
-          "createdAtMin": {
-            "type": "string",
-            "description": "Minimum value for createdAt"
-          },
-          "createdAtMax": {
-            "type": "string",
-            "description": "Maximum value for createdAt"
-          },
-          "sort": {
-            "type": "string",
-            "knownValues": [
-              "createdAt"
-            ],
-            "description": "Field to sort by (default: time_us)"
-          },
-          "order": {
-            "type": "string",
-            "knownValues": [
-              "asc",
-              "desc"
-            ],
-            "description": "Sort direction (default: desc for dates/numbers/counts, asc for strings)"
           }
         }
       },

@@ -140,10 +140,7 @@ export const config: ContrailConfig = {
 		// Endpoint: rsvp.atmo.declaration.listRecords
 		// Only a public group has a declaration, so the list needs no visibility filter.
 		declaration: {
-			collection: GROUP_DECLARATION_COLLECTION,
-			queryable: {
-				createdAt: { type: 'range' }
-			}
+			collection: GROUP_DECLARATION_COLLECTION
 		}
 		// `follow` (app.bsky.graph.follow) is auto-added by contrail 0.5+ when
 		// `feeds` is configured: discover:false, subjectField:'subject' (so only

@@ -82,14 +82,6 @@ const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.declaration.listRecords", {
      * Only used with spaceUri — filter to records authored by this DID.
      */
     byUser: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.didString()),
-    /**
-     * Maximum value for createdAt
-     */
-    createdAtMax: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
-    /**
-     * Minimum value for createdAt
-     */
-    createdAtMin: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
     cursor: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
     /**
      * Read-grant invite token for anonymous bearer access. Replaces JWT auth when supplied.
@@ -107,21 +99,9 @@ const _mainSchema = /*#__PURE__*/ v.query("rsvp.atmo.declaration.listRecords", {
       50,
     ),
     /**
-     * Sort direction (default: desc for dates/numbers/counts, asc for strings)
-     */
-    order: /*#__PURE__*/ v.optional(
-      /*#__PURE__*/ v.string<"asc" | "desc" | (string & {})>(),
-    ),
-    /**
      * Include profile + identity info keyed by DID
      */
     profiles: /*#__PURE__*/ v.optional(/*#__PURE__*/ v.boolean()),
-    /**
-     * Field to sort by (default: time_us)
-     */
-    sort: /*#__PURE__*/ v.optional(
-      /*#__PURE__*/ v.string<"createdAt" | (string & {})>(),
-    ),
     /**
      * If set, query records inside this permissioned space (requires service-auth JWT or a read-grant invite token). `ats://` URI.
      */
