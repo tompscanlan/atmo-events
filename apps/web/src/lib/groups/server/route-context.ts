@@ -109,6 +109,8 @@ export async function groupRouteContext(
 		return { group, membership, visibility: 'public', reader };
 	}
 
+	// A create that stopped before its spaces were recorded is not a group yet.
+	if (!group.about_space_uri) return hidden();
 	let visibility: GroupVisibility;
 	try {
 		visibility = await readGroupVisibility(reader, group);

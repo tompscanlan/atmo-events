@@ -1,7 +1,3 @@
-// The events tab, rendered on the server with the shared EventCard as it ships,
-// so each card's link and lock are what a visitor's browser gets. Only the card
-// is taken from the UI package: its index also pulls in plyr's CSS, which
-// Node's ESM loader rejects.
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
 
@@ -10,127 +6,56 @@ vi.mock('@atmo-dev/events-ui', async () => ({
 }));
 vi.mock('$lib/atproto/auth.svelte', () => ({ reauthorize: vi.fn() }));
 vi.mock('$lib/groups/roster.remote', () => ({ signInForGroup: vi.fn() }));
-const notices = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }));
-vi.mock('$lib/groups/components/GroupSignInNotice.svelte', async (original) => {
-	const actual = await original<{
-		default: (renderer: unknown, props: Record<string, unknown>) => unknown;
-	}>();
-	return {
-		default: (renderer: unknown, props: Record<string, unknown>) => {
-			notices.props.push(props);
-			return actual.default(renderer, props);
-		}
-	};
-});
 
 import Page from './+page.svelte';
-import type { GroupEventRecord, GroupRow } from '$lib/groups/types';
+import type { GroupEventRecord } from '$lib/groups/types';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
-const EVENT = 'community.lexicon.calendar.event';
-// Written out, so a wrong type or key in the app's constant fails here.
-const CALENDAR = `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`;
 
-// A public event and a members-only one that share a key, as the two slices
-// allow: only the placement tells their links apart.
-const PUBLIC_PADDLE: GroupEventRecord = {
-	uri: `at://${GROUP_DID}/${EVENT}/3lshared`,
+const PADDLE: GroupEventRecord = {
+	uri: `at://${GROUP_DID}/community.lexicon.calendar.event/3lpaddle`,
 	cid: 'bafypaddle',
-	rkey: '3lshared',
+	rkey: '3lpaddle',
 	value: { name: 'Sunrise paddle', startsAt: '2030-11-01T06:00:00.000Z' }
 };
-const MEMBERS_MEETING: GroupEventRecord = {
-	uri: `${CALENDAR}/${GROUP_DID}/${EVENT}/3lshared`,
-	cid: 'bafymeeting',
-	rkey: '3lshared',
-	value: { name: 'Committee call', startsAt: '2030-11-02T18:00:00.000Z' },
-	space: CALENDAR
-};
 
-function renderTab({ canManageEvents }: { canManageEvents: boolean }) {
+function renderTab(canManageEvents: boolean) {
 	return render(Page, {
 		props: {
 			data: {
-				group: { group_did: GROUP_DID } as GroupRow,
+				group: { group_did: GROUP_DID },
 				groupName: 'Kona',
 				handle: null,
-				events: [MEMBERS_MEETING, PUBLIC_PADDLE],
+				events: [PADDLE],
 				canCreateEvent: false,
 				canManageEvents
 			}
 		} as never
-	});
+	}).body;
 }
 
-/** Each card, as its link and its markup. A card is one anchor holding no other. */
-function cardsIn(body: string): Array<{ href: string; html: string }> {
-	return [...body.matchAll(/<a href="([^"]*)" class="group grid[\s\S]*?<\/a>/g)].map((m) => ({
-		href: m[1],
-		html: m[0]
-	}));
-}
-
-/** The href of every Edit link, in page order. */
-function editLinksIn(body: string): string[] {
-	return [...body.matchAll(/<a href="([^"]*)"[^>]*>Edit<\/a>/g)].map((m) => m[1]);
-}
+const cardLinks = (body: string) =>
+	[...body.matchAll(/<a href="([^"]*)" class="group grid/g)].map((m) => m[1]);
+const editLinks = (body: string) =>
+	[...body.matchAll(/<a href="([^"]*)"[^>]*>Edit<\/a>/g)].map((m) => m[1]);
 
 describe('/groups/[actor]/events', () => {
-	it('renders the events sign-in notice alongside the public slice, or alone for a hidden group', () => {
-		for (const signInOnly of [false, true]) {
-			notices.props.length = 0;
-			const data = signInOnly
-				? { groupDid: GROUP_DID, signInOnly: true, signIn: { from: null } }
-				: {
-						group: { group_did: GROUP_DID },
-						groupName: 'Kona',
-						handle: null,
-						events: [PUBLIC_PADDLE],
-						canCreateEvent: false,
-						canManageEvents: false,
-						signIn: { from: null }
-					};
-			const { body } = render(Page, { props: { data } as never });
-			expect(notices.props).toHaveLength(1);
-			expect(notices.props[0]).toMatchObject({
-				groupDid: GROUP_DID,
-				from: null,
-				subject: 'events'
-			});
-			expect(cardsIn(body)).toHaveLength(signInOnly ? 0 : 1);
-		}
-	});
-	it('the events tab links a members-only card to its page, and its lock says members only', () => {
-		const { body } = renderTab({ canManageEvents: false });
-		const cards = cardsIn(body);
-
-		expect(cards.map((card) => card.href)).toEqual([
-			`/groups/${GROUP_DID}/events/3lshared`,
-			`/p/${GROUP_DID}/e/3lshared`
-		]);
-		const [membersOnly, open] = cards;
-		expect(membersOnly.html).toContain('Committee call');
-		expect(membersOnly.html).toContain('aria-label="Members only"');
-		expect(open.html).toContain('Sunrise paddle');
-		expect(open.html).not.toContain('aria-label');
-		// One lock, in the app's own words, and no link into contrail's own space
-		// flow, which this calendar space is not.
-		expect(body.match(/aria-label="Members only"/g)).toHaveLength(1);
-		expect(body).not.toContain('Private event');
-		expect(body).not.toContain('/s/');
+	it('links each card to the public event page, with no lock', () => {
+		const body = renderTab(false);
+		expect(cardLinks(body)).toEqual([`/p/${GROUP_DID}/e/3lpaddle`]);
+		expect(body).not.toContain('aria-label="Members only"');
 	});
 
-	it("the events tab's Edit link names the placement of a members-only event only", () => {
-		const { body } = renderTab({ canManageEvents: true });
+	it('shows an Edit link only to someone who may manage events', () => {
+		expect(editLinks(renderTab(true))).toEqual([`/groups/${GROUP_DID}/events/3lpaddle/edit`]);
+		expect(editLinks(renderTab(false))).toEqual([]);
+	});
 
-		// A public event's edit page reads it from the index; a members-only
-		// event's link says where it is, since the two share a key.
-		expect(editLinksIn(body)).toEqual([
-			`/groups/${GROUP_DID}/events/3lshared/edit?placement=members`,
-			`/groups/${GROUP_DID}/events/3lshared/edit`
-		]);
-
-		// Someone who may not manage events gets no Edit link at all.
-		expect(editLinksIn(renderTab({ canManageEvents: false }).body)).toEqual([]);
+	it('shows a hidden group only the sign-in notice', () => {
+		const body = render(Page, {
+			props: { data: { groupDid: GROUP_DID, signInOnly: true } } as never
+		}).body;
+		expect(cardLinks(body)).toEqual([]);
+		expect(body).toContain('Sign in again');
 	});
 });

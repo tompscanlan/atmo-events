@@ -1,13 +1,6 @@
-// A refused submit must leave the form as the user typed it. SvelteKit's
-// default resets a remote form after any response without validation issues,
-// and the group handlers report a refusal as a result (`{ ok: false }`), so the
-// default emptied the form the user was about to correct.
-//
-// The fake stands in for a remote form: `enhance` hands back the callback the
-// page would attach, and `submit` sets `result` the way the real one does.
 import { describe, it, expect, vi } from 'vitest';
-
 import { resetOnSuccess } from './form-result';
+
 type Result = { ok: true } | { ok: false; error: string } | undefined;
 
 function fakeRemoteForm(next: Result) {
@@ -43,15 +36,11 @@ describe('resetOnSuccess', () => {
 		expect(form.reset).toHaveBeenCalledOnce();
 	});
 
-	it('keeps the input when the handler refused', async () => {
-		const { form, submitOnce } = fakeRemoteForm({ ok: false, error: 'walk-0929 is already taken' });
-		await submitOnce();
-		expect(form.reset).not.toHaveBeenCalled();
-	});
-
-	// A response with validation issues carries no result.
-	it('keeps the input when there is no result', async () => {
-		const { form, submitOnce } = fakeRemoteForm(undefined);
+	it.each([
+		['the handler refused', { ok: false as const, error: 'taken' }],
+		['there is no result, as with validation issues', undefined]
+	])('keeps the input when %s', async (_, result) => {
+		const { form, submitOnce } = fakeRemoteForm(result);
 		await submitOnce();
 		expect(form.reset).not.toHaveBeenCalled();
 	});

@@ -1,7 +1,6 @@
-// The record MAC against @atproto/space's own answer: every expected value here
-// was computed by its decapsulate, computeRecordMac, formatWantMacHeader and
-// formatMacHeader in the 2026-10-22 alpha image (ghcr.io/bluesky-social/atproto
-// @sha256:3ebb6d0e...), from the two fixed keys below, not by the code tested.
+// Every expected value here was computed by @atproto/space (decapsulate, computeRecordMac,
+// formatWantMacHeader, formatMacHeader) in the alpha image sha256:3ebb6d0e, from the two
+// fixed keys below, not by the code tested.
 import { describe, expect, it } from 'vitest';
 
 import { recordMacCheck } from './space-mac';

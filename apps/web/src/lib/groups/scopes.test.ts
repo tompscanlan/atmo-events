@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
 	GROUP_ITSELF,
 	NO_GRANTS,
+	allowsRepoWrite,
 	allowsWrite,
 	membershipAction,
+	parseRepoScope,
 	parseSpaceScope,
 	permits,
 	spacePermissions,
@@ -173,5 +175,27 @@ describe('withAccess', () => {
 		expect(allowsWrite(grants, GROUP, recordWrite(META, 'x.y.z', 'create'))).toBe(true);
 		expect(allowsWrite(grants, GROUP, recordWrite(META, 'a.b.c', 'create'))).toBe(false);
 		expect(allowsWrite(grants, GROUP, recordWrite(MEMBERS, 'x.y.z', 'create'))).toBe(false);
+	});
+});
+
+describe('repo scopes', () => {
+	const EVENT = 'community.lexicon.calendar.event';
+
+	it('read a collection, with every write action when they name none', () => {
+		expect(parseRepoScope(`repo:${EVENT}`)).toEqual({
+			collections: [EVENT],
+			actions: ['create', 'update', 'delete']
+		});
+		expect(parseRepoScope(`repo?collection=${EVENT}&action=create`)?.actions).toEqual(['create']);
+		expect(parseRepoScope(`space:${META}`)).toBeNull();
+	});
+
+	it('let a role write the collections they name, or any with *', () => {
+		const grants = (scopes: string[]) =>
+			writeGrants({ roles: ['admin'], permissions: [{ role: 'admin', scopes }] });
+		expect(allowsRepoWrite(grants(['repo:*']), EVENT, 'delete')).toBe(true);
+		expect(allowsRepoWrite(grants([`repo:${EVENT}?action=create`]), EVENT, 'create')).toBe(true);
+		expect(allowsRepoWrite(grants([`repo:${EVENT}?action=create`]), EVENT, 'update')).toBe(false);
+		expect(allowsRepoWrite(grants(['repo:a.b.c']), EVENT, 'create')).toBe(false);
 	});
 });

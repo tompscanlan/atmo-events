@@ -1,89 +1,56 @@
 import { describe, it, expect } from 'vitest';
 import example from './__fixtures__/opensocial-example-records.json';
-import { communityPermissions, memberGrants } from './grants';
+import { HOST_PERMISSIONS } from './server/__fixtures__/members-space';
+import { grantsAnyWrite, memberGrants, permissionsFor } from './grants';
 import {
 	GROUP_ACCESS_COLLECTION,
 	GROUP_PERMISSIONS_COLLECTION,
-	groupBindingsRecord,
 	parseGroupAccess,
 	parseGroupGrants
 } from './members-record';
-import {
-	COMMUNITY_PERMISSIONS,
-	DEFAULT_ROLE_PERMISSIONS,
-	GROUP_ROLES,
-	type GroupPermission
-} from './permissions';
+import { COMMUNITY_PERMISSIONS, GROUP_PERMISSIONS } from './permissions';
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from './types';
 
 const GROUP = 'did:plc:group';
+const names = (grants: ReturnType<typeof memberGrants>, groupDid = GROUP) => [
+	...permissionsFor(grants, groupDid)
+];
 
-describe("atmo's own grants", () => {
-	// What atmo publishes for a bundle must read back as that bundle, through the
-	// same scope checks the gate makes, or a role would lose or gain powers by
-	// being written down.
-	it('read back as the community names of every default bundle', () => {
-		const permissions = parseGroupGrants(
-			groupBindingsRecord({ altitude: 'community', bundles: DEFAULT_ROLE_PERMISSIONS })
-		);
-		for (const role of GROUP_ROLES) {
-			const community = DEFAULT_ROLE_PERMISSIONS[role].filter((p) =>
-				(COMMUNITY_PERMISSIONS as readonly GroupPermission[]).includes(p)
-			);
-			expect(
-				communityPermissions(memberGrants({ roles: [role], permissions }), GROUP),
-				role
-			).toEqual(community);
-		}
+describe("the group host's own permissions record", () => {
+	const permissions = parseGroupGrants(HOST_PERMISSIONS);
+
+	it('gives an admin every permission atmo asks, and a member none', () => {
+		expect(names(memberGrants({ roles: ['admin'], permissions }))).toEqual([...GROUP_PERMISSIONS]);
+		expect(names(memberGrants({ roles: ['member'], permissions }))).toEqual([]);
 	});
 
-	it('read back as exactly one name, for a bundle of one', () => {
-		for (const permission of COMMUNITY_PERMISSIONS) {
-			const permissions = parseGroupGrants(
-				groupBindingsRecord({ altitude: 'community', bundles: { admin: [permission] } })
-			);
-			expect(
-				communityPermissions(memberGrants({ roles: ['admin'], permissions }), GROUP),
-				permission
-			).toEqual([permission]);
-		}
+	it('lets an admin hold a group session, and not a member', () => {
+		expect(grantsAnyWrite(memberGrants({ roles: ['admin'], permissions }))).toBe(true);
+		expect(grantsAnyWrite(memberGrants({ roles: ['member'], permissions }))).toBe(false);
 	});
+});
 
-	it('union a role granted twice', () => {
-		const permissions = parseGroupGrants({
-			grants: [
-				...(groupBindingsRecord({ altitude: 'community', bundles: { admin: ['ADMIT_MEMBERS'] } })
-					.grants as unknown[]),
-				...(groupBindingsRecord({ altitude: 'community', bundles: { admin: ['EJECT_MEMBERS'] } })
-					.grants as unknown[])
-			]
-		});
-		expect(communityPermissions(memberGrants({ roles: ['admin'], permissions }), GROUP)).toEqual([
-			'ADMIT_MEMBERS',
-			'EJECT_MEMBERS'
-		]);
-	});
-
-	// A scope to write memberships with no role to hand out admits nobody.
-	it('need a role to assign before a roster act reads as allowed', () => {
+describe('roster acts', () => {
+	it('need a role to assign as well as a scope on memberships', () => {
 		const scopes = ['include:group.opensocial.manageMembers'];
 		const without = memberGrants({ roles: ['helper'], permissions: [{ role: 'helper', scopes }] });
-		expect(communityPermissions(without, GROUP)).toEqual([]);
+		expect(names(without)).toEqual([]);
 		const withRole = memberGrants({
 			roles: ['helper'],
 			permissions: [{ role: 'helper', scopes, assignable: ['member'] }]
 		});
-		expect(communityPermissions(withRole, GROUP)).toEqual([
-			'ADMIT_MEMBERS',
-			'EJECT_MEMBERS',
-			'ASSIGN_ROLES'
-		]);
+		expect(names(withRole)).toEqual(['ADMIT_MEMBERS', 'EJECT_MEMBERS', 'ASSIGN_ROLES']);
+	});
+
+	it('read a read-only grant as no write', () => {
+		const read = memberGrants({
+			roles: ['member'],
+			permissions: [{ role: 'member', scopes: ['space:*?action=read'] }]
+		});
+		expect(grantsAnyWrite(read)).toBe(false);
 	});
 });
 
-// SC-207: upstream's own example group (`examples/records.json` at the pinned
-// commit), read through atmo's parsers and checked by atmo's gate, gives the
-// answers of the primer's worked checks. (Spec: FR-213.)
 describe("upstream's example group", () => {
 	const records = example as { uri: string; value: Record<string, unknown> }[];
 	const garden = records[0].uri.split('/')[2];
@@ -96,32 +63,14 @@ describe("upstream's example group", () => {
 	const aboutAccess = parseGroupAccess(find(GROUP_ACCESS_COLLECTION, ABOUT_SPACE_TYPE));
 	const grantsOf = (role: string) =>
 		memberGrants({ roles: [role], permissions, membersAccess, aboutAccess });
-	const names = (role: string) => communityPermissions(grantsOf(role), garden);
 
-	it('is the group the primer reads', () => {
-		expect(permissions?.map((grant) => grant.role)).toEqual(['admin', 'moderator']);
-		expect(membersAccess?.grants.map((grant) => grant.role)).toEqual(['member', 'moderator']);
+	it("reads the admin's permission sets as every community permission", () => {
+		expect(names(grantsOf('admin'), garden)).toEqual([...COMMUNITY_PERMISSIONS]);
 	});
 
-	it('gives a member no roster act', () => {
-		expect(names('member')).toEqual([]);
-	});
-
-	it("lets an admin eject, a moderator's holder included", () => {
-		expect(names('admin')).toContain('EJECT_MEMBERS');
-		expect(grantsOf('admin').assignable.has('moderator')).toBe(true);
-	});
-
-	// `assignable` names member, but no scope of the moderator's reaches
-	// `membership`, and both are needed.
-	it("gives a moderator no roster act on a member's membership", () => {
+	it('gives a member and a moderator no roster act', () => {
+		expect(names(grantsOf('member'), garden)).toEqual([]);
 		expect(grantsOf('moderator').assignable.has('member')).toBe(true);
-		expect(names('moderator')).not.toContain('EJECT_MEMBERS');
-	});
-
-	// Before this check, a grant of `include:` read as no permission at all.
-	it("reads the admin's permission sets as everything atmo asks", () => {
-		expect(communityPermissions(grantsOf('admin'), garden)).toEqual([...COMMUNITY_PERMISSIONS]);
-		expect(communityPermissions(grantsOf('moderator'), garden)).toEqual([]);
+		expect(names(grantsOf('moderator'), garden)).toEqual([]);
 	});
 });

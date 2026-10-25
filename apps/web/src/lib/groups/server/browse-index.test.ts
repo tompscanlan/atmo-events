@@ -1,16 +1,3 @@
-// Our own declaration index, run in process over one SQLite database, and what
-// a declaration write or withdrawal does to it.
-//
-// One database for the whole file, not one per case: `ensureInit` creates the
-// index's tables once per module, on the first database it sees, so a second
-// database would have no tables at all. Each case uses its own group DID
-// instead.
-//
-// The PDS is a stub behind `fetch`. The index resolves a DID to its PDS through
-// the `identities` row the create writes, and then asks that PDS for the record,
-// so the stub answers `com.atproto.repo.getRecord` and refuses anything else.
-// What matters is the index's rule: a record the PDS does not return is
-// deleted, whatever the reason the PDS gave.
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ensureInit, getServerClient } from '$lib/contrail/index';
 import type { ResourceUri } from '@atcute/lexicons/syntax';
@@ -36,8 +23,6 @@ import { createGroup } from './db/groups';
 const OWNER = 'did:plc:owner';
 const PDS = 'https://pds.example.test';
 
-/** What the stub PDS holds, by at-uri. `down` makes it answer 502 to every
- *  read, the transient failure a notify must never be exposed to. */
 const pds = new Map<string, Record<string, unknown>>();
 let down = false;
 let getRecordCalls: string[] = [];
@@ -45,8 +30,6 @@ let getRecordCalls: string[] = [];
 let harness: SqliteD1;
 let db: D1Database;
 
-// The writer takes an env only to find the group's linked session, and these
-// cases inject their own writer, so it is never consulted.
 const env = {};
 
 function declarationUri(groupDid: string): string {
@@ -75,10 +58,6 @@ function stubPds(input: RequestInfo | URL): Response {
 	});
 }
 
-/** A writer that applies the write to the stub PDS, as the real one applies it
- *  to the group's repo. */
-// Every write below is the group's own (`callerDid` is its DID), which passes the
-// gate with nothing read: these cases are about the index, not who may write.
 const writer: GroupRepoWriter = async (write) => {
 	const uri = `at://${write.repo}/${write.collection}/${write.rkey}`;
 	if (write.intent === 'delete') pds.delete(uri);
@@ -86,19 +65,14 @@ const writer: GroupRepoWriter = async (write) => {
 	return { uri, cid: 'bafytest' };
 };
 
-/** A public group we host, its identity registered the way the create does it,
- *  and its declaration both on the PDS and in our index. */
-async function declaredGroup(groupDid: string, createdAt?: string): Promise<GroupRow> {
-	const created = await createGroup(db, { groupDid, ownerDid: OWNER, name: 'Kona' });
+async function declaredGroup(groupDid: string): Promise<GroupRow> {
+	const created = await createGroup(db, { groupDid, creatorDid: OWNER, name: 'Kona' });
 	expect(
 		await registerGroupIdentity(db, { did: groupDid, handle: 'kona.pds.example.test', pds: PDS })
 	).toBe(true);
 	const uri = declarationUri(groupDid);
 	pds.set(uri, {
-		...groupDeclarationRecord({
-			aboutSpaceUri: spaceUri(groupDid, ABOUT_SPACE_TYPE, 'self'),
-			createdAt
-		}),
+		...groupDeclarationRecord({ aboutSpaceUri: spaceUri(groupDid, ABOUT_SPACE_TYPE, 'self') }),
 		$type: GROUP_DECLARATION_COLLECTION
 	});
 	await notify(uri);
@@ -122,8 +96,6 @@ async function declaredDids(): Promise<string[]> {
 beforeAll(async () => {
 	harness = sqliteD1();
 	db = harness.db;
-	// The index's own tables, `identities` among them, which the create writes to
-	// before anything has queried the index.
 	await ensureInit(db);
 	vi.stubGlobal(
 		'fetch',
@@ -141,26 +113,22 @@ afterAll(() => {
 });
 
 describe('our declaration index', () => {
-	// The standard's declaration has only `meta`. Ours also carries `createdAt`,
-	// because browse lists the newest group first, and this is where it is read.
-	it('lists declarations newest first, with the date each one carries', async () => {
-		const older = await declaredGroup(
-			'did:plc:vq2mtsxokd6ajwn4c5ldaxfz',
-			'2026-01-02T03:04:05.000Z'
-		);
-		const newer = await declaredGroup(
-			'did:plc:ohb3quxgnfq7lxdkamqesfyc',
-			'2026-06-07T08:09:10.000Z'
-		);
+	it('lists declarations newest first, by when the index took each one', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		try {
+			vi.setSystemTime(1_000_000);
+			const older = await declaredGroup('did:plc:vq2mtsxokd6ajwn4c5ldaxfz');
+			vi.setSystemTime(2_000_000);
+			const newer = await declaredGroup('did:plc:ohb3quxgnfq7lxdkamqesfyc');
 
-		const listed = (await listDeclaredGroups(db)).filter((d) =>
-			[older.group_did, newer.group_did].includes(d.did)
-		);
-
-		expect(listed).toEqual([
-			{ did: newer.group_did, createdAt: '2026-06-07T08:09:10.000Z' },
-			{ did: older.group_did, createdAt: '2026-01-02T03:04:05.000Z' }
-		]);
+			const listed = (await listDeclaredGroups(db)).filter((d) =>
+				[older.group_did, newer.group_did].includes(d.did)
+			);
+			expect(listed.map((d) => d.did)).toEqual([newer.group_did, older.group_did]);
+			expect(listed[0].indexedAt).toBeGreaterThan(listed[1].indexedAt);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('withdrawing a declaration updates our index before any cron tick', async () => {
@@ -169,18 +137,12 @@ describe('our declaration index', () => {
 		await removeGroupDeclaration({ db, env, group, callerDid: group.group_did, writer });
 
 		expect(await declaredDids()).not.toContain(group.group_did);
-		// Once, for this declaration: the index heard it from us, not from a tick.
 		expect(getRecordCalls).toEqual([declarationUri(group.group_did)]);
 	});
 
-	// The index can answer 200 and still refuse the URI, in its `errors` list.
-	// Here it cannot find the PDS of a group whose identity was never
-	// registered, so it keeps whatever entry it had. That is a notify that did
-	// not land, and the withdrawal reports it, since browse would still list
-	// the group.
 	it('fails a withdrawal the index answered with errors', async () => {
 		const groupDid = 'did:plc:unregistered4sm2kqhxpzt6';
-		const created = await createGroup(db, { groupDid, ownerDid: OWNER, name: 'Kona' });
+		const created = await createGroup(db, { groupDid, creatorDid: OWNER, name: 'Kona' });
 		const group = { ...created, about_space_uri: spaceUri(groupDid, ABOUT_SPACE_TYPE, 'self') };
 
 		const error = await removeGroupDeclaration({
@@ -192,13 +154,9 @@ describe('our declaration index', () => {
 		}).catch((e: unknown) => e);
 
 		expect(error).toBeInstanceOf(DeclarationIndexError);
-		expect(String(error)).toContain(declarationUri(groupDid));
+		expect((error as DeclarationIndexError).groupDid).toBe(groupDid);
 	});
 
-	// The index deletes on ANY answer that is not a record, a 5xx included. A
-	// notify after a declare would therefore drop a live declaration whenever
-	// the PDS blinked, and nothing would put it back until its next write. The
-	// PDS is down for this whole case to show the declare never asks.
 	it('a declare never notifies the index', async () => {
 		const group = await declaredGroup('did:plc:w5mbhkqzwkb2xdpxa6p5kfnb');
 		down = true;
@@ -208,6 +166,7 @@ describe('our declaration index', () => {
 			env,
 			group,
 			visibility: 'public',
+			listed: true,
 			callerDid: group.group_did,
 			writer
 		});

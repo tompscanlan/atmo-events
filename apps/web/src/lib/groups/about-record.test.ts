@@ -1,209 +1,100 @@
-// The profile and rule record shapes. Two rules here would pass a "does it
-// round-trip" test while being wrong:
-//
-//   1. a group the host reads as private, or whose visibility is unknown, is
-//      invite-only, whatever the approval flag or the profile says;
-//   2. an unrecognized join policy must fail closed, because this value comes
-//      off a PDS and decides whether strangers can walk into a group.
 import { describe, it, expect } from 'vitest';
 import {
-	GROUP_AVATAR_MAX_BYTES,
-	approvalRefusal,
-	groupAvatarRefusal,
 	groupFace,
 	groupProfileRecord,
 	groupRuleRecord,
-	joinPolicyFor,
-	parseGroupProfile
+	parseGroupProfile,
+	parseGroupRule,
+	splitRuleLines
 } from './about-record';
 
-const AVATAR = {
-	$type: 'blob' as const,
+const BANNER = {
+	$type: 'blob',
 	ref: { $link: 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku' },
 	mimeType: 'image/png',
 	size: 70
 };
 
-describe('joinPolicyFor', () => {
-	// Private means invite-only, so visibility is consulted before
-	// require_approval. The forms refuse a private group with approval off
-	// (`approvalRefusal`), but the mapping must not depend on that.
-	it('reads private as invite regardless of require_approval', () => {
-		expect(joinPolicyFor('private', 1)).toBe('invite');
-		expect(joinPolicyFor('private', 0)).toBe('invite');
-	});
-
-	it('distinguishes approval from open for a public group', () => {
-		expect(joinPolicyFor('public', 1)).toBe('approval');
-		expect(joinPolicyFor('public', 0)).toBe('open');
-	});
-
-	// A host nobody could ask is not a public group, the same way a join is
-	// refused then.
-	it('reads an unknown visibility as invite', () => {
-		expect(joinPolicyFor(null, 0)).toBe('invite');
-	});
-});
-
-describe('groupProfileRecord', () => {
-	it('writes the avatar when there is one, and no key when there is none', () => {
-		expect(groupProfileRecord({ name: 'Kona', joinPolicy: 'open', avatar: AVATAR }).avatar).toEqual(
-			AVATAR
-		);
-		expect('avatar' in groupProfileRecord({ name: 'Kona', joinPolicy: 'open', avatar: null })).toBe(
-			false
-		);
-	});
-});
-
-describe('groupAvatarRefusal', () => {
-	it("refuses a type or a size the standard's avatar does not take", () => {
-		const image = (type: string, size: number) => new Blob([new Uint8Array(size)], { type });
-		expect(groupAvatarRefusal(image('image/webp', 10))).toBeNull();
-		expect(groupAvatarRefusal(image('image/gif', 10))).toBe(
-			'The group picture must be a PNG, JPEG or WebP image.'
-		);
-		expect(groupAvatarRefusal(image('image/png', GROUP_AVATAR_MAX_BYTES + 1))).toBe(
-			'The group picture must be at most 2 MB.'
-		);
-	});
-});
-
-describe('approvalRefusal', () => {
-	it('refuses only a private group with approval off', () => {
-		expect(approvalRefusal('private', false)).toBe(
-			'A private group must require approval to join. Invite members instead.'
-		);
-		expect(approvalRefusal('private', true)).toBeNull();
-		expect(approvalRefusal('public', false)).toBeNull();
-		// Absent means approval on, as everywhere else.
-		expect(approvalRefusal('private', undefined)).toBeNull();
-	});
-});
-
 describe('parseGroupProfile', () => {
-	// Fail closed. This value came off a PDS and gates whether a stranger can
-	// self-serve their way in, so an unknown policy must read as the most
-	// restrictive one, never as `open`.
-	it('reads an unknown or missing joinPolicy as invite, not open', () => {
+	it('reads an unknown or missing joinPolicy as invite, never open', () => {
 		expect(parseGroupProfile({ displayName: 'Kona', joinPolicy: 'everyone' })?.joinPolicy).toBe(
 			'invite'
 		);
 		expect(parseGroupProfile({ displayName: 'Kona' })?.joinPolicy).toBe('invite');
 	});
 
-	// A page must still render for a record an older build wrote, so tolerance
-	// is the contract. But a record with no name is not a profile.
-	// The route serves what the profile names as an image, so only the
-	// standard's types and size are taken from a record another app may write.
-	it("reads an avatar only of the standard's types and size", () => {
-		const read = (avatar: unknown) => parseGroupProfile({ displayName: 'Kona', avatar })?.avatar;
-		expect(read(AVATAR)).toEqual(AVATAR);
-		expect(read({ ...AVATAR, mimeType: 'image/svg+xml' })).toBeNull();
-		expect(read({ ...AVATAR, size: GROUP_AVATAR_MAX_BYTES + 1 })).toBeNull();
-		expect(read({ ...AVATAR, ref: 'not-a-link' })).toBeNull();
-		expect(read({ ...AVATAR, $type: undefined })).toBeNull();
-		expect(read(undefined)).toBeNull();
+	it('keeps the record as read', () => {
+		const value = { displayName: 'Kona', joinPolicy: 'open', url: 'https://kona.example' };
+		expect(parseGroupProfile(value)?.record).toBe(value);
 	});
 
-	it('rejects a value with no usable displayName', () => {
-		expect(parseGroupProfile({ displayName: '   ' })).toBeNull();
-		expect(parseGroupProfile({ description: 'no name here' })).toBeNull();
-		expect(parseGroupProfile(null)).toBeNull();
-		expect(parseGroupProfile('Kona')).toBeNull();
+	it.each([{ displayName: '   ' }, { description: 'no name' }, null, 'Kona'])(
+		'rejects %j, which has no usable displayName',
+		(value) => expect(parseGroupProfile(value)).toBeNull()
+	);
+});
+
+describe('groupProfileRecord', () => {
+	it("keeps the base record's other fields and drops its $type", () => {
+		const base = {
+			$type: 'group.opensocial.profile',
+			displayName: 'Old',
+			description: 'Old text',
+			avatar: BANNER,
+			banner: BANNER,
+			url: 'https://kona.example'
+		};
+		expect(groupProfileRecord({ name: 'Kona', joinPolicy: 'approval', base })).toEqual({
+			displayName: 'Kona',
+			joinPolicy: 'approval',
+			avatar: BANNER,
+			banner: BANNER,
+			url: 'https://kona.example'
+		});
 	});
 });
 
-// Where the page's face comes from. A profile record is authoritative for every
-// field it owns, including the ones it leaves null: a null description is a
-// group that has none, not a record that forgot to say. A per-field `??` cannot
-// tell those apart, and would let a stale or corrupted row leak into a page
-// that says it renders from records.
 describe('groupFace', () => {
-	const row = {
-		name: 'ZZZ CORRUPTED CACHE',
-		description: 'CORRUPTED DESCRIPTION',
-		location_name: 'CORRUPTED LOCATION',
-		require_approval: 1
-	};
+	const row = { name: 'STALE ROW', description: 'STALE DESCRIPTION' };
 
-	it("renders a record's null as null, not the row's value", () => {
-		const face = groupFace(
-			{
-				name: 'Kona',
-				description: null,
-				joinPolicy: 'open',
-				locationName: null,
-				createdAt: null,
-				avatar: null
-			},
-			row,
-			'public'
-		);
-		expect(face).toEqual({
-			source: 'records',
+	it("renders a record's null description as null, not the row's", () => {
+		const profile = parseGroupProfile({ displayName: 'Kona', joinPolicy: 'open' });
+		expect(groupFace(profile, row)).toEqual({
 			name: 'Kona',
 			description: null,
-			locationName: null,
-			joinPolicy: 'open',
-			avatarCid: null
+			joinPolicy: 'open'
 		});
 	});
 
-	const openProfile = {
-		name: 'Kona',
-		description: null,
-		joinPolicy: 'open' as const,
-		locationName: null,
-		createdAt: null,
-		avatar: null
-	};
-
-	// The row caches no picture, so only a record can show one.
-	it("shows the record's avatar by its CID, and none from the row", () => {
-		expect(groupFace({ ...openProfile, avatar: AVATAR }, row, 'public').avatarCid).toBe(
-			AVATAR.ref.$link
-		);
-		expect(groupFace(null, row, 'public').avatarCid).toBeNull();
-	});
-
-	// The join policy is derived, not stored: a group is invite-only when its
-	// host reads it as private, whatever the profile record or the row says. Any
-	// client can change the host's read policy without touching our records, so
-	// a stored "private means approval" could never stay true.
-	it('a private group shows invite-only whatever its profile says', () => {
-		expect(groupFace(openProfile, row, 'private').joinPolicy).toBe('invite');
-		expect(groupFace({ ...openProfile, joinPolicy: 'approval' }, row, 'private').joinPolicy).toBe(
-			'invite'
-		);
-		// A public group shows what its profile published.
-		expect(groupFace(openProfile, row, 'public').joinPolicy).toBe('open');
-	});
-
-	// A host nobody could ask is not a public one, which is also how a join is
-	// refused then.
-	it('a group whose visibility is unknown shows invite-only', () => {
-		expect(groupFace(openProfile, row, null).joinPolicy).toBe('invite');
-		expect(groupFace(null, { ...row, require_approval: 0 }, null).joinPolicy).toBe('invite');
+	it('falls back to the row with no join policy when there is no record', () => {
+		expect(groupFace(null, row)).toEqual({ ...row, joinPolicy: null });
 	});
 });
 
 describe('rules', () => {
-	// A grapheme is what a reader sees as one character. Cutting by UTF-16 unit
-	// would split an emoji and count it as several.
-	it('counts graphemes, not code units, so an emoji is never split', () => {
-		// One grapheme of two code points and four UTF-16 units.
-		const thumbsUp = '\u{1F44D}\u{1F3FD}';
-		const title = groupRuleRecord({ text: thumbsUp.repeat(70), order: 0 }).title as string;
-		expect(title).toBe(thumbsUp.repeat(64));
+	it('splits one trimmed rule per non-empty line', () => {
+		expect(splitRuleLines(' Be kind \n\n  No spam\n')).toEqual(['Be kind', 'No spam']);
+		expect(splitRuleLines(undefined)).toEqual([]);
 	});
 
-	// The title's other bound is 640 bytes. Only a line of heavily combined
-	// characters reaches it before 64 graphemes, and the title stops short then.
+	it('titles a rule by graphemes, so an emoji is never split', () => {
+		const thumbsUp = '\u{1F44D}\u{1F3FD}';
+		expect(groupRuleRecord({ text: thumbsUp.repeat(70), order: 0 }).title).toBe(
+			thumbsUp.repeat(64)
+		);
+	});
+
 	it('stops the title before it would pass 640 bytes', () => {
-		const heavy = `e${'\u0301'.repeat(10)}`;
+		const heavy = `e${'́'.repeat(10)}`;
 		const title = groupRuleRecord({ text: heavy.repeat(64), order: 0 }).title as string;
-		expect(new TextEncoder().encode(title).length).toBeLessThanOrEqual(640);
 		expect(title).toBe(heavy.repeat(Math.floor(640 / new TextEncoder().encode(heavy).length)));
+	});
+
+	it('reads a rule with no text as none, and a bad order as 0', () => {
+		expect(parseGroupRule({ text: '  ' })).toBeNull();
+		expect(parseGroupRule({ text: 'Be kind', order: 'first' })).toEqual({
+			text: 'Be kind',
+			order: 0
+		});
 	});
 });

@@ -1,14 +1,10 @@
-// The codegen copies in lexicons/custom, checked against what
-// scripts/lexicon-shims.mjs derives from the reference lexicons. A hand edit, or
-// a reference that changed without a `pnpm generate`, fails here.
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { LEX_CONFIG, SHIMS, shimLexicon } from '../../../scripts/lexicon-shims.mjs';
 
 const read = (path: string) => readFileSync(path, 'utf8');
 
-/** The parsed lexicon with every `space-ref` format changed to `uri`, worked
- *  out on the structure rather than the text the script edits. */
+/** Every `space-ref` format changed to `uri`, on the structure, not the text. */
 function withUriFormats(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(withUriFormats);
 	if (typeof value !== 'object' || value === null) return value;

@@ -1,12 +1,9 @@
-// What the confidential client declares, since a PDS refuses any requested scope
-// its served metadata does not list, and atcute refuses one its own does not.
 import { describe, it, expect, beforeAll } from 'vitest';
 import { generateClientAssertionKey } from '@atcute/oauth-node-client';
 import { scopes } from '../settings';
 import { createOAuthClient } from './oauth';
 
-const GRANT =
-	'space:*?authority=did:plc:kona0000000000000000000a&collection=group.opensocial.acceptance&action=create&action=update&action=delete';
+const GRANT = 'include:group.opensocial.participate';
 
 let env: App.Platform['env'];
 

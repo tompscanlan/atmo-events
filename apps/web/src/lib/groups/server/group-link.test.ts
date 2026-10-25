@@ -1,12 +1,3 @@
-// Who may link a group session, which account it may hold, and whose it becomes.
-// A link started by someone whose roles grant no writes, finished in another
-// browser, or authorized by any account but the group's must store nothing: the
-// refusals before the code exchange never reach the PDS, and a token issued to
-// the wrong account is revoked. A link finishes through the client of the person
-// who started it, which files the session under them.
-//
-// The OAuth client is the I/O boundary (it talks to the group's PDS), so it is a
-// recording stub. The state store is a Map, as the client's own would be.
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { StoredState } from '@atcute/oauth-node-client';
 import {
@@ -23,7 +14,7 @@ const MEMBER = 'did:plc:memberaaaaaaaaaaaaaaaaaa';
 const REDIRECT = 'https://atmo.test/oauth/group-link/callback';
 const STATE_ID = 'state-1';
 
-const group = { group_did: GROUP, owner_did: OWNER };
+const group = { group_did: GROUP };
 
 let authorized: unknown[];
 let exchanged: number;
@@ -31,7 +22,6 @@ let revoked: string[];
 let authorizedAs: string;
 let callbackError: Error | null;
 let states: Map<string, StoredState>;
-/** Whose client each exchange went through. */
 let clientsUsed: string[];
 let stillMayConnect: boolean;
 
@@ -106,8 +96,6 @@ describe('starting a link', () => {
 		await start(MEMBER);
 		expect(authorized).toEqual([
 			{
-				// An account target makes the client resolve the group's DID now and
-				// refuse a token issued to anyone else at the callback.
 				target: { type: 'account', identifier: GROUP },
 				scope: groupSessionScope(),
 				redirectUri: REDIRECT,
@@ -116,8 +104,6 @@ describe('starting a link', () => {
 		]);
 	});
 
-	// The group's host keeps each space's member list and read policy, so the
-	// creator's link asks for no more than anyone else's.
 	it('asks the creator for the same scope as anyone else', async () => {
 		await start(OWNER);
 		await start(MEMBER);
@@ -133,8 +119,6 @@ describe('starting a link', () => {
 });
 
 describe('the hint a group host reads off the link', () => {
-	// The group host's act-for-group page asks for the person's own handle and
-	// fills it in from the person's DID on the link. There is no name to suggest.
 	it('names the person, and never a group name, to a group at the group host, and adds nothing to the request', async () => {
 		const url = await start(MEMBER, true, async () => true);
 
@@ -151,8 +135,6 @@ describe('the hint a group host reads off the link', () => {
 		]);
 	});
 
-	// This site links only a group at its own group host, so no other PDS is
-	// asked anything or told who the person is.
 	it('refuses a group elsewhere, or one the check cannot place, before any request', async () => {
 		await expect(start(MEMBER, true, async () => false)).rejects.toBeInstanceOf(GroupLinkRefused);
 		await expect(

@@ -1,16 +1,11 @@
-// A create at a group host, against a fake host and the real schema. The host
-// makes the group's account and its meta and members records at sign-up; these
-// cases cover what this app does around that: the refusals before anything
-// exists at the host, the checks at the callback, and what it writes on the
-// creator's new session afterwards, and above all what it leaves to the host.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sqliteD1, type SqliteD1 } from './server/__fixtures__/d1-sqlite';
-import { fakeGroupHost } from './server/__fixtures__/group-host';
+import { fakeGroupHost, type FakeGroupHostOptions } from './server/__fixtures__/group-host';
 import { stubSession } from './server/__fixtures__/linked-oauth-stub';
 
 vi.mock('./server/handles', () => ({ refreshGroupHandle: vi.fn(async () => null) }));
-vi.mock('./server/host-kind', async (importOriginal) => ({
-	...(await importOriginal<typeof import('./server/host-kind')>()),
+vi.mock('./server/host', async (importOriginal) => ({
+	...(await importOriginal<typeof import('./server/host')>()),
 	isHostGroup: vi.fn(async () => true)
 }));
 
@@ -22,21 +17,17 @@ import {
 	type HostCreateFields,
 	type HostCreateState
 } from './create-at-host';
-import { isHostGroup } from './server/host-kind';
+import { isHostGroup } from './server/host';
 import { getGroupByDid } from './server/db/groups';
 import { listMembers } from './server/db/roster';
 import { groupSessionScope, type LinkedGroupCredential } from './server/session';
 import { groupSpaceUris } from './ids';
-import { CALENDAR_SPACE_TYPE } from './types';
 
 const CREATOR = 'did:plc:creatoraaaaaaaaaaaaaaaaa';
 const GROUP = 'did:plc:hostgroupaaaaaaaaaaaaaaa';
 const HOST = 'https://grouphost.stub.test';
-const {
-	aboutSpaceUri: META,
-	membersSpaceUri: MEMBERS,
-	calendarSpaceUri: CALENDAR
-} = groupSpaceUris(GROUP);
+const { aboutSpaceUri: META, membersSpaceUri: MEMBERS } = groupSpaceUris(GROUP);
+const ENV = { GROUP_HOST_URL: HOST, OAUTH_PUBLIC_URL: 'https://atmo.stub.test' };
 
 let harness: SqliteD1;
 
@@ -55,14 +46,17 @@ function fields(overrides: Partial<HostCreateFields> = {}): HostCreateFields {
 		name: 'Kona Trail Runners',
 		description: 'Dawn runs',
 		visibility: 'public',
-		requireApproval: true,
+		joinPolicy: 'approval',
+		listed: true,
 		rules: 'Be kind\nLeave no trace',
 		...overrides
 	};
 }
 
-const groupRows = async () =>
-	(await harness.db.prepare(`SELECT group_did, owner_did FROM groups`).all()).results ?? [];
+const groupDids = async () =>
+	((await harness.db.prepare(`SELECT group_did FROM groups`).all()).results ?? []).map(
+		(row) => (row as { group_did: string }).group_did
+	);
 
 /** The host's meta `access` record as it writes it at create. */
 const HOST_META_GRANTS = [
@@ -70,20 +64,9 @@ const HOST_META_GRANTS = [
 	{ role: 'member', scopes: ['space:group.opensocial.meta?action=read'] }
 ];
 
-/** The fake host with the group the host made: its meta `access` record, and
- *  the host's own `createSpace`, which the fake does not serve. */
-async function hostWithGroup(fail?: (nsid: string) => Response | undefined) {
-	const host = fakeGroupHost({
-		did: GROUP,
-		fail: (nsid) =>
-			fail?.(nsid) ??
-			(nsid === 'group.opensocial.createSpace'
-				? Response.json({
-						space: CALENDAR,
-						access: { uri: `${CALENDAR}/access`, cid: 'bafyaccess' }
-					})
-				: undefined)
-	});
+/** The fake host holding the group it made, with its meta `access` record. */
+async function hostWithGroup(fail?: FakeGroupHostOptions['fail']) {
+	const host = fakeGroupHost({ did: GROUP, fail });
 	await fetch(`${HOST}/xrpc/com.atproto.space.putRecord`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
@@ -99,33 +82,14 @@ async function hostWithGroup(fail?: (nsid: string) => Response | undefined) {
 	return host;
 }
 
-/** A PNG's first bytes: enough for a fake host that keeps what it was sent. */
-const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const picture = (type = 'image/png') => new Blob([PNG], { type });
-
-/** The stash, in memory, taking each image once as the KV one does. */
-function memoryStash() {
-	const kept = new Map<string, Blob>();
-	return {
-		kept,
-		put: vi.fn(async (image: Blob) => {
-			const key = `picture-${kept.size + 1}`;
-			kept.set(key, image);
-			return key;
-		}),
-		take: vi.fn(async (key: string) => {
-			const image = kept.get(key) ?? null;
-			kept.delete(key);
-			return image;
-		})
-	};
-}
-
 const credential = (): LinkedGroupCredential => ({
 	kind: 'linked',
 	person: CREATOR,
 	session: stubSession(GROUP, HOST, CREATOR)
 });
+
+const setUp = (overrides: Partial<HostCreateFields> = {}) =>
+	setUpHostGroup({ DB: harness.db, ...ENV }, CREATOR, fields(overrides), credential(), HOST);
 
 describe('hostCreation', () => {
 	it('is the host origin only when the deployment can also link what the host makes', () => {
@@ -140,280 +104,98 @@ describe('hostCreation', () => {
 });
 
 describe('startCreateAtHost', () => {
-	const start = (overrides: Partial<HostCreateFields> = {}, image?: Blob) => {
+	it("sends the creator to the host's sign-up with the form in the state, and makes nothing here", async () => {
+		const name = 'Hilo & Kona #1 = "best" <runners>?';
 		const authorize = vi.fn(async () => ({
 			url: new URL(`${HOST}/oauth/authorize?request_uri=x`)
 		}));
-		const stash = memoryStash();
-		return {
-			authorize,
-			stash,
-			result: startCreateAtHost({
-				db: harness.db,
-				client: { authorize } as never,
-				hostUrl: HOST,
-				callerDid: CREATOR,
-				fields: fields(overrides),
-				redirectUri: 'https://atmo.stub.test/oauth/group-create/callback',
-				...(image ? { avatar: { image, stash } } : {})
-			})
-		};
-	};
 
-	// The state goes to the host and back, so it carries the key, never the image.
-	it('keeps the picture here and sends the host only its key', async () => {
-		const image = picture();
-		const { authorize, stash, result } = start({}, image);
-
-		expect((await result).ok).toBe(true);
-		expect([...stash.kept.values()]).toEqual([image]);
-		const [options] = authorize.mock.calls[0] as unknown as [{ state: HostCreateState }];
-		expect(options.state.avatar).toBe('picture-1');
-		expect(JSON.stringify(options.state)).not.toContain('image/png');
-	});
-
-	it('refuses a picture the profile cannot take before anything is kept or asked', async () => {
-		const { authorize, stash, result } = start({}, picture('image/gif'));
-
-		expect(await result).toEqual({
-			ok: false,
-			error: 'The group picture must be a PNG, JPEG or WebP image.'
+		const answer = await startCreateAtHost({
+			client: { authorize } as never,
+			hostUrl: HOST,
+			callerDid: CREATOR,
+			fields: fields({ name }),
+			redirectUri: 'https://atmo.stub.test/oauth/group-create/callback'
 		});
-		expect(stash.put).not.toHaveBeenCalled();
-		expect(authorize).not.toHaveBeenCalled();
-	});
 
-	it("sends the creator to the host's sign-up with the link scope, and makes nothing here", async () => {
-		const { authorize, result } = start({ locationName: 'Kailua-Kona' });
-
-		const answer = await result;
 		expect(answer.ok).toBe(true);
 		const signUp = new URL(answer.ok ? answer.signUpUrl : '');
-		expect(signUp.origin + signUp.pathname).toBe(`${HOST}/oauth/authorize`);
-		expect(signUp.searchParams.get('request_uri')).toBe('x');
-		expect(authorize).toHaveBeenCalledOnce();
+		expect(Object.fromEntries(signUp.searchParams)).toEqual({
+			request_uri: 'x',
+			gh_name: name,
+			gh_person: CREATOR
+		});
 		const [options] = authorize.mock.calls[0] as unknown as [Record<string, unknown>];
-		expect(options.target).toEqual({ type: 'pds', serviceUrl: HOST });
-		expect(options.prompt).toBe('create');
-		expect(options.scope).toBe(groupSessionScope());
-		// The calendar space does not exist yet, and its items are asked for anyway:
-		// the host's admin grant covers every space, ones made later included.
-		expect(options.scope).toContain(`space:${CALENDAR_SPACE_TYPE}?`);
+		expect(options).toMatchObject({
+			target: { type: 'pds', serviceUrl: HOST },
+			prompt: 'create',
+			scope: groupSessionScope()
+		});
 		expect(options.state).toEqual({
 			by: CREATOR,
-			create: {
-				name: 'Kona Trail Runners',
-				description: 'Dawn runs',
-				visibility: 'public',
-				requireApproval: true,
-				locationName: 'Kailua-Kona',
-				rules: 'Be kind\nLeave no trace'
-			}
+			create: fields({ name })
 		} satisfies HostCreateState);
-		expect(await groupRows()).toEqual([]);
-	});
-
-	// The host's sign-up page asks for the group's address and the creator's own
-	// handle, and reads these hints off the link to fill both in. They ride on the
-	// URL the browser opens: the authorization request stays as it was, since the
-	// PDS drops any field it does not know.
-	it('hints the typed name and the creator to the host on the sign-up link, and adds nothing to the request', async () => {
-		for (const name of ['Kona Trail Runners', 'Hilo & Kona #1 = "best" <runners>?']) {
-			const { authorize, result } = start({ name });
-
-			const answer = await result;
-			expect(answer.ok).toBe(true);
-			const signUp = new URL(answer.ok ? answer.signUpUrl : '');
-			expect(signUp.searchParams.get('gh_name')).toBe(name);
-			expect(signUp.searchParams.get('gh_person')).toBe(CREATOR);
-			expect(signUp.searchParams.get('request_uri')).toBe('x');
-			expect([...signUp.searchParams.keys()].sort()).toEqual([
-				'gh_name',
-				'gh_person',
-				'request_uri'
-			]);
-
-			const [options] = authorize.mock.calls[0] as unknown as [Record<string, unknown>];
-			expect(Object.keys(options).sort()).toEqual([
-				'prompt',
-				'redirectUri',
-				'scope',
-				'state',
-				'target'
-			]);
-			expect(JSON.stringify(options)).not.toContain('gh_');
-		}
-	});
-
-	it('refuses a private group without approval before the host is asked', async () => {
-		const { authorize, result } = start({ visibility: 'private', requireApproval: false });
-
-		expect((await result).ok).toBe(false);
-		expect(authorize).not.toHaveBeenCalled();
-	});
-
-	it('refuses before the host is asked when the row would not fit the database', async () => {
-		harness.raw.exec('ALTER TABLE groups ADD COLUMN slug TEXT CHECK (slug IS NOT NULL)');
-		const { authorize, result } = start();
-
-		const answer = await result;
-		expect(answer.ok).toBe(false);
-		expect(!answer.ok && answer.error).toContain('nothing was made');
-		expect(authorize).not.toHaveBeenCalled();
+		expect(JSON.stringify(options)).not.toContain('gh_');
+		expect(await groupDids()).toEqual([]);
 	});
 });
 
 describe('setUpHostGroup', () => {
-	it("makes the calendar space through the host, then writes only this app's records", async () => {
+	it("writes only this app's records, on the creator's session, and records the spaces last", async () => {
 		const host = await hostWithGroup();
 
-		const result = await setUpHostGroup(
-			{ DB: harness.db, GROUP_HOST_URL: HOST },
-			CREATOR,
-			fields(),
-			credential(),
-			HOST
-		);
+		expect(await setUp()).toEqual({ ok: true, groupDid: GROUP });
 
-		expect(result).toEqual({ ok: true, groupDid: GROUP });
-		const writes = host.writes();
-		// The calendar space before any record, with an `access` record naming the
-		// host's roles. The stub does not count the host's own method as a write.
-		const sent = host.requests.map((r) => r.nsid);
-		expect(sent.indexOf('group.opensocial.createSpace')).toBeGreaterThanOrEqual(0);
-		expect(sent.indexOf('group.opensocial.createSpace')).toBeLessThan(sent.indexOf(writes[0].nsid));
-		const createSpace = host.requests.find((r) => r.nsid === 'group.opensocial.createSpace');
-		expect(createSpace?.body).toEqual({
-			type: CALENDAR_SPACE_TYPE,
-			skey: 'self',
-			access: {
-				public: false,
-				grants: [
-					{ role: 'admin', scopes: [`space:${CALENDAR_SPACE_TYPE}?action=read`] },
-					{ role: 'member', scopes: [`space:${CALENDAR_SPACE_TYPE}?action=read`] }
-				]
-			}
-		});
-		// Every write on the creator's own session.
 		expect(new Set(host.requests.map((r) => r.person))).toEqual(new Set([CREATOR]));
-		// What the host already holds is left alone: no role, permissions,
-		// membership or space index, and no member list or read policy.
-		const collections = host.spaceWrites.map((w) => w.collection);
-		for (const theirs of [
-			'group.opensocial.role',
-			'group.opensocial.permissions',
-			'group.opensocial.membership',
-			'group.opensocial.space'
-		]) {
-			expect(collections).not.toContain(theirs);
-		}
-		expect(writes.some((w) => w.nsid.startsWith('com.atproto.simplespace.'))).toBe(false);
-		// The event bindings name the host's roles.
-		expect(host.record(MEMBERS, 'rsvp.atmo.group.eventPermissions', 'self')).toMatchObject({
-			bindings: [
-				{ role: 'admin', actions: expect.arrayContaining(['createEvent', 'manageEvents']) },
-				{ role: 'member', actions: [] }
-			]
-		});
+		expect(host.spaceWrites.map((w) => w.collection)).toEqual([
+			'group.opensocial.profile',
+			'group.opensocial.rule',
+			'group.opensocial.rule',
+			'group.opensocial.access'
+		]);
 		expect(host.record(META, 'group.opensocial.profile', 'self')).toMatchObject({
 			displayName: 'Kona Trail Runners',
 			description: 'Dawn runs',
 			joinPolicy: 'approval'
 		});
-		expect(host.records(META, 'group.opensocial.rule')).toHaveLength(2);
-		// The host's grants kept; only `public` follows the form.
 		expect(host.record(META, 'group.opensocial.access', 'self')).toEqual({
 			$type: 'group.opensocial.access',
 			public: true,
 			grants: HOST_META_GRANTS
 		});
 		expect(host.repoWrites.map((w) => w.collection)).toEqual(['group.opensocial.declaration']);
-		// The row, created by the creator, with the host's spaces recorded, and
-		// the creator on the roster as an ordinary admin, as the host has them.
 		const row = await getGroupByDid(harness.db, GROUP);
-		expect(row).toMatchObject({
-			owner_did: CREATOR,
-			about_space_uri: META,
-			members_space_uri: MEMBERS
-		});
+		expect(row).toMatchObject({ about_space_uri: META, members_space_uri: MEMBERS });
 		expect(await listMembers(harness.db, row!.id)).toEqual([
 			expect.objectContaining({ did: CREATOR, role: 'admin' })
 		]);
 	});
 
-	it("uploads the picture on the creator's session and names it in the profile", async () => {
+	it.each([
+		['a private group', { visibility: 'private' as const }, false],
+		['an unlisted public group', { listed: false }, true]
+	])('does not declare %s', async (_, overrides, isPublic) => {
 		const host = await hostWithGroup();
 
-		const result = await setUpHostGroup(
-			{ DB: harness.db, GROUP_HOST_URL: HOST },
-			CREATOR,
-			fields(),
-			credential(),
-			HOST,
-			picture()
-		);
-
-		expect(result.ok).toBe(true);
-		expect(host.blobs).toEqual([{ mimeType: 'image/png', bytes: PNG }]);
-		const upload = host.requests.find((r) => r.nsid === 'com.atproto.repo.uploadBlob');
-		expect(upload?.person).toBe(CREATOR);
-		expect(host.record(META, 'group.opensocial.profile', 'self')).toMatchObject({
-			avatar: { $type: 'blob', ref: { $link: 'bafkreiupload1' }, mimeType: 'image/png' }
+		expect((await setUp(overrides)).ok).toBe(true);
+		expect(host.record(META, 'group.opensocial.access', 'self')).toMatchObject({
+			public: isPublic
 		});
-	});
-
-	it('uploads nothing, and the profile names no picture, when the form had none', async () => {
-		const host = await hostWithGroup();
-
-		await setUpHostGroup(
-			{ DB: harness.db, GROUP_HOST_URL: HOST },
-			CREATOR,
-			fields(),
-			credential(),
-			HOST
-		);
-
-		expect(host.blobs).toEqual([]);
-		expect(host.record(META, 'group.opensocial.profile', 'self')).not.toHaveProperty('avatar');
-	});
-
-	it('neither opens nor declares a private group', async () => {
-		const host = await hostWithGroup();
-
-		const result = await setUpHostGroup(
-			{ DB: harness.db, GROUP_HOST_URL: HOST },
-			CREATOR,
-			fields({ visibility: 'private', requireApproval: true }),
-			credential(),
-			HOST
-		);
-
-		expect(result.ok).toBe(true);
-		expect(host.record(META, 'group.opensocial.access', 'self')).toMatchObject({ public: false });
 		expect(host.repoWrites).toEqual([]);
-		expect(host.record(META, 'group.opensocial.profile', 'self')).toMatchObject({
-			joinPolicy: 'invite'
-		});
 	});
 
-	it('names the group the host made when a step after it fails', async () => {
-		const host = await hostWithGroup((nsid) =>
-			nsid === 'group.opensocial.createSpace'
-				? Response.json({ error: 'InvalidScope', message: 'no' }, { status: 400 })
+	it('names the group the host made when a later step fails, and records no spaces', async () => {
+		await hostWithGroup((nsid) =>
+			nsid === 'com.atproto.space.putRecord'
+				? Response.json({ error: 'InternalServerError' }, { status: 500 })
 				: undefined
 		);
 
-		const result = await setUpHostGroup(
-			{ DB: harness.db, GROUP_HOST_URL: HOST },
-			CREATOR,
-			fields(),
-			credential(),
-			HOST
-		);
+		const result = await setUp();
 
 		expect(result.ok).toBe(false);
 		expect(!result.ok && result.error).toContain(GROUP);
-		expect(host.spaceWrites).toEqual([]);
+		expect((await getGroupByDid(harness.db, GROUP))?.members_space_uri).toBeNull();
 	});
 });
 
@@ -426,7 +208,6 @@ describe('finishCreateAtHost', () => {
 			signedInDid?: string | null;
 			stored?: unknown;
 			callback?: () => Promise<{ session: LinkedGroupCredential['session'] }>;
-			stash?: ReturnType<typeof memoryStash>;
 		} = {}
 	) {
 		const states = {
@@ -447,57 +228,48 @@ describe('finishCreateAtHost', () => {
 			client,
 			clientFor,
 			result: finishCreateAtHost({
-				env: {
-					DB: harness.db,
-					GROUP_HOST_URL: HOST,
-					OAUTH_PUBLIC_URL: 'https://atmo.stub.test',
-					OAUTH_SESSIONS: {} as KVNamespace
-				},
+				env: { DB: harness.db, ...ENV, OAUTH_SESSIONS: {} as KVNamespace },
 				clientFor,
 				states,
 				params: new URLSearchParams({ state: STATE_ID, code: 'c', iss: HOST }),
-				signedInDid: 'signedInDid' in options ? (options.signedInDid ?? null) : CREATOR,
-				stash: options.stash
+				signedInDid: 'signedInDid' in options ? (options.signedInDid ?? null) : CREATOR
 			})
 		};
 	}
 
-	it('sets up the group the host made, filed under the person who started it', async () => {
+	it('sets up the group the host made, on the client of the person who started it', async () => {
 		await hostWithGroup();
 		const { clientFor, client, result } = finish();
 
 		expect(await result).toEqual({ ok: true, groupDid: GROUP });
 		expect(clientFor).toHaveBeenCalledWith(CREATOR);
 		expect(client.revoke).not.toHaveBeenCalled();
-		expect(await groupRows()).toEqual([{ group_did: GROUP, owner_did: CREATOR }]);
+		expect(await groupDids()).toEqual([GROUP]);
 	});
 
-	it('takes the picture the form left and uploads it into the new group', async () => {
-		const host = await hostWithGroup();
-		const stash = memoryStash();
-		const key = await stash.put(picture());
+	it('finishes a create that stopped partway, writing its rules once', async () => {
+		const down = { declaration: true };
+		const host = await hostWithGroup((nsid) =>
+			down.declaration && nsid === 'com.atproto.repo.putRecord'
+				? Response.json({ error: 'InternalServerError' }, { status: 500 })
+				: undefined
+		);
+		expect((await finish().result).ok).toBe(false);
 
-		const { result } = finish({ stored: { userState: { ...started, avatar: key } }, stash });
-
-		expect(await result).toEqual({ ok: true, groupDid: GROUP });
-		expect(stash.take).toHaveBeenCalledWith(key);
-		expect(stash.kept.size).toBe(0);
-		expect(host.blobs).toHaveLength(1);
+		down.declaration = false;
+		expect(await finish().result).toEqual({ ok: true, groupDid: GROUP });
+		expect(host.records(META, 'group.opensocial.rule')).toHaveLength(2);
+		expect(host.repoWrites.map((w) => w.collection)).toEqual(['group.opensocial.declaration']);
+		expect((await getGroupByDid(harness.db, GROUP))?.members_space_uri).toBe(MEMBERS);
 	});
 
-	// The group exists at the host by now, so a lost picture is not worth a
-	// half-made group: it can be added later.
-	it('makes the group without the picture when it is gone', async () => {
+	it('sets up nothing for a group this site already has', async () => {
 		const host = await hostWithGroup();
+		await finish().result;
+		host.clearLog();
 
-		const { result } = finish({
-			stored: { userState: { ...started, avatar: 'picture-lapsed' } },
-			stash: memoryStash()
-		});
-
-		expect(await result).toEqual({ ok: true, groupDid: GROUP });
-		expect(host.blobs).toEqual([]);
-		expect(host.record(META, 'group.opensocial.profile', 'self')).not.toHaveProperty('avatar');
+		expect(await finish().result).toMatchObject({ ok: false, groupDid: GROUP });
+		expect(host.writes()).toEqual([]);
 	});
 
 	it('refuses a browser signed in as someone else before the code is exchanged', async () => {
@@ -509,9 +281,7 @@ describe('finishCreateAtHost', () => {
 	});
 
 	it('refuses a state that is not a create', async () => {
-		const { client, result } = finish({
-			stored: { userState: { groupDid: GROUP, by: CREATOR } }
-		});
+		const { client, result } = finish({ stored: { userState: { groupDid: GROUP, by: CREATOR } } });
 
 		expect(await result).toMatchObject({ ok: false, groupDid: null });
 		expect(client.callback).not.toHaveBeenCalled();
@@ -523,30 +293,17 @@ describe('finishCreateAtHost', () => {
 
 		expect(await result).toMatchObject({ ok: false, groupDid: null });
 		expect(client.revoke).toHaveBeenCalledWith(GROUP);
-		expect(await groupRows()).toEqual([]);
+		expect(await groupDids()).toEqual([]);
 	});
 
-	it('sets up nothing for a group this site already has', async () => {
-		const host = await hostWithGroup();
-		await finish().result;
-		host.clearLog();
-
-		const { result } = finish();
-
-		expect(await result).toMatchObject({ ok: false, groupDid: GROUP });
-		expect(host.writes()).toEqual([]);
-	});
-
-	it('reports a sign-up the host did not finish', async () => {
+	it('sets up nothing when the host did not finish the sign-up', async () => {
 		const { result } = finish({
 			callback: async () => {
 				throw new Error('access_denied');
 			}
 		});
 
-		const answer = await result;
-		expect(answer.ok).toBe(false);
-		expect(!answer.ok && answer.error).toContain('access_denied');
-		expect(await groupRows()).toEqual([]);
+		expect(await result).toMatchObject({ ok: false, groupDid: null });
+		expect(await groupDids()).toEqual([]);
 	});
 });

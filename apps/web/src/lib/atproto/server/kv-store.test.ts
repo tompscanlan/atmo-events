@@ -1,5 +1,3 @@
-// A prefix keeps a store's keys apart in a shared namespace: a group's linked
-// session and a sign-in session are both keyed by DID in OAUTH_SESSIONS.
 import { describe, it, expect } from 'vitest';
 import { KVStore } from './kv-store';
 

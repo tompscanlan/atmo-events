@@ -1,10 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// The new-event page's loader, behind the real editor gate. The space reader is
-// a fake host whose members space holds the records a create leaves, which a
-// roster caller's standing comes from, read with their own access: the owner's
-// role grants CREATE_EVENT and a plain member's grants nothing. Its about space's access record makes the group
-// public, so a caller off the roster reaches the editor gate too.
 vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
 	...(await import('$lib/groups/server/__fixtures__/linked-oauth-stub')).linkedOAuthStub
@@ -41,7 +36,7 @@ let harness: SqliteD1;
 beforeEach(async () => {
 	({ harness } = await seedGroup({
 		groupDid: GROUP_DID,
-		ownerDid: OWNER,
+		creatorDid: OWNER,
 		name: 'Kona',
 		members: { [MEMBER]: 'member' }
 	}));
@@ -77,7 +72,6 @@ afterEach(() => {
 	resetReaderHost();
 });
 
-/** The page as `did` sees it, signed in with their own session, or signed out. */
 async function openAs(did: string | null) {
 	return load({
 		params: { actor: GROUP_DID },
@@ -87,16 +81,10 @@ async function openAs(did: string | null) {
 	} as unknown as Parameters<typeof load>[0]);
 }
 
-describe('/groups/[actor]/events/new load: who may open it', () => {
-	// The page is the first gate on publishing as the group, so a caller who may
-	// see a public group but not create its events, on the roster or off it, is
-	// refused here rather than handed the editor.
+describe('/groups/[actor]/events/new load', () => {
 	it('the new-event page refuses a caller without CREATE_EVENT and serves one with it', async () => {
 		for (const did of [MEMBER, STRANGER]) {
-			await expect(openAs(did), did).rejects.toMatchObject({
-				status: 403,
-				body: { message: 'Not allowed: CREATE_EVENT required' }
-			});
+			await expect(openAs(did), did).rejects.toMatchObject({ status: 403 });
 		}
 
 		expect(await openAs(OWNER)).toMatchObject({ groupDid: GROUP_DID, groupName: 'Kona' });

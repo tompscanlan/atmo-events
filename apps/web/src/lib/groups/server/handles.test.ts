@@ -1,7 +1,3 @@
-// A group's handle is shown only when its PDS says the handle and the DID point
-// at each other. A handle that fails that check may belong to someone else now,
-// so showing it, or caching it for every later page, would hand the group's
-// name to whoever registered it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$lib/atproto/methods', () => ({ getPDS: vi.fn() }));
@@ -20,7 +16,6 @@ let describeRepo: () => Response;
 
 beforeEach(() => {
 	harness = sqliteD1();
-	// Contrail's cache, which a D1 made from migrations/ alone does not have.
 	harness.raw.exec(
 		'CREATE TABLE identities (did TEXT PRIMARY KEY, handle TEXT, pds TEXT, resolved_at INTEGER)'
 	);

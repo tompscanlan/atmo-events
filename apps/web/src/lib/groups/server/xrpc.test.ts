@@ -1,11 +1,6 @@
-// The one XRPC helper every group transport sends through. What it promises:
-// a failure is worded `<method> failed: <status> <error>` and never carries the
-// PDS's message, and only RecordNotFound reads as absent. How it encodes a
-// request is exercised by every test that talks to a stub PDS.
 import { describe, expect, it } from 'vitest';
 import { isRecordNotFound, readXrpc, repoRecordExists, xrpcError, type XrpcHandle } from './xrpc';
 
-/** A handle that answers every request with `reply`. */
 function answering(reply: () => Response): XrpcHandle {
 	return async () => reply();
 }
@@ -39,7 +34,6 @@ describe('readXrpc', () => {
 });
 
 describe('xrpcError', () => {
-	// The message can carry what a user typed, so the wording never includes it.
 	it('names the method, the status and the error, and never the message', () => {
 		const error = xrpcError('com.atproto.server.createAccount', {
 			status: 400,

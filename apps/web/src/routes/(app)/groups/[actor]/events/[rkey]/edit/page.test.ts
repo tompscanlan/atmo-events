@@ -1,6 +1,3 @@
-// The edit page, rendered on the server with the shared editor stubbed, as on
-// the new-event page (../../new/page.test.ts). The body is the page's own
-// markup, and the adapter the editor would have saved with is called directly.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
 import type { EditorAdapter } from '$lib/components/editor/adapter';
@@ -29,44 +26,6 @@ import Page from './+page.svelte';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const EVENT = 'community.lexicon.calendar.event';
-// Written out, so a wrong type or key in the app's constant fails here.
-const CALENDAR = `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`;
-const IMAGE = [
-	{
-		role: 'thumbnail',
-		alt: 'The committee',
-		content: { $type: 'blob', ref: { $link: 'bafkreithumb' }, mimeType: 'image/webp', size: 41250 }
-	}
-];
-
-/** The page as the loader hands it a members-only event: the calendar space
- *  as its own field, and the event whole, image included. */
-function membersOnlyData() {
-	return {
-		groupDid: GROUP_DID,
-		groupName: 'Kona',
-		handle: null,
-		canDelete: true,
-		rkey: '3lmeeting',
-		eventData: {
-			name: 'Committee call',
-			startsAt: '2030-11-02T18:00:00.000Z',
-			media: structuredClone(IMAGE),
-			cid: 'bafymeeting',
-			did: GROUP_DID,
-			rkey: '3lmeeting',
-			uri: `${CALENDAR}/${GROUP_DID}/${EVENT}/3lmeeting`
-		},
-		space: CALENDAR
-	};
-}
-
-/** What a person reads: tags and Svelte's markers dropped, spaces collapsed. */
-const textOf = (html: string) =>
-	html
-		.replace(/<[^>]*>/g, ' ')
-		.replace(/\s+/g, ' ')
-		.trim();
 
 afterEach(() => {
 	editor.renders.length = 0;
@@ -74,16 +33,25 @@ afterEach(() => {
 });
 
 describe('/groups/[actor]/events/[rkey]/edit', () => {
-	// A public event saves with its own placement too, so an edit does not move
-	// it into the calendar space and leave the public copy as it was.
-	it('the edit page saves a public event to the group repo', async () => {
-		const eventData = { name: 'Sunrise paddle', startsAt: '2026-11-01T06:00:00.000Z' };
-		const data = { ...membersOnlyData(), rkey: '3lpaddle', eventData, space: null };
+	it('edits the event in the group repo: a save updates it and a delete removes it', async () => {
+		const eventData = { name: 'Sunrise paddle', startsAt: '2030-11-01T06:00:00.000Z' };
+		const data = {
+			groupDid: GROUP_DID,
+			groupName: 'Kona',
+			handle: null,
+			canDelete: true,
+			rkey: '3lpaddle',
+			eventData
+		};
+		const { body } = render(Page, { props: { data } as never });
+		expect(body).not.toContain('/space/');
 
-		// The server renders on the first read of the output, which names no space.
-		expect(render(Page, { props: { data } as never }).body).not.toContain('/space/');
 		expect(editor.renders).toHaveLength(1);
-		const { adapter } = editor.renders[0] as { adapter: EditorAdapter };
+		const { adapter, eventData: given } = editor.renders[0] as {
+			adapter: EditorAdapter;
+			eventData: unknown;
+		};
+		expect(given).toStrictEqual(eventData);
 		remote.putGroupEvent.mockResolvedValue({
 			ok: true,
 			uri: `at://${GROUP_DID}/${EVENT}/3lpaddle`
@@ -91,71 +59,13 @@ describe('/groups/[actor]/events/[rkey]/edit', () => {
 		remote.removeGroupEvent.mockResolvedValue({ ok: true });
 		await adapter.putRecord({ collection: EVENT, rkey: '3lpaddle', record: eventData });
 		await adapter.deleteRecord({ collection: EVENT, rkey: '3lpaddle' });
-		expect(remote.putGroupEvent.mock.calls[0][0]).toMatchObject({ placement: 'everyone' });
-		expect(remote.removeGroupEvent.mock.calls[0][0]).toMatchObject({ placement: 'everyone' });
-	});
-
-	it('the edit page saves a members-only event into the calendar space', async () => {
-		const data = membersOnlyData();
-		const { body } = render(Page, { props: { data } as never });
-
-		expect(textOf(body)).toContain('Who can see this event: Members only');
-		// No control of the page's own to switch it (the editor's markup is
-		// stubbed out): the placement is fixed once the event is published.
-		expect(body).not.toMatch(/<(input|select|button|textarea)\b/);
-
-		// The editor gets the event as loaded, and saves where the line says: the
-		// calendar space, on every write and delete. No recurring copies, which
-		// would cite the event by a URI in the group's repo.
-		expect(editor.renders).toHaveLength(1);
-		const { adapter, eventData } = editor.renders[0] as {
-			adapter: EditorAdapter;
-			eventData: unknown;
-		};
-		expect(eventData).toStrictEqual(data.eventData);
-		expect(adapter.features.recurring).toBe(false);
-		remote.putGroupEvent.mockResolvedValue({
-			ok: true,
-			uri: `${CALENDAR}/${GROUP_DID}/${EVENT}/3lmeeting`
+		expect(remote.putGroupEvent.mock.calls[0][0]).toMatchObject({
+			groupDid: GROUP_DID,
+			rkey: '3lpaddle',
+			intent: 'update'
 		});
-		remote.removeGroupEvent.mockResolvedValue({ ok: true });
-		const record = { $type: EVENT, name: 'Committee call (moved)' };
-		await adapter.putRecord({ collection: EVENT, rkey: '3lmeeting', record });
-		await adapter.deleteRecord({ collection: EVENT, rkey: '3lmeeting' });
-		expect(remote.putGroupEvent.mock.calls).toEqual([
-			[{ groupDid: GROUP_DID, rkey: '3lmeeting', intent: 'update', placement: 'members', record }]
-		]);
 		expect(remote.removeGroupEvent.mock.calls).toEqual([
-			[{ groupDid: GROUP_DID, rkey: '3lmeeting', placement: 'members' }]
+			[{ groupDid: GROUP_DID, rkey: '3lpaddle' }]
 		]);
-	});
-
-	// The editor's preview of an image the event already has comes from
-	// cdn.bsky.app, which would hand a third party the group's DID and the
-	// image's CID. A members-only event gets no preview until members can get
-	// its image through atmo's own route; the save still keeps the image, since
-	// the editor gets the event whole. (Spec: FR-119.)
-	it('the edit page builds no image URL for a members-only event', () => {
-		const data = membersOnlyData();
-		const { body } = render(Page, { props: { data } as never });
-
-		expect(editor.renders).toHaveLength(1);
-		const props = editor.renders[0] as {
-			eventData: { media: typeof IMAGE };
-			storedImageUrl?: (blob: (typeof IMAGE)[number]['content']) => string | null;
-		};
-		expect(typeof props.storedImageUrl).toBe('function');
-		expect(props.storedImageUrl!(IMAGE[0].content)).toBeNull();
-		expect(props.eventData.media).toStrictEqual(IMAGE);
-		expect(body).not.toContain('cdn.bsky.app');
-		expect(body).not.toContain('bafkreithumb');
-
-		// A public event's preview is the editor's own. (A server render
-		// runs when its markup is read.)
-		editor.renders.length = 0;
-		const asPublic = render(Page, { props: { data: { ...data, space: null } } as never });
-		expect(textOf(asPublic.body)).toContain('Who can see this event: Everyone');
-		expect(editor.renders).toHaveLength(1);
-		expect((editor.renders[0] as typeof props).storedImageUrl).toBeUndefined();
 	});
 });
