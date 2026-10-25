@@ -1,5 +1,5 @@
-// A group's public face as records in its meta space: the profile, and one record per
-// rule. The D1 name and description columns are a cache of them.
+// The profile and one record per rule, in the meta space; the row's name and
+// description are a cache of them.
 export const GROUP_PROFILE_COLLECTION = 'group.opensocial.profile';
 export const GROUP_RULE_COLLECTION = 'group.opensocial.rule';
 export const GROUP_PROFILE_RKEY = 'self';
@@ -11,7 +11,6 @@ function isJoinPolicy(value: unknown): value is GroupJoinPolicy {
 	return typeof value === 'string' && (GROUP_JOIN_POLICIES as readonly string[]).includes(value);
 }
 
-/** The lexicon's bounds, in graphemes. */
 export const GROUP_NAME_MAX = 64;
 export const GROUP_DESCRIPTION_MAX = 2000;
 export const GROUP_RULE_MAX = 2000;
@@ -20,12 +19,10 @@ export interface GroupProfileFields {
 	name: string;
 	description: string | null;
 	joinPolicy: GroupJoinPolicy;
-	/** The record as read, so a save keeps the fields the form does not edit. */
 	record: Record<string, unknown>;
 }
 
-/** The profile record when there is one, the row only when there is not. A record's
- *  `null` is an authored value, so the branch is taken once, not per field. */
+/** A record's `null` is authored, so the row stands in only when there is no record. */
 export function groupFace(
 	profile: GroupProfileFields | null,
 	group: { name: string; description: string | null }
@@ -115,7 +112,6 @@ export function parseGroupRule(value: unknown): GroupRuleFields | null {
 	};
 }
 
-/** One trimmed rule per non-empty line, in line order. */
 export function splitRuleLines(value: string | null | undefined): string[] {
 	if (!value) return [];
 	return value

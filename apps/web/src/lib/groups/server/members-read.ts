@@ -31,7 +31,6 @@ export interface GroupMembershipRecord {
 
 export interface GroupMembers {
 	memberships: GroupMembershipRecord[];
-	/** The role records' ids, known roles first. */
 	roles: string[];
 	permissions: RoleGrant[] | null;
 	access: GroupAccessFields | null;
@@ -79,7 +78,6 @@ async function readAuthz(
 	};
 }
 
-/** The reads are independent and go out together. */
 export async function readGroupMembers(
 	reader: GroupSpaceReader,
 	group: Pick<GroupRow, 'group_did' | 'members_space_uri'>
@@ -116,7 +114,6 @@ export async function readMembership(
 	);
 }
 
-/** Only the caller's own membership, the authz config and the members space's access. */
 export async function readCallerAuthz(
 	reader: GroupSpaceReader,
 	group: GroupRow,
@@ -156,7 +153,6 @@ export function rolesForDid(members: GroupMembers, did: string | null): string[]
 	return members.memberships.find((record) => record.subject === did)?.roles ?? [];
 }
 
-/** What `actorDid` may do, from the records alone: no D1, no session, no request. */
 export function resolveActor(
 	members: GroupMembers,
 	actorDid: string | null,
@@ -167,7 +163,6 @@ export function resolveActor(
 	return { grants, permissions: permissionsFor(grants, groupDid) };
 }
 
-/** What each role record answers yes to, for the members page's role table. */
 export function rolePermissionsFromRecords(
 	members: GroupMembers,
 	groupDid: string
@@ -194,7 +189,6 @@ function byRosterOrder(a: RosterEntry, b: RosterEntry): number {
 	return a.created_at - b.created_at || a.did.localeCompare(b.did);
 }
 
-/** Every member a record names with any role, known here or not. */
 export function rosterFromRecords(members: GroupMembers): RosterEntry[] {
 	return members.memberships
 		.flatMap((record) => {

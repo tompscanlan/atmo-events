@@ -1,5 +1,3 @@
-// What every group remote resolves before it acts. A plain module, since a
-// `*.remote.ts` may export only remote functions.
 import { error } from '@sveltejs/kit';
 import { getRequestEvent } from '$app/server';
 import type { CallerMembership, GroupRow, GroupVisibility } from './types';
@@ -13,14 +11,11 @@ export interface GroupRequestContext {
 	group: GroupRow;
 	membership: CallerMembership;
 	visibility: GroupVisibility | null;
-	/** Null when the caller's sign-in reads no spaces. */
 	reader: GroupSpaceReader | null;
 	callerDid: string;
 }
 
-/** 401 when signed out, and the pages' own 404 for every other refusal: anyone signed
- *  in can post a remote form with any group key, so a lookup of its own could reveal
- *  that a private group exists. */
+/** 401 when signed out, else the pages' own 404, so a form cannot probe for private groups. */
 export async function groupRequestContext(
 	actor: string,
 	options: GroupRouteOptions = {}

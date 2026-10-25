@@ -6,7 +6,6 @@ import { GROUP_COLUMNS } from './db/groups';
 
 export interface DeclaredGroup {
 	did: string;
-	/** When the index saw the declaration, in milliseconds. */
 	indexedAt: number;
 }
 
@@ -23,17 +22,13 @@ export async function listDeclaredGroups(db: D1Database, limit = 100): Promise<D
 	}));
 }
 
-/** `row` is null when this site holds none for the group, which then renders without
- *  a link. `declared` lets browse show an undeclared group as private without asking. */
 export interface BrowseEntry {
 	group_did: string;
 	row: GroupRow | null;
 	declared: boolean;
 }
 
-/** A declared group is listed whoever made it. A signed-in caller also sees the groups
- *  the rows say they are in, so a private group stays reachable by its members; its
- *  page still reads their standing with their own access. */
+/** Declared groups, and for a signed-in caller the groups the rows say they are in. */
 export async function listGroups(
 	db: D1Database,
 	opts: { callerDid?: string | null; declared: DeclaredGroup[]; limit?: number }

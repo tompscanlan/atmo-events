@@ -1,13 +1,10 @@
-// A group's handle, asked of the group's own PDS and checked both ways before it
-// is cached (./identities.ts) and shown.
 import { Client, simpleFetchHandler } from '@atcute/client';
 import type { Did } from '@atcute/lexicons';
 import { getPDS } from '$lib/atproto/methods';
 import { registerGroupIdentity } from './identities';
 
-/** Reads the handle the group's PDS reports and caches it. A handle that fails the
- *  two-way check (`handleIsCorrect`) is not shown, since an unverified handle is a
- *  takeover risk. Returns null when the PDS cannot be asked; the caller shows the DID. */
+/** A handle that fails the two-way check is not shown: an unverified handle is a takeover
+ *  risk. Null when the group's PDS cannot be asked. */
 export async function refreshGroupHandle(db: D1Database, groupDid: string): Promise<string | null> {
 	let service: string | null;
 	try {

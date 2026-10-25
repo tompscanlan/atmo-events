@@ -1,29 +1,19 @@
-// A members space whose authz config is written, holding a membership record
-// for each of the given DIDs and for nobody else. That is the state a
-// revocation leaves when the record delete succeeded and the row delete did
-// not: `getCallerMembership` reads the record, not the row, and answers "off the
-// roster".
-//
-// Test harness only. It is the in-memory reader of ./space-reader.ts, so its
-// call log can also prove that no record was read at all. It holds no space
-// configuration of its own: a members space holds no answer about the about
-// space's, so a test that needs one passes the about space's `policies`.
+// The members space as the group host seeds it (spike/host.mjs `seedRecords`): the two
+// role records, the `permissions` record, the space's `access`, and a membership per
+// member. In memory through ./space-reader.ts, or written through a host's transport.
 import { SPACE_SKEY, spaceUri } from '../../ids';
-import { DEFAULT_ROLE_PERMISSIONS, GROUP_ROLES, type GroupRoleName } from '../../permissions';
-import { CALENDAR_SPACE_TYPE, MEMBERS_SPACE_TYPE } from '../../types';
+import { GROUP_ROLES, type GroupRoleName } from '../../permissions';
+import { MEMBERS_SPACE_TYPE } from '../../types';
 import {
+	ABOUT_SPACE_READER_ROLES,
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
-	GROUP_EVENT_PERMISSIONS_COLLECTION,
 	GROUP_MEMBERSHIP_COLLECTION,
 	GROUP_PERMISSIONS_COLLECTION,
 	GROUP_PERMISSIONS_RKEY,
 	GROUP_ROLE_COLLECTION,
-	MEMBERS_SPACE_READER_ROLES,
 	groupAccessRecord,
-	groupBindingsRecord,
-	groupMembershipRecord,
-	groupRoleRecord
+	groupMembershipRecord
 } from '../../members-record';
 import {
 	spaceReader,
@@ -37,45 +27,35 @@ import { gatedWriter, pdsWriter } from '../group-write';
 import { putGroupMembership, type WriteGroupMembersInput } from '../members-writer';
 import type { CredentialStoreEnv, GroupCredential } from '../session';
 
+/** The host's `permissions` record at create. */
+export const HOST_PERMISSIONS = {
+	grants: [
+		{
+			role: 'admin',
+			scopes: [
+				'space:*?action=read_self&manage=create&manage=delete',
+				'space:*?collection=*',
+				'repo:*',
+				'blob:*/*'
+			],
+			assignable: ['admin', 'member']
+		},
+		{ role: 'member', scopes: [], assignable: [] }
+	]
+};
+
 export function membersSpaceReader(
 	space: string,
 	groupDid: string,
-	members: string[],
-	policies?: SpaceReaderOptions['policies']
+	members: string[]
 ): FakeSpaceReader {
 	return spaceReader(groupDid, {
 		space,
-		policies,
-		records: [
-			{
-				collection: GROUP_ROLE_COLLECTION,
-				rkey: 'member',
-				value: { ...groupRoleRecord({ id: 'member' }), $type: GROUP_ROLE_COLLECTION }
-			},
-			{
-				collection: GROUP_PERMISSIONS_COLLECTION,
-				rkey: GROUP_PERMISSIONS_RKEY,
-				value: {
-					...groupBindingsRecord({ altitude: 'community', bundles: DEFAULT_ROLE_PERMISSIONS }),
-					$type: GROUP_PERMISSIONS_COLLECTION
-				}
-			},
-			...members.map((did) => ({
-				collection: GROUP_MEMBERSHIP_COLLECTION,
-				rkey: did,
-				value: {
-					...groupMembershipRecord({ subject: did, roles: ['member'] }),
-					$type: GROUP_MEMBERSHIP_COLLECTION
-				}
-			}))
-		]
+		records: authzRecords(groupDid, Object.fromEntries(members.map((did) => [did, 'member'])))
 	});
 }
 
-/** The records a create leaves in the members space: a `role` record per role,
- *  both binding records with atmo's default bundles, and a `membership` for each
- *  DID in `roster` with its role. Each names its space, so a host that holds
- *  other spaces' records too can hold these beside them. */
+/** Each record names its space, so a host holding other spaces can hold these too. */
 export function authzRecords(
 	groupDid: string,
 	roster: Record<string, GroupRoleName>
@@ -87,28 +67,25 @@ export function authzRecords(
 			space,
 			collection: GROUP_ROLE_COLLECTION,
 			rkey: role,
-			value: { ...groupRoleRecord({ id: role }), $type: GROUP_ROLE_COLLECTION }
+			value: { $type: GROUP_ROLE_COLLECTION, displayName: role }
 		})),
 		{
 			space,
 			collection: GROUP_PERMISSIONS_COLLECTION,
 			rkey: GROUP_PERMISSIONS_RKEY,
-			value: {
-				...groupBindingsRecord({ altitude: 'community', bundles: DEFAULT_ROLE_PERMISSIONS }),
-				$type: GROUP_PERMISSIONS_COLLECTION
-			}
+			value: { ...HOST_PERMISSIONS, $type: GROUP_PERMISSIONS_COLLECTION }
 		},
 		{
 			space,
-			collection: GROUP_EVENT_PERMISSIONS_COLLECTION,
-			rkey: GROUP_PERMISSIONS_RKEY,
+			collection: GROUP_ACCESS_COLLECTION,
+			rkey: GROUP_ACCESS_RKEY,
 			value: {
-				...groupBindingsRecord({
-					altitude: 'modality',
-					bundles: DEFAULT_ROLE_PERMISSIONS,
-					createdAt
+				...groupAccessRecord({
+					spaceType: MEMBERS_SPACE_TYPE,
+					roles: ABOUT_SPACE_READER_ROLES,
+					public: false
 				}),
-				$type: GROUP_EVENT_PERMISSIONS_COLLECTION
+				$type: GROUP_ACCESS_COLLECTION
 			}
 		},
 		...Object.entries(roster).map(([did, role]) => ({
@@ -123,9 +100,7 @@ export function authzRecords(
 	];
 }
 
-/** The members space as a create leaves it, in memory (`authzRecords`). The gate
- *  resolves a caller from these, so a test of something the gate guards hands
- *  this as its reader and keeps the host's log for the writes under test. */
+/** The members space as a create leaves it, in memory, for a test's gate. */
 export function authzReader(
 	groupDid: string,
 	roster: Record<string, GroupRoleName>,
@@ -138,10 +113,8 @@ export function authzReader(
 	});
 }
 
-/** Puts, with `input`'s writer, the records a group host writes into the members
- *  space at create: a `role` record per role and both binding records with atmo's
- *  default bundles (`authzRecords`). No membership. Nothing here checks a scope:
- *  it stands in for the host. */
+/** Puts, with `input`'s writer, what the host seeds into the members space, without
+ *  any membership. */
 export async function writeAuthzRecords(input: WriteGroupMembersInput): Promise<void> {
 	const writer = await gatedWriter(input);
 	for (const record of authzRecords(input.group.group_did, {})) {
@@ -156,34 +129,8 @@ export async function writeAuthzRecords(input: WriteGroupMembersInput): Promise<
 	}
 }
 
-/** Puts a members-read `access` record, not public and readable by every role,
- *  into the members space, or into `space` when it is the calendar space. It
- *  stands in for what the host and the create write. */
-export async function writeClosedAccess(
-	input: WriteGroupMembersInput & { space?: string }
-): Promise<void> {
-	const members = input.group.members_space_uri;
-	if (!members) throw new Error('members-space fixture: the group has no members space');
-	const space = input.space ?? members;
-	const spaceType = space === members ? MEMBERS_SPACE_TYPE : CALENDAR_SPACE_TYPE;
-	const writer = await gatedWriter(input);
-	await writer({
-		repo: input.group.group_did,
-		collection: GROUP_ACCESS_COLLECTION,
-		rkey: GROUP_ACCESS_RKEY,
-		record: {
-			...groupAccessRecord({ spaceType, roles: MEMBERS_SPACE_READER_ROLES, public: false }),
-			$type: GROUP_ACCESS_COLLECTION
-		},
-		intent: 'update',
-		space
-	});
-}
-
-/** Writes, as the group, the records a create leaves in its members space at a
- *  host: the authz config and a membership for each DID in `roster`. For a test
- *  whose gate reads the host (./group-host.ts) rather than an in-memory reader.
- *  The group's own DID passes the gate, as at create. */
+/** Writes, as the group, the seeded records and a membership for each DID in `roster`,
+ *  for a test whose gate reads ./group-host.ts. */
 export async function publishAuthz(input: {
 	db: D1Database;
 	env: CredentialStoreEnv;

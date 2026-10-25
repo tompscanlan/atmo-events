@@ -3,10 +3,7 @@
 	import { resolve } from '$app/paths';
 	import type { Person } from '../types';
 
-	// A DID shown as a person: avatar, display name, handle. The link is the
-	// person's page on this site, keyed by the DID like every link the app
-	// publishes. With no handle the DID is shown, since it is the one name
-	// that always resolves.
+	// A DID shown as a person; the link keys on the DID, and with no handle the DID shows.
 	let {
 		did,
 		person,

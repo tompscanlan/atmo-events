@@ -4,7 +4,6 @@ import { GROUP_SESSION_SCOPES } from '$lib/groups/server/session';
 import { GROUP_SIGN_IN_SCOPES, groupsEnabled } from '$lib/groups/server/sign-in-grants';
 import type { RequestHandler } from './$types';
 
-// A PDS refuses any requested scope the metadata does not list.
 export const GET: RequestHandler = async ({ platform }) => {
 	const extras = groupsEnabled(platform?.env)
 		? [...GROUP_SIGN_IN_SCOPES, ...GROUP_SESSION_SCOPES]

@@ -44,8 +44,7 @@ export const signInForGroup = command(v.object({ groupDid: didField }), async (d
 	return url.toString();
 });
 
-/** Leave, or withdraw a pending request: one button, since for the applicant
- *  they are the same intent. Anyone may leave, the group's creator included. */
+/** Leave, or withdraw a pending request: for the applicant, the same intent. */
 export const leaveGroupForm = form(
 	v.object({ groupDid: didField }),
 	async (data): Promise<GroupFormResult<{ outcome: 'withdrawn' | 'left' }>> => {
@@ -93,8 +92,6 @@ export const rejectJoinRequestForm = form(
 			return notAllowed(ctx.membership, 'ADMIT_MEMBERS');
 		}
 		try {
-			// A rejected request never granted anything, so there is no
-			// membership, only the request itself.
 			await (await groupHost(ctx)).denyJoinRequest(ctx, data.member);
 			return { ok: true };
 		} catch (e) {
@@ -103,9 +100,7 @@ export const rejectJoinRequestForm = form(
 	}
 );
 
-/** Adds a member without a request, behind the same gate as approving one. It
- *  takes a handle or a DID. A handle is resolved here, after the permission
- *  check, and the DID it resolves to is what the roster records. */
+/** A handle is resolved after the permission check; the roster records the DID. */
 export const addMemberForm = form(
 	v.object({ groupDid: didField, actor: memberActorField, role: v.optional(assignableRoleField) }),
 	async (data): Promise<GroupFormResult> => {

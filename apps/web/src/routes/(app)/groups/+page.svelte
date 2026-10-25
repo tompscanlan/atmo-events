@@ -45,10 +45,7 @@
 						<GroupMonogram name={group.name ?? group.handle ?? '?'} />
 						<div class="min-w-0 flex-1">
 							{#if group.hosted}
-								<!-- The link carries the DID, never the handle. A handle can
-								     lapse and another account can register it, and then every
-								     link we published would point at a stranger. The DID cannot
-								     be re-issued and does not move, so it is safe to publish. -->
+								<!-- The DID, never the handle, which can lapse and be re-registered. -->
 								<a
 									href={resolve('/(app)/groups/[actor]', { actor: group.group_did })}
 									class="text-lg font-semibold hover:underline">{group.name}</a

@@ -1,6 +1,5 @@
-// What a group's scopes let a member write as the group, in 0016's scope grammar.
-// The host checks every write as the group; atmo asks the same question for its own
-// rows and for which controls a page shows. An `include:` expands only from the
+// What a group's scopes let a member write, for atmo's own rows and the controls a page
+// shows; the host checks every write as the group. An `include:` expands only from the
 // copies of the sets in lexicons/reference.
 import configure from '../../../lexicons/reference/group/opensocial/configure.json';
 import invites from '../../../lexicons/reference/group/opensocial/invites.json';
@@ -140,7 +139,6 @@ export function permits(permission: SpacePermission, groupDid: string, write: Sp
 	return collections.includes('*') || collections.includes(write.collection);
 }
 
-/** A `repo:` scope: writes to the group's own public repo. */
 export interface RepoPermission {
 	collections: readonly string[];
 	actions: readonly WriteAction[];
@@ -163,13 +161,11 @@ export function parseRepoScope(scope: string): RepoPermission | null {
 export interface RoleGrant {
 	role: string;
 	scopes: readonly unknown[];
-	/** `permissions` only. */
 	assignable?: readonly unknown[];
 }
 
 /** The union over a member's roles, since there are no deny rules. */
 export interface WriteGrants {
-	/** The group DID itself, which passes every check. */
 	group: boolean;
 	roles: readonly string[];
 	/** From `permissions`, good in every space. */
@@ -219,7 +215,6 @@ export function writeGrants(input: {
 	};
 }
 
-/** One more space's `access` grants, for a space whose record was not read with the rest. */
 export function withAccess(
 	grants: WriteGrants,
 	spaceType: string,

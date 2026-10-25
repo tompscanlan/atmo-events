@@ -1,9 +1,6 @@
-// Linking a group session: someone whose roles grant writes signs in at the group's
-// host as the group, and this app keeps the session under them. Only a group at this
-// site's host is linked; only the browser that started a link, still signed in as that
-// person, may finish it, checked before the code is exchanged; and the account that
-// authorized must be the group. No cookie is touched: the sign-in callback would sign
-// the admin in as the group.
+// Linking a group session, kept under the person who approved it at the host. Only the
+// browser that started it, still signed in as that person, may finish it. No cookie is
+// touched: the sign-in callback would sign the admin in as the group.
 import type { Did } from '@atcute/lexicons';
 import type { OAuthClient, OAuthClientStores } from '@atcute/oauth-node-client';
 import type { GroupRow } from '../types';
@@ -11,10 +8,8 @@ import type { GroupRow } from '../types';
 import { errorText } from './errors';
 import { groupSessionScope } from './session';
 
-/** Carried through the PDS in the authorization's state. */
 export interface GroupLinkState {
 	groupDid: string;
-	/** Whose session it becomes. */
 	by: string;
 }
 
@@ -28,7 +23,6 @@ export class GroupLinkRefused extends Error {
 	}
 }
 
-/** `mayConnect` is whether their roles grant writes, as their own access read them. */
 export async function startGroupLink(input: {
 	client: LinkClient;
 	group: LinkGroup;
@@ -69,11 +63,8 @@ function linkState(value: unknown): GroupLinkState | null {
 
 export type GroupLinkResult =
 	| { ok: true; groupDid: string }
-	/** `groupDid` is null when the state did not say which group. */
 	| { ok: false; groupDid: string | null; reason: string };
 
-/** Every failure after the state is read names the group, so the person can be sent
- *  back to its page; the reason is for the log. */
 export async function finishGroupLink(input: {
 	clientFor: (personDid: string) => LinkClient;
 	states: Pick<OAuthClientStores['states'], 'get' | 'delete'>;

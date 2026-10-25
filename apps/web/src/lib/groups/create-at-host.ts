@@ -1,13 +1,9 @@
-// Group creation the proposal's way: the app starts its OAuth flow at the group host
-// with `prompt=create`, and the host makes the group's account, its two spaces and their
-// records, and hands back a group session the creator approved. What this app adds is
-// its row and the form's records: the profile, the rules, the meta space's `public`,
-// and the declaration of a listed public group.
+// Creating a group: an OAuth flow at the group host with `prompt=create`, which makes the
+// account and its spaces; then, on the creator's new group session:
 //
-//   sign up at the host -> (callback) checks -> INSERT -> records -> spaces recorded
+//   (callback) checks -> INSERT -> profile, rules, access, declaration -> spaces recorded
 //
-// The row's spaces stay NULL until the last step, so a create that stopped partway is
-// finished, not refused, when its creator's session comes back for the same group.
+// The row's spaces stay NULL until the last step, so a stopped create is resumable.
 import type { Did } from '@atcute/lexicons';
 import type { OAuthClient, OAuthClientStores } from '@atcute/oauth-node-client';
 import { GROUP_JOIN_POLICIES, splitRuleLines, type GroupJoinPolicy } from './about-record';
@@ -41,10 +37,8 @@ export interface HostCreateFields {
 	rules?: string;
 }
 
-/** Carried through the host in the authorization's state. */
 export interface HostCreateState {
 	create: HostCreateFields;
-	/** Whose session the group's becomes. */
 	by: string;
 }
 
@@ -52,7 +46,6 @@ export interface HostCreateEnv extends CredentialStoreEnv {
 	DB: D1Database;
 }
 
-/** The host's origin when this deployment can link what the host makes, else null. */
 export function hostCreation(env: CredentialStoreEnv | undefined): string | null {
 	return groupLinkConfigured(env) ? groupHostOrigin(env) : null;
 }
@@ -105,14 +98,11 @@ function createState(value: unknown): HostCreateState | null {
 
 export type HostCreateResult =
 	| { ok: true; groupDid: string }
-	/** `groupDid` is set once the host made the group. */
 	| { ok: false; groupDid: string | null; error: string };
 
 type FinishClient = Pick<OAuthClient, 'callback' | 'revoke'>;
 
-/** Only the browser that started the create, still signed in as that person, may finish
- *  it, checked before the code is exchanged; the account that comes back must live at
- *  this site's host. */
+/** Only the browser that started the create, still signed in as that person, may finish it. */
 export async function finishCreateAtHost(input: {
 	env: HostCreateEnv;
 	clientFor: (personDid: string) => FinishClient;
@@ -182,8 +172,6 @@ export async function finishCreateAtHost(input: {
 	return result.ok ? { ok: true, groupDid } : { ok: false, groupDid, error: result.error };
 }
 
-/** Everything after the host made the group, on the creator's new session, as the group
- *  itself: the host checks the creator's roles on every write. */
 export async function setUpHostGroup(
 	env: HostCreateEnv,
 	creatorDid: string,
@@ -211,8 +199,7 @@ export async function setUpHostGroup(
 			return made('saving it on this site', knownFormError(e)?.error ?? errorText(e));
 		}
 	}
-	// Where its repo lives, before anything is written to it, since the index resolves
-	// the DID through this. Neither throws.
+	// Before any write, since the index resolves the DID through this.
 	await registerGroupIdentity(env.DB, { did: groupDid, handle: null, pds: hostOrigin });
 	await refreshGroupHandle(env.DB, groupDid);
 
@@ -243,8 +230,7 @@ export async function setUpHostGroup(
 		if (!existing || (await readGroupAbout(reader, withSpaces)).rules.length === 0) {
 			await createGroupRules({ ...as, rules: splitRuleLines(fields.rules) });
 		}
-		// Only `public` follows the form; the host's grants stay. Before the declaration,
-		// so a declared group's access always says public.
+		// Only `public` follows the form; the host's grants stay.
 		const access = await readAboutAccess(reader, withSpaces);
 		await writeAboutAccess({ ...as, visibility: fields.visibility, grants: access?.grants });
 		await reconcileGroupDeclaration({

@@ -1,12 +1,8 @@
-// What every group form resolves to, and the one way a page resets a form after it.
-// Handlers annotate their return type as `GroupFormResult<…>`, because an
-// un-annotated `{ ok: true }` widens to `{ ok: boolean }` and lets a page read
-// `.error` off a success. Client-safe: the pages import it.
+// Annotate `GroupFormResult<…>`: a bare `{ ok: true }` widens to `{ ok: boolean }`.
 
 export interface GroupFormFailure {
 	ok: false;
 	error: string;
-	/** Why the shared permission gate refused, independent of its wording. */
 	reason?: 'sign-in-required' | 'no-space-access' | 'members-unreadable' | 'permission-denied';
 }
 
@@ -16,16 +12,13 @@ export type GroupFormResult<TDone extends object = Record<never, never>> =
 	| GroupFormSuccess<TDone>
 	| GroupFormFailure;
 
-/** The only way from a result to its `error`. Takes the `undefined` a form's
- *  `result` starts as. */
 export function groupFormError(
 	result: GroupFormResult<object> | undefined | null
 ): string | undefined {
 	return result && !result.ok ? result.error : undefined;
 }
 
-// SvelteKit resets a remote form after any response without validation issues,
-// but a group handler's refusal (`{ ok: false }`) must keep the user's input.
+// SvelteKit resets a remote form after any valid response, a refusal included.
 interface GroupRemoteForm<TAttributes> {
 	readonly result: { ok: boolean } | undefined;
 	enhance(

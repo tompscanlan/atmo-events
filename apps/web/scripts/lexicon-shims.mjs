@@ -1,23 +1,16 @@
 #!/usr/bin/env node
 /**
- * Codegen copies of lexicons the lexicon tooling cannot read yet. `pnpm generate`
- * runs both steps, around contrail-lex generate:
- *
- *   node scripts/lexicon-shims.mjs write    before: derive each copy from its reference
- *   node scripts/lexicon-shims.mjs unpull   after: drop the copied NSIDs from lex.config.js's pull list
- *
- * The group.opensocial declaration gives `meta` the proposal's `space-ref`
- * format, which @atcute/lex-cli rejects. Its copy in lexicons/custom has `uri`
- * there and nothing else changed. contrail-lex generate adds every indexed
- * collection to the pull list, but these NSIDs do not resolve, so there is
- * nothing to pull. Why the copy exists and when it goes: src/lib/groups/README.md.
+ * Codegen copies of lexicons the tooling cannot read yet; `pnpm generate` runs `write`
+ * before contrail-lex generate and `unpull` after. The declaration's `meta` has the
+ * proposal's `space-ref` format, which @atcute/lex-cli rejects, so its copy in
+ * lexicons/custom says `uri`. Its NSID does not resolve, so it leaves the pull list.
+ * When the copy goes: src/lib/groups/README.md.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const path = (/** @type {string} */ rel) => fileURLToPath(new URL(`../${rel}`, import.meta.url));
 
-/** Each codegen copy, the reference it is derived from, and its NSID. */
 export const SHIMS = [
 	{
 		nsid: 'group.opensocial.declaration',
@@ -31,8 +24,7 @@ export const LEX_CONFIG = path('lex.config.js');
 const SPACE_REF = /("format"\s*:\s*)"space-ref"/g;
 
 /**
- * The reference's text with every `space-ref` format changed to `uri`. Text, not
- * re-serialized JSON, so the copy keeps the reference's layout byte for byte.
+ * Text, not re-serialized JSON, so the copy keeps the reference's layout.
  * @param {string} text
  */
 export function shimLexicon(text) {
@@ -42,7 +34,6 @@ export function shimLexicon(text) {
 const PULL_LIST = /(nsids: )(\[[^\]]*\])/;
 
 /**
- * lex.config.js without `nsids` in its pull list, in contrail-lex's own layout.
  * @param {string} text
  * @param {readonly string[]} nsids
  */

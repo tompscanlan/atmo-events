@@ -1,5 +1,4 @@
-// What a person's own sign-in lets them read of a group's spaces. Read by parameter,
-// since a PDS hands an `include:` back expanded, its parameters in its own order.
+// Read by parameter: a PDS hands an `include:` back expanded, in its own order.
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from '../types';
 
 function readsSpace(scope: string, spaceType: string, groupDid: string): boolean {
@@ -14,13 +13,11 @@ function readsSpace(scope: string, spaceType: string, groupDid: string): boolean
 		);
 }
 
-/** A stock PDS drops a space grant it does not know, so no meta read also means the
- *  holder's PDS serves no spaces. */
+/** A stock PDS drops a space grant it does not know, so this also means spaces support. */
 export function holdsMetaRead(scope: string): boolean {
 	return readsSpace(scope, ABOUT_SPACE_TYPE, '*');
 }
 
-/** Without it, the holder's own PDS refuses them the members space before the host is asked. */
 export function readsMembersSpace(scope: string, groupDid: string): boolean {
 	return readsSpace(scope, MEMBERS_SPACE_TYPE, groupDid);
 }

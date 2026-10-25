@@ -6,8 +6,7 @@
 	import type { JoinRequestRow, Person } from '../types';
 	import PersonLabel from './PersonLabel.svelte';
 
-	// One pending join request, with Approve and Reject. With `roles`, the
-	// approver picks the new member's role; without, they join as a member.
+	// With `roles`, the approver picks the new member's role; without, they join as a member.
 	let {
 		groupDid,
 		request,
@@ -20,8 +19,7 @@
 		roles?: readonly GroupRoleName[];
 	} = $props();
 
-	// One form instance per row: a remote form object attaches to one `<form>` only.
-	// A person has at most one pending request, so their DID keys the row.
+	// A remote form attaches to one `<form>` only; a person has one pending request at most.
 	let approveForm = $derived(approveJoinRequestForm.for(request.did));
 	let rejectForm = $derived(rejectJoinRequestForm.for(request.did));
 	let requestError = $derived(

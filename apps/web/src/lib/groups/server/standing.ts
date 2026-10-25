@@ -9,8 +9,7 @@ import { getMemberRow, pendingRequestIdOf } from './db/roster';
 import { errorText } from './errors';
 import { isSpaceAccessDenied } from './space-credential';
 
-/** The group DID itself passes every check, with no record and no row. With no reader
- *  the caller is off the roster: only their own record puts them on it. */
+/** With no reader the caller is off the roster: only their own record puts them on it. */
 export async function getCallerMembership(
 	db: D1Database,
 	group: GroupRow,
@@ -53,9 +52,7 @@ export async function getCallerMembership(
 	};
 }
 
-/** When the members space errors, the caller is off the roster and holds nothing: after
- *  a removal whose row delete failed, the row would let them in. A host that turns them
- *  away is an answer, not an outage. With no reader, `noSpaceAccess` lets a form say why. */
+/** When the members space errors, the caller holds nothing, so a stale row admits no one. */
 export async function readStanding(
 	db: D1Database,
 	group: GroupRow,

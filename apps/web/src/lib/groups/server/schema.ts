@@ -7,15 +7,13 @@ export const GROUPS_SCHEMA_STATEMENTS: readonly string[] = groupsSql
 	.map((s) => s.trim())
 	.filter((s) => s.length > 0 && !/^(?:--[^\n]*\n?)*$/.test(s));
 
-/** For tests, against a `node:sqlite` handle. */
 export function applyGroupsSchemaSync(sqlite: { exec(sql: string): void }): void {
 	for (const statement of GROUPS_SCHEMA_STATEMENTS) sqlite.exec(statement);
 }
 
 let applied: Promise<void> | null = null;
 
-/** Once per isolate, as one `batch()`, which D1 runs as a transaction. A failure is
- *  not cached, so the next call retries. */
+/** Once per isolate, as one `batch()`; a failure is not cached. */
 export async function ensureGroupsSchema(db: D1Database): Promise<void> {
 	applied ??= Promise.resolve()
 		.then(() => db.batch(GROUPS_SCHEMA_STATEMENTS.map((sql) => db.prepare(sql))))

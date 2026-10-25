@@ -1,10 +1,6 @@
-// Writing as a group. A group session is an OAuth session on the group's account that
-// a person approved at the host; it is filed under that person and writes within their
-// roles, which the host checks on every request.
-//
-// Group sessions have their own store prefix, `group:session:<person>/`: a sign-in
-// session is keyed by DID too, so a shared store would let a sign-in as the group
-// overwrite a group session, and a `did` cookie could restore one.
+// Group sessions: OAuth sessions on a group's account that a person approved at the host,
+// filed under that person. Their own store prefix, since a sign-in session is keyed by DID
+// too: a sign-in as the group would overwrite one, and a `did` cookie could restore it.
 import { Client } from '@atcute/client';
 import {
 	scope,
@@ -40,8 +36,6 @@ export function parseGroupSessionKey(key: string): { groupDid: string; personDid
 	return { groupDid, personDid };
 }
 
-/** The proposal's sets for the group's own records, and the group's public repo for
- *  its declaration and events. */
 export const GROUP_SESSION_SCOPES: readonly string[] = [
 	'include:group.opensocial.configure',
 	'include:group.opensocial.manageSpaces',
@@ -50,13 +44,10 @@ export const GROUP_SESSION_SCOPES: readonly string[] = [
 	scope.blob({ accept: ['image/*'] })
 ];
 
-/** What a link asks for, the create's included. */
 export function groupSessionScope(): string {
 	return ['atproto', ...GROUP_SESSION_SCOPES].join(' ');
 }
 
-/** It serves its own client metadata, so a link can ask for the group's scope, and it
- *  has a sessions store, so a link outlives the request that made it. */
 export function groupLinkConfigured(env: CredentialStoreEnv | undefined): boolean {
 	return Boolean(env?.OAUTH_PUBLIC_URL && env?.OAUTH_SESSIONS);
 }
@@ -84,7 +75,6 @@ export function groupLinkClient(
 	return client;
 }
 
-/** A read of the store only: it neither refreshes nor checks the session. */
 export async function hasLinkedSession(
 	env: CredentialStoreEnv | undefined,
 	groupDid: string,
@@ -107,7 +97,6 @@ export async function linkedGroupSession(
 
 export interface LinkedGroupCredential {
 	kind: 'linked';
-	/** Whose roles it writes within. */
 	person: string;
 	session: Pick<OAuthSession, 'did' | 'handle'>;
 }
@@ -167,8 +156,7 @@ function reportWrite(
 	console.info(`[group-session] ${did} ${nsid} via ${via}: ${status}`);
 }
 
-/** `handle` is there because the space methods are not in the generated lexicon set. A
- *  session stored under the wrong group fails loudly. */
+/** A session stored under the wrong group fails loudly. */
 export async function groupClient(
 	cred: GroupCredential,
 	expectDid: string

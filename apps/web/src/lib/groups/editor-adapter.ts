@@ -1,5 +1,4 @@
-// atmo's event editor, writing as a group: the editor builds the record as it does
-// for a person's own event, and this adapter hands it to the group's commands.
+// atmo's event editor, writing as a group: the editor builds the record, this hands it on.
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { resolveHandle } from '$lib/atproto/methods';
@@ -8,8 +7,7 @@ import type { EditorAdapter, EditorBlobRef } from '$lib/components/editor/adapte
 import type { GroupFormResult } from './form-result';
 import { putGroupEvent, putGroupEventImage, removeGroupEvent } from './group-events.remote';
 
-// The editor shows its own generic line for every failure, so a refusal's words
-// go to the page first.
+// The editor shows a generic line for every failure, so a refusal's words go first.
 function unwrap<T extends object>(
 	result: GroupFormResult<T>,
 	onRefusal: (message: string) => void

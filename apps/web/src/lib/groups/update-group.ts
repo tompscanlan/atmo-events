@@ -1,12 +1,10 @@
-// The settings save; `updateGroupForm` checks MANAGE_GROUP first. Every read comes
-// before the first write, and the writes go in this order, so saving again finishes
-// a save that stopped partway:
+// Every read comes before the first write, and the writes go in this order, so saving
+// again finishes a save that stopped partway:
 //
 //   private  withdraw the declaration -> access says private -> row -> profile
-//   public   access says public -> row -> read access again -> declare if listed
-//            -> profile
+//   public   access says public -> row -> read access again -> declare if listed -> profile
 //
-// The form sends the visibility it showed: a choice equal to it keeps the record's.
+// A visibility choice equal to the one the form showed keeps the record's.
 import { GROUP_PROFILE_COLLECTION, type GroupJoinPolicy } from './about-record';
 import { readAboutAccess, readGroupProfile, type GroupSpaceReader } from './server/about-read';
 import { alignAboutAccess, writeGroupProfile } from './server/about-writer';

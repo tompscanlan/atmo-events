@@ -137,8 +137,6 @@ export const config: ContrailConfig = {
 				}
 			}
 		},
-		// Endpoint: rsvp.atmo.declaration.listRecords
-		// Only a public group has a declaration, so the list needs no visibility filter.
 		declaration: {
 			collection: GROUP_DECLARATION_COLLECTION
 		}

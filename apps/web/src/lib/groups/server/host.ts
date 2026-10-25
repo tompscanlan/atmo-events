@@ -1,10 +1,6 @@
-// The group host this deployment is set up with (`GROUP_HOST_URL`), by the methods
-// the groups proposal gives it. A person's own acts (join, cancel, leave) go through
-// their own PDS, which forwards each with service auth when their sign-in holds its
-// `rpc:` scope. The group's own methods and the membership writes go on the acting
-// person's group session, which the host cuts to their roles on every request.
-// What stays atmo's is the D1 roster cache and its note that someone asked to join,
-// since no method reads a member's own request back.
+// The group host (`GROUP_HOST_URL`), by the proposal's methods. A person's own acts go
+// through their PDS with service auth; the group's methods and membership writes go on
+// the acting person's group session, which the host cuts to their roles.
 import { GROUP_ROLES, primaryRole, type GroupRoleName } from '../permissions';
 import type { GroupRow, JoinRequestRow } from '../types';
 import type { GroupSpaceReader } from './about-read';
@@ -36,7 +32,6 @@ import { describeFailure, readXrpc, xrpc, type XrpcAnswer, type XrpcRequest } fr
 const NS = 'group.opensocial';
 const MAX_LISTED_REQUESTS = 1000;
 
-/** Thrown before any request: this site changes a group only through its own host. */
 export class GroupNotAtHostError extends Error {
 	constructor(readonly groupDid: string) {
 		super(`${groupDid} is not at this site's group host, so this site cannot change it`);
@@ -56,7 +51,6 @@ export class GroupHostError extends Error {
 	}
 }
 
-/** The caller's own sign-in cannot make a member's call; signing in again asks for it. */
 export class HostSignInError extends Error {
 	constructor(
 		readonly nsid: string,
@@ -74,8 +68,7 @@ export function groupHostOrigin(
 	return url ? new URL(url).origin : null;
 }
 
-/** Whether the group's DID document names this site's host as its PDS. An unresolvable
- *  DID throws: which host serves a group is not something to guess. */
+/** An unresolvable DID throws: which host serves a group is not something to guess. */
 export async function isHostGroup(
 	env: Pick<CredentialStoreEnv, 'GROUP_HOST_URL'> | undefined,
 	groupDid: string,
@@ -123,14 +116,12 @@ export interface HostBinding {
 	db: D1Database;
 	env: CredentialStoreEnv;
 	group: GroupRow;
-	/** The group's session when the caller holds one the store does not, as a create does. */
 	credential?: GroupCredential;
 }
 
 export interface HostCaller {
 	callerDid: string;
 	reader?: GroupSpaceReader | null;
-	/** The caller's own session at their PDS, for their own acts. */
 	member?: CallerSession | null;
 }
 
@@ -140,14 +131,12 @@ export interface GroupHost {
 	requestJoin(caller: HostCaller, message: string | null): Promise<JoinOutcome>;
 	cancelJoinRequest(caller: HostCaller): Promise<void>;
 	leaveGroup(caller: HostCaller): Promise<void>;
-	/** Writing the requester's membership is what approves a request. */
 	approveJoinRequest(caller: HostCaller, member: string, role: GroupRoleName): Promise<void>;
 	addMember(caller: HostCaller, did: string, role: GroupRoleName): Promise<void>;
 	ejectMember(caller: HostCaller, did: string): Promise<void>;
 	setMemberRole(caller: HostCaller, did: string, role: GroupRoleName): Promise<void>;
 }
 
-/** Throws GroupNotAtHostError for a group at any other host. */
 export async function groupHost(binding: HostBinding): Promise<GroupHost> {
 	if (!(await isHostGroup(binding.env, binding.group.group_did))) {
 		throw new GroupNotAtHostError(binding.group.group_did);
@@ -155,7 +144,6 @@ export async function groupHost(binding: HostBinding): Promise<GroupHost> {
 	return hostMethods(binding);
 }
 
-/** For a group already known to be at this site's host. */
 export function hostMethods(binding: HostBinding): GroupHost {
 	const { db, env, group } = binding;
 	const groupDid = group.group_did;
@@ -186,7 +174,6 @@ export function hostMethods(binding: HostBinding): GroupHost {
 			binding.credential ?? (await requireGroupCredential(env, groupDid, caller.callerDid));
 		const { handle } = await groupClient(cred, groupDid);
 		const answer = await xrpc(handle, nsid, request);
-		// The host cuts the session to the person's roles, so this is their roles.
 		if (!answer.ok && answer.error === 'ScopeMissingError') {
 			throw new GroupPermissionError(`your roles do not allow ${nsid}`, groupDid);
 		}
@@ -286,8 +273,7 @@ export function hostMethods(binding: HostBinding): GroupHost {
 		},
 
 		async setMemberRole(caller, did, role) {
-			// Read with the caller's own access; a failed read throws rather than
-			// dropping the roles and the date the record already has.
+			// A failed read throws rather than drop the record's roles and date.
 			const published = caller.reader ? await readMembership(caller.reader, group, did) : null;
 			const others = (published?.roles ?? []).filter(
 				(id) => !(GROUP_ROLES as readonly string[]).includes(id)
@@ -304,8 +290,7 @@ export function hostMethods(binding: HostBinding): GroupHost {
 	};
 }
 
-/** Null when the viewer holds no group session to ask the host with, which only they
- *  can fix, by linking one. */
+/** Null when the viewer holds no group session to ask the host with. */
 export async function pendingRequestsFor(
 	binding: HostBinding,
 	caller: HostCaller
@@ -319,7 +304,6 @@ export async function pendingRequestsFor(
 	}
 }
 
-/** For a write no host method stands in front of, such as an event or a settings save. */
 export async function hostGroupWriter(
 	env: CredentialStoreEnv,
 	group: GroupRow,

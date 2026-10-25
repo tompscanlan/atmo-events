@@ -1,5 +1,4 @@
-// A group's visibility is its meta space's `access.public`: the host decides every read
-// of a space from that record, for every app.
+// A group's visibility is its meta space's `access.public`, which the host reads from.
 import { ABOUT_SPACE_TYPE, type GroupRow, type GroupVisibility } from '../types';
 import type { GroupAccessFields } from '../members-record';
 import { readAboutAccess, type GroupSpaceReader } from './about-read';

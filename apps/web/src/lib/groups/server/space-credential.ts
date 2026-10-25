@@ -1,7 +1,6 @@
-// A space credential for one of a group's spaces, and the reads made with it, as the
-// 2026-10-22 spaces alpha takes them: a delegation token from the holder's PDS, exchanged
-// at the authority's host for a credential bound to a fresh P-256 key, which signs every
-// request (RFC 9421); a record read also checks the repo host's MAC (./space-mac.ts).
+// A space credential and the reads made with it: a delegation token from the holder's
+// PDS, exchanged at the authority's host for a credential bound to a fresh P-256 key,
+// which signs every request (RFC 9421). A record read also checks the MAC (./space-mac.ts).
 import { P256PrivateKeyExportable, type P256PrivateKey } from '@atcute/crypto';
 import type { Did } from '@atcute/lexicons';
 import { createDidDocumentResolver } from '$lib/atproto/identity';
@@ -13,7 +12,6 @@ const SIGNATURE_LABEL = 'atproto-space-credential';
 const AUTH_SCHEME = 'Atproto-Space-Credential';
 const GET_RECORD = 'com.atproto.space.getRecord';
 
-/** `keyId` is the key's did:key, which the host writes into the credential as `cnf.kid`. */
 export interface SpaceSigningKey {
 	key: P256PrivateKey;
 	keyId: string;
@@ -55,10 +53,8 @@ const DENIED: Record<string, true> = {
 };
 
 export interface SpaceHosts {
-	/** The PDS of `did`, which also answers for the spaces `did` is the authority of. */
 	repoHost(did: string): Promise<string>;
-	/** The `#atproto_kem` did:key a repo host derives a record's MAC from; `fresh` after
-	 *  a MAC that did not verify, since the key may have rotated. */
+	/** `fresh` after a MAC that did not verify, since the key may have rotated. */
 	kemKey(did: string, fresh?: boolean): Promise<string>;
 }
 
@@ -68,8 +64,6 @@ function toBase64(bytes: Uint8Array): string {
 	return btoa(out);
 }
 
-/** The signature base is RFC 9421's: each covered field, then `@signature-params`,
- *  joined by LF with no trailing LF. */
 export async function spaceSigHeaders(
 	signer: SpaceSigningKey,
 	authorization: string,
@@ -190,7 +184,6 @@ export async function spaceCredential(
 	}
 }
 
-/** For tests. */
 export function clearSpaceCredentials() {
 	kept.clear();
 	spent = new WeakSet();
@@ -201,7 +194,6 @@ export function clearSpaceCredentials() {
 // every space call, and that must not cost the next reader a new credential.
 const SPENT: Record<string, true> = { JwtExpired: true, CredentialRevoked: true };
 
-/** `at://<authority>/space/<type>/<skey>` */
 export function spaceAuthority(space: string): string {
 	const did = space.startsWith('at://') ? space.slice('at://'.length).split('/')[0] : '';
 	if (!did.startsWith('did:')) throw new Error(`not a space URI: ${space}`);
@@ -211,8 +203,7 @@ export function spaceAuthority(space: string): string {
 
 type SpaceCall = { host: string; audience: string; nsid: string; query: Record<string, string> };
 
-/** A record comes back only when it is the one asked for, its MAC verifies and its value
- *  is what its CID names; anything else throws. */
+/** A record comes back only when it is the one asked for and its MAC and CID check. */
 async function fetchWithCredential(
 	cred: SpaceCredential,
 	hosts: SpaceHosts,
@@ -248,8 +239,7 @@ async function fetchWithCredential(
 	}
 }
 
-/** A credential the host calls spent is replaced once. Throws `SpaceAccessDenied` when
- *  the authority issues none. */
+/** A credential the host calls spent is replaced once. */
 export async function credentialRequest(
 	holder: SpaceHolder,
 	hosts: SpaceHosts,

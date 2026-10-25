@@ -1,8 +1,7 @@
 // An in-memory group host behind the `GroupSpaceReader` interface, and a writer
 // that writes into it.
 //
-// The reader stands in for the host's space reads: `getRecord`, `listRecords`
-// and `getSpace`. A record lives at its space, repo, collection and rkey, and a
+// The reader stands in for the host's space reads, `getRecord` and `listRecords`. A record lives at its space, repo, collection and rkey, and a
 // read finds it only at that address, so a read of the wrong space or repo comes
 // back empty, as it would from a real host. Every call is logged before it is
 // answered, so "made no read" is asserted from the log rather than inferred
@@ -29,17 +28,12 @@ export interface SpaceRecordInput {
 /** One call, as the reader received it. */
 export type SpaceReadCall =
 	| { method: 'get'; space: string; repo: string; collection: string; rkey: string }
-	| { method: 'list'; space: string; repo: string; collection?: string }
-	| { method: 'getSpace'; space: string };
+	| { method: 'list'; space: string; repo: string; collection?: string };
 
 export interface SpaceReaderOptions {
 	/** The space a record without one lives in. */
 	space?: string;
 	records?: SpaceRecordInput[];
-	/** What `getSpace` answers for each space: a read policy, or the error the
-	 *  read fails with. A space not named here has no configuration to give, so
-	 *  asking for it throws. */
-	policies?: Record<string, string | Error>;
 	/** A host that ignores the collection filter: a listing returns every record
 	 *  in the space, whatever collection was asked for. */
 	ignoresFilter?: boolean;
@@ -52,8 +46,8 @@ export interface SpaceReaderOptions {
 }
 
 export interface FakeSpaceReader extends GroupSpaceReader {
-	/** Every call in order, as `get <space> <repo> <collection> <rkey>`,
-	 *  `list <space> <repo> <collection>` or `getSpace <space>`. */
+	/** Every call in order, as `get <space> <repo> <collection> <rkey>` or
+	 *  `list <space> <repo> <collection>`. */
 	calls: string[];
 	/** The logged calls that name `space`. */
 	callsIn(space: string): string[];
@@ -73,8 +67,7 @@ export interface FakeSpaceReader extends GroupSpaceReader {
 
 const NSID = {
 	get: 'com.atproto.space.getRecord',
-	list: 'com.atproto.space.listRecords',
-	getSpace: 'com.atproto.simplespace.getSpace'
+	list: 'com.atproto.space.listRecords'
 } as const;
 
 /** A `fail` for a host that is down: every call, or every call that names
@@ -96,8 +89,6 @@ function describeCall(call: SpaceReadCall): string {
 			return `get ${call.space} ${call.repo} ${call.collection} ${call.rkey}`;
 		case 'list':
 			return `list ${call.space} ${call.repo} ${call.collection ?? '(no collection)'}`;
-		case 'getSpace':
-			return `getSpace ${call.space}`;
 	}
 }
 
@@ -159,15 +150,6 @@ export function spaceReader(repo: string, options: SpaceReaderOptions = {}): Fak
 						(options.ignoresFilter || !q.collection || r.collection === q.collection)
 				)
 				.map(recordOf);
-		},
-		async getSpace(space) {
-			answer({ method: 'getSpace', space });
-			const policy = options.policies?.[space];
-			if (policy instanceof Error) throw policy;
-			if (policy === undefined) {
-				throw new Error(`space-reader: this host holds no configuration for ${space}`);
-			}
-			return { readPolicy: policy };
 		}
 	};
 	for (const record of options.records ?? []) reader.put(record);

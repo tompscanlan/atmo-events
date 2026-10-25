@@ -2,8 +2,7 @@
 //
 // A page test describes the host as a `GroupSpaceReader`-shaped object (what each
 // space holds, which reads fail, a log of the reads), and this fixture answers the
-// reader's XRPC calls from it: `space.getRecord`, `space.listRecords` and
-// `simplespace.getSpace`. The credential lookup, the session and the transport
+// reader's XRPC calls from it: `space.getRecord` and `space.listRecords`. The credential lookup, the session and the transport
 // stay real, so a test depends on the wire format and the linked-session seam,
 // never on which module builds the reader.
 //
@@ -22,7 +21,6 @@
 // group, and no host for anyone's reads.
 import { vi } from 'vitest';
 import type { OAuthSession } from '@atcute/oauth-node-client';
-import { META_READ_GRANT } from '$lib/atproto/settings';
 import { groupSpaceUris } from '../../ids';
 import { GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY } from '../../declaration-record';
 import {
@@ -108,10 +106,6 @@ async function answer(host: GroupSpaceReader, url: URL, headers: Headers): Promi
 					}))
 				});
 			}
-			case '/xrpc/com.atproto.simplespace.getSpace': {
-				const { readPolicy } = await host.getSpace(q.space);
-				return json(200, { readPolicy: { $type: readPolicy } });
-			}
 		}
 	} catch (e) {
 		return failure(e);
@@ -123,9 +117,8 @@ async function answer(host: GroupSpaceReader, url: URL, headers: Headers): Promi
  *  tokens. */
 export const MEMBER_PDS_SERVICE = 'https://member-pds.stub.test';
 
-/** A sign-in that reads every group's meta space and every space of any group,
- *  so only the host decides what it gets. */
-export const READ_EVERYTHING = `atproto ${META_READ_GRANT} space:*?authority=*&action=read`;
+/** A sign-in that reads every space of any group, so only the host decides. */
+export const READ_EVERYTHING = 'atproto space:*?authority=*&action=read';
 
 /** What each fixture person's sign-in was granted, by DID. */
 const granted = new Map<string, string>();

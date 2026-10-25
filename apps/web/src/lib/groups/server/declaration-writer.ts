@@ -1,5 +1,4 @@
-// A group's declaration, in its public repo. A declare never tells the index:
-// `notifyOfUpdate` deletes the entry on any answer that is not a record, a 5xx included.
+// A declare never tells the index: it deletes the entry on any non-record answer.
 import type { ResourceUri } from '@atcute/lexicons/syntax';
 import { getServerClient } from '$lib/contrail/index';
 import {
@@ -29,8 +28,7 @@ export interface WriteGroupDeclarationInput {
 const declarationUri = (groupDid: string): ResourceUri =>
 	`at://${groupDid}/${GROUP_DECLARATION_COLLECTION}/${GROUP_DECLARATION_RKEY}`;
 
-/** No permission set names the declaration, so it takes the scope that writes the
- *  meta space's `access`, which it follows. */
+/** No permission set names the declaration, so it takes the scope of the meta `access`. */
 export async function writeGroupDeclaration(
 	input: WriteGroupDeclarationInput
 ): Promise<{ uri: string; cid: string }> {
@@ -47,8 +45,7 @@ export async function writeGroupDeclaration(
 	return { uri: result.uri, cid: result.cid };
 }
 
-/** The repo no longer holds the declaration, but the index could not be told, so
- *  browse may still list the group. Withdrawing again tells it again. */
+/** The repo no longer holds the declaration, but browse may still list the group. */
 export class DeclarationIndexError extends Error {
 	constructor(
 		readonly groupDid: string,
@@ -67,8 +64,6 @@ export async function dropDeclarationFromIndex(db: D1Database, groupDid: string)
 	}
 }
 
-/** The index is told only after the delete lands, so it never drops a declaration
- *  the repo still holds. */
 export async function removeGroupDeclaration(input: WriteGroupDeclarationInput): Promise<void> {
 	await requireGroupWrite(input, VISIBILITY_WRITE);
 	const writer = await gatedWriter(input);
@@ -82,8 +77,7 @@ export async function removeGroupDeclaration(input: WriteGroupDeclarationInput):
 	await dropDeclarationFromIndex(input.db, input.group.group_did);
 }
 
-/** A group is declared while it is public and listed. `declared`, when known, is
- *  whether the repo holds the declaration already, so nothing is rewritten. */
+/** `declared`, when known, is whether the repo holds it already. */
 export async function reconcileGroupDeclaration(
 	input: WriteGroupDeclarationInput & {
 		visibility: GroupVisibility;
@@ -98,8 +92,7 @@ export async function reconcileGroupDeclaration(
 	if (input.declared !== false) await removeGroupDeclaration(input);
 }
 
-/** Whether the group's public repo holds its declaration, for a visitor no space can be
- *  read for: the index first, the repo itself only when the index has none. */
+/** The index first, the repo itself only when the index has none. */
 export async function publiclyDeclared(
 	db: D1Database,
 	groupDid: string,
@@ -115,7 +108,6 @@ export async function publiclyDeclared(
 	return repoRecordExists(handle, groupDid, GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY);
 }
 
-/** Whether the repo holds the declaration now, read with the group's own session. */
 export async function declarationExists(handle: XrpcHandle, groupDid: string): Promise<boolean> {
 	return repoRecordExists(handle, groupDid, GROUP_DECLARATION_COLLECTION, GROUP_DECLARATION_RKEY);
 }

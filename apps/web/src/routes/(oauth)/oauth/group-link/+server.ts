@@ -9,9 +9,6 @@ import { GROUP_NOT_FOUND, groupRouteContext } from '$lib/groups/server/route-con
 import type { RequestHandler } from './$types';
 
 import { groupLinkClient, groupLinkConfigured } from '$lib/groups/server/session';
-// Starts linking a group session for the signed-in person
-// (lib/groups/server/group-link.ts). A plain form post from the group page,
-// answered with a redirect to the group's host.
 export const POST: RequestHandler = async ({ request, locals, platform }) => {
 	const env = platform?.env;
 	if (!env?.DB) error(503, 'Groups are not available on this deployment');
@@ -22,7 +19,6 @@ export const POST: RequestHandler = async ({ request, locals, platform }) => {
 
 	const groupDid = (await request.formData()).get('groupDid');
 	if (typeof groupDid !== 'string') error(404, GROUP_NOT_FOUND);
-	// Their roles, read with their own access, as every group route reads them.
 	const { group, membership } = await groupRouteContext(
 		env.DB,
 		groupDid,
@@ -40,8 +36,7 @@ export const POST: RequestHandler = async ({ request, locals, platform }) => {
 			redirectUri: env.OAUTH_PUBLIC_URL + GROUP_LINK_REDIRECT_PATH
 		});
 	} catch (e) {
-		// A caller whose roles grant no writes gets the same 404 as a group that
-		// does not exist, as the link has always answered anyone who may not write.
+		// The same 404 as a group that does not exist.
 		if (e instanceof GroupLinkRefused) error(404, GROUP_NOT_FOUND);
 		throw e;
 	}

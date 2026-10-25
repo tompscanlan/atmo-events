@@ -1,8 +1,6 @@
-// The gate and transport for records a group authors. The signed-in user is the
-// subject of the check and the person whose group session carries the write; `repo`
-// is always the group. The host decides every write as the group, so the gate refuses
-// only a signed-out caller, except for this app's own rows (`appOnly`), which the host
-// never sees.
+// The gate and transport for records a group authors; `repo` is always the group. The
+// host decides every write as the group, so the gate refuses only a signed-out caller,
+// except for this app's own rows (`appOnly`), which the host never sees.
 import { isActorIdentifier } from '@atcute/lexicons/syntax';
 import { MEMBERSHIP_SPACE } from '../grants';
 import type { GroupPermission } from '../permissions';
@@ -54,9 +52,8 @@ export function permissionRequired(permission: GroupPermission): string {
 	return `${permission} required`;
 }
 
-// The host cuts each session to its person's roles, so a missing scope is their roles,
-// and `Forbidden` on a membership is its check of `assignable`. Its message is not
-// kept: it can carry what a user typed.
+// The host cuts each session to its person's roles. Its message is not kept: it can
+// carry what a user typed.
 function hostRefusal(nsid: string, error: string | null, groupDid: string, collection: string) {
 	if (error === 'ScopeMissingError') {
 		return new GroupPermissionError(`your roles do not allow ${nsid}`, groupDid);
@@ -90,8 +87,6 @@ export class GroupRecordError extends Error {
 
 const SPACE_TYPES = { about: ABOUT_SPACE_TYPE, members: MEMBERS_SPACE_TYPE } as const;
 
-/** `uri`, checked as `group`'s own space of `kind`, else a GroupRecordError naming
- *  what it `stops`. */
 export function ownSpace(
 	group: Pick<GroupRow, 'group_did'>,
 	kind: keyof typeof SPACE_TYPES,
@@ -111,15 +106,12 @@ export interface GroupRepoWrite {
 	rkey: string;
 	record: Record<string, unknown>;
 	intent: 'create' | 'update' | 'delete';
-	/** Absent for the group's public repo. */
 	space?: string;
 }
 
-/** Injectable, so the gate can be tested without a live PDS. */
 export type GroupRepoWriter = (write: GroupRepoWrite) => Promise<{ uri: string; cid: string }>;
 
-/** `groupDid` is checked against the session, so a credential stored under the wrong
- *  group cannot write elsewhere. */
+/** A credential stored under the wrong group cannot write elsewhere. */
 export function pdsWriter(cred: GroupCredential, groupDid: string): GroupRepoWriter {
 	return async (write) => {
 		const xrpcFailure = (nsid: string, status: number, error: string | null) =>
@@ -185,8 +177,7 @@ export function pdsWriter(cred: GroupCredential, groupDid: string): GroupRepoWri
 	};
 }
 
-// The caller's standing, read once per request: a reader is built for one request. A
-// failed read is not kept, so the next write asks again.
+// Read once per request (a reader is built for one); a failed read is not kept.
 const standings = new WeakMap<GroupSpaceReader, Map<string, Promise<CallerMembership>>>();
 
 function standingFor(
@@ -212,7 +203,6 @@ function standingFor(
 	return standing;
 }
 
-/** `reader` is the request's; absent, the gate reads through the caller's group session. */
 export interface GroupGateInput {
 	db: D1Database;
 	env: CredentialStoreEnv;
@@ -221,7 +211,6 @@ export interface GroupGateInput {
 	reader?: GroupSpaceReader | null;
 }
 
-/** `appOnly`: a write to this app's own rows, such as a settings save's copy of the group. */
 export interface GateOptions {
 	appOnly?: boolean;
 }
@@ -231,8 +220,6 @@ function requireCaller(input: GroupGateInput, refusal: string): void {
 	if (!input.callerDid) throw new GroupPermissionError(refusal, input.group.group_did);
 }
 
-/** With no reader and no group session, a members space cannot be read, and the
- *  refusal says what would fix it. */
 async function gateStanding(
 	input: GroupGateInput,
 	refusal: string
@@ -249,7 +236,6 @@ async function gateStanding(
 	return { membership: await standingFor(db, group, callerDid, reader), reader };
 }
 
-/** The host decides, so only a signed-out caller is refused here. */
 export async function requireGroupPermission(
 	input: GroupGateInput,
 	permission: GroupPermission
@@ -257,8 +243,7 @@ export async function requireGroupPermission(
 	requireCaller(input, permissionRequired(permission));
 }
 
-/** Only an `appOnly` write is checked here, against the scopes in `permissions` and the
- *  target space's `access`. Called before anything moves, so a refusal changes nothing. */
+/** Called before anything moves, so a refusal changes nothing. */
 export async function requireGroupWrite(
 	input: GroupGateInput,
 	write: SpaceWrite,
@@ -276,8 +261,6 @@ export async function requireGroupWrite(
 	}
 }
 
-/** The standing reads only the members space, so the target space's `access` is read
- *  here, and only when `permissions` alone does not allow the write. */
 async function withTargetAccess(
 	grants: WriteGrants,
 	reader: GroupSpaceReader | null,
@@ -323,7 +306,6 @@ export function gatedWriter(
 		: groupWriter(input.env, input.group, actingPerson(input));
 }
 
-/** Throws GroupCredentialError when `personDid` holds no group session. */
 export async function groupWriter(
 	env: CredentialStoreEnv,
 	group: GroupRow,

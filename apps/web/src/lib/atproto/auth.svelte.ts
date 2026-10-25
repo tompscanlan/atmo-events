@@ -23,8 +23,7 @@ function saveReturnTo() {
 	if (REDIRECT_TO_LAST_PAGE_ON_LOGIN) writeReturnTo();
 }
 
-/** Sends a signed-in user through authorize again and back to this page, so
- *  the session picks up a scope it lacks, such as a group's grant after a join. */
+/** Signs in again and comes back to this page, so the session picks up a scope it lacks. */
 export function reauthorize(url: string) {
 	writeReturnTo();
 	window.location.assign(url);

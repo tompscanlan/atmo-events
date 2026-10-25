@@ -56,28 +56,21 @@ function sharedParts(env?: App.Platform['env']) {
 	return { actorResolver: sharedResolver(), stores: cachedStores };
 }
 
-/** The store every client keeps its pending authorizations in, for a callback
- *  that must check who started a flow before the client finishes it. */
+/** For a callback that must check who started a flow before the client finishes it. */
 export function oauthStates(env?: App.Platform['env']): OAuthClientStores['states'] {
 	return sharedParts(env).stores.states;
 }
 
-/** Resolves a handle or DID to its DID, with the resolver sign-in uses. */
 export async function resolveActorDid(identifier: ActorIdentifier): Promise<Did> {
 	return (await sharedResolver().resolve(identifier)).did;
 }
 
-/** Whether this deployment serves its own client metadata. A loopback client
- *  (dev without OAUTH_PUBLIC_URL) carries its scope inside its client_id, so its
- *  scope cannot grow at sign-in without breaking the callback. */
+/** A loopback client carries its scope in its client_id, so the scope cannot grow. */
 export function servesClientMetadata(env?: App.Platform['env']): boolean {
 	return !(dev && !env?.OAUTH_PUBLIC_URL);
 }
 
-/** `extraScopes` are declared on top of the base scopes, for a sign-in that asks
- *  for them and for the metadata route. A client with extras is built fresh each
- *  call, since the set changes as groups are created. A loopback client ignores
- *  them (see `servesClientMetadata`). */
+/** `extraScopes` go on top of the base scopes; a loopback client ignores them. */
 export function createOAuthClient(
 	env?: App.Platform['env'],
 	extraScopes: readonly string[] = []
@@ -104,8 +97,7 @@ export function createOAuthClient(
 	return client;
 }
 
-/** The deployment's confidential client. Every client it builds declares the same
- *  redirect URIs, so the served metadata lists each path a flow can return to. */
+/** Every client declares each redirect path a flow can return to. */
 function confidentialClient(
 	env: App.Platform['env'] | undefined,
 	extras: readonly string[],
@@ -128,7 +120,6 @@ function confidentialClient(
 				site + GROUP_LINK_REDIRECT_PATH,
 				site + GROUP_CREATE_REDIRECT_PATH
 			],
-			// An extra may repeat a base scope; the metadata lists each once.
 			scope: [...new Set([...scopes, ...extras])],
 			jwks_uri: site + '/oauth/jwks.json'
 		},
@@ -138,10 +129,7 @@ function confidentialClient(
 	});
 }
 
-/** A confidential client that keeps its sessions in `sessions` instead of the
- *  sign-in store, and shares the rest with every other client: the client_id,
- *  the metadata and the state store. A session it holds is never the one a `did`
- *  cookie restores, and a sign-in under the same DID never overwrites it. */
+/** Its sessions are never ones a `did` cookie restores or a sign-in overwrites. */
 export function createOAuthClientWithSessions(
 	env: App.Platform['env'] | undefined,
 	extraScopes: readonly string[],

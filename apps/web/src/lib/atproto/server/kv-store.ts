@@ -1,7 +1,6 @@
 import type { Store } from '@atcute/oauth-node-client';
 
-/** `prefix` keeps one store's keys apart from another's in the same namespace,
- *  the way the bot keeps `bot:session:` (lib/bot/session.ts). */
+/** `prefix` keeps one store's keys apart from another's in the same namespace. */
 export class KVStore<K extends string, V> implements Store<K, V> {
 	private kv: KVNamespace;
 	private expirationTtl?: number;
@@ -29,7 +28,6 @@ export class KVStore<K extends string, V> implements Store<K, V> {
 		await this.kv.delete(this.prefix + key);
 	}
 
-	/** Clears only this store's keys when it has a prefix. */
 	async clear(): Promise<void> {
 		let cursor: string | undefined;
 		do {

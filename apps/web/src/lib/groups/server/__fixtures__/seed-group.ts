@@ -1,14 +1,8 @@
-// A group as the create leaves it in D1: its row, its two roles with their
-// default bundles, the creator's admin membership, the roster rows a test names, and
-// its about and members space URIs.
-//
-// It stands in for the create flow, whose group and spaces the host makes
-// first. Only the D1 half is done here, through the
-// app's own db helpers, in the SQLite harness of ./d1-sqlite.ts, so the
-// schema's triggers and checks still run. Nothing is written to any space: a
-// test that needs records gives a reader of its own (./space-reader.ts).
+// A group as the create leaves it in D1, through the app's own db helpers in the
+// SQLite harness: its row, the creator's admin row, the roster rows a test names, and
+// its space URIs. Nothing is written to any space.
 import { groupSpaceUris, type GroupSpaceUris } from '../../ids';
-import type { AssignableRole } from '../../permissions';
+import type { GroupRoleName } from '../../permissions';
 import type { GroupRow } from '../../types';
 import { createGroup, getGroupById, recordGroupSpaces, type CreateGroupInput } from '../db/groups';
 import { addMember } from '../db/roster';
@@ -16,7 +10,7 @@ import { sqliteD1, type SqliteD1 } from './d1-sqlite';
 
 export interface SeedGroupInput extends CreateGroupInput {
 	/** Roster rows beyond the creator's, by DID, in the order they joined. */
-	members?: Record<string, AssignableRole>;
+	members?: Record<string, GroupRoleName>;
 	/** Whether the about and members space URIs are recorded. On by default;
 	 *  off for a group made before the spaces. */
 	spaces?: boolean;

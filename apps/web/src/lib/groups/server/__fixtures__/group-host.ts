@@ -1,32 +1,7 @@
-// A fake group host: the one host the settings save, the event writer and the
-// refresh talk to.
-//
-// It answers behind a stubbed global `fetch`, so the code under test runs its
-// real transports (the session, the writer, the reader) instead of injected
-// seams that would only assert the test's own fixture. It records every XRPC
-// call in order, so "did not happen" can be asserted rather than assumed.
-//
-// It keeps what a host keeps, and only that:
-//
-//   spaces          Which of the group's spaces exist. Every one answers
-//                   `getSpace` with the managing app's policy: the host decides
-//                   each read from the space's `access` record, so there is no
-//                   read policy or member list to set, and a call that tries is
-//                   one this fake does not answer.
-//   space records   The write gate resolves from the members space, so a fake
-//                   that could not read back what was just written would test a
-//                   gate no deployment runs. A missing record is the host's 400,
-//                   which the reader maps to "absent".
-//   repo records    The declaration lives in the group's public repo, and the
-//                   save reads it back (`getRecord`) to decide whether to write
-//                   or withdraw it.
-//   blobs           `uploadBlob` keeps each upload's type and bytes, and
-//                   answers with a reference to it, as an event image needs.
-//
-// `listRecords` pages the way the reference host does, newest URI first with a
-// cursor only when the page is full, so a caller that reads only the first page
-// is caught. A test can shrink the page (`recordPageSize`) to put a record on
-// page two without writing a hundred of them.
+// A fake group host behind a stubbed global `fetch`, so the code under test runs its
+// real transports. It logs every XRPC call in order, keeps the spaces' records and
+// the public repo's, pages `listRecords` as the reference host does (newest URI
+// first, a cursor only on a full page), and keeps each uploaded blob.
 import { vi } from 'vitest';
 import { fixtureKem } from './space-mac-host';
 import {
@@ -34,18 +9,11 @@ import {
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
 	GROUP_MEMBERSHIP_COLLECTION,
-	MEMBERS_SPACE_READER_ROLES,
-	accessGrantsRead,
 	groupAccessRecord,
 	parseGroupAccess
 } from '../../members-record';
-import {
-	ABOUT_SPACE_TYPE,
-	CALENDAR_SPACE_TYPE,
-	MEMBERS_SPACE_TYPE,
-	type GroupVisibility
-} from '../../types';
-import { POLICY_MANAGING_APP, groupSpaceUris, type GroupSpaceUris } from '../../ids';
+import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE, type GroupVisibility } from '../../types';
+import { groupSpaceUris, type GroupSpaceUris } from '../../ids';
 import { SESSION_PERSON_HEADER } from './linked-oauth-stub';
 
 export interface FakeGroupHostOptions {
@@ -147,12 +115,6 @@ export function fakeGroupHost(options: FakeGroupHostOptions) {
 		if (failed) return failed;
 
 		switch (nsid) {
-			case 'com.atproto.simplespace.getSpace': {
-				const uri = query.get('space') ?? '';
-				if (!spaces.has(uri)) return Response.json({ error: 'SpaceNotFound' }, { status: 400 });
-				return Response.json({ uri, readPolicy: { $type: POLICY_MANAGING_APP } });
-			}
-
 			case 'com.atproto.space.putRecord':
 			case 'com.atproto.space.createRecord': {
 				const write = body as unknown as SpaceRecordWrite;
@@ -293,18 +255,19 @@ export function fakeGroupHost(options: FakeGroupHostOptions) {
 			const roles = Array.isArray(membership?.roles)
 				? membership.roles.filter((r): r is string => typeof r === 'string')
 				: [];
-			return accessGrantsRead(access, roles);
+			return (access?.grants ?? []).some(
+				(grant) =>
+					roles.includes(grant.role) &&
+					grant.scopes.some((s) => typeof s === 'string' && s.includes('action=read'))
+			);
 		},
-		/** The group as the host holds it once made: its three spaces, each with
-		 *  the `access` record it is made with. The about space's says
-		 *  `visibility`; the other two are never public. Nothing goes through the
-		 *  transport, so the log holds none of it. */
+		/** The group as the host makes it: its two spaces and their `access` records, the
+		 *  meta space's saying `visibility`. Not logged. */
 		holdGroup: (visibility: GroupVisibility): GroupSpaceUris => {
 			const uris = groupSpaceUris(did);
 			for (const [space, spaceType] of [
 				[uris.aboutSpaceUri, ABOUT_SPACE_TYPE],
-				[uris.membersSpaceUri, MEMBERS_SPACE_TYPE],
-				[uris.calendarSpaceUri, CALENDAR_SPACE_TYPE]
+				[uris.membersSpaceUri, MEMBERS_SPACE_TYPE]
 			]) {
 				spaces.add(space);
 				const about = spaceType === ABOUT_SPACE_TYPE;
@@ -315,7 +278,7 @@ export function fakeGroupHost(options: FakeGroupHostOptions) {
 					record: {
 						...groupAccessRecord({
 							spaceType,
-							roles: about ? ABOUT_SPACE_READER_ROLES : MEMBERS_SPACE_READER_ROLES,
+							roles: ABOUT_SPACE_READER_ROLES,
 							public: about && visibility === 'public'
 						}),
 						$type: GROUP_ACCESS_COLLECTION

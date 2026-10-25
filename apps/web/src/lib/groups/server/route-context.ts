@@ -1,8 +1,6 @@
-// The one way into a group route, for the pages and every remote, since a form with a
-// lookup of its own could reveal a private group. Every refusal is the same 404, except
-// a 503 when the host cannot say whether the group is private, and, where a page asks,
-// a notice for someone the row lists whose sign-in cannot read the group (`signInOnly`).
-// Everything is read with the caller's own access.
+// The one way into a group route, for the pages and every remote, since a lookup of its
+// own could reveal a private group. Every refusal is the same 404, except a 503 when the
+// host cannot say whether the group is private.
 import { error } from '@sveltejs/kit';
 import { actorToDid } from '$lib/atproto/methods';
 import { canSeeGroup } from '../access';
@@ -32,12 +30,9 @@ export const GROUP_VISIBILITY_UNCHECKED = 'Group visibility could not be checked
 export interface GroupRouteContext {
 	group: GroupRow;
 	membership: CallerMembership;
-	/** Null when the caller is on the roster, since the gate then does not ask. */
 	visibility: GroupVisibility | null;
-	/** Null for a signed-out visitor or a sign-in that reads no spaces. */
 	reader: GroupSpaceReader | null;
-	/** Hidden from the caller, but the row lists them and only their own sign-in stands
-	 *  in the way. Nothing of the group was read for them. */
+	/** Hidden, but the row lists the caller and only their sign-in stands in the way. */
 	signInOnly?: true;
 }
 
@@ -49,8 +44,6 @@ export function callerReader(caller: CallerSession | null): GroupSpaceReader | n
 	return caller && holdsMetaRead(caller.scope) ? credentialSpaceReader(caller) : null;
 }
 
-/** `signIn` is set when the row lists the caller, they are off the roster, and their
- *  sign-in cannot read the members space, so the refusal was their own PDS's. */
 export function withSignIn(
 	membership: CallerMembership,
 	group: GroupRow,
@@ -65,7 +58,6 @@ export function withSignIn(
 	return { ...membership, signIn: true };
 }
 
-/** `actorToDid` cannot tell an unknown handle from an outage, so an outage is a 404 too. */
 export async function groupActorToDid(actor: string): Promise<string | null> {
 	if (actor.startsWith('did:')) return actor;
 	try {
@@ -89,8 +81,6 @@ export async function groupRouteContext(
 
 	const reader = callerReader(caller);
 
-	// A member sees the group at every visibility, so a failed visibility read cannot
-	// lock them out.
 	const membership = withSignIn(
 		await readStanding(db, group, caller?.did ?? null, reader),
 		group,
@@ -135,7 +125,6 @@ export async function groupRouteContext(
 	return { group, membership, visibility, reader };
 }
 
-/** The profile's name, else the row's, so a profile that cannot be read never fails the page. */
 export async function groupHeader(
 	db: D1Database,
 	group: GroupRow,
@@ -156,7 +145,6 @@ export async function groupHeader(
 	return { groupName: profile?.name ?? group.name, handle: handles.get(group.group_did) ?? null };
 }
 
-/** The records, or the rows when the members space holds none. */
 export async function pageRoster(
 	db: D1Database,
 	group: GroupRow,

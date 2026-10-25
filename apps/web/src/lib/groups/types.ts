@@ -9,7 +9,7 @@ export type GroupVisibility = (typeof GROUP_VISIBILITIES)[number];
 export const JOIN_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'withdrawn'] as const;
 export type JoinRequestStatus = (typeof JOIN_REQUEST_STATUSES)[number];
 
-/** The proposal's two spaces. atmo calls `meta` the about space, as its column does. */
+/** atmo calls `meta` the about space, as its column does. */
 export const ABOUT_SPACE_TYPE = 'group.opensocial.meta';
 export const MEMBERS_SPACE_TYPE = 'group.opensocial.members';
 
@@ -18,7 +18,6 @@ export interface GroupRow {
 	group_did: string;
 	name: string;
 	description: string | null;
-	/** at://<group_did>/space/<type>/self, or NULL before the create finished. */
 	about_space_uri: string | null;
 	members_space_uri: string | null;
 	created_at: number;
@@ -69,19 +68,15 @@ export interface CallerMembership {
 	pendingRequestId: string | null;
 	permissions: ReadonlySet<GroupPermission>;
 	grants: WriteGrants;
-	/** The only question the read gate asks: from the caller's own `membership` record,
-	 *  never from a row. */
+	/** From the caller's own `membership` record, never from a row. */
 	onRoster: boolean;
 	/** The read error when the members space failed. `permissions` is then unknown. */
 	unreadable?: string;
-	/** Signed in, but the sign-in reads no spaces: nothing is read for them. */
 	noSpaceAccess?: true;
-	/** The row lists the caller, but their sign-in cannot read the group's spaces, so
-	 *  the pages ask them to sign in again. */
+	/** The row lists the caller, but their sign-in cannot read the group's spaces. */
 	signIn?: true;
 }
 
-/** A DID as a page shows it; a null `handle` means none resolved. */
 export interface Person {
 	did: string;
 	handle: string | null;
@@ -89,7 +84,6 @@ export interface Person {
 	avatar: string | null;
 }
 
-/** One of the group's public events, from its repo. */
 export interface GroupEventRecord {
 	uri: string;
 	cid: string;

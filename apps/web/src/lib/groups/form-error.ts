@@ -1,5 +1,4 @@
-// Turns the domain errors into the shape a form renders. A plain module, so
-// ./create-at-host.ts can share it: `*.remote.ts` may export only remote functions.
+// The domain errors as a form renders them; a plain module, so create-at-host.ts can share it.
 import type { GroupFormFailure } from './form-result';
 import type { GroupPermission } from './permissions';
 import type { CallerMembership } from './types';
@@ -9,18 +8,13 @@ import { GroupCredentialError } from './server/session';
 import { GroupRuleError } from './server/db/rules';
 import { GroupHostError, GroupNotAtHostError, HostSignInError } from './server/host';
 
-/** The caller holds no group session for the write to go out on, which only
- *  they can fix. */
 const NOT_LINKED: GroupFormFailure = {
 	ok: false,
 	error:
 		'This site cannot write as this group for you yet: link your access, from the group page. Nothing was changed.'
 };
 
-/** The form message for a domain error, or null for any other failure, which a
- *  caller words for what it had done so far. Permission and credential failures
- *  are kept apart: one is about the caller's roles, the other about the session
- *  the write would go out on. */
+/** Null for any other failure, which a caller words for what it had done so far. */
 export function knownFormError(e: unknown): GroupFormFailure | null {
 	if (e instanceof GroupPermissionError) {
 		return { ok: false, error: `Not allowed: ${e.reason}` };
@@ -53,18 +47,14 @@ export function knownFormError(e: unknown): GroupFormFailure | null {
 	return null;
 }
 
-/** `knownFormError`, rethrowing anything else, because an unrecognized failure
- *  must not be flattened into a form message. */
+/** An unrecognized failure is rethrown, not flattened into a form message. */
 export function formError(e: unknown): GroupFormFailure {
 	const known = knownFormError(e);
 	if (!known) throw e;
 	return known;
 }
 
-/** The refusal for a caller who lacks `permission`. When the members space
- *  could not be read, or cannot be with the caller's sign-in, their permissions
- *  are unknown rather than missing, and "Not allowed" would send an admin
- *  looking for a role they already hold. */
+/** When the members space could not be read, permissions are unknown, not missing. */
 export function notAllowed(
 	membership: Pick<CallerMembership, 'unreadable' | 'noSpaceAccess' | 'signIn'>,
 	permission: GroupPermission

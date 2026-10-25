@@ -1,17 +1,7 @@
-// The MAC a repo host puts on a space record read with a credential.
-//
-// A space repo authenticates what it serves with a MAC, not a signature, so a
-// leaked response proves nothing to anyone else. A record read made with a
-// credential must ask for one: `atproto-space-want-mac` names a P-256 key made
-// for that one request, the repo's host derives a secret shared with it from the
-// repo's own `#atproto_kem` key, and it answers with `atproto-space-mac`, an HMAC
-// of the record's URI and CID under that secret. A host refuses a credential read
-// that asks for none (`BadSpaceMac`). The MAC vouches for the URI and the CID the
-// host names, so a reader also checks the value against that CID (`recordCid`).
-//
-// The secret is ECDH on P-256 put through DHKEM(P-256, HKDF-SHA256), RFC 9180
-// § 4.1, as @atproto/space derives it (kem.ts, mac.ts, on the 2026-10-22 alpha).
-// The cryptography is WebCrypto, which the Workers runtime has.
+// The MAC a repo host puts on a space record read with a credential: the reader sends a
+// one-off P-256 key in `atproto-space-want-mac`, the host answers with an HMAC of the
+// record's URI and CID under a secret derived from its `#atproto_kem` key, DHKEM(P-256,
+// HKDF-SHA256) as in RFC 9180 § 4.1. The reader also checks the value against that CID.
 import { encode } from '@atcute/cbor';
 import { CODEC_DCBOR, create, fromString, toString } from '@atcute/cid';
 import { P256PublicKey, parseDidKey } from '@atcute/crypto';
@@ -44,8 +34,6 @@ function lengthPrefixed(text: string): Uint8Array {
 // RFC 9180's labels. 0x0010 names DHKEM(P-256, HKDF-SHA256).
 const KEM_PREFIX = concat([utf8('HPKE-v1'), utf8('KEM'), uint16be(0x0010)]);
 
-/** A P-256 did:key as an ECDH public key, with its uncompressed point, which the
- *  secret is derived over. */
 export async function ecdhPublicKey(
 	didKey: string
 ): Promise<{ key: CryptoKey; point: Uint8Array }> {
@@ -64,8 +52,6 @@ export async function ecdhPublicKey(
 	return { key, point: new Uint8Array(await crypto.subtle.exportKey('raw', key)) };
 }
 
-/** The secret both sides derive from one ECDH result: `reader` is the point of the
- *  key made for the request, `repo` the point of the repo's `#atproto_kem` key. */
 export async function sharedSecret(
 	dh: Uint8Array,
 	reader: Uint8Array,
@@ -82,15 +68,11 @@ export async function sharedSecret(
 	return new Uint8Array(bits);
 }
 
-/** The CID of a record's value: of its DRISL encoding (deterministic CBOR, with
- *  `$link` and `$bytes` as their CBOR forms). A MAC vouches for the CID a host
- *  names, so a reader checks the value against it too. */
+/** The CID of a record's DRISL encoding. */
 export async function recordCid(value: unknown): Promise<string> {
 	return toString(await create(CODEC_DCBOR, encode(value)));
 }
 
-/** HMAC-SHA256 over `atproto-space-record-v1`, the URI with its length, and the
- *  CID's bytes. */
 export async function recordMac(secret: Uint8Array<ArrayBuffer>, uri: string, cid: string) {
 	const key = await crypto.subtle.importKey(
 		'raw',
@@ -107,8 +89,6 @@ export async function recordMac(secret: Uint8Array<ArrayBuffer>, uri: string, ci
 	return new Uint8Array(await crypto.subtle.sign('HMAC', key, data));
 }
 
-/** The MAC in an `atproto-space-mac` header, or null when there is none for a
- *  record at this version. */
 function macFromHeader(value: string | null): Uint8Array | null {
 	if (!value) return null;
 	const fields = new Map(
@@ -123,16 +103,13 @@ function macFromHeader(value: string | null): Uint8Array | null {
 	return mac ? Uint8Array.from(atob(mac[1]), (c) => c.charCodeAt(0)) : null;
 }
 
-/** One record read's MAC: the header that asks for it, and the check of the
- *  answer. Made per request, since each takes a key of its own. */
+/** Made per request, since each takes a key of its own. */
 export interface RecordMacCheck {
 	header: string;
-	/** Whether the answer's `atproto-space-mac` is the MAC of this URI and CID. */
 	verify(record: { uri: string; cid: string }, macHeader: string | null): Promise<boolean>;
 }
 
-/** A MAC request against the repo's `#atproto_kem` key, a P-256 did:key. Tests pass
- *  `ephemeral` to fix the request's key. */
+/** Tests pass `ephemeral` to fix the request's key. */
 export async function recordMacCheck(
 	repoKemKey: string,
 	ephemeral?: CryptoKeyPair

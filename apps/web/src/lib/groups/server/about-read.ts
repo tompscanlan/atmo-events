@@ -1,6 +1,5 @@
-// Reads a group's records back out of its spaces. A page reads with the caller's own
-// space credential, so the group's authority decides what each person sees; the group's
-// own session reads only where the group itself acts.
+// Reads a group's records out of its spaces, with the caller's own space credential, so
+// the group's authority decides what each person sees.
 import {
 	GROUP_PROFILE_COLLECTION,
 	GROUP_PROFILE_RKEY,
@@ -88,7 +87,6 @@ function toSpaceRecord(
 	return { uri: body.uri, cid, collection, rkey, value };
 }
 
-/** The reader names the host's error code in what it throws, and this reads it back. */
 export function isSpaceNotFound(e: unknown): boolean {
 	return e instanceof Error && /\bSpaceNotFound\b/.test(e.message);
 }
@@ -147,7 +145,6 @@ function readerOver(query: SpaceQuery): GroupSpaceReader {
 	};
 }
 
-/** Through the raw `handle`, since the space methods are not in the generated lexicon set. */
 export function pdsSpaceReader(
 	cred: Parameters<typeof groupClient>[0],
 	groupDid: string
@@ -158,9 +155,7 @@ export function pdsSpaceReader(
 	});
 }
 
-/** A record read at the repo's PDS, signed for the repo's DID. A space the authority
- *  will not let the holder into throws `SpaceAccessDenied`, which callers read as no
- *  access, not as an outage. */
+/** A space the holder may not read throws `SpaceAccessDenied`: no access, not an outage. */
 export function credentialSpaceReader(
 	holder: SpaceHolder,
 	hosts: SpaceHosts = didSpaceHosts
@@ -173,7 +168,6 @@ export function credentialSpaceReader(
 	});
 }
 
-/** Null when `personDid` holds no group session, a fact a page shows rather than throws on. */
 export async function groupSpaceReader(
 	env: CredentialStoreEnv,
 	group: Pick<GroupRow, 'group_did'>,
@@ -230,7 +224,6 @@ export async function readGroupAbout(
 	return { profile, rules };
 }
 
-/** Kept out of `readGroupAbout`, since only the writers that keep it true read it. */
 export async function readAboutAccess(
 	reader: GroupSpaceReader,
 	group: Pick<GroupRow, 'group_did' | 'about_space_uri'>

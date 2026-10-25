@@ -11,7 +11,6 @@ export const GROUP_PERMISSIONS_COLLECTION = 'group.opensocial.permissions';
 export const GROUP_ACCESS_RKEY = 'self';
 export const GROUP_PERMISSIONS_RKEY = 'self';
 
-/** Every role may read the meta space: a private group's profile and rules are for its members. */
 export const ABOUT_SPACE_READER_ROLES: readonly GroupRoleName[] = GROUP_ROLES;
 
 export class MembershipKeyError extends Error {
@@ -33,7 +32,6 @@ export function membershipRkey(did: string): string {
 	return did;
 }
 
-/** Every role id in a list, de-duplicated, in list order. */
 function roleIds(value: unknown): string[] {
 	const raw = Array.isArray(value) ? value : [];
 	return [...new Set(raw.filter((entry): entry is string => typeof entry === 'string' && !!entry))];
@@ -100,7 +98,6 @@ export function parseGroupAccess(value: unknown): GroupAccessFields | null {
 	return { public: (value as Record<string, unknown>).public === true, grants };
 }
 
-/** The `grants` of a `permissions` or `access` record, as written. */
 export function parseGroupGrants(value: unknown): RoleGrant[] | null {
 	if (!value || typeof value !== 'object') return null;
 	const raw = value as Record<string, unknown>;
@@ -123,7 +120,6 @@ export function accessSays(access: GroupAccessFields | null, isPublic: boolean):
 	return access !== null && access.public === isPublic;
 }
 
-/** A role record is keyed by its id. */
 export function parseGroupRole(value: unknown, rkey?: string): { id: string } | null {
 	if (!value || typeof value !== 'object' || !rkey) return null;
 	return { id: rkey };
