@@ -1,4 +1,4 @@
-# A snowglobe for developing atmo's groups: a sealed atproto network on this machine
+# A snowglobe for developing atmo's groups: a private atproto network on this machine
 # (@openmeet/snowglobe) with an opensocial.group group host built from your checkout, the
 # latest permissioned-spaces alpha, and a current PDS release.
 #
@@ -12,8 +12,9 @@
 # secret (apps/web/.env), and on a machine without Playwright's Chromium,
 # `pnpm --filter web exec playwright install chromium`. Passwords are in
 # ~/.local/share/snowglobe/atmogh/accounts.env.
-# atmo runs sealed: every address it uses is this snowglobe's, and services with no stand-in
-# here (profiles, actor search, record stats) are off.
+# atmo uses this snowglobe's address for every service it runs here. The ones it has no
+# copy of (the Bluesky API, actor search, record stats, Constellation, DNS lookups) stay
+# on the public network's, which know nothing of this globe's accounts.
 
 globe: atmogh
 domain: local.snowglobe.at
@@ -66,15 +67,14 @@ apps:
       __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: ${apps.atmo.host}
       GROUP_HOST_URL: ${grouphosts.gh.url}
       # apps/web/src/lib/atproto/network.ts
-      PUBLIC_ATPROTO_SEALED: 'true'
-      PUBLIC_ATPROTO_PLC_URL: ${services.plc.url}
-      PUBLIC_ATPROTO_SLINGSHOT_URL: ${services.slingshot.url}
-      PUBLIC_ATPROTO_JETSTREAM_URLS: wss://jetstream.${domain}
-      PUBLIC_ATPROTO_RELAY_URLS: ${services.relay.url}
-      PUBLIC_ATPROTO_SIGNUP_PDS: ${pds.alpha.url}
+      PUBLIC_PLC_URL: ${services.plc.url}
+      PUBLIC_SLINGSHOT_URL: ${services.slingshot.url}
+      PUBLIC_JETSTREAM_URLS: wss://jetstream.${domain}
+      PUBLIC_RELAY_URLS: ${services.relay.url}
+      PUBLIC_SIGNUP_PDS_URL: ${pds.alpha.url}
       # No image service runs locally, so images come straight from the alpha; an image held
       # on another server here does not show.
-      PUBLIC_ATPROTO_BLOB_URL_TEMPLATE: ${pds.alpha.url}/xrpc/com.atproto.sync.getBlob?did={did}&cid={cid}
+      PUBLIC_IMAGE_URL_TEMPLATE: ${pds.alpha.url}/xrpc/com.atproto.sync.getBlob?did={did}&cid={cid}
 
   # atmo's groups e2e (apps/web/scripts/groups-e2e.mjs): pnpm globe:e2e
   - name: e2e
