@@ -50,8 +50,14 @@ const PADDLE: GroupEventRecord = {
 	uri: `at://${GROUP_DID}/community.lexicon.calendar.event/3lpaddle`,
 	cid: 'bafypaddle',
 	rkey: '3lpaddle',
-	value: { name: 'Sunrise paddle' }
+	value: { name: 'Sunrise paddle', startsAt: '2030-11-01T06:00:00.000Z' }
 };
+
+/** Every event the page lists, to come then past. */
+const listed = (data: Record<string, unknown>) => [
+	...(data.upcoming as GroupEventRecord[]),
+	...(data.past as GroupEventRecord[])
+];
 
 let harness: SqliteD1;
 let row: GroupRow;
@@ -137,20 +143,20 @@ describe('/groups/[actor]/events load', () => {
 		host(true);
 		for (const did of [null, STRANGER, MEMBER]) {
 			const data = await openAs(did);
-			expect(data, String(did)).toMatchObject({ groupName: 'Kona', events: [PADDLE] });
+			expect(data, String(did)).toMatchObject({ groupName: 'Kona', upcoming: [PADDLE], past: [] });
 			expect(data.group).toStrictEqual(publicGroup(row));
 		}
 	});
 
 	it('shows a member the members-only events beside the public ones, without their images', async () => {
 		host(true, { records: [MEETING] });
-		const events = (await openAs(MEMBER)).events as GroupEventRecord[];
+		const events = listed(await openAs(MEMBER));
 		expect(events.map((e) => e.rkey).sort()).toEqual(['3lmeeting', '3lpaddle']);
 		const meeting = events.find((e) => e.rkey === '3lmeeting')!;
 		expect(meeting.space).toBe(CALENDAR);
 		expect(meeting.value).not.toHaveProperty('media');
 		for (const did of [null, STRANGER]) {
-			expect((await openAs(did)).events, String(did)).toEqual([PADDLE]);
+			expect(listed(await openAs(did)), String(did)).toEqual([PADDLE]);
 		}
 	});
 
@@ -160,9 +166,30 @@ describe('/groups/[actor]/events load', () => {
 		});
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const data = await openAs(MEMBER);
-		expect(data.events).toEqual([PADDLE]);
+		expect(listed(data)).toEqual([PADDLE]);
 		expect(data.membersOnlyNotice).toBe("Members-only events couldn't be loaded right now.");
 		expect((await openAs(STRANGER)).membersOnlyNotice).toBeNull();
+	});
+
+	it('lists what is to come soonest first, members-only included, and then what is over', async () => {
+		const event = (rkey: string, startsAt: string): GroupEventRecord => ({
+			...PADDLE,
+			uri: `at://${GROUP_DID}/community.lexicon.calendar.event/${rkey}`,
+			rkey,
+			value: { name: rkey, startsAt }
+		});
+		vi.mocked(listGroupEvents).mockResolvedValue([
+			event('3llater', '2030-12-01T06:00:00.000Z'),
+			event('3lold', '2020-01-01T06:00:00.000Z'),
+			PADDLE
+		]);
+		host(true, {
+			records: [{ ...MEETING, value: { ...MEETING.value, startsAt: '2030-11-15T09:00:00.000Z' } }]
+		});
+		const data = await openAs(MEMBER);
+		const rkeys = (events: unknown) => (events as GroupEventRecord[]).map((e) => e.rkey);
+		expect(rkeys(data.upcoming)).toEqual(['3lpaddle', '3lmeeting', '3llater']);
+		expect(rkeys(data.past)).toEqual(['3lold']);
 	});
 
 	it('lets only a role that writes the group repo create or manage events', async () => {
@@ -175,7 +202,7 @@ describe('/groups/[actor]/events load', () => {
 		host(true);
 		vi.mocked(listGroupEvents).mockRejectedValue(new Error('index down'));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
-		expect((await openAs(null)).events).toEqual([]);
+		expect(listed(await openAs(null))).toEqual([]);
 	});
 
 	it('gives a member hidden by a private group only the sign-in notice, and anyone else a 404', async () => {

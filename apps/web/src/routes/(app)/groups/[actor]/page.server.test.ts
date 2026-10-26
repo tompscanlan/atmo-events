@@ -9,9 +9,14 @@ vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 	...(await import('$lib/groups/server/__fixtures__/linked-oauth-stub')).linkedOAuthStub
 }));
 vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
+vi.mock('$lib/groups/server/events-index', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/groups/server/events-index')>()),
+	listGroupEvents: vi.fn(async () => [])
+}));
 
 import { load } from './+page.server';
 import { loadPeople } from '$lib/groups/server/people';
+import { listGroupEvents } from '$lib/groups/server/events-index';
 import { notAllowed } from '$lib/groups/form-error';
 import {
 	hostDown,
@@ -38,6 +43,7 @@ import {
 	ABOUT_SPACE_TYPE,
 	publicGroup,
 	type CallerMembership,
+	type GroupEventRecord,
 	type GroupRow,
 	type GroupVisibility
 } from '$lib/groups/types';
@@ -148,6 +154,11 @@ type GroupPage = Record<string, unknown> & {
 	rosterPreview: { did: string }[];
 	memberCount: number;
 	confirmPrompt: boolean;
+	upcomingEvents: GroupEventRecord[];
+	moreUpcoming: number;
+	pastEventCount: number;
+	membersOnlyNotice: string | null;
+	canCreateEvent: boolean;
 };
 
 async function openAs(
@@ -444,5 +455,60 @@ describe('a create whose setup stopped', () => {
 				String(did)
 			).rejects.toMatchObject({ status: 404 });
 		}
+	});
+});
+
+describe('the next events', () => {
+	const event = (rkey: string, startsAt: string): GroupEventRecord => ({
+		uri: `at://${GROUP_DID}/community.lexicon.calendar.event/${rkey}`,
+		cid: `bafy${rkey}`,
+		rkey,
+		value: { name: rkey, startsAt }
+	});
+	const rkeys = (events: GroupEventRecord[]) => events.map((e) => e.rkey);
+
+	it('shows anyone the soonest three to come, and counts the rest and the past', async () => {
+		vi.mocked(listGroupEvents).mockResolvedValue([
+			event('3ld', '2030-04-01T09:00:00.000Z'),
+			event('3lold', '2020-01-01T09:00:00.000Z'),
+			event('3lb', '2030-02-01T09:00:00.000Z'),
+			event('3la', '2030-01-01T09:00:00.000Z'),
+			event('3lc', '2030-03-01T09:00:00.000Z')
+		]);
+		groupHost('public');
+		for (const did of [null, STRANGER, MEMBER]) {
+			const data = await openAs(did);
+			expect(rkeys(data.upcomingEvents), String(did)).toEqual(['3la', '3lb', '3lc']);
+			expect(data, String(did)).toMatchObject({ moreUpcoming: 1, pastEventCount: 1 });
+		}
+	});
+
+	it('shows a member the members-only events among them, and no one else', async () => {
+		vi.mocked(listGroupEvents).mockResolvedValue([event('3lpublic', '2030-02-01T09:00:00.000Z')]);
+		groupHost('public', {
+			records: [
+				{
+					space: groupSpaceUris(GROUP_DID).calendarSpaceUri,
+					collection: 'community.lexicon.calendar.event',
+					rkey: '3lmembers',
+					value: { name: 'Committee call', startsAt: '2030-01-01T09:00:00.000Z' }
+				}
+			]
+		});
+		expect(rkeys((await openAs(MEMBER)).upcomingEvents)).toEqual(['3lmembers', '3lpublic']);
+		expect(rkeys((await openAs(STRANGER)).upcomingEvents)).toEqual(['3lpublic']);
+	});
+
+	it('shows no events, rather than failing, when the index cannot be read', async () => {
+		vi.mocked(listGroupEvents).mockRejectedValue(new Error('index down'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		groupHost('public');
+		expect(await openAs(null)).toMatchObject({ upcomingEvents: [], pastEventCount: 0 });
+	});
+
+	it('offers a new event only to a role that writes the group repo', async () => {
+		groupHost('public');
+		expect((await openAs(OWNER)).canCreateEvent).toBe(true);
+		expect((await openAs(MEMBER)).canCreateEvent).toBe(false);
 	});
 });

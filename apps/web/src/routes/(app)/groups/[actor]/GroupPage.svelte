@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { groupFormError, resetOnSuccess } from '$lib/groups/form-result';
 	import { joinGroupForm, leaveGroupForm } from '$lib/groups/roster.remote';
+	import GroupEventList from '$lib/groups/components/GroupEventList.svelte';
 	import GroupLinkForm from '$lib/groups/components/GroupLinkForm.svelte';
 	import GroupMonogram from '$lib/groups/components/GroupMonogram.svelte';
 	import GroupSettings from '$lib/groups/components/GroupSettings.svelte';
@@ -39,6 +40,14 @@
 	let leaveError = $derived(groupFormError(leaveGroupForm.result));
 	// Null when the host could not be asked, and then no badge shows.
 	let visibility = $derived(data.visibility);
+	let eventsHref = $derived(resolve('/(app)/groups/[actor]/events', { actor: group.group_did }));
+	let moreEventsLabel = $derived(
+		data.moreUpcoming > 0
+			? `See all events (${data.moreUpcoming} more coming up)`
+			: data.pastEventCount > 0
+				? `See past events (${data.pastEventCount})`
+				: null
+	);
 </script>
 
 <svelte:head>
@@ -72,7 +81,39 @@
 		<p class="text-base-700 dark:text-base-200 mt-6 whitespace-pre-line">{about.description}</p>
 	{/if}
 
-	<div class="mt-6 grid gap-3 sm:grid-cols-3">
+	<!-- First after the description: what the group does next is why most people open it. -->
+	<section class="mt-8" aria-labelledby="group-upcoming">
+		<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+			<h2 id="group-upcoming" class="text-xl font-semibold">Upcoming events</h2>
+			{#if data.canCreateEvent}
+				<Button
+					href={resolve('/(app)/groups/[actor]/events/new', { actor: group.group_did })}
+					size="sm">New group event</Button
+				>
+			{/if}
+		</div>
+		{#if data.membersOnlyNotice}
+			<p class="text-base-500 dark:text-base-400 mb-4 text-sm" role="status">
+				{data.membersOnlyNotice}
+			</p>
+		{/if}
+		{#if data.upcomingEvents.length > 0}
+			<GroupEventList groupDid={group.group_did} events={data.upcomingEvents} />
+		{:else}
+			<p class="text-base-500 dark:text-base-400 text-sm">
+				{data.pastEventCount > 0 ? 'Nothing planned right now.' : 'No events yet.'}
+			</p>
+		{/if}
+		{#if moreEventsLabel}
+			<a
+				href={resolve('/(app)/groups/[actor]/events', { actor: group.group_did })}
+				class="text-accent-600 dark:text-accent-400 mt-4 inline-block text-sm hover:underline"
+				>{moreEventsLabel}</a
+			>
+		{/if}
+	</section>
+
+	<div class="mt-8 grid gap-3 sm:grid-cols-3">
 		<div class="ring-base-200 dark:ring-base-800 rounded-2xl p-4 ring-1">
 			<p class="text-base-500 dark:text-base-400 text-xs font-medium uppercase">Members</p>
 			<p class="mt-1 text-2xl font-semibold">{data.memberCount}</p>
@@ -99,10 +140,7 @@
 	</div>
 
 	<div class="mt-8 flex flex-wrap items-center gap-3">
-		<Button
-			href={resolve('/(app)/groups/[actor]/events', { actor: group.group_did })}
-			variant="secondary">Events</Button
-		>
+		<Button href={eventsHref} variant="secondary">Events</Button>
 		{#if data.canSeeMembers}
 			<Button
 				href={resolve('/(app)/groups/[actor]/members', { actor: group.group_did })}

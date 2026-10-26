@@ -144,18 +144,3 @@ export function membersOnlyEventForEditing(
 		uri: event.uri
 	};
 }
-
-function createdAtOf(event: GroupEventRecord): number {
-	const ms = typeof event.value.createdAt === 'string' ? Date.parse(event.value.createdAt) : NaN;
-	return Number.isNaN(ms) ? -Infinity : ms;
-}
-
-/** Newest first by each record's own `createdAt`, as the index orders the public slice; ties by URI. */
-export function unionGroupEvents(
-	publicEvents: GroupEventRecord[],
-	membersOnly: GroupEventRecord[]
-): GroupEventRecord[] {
-	return [...publicEvents, ...membersOnly].sort(
-		(a, b) => createdAtOf(b) - createdAtOf(a) || (a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0)
-	);
-}

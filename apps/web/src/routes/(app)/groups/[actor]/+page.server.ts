@@ -5,6 +5,7 @@ import { unfinishedSetupFor } from '$lib/groups/create-at-host';
 import { mayHoldGroupSession } from '$lib/groups/grants';
 import { can } from '$lib/groups/permissions';
 import { readGroupAbout, type GroupSpaceReader } from '$lib/groups/server/about-read';
+import { readGroupEvents } from '$lib/groups/server/group-events';
 import { gateCaller, type CallerSession } from '$lib/groups/server/caller';
 import { publiclyDeclared } from '$lib/groups/server/declaration-writer';
 import { refreshGroupHandle } from '$lib/groups/server/handles';
@@ -40,6 +41,8 @@ async function hostVisibility(
 }
 
 const ROSTER_PREVIEW = 8;
+/** Upcoming events on the group page; the events tab lists the rest. */
+const EVENTS_PREVIEW = 3;
 
 /** Null when the members space did not answer, so the page shows no faces. */
 async function rosterPreview(
@@ -91,14 +94,15 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 	const canManageGroup = can(membership.permissions, 'MANAGE_GROUP');
 	// A failed read fails the page, so the row never stands in for a record the PDS refused.
 	const showRoster = canSeeMembers(membership);
-	const [about, visibility, roster, pendingRequests, listed] = await Promise.all([
+	const [about, visibility, roster, pendingRequests, listed, events] = await Promise.all([
 		reader ? readGroupAbout(reader, group) : { profile: null, rules: [] },
 		hostVisibility(gateVisibility, reader, group),
 		showRoster ? rosterPreview(reader, db, group, viewer) : null,
 		canAdmitMembers
 			? pendingRequestsFor({ db, env: platform!.env, group }, { callerDid: locals.did!, reader })
 			: [],
-		canManageGroup ? publiclyDeclared(db, group.group_did) : false
+		canManageGroup ? publiclyDeclared(db, group.group_did) : false,
+		readGroupEvents(db, group, membership, reader)
 	]);
 	const { listed: confirmed, unconfirmed } = splitRoster(roster ?? []);
 	const preview = confirmed.slice(0, ROSTER_PREVIEW);
@@ -120,6 +124,12 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 		/** The viewer's own acceptance is missing and their sign-in could not write it. */
 		confirmPrompt: unconfirmed.some((entry) => entry.did === locals.did),
 		rosterPreview: preview,
+		/** The soonest few; under way first. */
+		upcomingEvents: events.upcoming.slice(0, EVENTS_PREVIEW),
+		moreUpcoming: Math.max(events.upcoming.length - EVENTS_PREVIEW, 0),
+		pastEventCount: events.past.length,
+		membersOnlyNotice: events.membersOnlyNotice,
+		canCreateEvent: can(membership.permissions, 'CREATE_EVENT'),
 		pendingRequests: pendingRequests ?? [],
 		/** The viewer may admit, but holds no group session to ask the host with. */
 		requestsNeedLink: pendingRequests === null,

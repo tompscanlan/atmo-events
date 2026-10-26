@@ -1,11 +1,6 @@
 import { can } from '$lib/groups/permissions';
-import {
-	membersOnlyEventForDisplay,
-	readMembersOnlyEvents,
-	unionGroupEvents
-} from '$lib/groups/server/calendar-read';
 import { gateCaller } from '$lib/groups/server/caller';
-import { listGroupEvents } from '$lib/groups/server/events-index';
+import { readGroupEvents } from '$lib/groups/server/group-events';
 import { groupHeader, groupRouteContext } from '$lib/groups/server/route-context';
 import { publicGroup } from '$lib/groups/types';
 import type { PageServerLoad } from './$types';
@@ -25,24 +20,15 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		return { groupDid: group.group_did, signInOnly: true as const };
 	}
 
-	const [header, events, membersOnly] = await Promise.all([
+	const [header, events] = await Promise.all([
 		groupHeader(db, group, reader),
-		listGroupEvents(db, group).catch((e) => {
-			console.error(`[groups] listGroupEvents failed for ${group.group_did}:`, e);
-			return [];
-		}),
-		readMembersOnlyEvents(membership, reader, group)
+		readGroupEvents(db, group, membership, reader)
 	]);
 
 	return {
 		group: publicGroup(group),
 		...header,
-		// Without their images, as on their own page.
-		events: membersOnly
-			? unionGroupEvents(events, membersOnly.events.map(membersOnlyEventForDisplay))
-			: events,
-		/** Why a member sees no members-only events, when they could not be read. */
-		membersOnlyNotice: membersOnly?.notice ?? null,
+		...events,
 		canCreateEvent: can(membership.permissions, 'CREATE_EVENT'),
 		canManageEvents: can(membership.permissions, 'MANAGE_EVENTS')
 	};

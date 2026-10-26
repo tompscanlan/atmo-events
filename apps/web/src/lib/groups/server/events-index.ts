@@ -15,7 +15,8 @@ export async function notifyIndexQuietly(db: D1Database, uri: string): Promise<v
 	}
 }
 
-/** By the record's `createdAt`, since a backfill stamps a repo with one ingest time. */
+/** The `limit` that start latest, by the record's own `startsAt` (a backfill stamps a repo with one
+ *  ingest time): every event still to come while there are fewer, then the most recent past. */
 export async function listGroupEvents(
 	db: D1Database,
 	group: GroupRow,
@@ -26,7 +27,7 @@ export async function listGroupEvents(
 		{
 			params: {
 				actor: group.group_did as ActorIdentifier,
-				sort: 'createdAt',
+				sort: 'startsAt',
 				order: 'desc',
 				limit: Math.min(Math.max(limit, 1), 200)
 			}

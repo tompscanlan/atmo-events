@@ -19,14 +19,22 @@ const PADDLE: GroupEventRecord = {
 	value: { name: 'Sunrise paddle', startsAt: '2030-11-01T06:00:00.000Z' }
 };
 
-function renderTab(canManageEvents: boolean) {
+function renderTab(
+	canManageEvents: boolean,
+	{
+		upcoming = [PADDLE],
+		past = []
+	}: { upcoming?: GroupEventRecord[]; past?: GroupEventRecord[] } = {}
+) {
 	return render(Page, {
 		props: {
 			data: {
 				group: { group_did: GROUP_DID },
 				groupName: 'Kona',
 				handle: null,
-				events: [PADDLE],
+				upcoming,
+				past,
+				membersOnlyNotice: null,
 				canCreateEvent: false,
 				canManageEvents
 			}
@@ -49,6 +57,14 @@ describe('/groups/[actor]/events', () => {
 	it('shows an Edit link only to someone who may manage events', () => {
 		expect(editLinks(renderTab(true))).toEqual([`/groups/${GROUP_DID}/events/3lpaddle/edit`]);
 		expect(editLinks(renderTab(false))).toEqual([]);
+	});
+
+	it('lists what is over under its own heading, and says when nothing is planned', () => {
+		const body = renderTab(false, { upcoming: [], past: [PADDLE] });
+		expect(body).toContain('Nothing planned right now.');
+		expect(body).toMatch(/<h2[^>]*>Past<\/h2>/);
+		expect(cardLinks(body)).toEqual([`/p/${GROUP_DID}/e/3lpaddle`]);
+		expect(renderTab(false)).not.toMatch(/<h2[^>]*>Past<\/h2>/);
 	});
 
 	it('shows a hidden group only the sign-in notice', () => {

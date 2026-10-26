@@ -7,8 +7,7 @@ import {
 	membersOnlyEventForDisplay,
 	membersOnlyEventForEditing,
 	readMembersOnlyEvent,
-	readMembersOnlyEvents,
-	unionGroupEvents
+	readMembersOnlyEvents
 } from './calendar-read';
 import type { GroupSpaceReader, GroupSpaceRecord } from './about-read';
 import { NO_GRANTS } from '../scopes';
@@ -171,22 +170,5 @@ describe('the copies a page gets', () => {
 		expect(forEditor).toMatchObject({ did: GROUP_DID, rkey: '3lmeeting', uri: MEETING.uri });
 		expect(forEditor).not.toHaveProperty('space');
 		expect(membersOnlyEventForEditing({ ...event, value: { name: 'x' } }, GROUP)).toBeNull();
-	});
-
-	it('orders both slices newest first by their own dates, ties by URI', () => {
-		const at = (uri: string, createdAt?: string): GroupEventRecord => ({
-			uri,
-			cid: 'c',
-			rkey: uri.slice(-1),
-			value: createdAt ? { createdAt } : {}
-		});
-		const old = at('at://g/e/a', '2026-01-01T00:00:00Z');
-		const recent = at(`${CALENDAR}/g/e/b`, '2026-03-01T00:00:00Z');
-		const undated = at('at://g/e/c');
-		expect(unionGroupEvents([old, undated], [recent]).map((e) => e.uri)).toEqual([
-			recent.uri,
-			old.uri,
-			undated.uri
-		]);
 	});
 });
