@@ -1,5 +1,6 @@
 // The members space as records: one `membership` per member, keyed by the member's
-// DID, the space's `access`, and the authz config (`role`, `permissions`).
+// DID, the space's `access`, and the authz config (`role`, `permissions`). Each member's
+// own `acceptance` sits in their repo in the same space.
 import { GROUP_ROLES, type GroupRoleName } from './permissions';
 import type { RoleGrant } from './scopes';
 
@@ -7,9 +8,11 @@ export const GROUP_MEMBERSHIP_COLLECTION = 'group.opensocial.membership';
 export const GROUP_ACCESS_COLLECTION = 'group.opensocial.access';
 export const GROUP_ROLE_COLLECTION = 'group.opensocial.role';
 export const GROUP_PERMISSIONS_COLLECTION = 'group.opensocial.permissions';
+export const GROUP_ACCEPTANCE_COLLECTION = 'group.opensocial.acceptance';
 
 export const GROUP_ACCESS_RKEY = 'self';
 export const GROUP_PERMISSIONS_RKEY = 'self';
+export const GROUP_ACCEPTANCE_RKEY = 'self';
 
 export const ABOUT_SPACE_READER_ROLES: readonly GroupRoleName[] = GROUP_ROLES;
 

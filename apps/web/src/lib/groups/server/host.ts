@@ -4,6 +4,7 @@
 import { GROUP_ROLES, primaryRole, type GroupRoleName } from '../permissions';
 import type { GroupRow, JoinRequestRow } from '../types';
 import type { GroupSpaceReader } from './about-read';
+import { accept, unaccept } from './acceptance';
 import type { CallerSession } from './caller';
 import {
 	addMember,
@@ -233,6 +234,7 @@ export function hostMethods(binding: HostBinding): GroupHost {
 					? await readMembership(caller.reader, group, did).catch(() => null)
 					: null;
 				await cacheMember(did, primaryRole(record?.roles ?? []) ?? 'member', null);
+				await accept(caller.member, group);
 				return already ? 'already-member' : 'joined';
 			}
 			if (answer.data.status === 'pending') {
@@ -251,6 +253,7 @@ export function hostMethods(binding: HostBinding): GroupHost {
 		},
 
 		async leaveGroup(caller) {
+			if (caller.member?.did === caller.callerDid) await unaccept(caller.member, group);
 			const { nsid, answer } = await asMember(caller, 'leaveGroup', {});
 			if (!answer.ok) throw refusal(nsid, answer);
 			await uncacheMember(caller.callerDid);

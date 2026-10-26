@@ -51,6 +51,8 @@ export interface RosterEntry {
 	did: string;
 	role: string;
 	created_at: number;
+	/** Whether the member wrote their acceptance; null when it was not read. Never changes access. */
+	confirmed: boolean | null;
 }
 
 export interface JoinRequestRow {

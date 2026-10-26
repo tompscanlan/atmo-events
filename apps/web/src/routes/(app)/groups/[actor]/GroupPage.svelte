@@ -147,6 +147,8 @@
 
 	{#if membership.signIn}
 		<GroupSignInNotice groupDid={group.group_did} class="mt-6" />
+	{:else if data.confirmPrompt}
+		<GroupSignInNotice groupDid={group.group_did} subject="confirm" class="mt-6" />
 	{/if}
 
 	<!-- Nothing could be read with the caller's own access: the row's name, no rules. -->

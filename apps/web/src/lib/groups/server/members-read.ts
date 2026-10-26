@@ -189,15 +189,39 @@ function byRosterOrder(a: RosterEntry, b: RosterEntry): number {
 	return a.created_at - b.created_at || a.did.localeCompare(b.did);
 }
 
-export function rosterFromRecords(members: GroupMembers): RosterEntry[] {
+/** With `acceptances` null, nobody's state is known. */
+export function rosterFromRecords(
+	members: GroupMembers,
+	acceptances: ReadonlyMap<string, boolean> | null = null
+): RosterEntry[] {
 	return members.memberships
 		.flatMap((record) => {
 			const role = primaryRole(record.roles);
-			return role ? [{ did: record.subject, role, created_at: createdAtMs(record.createdAt) }] : [];
+			if (!role) return [];
+			const confirmed = acceptances ? acceptances.get(record.subject) === true : null;
+			return [{ did: record.subject, role, created_at: createdAtMs(record.createdAt), confirmed }];
 		})
 		.sort(byRosterOrder);
 }
 
+/** The rows hold no acceptance. */
 export function rosterFromRows(rows: MemberRow[]): RosterEntry[] {
-	return rows.map((row) => ({ did: row.did, role: row.role, created_at: row.created_at }));
+	return rows.map((row) => ({
+		did: row.did,
+		role: row.role,
+		created_at: row.created_at,
+		confirmed: null
+	}));
+}
+
+/** The proposal's roster lists a member only while their acceptance also exists; an admin
+ *  also sees the rest. A roster whose acceptances were not read lists everyone. */
+export function splitRoster(roster: RosterEntry[]): {
+	listed: RosterEntry[];
+	unconfirmed: RosterEntry[];
+} {
+	return {
+		listed: roster.filter((entry) => entry.confirmed !== false),
+		unconfirmed: roster.filter((entry) => entry.confirmed === false)
+	};
 }

@@ -179,12 +179,57 @@ function credentialSpace(authorization: string): string | null {
 	}
 }
 
-/** The member's PDS: a delegation token for a space their sign-in reads. */
-function memberPds(url: URL, headers: Headers): Response {
+/** Each write a fixture person's own session made in a group space, in order. */
+export const memberWrites: {
+	did: string;
+	nsid: string;
+	space: string;
+	collection: string;
+	rkey: string;
+}[] = [];
+
+/** A write in the person's own repo in a group space, applied to that group's host. */
+function memberSpaceWrite(url: URL, holder: string, init?: RequestInit): Response {
+	const nsid = url.pathname.slice('/xrpc/'.length);
+	const body = JSON.parse(String(init?.body ?? '{}'));
+	const address = {
+		space: String(body.space),
+		repo: String(body.repo),
+		collection: String(body.collection),
+		rkey: String(body.rkey)
+	};
+	if (address.repo !== holder)
+		return json(400, { error: 'InvalidRequest', message: 'not your repo' });
+	memberWrites.push({ did: holder, nsid, ...address });
+	const host = hosts.get(spaceParts(address.space).authority) as FakeSpaceReader | undefined;
+	if (nsid === 'com.atproto.space.deleteRecord') {
+		host?.remove?.(address);
+		return json(200, {});
+	}
+	if (nsid === 'com.atproto.space.createRecord' && host?.peek?.(address)) {
+		return json(400, { error: 'RecordAlreadyExists', message: 'Record already exists' });
+	}
+	host?.put?.({ ...address, value: body.record });
+	return json(200, {
+		uri: `at://${address.space.slice('at://'.length)}/${holder}/${address.collection}/${address.rkey}`,
+		cid: 'bafyreiwrite'
+	});
+}
+
+/** The member's PDS: a delegation token for a space their sign-in reads, and their own
+ *  writes in a group space. */
+function memberPds(url: URL, headers: Headers, init?: RequestInit): Response {
+	const holder = (headers.get('authorization') ?? '').replace(/^Bearer member /, '');
+	if (
+		url.pathname === '/xrpc/com.atproto.space.createRecord' ||
+		url.pathname === '/xrpc/com.atproto.space.putRecord' ||
+		url.pathname === '/xrpc/com.atproto.space.deleteRecord'
+	) {
+		return memberSpaceWrite(url, holder, init);
+	}
 	if (url.pathname !== '/xrpc/com.atproto.space.getDelegationToken') {
 		throw new Error(`reader-host: the member PDS has no answer for ${url.pathname}`);
 	}
-	const holder = (headers.get('authorization') ?? '').replace(/^Bearer member /, '');
 	const space = url.searchParams.get('space') ?? '';
 	if (!scopeReads(granted.get(holder) ?? '', holder, space)) {
 		return json(403, { error: 'ScopeMissingError', message: `Missing required scope` });
@@ -299,7 +344,7 @@ export function serveReader(groupDid: string, host: GroupSpaceReader | null): vo
 					]
 				});
 			}
-			if (url.origin === MEMBER_PDS_SERVICE) return memberPds(url, headers);
+			if (url.origin === MEMBER_PDS_SERVICE) return memberPds(url, headers, init);
 			if (url.origin !== new URL(STUB_PDS_SERVICE).origin) {
 				throw new Error(`reader-host: unexpected request to ${url.href}`);
 			}
@@ -340,6 +385,7 @@ export function serveReader(groupDid: string, host: GroupSpaceReader | null): vo
  *  count outlives its test. */
 export function resetReaderHost(): void {
 	hosts.clear();
+	memberWrites.length = 0;
 	broken.clear();
 	linkedServices.clear();
 	granted.clear();

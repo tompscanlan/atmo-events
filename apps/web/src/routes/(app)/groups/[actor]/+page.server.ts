@@ -5,10 +5,10 @@ import { unfinishedSetupFor } from '$lib/groups/create-at-host';
 import { mayHoldGroupSession } from '$lib/groups/grants';
 import { can } from '$lib/groups/permissions';
 import { readGroupAbout, type GroupSpaceReader } from '$lib/groups/server/about-read';
-import { gateCaller } from '$lib/groups/server/caller';
+import { gateCaller, type CallerSession } from '$lib/groups/server/caller';
 import { publiclyDeclared } from '$lib/groups/server/declaration-writer';
 import { refreshGroupHandle } from '$lib/groups/server/handles';
-import { readGroupMembers, NO_MEMBER_RECORDS } from '$lib/groups/server/members-read';
+import { readGroupMembers, splitRoster, NO_MEMBER_RECORDS } from '$lib/groups/server/members-read';
 import { loadPeople } from '$lib/groups/server/people';
 import { groupRouteContext, pageRoster } from '$lib/groups/server/route-context';
 import { readGroupVisibility } from '$lib/groups/server/spaces';
@@ -45,11 +45,12 @@ const ROSTER_PREVIEW = 8;
 async function rosterPreview(
 	reader: GroupSpaceReader | null,
 	db: D1Database,
-	group: GroupRow
+	group: GroupRow,
+	viewer: CallerSession | null
 ): Promise<RosterEntry[] | null> {
 	try {
 		const members = reader ? await readGroupMembers(reader, group) : NO_MEMBER_RECORDS;
-		return await pageRoster(db, group, members);
+		return await pageRoster(db, group, members, viewer);
 	} catch (e) {
 		console.error(`[groups] ${group.group_did}: the members space did not answer:`, e);
 		return null;
@@ -58,14 +59,10 @@ async function rosterPreview(
 
 export const load: PageServerLoad = async ({ params, locals, platform, url }) => {
 	const db = platform!.env.DB;
+	const viewer = await gateCaller(locals.did, locals.session);
 	let context: Awaited<ReturnType<typeof groupRouteContext>>;
 	try {
-		context = await groupRouteContext(
-			db,
-			params.actor,
-			await gateCaller(locals.did, locals.session),
-			{ signInNotice: true }
-		);
+		context = await groupRouteContext(db, params.actor, viewer, { signInNotice: true });
 	} catch (e) {
 		const unfinished =
 			isHttpError(e, 404) && locals.did
@@ -97,13 +94,14 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 	const [about, visibility, roster, pendingRequests, listed] = await Promise.all([
 		reader ? readGroupAbout(reader, group) : { profile: null, rules: [] },
 		hostVisibility(gateVisibility, reader, group),
-		showRoster ? rosterPreview(reader, db, group) : null,
+		showRoster ? rosterPreview(reader, db, group, viewer) : null,
 		canAdmitMembers
 			? pendingRequestsFor({ db, env: platform!.env, group }, { callerDid: locals.did!, reader })
 			: [],
 		canManageGroup ? publiclyDeclared(db, group.group_did) : false
 	]);
-	const preview = roster?.slice(0, ROSTER_PREVIEW) ?? [];
+	const { listed: confirmed, unconfirmed } = splitRoster(roster ?? []);
+	const preview = confirmed.slice(0, ROSTER_PREVIEW);
 	const link = url.searchParams.get('link');
 
 	return {
@@ -118,7 +116,9 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 			...groupFace(about.profile, group),
 			rules: about.rules.map((rule) => ({ text: rule.text, uri: rule.uri }))
 		},
-		memberCount: roster?.length ?? (await countMembers(db, group.id)),
+		memberCount: roster ? confirmed.length : await countMembers(db, group.id),
+		/** The viewer's own acceptance is missing and their sign-in could not write it. */
+		confirmPrompt: unconfirmed.some((entry) => entry.did === locals.did),
 		rosterPreview: preview,
 		pendingRequests: pendingRequests ?? [],
 		/** The viewer may admit, but holds no group session to ask the host with. */

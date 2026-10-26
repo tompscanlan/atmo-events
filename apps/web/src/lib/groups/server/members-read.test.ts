@@ -13,7 +13,8 @@ import {
 	resolveActor,
 	rolePermissionsFromRecords,
 	rosterFromRecords,
-	rosterFromRows
+	rosterFromRows,
+	splitRoster
 } from './members-read';
 import {
 	GROUP_MEMBERSHIP_COLLECTION,
@@ -177,6 +178,33 @@ describe('rosterFromRecords', () => {
 			MEMBER,
 			OWNER
 		]);
+	});
+
+	it('says who confirmed, and nobody when no acceptance was read', async () => {
+		const members = await readGroupMembers(
+			readerOver([membership(MEMBER, ['member']), membership(ADMIN, ['admin'])]),
+			group
+		);
+		const read = new Map([
+			[MEMBER, true],
+			[ADMIN, false],
+			[STRANGER, true]
+		]);
+
+		const confirmed = rosterFromRecords(members, read);
+		expect(Object.fromEntries(confirmed.map((e) => [e.did, e.confirmed]))).toEqual({
+			[MEMBER]: true,
+			[ADMIN]: false
+		});
+		expect(rosterFromRecords(members).every((e) => e.confirmed === null)).toBe(true);
+		expect(rosterFromRows(await listMembers(db, group.id)).every((e) => e.confirmed === null)).toBe(
+			true
+		);
+
+		const { listed, unconfirmed } = splitRoster(confirmed);
+		expect(listed.map((e) => e.did)).toEqual([MEMBER]);
+		expect(unconfirmed.map((e) => e.did)).toEqual([ADMIN]);
+		expect(splitRoster(rosterFromRecords(members)).listed).toHaveLength(2);
 	});
 });
 

@@ -6,8 +6,10 @@ import { actorToDid } from '$lib/atproto/methods';
 import { canSeeGroup } from '../access';
 import type { CallerMembership, GroupRow, GroupVisibility, RosterEntry } from '../types';
 import { credentialSpaceReader, readGroupProfile, type GroupSpaceReader } from './about-read';
+import { writeAcceptance } from './acceptance';
 import type { CallerSession } from './caller';
 import { publiclyDeclared } from './declaration-writer';
+import { errorText } from './errors';
 import { holdsMetaRead, readsMembersSpace } from './member-grants';
 import { knownHandles } from './identities';
 import {
@@ -20,7 +22,7 @@ import { readGroupVisibility } from './spaces';
 import { getGroupByDid } from './db/groups';
 import { listMembers } from './db/roster';
 import { readStanding } from './standing';
-import { isSpaceAccessDenied } from './space-credential';
+import { credentialAcceptanceReader, isSpaceAccessDenied } from './space-credential';
 
 /** Byte for byte, so the causes cannot be told apart. */
 export const GROUP_NOT_FOUND = 'Group not found';
@@ -147,14 +149,42 @@ export async function groupHeader(
 	return { groupName: profile?.name ?? group.name, handle: handles.get(group.group_did) ?? null };
 }
 
+/** Each listed member's acceptance, read with the viewer's own credential; null when none
+ *  could be had. */
+async function readAcceptances(
+	viewer: CallerSession,
+	group: GroupRow,
+	dids: string[]
+): Promise<Map<string, boolean> | null> {
+	if (!group.members_space_uri || dids.length === 0) return null;
+	if (!readsMembersSpace(viewer.scope, group.group_did)) return null;
+	try {
+		return await credentialAcceptanceReader(viewer).accepted(group.members_space_uri, dids);
+	} catch (e) {
+		console.warn(`[groups] ${group.group_did}: acceptances could not be read:`, errorText(e));
+		return null;
+	}
+}
+
+/** With a viewer, each entry says whether the member confirmed, and a viewer who has not
+ *  gets their acceptance written now when their session can write it (FR-205). */
 export async function pageRoster(
 	db: D1Database,
 	group: GroupRow,
-	members: GroupMembers
+	members: GroupMembers,
+	viewer: CallerSession | null = null
 ): Promise<RosterEntry[]> {
-	return hasMemberRecords(members)
-		? rosterFromRecords(members)
-		: rosterFromRows(await listMembers(db, group.id));
+	if (!hasMemberRecords(members)) return rosterFromRows(await listMembers(db, group.id));
+	const dids = members.memberships.map((record) => record.subject);
+	const acceptances = viewer ? await readAcceptances(viewer, group, dids) : null;
+	if (viewer && acceptances?.get(viewer.did) === false) {
+		const wrote = await writeAcceptance(viewer, group).catch((e) => {
+			console.warn(`[groups] ${viewer.did}'s acceptance in ${group.group_did}:`, errorText(e));
+			return 'skipped' as const;
+		});
+		if (wrote !== 'skipped') acceptances.set(viewer.did, true);
+	}
+	return rosterFromRecords(members, acceptances);
 }
 
 /** Always the DID, never a handle. */

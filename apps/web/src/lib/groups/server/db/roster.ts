@@ -1,5 +1,5 @@
 // The D1 rows for who is in a group. A pending request is a join request, never a membership.
-import type { MemberRow } from '../../types';
+import type { GroupRow, MemberRow } from '../../types';
 import { ensureGroupsSchema } from '../schema';
 import { GroupRuleError, constraintMessage, guard } from './rules';
 
@@ -25,6 +25,23 @@ export async function getMemberRow(
 		.prepare(`${MEMBER_ROW} WHERE group_id = ? AND did = ?`)
 		.bind(groupId, did)
 		.first<MemberRow>();
+}
+
+/** The groups whose rows list `did` as a member, oldest first. */
+export async function groupsOfMember(
+	db: D1Database,
+	did: string
+): Promise<Pick<GroupRow, 'group_did' | 'members_space_uri'>[]> {
+	await ensureGroupsSchema(db);
+	const { results } = await db
+		.prepare(
+			`SELECT group_did, members_space_uri FROM groups
+			 WHERE id IN (SELECT group_id FROM memberships WHERE did = ?)
+			 ORDER BY created_at, group_did`
+		)
+		.bind(did)
+		.all<Pick<GroupRow, 'group_did' | 'members_space_uri'>>();
+	return results ?? [];
 }
 
 /** Roster size. A page may show the count to someone not allowed the names. */

@@ -5,7 +5,15 @@ import { P256PrivateKeyExportable, type P256PrivateKey } from '@atcute/crypto';
 import type { Did } from '@atcute/lexicons';
 import { createDidDocumentResolver } from '$lib/atproto/identity';
 import { spaceRecordUri } from '../ids';
-import { describeFailure, readXrpc, xrpcError, type XrpcAnswer, type XrpcHandle } from './xrpc';
+import { GROUP_ACCEPTANCE_COLLECTION, GROUP_ACCEPTANCE_RKEY } from '../members-record';
+import {
+	describeFailure,
+	isRecordNotFound,
+	readXrpc,
+	xrpcError,
+	type XrpcAnswer,
+	type XrpcHandle
+} from './xrpc';
 import { MAC_HEADER, recordCid, recordMacCheck, WANT_MAC_HEADER } from './space-mac';
 
 const SIGNATURE_LABEL = 'atproto-space-credential';
@@ -254,6 +262,75 @@ export async function credentialRequest(
 		if (answer.ok || attempt > 0 || !answer.error || !SPENT[answer.error]) return answer;
 		spent.add(cred);
 	}
+}
+
+type AcceptanceRead = 'accepted' | 'absent' | 'spent';
+
+/** At the member's own PDS. Any failure but a spent credential reads as absent and is
+ *  logged, as for a member whose PDS serves no spaces. */
+async function readAcceptance(
+	cred: SpaceCredential,
+	hosts: SpaceHosts,
+	space: string,
+	did: string
+): Promise<AcceptanceRead> {
+	try {
+		const answer = await readXrpc(
+			await fetchWithCredential(cred, hosts, {
+				host: await hosts.repoHost(did),
+				audience: did,
+				nsid: GET_RECORD,
+				query: {
+					space,
+					repo: did,
+					collection: GROUP_ACCEPTANCE_COLLECTION,
+					rkey: GROUP_ACCEPTANCE_RKEY
+				}
+			})
+		);
+		if (answer.ok) return 'accepted';
+		if (isRecordNotFound(answer)) return 'absent';
+		if (answer.error && SPENT[answer.error]) return 'spent';
+		console.info(`[groups] acceptance read for ${did} in ${space}: ${describeFailure(answer)}`);
+		return 'absent';
+	} catch (e) {
+		console.info(`[groups] acceptance read for ${did} in ${space} failed:`, e);
+		return 'absent';
+	}
+}
+
+export interface AcceptanceReader {
+	/** Only the DIDs passed in are read, so an acceptance with no membership never counts.
+	 *  Throws only when no credential can be had. */
+	accepted(space: string, dids: readonly string[]): Promise<Map<string, boolean>>;
+}
+
+/** A credential the hosts call spent is replaced once, and those DIDs read again. */
+export function credentialAcceptanceReader(
+	holder: SpaceHolder,
+	hosts: SpaceHosts = didSpaceHosts
+): AcceptanceReader {
+	return {
+		async accepted(space, dids) {
+			const authorityHost = await hosts.repoHost(spaceAuthority(space));
+			const answers = new Map<string, boolean>();
+			let pending = [...new Set(dids)];
+			for (let attempt = 0; attempt < 2 && pending.length > 0; attempt++) {
+				const cred = await spaceCredential(holder, space, authorityHost);
+				const reads = await Promise.all(
+					pending.map(async (did) => [did, await readAcceptance(cred, hosts, space, did)] as const)
+				);
+				pending = [];
+				for (const [did, read] of reads) {
+					if (read === 'spent') pending.push(did);
+					else answers.set(did, read === 'accepted');
+				}
+				if (pending.length > 0) spent.add(cred);
+			}
+			for (const did of pending) answers.set(did, false);
+			return answers;
+		}
+	};
 }
 
 const RESOLVED_TTL_MS = 10 * 60 * 1000;

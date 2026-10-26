@@ -8,6 +8,7 @@
 	import { addMemberForm, changeMemberRoleForm, removeMemberForm } from '$lib/groups/roster.remote';
 	import JoinRequestItem from '$lib/groups/components/JoinRequestItem.svelte';
 	import GroupSignInNotice from '$lib/groups/components/GroupSignInNotice.svelte';
+	import type { RosterEntry } from '$lib/groups/types';
 
 	let { data } = $props();
 
@@ -19,6 +20,54 @@
 	// A remote form attaches to one `<form>` only, so each row's forms are `.for(key)`.
 	let addError = $derived(groupFormError(addMemberForm.result));
 </script>
+
+{#snippet memberRow(member: RosterEntry)}
+	<li class="ring-base-200 dark:ring-base-800 rounded-xl p-3 ring-1">
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<div class="flex min-w-0 items-center gap-3">
+				<PersonLabel did={member.did} person={data.people?.[member.did]} />
+				<Badge variant={member.role === 'admin' ? 'primary' : 'secondary'}>
+					{member.role}
+				</Badge>
+			</div>
+
+			{#if canManageAnyMember}
+				{@const roleForm = changeMemberRoleForm.for(member.did)}
+				{@const removeForm = removeMemberForm.for(member.did)}
+				{@const rowError = groupFormError(roleForm.result) ?? groupFormError(removeForm.result)}
+				<div class="flex shrink-0 flex-wrap items-center gap-2">
+					{#if data.canAssignRoles}
+						<form {...resetOnSuccess(roleForm)} class="flex items-center gap-1">
+							<input type="hidden" name="groupDid" value={group.group_did} />
+							<input type="hidden" name="did" value={member.did} />
+							<select
+								name="role"
+								class="ring-base-200 dark:ring-base-800 bg-base-100/50 dark:bg-base-900/50 rounded-ui border-0 px-2 py-1 text-xs ring-1 ring-inset"
+							>
+								{#each data.assignableRoles as role (role)}
+									<option value={role} selected={member.role === role}>{role}</option>
+								{/each}
+							</select>
+							<Button type="submit" size="sm" variant="secondary">Set role</Button>
+						</form>
+					{/if}
+					{#if data.canEjectMembers}
+						<form {...resetOnSuccess(removeForm)}>
+							<input type="hidden" name="groupDid" value={group.group_did} />
+							<input type="hidden" name="did" value={member.did} />
+							<button type="submit" class="text-xs text-red-600 hover:underline dark:text-red-400"
+								>Remove</button
+							>
+						</form>
+					{/if}
+				</div>
+				{#if rowError}
+					<p class="w-full text-sm text-red-600 dark:text-red-400">{rowError}</p>
+				{/if}
+			{/if}
+		</div>
+	</li>
+{/snippet}
 
 <svelte:head><title>{groupName} members - atmo.rsvp</title></svelte:head>
 
@@ -33,61 +82,33 @@
 	{#if data.signIn}
 		<GroupSignInNotice groupDid={group.group_did} class="mt-4" />
 	{:else}
+		{#if data.confirmPrompt}
+			<GroupSignInNotice groupDid={group.group_did} subject="confirm" class="mt-4" />
+		{/if}
 		{#if addError}
 			<p class="mt-6 text-sm text-red-600 dark:text-red-400">{addError}</p>
 		{/if}
 
 		<ul class="mt-6 flex flex-col gap-2">
 			{#each data.members as member (member.did)}
-				<li class="ring-base-200 dark:ring-base-800 rounded-xl p-3 ring-1">
-					<div class="flex flex-wrap items-center justify-between gap-3">
-						<div class="flex min-w-0 items-center gap-3">
-							<PersonLabel did={member.did} person={data.people[member.did]} />
-							<Badge variant={member.role === 'admin' ? 'primary' : 'secondary'}>
-								{member.role}
-							</Badge>
-						</div>
-
-						{#if canManageAnyMember}
-							{@const roleForm = changeMemberRoleForm.for(member.did)}
-							{@const removeForm = removeMemberForm.for(member.did)}
-							{@const rowError =
-								groupFormError(roleForm.result) ?? groupFormError(removeForm.result)}
-							<div class="flex shrink-0 flex-wrap items-center gap-2">
-								{#if data.canAssignRoles}
-									<form {...resetOnSuccess(roleForm)} class="flex items-center gap-1">
-										<input type="hidden" name="groupDid" value={group.group_did} />
-										<input type="hidden" name="did" value={member.did} />
-										<select
-											name="role"
-											class="ring-base-200 dark:ring-base-800 bg-base-100/50 dark:bg-base-900/50 rounded-ui border-0 px-2 py-1 text-xs ring-1 ring-inset"
-										>
-											{#each data.assignableRoles as role (role)}
-												<option value={role} selected={member.role === role}>{role}</option>
-											{/each}
-										</select>
-										<Button type="submit" size="sm" variant="secondary">Set role</Button>
-									</form>
-								{/if}
-								{#if data.canEjectMembers}
-									<form {...resetOnSuccess(removeForm)}>
-										<input type="hidden" name="groupDid" value={group.group_did} />
-										<input type="hidden" name="did" value={member.did} />
-										<button
-											type="submit"
-											class="text-xs text-red-600 hover:underline dark:text-red-400">Remove</button
-										>
-									</form>
-								{/if}
-							</div>
-							{#if rowError}
-								<p class="w-full text-sm text-red-600 dark:text-red-400">{rowError}</p>
-							{/if}
-						{/if}
-					</div>
-				</li>
+				{@render memberRow(member)}
 			{/each}
 		</ul>
+
+		{#if data.unconfirmed.length > 0}
+			<section class="mt-10">
+				<h2 class="mb-1 text-xl font-semibold">Added, not yet confirmed</h2>
+				<p class="text-base-500 dark:text-base-400 mb-3 text-sm">
+					They hold a membership, so they have access, but they have not confirmed it from their own
+					account, so the roster others see leaves them out. A PDS without spaces cannot confirm.
+				</p>
+				<ul class="flex flex-col gap-2">
+					{#each data.unconfirmed as member (member.did)}
+						{@render memberRow(member)}
+					{/each}
+				</ul>
+			</section>
+		{/if}
 
 		<!-- Rows the records no longer back; each Remove shares its roster row's form. -->
 		{#if data.unfinished.length > 0}
@@ -147,7 +168,8 @@
 
 				<h2 class="mt-8 mb-1 text-xl font-semibold">Add a member directly</h2>
 				<p class="text-base-500 dark:text-base-400 mb-3 text-sm">
-					They join at once, with the role you pick.
+					They join at once, with the role you pick, and show as not yet confirmed until they next
+					sign in or visit.
 				</p>
 				<form {...resetOnSuccess(addMemberForm)} class="flex flex-wrap items-end gap-2">
 					<input type="hidden" name="groupDid" value={group.group_did} />

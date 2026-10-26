@@ -7,6 +7,7 @@ import {
 	readGroupMembers,
 	rolePermissionsFromRecords,
 	rolesForDid,
+	splitRoster,
 	type GroupMembers
 } from '$lib/groups/server/members-read';
 import { listMembers } from '$lib/groups/server/db/roster';
@@ -82,7 +83,9 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 
 	const canAdmitMembers = can(membership.permissions, 'ADMIT_MEMBERS');
 	const canEjectMembers = can(membership.permissions, 'EJECT_MEMBERS');
-	const roster = await pageRoster(db, group, members);
+	const everyone = await pageRoster(db, group, members, isGroup ? null : viewer);
+	const { listed: roster, unconfirmed: notConfirmed } = splitRoster(everyone);
+	const unconfirmed = canAdmitMembers ? notConfirmed : [];
 	const unfinished =
 		canEjectMembers && fromRecords ? await unfinishedRemovals(db, group, members) : [];
 	const pendingRequests = canAdmitMembers
@@ -98,11 +101,16 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		groupName,
 		signIn: null,
 		members: roster,
+		/** Added, not yet confirmed: a membership and no acceptance. Admins only (FR-204). */
+		unconfirmed,
+		/** The viewer's own acceptance is missing and their sign-in could not write it. */
+		confirmPrompt: notConfirmed.some((entry) => entry.did === locals.did),
 		pendingRequests: pendingRequests ?? [],
 		/** The viewer may admit, but holds no group session to ask the host with. */
 		requestsNeedLink: pendingRequests === null,
 		people: await loadPeople(db, [
 			...roster.map((entry) => entry.did),
+			...unconfirmed.map((entry) => entry.did),
 			...(pendingRequests ?? []).map((request) => request.did),
 			...unfinished
 		]),

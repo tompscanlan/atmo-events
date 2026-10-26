@@ -20,11 +20,13 @@ import {
 	type SpaceReadCall,
 	type SpaceRecordInput
 } from '$lib/groups/server/__fixtures__/space-reader';
-import { authzRecords } from '$lib/groups/server/__fixtures__/host-records';
+import { acceptanceRecords, authzRecords } from '$lib/groups/server/__fixtures__/host-records';
 import {
 	admitOnly,
 	declare,
 	fixtureSessions,
+	memberWrites,
+	READ_EVERYTHING,
 	readerSession,
 	resetReaderHost,
 	serveReader
@@ -145,6 +147,7 @@ type GroupPage = Record<string, unknown> & {
 	hiddenDetails: 'signed-out' | 'no-access' | null;
 	rosterPreview: { did: string }[];
 	memberCount: number;
+	confirmPrompt: boolean;
 };
 
 async function openAs(
@@ -237,9 +240,45 @@ describe('the group and its face', () => {
 
 describe('the roster preview', () => {
 	it('shows a member the faces', async () => {
-		groupHost('public');
+		groupHost('public', { records: acceptanceRecords(GROUP_DID, [OWNER, MEMBER]) });
 		const data = await openAs(MEMBER);
 		expect(data.rosterPreview.map((entry) => entry.did).sort()).toEqual([MEMBER, OWNER]);
+		expect(data.confirmPrompt).toBe(false);
+	});
+
+	it('leaves out, and does not count, a member who has not confirmed', async () => {
+		groupHost('public', { records: acceptanceRecords(GROUP_DID, [MEMBER]) });
+		const data = await openAs(MEMBER);
+		expect(data.rosterPreview.map((entry) => entry.did)).toEqual([MEMBER]);
+		expect(data.memberCount).toBe(1);
+	});
+
+	it("writes a visiting member's missing acceptance when their sign-in can", async () => {
+		const host = groupHost('public', { records: acceptanceRecords(GROUP_DID, [OWNER]) });
+		const data = await openAs(MEMBER, {
+			scope: `${READ_EVERYTHING} space:group.opensocial.members?authority=*&collection=group.opensocial.acceptance&action=read&action=create&action=delete`
+		});
+		expect(memberWrites.map((w) => [w.did, w.nsid, w.space])).toEqual([
+			[MEMBER, 'com.atproto.space.createRecord', MEMBERS]
+		]);
+		expect(data.rosterPreview.map((entry) => entry.did).sort()).toEqual([MEMBER, OWNER]);
+		expect(data.confirmPrompt).toBe(false);
+		expect(
+			host.peek({
+				space: MEMBERS,
+				repo: MEMBER,
+				collection: 'group.opensocial.acceptance',
+				rkey: 'self'
+			})
+		).not.toBeNull();
+	});
+
+	it('offers a member whose sign-in cannot write their acceptance to confirm', async () => {
+		groupHost('public', { records: acceptanceRecords(GROUP_DID, [OWNER]) });
+		const data = await openAs(MEMBER);
+		expect(memberWrites).toEqual([]);
+		expect(data.confirmPrompt).toBe(true);
+		expect(data.rosterPreview.map((entry) => entry.did)).toEqual([OWNER]);
 	});
 
 	it.each([

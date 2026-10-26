@@ -5,6 +5,8 @@ import { GROUP_ROLES, type GroupRoleName } from '../../permissions';
 import { MEMBERS_SPACE_TYPE } from '../../types';
 import {
 	ABOUT_SPACE_READER_ROLES,
+	GROUP_ACCEPTANCE_COLLECTION,
+	GROUP_ACCEPTANCE_RKEY,
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
 	GROUP_MEMBERSHIP_COLLECTION,
@@ -86,4 +88,19 @@ export function authzRecords(
 			}
 		}))
 	];
+}
+
+/** Each member's own acceptance, in their repo in the members space. */
+export function acceptanceRecords(
+	groupDid: string,
+	dids: readonly string[]
+): (HostRecord & { repo: string })[] {
+	const space = spaceUri(groupDid, MEMBERS_SPACE_TYPE, SPACE_SKEY);
+	return dids.map((did) => ({
+		space,
+		repo: did,
+		collection: GROUP_ACCEPTANCE_COLLECTION,
+		rkey: GROUP_ACCEPTANCE_RKEY,
+		value: { $type: GROUP_ACCEPTANCE_COLLECTION, createdAt: '2026-10-01T00:00:00.000Z' }
+	}));
 }

@@ -9,6 +9,7 @@ vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { load } from './+page.server';
 import { authzReader } from '$lib/groups/server/__fixtures__/members-space';
+import { acceptanceRecords } from '$lib/groups/server/__fixtures__/host-records';
 import {
 	admitOnly,
 	fixtureSessions,
@@ -73,12 +74,13 @@ afterEach(() => {
 	resetReaderHost();
 });
 
-/** A host whose members space names OWNER as admin and MEMBER as member. */
-function recordsHost(isPublic = true): FakeSpaceReader {
+/** A host whose members space names OWNER as admin and MEMBER as member, each confirmed
+ *  unless left out of `confirmed`. */
+function recordsHost(isPublic = true, confirmed: string[] = [OWNER, MEMBER]): FakeSpaceReader {
 	const host = authzReader(
 		GROUP_DID,
 		{ [OWNER]: 'admin', [MEMBER]: 'member' },
-		{ records: [metaAccess(isPublic)] }
+		{ records: [metaAccess(isPublic), ...acceptanceRecords(GROUP_DID, confirmed)] }
 	);
 	serveReader(GROUP_DID, host);
 	return host;
@@ -90,7 +92,9 @@ async function openAs(did: string | null, scope?: string) {
 		locals: { did, session: did ? readerSession(did, scope) : null },
 		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } }
 	} as unknown as Parameters<typeof load>[0])) as Record<string, unknown> & {
-		members: { did: string; role: string }[];
+		members: { did: string; role: string; confirmed: boolean | null }[];
+		unconfirmed: { did: string }[];
+		confirmPrompt: boolean;
 		unfinished: string[];
 		rolePermissions: Record<string, string[]>;
 	};
@@ -107,7 +111,8 @@ describe('/groups/[actor]/members load, with membership records', () => {
 			[MEMBER, 'member'],
 			[OWNER, 'admin']
 		]);
-		expect(Object.keys(data.members[0]).sort()).toEqual(['created_at', 'did', 'role']);
+		expect(Object.keys(data.members[0]).sort()).toEqual(['confirmed', 'created_at', 'did', 'role']);
+		expect(data.members.every((entry) => entry.confirmed)).toBe(true);
 		expect(data.rolePermissions.member).toEqual([]);
 		expect(data.rolePermissions.admin).toContain('ADMIT_MEMBERS');
 		expect(data.unfinished).toEqual([]);
@@ -117,6 +122,22 @@ describe('/groups/[actor]/members load, with membership records', () => {
 			.map(([, init]) => new Headers(init?.headers).get('authorization'));
 		expect(new Set(delegations)).toEqual(new Set([`Bearer member ${MEMBER}`]));
 		expect(fixtureSessions.reads).toBe(0);
+	});
+
+	it('leaves a member who has not confirmed out of the roster, and prompts them', async () => {
+		recordsHost(true, [OWNER]);
+		const data = await openAs(MEMBER);
+		expect(dids(data)).toEqual([OWNER]);
+		expect(data.unconfirmed).toEqual([]);
+		expect(data.confirmPrompt).toBe(true);
+	});
+
+	it('shows an admin the members who have not confirmed', async () => {
+		recordsHost(true, [OWNER]);
+		const data = await openAs(OWNER);
+		expect(dids(data)).toEqual([OWNER]);
+		expect(data.unconfirmed.map((entry) => entry.did)).toEqual([MEMBER]);
+		expect(data.confirmPrompt).toBe(false);
 	});
 
 	it('lists the rows the records do not back as not finished, to whoever may eject', async () => {

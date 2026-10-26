@@ -13,6 +13,7 @@ its spaces; D1 holds a cache of them and a note of each join request sent from t
 | declaration (makes the group findable)                   | the group's public repo, while it is public and listed    | anyone                 |
 | profile, rules, access                                   | the meta space, `group.opensocial.meta`                   | the group's visibility |
 | roles, permissions, membership, access                   | the members space, `group.opensocial.members`             | its `access` record    |
+| each member's acceptance                                 | the member's own repo in the members space                | its `access` record    |
 | join requests                                            | the group host                                            | the host decides       |
 | a cache of the records above, and a note of each request | D1, `migrations/0001_groups.sql`                          | the app                |
 | the group sessions people linked                         | the `OAUTH_SESSIONS` KV namespace, under `group:session:` | the app                |
@@ -41,6 +42,10 @@ and the NSID resolves, delete the copy, the script, its test and its two steps i
   is the profile's own setting, apart from visibility; a public group can be left unlisted.
 - There is no owner. The creator is an ordinary `admin`, and the host's rules on demoting,
   removing and leaving apply to them as to anyone.
+- The roster lists a member while both their membership and their own acceptance exist; admins
+  also see who was added and has not confirmed. atmo writes the acceptance with the member's own
+  sign-in at an open join, at sign-in and on their next visit, never for a pending request, and
+  deletes it when they leave. A PDS without spaces cannot hold one.
 - Rules are set at create and shown on the group page; editing them is not in this version.
 - The settings save writes in a fixed order, so saving again finishes one that stopped partway
   (`update-group.ts`). Browse lists declared groups newest first by when the index saw them.
