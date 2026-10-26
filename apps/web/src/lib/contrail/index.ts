@@ -2,6 +2,8 @@ import { Contrail } from '@atmo-dev/contrail';
 import { createHandler } from '@atmo-dev/contrail/server';
 import { Client } from '@atcute/client';
 import { config } from '../contrail.config';
+import { network } from '../atproto/network';
+import { contrailNetwork } from '../atproto/contrail-network';
 import { getSpacesConfig, spacesAvailable } from '../spaces/config';
 import {
 	createMeiliSink,
@@ -35,6 +37,7 @@ let geocodeCacheDb: D1Database | null = null;
 
 export const contrail = new Contrail({
 	...config,
+	...contrailNetwork(network()),
 	...(spaces ? { spaces } : {}),
 	sinks: [
 		createMeiliSink(

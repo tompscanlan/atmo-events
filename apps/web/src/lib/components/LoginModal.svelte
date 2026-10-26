@@ -12,12 +12,14 @@
 
 <script lang="ts">
 	import { login, signup } from '$lib/atproto';
+	import { network } from '$lib/atproto/network';
 
 	import { AtprotoLoginModal } from '@foxui/social';
 </script>
 
 <AtprotoLoginModal
 	bind:open={atProtoLoginModalState.open}
+	host={network().appviewUrl}
 	login={async (handle) => {
 		await login(handle);
 		return true;

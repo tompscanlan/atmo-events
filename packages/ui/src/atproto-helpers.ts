@@ -3,6 +3,23 @@
  * on any session/client state — those flow through the EditorAdapter.
  */
 
+export const DEFAULT_IMAGE_URL_TEMPLATE =
+	'https://cdn.bsky.app/img/feed_thumbnail/plain/{did}/{cid}@{format}';
+export const DEFAULT_APPVIEW_URL = 'https://public.api.bsky.app';
+
+let imageUrlTemplate = DEFAULT_IMAGE_URL_TEMPLATE;
+let appviewUrl = DEFAULT_APPVIEW_URL;
+
+/** Points the components at another network's images and Bluesky API. */
+export function configureAtproto(options: { imageUrlTemplate?: string; appviewUrl?: string }) {
+	if (options.imageUrlTemplate !== undefined) imageUrlTemplate = options.imageUrlTemplate;
+	if (options.appviewUrl !== undefined) appviewUrl = options.appviewUrl;
+}
+
+export function getAppviewUrl(): string {
+	return appviewUrl;
+}
+
 export function getCDNImageBlobUrl({
 	did,
 	blob,
@@ -15,7 +32,10 @@ export function getCDNImageBlobUrl({
 	};
 	format?: 'webp' | 'jpeg' | 'png';
 }) {
-	return `https://cdn.bsky.app/img/feed_thumbnail/plain/${did}/${blob.ref.$link}@${format}`;
+	return imageUrlTemplate
+		.replace('{did}', did)
+		.replace('{cid}', blob.ref.$link)
+		.replace('{format}', format);
 }
 
 export function compressImage(

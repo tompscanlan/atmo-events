@@ -11,6 +11,7 @@
 	import type { Readable } from 'svelte/store';
 	import { get } from 'svelte/store';
 	import type { EditorAdapter, EditorViewer } from './editor/adapter.js';
+	import { getAppviewUrl } from './atproto-helpers.js';
 
 	let {
 		open = $bindable(false),
@@ -50,7 +51,7 @@
 		return { type: 'doc', content } as JSONContent;
 	}
 
-	const searchMentions = createBlueskyMentionSearch();
+	const searchMentions = createBlueskyMentionSearch(getAppviewUrl());
 
 	// Seed from the initial prop; the $effect below re-pushes it into the editor
 	// each time the modal opens, so only capturing the initial value is intentional.
@@ -115,9 +116,7 @@
 		// Read the editor's live JSON directly — postContent only updates on the
 		// editor's onupdate callback and can lag behind setContent prefills.
 		const editor = editorStore ? get(editorStore) : undefined;
-		const liveJson: JSONContent = editor
-			? (editor.getJSON() as JSONContent)
-			: postContent.json;
+		const liveJson: JSONContent = editor ? (editor.getJSON() as JSONContent) : postContent.json;
 
 		posting = true;
 		errorMessage = null;
@@ -227,14 +226,12 @@
 		{#if canSetEventComments}
 			<Label class="flex items-center gap-2">
 				<Checkbox bind:checked={showComments} />
-				<span class="text-base-700 dark:text-base-300 text-sm">
-					Show comments on event page
-				</span>
+				<span class="text-base-700 dark:text-base-300 text-sm"> Show comments on event page </span>
 			</Label>
 		{/if}
 
 		{#if errorMessage}
-			<p class="text-red-600 dark:text-red-400 text-sm">{errorMessage}</p>
+			<p class="text-sm text-red-600 dark:text-red-400">{errorMessage}</p>
 		{/if}
 
 		<Button class="w-full" onclick={handlePost} disabled={posting}>

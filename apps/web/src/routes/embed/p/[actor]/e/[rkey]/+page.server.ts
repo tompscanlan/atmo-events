@@ -8,6 +8,7 @@ import {
 	getViewerRsvpFromContrail
 } from '$lib/contrail';
 import { getServerClient } from '$lib/contrail/index';
+import { imageUrl } from '$lib/atproto/network';
 import type { ActorIdentifier } from '@atcute/lexicons';
 
 export async function load({ params, url, platform }) {
@@ -48,7 +49,7 @@ export async function load({ params, url, platform }) {
 		if (eventData.media && eventData.media.length > 0) {
 			const thumb = eventData.media.find((m: any) => m.role === 'thumbnail');
 			if (thumb?.content?.ref?.$link) {
-				thumbnailUrl = `https://cdn.bsky.app/img/feed_thumbnail/plain/${did}/${thumb.content.ref.$link}@webp`;
+				thumbnailUrl = imageUrl(did, thumb.content.ref.$link);
 			}
 		}
 

@@ -1,9 +1,6 @@
 <script lang="ts">
-	import {
-		NestedComments,
-		blueskyPostToPostData,
-		type PostData
-	} from '@foxui/social';
+	import { NestedComments, blueskyPostToPostData, type PostData } from '@foxui/social';
+	import { getAppviewUrl } from './atproto-helpers.js';
 
 	let { postUri }: { postUri: string } = $props();
 
@@ -37,7 +34,7 @@
 		errorMessage = null;
 		try {
 			const res = await fetch(
-				`https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=6`
+				`${getAppviewUrl()}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=6`
 			);
 			if (!res.ok) throw new Error(`Failed to load thread (${res.status})`);
 			const data = (await res.json()) as { thread?: { replies?: unknown[] } };
@@ -58,12 +55,6 @@
 
 	let replyUrl = $derived(bskyWebUrl(postUri));
 </script>
-
-<style>
-	.comments-no-divider :global(> div) {
-		border-top-width: 0;
-	}
-</style>
 
 <div>
 	{#if replyUrl}
@@ -97,3 +88,9 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.comments-no-divider :global(> div) {
+		border-top-width: 0;
+	}
+</style>

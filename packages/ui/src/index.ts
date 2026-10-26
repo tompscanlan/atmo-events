@@ -22,21 +22,13 @@ export {
 export type { ScheduleEvent, ParentEventRef } from './conference.js';
 
 // Adapter contract
-export type {
-	EditorAdapter,
-	EditorBlobRef,
-	EditorViewer
-} from './editor/adapter.js';
+export type { EditorAdapter, EditorBlobRef, EditorViewer } from './editor/adapter.js';
 
 // Editor inputs
 export type { EventEditorPrefill } from './editor/types.js';
 
 // Domain types
-export type {
-	FlatEventRecord,
-	HostProfile,
-	AttendeeInfo
-} from './contrail.js';
+export type { FlatEventRecord, HostProfile, AttendeeInfo } from './contrail.js';
 export type {
 	EventData,
 	EventLexiconMain,
@@ -47,18 +39,19 @@ export type {
 export type { EventTheme } from './theme.js';
 
 // Theme values
-export {
-	defaultTheme,
-	themeBackgrounds,
-	randomAccentColor,
-	accentColors
-} from './theme.js';
+export { defaultTheme, themeBackgrounds, randomAccentColor, accentColors } from './theme.js';
 
 // Event helpers
 export { eventUrl, isEventOngoing, RSVP_GOING, RSVP_INTERESTED } from './contrail.js';
 
 // Atproto helpers (browser-safe, no client/session state)
-export { getCDNImageBlobUrl, compressImage } from './atproto-helpers.js';
+export {
+	getCDNImageBlobUrl,
+	compressImage,
+	configureAtproto,
+	DEFAULT_IMAGE_URL_TEMPLATE,
+	DEFAULT_APPVIEW_URL
+} from './atproto-helpers.js';
 export { getProfileUrl } from './profile-url.js';
 
 // Date/time helpers

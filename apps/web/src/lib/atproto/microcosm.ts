@@ -1,4 +1,4 @@
-const BASE_URL = 'https://ufos-api.microcosm.blue';
+import { network } from './network';
 
 export interface MicrocosmRecord<T = unknown> {
 	did: string;
@@ -12,7 +12,7 @@ export async function recentRecords<T = unknown>(
 	collections: string | string[]
 ): Promise<MicrocosmRecord<T>[]> {
 	const collection = Array.isArray(collections) ? collections.join(',') : collections;
-	const url = `${BASE_URL}/records?collection=${encodeURIComponent(collection)}`;
+	const url = `${network().ufosUrl}/records?collection=${encodeURIComponent(collection)}`;
 	const res = await fetch(url);
 	if (!res.ok) throw new Error(`Microcosm API error: ${res.status}`);
 	return res.json();
