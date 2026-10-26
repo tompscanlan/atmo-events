@@ -1,0 +1,9 @@
+# BuildKit reads this for deploy/snowglobe/Dockerfile only; the context is the repo root.
+.git
+**/node_modules
+**/.svelte-kit
+**/.wrangler
+**/.env
+**/.env.*
+**/.dev.vars
+**/.dev.vars.*
