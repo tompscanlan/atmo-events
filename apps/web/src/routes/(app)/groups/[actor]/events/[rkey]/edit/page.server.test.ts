@@ -43,6 +43,16 @@ const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const EVENT = 'community.lexicon.calendar.event';
 const PADDLE_URI = `at://${GROUP_DID}/${EVENT}/3lpaddle`;
 const PADDLE = { $type: EVENT, name: 'Sunrise paddle', startsAt: '2030-11-01T06:00:00.000Z' };
+const CALENDAR = groupSpaceUris(GROUP_DID).calendarSpaceUri;
+const IMAGE = {
+	role: 'thumbnail',
+	content: {
+		$type: 'blob',
+		ref: { $link: 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku' },
+		mimeType: 'image/png',
+		size: 3
+	}
+};
 
 let harness: SqliteD1;
 
@@ -60,6 +70,13 @@ beforeEach(async () => {
 			{ [OWNER]: 'admin', [MEMBER]: 'member' },
 			{
 				records: [
+					// A members-only event that shares its key with the public one.
+					{
+						space: CALENDAR,
+						collection: EVENT,
+						rkey: '3lpaddle',
+						value: { ...PADDLE, name: 'Members paddle', media: [IMAGE] }
+					},
 					{
 						space: groupSpaceUris(GROUP_DID).aboutSpaceUri,
 						collection: GROUP_ACCESS_COLLECTION,
@@ -93,12 +110,14 @@ afterEach(() => {
 	resetReaderHost();
 });
 
-function openAs(did: string | null, rkey: string) {
+function openAs(did: string | null, rkey: string, placement?: string) {
+	const url = new URL(`https://atmo.test/groups/${GROUP_DID}/events/${rkey}/edit`);
+	if (placement) url.searchParams.set('placement', placement);
 	return load({
 		params: { actor: GROUP_DID, rkey },
 		locals: { did, session: did ? readerSession(did) : null },
 		platform: { env: { DB: harness.db, OAUTH_SESSIONS: fixtureSessions } },
-		url: new URL(`https://atmo.test/groups/${GROUP_DID}/events/${rkey}/edit`)
+		url
 	} as unknown as Parameters<typeof load>[0]);
 }
 
@@ -119,8 +138,37 @@ describe('/groups/[actor]/events/[rkey]/edit load', () => {
 			handle: null,
 			canDelete: true,
 			rkey: '3lpaddle',
-			eventData: { ...PADDLE, cid: 'bafypaddle', did: GROUP_DID, rkey: '3lpaddle', uri: PADDLE_URI }
+			eventData: {
+				...PADDLE,
+				cid: 'bafypaddle',
+				did: GROUP_DID,
+				rkey: '3lpaddle',
+				uri: PADDLE_URI
+			},
+			space: null
 		});
+	});
+
+	it('reads a members-only event from the calendar space only when the link says so, image kept', async () => {
+		const data = (await openAs(OWNER, '3lpaddle', 'members')) as Record<string, unknown> & {
+			eventData: Record<string, unknown>;
+		};
+		expect(data.space).toBe(CALENDAR);
+		expect(data.eventData).toMatchObject({
+			name: 'Members paddle',
+			media: [IMAGE],
+			did: GROUP_DID,
+			rkey: '3lpaddle',
+			uri: `${CALENDAR}/${GROUP_DID}/${EVENT}/3lpaddle`
+		});
+		expect(data.eventData).not.toHaveProperty('space');
+		expect(getEventRecordFromContrail).not.toHaveBeenCalled();
+		await expect(openAs(OWNER, '3lmadeup', 'members')).rejects.toMatchObject({ status: 404 });
+	});
+
+	it('answers 404 for a placement it does not know, without reading anything', async () => {
+		await expect(openAs(OWNER, '3lpaddle', 'public')).rejects.toMatchObject({ status: 404 });
+		expect(getEventRecordFromContrail).not.toHaveBeenCalled();
 	});
 
 	it('answers 404 for an event the index does not hold or cannot read', async () => {

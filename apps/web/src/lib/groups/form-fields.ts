@@ -12,6 +12,8 @@ import {
 	graphemeLength,
 	splitRuleLines
 } from './about-record';
+import { EVENT_PLACEMENTS } from './event-placement';
+import { RSVP_STATUSES } from './ids';
 import { GROUP_VISIBILITIES } from './types';
 
 const utf8 = new TextEncoder();
@@ -57,6 +59,10 @@ export const rkeyField = v.pipe(
 	v.regex(/^[a-zA-Z0-9._:~-]{1,512}$/, 'Invalid record key')
 );
 export const eventIntentField = v.picklist(['create', 'update'] as const);
+
+export const placementField = v.picklist(EVENT_PLACEMENTS, 'Say who can see the event');
+
+export const rsvpStatusField = v.picklist(RSVP_STATUSES, 'Unknown RSVP');
 
 /** Within the lexicon's bounds. */
 export const groupSettingsFields = {

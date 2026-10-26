@@ -2,6 +2,7 @@
 // through their PDS with service auth; the group's methods and membership writes go on
 // the acting person's group session, which the host cuts to their roles.
 import { GROUP_ROLES, primaryRole, type GroupRoleName } from '../permissions';
+import { spaceUri } from '../ids';
 import type { GroupRow, JoinRequestRow } from '../types';
 import type { GroupSpaceReader } from './about-read';
 import { accept, unaccept } from './acceptance';
@@ -126,7 +127,18 @@ export interface HostCaller {
 	member?: CallerSession | null;
 }
 
+/** The proposal's `accessConfig`: who reads a new space, by role. */
+export interface HostSpaceAccess {
+	public: boolean;
+	grants: { role: string; scopes: string[] }[];
+}
+
 export interface GroupHost {
+	/** An existing space is not a failure, so a create that stopped partway can finish. */
+	createSpace(
+		caller: HostCaller,
+		space: { type: string; skey: string; access: HostSpaceAccess }
+	): Promise<{ uri: string }>;
 	listJoinRequests(caller: HostCaller): Promise<JoinRequestRow[]>;
 	denyJoinRequest(caller: HostCaller, member: string): Promise<void>;
 	requestJoin(caller: HostCaller, message: string | null): Promise<JoinOutcome>;
@@ -201,6 +213,17 @@ export function hostMethods(binding: HostBinding): GroupHost {
 	}
 
 	return {
+		async createSpace(caller, space) {
+			const { nsid, answer } = await asGroup(caller, 'createSpace', { body: space });
+			if (answer.ok && typeof answer.data.space === 'string') return { uri: answer.data.space };
+			if (!answer.ok && answer.error === 'SpaceAlreadyExists') {
+				return { uri: spaceUri(groupDid, space.type, space.skey) };
+			}
+			throw answer.ok
+				? new GroupHostError(nsid, 200, 'no space in the answer')
+				: refusal(nsid, answer);
+		},
+
 		async listJoinRequests(caller) {
 			const rows: JoinRequestRow[] = [];
 			let cursor: string | undefined;

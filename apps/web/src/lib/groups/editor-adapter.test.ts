@@ -14,18 +14,20 @@ vi.mock('$lib/components/LoginModal.svelte', () => ({
 vi.mock('./group-events.remote', () => remote);
 
 import { createGroupEditorAdapter } from './editor-adapter';
+import type { EventPlacement } from './event-placement';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const EVENT = 'community.lexicon.calendar.event';
 const BLOB_REF = { $type: 'blob', ref: { $link: 'bafkreiimage' }, mimeType: 'image/png', size: 3 };
 const record = (name: string) => ({ $type: EVENT, name, startsAt: '2026-11-01T18:00:00.000Z' });
 
-function adapterFor(editingRkey: string | null = null) {
+function adapterFor(editingRkey: string | null = null, placement: EventPlacement = 'everyone') {
 	const onRefusal = vi.fn();
 	const adapter = createGroupEditorAdapter({
 		groupDid: GROUP_DID,
 		editingRkey,
 		canDelete: true,
+		placement,
 		onRefusal
 	});
 	return { adapter, onRefusal };
@@ -54,8 +56,26 @@ describe('the group editor adapter', () => {
 			['3edit', 'update'],
 			['3copy', 'create']
 		]);
-		expect(remote.removeGroupEvent.mock.calls).toEqual([[{ groupDid: GROUP_DID, rkey: '3edit' }]]);
+		expect(remote.putGroupEvent.mock.calls.every(([call]) => call.placement === 'everyone')).toBe(
+			true
+		);
+		expect(remote.removeGroupEvent.mock.calls).toEqual([
+			[{ groupDid: GROUP_DID, rkey: '3edit', placement: 'everyone' }]
+		]);
 		expect(adapter.features).toEqual({ delete: true, recurring: true, privateMode: false });
+	});
+
+	it('sends a members-only event to the calendar space every time, with no recurring copies', async () => {
+		remote.putGroupEvent.mockResolvedValue({ ok: true, uri: 'at://x' });
+		remote.removeGroupEvent.mockResolvedValue({ ok: true });
+		const { adapter } = adapterFor('3edit', 'members');
+
+		await adapter.putRecord({ collection: EVENT, rkey: '3edit', record: record('B') });
+		await adapter.deleteRecord({ collection: EVENT, rkey: '3edit' });
+
+		expect(remote.putGroupEvent.mock.calls[0][0].placement).toBe('members');
+		expect(remote.removeGroupEvent.mock.calls[0][0].placement).toBe('members');
+		expect(adapter.features.recurring).toBe(false);
 	});
 
 	it('uploads an image as bytes, for the intent of its page', async () => {

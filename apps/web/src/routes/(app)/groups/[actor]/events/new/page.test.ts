@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
-import type { EditorAdapter } from '$lib/components/editor/adapter';
 
 const editor = vi.hoisted(() => ({ renders: [] as Array<Record<string, unknown>> }));
 const remote = vi.hoisted(() => ({
@@ -25,7 +24,6 @@ vi.mock('$lib/groups/group-events.remote', () => remote);
 import Page from './+page.svelte';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
-const EVENT = 'community.lexicon.calendar.event';
 
 afterEach(() => {
 	editor.renders.length = 0;
@@ -33,27 +31,16 @@ afterEach(() => {
 });
 
 describe('/groups/[actor]/events/new', () => {
-	it('opens the editor as the group, and its save creates the event', async () => {
+	// A server render has no DOM to click, so what each choice sends is tested on the adapter.
+	it('asks who can see the event before it shows the editor', () => {
 		const data = { groupDid: GROUP_DID, groupName: 'Kona', handle: null, rkey: '3lnewevent222' };
 		const { body } = render(Page, { props: { data } as never });
-		expect(body).not.toMatch(/type="radio"/);
 
-		expect(editor.renders).toHaveLength(1);
-		const props = editor.renders[0] as {
-			adapter: EditorAdapter;
-			eventData: unknown;
-			actorDid: string;
-			viewer: { did: string };
-		};
-		expect(props).toMatchObject({ eventData: null, actorDid: GROUP_DID });
-		expect(props.viewer.did).toBe(GROUP_DID);
-
-		remote.putGroupEvent.mockResolvedValue({ ok: true, uri: `at://${GROUP_DID}/${EVENT}/x` });
-		await props.adapter.putRecord({ collection: EVENT, rkey: '3lnewevent222', record: {} });
-		expect(remote.putGroupEvent.mock.calls[0][0]).toMatchObject({
-			groupDid: GROUP_DID,
-			rkey: '3lnewevent222',
-			intent: 'create'
-		});
+		// No editor until a choice is made, so nothing can be saved by default.
+		expect(editor.renders).toEqual([]);
+		// Two answers, neither picked for the person, and neither locked yet.
+		expect(body.match(/type="radio"/g)).toHaveLength(2);
+		expect(body).not.toMatch(/\bchecked\b/);
+		expect(body).not.toMatch(/\bdisabled\b/);
 	});
 });

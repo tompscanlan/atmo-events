@@ -70,7 +70,8 @@ const WRITE_METHODS = new Set([
 	'com.atproto.repo.putRecord',
 	'com.atproto.repo.createRecord',
 	'com.atproto.repo.deleteRecord',
-	'com.atproto.repo.uploadBlob'
+	'com.atproto.repo.uploadBlob',
+	'group.opensocial.createSpace'
 ]);
 
 export function fakeGroupHost(options: FakeGroupHostOptions) {
@@ -115,6 +116,28 @@ export function fakeGroupHost(options: FakeGroupHostOptions) {
 		if (failed) return failed;
 
 		switch (nsid) {
+			// As the reference host makes one: the space, then its `access` record in it.
+			case 'group.opensocial.createSpace': {
+				const { type, skey, access } = body as {
+					type: string;
+					skey: string;
+					access: Record<string, unknown>;
+				};
+				const space = `at://${did}/space/${type}/${skey}`;
+				if (spaces.has(space)) {
+					return Response.json({ error: 'SpaceAlreadyExists' }, { status: 400 });
+				}
+				spaces.add(space);
+				const write = {
+					space,
+					collection: GROUP_ACCESS_COLLECTION,
+					rkey: GROUP_ACCESS_RKEY,
+					record: { $type: GROUP_ACCESS_COLLECTION, ...access }
+				};
+				liveRecords.set(recordKey(space, write.collection, write.rkey), write);
+				return Response.json({ space });
+			}
+
 			case 'com.atproto.space.putRecord':
 			case 'com.atproto.space.createRecord': {
 				const write = body as unknown as SpaceRecordWrite;

@@ -17,6 +17,10 @@ export async function groupEditorPage(
 	}
 	const { groupName, handle } = await groupHeader(db, group, reader);
 	return {
+		/** For a page that goes on to read a members-only event, so it reads neither again. */
+		group,
+		membership,
+		reader,
 		groupDid: group.group_did,
 		groupName,
 		handle,

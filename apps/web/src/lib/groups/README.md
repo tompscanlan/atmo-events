@@ -10,6 +10,7 @@ its spaces; D1 holds a cache of them and a note of each join request sent from t
 | what                                                     | where                                                     | who may read           |
 | -------------------------------------------------------- | --------------------------------------------------------- | ---------------------- |
 | events                                                   | the group's public repo                                   | anyone                 |
+| members-only events, and members' RSVPs to them          | the calendar space, `rsvp.atmo.group.calendar`            | members                |
 | declaration (makes the group findable)                   | the group's public repo, while it is public and listed    | anyone                 |
 | profile, rules, access                                   | the meta space, `group.opensocial.meta`                   | the group's visibility |
 | roles, permissions, membership, access                   | the members space, `group.opensocial.members`             | its `access` record    |
@@ -19,8 +20,9 @@ its spaces; D1 holds a cache of them and a note of each join request sent from t
 | the group sessions people linked                         | the `OAUTH_SESSIONS` KV namespace, under `group:session:` | the app                |
 
 Spaces are read with each caller's own access, so the host decides what each person sees. Sign-in
-asks for `include:group.opensocial.participate` and falls back to the base scope when the PDS
-refuses it with `invalid_scope`. When a record and a D1 row disagree, the record wins.
+asks for `include:group.opensocial.participate` and a grant for RSVPs in any group's calendar space,
+and asks for less (the set alone, then the base scope) when the PDS refuses with `invalid_scope`.
+When a record and a D1 row disagree, the record wins.
 
 ## The records
 
@@ -34,6 +36,45 @@ checks every record builder against them.
 format `uri`. Do not edit it: `pnpm generate` writes it with `scripts/lexicon-shims.mjs` and takes
 the NSID back out of the pull list, since it does not resolve. When the tooling reads `space-ref`
 and the NSID resolves, delete the copy, the script, its test and its two steps in `pnpm generate`.
+
+## Members-only events
+
+A group's create also makes its calendar space, atmo's own space type, which every role may read
+whatever the group's visibility. A members-only event is an ordinary event record placed there
+instead of in the public repo, so the container is the only thing that says who may read it:
+
+- The new-event page asks who can see the event before it shows the editor, with no default. An
+  event cannot move between public and members-only later, since that would change its URI and
+  strand its RSVPs; the writer refuses it, and refuses a write to a calendar space that is missing
+  or readable by more than members.
+- Members see them on the events tab and on their own page, read with their own access. The index
+  never learns of one, so they are not in feeds, search or the public event page.
+- A member's RSVP goes into their own repo in the calendar space, citing the event's space URI and
+  its current CID. A sign-in without the grant is sent to sign in again once.
+- No image is shown, and there are no recurring copies, until both can be done without a public
+  link.
+
+The space type has to be published where the group's PDS and its members' PDSes resolve it, as
+the group sets are. Its declaration:
+
+```json
+{
+	"lexicon": 1,
+	"id": "rsvp.atmo.group.calendar",
+	"defs": {
+		"main": {
+			"type": "space",
+			"key": "literal:self",
+			"name": "Group calendar",
+			"collections": [
+				"community.lexicon.calendar.event",
+				"community.lexicon.calendar.rsvp",
+				"group.opensocial.access"
+			]
+		}
+	}
+}
+```
 
 ## What a group can and cannot do here
 

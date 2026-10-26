@@ -113,6 +113,7 @@ const write = (input: Partial<WriteGroupEventInput> & Pick<WriteGroupEventInput,
 		callerDid: ADMIN,
 		record: validRecord(),
 		reader: authz,
+		placement: 'everyone',
 		...input
 	});
 
@@ -124,9 +125,9 @@ const remove = (rkey: string, input: Partial<Parameters<typeof deleteGroupEvent>
 		callerDid: ADMIN,
 		rkey,
 		reader: authz,
+		placement: 'everyone',
 		...input
 	});
-
 
 async function hostRecord(rkey: string) {
 	const [requests, calls] = [pds.requests.length, pds.calls.length];
@@ -306,6 +307,7 @@ describe('credentials', () => {
 				group: { ...group, members_space_uri: null },
 				callerDid: null,
 				intent: 'create',
+				placement: 'everyone',
 				record: validRecord()
 			})
 		).rejects.toBeInstanceOf(GroupPermissionError);
@@ -382,5 +384,82 @@ describe('event images', () => {
 			upload({ bytes: new Uint8Array(GROUP_EVENT_IMAGE_MAX_BYTES + 1) })
 		).rejects.toBeInstanceOf(GroupRecordError);
 		expect(pds.calls).toEqual([]);
+	});
+});
+
+describe('members-only events', () => {
+	const CALENDAR = `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`;
+
+	async function holdCalendar(isPublic = false) {
+		await fetch('https://pds.stub.test/xrpc/group.opensocial.createSpace', {
+			method: 'POST',
+			body: JSON.stringify({
+				type: 'rsvp.atmo.group.calendar',
+				skey: 'self',
+				access: { public: isPublic, grants: [] }
+			})
+		});
+		pds.clearLog();
+	}
+
+	it('writes one into the calendar space, and never tells the index', async () => {
+		await holdCalendar();
+
+		const result = await write({ intent: 'create', rkey: '3lmembers', placement: 'members' });
+
+		expect(pds.spaceWrites.map((w) => [w.space, w.collection, w.rkey])).toEqual([
+			[CALENDAR, GROUP_EVENT_COLLECTION, '3lmembers']
+		]);
+		expect(pds.repoWrites).toEqual([]);
+		expect(result.uri.startsWith(`${CALENDAR}/`)).toBe(true);
+		expect(index.told).toEqual([]);
+	});
+
+	it('refuses a calendar space that is missing, open to more than members, or has no access record', async () => {
+		await onHost({
+			fail: (nsid, _init, query) =>
+				nsid === 'com.atproto.space.getRecord' && query?.get('space') === CALENDAR
+					? Response.json({ error: 'SpaceNotFound' }, { status: 400 })
+					: undefined
+		});
+		await expect(write({ intent: 'create', placement: 'members' })).rejects.toMatchObject({
+			reason: 'no-calendar-space'
+		});
+
+		await onHost();
+		await holdCalendar(true);
+		await expect(write({ intent: 'create', placement: 'members' })).rejects.toMatchObject({
+			reason: 'calendar-space-readable'
+		});
+
+		await onHost();
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		await expect(write({ intent: 'create', placement: 'members' })).rejects.toMatchObject({
+			reason: 'calendar-space-unchecked'
+		});
+		expect(pds.spaceWrites).toEqual([]);
+	});
+
+	it('will not move an event between public and members-only, or delete it from the wrong place', async () => {
+		await holdCalendar();
+		await write({ intent: 'create', rkey: '3lpublic', placement: 'everyone' });
+		await write({ intent: 'create', rkey: '3lmembers', placement: 'members' });
+		pds.clearLog();
+		index.told = [];
+
+		await expect(
+			write({ intent: 'update', rkey: '3lpublic', placement: 'members' })
+		).rejects.toMatchObject({ reason: 'placement-change' });
+		await expect(
+			write({ intent: 'update', rkey: '3lmembers', placement: 'everyone' })
+		).rejects.toMatchObject({ reason: 'placement-change' });
+		await expect(remove('3lmembers', { placement: 'everyone' })).rejects.toMatchObject({
+			reason: 'wrong-placement-delete'
+		});
+		expect(pds.writes()).toEqual([]);
+
+		await remove('3lmembers', { placement: 'members' });
+		expect(pds.writes().map((w) => w.nsid)).toEqual(['com.atproto.space.deleteRecord']);
+		expect(index.told).toEqual([]);
 	});
 });

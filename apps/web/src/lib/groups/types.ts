@@ -12,6 +12,9 @@ export type JoinRequestStatus = (typeof JOIN_REQUEST_STATUSES)[number];
 /** atmo calls `meta` the about space, as its column does. */
 export const ABOUT_SPACE_TYPE = 'group.opensocial.meta';
 export const MEMBERS_SPACE_TYPE = 'group.opensocial.members';
+/** atmo's own space type, for a group's members-only events. It is in every URI in the space,
+ *  so a rename strands what was written under the old name. */
+export const CALENDAR_SPACE_TYPE = 'rsvp.atmo.group.calendar';
 
 export interface GroupRow {
 	id: string;
@@ -91,4 +94,6 @@ export interface GroupEventRecord {
 	cid: string;
 	rkey: string;
 	value: Record<string, unknown>;
+	/** The calendar space a members-only event was read from; absent for a public one. */
+	space?: string;
 }

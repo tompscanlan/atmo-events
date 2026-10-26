@@ -65,7 +65,7 @@ describe('/groups/[actor]/events/[rkey]/edit', () => {
 			intent: 'update'
 		});
 		expect(remote.removeGroupEvent.mock.calls).toEqual([
-			[{ groupDid: GROUP_DID, rkey: '3lpaddle' }]
+			[{ groupDid: GROUP_DID, rkey: '3lpaddle', placement: 'everyone' }]
 		]);
 	});
 });

@@ -18,15 +18,23 @@ vi.mock('$app/server', () => {
 	return { form: remote('form'), command: remote('command'), getRequestEvent: () => request };
 });
 vi.mock('@atmo-dev/events-ui', () => ({ getProfileUrl: vi.fn() }));
-/** Each sign-in's extra scopes, in order; `refuse` makes a PDS refuse any extra. */
-const signIn = vi.hoisted(() => ({ asked: [] as string[][], refuse: false }));
+/** Each sign-in's extra scopes, in order; `refuse` makes a PDS refuse any extra, or with
+ *  'calendar' only the calendar type, as one where it does not resolve. */
+const signIn = vi.hoisted(() => ({
+	asked: [] as string[][],
+	refuse: false as boolean | 'calendar'
+}));
 vi.mock('$lib/atproto/server/oauth', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/atproto/server/oauth')>()),
 	...(await import('./server/__fixtures__/linked-oauth-stub')).linkedOAuthStub,
 	createOAuthClient: (_env: unknown, extras: readonly string[] = []) => ({
 		authorize: async () => {
 			signIn.asked.push([...extras]);
-			if (signIn.refuse && extras.length > 0) {
+			const calendar = extras.some((s) => s.startsWith('space:rsvp.atmo.group.calendar'));
+			if (
+				(signIn.refuse === true && extras.length > 0) ||
+				(signIn.refuse === 'calendar' && calendar)
+			) {
 				throw new OAuthResponseError(new Response(null, { status: 400 }), 'invalid_scope');
 			}
 			return { url: new URL(`https://pds.stub.test/oauth/authorize?extras=${extras.length}`) };
@@ -45,6 +53,7 @@ import {
 } from './server/__fixtures__/reader-host';
 import { seedGroup } from './server/__fixtures__/seed-group';
 import { formError } from './form-error';
+import { GROUP_SIGN_IN_SCOPES } from './server/sign-in-grants';
 import type { GroupFormResult } from './form-result';
 import { GroupCredentialError } from './server/session';
 import { getGroupByDid } from './server/db/groups';
@@ -299,19 +308,27 @@ describe('the sign-in button', () => {
 		request.platform.env = { ...request.platform.env, GROUP_HOST_URL: 'https://pds.stub.test' };
 	});
 
-	it('asks the groups permission set for a member a private group hides, and falls back when the PDS refuses it', async () => {
+	it('asks the groups permission set and the RSVP grant for a member a private group hides, and less when the PDS refuses', async () => {
+		const participate = 'include:group.opensocial.participate';
 		signInAs(OWNER, META_ONLY);
+		expect(await call(signInForGroup, { groupDid: GROUP })).toBe(
+			'https://pds.stub.test/oauth/authorize?extras=2'
+		);
+		expect(signIn.asked).toEqual([[...GROUP_SIGN_IN_SCOPES]]);
+
+		signIn.asked = [];
+		signIn.refuse = 'calendar';
 		expect(await call(signInForGroup, { groupDid: GROUP })).toBe(
 			'https://pds.stub.test/oauth/authorize?extras=1'
 		);
-		expect(signIn.asked).toEqual([['include:group.opensocial.participate']]);
+		expect(signIn.asked).toEqual([[...GROUP_SIGN_IN_SCOPES], [participate]]);
 
 		signIn.asked = [];
 		signIn.refuse = true;
 		expect(await call(signInForGroup, { groupDid: GROUP })).toBe(
 			'https://pds.stub.test/oauth/authorize?extras=0'
 		);
-		expect(signIn.asked).toEqual([['include:group.opensocial.participate'], []]);
+		expect(signIn.asked).toEqual([[...GROUP_SIGN_IN_SCOPES], [participate], []]);
 	});
 
 	it('answers someone the row does not list with the 404', async () => {

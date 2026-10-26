@@ -13,6 +13,7 @@ import { KVStore } from '$lib/atproto/server/kv-store';
 import { createOAuthClientWithSessions } from '$lib/atproto/server/oauth';
 import { GROUP_DECLARATION_COLLECTION } from '../declaration-record';
 import { GROUP_EVENT_COLLECTION } from '../ids';
+import { CALENDAR_SPACE_TYPE } from '../types';
 
 export type CredentialStoreEnv = Partial<App.Platform['env']>;
 
@@ -36,10 +37,14 @@ export function parseGroupSessionKey(key: string): { groupDid: string; personDid
 	return { groupDid, personDid };
 }
 
+/** The sets cover the host's two spaces. atmo's calendar space, made at create, needs its own
+ *  items, and its type must resolve where the session is asked for. */
 export const GROUP_SESSION_SCOPES: readonly string[] = [
 	'include:group.opensocial.configure',
 	'include:group.opensocial.manageSpaces',
 	'include:group.opensocial.manageMembers',
+	'space:*?authority=self&manage=create',
+	`space:${CALENDAR_SPACE_TYPE}?authority=self&collection=${GROUP_EVENT_COLLECTION}&action=read&action=create&action=update&action=delete`,
 	scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
 	scope.blob({ accept: ['image/*'] })
 ];

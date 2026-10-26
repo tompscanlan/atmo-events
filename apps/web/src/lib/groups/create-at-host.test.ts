@@ -167,6 +167,24 @@ describe('setUpHostGroup', () => {
 		expect(await setUp()).toEqual({ ok: true, groupDid: GROUP });
 
 		expect(new Set(host.requests.map((r) => r.person))).toEqual(new Set([CREATOR]));
+		// The calendar space first, for members-only events, read by every role.
+		const created = host.requests.filter((r) => r.nsid === 'group.opensocial.createSpace');
+		expect(created.map((r) => r.body)).toEqual([
+			{
+				type: 'rsvp.atmo.group.calendar',
+				skey: 'self',
+				access: {
+					public: false,
+					grants: [
+						{ role: 'admin', scopes: ['space:rsvp.atmo.group.calendar?action=read'] },
+						{ role: 'member', scopes: ['space:rsvp.atmo.group.calendar?action=read'] }
+					]
+				}
+			}
+		]);
+		expect(host.requests.findIndex((r) => r.nsid === 'group.opensocial.createSpace')).toBeLessThan(
+			host.requests.findIndex((r) => r.nsid === 'com.atproto.space.putRecord')
+		);
 		expect(host.spaceWrites.map((w) => w.collection)).toEqual([
 			'group.opensocial.profile',
 			'group.opensocial.rule',

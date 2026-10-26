@@ -150,7 +150,7 @@ describe('resolveGroupCredential', () => {
 describe('the scope a link asks for', () => {
 	const asked = groupSessionScope().split(' ');
 
-	it('asks for the proposal’s permission sets, and no raw space scope', () => {
+	it('asks for the proposal’s permission sets, and raw space scopes only for the calendar', () => {
 		expect(asked).toEqual(
 			expect.arrayContaining([
 				'include:group.opensocial.configure',
@@ -158,7 +158,11 @@ describe('the scope a link asks for', () => {
 				'include:group.opensocial.manageMembers'
 			])
 		);
-		expect(asked.filter((s) => s.startsWith('space:'))).toEqual([]);
+		// The sets cover only the host's own two spaces.
+		expect(asked.filter((s) => s.startsWith('space:'))).toEqual([
+			'space:*?authority=self&manage=create',
+			`space:rsvp.atmo.group.calendar?authority=self&collection=${GROUP_EVENT_COLLECTION}&action=read&action=create&action=update&action=delete`
+		]);
 	});
 
 	it('covers every public-repo collection the group writes', () => {

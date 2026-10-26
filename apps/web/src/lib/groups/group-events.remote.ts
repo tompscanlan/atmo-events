@@ -2,7 +2,7 @@ import { command } from '$app/server';
 import * as v from 'valibot';
 import type { GroupFormResult } from './form-result';
 import { formError } from './form-error';
-import { didField, eventIntentField, rkeyField } from './form-fields';
+import { didField, eventIntentField, placementField, rkeyField } from './form-fields';
 import { groupRequestContext } from './remote-context';
 import {
 	GROUP_EVENT_IMAGE_MAX_BYTES,
@@ -18,6 +18,7 @@ export const putGroupEvent = command(
 		groupDid: didField,
 		rkey: rkeyField,
 		intent: eventIntentField,
+		placement: placementField,
 		record: v.record(v.string(), v.unknown())
 	}),
 	async (data): Promise<GroupFormResult<{ uri: string }>> => {
@@ -31,6 +32,7 @@ export const putGroupEvent = command(
 				reader,
 				intent: data.intent,
 				rkey: data.rkey,
+				placement: data.placement,
 				record: data.record
 			});
 			return { ok: true, uri: result.uri };
@@ -41,7 +43,7 @@ export const putGroupEvent = command(
 );
 
 export const removeGroupEvent = command(
-	v.object({ groupDid: didField, rkey: rkeyField }),
+	v.object({ groupDid: didField, rkey: rkeyField, placement: placementField }),
 	async (data): Promise<GroupFormResult<{ uri: string }>> => {
 		const { db, env, group, callerDid, reader } = await groupRequestContext(data.groupDid);
 		try {
@@ -51,7 +53,8 @@ export const removeGroupEvent = command(
 				group,
 				callerDid,
 				reader,
-				rkey: data.rkey
+				rkey: data.rkey,
+				placement: data.placement
 			});
 			return { ok: true, uri: result.uri };
 		} catch (e) {

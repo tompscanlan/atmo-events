@@ -1,17 +1,21 @@
 // Creating a group: an OAuth flow at the group host with `prompt=create`, which makes the
 // account and its spaces; then, on the creator's new group session:
 //
-//   (callback) checks -> INSERT -> profile, rules, access, declaration -> spaces recorded
+//   (callback) checks -> INSERT -> calendar space -> profile, rules, access, declaration
+//   -> spaces recorded
 //
 // The row's spaces stay NULL until the last step, and the form waits in KV until then, so
-// the group page can offer its creator the rest of a create that stopped.
+// the group page can offer its creator the rest of a create that stopped. The calendar
+// space is atmo's own, for members-only events; every role may read it.
 import type { Did } from '@atcute/lexicons';
 import type { OAuthClient, OAuthClientStores } from '@atcute/oauth-node-client';
 import { GROUP_JOIN_POLICIES, splitRuleLines, type GroupJoinPolicy } from './about-record';
 import { knownFormError } from './form-error';
 import type { GroupFormResult } from './form-result';
-import { groupSpaceUris } from './ids';
-import type { GroupRow, GroupVisibility } from './types';
+import { SPACE_SKEY, groupSpaceUris } from './ids';
+import { spaceReadScope } from './members-record';
+import { GROUP_ROLES } from './permissions';
+import { CALENDAR_SPACE_TYPE, type GroupRow, type GroupVisibility } from './types';
 import { pdsSpaceReader, readAboutAccess, readGroupAbout } from './server/about-read';
 import { createGroupRules, writeAboutAccess, writeGroupProfile } from './server/about-writer';
 import { createGroup, getGroupByDid, recordGroupSpaces } from './server/db/groups';
@@ -20,7 +24,7 @@ import { errorText } from './server/errors';
 import { pdsWriter } from './server/group-write';
 import { refreshGroupHandle } from './server/handles';
 import { groupActorToDid } from './server/route-context';
-import { groupHostOrigin, isHostGroup } from './server/host';
+import { groupHostOrigin, hostMethods, isHostGroup } from './server/host';
 import { registerGroupIdentity } from './server/identities';
 import {
 	groupLinkConfigured,
@@ -284,6 +288,29 @@ export async function setUpHostGroup(
 		about_space_uri: uris.aboutSpaceUri,
 		members_space_uri: uris.membersSpaceUri
 	};
+	try {
+		await hostMethods({ db: env.DB, env, group, credential }).createSpace(
+			{ callerDid: creatorDid },
+			{
+				type: CALENDAR_SPACE_TYPE,
+				skey: SPACE_SKEY,
+				access: {
+					public: false,
+					grants: GROUP_ROLES.map((role) => ({
+						role,
+						scopes: [spaceReadScope(CALENDAR_SPACE_TYPE)]
+					}))
+				}
+			}
+		);
+	} catch (e) {
+		return made(
+			'making its calendar space',
+			errorText(e),
+			'Open the group’s page to finish setting it up.'
+		);
+	}
+
 	const reader = pdsSpaceReader(credential, groupDid);
 	const as = {
 		db: env.DB,

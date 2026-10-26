@@ -12,6 +12,10 @@ vi.mock('$lib/atproto/methods', () => ({ actorToDid: vi.fn() }));
 
 import { load } from './+page.server';
 import { authzReader } from '$lib/groups/server/__fixtures__/members-space';
+import type {
+	SpaceReaderOptions,
+	SpaceRecordInput
+} from '$lib/groups/server/__fixtures__/space-reader';
 import {
 	fixtureSessions,
 	readerSession,
@@ -69,7 +73,30 @@ afterEach(() => {
 	resetReaderHost();
 });
 
-function host(isPublic: boolean) {
+const CALENDAR = groupSpaceUris(GROUP_DID).calendarSpaceUri;
+const MEETING = {
+	space: CALENDAR,
+	collection: 'community.lexicon.calendar.event',
+	rkey: '3lmeeting',
+	value: {
+		name: 'Committee call',
+		createdAt: '2026-10-02T09:00:00.000Z',
+		media: [
+			{
+				role: 'thumbnail',
+				content: {
+					$type: 'blob',
+					ref: { $link: 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku' }
+				}
+			}
+		]
+	}
+};
+
+function host(
+	isPublic: boolean,
+	{ records = [], fail }: { records?: SpaceRecordInput[]; fail?: SpaceReaderOptions['fail'] } = {}
+) {
 	const access = groupAccessRecord({
 		spaceType: ABOUT_SPACE_TYPE,
 		roles: ABOUT_SPACE_READER_ROLES,
@@ -81,13 +108,15 @@ function host(isPublic: boolean) {
 			GROUP_DID,
 			{ [OWNER]: 'admin', [MEMBER]: 'member' },
 			{
+				fail,
 				records: [
 					{
 						space: ABOUT,
 						collection: GROUP_ACCESS_COLLECTION,
 						rkey: GROUP_ACCESS_RKEY,
 						value: { ...access, $type: GROUP_ACCESS_COLLECTION }
-					}
+					},
+					...records
 				]
 			}
 		)
@@ -111,6 +140,29 @@ describe('/groups/[actor]/events load', () => {
 			expect(data, String(did)).toMatchObject({ groupName: 'Kona', events: [PADDLE] });
 			expect(data.group).toStrictEqual(publicGroup(row));
 		}
+	});
+
+	it('shows a member the members-only events beside the public ones, without their images', async () => {
+		host(true, { records: [MEETING] });
+		const events = (await openAs(MEMBER)).events as GroupEventRecord[];
+		expect(events.map((e) => e.rkey).sort()).toEqual(['3lmeeting', '3lpaddle']);
+		const meeting = events.find((e) => e.rkey === '3lmeeting')!;
+		expect(meeting.space).toBe(CALENDAR);
+		expect(meeting.value).not.toHaveProperty('media');
+		for (const did of [null, STRANGER]) {
+			expect((await openAs(did)).events, String(did)).toEqual([PADDLE]);
+		}
+	});
+
+	it("tells a member why they see no members-only events when the calendar space can't be read", async () => {
+		host(true, {
+			fail: (call) => (call.space === CALENDAR ? new Error('host failed: 502') : undefined)
+		});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		const data = await openAs(MEMBER);
+		expect(data.events).toEqual([PADDLE]);
+		expect(data.membersOnlyNotice).toBe("Members-only events couldn't be loaded right now.");
+		expect((await openAs(STRANGER)).membersOnlyNotice).toBeNull();
 	});
 
 	it('lets only a role that writes the group repo create or manage events', async () => {
