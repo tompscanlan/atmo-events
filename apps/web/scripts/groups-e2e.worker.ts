@@ -29,7 +29,8 @@ import {
 	resolveActor,
 	rolesForDid,
 	rosterFromRecords,
-	rosterFromRows
+	rosterFromRows,
+	splitRoster
 } from '../src/lib/groups/server/members-read';
 import {
 	groupHost,
@@ -41,6 +42,7 @@ import {
 import { holdsMetaRead } from '../src/lib/groups/server/member-grants';
 import type { CallerSession } from '../src/lib/groups/server/caller';
 import {
+	credentialAcceptanceReader,
 	didSpaceHosts,
 	spaceCredential,
 	spaceSigHeaders
@@ -60,7 +62,24 @@ import { scopes } from '../src/lib/atproto/settings';
 import { getGroupByDid, getGroupById } from '../src/lib/groups/server/db/groups';
 import { listMembers } from '../src/lib/groups/server/db/roster';
 import { readStanding } from '../src/lib/groups/server/standing';
-import { callerReader, groupRouteContext } from '../src/lib/groups/server/route-context';
+import {
+	callerReader,
+	groupRouteContext,
+	pageRoster
+} from '../src/lib/groups/server/route-context';
+import type { OAuthSession } from '@atcute/oauth-node-client';
+import type { EventPlacement } from '../src/lib/groups/event-placement';
+import type { RsvpStatus } from '../src/lib/groups/ids';
+import { acceptOnSignIn } from '../src/lib/groups/server/acceptance';
+import {
+	readMembersOnlyEvent,
+	readMembersOnlyEvents
+} from '../src/lib/groups/server/calendar-read';
+import {
+	deleteMembersOnlyRsvp,
+	putMembersOnlyRsvp,
+	readOwnMembersOnlyRsvp
+} from '../src/lib/groups/server/member-rsvp';
 
 interface Env {
 	DB: D1Database;
@@ -194,6 +213,24 @@ async function spaceReader(env: Env, group: GroupRow, personDid: unknown) {
 	return reader;
 }
 
+function placementOf(args: Args): EventPlacement {
+	return args.placement === 'members' ? 'members' : 'everyone';
+}
+
+async function rsvpTarget(env: Env, args: Args, group: GroupRow) {
+	const member = await callerFor(env, args);
+	const ownReader = callerReader(member);
+	return {
+		membership: await readStanding(env.DB, group, didOf(args.did), ownReader),
+		group,
+		member,
+		ownReader,
+		rkey: String(args.rkey),
+		reauthorized: args.reauthorized === true,
+		reauthorize: async () => null
+	};
+}
+
 const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unknown>> = {
 	/** Stores `personDid`'s group session, as their own link would. */
 	linkGroup: async (env, args) => {
@@ -271,6 +308,7 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 			reader: await readerFor(env, { did: args.callerDid }),
 			intent: args.intent as 'create' | 'update',
 			rkey: args.rkey as string | undefined,
+			placement: placementOf(args),
 			record: args.record as Record<string, unknown>
 		}),
 
@@ -293,7 +331,8 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 			group,
 			callerDid: didOf(args.callerDid),
 			reader: await readerFor(env, { did: args.callerDid }),
-			rkey: String(args.rkey)
+			rkey: String(args.rkey),
+			placement: placementOf(args)
 		}),
 
 	/** The requests sent through the group's session, and with `from`, the ones since. */
@@ -472,6 +511,71 @@ const ops: Record<string, (env: Env, args: Args, group: GroupRow) => Promise<unk
 	},
 
 	/** The roster as the members page builds it, and whether one DID has a record. */
+	/** The members-only slice as the events tab reads it, with `did`'s own access, and the
+	 *  requests that read sent. */
+	membersOnlyEvents: async (env, args, group) => {
+		const reader = await readerFor(env, args);
+		const standing = await readStanding(env.DB, group, didOf(args.did), reader);
+		const from = ownCalls.length;
+		return {
+			slice: await readMembersOnlyEvents(standing, reader, group),
+			calls: ownCalls.slice(from)
+		};
+	},
+
+	membersOnlyEvent: async (env, args, group) => {
+		const reader = await readerFor(env, args);
+		const standing = await readStanding(env.DB, group, didOf(args.did), reader);
+		return readMembersOnlyEvent(standing, reader, group, String(args.rkey));
+	},
+
+	/** A member's RSVP from their own session. It never starts a new sign-in. */
+	rsvp: async (env, args, group) => {
+		const target = await rsvpTarget(env, args, group);
+		return putMembersOnlyRsvp({
+			...target,
+			status: args.status as RsvpStatus,
+			cid: (args.cid as string | null | undefined) ?? null,
+			reader: async () => target.ownReader
+		});
+	},
+
+	cancelRsvp: async (env, args, group) => deleteMembersOnlyRsvp(await rsvpTarget(env, args, group)),
+
+	ownRsvp: async (env, args, group) => {
+		const target = await rsvpTarget(env, args, group);
+		return readOwnMembersOnlyRsvp(target.membership, group, target.member, target.rkey);
+	},
+
+	/** Whether each of `dids` wrote their acceptance, read with `viewer`'s own credential. */
+	acceptances: async (env, args, group) => {
+		const viewer = await callerFor(env, { did: args.viewer });
+		if (!viewer || !group.members_space_uri) throw new Error('no viewer or no members space');
+		const read = await credentialAcceptanceReader(viewer).accepted(
+			group.members_space_uri,
+			(args.dids as string[]) ?? []
+		);
+		return Object.fromEntries(read);
+	},
+
+	/** The sign-in callback's acceptance step, on `did`'s own session. */
+	acceptAtSignIn: async (env, args) => {
+		const own = await ownSession(env, String(args.did));
+		await acceptOnSignIn(env.DB, {
+			did: own.did,
+			getTokenInfo: async () => ({ scope: own.scope }),
+			handle: own.handle
+		} as unknown as OAuthSession);
+		return { signedIn: own.did };
+	},
+
+	/** The roster as a page shows it to `viewer`: the listed members and the unconfirmed. */
+	pageRoster: async (env, args, group) => {
+		const viewer = await callerFor(env, { did: args.viewer });
+		const members = await readGroupMembers((await readerFor(env, { did: args.viewer }))!, group);
+		return splitRoster(await pageRoster(env.DB, group, members, viewer));
+	},
+
 	recordedRoster: async (env, args, group) => {
 		const members = await readGroupMembers(await spaceReader(env, group, args.personDid), group);
 		const fromRecords = hasMemberRecords(members);

@@ -5,8 +5,8 @@
  *
  *   node apps/web/scripts/groups-e2e.mjs
  *
- * It runs 28 numbered checks and prints one PASS or FAIL line each; a clean run ends
- * with `SUMMARY: 28 passed, 0 failed`. Setup steps print as notes. In order: the group
+ * It runs 37 numbered checks and prints one PASS or FAIL line each; a clean run ends
+ * with `SUMMARY: 37 passed, 0 failed`. Setup steps print as notes. In order: the group
  * made at the host's own sign-up and the app's set-up after it (1), each person's sign-in
  * with the participate set (2), events written as the group DID and the write gate
  * (3-6), a cover image in the group's repo (7), the profile, rules and access records
@@ -14,8 +14,10 @@
  * a direct add, a member whose PDS serves no spaces (14-17), the declaration and an
  * unlisted public group (18-19), the group saved private, public, private and public
  * again, with each space credential issued exactly where the caller's roles or a public
- * meta space allow (20-24), an open join (25), the events index (26-27), and, once
- * cleanup is done, that no request left this machine (28).
+ * meta space allow (20-24), an open join (25), the events index (26-27), members-only
+ * events in the calendar space and members' RSVPs to them (28-32), acceptances and the
+ * confirmed roster (33-35), a members-only delete (36), and, once cleanup is done, that no
+ * request left this machine (37).
  *
  * The real $lib/groups modules run on workerd with a real D1 binding: Vite bundles
  * scripts/groups-e2e.worker.ts, a thin JSON entry onto them, and Miniflare runs it. D1
@@ -541,6 +543,7 @@ async function main() {
 	/** The owner's group session, for reading the group's spaces with no app code. */
 	let groupToken;
 	const written = [];
+	const membersOnlyWritten = [];
 	let membersSpaceUri;
 	let aboutSpaceUri;
 	let declared = false;
@@ -1288,9 +1291,217 @@ async function main() {
 			'an event written after the backfill is indexed at once, and a deletion drops it',
 			`after the write ${withThird.length}, after the delete ${afterDelete.length}`
 		);
+
+		// 28. the create made the calendar space for members-only events: every role reads it,
+		// and nobody else.
+		const calendarSpaceUri = `at://${GROUP_DID}/space/rsvp.atmo.group.calendar/self`;
+		const calendarAccess = await spaceRecord(
+			groupToken,
+			calendarSpaceUri,
+			ACCESS_COLLECTION,
+			'self'
+		);
+		record(
+			calendarAccess.status === 200 &&
+				grantsEveryRoleRead(calendarAccess.value, calendarSpaceUri) &&
+				notPublic(calendarAccess.value),
+			"the create made the group's calendar space, which every role reads and nobody else",
+			`access ${calendarAccess.status}: ${JSON.stringify(calendarAccess.value ?? calendarAccess.error)}`
+		);
+
+		// 29. a members-only event goes into the calendar space and only there, and the index
+		// never holds it.
+		const membersOnly = await op('writeGroupEvent', {
+			callerDid: ALICE,
+			intent: 'create',
+			placement: 'members',
+			record: eventRecord('e2e committee call, members only')
+		});
+		membersOnlyWritten.push(membersOnly.rkey);
+		const inSpace = await spaceRecord(
+			groupToken,
+			calendarSpaceUri,
+			EVENT_COLLECTION,
+			membersOnly.rkey
+		);
+		const inRepo = await getRecord(GROUP_DID, membersOnly.rkey);
+		const tab = await op('listGroupEvents');
+		record(
+			membersOnly.uri.startsWith(`${calendarSpaceUri}/`) &&
+				inSpace.status === 200 &&
+				notFound(inRepo) &&
+				tab.every((e) => e.rkey !== membersOnly.rkey),
+			'a members-only event is written into the calendar space and nowhere else, and the index never holds it',
+			`uri ${membersOnly.uri}; space ${inSpace.status}; repo ${inRepo.error ?? inRepo.status}; index ${tab.length}`
+		);
+
+		// 30. it cannot move: an edit to public and a delete sent as public are both refused.
+		const madePublic = await tryOp('writeGroupEvent', {
+			callerDid: ALICE,
+			intent: 'update',
+			rkey: membersOnly.rkey,
+			placement: 'everyone',
+			record: eventRecord('e2e committee call, made public')
+		});
+		const wrongDelete = await tryOp('deleteGroupEvent', {
+			callerDid: ALICE,
+			rkey: membersOnly.rkey,
+			placement: 'everyone'
+		});
+		const stillThere = await spaceRecord(
+			groupToken,
+			calendarSpaceUri,
+			EVENT_COLLECTION,
+			membersOnly.rkey
+		);
+		const stillNotPublic = await getRecord(GROUP_DID, membersOnly.rkey);
+		record(
+			madePublic.ok === false &&
+				madePublic.error.reason === 'placement-change' &&
+				wrongDelete.ok === false &&
+				wrongDelete.error.reason === 'wrong-placement-delete' &&
+				stillThere.value?.name === 'e2e committee call, members only' &&
+				notFound(stillNotPublic),
+			'a members-only event cannot be made public by an edit, or deleted as a public one',
+			`edit ${madePublic.error?.reason ?? 'saved'}; delete ${wrongDelete.error?.reason ?? 'done'}; ` +
+				`space ${stillThere.value?.name}; repo ${stillNotPublic.error ?? stillNotPublic.status}`
+		);
+
+		// 31. a member reads it with their own access; an outsider's and a visitor's visit read
+		// nothing.
+		await op('admitMember', { callerDid: ALICE, did: BOB, role: 'member' });
+		const bobSlice = await op('membersOnlyEvents', { did: BOB });
+		const outsiderSlice = await op('membersOnlyEvents', { did: MALLORY });
+		const visitorSlice = await op('membersOnlyEvents', { did: null });
+		const bobEvent = bobSlice.slice?.events.find((e) => e.rkey === membersOnly.rkey);
+		record(
+			bobEvent?.space === calendarSpaceUri &&
+				bobSlice.slice.notice === null &&
+				outsiderSlice.slice === null &&
+				outsiderSlice.calls.length === 0 &&
+				visitorSlice.slice === null,
+			"a member reads the group's members-only events with their own access; an outsider and a visitor cause no read",
+			`member ${bobSlice.slice?.events.length ?? 'none'} (notice ${bobSlice.slice?.notice}); ` +
+				`outsider ${JSON.stringify(outsiderSlice.slice)} after ${outsiderSlice.calls.length} request(s); visitor ${JSON.stringify(visitorSlice.slice)}`
+		);
+
+		// 32. the member's RSVP goes into their own repo in the calendar space, citing the event's
+		// current version; an answer to another version is refused; the cancel removes it.
+		const stale = await op('rsvp', {
+			did: BOB,
+			rkey: membersOnly.rkey,
+			status: 'going',
+			cid: 'bafyreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+		});
+		const going = await op('rsvp', {
+			did: BOB,
+			rkey: membersOnly.rkey,
+			status: 'going',
+			cid: bobEvent?.cid ?? null
+		});
+		const ownGoing = await op('ownRsvp', { did: BOB, rkey: membersOnly.rkey });
+		const outsiderRsvp = await op('rsvp', {
+			did: MALLORY,
+			rkey: membersOnly.rkey,
+			status: 'going',
+			cid: bobEvent?.cid ?? null
+		});
+		const cancelled = await op('cancelRsvp', { did: BOB, rkey: membersOnly.rkey });
+		const ownAfter = await op('ownRsvp', { did: BOB, rkey: membersOnly.rkey });
+		record(
+			stale.ok === false &&
+				stale.reason === 'changed' &&
+				going.ok === true &&
+				going.uri.startsWith(`${calendarSpaceUri}/${BOB}/`) &&
+				ownGoing?.status === 'going' &&
+				outsiderRsvp.reason === 'not-member' &&
+				cancelled.ok === true &&
+				ownAfter === null,
+			"a member's RSVP goes into their own repo in the calendar space, citing the event's current version, and the cancel removes it",
+			`stale ${stale.reason ?? 'saved'}; going ${going.ok ? going.uri : going.reason}; read back ${ownGoing?.status}; ` +
+				`outsider ${outsiderRsvp.reason ?? 'saved'}; cancel ${cancelled.ok}; after ${JSON.stringify(ownAfter)}`
+		);
+
+		// 33. a member added directly is listed once their sign-in writes their acceptance, and
+		// leaving deletes it.
+		const addedAccepted = await op('acceptances', { viewer: ALICE, dids: [BOB] });
+		const addedRoster = await op('pageRoster', { viewer: ALICE });
+		await op('acceptAtSignIn', { did: BOB });
+		const signedInAccepted = await op('acceptances', { viewer: ALICE, dids: [BOB] });
+		const signedInRoster = await op('pageRoster', { viewer: ALICE });
+		await op('leaveGroup', { callerDid: BOB, asMember: true });
+		const leftAccepted = await op('acceptances', { viewer: ALICE, dids: [BOB] });
+		const has = (list, did) => list.some((entry) => entry.did === did);
+		record(
+			addedAccepted[BOB] === false &&
+				has(addedRoster.unconfirmed, BOB) &&
+				!has(addedRoster.listed, BOB) &&
+				signedInAccepted[BOB] === true &&
+				has(signedInRoster.listed, BOB) &&
+				leftAccepted[BOB] === false,
+			'a member added directly is listed only once their sign-in writes their acceptance, and leaving deletes it',
+			`added ${addedAccepted[BOB]} (unconfirmed ${has(addedRoster.unconfirmed, BOB)}); signed in ${signedInAccepted[BOB]} ` +
+				`(listed ${has(signedInRoster.listed, BOB)}); left ${leftAccepted[BOB]}`
+		);
+
+		// 34. an open join writes the joiner's acceptance at once, and leaving deletes it.
+		await saveVisibility('public', 'public', 'open');
+		await op('joinGroup', { callerDid: MALLORY, asMember: true });
+		const joinedAccepted = await op('acceptances', { viewer: ALICE, dids: [MALLORY] });
+		await op('leaveGroup', { callerDid: MALLORY, asMember: true });
+		const leftJoinAccepted = await op('acceptances', { viewer: ALICE, dids: [MALLORY] });
+		await saveVisibility('public', 'public', CREATE_DATA.joinPolicy);
+		record(
+			joinedAccepted[MALLORY] === true && leftJoinAccepted[MALLORY] === false,
+			"an open join writes the joiner's own acceptance at once, and leaving deletes it",
+			`joined ${joinedAccepted[MALLORY]}; left ${leftJoinAccepted[MALLORY]}`
+		);
+
+		// 35. a member whose PDS serves no spaces stays unconfirmed, shown to admins only, and
+		// nothing goes out on their session.
+		const noSpacesBefore = (await op('noSpacesCalls')).length;
+		await op('admitMember', { callerDid: ALICE, did: CAROL, role: 'member' });
+		const carolAccepted = await op('acceptances', { viewer: ALICE, dids: [CAROL] });
+		const carolRoster = await op('pageRoster', { viewer: ALICE });
+		await op('ejectMember', { callerDid: ALICE, did: CAROL });
+		const noSpacesAfter = (await op('noSpacesCalls')).length;
+		record(
+			carolAccepted[CAROL] === false &&
+				has(carolRoster.unconfirmed, CAROL) &&
+				!has(carolRoster.listed, CAROL) &&
+				noSpacesAfter === noSpacesBefore,
+			'a member whose PDS serves no spaces stays unconfirmed, shown to admins only, and nothing goes out on their session',
+			`accepted ${carolAccepted[CAROL]}; unconfirmed ${has(carolRoster.unconfirmed, CAROL)}; ` +
+				`requests on her session ${noSpacesAfter - noSpacesBefore}`
+		);
+
+		// 36. deleting a members-only event removes it from the calendar space.
+		await op('deleteGroupEvent', {
+			callerDid: ALICE,
+			rkey: membersOnly.rkey,
+			placement: 'members'
+		});
+		const goneFromSpace = await spaceRecord(
+			groupToken,
+			calendarSpaceUri,
+			EVENT_COLLECTION,
+			membersOnly.rkey
+		);
+		membersOnlyWritten.splice(membersOnlyWritten.indexOf(membersOnly.rkey), 1);
+		record(
+			notFound(goneFromSpace),
+			'deleting a members-only event removes it from the calendar space',
+			`after the delete ${goneFromSpace.error ?? goneFromSpace.status}`
+		);
 	} finally {
 		// The group is left behind, so cleanup undoes only what shows outside it: its public
-		// events and its declaration.
+		// events and its declaration. A members-only event a failed run left behind goes too.
+		for (const rkey of membersOnlyWritten) {
+			await tryOp('deleteGroupEvent', { callerDid: ALICE, rkey, placement: 'members' }).catch(
+				(error) =>
+					console.log(`WARN  could not delete members-only event ${rkey}: ${error.message}`)
+			);
+		}
 		if (written.length > 0) console.log('');
 		for (const rkey of written) {
 			const uri = `at://${GROUP_DID}/${EVENT_COLLECTION}/${rkey}`;
@@ -1345,7 +1556,7 @@ try {
 	record(false, 'e2e aborted', error.message);
 }
 
-// 28. no request left this machine --------------------------------------------
+// 37. no request left this machine --------------------------------------------
 // Recorded once main() has returned, so cleanup's requests are counted too. It
 // needs no public request, and at least one local request from the worker and
 // one from the driver after its startup checks, so a ledger that saw nothing
