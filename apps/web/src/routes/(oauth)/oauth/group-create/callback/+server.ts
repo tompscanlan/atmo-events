@@ -24,7 +24,11 @@ export const GET: RequestHandler = async ({ url, locals, platform }) => {
 		console.error(
 			`[groups] create at the group host failed${result.groupDid ? ` for ${result.groupDid}` : ''}: ${result.error}`
 		);
-		redirect(303, `/groups/create?${new URLSearchParams({ error: result.error })}`);
+		const back =
+			result.unfinished && result.groupDid
+				? groupPath({ group_did: result.groupDid })
+				: '/groups/create';
+		redirect(303, `${back}?${new URLSearchParams({ error: result.error })}`);
 	}
 	console.info(`[groups] ${result.groupDid} created at the group host by ${locals.did}`);
 	redirect(303, `${groupPath({ group_did: result.groupDid })}?link=linked`);

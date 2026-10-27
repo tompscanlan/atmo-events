@@ -11,7 +11,9 @@ vi.mock('./server/host', async (importOriginal) => ({
 
 import {
 	finishCreateAtHost,
+	finishGroupSetup,
 	hostCreation,
+	pendingSetup,
 	setUpHostGroup,
 	startCreateAtHost,
 	type HostCreateFields,
@@ -30,6 +32,24 @@ const { aboutSpaceUri: META, membersSpaceUri: MEMBERS } = groupSpaceUris(GROUP);
 const ENV = { GROUP_HOST_URL: HOST, OAUTH_PUBLIC_URL: 'https://atmo.stub.test' };
 
 let harness: SqliteD1;
+
+/** A KV namespace that keeps what is put, as the sessions namespace does. */
+function memoryKv(): KVNamespace {
+	const kept = new Map<string, string>();
+	return {
+		get: async (key: string, type?: string) => {
+			const value = kept.get(key);
+			if (value === undefined) return null;
+			return type === 'json' ? JSON.parse(value) : value;
+		},
+		put: async (key: string, value: string) => {
+			kept.set(key, value);
+		},
+		delete: async (key: string) => {
+			kept.delete(key);
+		}
+	} as unknown as KVNamespace;
+}
 
 beforeEach(() => {
 	harness = sqliteD1();
@@ -203,6 +223,23 @@ describe('finishCreateAtHost', () => {
 	const STATE_ID = 'state-1';
 	const started: HostCreateState = { by: CREATOR, create: fields() };
 
+	let kv: KVNamespace;
+	beforeEach(() => {
+		kv = memoryKv();
+	});
+	const env = () => ({ DB: harness.db, ...ENV, OAUTH_SESSIONS: kv });
+	const finishSetup = (callerDid = CREATOR) =>
+		finishGroupSetup({
+			env: env(),
+			groupDid: GROUP,
+			callerDid,
+			credentialFor: async () => ({
+				kind: 'linked',
+				person: callerDid,
+				session: stubSession(GROUP, HOST, callerDid)
+			})
+		});
+
 	function finish(
 		options: {
 			signedInDid?: string | null;
@@ -228,7 +265,7 @@ describe('finishCreateAtHost', () => {
 			client,
 			clientFor,
 			result: finishCreateAtHost({
-				env: { DB: harness.db, ...ENV, OAUTH_SESSIONS: {} as KVNamespace },
+				env: env(),
 				clientFor,
 				states,
 				params: new URLSearchParams({ state: STATE_ID, code: 'c', iss: HOST }),
@@ -247,20 +284,60 @@ describe('finishCreateAtHost', () => {
 		expect(await groupDids()).toEqual([GROUP]);
 	});
 
-	it('finishes a create that stopped partway, writing its rules once', async () => {
+	it('keeps a create that stopped partway for its creator to finish, writing its rules once', async () => {
 		const down = { declaration: true };
 		const host = await hostWithGroup((nsid) =>
 			down.declaration && nsid === 'com.atproto.repo.putRecord'
 				? Response.json({ error: 'InternalServerError' }, { status: 500 })
 				: undefined
 		);
-		expect((await finish().result).ok).toBe(false);
+		expect(await finish().result).toMatchObject({ ok: false, groupDid: GROUP, unfinished: true });
+		expect(await pendingSetup(env(), GROUP)).toEqual(started);
 
 		down.declaration = false;
-		expect(await finish().result).toEqual({ ok: true, groupDid: GROUP });
+		expect(await finishSetup()).toEqual({ ok: true });
 		expect(host.records(META, 'group.opensocial.rule')).toHaveLength(2);
 		expect(host.repoWrites.map((w) => w.collection)).toEqual(['group.opensocial.declaration']);
 		expect((await getGroupByDid(harness.db, GROUP))?.members_space_uri).toBe(MEMBERS);
+		expect(await pendingSetup(env(), GROUP)).toBeNull();
+	});
+
+	it('writes only the rules a stopped create left unwritten, in their places', async () => {
+		let ruleWrites = 0;
+		const down = { secondRule: true };
+		const host = await hostWithGroup((nsid, init) => {
+			const isRule = String(init?.body ?? '').includes('group.opensocial.rule');
+			if (nsid !== 'com.atproto.space.createRecord' || !isRule) return undefined;
+			ruleWrites += 1;
+			return down.secondRule && ruleWrites === 2
+				? Response.json({ error: 'InternalServerError' }, { status: 500 })
+				: undefined;
+		});
+		expect((await finish().result).ok).toBe(false);
+
+		down.secondRule = false;
+		expect(await finishSetup()).toEqual({ ok: true });
+		const rules = host.records(META, 'group.opensocial.rule').map((r) => [r.order, r.text]);
+		expect(rules.sort()).toEqual([
+			[0, 'Be kind'],
+			[1, 'Leave no trace']
+		]);
+	});
+
+	it('lets no one but the creator finish a stopped create', async () => {
+		const down = { declaration: true };
+		const host = await hostWithGroup((nsid) =>
+			down.declaration && nsid === 'com.atproto.repo.putRecord'
+				? Response.json({ error: 'InternalServerError' }, { status: 500 })
+				: undefined
+		);
+		await finish().result;
+		down.declaration = false;
+		host.clearLog();
+
+		expect((await finishSetup('did:plc:someoneelseaaaaaaaaaaaa')).ok).toBe(false);
+		expect(host.writes()).toEqual([]);
+		expect((await getGroupByDid(harness.db, GROUP))?.members_space_uri).toBeNull();
 	});
 
 	it('sets up nothing for a group this site already has', async () => {

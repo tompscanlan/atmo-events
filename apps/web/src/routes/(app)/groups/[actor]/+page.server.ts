@@ -1,5 +1,7 @@
+import { isHttpError } from '@sveltejs/kit';
 import { canSeeMembers } from '$lib/groups/access';
 import { groupFace } from '$lib/groups/about-record';
+import { unfinishedSetupFor } from '$lib/groups/create-at-host';
 import { mayHoldGroupSession } from '$lib/groups/grants';
 import { can } from '$lib/groups/permissions';
 import { readGroupAbout, type GroupSpaceReader } from '$lib/groups/server/about-read';
@@ -56,15 +58,28 @@ async function rosterPreview(
 
 export const load: PageServerLoad = async ({ params, locals, platform, url }) => {
 	const db = platform!.env.DB;
-	const {
-		group,
-		membership,
-		visibility: gateVisibility,
-		reader,
-		signInOnly
-	} = await groupRouteContext(db, params.actor, await gateCaller(locals.did, locals.session), {
-		signInNotice: true
-	});
+	let context: Awaited<ReturnType<typeof groupRouteContext>>;
+	try {
+		context = await groupRouteContext(
+			db,
+			params.actor,
+			await gateCaller(locals.did, locals.session),
+			{ signInNotice: true }
+		);
+	} catch (e) {
+		const unfinished =
+			isHttpError(e, 404) && locals.did
+				? await unfinishedSetupFor({ ...platform!.env, DB: db }, params.actor, locals.did)
+				: null;
+		if (!unfinished) throw e;
+		return {
+			setupUnfinished: true as const,
+			group: { group_did: unfinished.groupDid },
+			groupName: unfinished.name,
+			error: url.searchParams.get('error')
+		};
+	}
+	const { group, membership, visibility: gateVisibility, reader, signInOnly } = context;
 
 	// Hidden from them: nothing from atmo's copy of the group, which may be stale.
 	if (signInOnly && membership.signIn) {

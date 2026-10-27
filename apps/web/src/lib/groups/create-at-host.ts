@@ -3,7 +3,8 @@
 //
 //   (callback) checks -> INSERT -> profile, rules, access, declaration -> spaces recorded
 //
-// The row's spaces stay NULL until the last step, so a stopped create is resumable.
+// The row's spaces stay NULL until the last step, and the form waits in KV until then, so
+// the group page can offer its creator the rest of a create that stopped.
 import type { Did } from '@atcute/lexicons';
 import type { OAuthClient, OAuthClientStores } from '@atcute/oauth-node-client';
 import { GROUP_JOIN_POLICIES, splitRuleLines, type GroupJoinPolicy } from './about-record';
@@ -14,16 +15,17 @@ import type { GroupRow, GroupVisibility } from './types';
 import { pdsSpaceReader, readAboutAccess, readGroupAbout } from './server/about-read';
 import { createGroupRules, writeAboutAccess, writeGroupProfile } from './server/about-writer';
 import { createGroup, getGroupByDid, recordGroupSpaces } from './server/db/groups';
-import { getMemberRow } from './server/db/roster';
 import { reconcileGroupDeclaration } from './server/declaration-writer';
 import { errorText } from './server/errors';
 import { pdsWriter } from './server/group-write';
 import { refreshGroupHandle } from './server/handles';
+import { groupActorToDid } from './server/route-context';
 import { groupHostOrigin, isHostGroup } from './server/host';
 import { registerGroupIdentity } from './server/identities';
 import {
 	groupLinkConfigured,
 	groupSessionScope,
+	resolveGroupCredential,
 	type CredentialStoreEnv,
 	type LinkedGroupCredential
 } from './server/session';
@@ -98,7 +100,26 @@ function createState(value: unknown): HostCreateState | null {
 
 export type HostCreateResult =
 	| { ok: true; groupDid: string }
-	| { ok: false; groupDid: string | null; error: string };
+	| { ok: false; groupDid: string | null; error: string; unfinished?: true };
+
+const PENDING_SETUP_PREFIX = 'group:setup:';
+
+/** The form of a create whose setup has not finished, and who started it. */
+export async function pendingSetup(
+	env: CredentialStoreEnv | undefined,
+	groupDid: string
+): Promise<HostCreateState | null> {
+	const kept = await env?.OAUTH_SESSIONS?.get(PENDING_SETUP_PREFIX + groupDid, 'json');
+	return createState(kept);
+}
+
+async function keepPendingSetup(env: CredentialStoreEnv, groupDid: string, state: HostCreateState) {
+	await env.OAUTH_SESSIONS?.put(PENDING_SETUP_PREFIX + groupDid, JSON.stringify(state));
+}
+
+async function dropPendingSetup(env: CredentialStoreEnv, groupDid: string) {
+	await env.OAUTH_SESSIONS?.delete(PENDING_SETUP_PREFIX + groupDid);
+}
 
 type FinishClient = Pick<OAuthClient, 'callback' | 'revoke'>;
 
@@ -153,23 +174,73 @@ export async function finishCreateAtHost(input: {
 		};
 	}
 
-	const existing = await getGroupByDid(input.env.DB, groupDid);
-	const resumable =
-		existing?.members_space_uri === null &&
-		(await getMemberRow(input.env.DB, existing.id, started.by))?.role === 'admin';
-	if (existing && !resumable) {
+	if (await getGroupByDid(input.env.DB, groupDid)) {
 		return { ok: false, groupDid, error: `${groupDid} is already a group here.` };
 	}
 
+	await keepPendingSetup(input.env, groupDid, started);
 	const result = await setUpHostGroup(
 		input.env,
 		started.by,
 		started.create,
 		{ kind: 'linked', person: started.by, session },
-		groupHostOrigin(input.env)!,
-		existing
+		groupHostOrigin(input.env)!
 	);
-	return result.ok ? { ok: true, groupDid } : { ok: false, groupDid, error: result.error };
+	if (!result.ok) return { ok: false, groupDid, error: result.error, unfinished: true };
+	await dropPendingSetup(input.env, groupDid);
+	return { ok: true, groupDid };
+}
+
+/** For the group page, which is otherwise a 404 until the group's spaces are recorded. */
+export async function unfinishedSetupFor(
+	env: HostCreateEnv,
+	actor: string,
+	callerDid: string
+): Promise<{ groupDid: string; name: string } | null> {
+	const groupDid = await groupActorToDid(actor);
+	const group = groupDid ? await getGroupByDid(env.DB, groupDid) : null;
+	if (!group || group.members_space_uri !== null) return null;
+	const pending = await pendingSetup(env, group.group_did);
+	return pending?.by === callerDid
+		? { groupDid: group.group_did, name: pending.create.name }
+		: null;
+}
+
+/** The group page's "finish setting up", for the person whose create stopped. */
+export async function finishGroupSetup(input: {
+	env: HostCreateEnv;
+	groupDid: string;
+	callerDid: string;
+	credentialFor?: typeof resolveGroupCredential;
+}): Promise<GroupFormResult> {
+	const { env, groupDid, callerDid } = input;
+	const pending = await pendingSetup(env, groupDid);
+	const group = await getGroupByDid(env.DB, groupDid);
+	if (!pending || pending.by !== callerDid || !group || group.members_space_uri !== null) {
+		return { ok: false, error: 'This group has no unfinished setup of yours.' };
+	}
+	const credential = await (input.credentialFor ?? resolveGroupCredential)(
+		env,
+		groupDid,
+		callerDid
+	);
+	if (!credential) {
+		return {
+			ok: false,
+			error: 'This site no longer holds your access to the group, so it cannot finish it.'
+		};
+	}
+	const result = await setUpHostGroup(
+		env,
+		callerDid,
+		pending.create,
+		credential,
+		groupHostOrigin(env)!,
+		group
+	);
+	if (!result.ok) return result;
+	await dropPendingSetup(env, groupDid);
+	return { ok: true };
 }
 
 export async function setUpHostGroup(
@@ -181,9 +252,9 @@ export async function setUpHostGroup(
 	existing: GroupRow | null = null
 ): Promise<GroupFormResult<{ groupDid: string }>> {
 	const groupDid = credential.session.did;
-	const made = (step: string, detail: string) => ({
+	const made = (step: string, detail: string, then: string) => ({
 		ok: false as const,
-		error: `The group host made ${groupDid}, but ${step} failed (${detail}). Tell an administrator before creating it again.`
+		error: `The group host made ${groupDid}, but ${step} failed (${detail}). ${then}`
 	});
 
 	let group = existing;
@@ -196,7 +267,11 @@ export async function setUpHostGroup(
 				description: fields.description || null
 			});
 		} catch (e) {
-			return made('saving it on this site', knownFormError(e)?.error ?? errorText(e));
+			return made(
+				'saving it on this site',
+				knownFormError(e)?.error ?? errorText(e),
+				'Tell an administrator before creating it again.'
+			);
 		}
 	}
 	// Before any write, since the index resolves the DID through this.
@@ -227,9 +302,11 @@ export async function setUpHostGroup(
 				joinPolicy: fields.joinPolicy
 			}
 		});
-		if (!existing || (await readGroupAbout(reader, withSpaces)).rules.length === 0) {
-			await createGroupRules({ ...as, rules: splitRuleLines(fields.rules) });
-		}
+		const written = existing
+			? new Set((await readGroupAbout(reader, withSpaces)).rules.map((rule) => rule.order))
+			: new Set<number>();
+		const rules = splitRuleLines(fields.rules).map((text, order) => ({ text, order }));
+		await createGroupRules({ ...as, rules: rules.filter((rule) => !written.has(rule.order)) });
 		// Only `public` follows the form; the host's grants stay.
 		const access = await readAboutAccess(reader, withSpaces);
 		await writeAboutAccess({ ...as, visibility: fields.visibility, grants: access?.grants });
@@ -241,7 +318,11 @@ export async function setUpHostGroup(
 		});
 		await recordGroupSpaces(env.DB, group.id, uris);
 	} catch (e) {
-		return made('writing its profile and settings', errorText(e));
+		return made(
+			'writing its profile and settings',
+			errorText(e),
+			'Open the group’s page to finish setting it up.'
+		);
 	}
 	return { ok: true, groupDid };
 }

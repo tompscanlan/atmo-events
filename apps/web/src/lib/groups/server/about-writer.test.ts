@@ -97,7 +97,13 @@ describe('createGroupRules', () => {
 		await createGroupRules({ ...as, rules: [] });
 		expect(writer.writes).toEqual([]);
 
-		await createGroupRules({ ...as, rules: ['Be kind', 'No spam'] });
+		await createGroupRules({
+			...as,
+			rules: [
+				{ text: 'Be kind', order: 0 },
+				{ text: 'No spam', order: 1 }
+			]
+		});
 		expect(
 			writer.writes.map((w) => [w.collection, w.intent, w.space, w.record.text, w.record.order])
 		).toEqual([

@@ -5,7 +5,8 @@ import {
 	GROUP_RULE_COLLECTION,
 	groupProfileRecord,
 	groupRuleRecord,
-	type GroupProfileInput
+	type GroupProfileInput,
+	type GroupRuleFields
 } from '../about-record';
 import {
 	ABOUT_SPACE_READER_ROLES,
@@ -99,14 +100,14 @@ export async function alignAboutAccess(
 	return true;
 }
 
-/** The rules a new group starts with, one record each. */
+/** The rules a new group starts with, one record each, at their place in the form. */
 export async function createGroupRules(
-	input: WriteGroupAboutInput & { rules: readonly string[] }
+	input: WriteGroupAboutInput & { rules: readonly GroupRuleFields[] }
 ): Promise<void> {
 	if (input.rules.length === 0) return;
 	await requireGroupWrite(input, spaceWrite(ABOUT_SPACE_TYPE, GROUP_RULE_COLLECTION, 'create'));
 	const writer = await gatedWriter(input);
-	for (const [order, text] of input.rules.entries()) {
+	for (const { text, order } of input.rules) {
 		await writer({
 			repo: input.group.group_did,
 			collection: GROUP_RULE_COLLECTION,

@@ -368,3 +368,42 @@ describe('the link prompt', () => {
 		}
 	});
 });
+
+describe('a create whose setup stopped', () => {
+	const STOPPED = 'did:plc:stoppedaaaaaaaaaaaaaaaaa';
+	const pending = {
+		by: OWNER,
+		create: { name: 'Half made', visibility: 'private', joinPolicy: 'approval', listed: false }
+	};
+	const kv = {
+		get: async (key: string) => (key === `group:setup:${STOPPED}` ? pending : null)
+	} as unknown as KVNamespace;
+
+	beforeEach(async () => {
+		await seedGroup({
+			harness,
+			groupDid: STOPPED,
+			creatorDid: OWNER,
+			name: 'Half made',
+			spaces: false
+		});
+	});
+
+	it('offers its creator the rest of the setup, under the name they gave it', async () => {
+		expect(await openAs(OWNER, { env: { OAUTH_SESSIONS: kv }, actor: STOPPED })).toStrictEqual({
+			setupUnfinished: true,
+			group: { group_did: STOPPED },
+			groupName: 'Half made',
+			error: null
+		});
+	});
+
+	it('is the standard 404 to anyone else signed in', async () => {
+		for (const did of [MEMBER, STRANGER]) {
+			await expect(
+				openAs(did, { env: { OAUTH_SESSIONS: kv }, actor: STOPPED }),
+				String(did)
+			).rejects.toMatchObject({ status: 404 });
+		}
+	});
+});

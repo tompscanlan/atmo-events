@@ -207,7 +207,11 @@ describe('the forms’ schemas', () => {
 	});
 
 	it('offers no refresh and no handle suggestions', () => {
-		expect(Object.keys(groupRemotes).sort()).toEqual(['createGroupForm', 'updateGroupForm']);
+		expect(Object.keys(groupRemotes).sort()).toEqual([
+			'createGroupForm',
+			'finishGroupSetupCommand',
+			'updateGroupForm'
+		]);
 		expect(rosterRemotes).not.toHaveProperty('suggestPeople');
 	});
 });
@@ -219,7 +223,8 @@ describe('the gate in front of the group forms', () => {
 		['leaving', leaveGroupForm],
 		['writing an event', putGroupEvent],
 		['deleting an event', removeGroupEvent],
-		['the sign-in button', signInForGroup]
+		['the sign-in button', signInForGroup],
+		['finishing a stopped create', groupRemotes.finishGroupSetupCommand]
 	])('refuses %s to a signed-out caller with a 401, before any read', async (_, remote) => {
 		host();
 		await expect(call(remote, DATA)).rejects.toMatchObject({ status: 401 });

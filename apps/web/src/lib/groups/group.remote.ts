@@ -1,6 +1,6 @@
 // Creating a group and saving its settings, as remote forms.
 import { error } from '@sveltejs/kit';
-import { form, getRequestEvent } from '$app/server';
+import { command, form, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
 import { can } from './permissions';
 import type { GroupFormResult } from './form-result';
@@ -11,7 +11,7 @@ import {
 	groupSettingsFields,
 	shownVisibilityField
 } from './form-fields';
-import { hostCreation, startCreateAtHost } from './create-at-host';
+import { finishGroupSetup, hostCreation, startCreateAtHost } from './create-at-host';
 import { groupLinkClient } from './server/session';
 import { GROUP_CREATE_REDIRECT_PATH } from '$lib/atproto/settings';
 import { runUpdateGroup } from './update-group';
@@ -33,6 +33,20 @@ export const createGroupForm = form(
 			callerDid: locals.did,
 			fields: data,
 			redirectUri: env.OAUTH_PUBLIC_URL + GROUP_CREATE_REDIRECT_PATH
+		});
+	}
+);
+
+export const finishGroupSetupCommand = command(
+	v.object({ groupDid: didField }),
+	async (data): Promise<GroupFormResult> => {
+		const { locals, platform } = getRequestEvent();
+		if (!locals.did || !platform?.env.DB) error(401, 'Sign in to finish setting up a group');
+		const env = platform.env;
+		return finishGroupSetup({
+			env: { ...env, DB: env.DB },
+			groupDid: data.groupDid,
+			callerDid: locals.did
 		});
 	}
 );
