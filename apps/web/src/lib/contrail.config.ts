@@ -3,6 +3,7 @@ import { SPACE_TYPE } from './spaces/config';
 import { MAX_HYDRATION_URIS } from './search/constants';
 import { createMeiliSink, meiliSinkBackendFromEnv } from './search/server/meili-sink';
 import { discoverableSql } from './search/server/discoverability';
+import { GROUP_DECLARATION_COLLECTION } from './groups/declaration-record';
 
 // The `contrail` CLI (`pnpm backfill` / `contrail refresh`) fires `config.sinks`
 // on the backfill/refresh paths, so a fresh or re-synced install gets full search
@@ -135,6 +136,9 @@ export const config: ContrailConfig = {
 					field: 'subject.uri'
 				}
 			}
+		},
+		declaration: {
+			collection: GROUP_DECLARATION_COLLECTION
 		}
 		// `follow` (app.bsky.graph.follow) is auto-added by contrail 0.5+ when
 		// `feeds` is configured: discover:false, subjectField:'subject' (so only

@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build && contrail append-scheduled",
-		"generate": "contrail-lex generate",
+		"generate": "node scripts/lexicon-shims.mjs write && contrail-lex generate && node scripts/lexicon-shims.mjs unpull",
 		"generate:pull": "contrail-lex all",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
@@ -31,6 +31,8 @@
 	"devDependencies": {
 		"@atcute/atproto": "^3.1.10",
 		"@atcute/bluesky": "^3.3.0",
+		"@atcute/cbor": "^2.3.2",
+		"@atcute/cid": "^2.4.1",
 		"@atcute/client": "^4.2.1",
 		"@atcute/crypto": "^2.4.1",
 		"@atcute/identity-resolver": "^1.2.2",
