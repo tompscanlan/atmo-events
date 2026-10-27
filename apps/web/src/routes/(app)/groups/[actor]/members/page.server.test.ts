@@ -158,15 +158,16 @@ describe('/groups/[actor]/members load, with no membership records', () => {
 
 describe('/groups/[actor]/members load, for a member whose sign-in reads no members space', () => {
 	it.each([
-		['public', true],
-		['private', false]
+		['public', true, 'Kona'],
+		['private', false, GROUP_DID]
 	])(
 		'on a %s group, says a new sign-in opens the roster, and reads none of it',
-		async (_, isPublic) => {
+		async (_, isPublic, groupName) => {
 			const host = recordsHost(isPublic);
 			const data = await openAs(OWNER, META_ONLY);
 
-			expect(data).toMatchObject({ signIn: true });
+			expect(data).toMatchObject({ signIn: true, groupName });
+			if (!isPublic) expect(data.group).toStrictEqual({ group_did: GROUP_DID });
 			expect(data.members).toBeUndefined();
 			expect(host.callsIn(MEMBERS)).toEqual([]);
 		}

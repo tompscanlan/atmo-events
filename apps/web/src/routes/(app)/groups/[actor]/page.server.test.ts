@@ -327,12 +327,12 @@ describe('a member whose sign-in reads no members space', () => {
 		expect(data.membership.signIn).toBeUndefined();
 	});
 
-	it("on a private group gets the row's name and the notice in place of the 404", async () => {
+	it('on a private group gets the notice in place of the 404, and nothing of the row', async () => {
 		groupHost('private');
 		expect(await openAs(OWNER, { scope: META_ONLY })).toStrictEqual({
 			signInOnly: true,
-			group: publicGroup(row),
-			groupName: 'Kona'
+			group: { group_did: GROUP_DID },
+			groupName: GROUP_DID
 		});
 		await expect(openAs(STRANGER, { scope: META_ONLY })).rejects.toMatchObject({ status: 404 });
 	});

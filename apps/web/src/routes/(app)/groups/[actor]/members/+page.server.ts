@@ -50,14 +50,24 @@ async function readRosterSpace(
 export const load: PageServerLoad = async ({ params, locals, platform }) => {
 	const db = platform!.env.DB;
 	const viewer = await gateCaller(locals.did, locals.session);
-	const { group, membership, reader } = await groupRouteContext(db, params.actor, viewer, {
-		signInNotice: true
-	});
+	const { group, membership, reader, signInOnly } = await groupRouteContext(
+		db,
+		params.actor,
+		viewer,
+		{ signInNotice: true }
+	);
 
 	const isGroup = locals.did === group.group_did;
 	const refuse = () =>
 		error(403, locals.did ? 'Only members can see this roster' : 'Sign in to see members');
 	if (!isGroup && !canSeeMembers(membership) && membership.signIn) {
+		if (signInOnly) {
+			return {
+				group: { group_did: group.group_did },
+				groupName: params.actor,
+				signIn: true as const
+			};
+		}
 		const { groupName } = await groupHeader(db, group, reader);
 		return { group: publicGroup(group), groupName, signIn: true as const };
 	}

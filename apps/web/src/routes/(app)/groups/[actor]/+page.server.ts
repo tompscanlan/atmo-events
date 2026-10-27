@@ -8,7 +8,7 @@ import { publiclyDeclared } from '$lib/groups/server/declaration-writer';
 import { refreshGroupHandle } from '$lib/groups/server/handles';
 import { readGroupMembers, NO_MEMBER_RECORDS } from '$lib/groups/server/members-read';
 import { loadPeople } from '$lib/groups/server/people';
-import { groupHeader, groupRouteContext, pageRoster } from '$lib/groups/server/route-context';
+import { groupRouteContext, pageRoster } from '$lib/groups/server/route-context';
 import { readGroupVisibility } from '$lib/groups/server/spaces';
 import {
 	publicGroup,
@@ -66,9 +66,13 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 		signInNotice: true
 	});
 
+	// Hidden from them: nothing from atmo's copy of the group, which may be stale.
 	if (signInOnly && membership.signIn) {
-		const { groupName } = await groupHeader(db, group, null);
-		return { signInOnly: true as const, group: publicGroup(group), groupName };
+		return {
+			signInOnly: true as const,
+			group: { group_did: group.group_did },
+			groupName: params.actor
+		};
 	}
 
 	const canAdmitMembers = can(membership.permissions, 'ADMIT_MEMBERS');

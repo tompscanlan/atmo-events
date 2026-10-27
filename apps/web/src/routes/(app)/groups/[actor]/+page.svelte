@@ -12,7 +12,7 @@
 </svelte:head>
 
 {#if data.signInOnly}
-	<!-- Hidden until a new sign-in: nothing of the group was read, so only the row's name. -->
+	<!-- Hidden until a new sign-in: nothing of the group was read, so only its address. -->
 	<div class="mx-auto max-w-3xl px-6 py-8 sm:py-12">
 		<a
 			href={resolve('/groups')}
