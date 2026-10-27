@@ -1,5 +1,5 @@
 import { redirect } from '@sveltejs/kit';
-import { createOAuthClient } from '$lib/atproto/server/oauth';
+import { createOAuthClient, isSignInState } from '$lib/atproto/server/oauth';
 import { setSignedCookie } from '$lib/atproto/server/signed-cookie';
 import { scopes } from '$lib/atproto/settings';
 import { getServerClient } from '$lib/contrail/index';
@@ -8,6 +8,9 @@ import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ url, platform, cookies }) => {
 	const oauth = createOAuthClient(platform?.env);
+	if (!(await isSignInState(platform?.env, url.searchParams.get('state')))) {
+		redirect(303, '/?error=auth_failed');
+	}
 
 	// oauth.callback() validates the state parameter (CSRF protection) and
 	// exchanges the authorization code for tokens via the token endpoint.

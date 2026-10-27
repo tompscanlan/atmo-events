@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { generateClientAssertionKey } from '@atcute/oauth-node-client';
+import { generateClientAssertionKey, type StoredState } from '@atcute/oauth-node-client';
 import { scopes } from '../settings';
-import { createOAuthClient } from './oauth';
+import { createOAuthClient, isSignInState, oauthStates } from './oauth';
 
 const GRANT = 'include:group.opensocial.participate';
 
@@ -47,5 +47,26 @@ describe('createOAuthClient', () => {
 				scope: [...scopes, GRANT].join(' ')
 			})
 		).rejects.toThrow(/not within client metadata's scope/);
+	});
+});
+
+describe('isSignInState', () => {
+	const stateFor = (path: string) =>
+		({ redirectUri: `https://atmo.example.com${path}` }) as unknown as StoredState;
+
+	it('takes a state its sign-in started, and no group flow’s', async () => {
+		const states = oauthStates(env);
+		await states.set('sign-in', stateFor('/oauth/callback'));
+		await states.set('link', { ...stateFor('/oauth/group-link/callback'), userState: '{}' });
+		await states.set('create', { ...stateFor('/oauth/group-create/callback'), userState: '{}' });
+
+		expect(await isSignInState(env, 'sign-in')).toBe(true);
+		expect(await isSignInState(env, 'link')).toBe(false);
+		expect(await isSignInState(env, 'create')).toBe(false);
+	});
+
+	it('refuses an unknown state and a missing one', async () => {
+		expect(await isSignInState(env, 'unknown')).toBe(false);
+		expect(await isSignInState(env, null)).toBe(false);
 	});
 });

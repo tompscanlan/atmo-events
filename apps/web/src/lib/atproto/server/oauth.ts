@@ -61,6 +61,15 @@ export function oauthStates(env?: App.Platform['env']): OAuthClientStores['state
 	return sharedParts(env).stores.states;
 }
 
+/** A group flow's state finishes only at its own callback, which checks who started it. */
+export async function isSignInState(
+	env: App.Platform['env'] | undefined,
+	stateId: string | null
+): Promise<boolean> {
+	const stored = stateId ? await oauthStates(env).get(stateId) : undefined;
+	return stored !== undefined && new URL(stored.redirectUri).pathname === REDIRECT_PATH;
+}
+
 export async function resolveActorDid(identifier: ActorIdentifier): Promise<Did> {
 	return (await sharedResolver().resolve(identifier)).did;
 }

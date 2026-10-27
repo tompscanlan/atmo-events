@@ -1,6 +1,6 @@
 // Linking a group session, kept under the person who approved it at the host. Only the
-// browser that started it, still signed in as that person, may finish it. No cookie is
-// touched: the sign-in callback would sign the admin in as the group.
+// person who started it, still signed in, may finish it, and only here: the sign-in
+// callback refuses its state. No cookie is touched.
 import type { Did } from '@atcute/lexicons';
 import type { OAuthClient, OAuthClientStores } from '@atcute/oauth-node-client';
 import type { GroupRow } from '../types';
