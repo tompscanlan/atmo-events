@@ -74,6 +74,11 @@ function hostRefusal(nsid: string, error: string | null, groupDid: string, colle
 	return null;
 }
 
+function alreadyMember(error: string | null, collection: string) {
+	if (error !== 'RecordAlreadyExists' || collection !== GROUP_MEMBERSHIP_COLLECTION) return null;
+	return new GroupRecordError('That account is already a member. Change its role in the roster.');
+}
+
 function noScopeFor(write: SpaceWrite): string {
 	return 'manage' in write
 		? `your roles hold no scope to ${write.manage} a ${write.spaceType} space`
@@ -120,7 +125,9 @@ export type GroupRepoWriter = (write: GroupRepoWrite) => Promise<{ uri: string; 
 export function pdsWriter(cred: GroupCredential, groupDid: string): GroupRepoWriter {
 	return async (write) => {
 		const xrpcFailure = (nsid: string, status: number, error: string | null) =>
-			hostRefusal(nsid, error, groupDid, write.collection) || xrpcError(nsid, { status, error });
+			hostRefusal(nsid, error, groupDid, write.collection) ||
+			alreadyMember(error, write.collection) ||
+			xrpcError(nsid, { status, error });
 		const { client, handle } = await groupClient(cred, groupDid);
 		const collection = write.collection as `${string}.${string}.${string}`;
 		const repo = write.repo;

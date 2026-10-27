@@ -31,6 +31,9 @@ describe('shownVisibilityField', () => {
 	});
 });
 
+/** One grapheme, 25 bytes. */
+const FAMILY = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}';
+
 describe('groupSettingsFields', () => {
 	const settings = v.object({ ...groupSettingsFields, rules: groupRulesField });
 	const valid = { name: 'Kona', visibility: 'public', joinPolicy: 'approval' };
@@ -47,7 +50,10 @@ describe('groupSettingsFields', () => {
 		['a name over 64 graphemes', { name: 'x'.repeat(65) }],
 		['a description over 2000 graphemes', { description: 'x'.repeat(2001) }],
 		['an unknown join policy', { joinPolicy: 'anyone' }],
-		['a rule line over the bound', { rules: `Be kind\n${'x'.repeat(GROUP_RULE_MAX + 1)}` }]
+		['a rule line over the bound', { rules: `Be kind\n${'x'.repeat(GROUP_RULE_MAX + 1)}` }],
+		['a one-grapheme name over 640 bytes', { name: `e${'\u0301'.repeat(400)}` }],
+		['a description over 20000 bytes', { description: FAMILY.repeat(801) }],
+		['a rule line over 20000 bytes', { rules: `Be kind\n${FAMILY.repeat(801)}` }]
 	])('refuses %s', (_, input) => {
 		expect(parses(input)).toBe(false);
 	});

@@ -118,8 +118,16 @@ export function fakeGroupHost(options: FakeGroupHostOptions) {
 			case 'com.atproto.space.putRecord':
 			case 'com.atproto.space.createRecord': {
 				const write = body as unknown as SpaceRecordWrite;
+				const key = recordKey(write.space, write.collection, write.rkey);
+				// As the PDS answers a create over a record that exists.
+				if (nsid === 'com.atproto.space.createRecord' && liveRecords.has(key)) {
+					return Response.json(
+						{ error: 'RecordAlreadyExists', message: 'Record already exists' },
+						{ status: 400 }
+					);
+				}
 				spaceWrites.push(write);
-				liveRecords.set(recordKey(write.space, write.collection, write.rkey), write);
+				liveRecords.set(key, write);
 				return Response.json({
 					uri: `${write.space}/${did}/${write.collection}/${write.rkey}`,
 					cid: 'bafycreate'

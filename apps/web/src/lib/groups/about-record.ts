@@ -12,8 +12,11 @@ function isJoinPolicy(value: unknown): value is GroupJoinPolicy {
 }
 
 export const GROUP_NAME_MAX = 64;
+export const GROUP_NAME_MAX_BYTES = 640;
 export const GROUP_DESCRIPTION_MAX = 2000;
+export const GROUP_DESCRIPTION_MAX_BYTES = 20000;
 export const GROUP_RULE_MAX = 2000;
+export const GROUP_RULE_MAX_BYTES = 20000;
 
 export interface GroupProfileFields {
 	name: string;

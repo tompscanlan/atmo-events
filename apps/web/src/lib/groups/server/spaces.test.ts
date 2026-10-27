@@ -5,12 +5,13 @@ import { linkedCredential, unlinkAllGroups } from './__fixtures__/linked-group';
 import { GroupSpaceError, readGroupVisibility } from './spaces';
 
 import { spaceUri } from '../ids';
-import { pdsWriter } from './group-write';
+import { GroupRecordError, pdsWriter } from './group-write';
 import { hostDown, spaceReader } from './__fixtures__/space-reader';
 import {
 	ABOUT_SPACE_READER_ROLES,
 	GROUP_ACCESS_COLLECTION,
 	GROUP_ACCESS_RKEY,
+	GROUP_MEMBERSHIP_COLLECTION,
 	groupAccessRecord
 } from '../members-record';
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
@@ -60,6 +61,40 @@ describe('pdsWriter target', () => {
 		expect(sent[0].body).toMatchObject({ repo: GROUP_DID, rkey: 'self' });
 		if (space) expect(sent[0].body.space).toBe(space);
 		else expect(sent[0].body).not.toHaveProperty('space');
+	});
+});
+
+describe('pdsWriter refusals', () => {
+	const SPACE = spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self');
+	const create = (collection: string) =>
+		pdsWriter(
+			CRED,
+			GROUP_DID
+		)({
+			repo: GROUP_DID,
+			collection,
+			rkey: 'did:plc:member',
+			record: {},
+			intent: 'create',
+			space: SPACE
+		});
+
+	beforeEach(() => {
+		vi.stubGlobal('fetch', async () =>
+			Response.json(
+				{ error: 'RecordAlreadyExists', message: 'Record already exists' },
+				{ status: 400 }
+			)
+		);
+	});
+
+	it('says an admitted account is already a member, rather than replacing its roles', async () => {
+		await expect(create(GROUP_MEMBERSHIP_COLLECTION)).rejects.toBeInstanceOf(GroupRecordError);
+	});
+
+	it('leaves an existing record of another kind a plain failure', async () => {
+		const failure = await create('com.example.test').catch((e: unknown) => e);
+		expect(failure).not.toBeInstanceOf(GroupRecordError);
 	});
 });
 

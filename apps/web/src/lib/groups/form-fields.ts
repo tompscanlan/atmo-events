@@ -3,13 +3,18 @@ import * as v from 'valibot';
 import { isDid, isHandle } from '@atcute/lexicons/syntax';
 import {
 	GROUP_DESCRIPTION_MAX,
+	GROUP_DESCRIPTION_MAX_BYTES,
 	GROUP_JOIN_POLICIES,
 	GROUP_NAME_MAX,
+	GROUP_NAME_MAX_BYTES,
 	GROUP_RULE_MAX,
+	GROUP_RULE_MAX_BYTES,
 	graphemeLength,
 	splitRuleLines
 } from './about-record';
 import { GROUP_VISIBILITIES } from './types';
+
+const utf8 = new TextEncoder();
 import { ASSIGNABLE_ROLES } from './permissions';
 
 /** An unticked checkbox sends nothing, and without the `''` default valibot skips the
@@ -57,8 +62,20 @@ export const eventIntentField = v.picklist(['create', 'update'] as const);
 
 /** Within the lexicon's bounds. */
 export const groupSettingsFields = {
-	name: v.pipe(v.string(), v.trim(), v.nonEmpty('Enter a name.'), v.maxGraphemes(GROUP_NAME_MAX)),
-	description: v.optional(v.pipe(v.string(), v.maxGraphemes(GROUP_DESCRIPTION_MAX))),
+	name: v.pipe(
+		v.string(),
+		v.trim(),
+		v.nonEmpty('Enter a name.'),
+		v.maxGraphemes(GROUP_NAME_MAX),
+		v.maxBytes(GROUP_NAME_MAX_BYTES)
+	),
+	description: v.optional(
+		v.pipe(
+			v.string(),
+			v.maxGraphemes(GROUP_DESCRIPTION_MAX),
+			v.maxBytes(GROUP_DESCRIPTION_MAX_BYTES)
+		)
+	),
 	visibility: v.picklist(GROUP_VISIBILITIES),
 	joinPolicy: v.picklist(GROUP_JOIN_POLICIES),
 	listed: checkboxField
@@ -68,7 +85,12 @@ export const groupRulesField = v.optional(
 	v.pipe(
 		v.string(),
 		v.check(
-			(value) => splitRuleLines(value).every((rule) => graphemeLength(rule) <= GROUP_RULE_MAX),
+			(value) =>
+				splitRuleLines(value).every(
+					(rule) =>
+						graphemeLength(rule) <= GROUP_RULE_MAX &&
+						utf8.encode(rule).length <= GROUP_RULE_MAX_BYTES
+				),
 			`A rule can be at most ${GROUP_RULE_MAX} characters.`
 		)
 	)

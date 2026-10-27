@@ -42,7 +42,7 @@ describe('the roster records', () => {
 		expect(
 			writer.writes.map((w) => [w.space, w.collection, w.rkey, w.intent, w.record.roles])
 		).toEqual([
-			[MEMBERS, GROUP_MEMBERSHIP_COLLECTION, STRANGER, 'update', ['member']],
+			[MEMBERS, GROUP_MEMBERSHIP_COLLECTION, STRANGER, 'create', ['member']],
 			[MEMBERS, GROUP_MEMBERSHIP_COLLECTION, STRANGER, 'update', ['moderator']],
 			[MEMBERS, GROUP_MEMBERSHIP_COLLECTION, STRANGER, 'delete', undefined]
 		]);

@@ -28,7 +28,8 @@ export interface WriteGroupMembersInput {
 	reader?: GroupSpaceReader | null;
 }
 
-/** A role change rewrites the record in place, so a member keeps one record and one URI. */
+/** An admit creates the record, so it never replaces a member's roles; a role change
+ *  rewrites it in place, so a member keeps one record and one URI. */
 export async function putGroupMembership(
 	input: WriteGroupMembersInput & {
 		subject: string;
@@ -59,7 +60,7 @@ export async function putGroupMembership(
 			}),
 			$type: GROUP_MEMBERSHIP_COLLECTION
 		},
-		intent: 'update',
+		intent: input.intent === 'admit' ? 'create' : 'update',
 		space
 	});
 	return { uri: result.uri, cid: result.cid, rkey };
