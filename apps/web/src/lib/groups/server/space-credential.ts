@@ -27,6 +27,8 @@ export interface SpaceCredential {
 
 export interface SpaceHolder {
 	did: string;
+	/** What the holder's sign-in grants; a new sign-in that grants less gets its own credentials. */
+	scope?: string;
 	handle: XrpcHandle;
 }
 
@@ -144,7 +146,7 @@ export async function exchangeSpaceCredential(
 const EXPIRY_MARGIN_MS = 30_000;
 const MAX_KEPT = 500;
 
-// Keyed by holder and space. Only an issued credential is kept, never an exchange
+// Keyed by holder, space and granted scope. Only an issued credential is kept, never an exchange
 // still under way: Workers ends a request's I/O with the request, so an exchange kept
 // past it may never settle, and the next request to wait on it would wait forever.
 const kept = new Map<string, SpaceCredential>();
@@ -160,7 +162,7 @@ export async function spaceCredential(
 	authorityHost: string,
 	underWay?: ExchangesUnderWay
 ): Promise<SpaceCredential> {
-	const key = `${holder.did} ${space}`;
+	const key = `${holder.did} ${space} ${holder.scope ?? ''}`;
 	const held = kept.get(key);
 	if (held?.expiresAt && !spent.has(held) && held.expiresAt - EXPIRY_MARGIN_MS > Date.now()) {
 		return held;

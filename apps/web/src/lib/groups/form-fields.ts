@@ -50,8 +50,6 @@ export const didField = v.pipe(
 	v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,300}$/, 'Invalid DID')
 );
 
-export const idField = v.pipe(v.string(), v.minLength(1), v.maxLength(64));
-
 export const assignableRoleField = v.picklist(ASSIGNABLE_ROLES, 'Unknown role');
 
 export const rkeyField = v.pipe(

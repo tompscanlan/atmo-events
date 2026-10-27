@@ -117,23 +117,6 @@ describe('spaceSigHeaders', () => {
 	});
 });
 
-describe('spaceSigHeaders', () => {
-	it('signs a credential use over the authorization and the audience, as @atproto/space does', async () => {
-		const signer = await newSigner();
-		const headers = await spaceSigHeaders(signer, 'Atproto-Space-Credential cred.jwt', BOB);
-
-		expect(headers.authorization).toBe('Atproto-Space-Credential cred.jwt');
-		expect(headers['atproto-space-audience']).toBe(BOB);
-		expect(headers['signature-input']).toBe(`atproto-space-credential=${CREDENTIAL_SIG_INPUT}`);
-		const base = [
-			'"authorization": Atproto-Space-Credential cred.jwt',
-			`"atproto-space-audience": ${BOB}`,
-			`"@signature-params": ${CREDENTIAL_SIG_INPUT}`
-		].join('\n');
-		expect(await verifies(signer, base, headers.signature)).toBe(true);
-	});
-});
-
 type ExchangeBody = { space?: unknown; credentialKid?: unknown; delegationToken?: unknown };
 
 /** A holder's session answers `getDelegationToken` with a token naming them; the group's
@@ -322,6 +305,16 @@ describe('a read with a credential', () => {
 			holderOf((read.headers.get('authorization') ?? '').replace(/^Atproto-Space-Credential /, ''))
 		);
 		expect(readers).toEqual([CAROL, MALLORY, CAROL, MALLORY]);
+	});
+
+	it('keeps a new sign-in that grants less apart from the credential an older one got', async () => {
+		const net = network({});
+		const wide = { ...net.holderFor(CAROL), scope: 'atproto space:*?authority=*&action=read' };
+		const narrow = { ...net.holderFor(CAROL), scope: 'atproto' };
+		await readAs(wide);
+		await readAs(narrow);
+		await readAs(wide);
+		expect(net.exchanges).toHaveLength(2);
 	});
 
 	it('keeps at most 500 credentials, dropping the oldest', async () => {

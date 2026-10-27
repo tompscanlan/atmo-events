@@ -1,6 +1,5 @@
-// Read by parameter: a PDS hands an `include:` back expanded, in its own order, and drops
-// each parameter left at its default. No `action` is read, create, update and delete; no
-// `authority` is the signer's own repo, never a group's.
+// A PDS hands an `include:` back expanded and drops each parameter left at its default:
+// no `action` is all four, no `authority` the signer's own repo, never a group's.
 import { ABOUT_SPACE_TYPE, MEMBERS_SPACE_TYPE } from '../types';
 
 const DEFAULT_ACTIONS: readonly string[] = ['read', 'create', 'update', 'delete'];
