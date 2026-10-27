@@ -31,6 +31,13 @@ export type HostProfile = {
 	avatar?: string;
 };
 
+/** A page's own name and link for an event's host; with no href the name shows unlinked. */
+export type EventHost = {
+	name: string;
+	href: string | null;
+	note?: string;
+};
+
 export type AttendeeInfo = {
 	did: string;
 	status: 'going' | 'interested';

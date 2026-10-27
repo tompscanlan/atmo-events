@@ -417,7 +417,7 @@
 
 			<!-- Left column: sidebar info -->
 			<div class="order-3 space-y-6 md:order-0 md:col-start-1">
-				<EventHostedBy {hostProfile} {hostUrl} {did} {speakers} />
+				<EventHostedBy {hostProfile} {hostUrl} host={data.host} {did} {speakers} />
 
 				<EventLinksList uris={eventData.uris} />
 

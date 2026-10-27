@@ -106,6 +106,7 @@ describe('/groups/[actor]/events/[rkey] load', () => {
 		expect(data.spaceUri).toBe(CALENDAR);
 		expect(data.membersOnly).toBe(true);
 		expect(data).not.toHaveProperty('editHref');
+		expect(data.host).toEqual({ name: 'Kona', href: `/groups/${GROUP_DID}` });
 	});
 
 	it('links whoever may manage events to the edit page, naming the placement', async () => {

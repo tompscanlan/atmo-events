@@ -59,6 +59,7 @@ export const load: PageServerLoad = async ({ params, locals, platform }) => {
 		viewerRsvpRkey: own?.rkey ?? null,
 		membersOnly: true,
 		hostProfile: hostName ? { did: group.group_did, displayName: hostName } : null,
+		host: { name: hostName ?? group.name, href: groupPath(group) },
 		// The link names the placement: a public event can share this key.
 		...(can(membership.permissions, 'MANAGE_EVENTS')
 			? { editHref: `${groupPath(group, 'events')}/${shown.rkey}/edit?placement=members` }

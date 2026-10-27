@@ -17,6 +17,7 @@ import {
 import { getServerClient } from '$lib/contrail/index';
 import type { Client } from '@atcute/client';
 import { vodFromAtUri } from '$lib/vods';
+import { groupEventHost } from '$lib/groups/server/event-host';
 import { isConferenceEvent, getParentEventRef, parseEventUri } from '@atmo-dev/events-ui/conference';
 
 type EventRecord = Awaited<ReturnType<typeof getEventRecordFromContrail>>;
@@ -133,6 +134,7 @@ export async function load({ params, locals, url, platform }) {
 		parentRecord,
 		conferenceTalksResp,
 		conferenceRsvpResp,
+		host,
 		...speakerProfiles
 	] = await Promise.all([
 		listEventAttendeesFromContrail(client, eventUri).catch(() => ({
@@ -170,6 +172,11 @@ export async function load({ params, locals, url, platform }) {
 					})
 					.catch(() => null)
 			: null,
+		// An event in a group's repo names the group and links its page.
+		groupEventHost(platform!.env, did, locals).catch((e) => {
+			console.error(`[groups] ${did}: the event's group could not be read:`, e);
+			return null;
+		}),
 		...speakers.map((s) =>
 			s.id
 				? getProfileFromContrail(client, s.id as ActorIdentifier)
@@ -227,6 +234,7 @@ export async function load({ params, locals, url, platform }) {
 		actorDid: did,
 		rkey,
 		hostProfile: getHostProfile(did, fullEventRecord.profiles) ?? null,
+		host,
 		attendees,
 		viewerRsvpStatus: getRsvpStatus(viewerRsvpRecord?.value?.status),
 		viewerRsvpRkey: viewerRsvpRecord?.rkey ?? null,

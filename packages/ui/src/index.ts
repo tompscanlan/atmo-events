@@ -28,7 +28,7 @@ export type { EditorAdapter, EditorBlobRef, EditorViewer } from './editor/adapte
 export type { EventEditorPrefill } from './editor/types.js';
 
 // Domain types
-export type { FlatEventRecord, HostProfile, AttendeeInfo } from './contrail.js';
+export type { FlatEventRecord, HostProfile, EventHost, AttendeeInfo } from './contrail.js';
 export type {
 	EventData,
 	EventLexiconMain,
