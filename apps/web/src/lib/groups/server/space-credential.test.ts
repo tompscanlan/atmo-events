@@ -5,6 +5,7 @@ import {
 	exchangeSpaceCredential,
 	isSpaceAccessDenied,
 	SpaceAccessDenied,
+	spaceCredential,
 	spaceSigHeaders,
 	type SpaceHolder,
 	type SpaceHosts,
@@ -182,8 +183,13 @@ function network(options: {
 const READ = { space: MEMBERS, repo: GROUP_DID, collection: 'x.y.z', rkey: 'self' };
 const readAs = (holder: SpaceHolder) => credentialSpaceReader(holder, hosts).get(READ);
 
+// A test past its timeout keeps running. A long one sets this, and the next test waits for it,
+// so the exchange it has under way cannot land in the next test's fetch.
+let stopping: Promise<unknown> = Promise.resolve();
+
 beforeEach(() => clearSpaceCredentials());
-afterEach(() => {
+afterEach(async () => {
+	await stopping;
 	vi.unstubAllGlobals();
 	vi.useRealTimers();
 });
@@ -317,15 +323,24 @@ describe('a read with a credential', () => {
 		expect(net.exchanges).toHaveLength(2);
 	});
 
-	it('keeps at most 500 credentials, dropping the oldest', async () => {
+	it('keeps at most 500 credentials, dropping the oldest', async ({ signal }) => {
+		// The cap is in the credential cache, so this skips the 502 signed and MAC-checked reads.
 		const net = network({});
 		const holders = Array.from({ length: 501 }, (_, i) => net.holderFor(`did:plc:holder${i}`));
-		for (const holder of holders) await readAs(holder);
+		const credentialFor = (holder: SpaceHolder) => spaceCredential(holder, MEMBERS, GROUP_HOST);
+		const exchangeAll = (async () => {
+			for (const holder of holders) {
+				if (signal.aborted) return;
+				await credentialFor(holder);
+			}
+		})();
+		stopping = exchangeAll.catch(() => {});
+		await exchangeAll;
 		expect(net.exchanges).toHaveLength(501);
 
-		await readAs(holders[500]);
+		await credentialFor(holders[500]);
 		expect(net.exchanges).toHaveLength(501);
-		await readAs(holders[0]);
+		await credentialFor(holders[0]);
 		expect(net.exchanges).toHaveLength(502);
 	});
 });
