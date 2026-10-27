@@ -46,5 +46,8 @@ export function signUpPDS(): string {
 // where to redirect after oauth login/signup
 export const REDIRECT_PATH = '/oauth/callback';
 
+export const GROUP_LINK_REDIRECT_PATH = '/oauth/group-link/callback';
+export const GROUP_CREATE_REDIRECT_PATH = '/oauth/group-create/callback';
+
 // redirect the user back to the page they were on before login
 export const REDIRECT_TO_LAST_PAGE_ON_LOGIN = true;
