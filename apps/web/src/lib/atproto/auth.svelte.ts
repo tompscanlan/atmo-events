@@ -15,10 +15,18 @@ export const user = {
 	}
 };
 
+function writeReturnTo() {
+	document.cookie = `oauth_return_to=${encodeURIComponent(window.location.pathname + window.location.search)};path=/;max-age=600;samesite=lax`;
+}
+
 function saveReturnTo() {
-	if (REDIRECT_TO_LAST_PAGE_ON_LOGIN) {
-		document.cookie = `oauth_return_to=${encodeURIComponent(window.location.pathname + window.location.search)};path=/;max-age=600;samesite=lax`;
-	}
+	if (REDIRECT_TO_LAST_PAGE_ON_LOGIN) writeReturnTo();
+}
+
+/** Signs in again and comes back to this page, so the session picks up a scope it lacks. */
+export function reauthorize(url: string) {
+	writeReturnTo();
+	window.location.assign(url);
 }
 
 export async function login(handle: string) {
