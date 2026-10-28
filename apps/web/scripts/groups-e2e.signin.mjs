@@ -225,12 +225,14 @@ export async function createSignIns({ plcUrl, fetch, ledger, playwright, log }) 
 
 		/**
 		 * `person`'s group session from the host: its sign-in page (with the new
-		 * group's address for a create), their own PDS, and the host's consent,
-		 * whose offered and dropped items are handed back.
+		 * group's address for a create), their own PDS, the new group's recovery
+		 * key page after a create, and the host's consent, whose offered and
+		 * dropped items are handed back with whether the key page was shown.
 		 * @param {{ create?: { label: string }, groupDid?: string, scope: string, host: string }} options
 		 */
 		async group(person, { create, groupDid, scope, host }) {
 			const consent = { kept: [], dropped: [] };
+			let keyPage = false;
 			const out = await signIn(person, {
 				target: create
 					? { type: 'pds', serviceUrl: host }
@@ -244,6 +246,26 @@ export async function createSignIns({ plcUrl, fetch, ledger, playwright, log }) 
 					await page.click('button');
 					await ownPdsPages(page, person, done, async (p) => {
 						if (new URL(p.url()).origin !== new URL(host).origin) return false;
+						// The page holds the group's private recovery key, shown once. Nothing
+						// on it is captured: no screenshot, no text, no HTML. Continue leads
+						// on to the consent.
+						if (
+							await p
+								.locator('#recovery')
+								.count()
+								.catch(() => 0)
+						) {
+							keyPage = true;
+							await Promise.all([
+								p.waitForEvent('framenavigated', {
+									predicate: (f) => f === p.mainFrame(),
+									timeout: 30_000
+								}),
+								p.click('#continue')
+							]);
+							await p.waitForLoadState('load');
+							return true;
+						}
 						if (
 							!(await p
 								.locator('#consent')
@@ -257,12 +279,13 @@ export async function createSignIns({ plcUrl, fetch, ledger, playwright, log }) 
 						await p.waitForTimeout(1000);
 						return true;
 					});
-					return { consent };
+					return { consent, keyPage };
 				}
 			});
 			log(
 				`${person.did} holds a group session on ${out.session.did} from the host ` +
-					`(${consent.kept.length} item(s) offered, ${consent.dropped.length} dropped)`
+					`(${keyPage ? 'recovery key page shown, not read; ' : ''}` +
+					`${consent.kept.length} item(s) offered, ${consent.dropped.length} dropped)`
 			);
 			return out;
 		},

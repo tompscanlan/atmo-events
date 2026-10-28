@@ -596,6 +596,7 @@ async function main() {
 					described.status === 200 &&
 					handle?.startsWith(`${GROUP_LABEL}.`) &&
 					described.body.handleIsCorrect === true &&
+					made.keyPage === true &&
 					made.consent.dropped.length === 0 &&
 					members.length === 1 &&
 					members[0].did === ALICE &&
@@ -604,9 +605,9 @@ async function main() {
 					membersSpaceUri === `at://${GROUP_DID}/space/group.opensocial.members/self` &&
 					creatorRecord.status === 200 &&
 					JSON.stringify(creatorRecord.value?.roles) === JSON.stringify(['admin']),
-				"at the host: its sign-up makes the group, the app's set-up runs on the creator's session with the whole scope it asked for, and the host's record makes her an admin",
+				"at the host: its sign-up makes the group and shows her its recovery key, the app's set-up runs on the creator's session with the whole scope it asked for, and the host's record makes her an admin",
 				`${handle} (${GROUP_DID}) at the host ${setUp.atHost}, handle verified ` +
-					`${described.body.handleIsCorrect}; consent offered ${made.consent.kept.length}, dropped ` +
+					`${described.body.handleIsCorrect}; recovery key page ${made.keyPage ? 'shown (not read)' : 'NOT shown'}; consent offered ${made.consent.kept.length}, dropped ` +
 					`${made.consent.dropped.length}${made.consent.dropped.length ? ` (${made.consent.dropped.join('; ')})` : ''}; ` +
 					`app roster ${members.map((m) => `${m.did}/${m.role}`).join(' ')}; ` +
 					`her membership record ${creatorRecord.error ?? JSON.stringify(creatorRecord.value?.roles)}`
