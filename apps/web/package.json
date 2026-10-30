@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build && node scripts/build-worker.mjs",
-		"generate": "contrail lexicons generate --config src/lib/contrail.config.ts --no-atcute-config && lex-cli generate",
+		"generate": "node scripts/lexicon-shims.mjs && contrail lexicons generate --config src/lib/contrail.config.ts --no-atcute-config && lex-cli generate",
 		"generate:favicons": "node scripts/generate-favicons.mjs",
 		"generate:og": "tsx scripts/generate-og.ts",
 		"generate:globe": "tsx scripts/bake-globe.ts",
