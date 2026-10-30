@@ -10,7 +10,13 @@ import { cloudflareKV } from '@svelte-atproto/oauth/server/stores/cloudflare';
 import { ALLOW_SIGNUP, DEV_PORT, REDIRECT_PATH, scopes, signUpPDS } from '../settings';
 import { atprotoNetwork } from '../network';
 import { oauthOrigin } from './origin';
+import { GROUP_PERSON_SCOPES } from '../../groups/scopes';
 
+/** Declared, so a person can grant them at their first group action; never asked for at a
+ *  login. Only with groups on, since a PDS resolves the set's lexicon to grant it. */
+function declaredScopes(): string[] {
+	return env.GROUP_HOST_URL ? [...scopes, ...GROUP_PERSON_SCOPES] : scopes;
+}
 const pending = new Map<string, Promise<unknown>>();
 
 /** Serialize interactive and bot refreshes in this process, as the library's
@@ -37,7 +43,7 @@ export function getAuth(): AtprotoAuth {
 		origin: oauthOrigin(env.OAUTH_PUBLIC_URL),
 		cookieSecret: env.COOKIE_SECRET,
 		clientAssertionKey: env.CLIENT_ASSERTION_KEY,
-		scope: scopes,
+		scope: declaredScopes(),
 		signupPDS: ALLOW_SIGNUP
 			? (PUBLIC_SIGNUP_PDS_URL ?? signUpPDS[dev ? 'development' : 'production'])
 			: undefined,

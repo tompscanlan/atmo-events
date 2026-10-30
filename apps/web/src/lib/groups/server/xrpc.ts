@@ -18,7 +18,26 @@ export class XrpcError extends Error {
 	}
 }
 
-/** Throws `XrpcError` on any answer but 2xx. A body that is not JSON reads as empty. */
+export type XrpcAnswer =
+	| { ok: true; status: number; data: Record<string, unknown> }
+	| { ok: false; status: number; error: string | null };
+
+/** For a caller that acts on the answer itself. A body that is not JSON reads as empty. */
+export async function readXrpc(res: Response): Promise<XrpcAnswer> {
+	const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+	if (res.ok) return { ok: true, status: res.status, data: data ?? {} };
+	return {
+		ok: false,
+		status: res.status,
+		error: typeof data?.error === 'string' ? data.error : null
+	};
+}
+
+export function answerError(nsid: string, answer: { status: number; error: string | null }) {
+	return new XrpcError(nsid, answer.status, answer.error);
+}
+
+/** Throws `XrpcError` on any answer but 2xx. */
 export async function xrpc(
 	handle: XrpcHandle,
 	nsid: string,
@@ -34,9 +53,14 @@ export async function xrpc(
 				: { headers: { 'content-type': 'application/json' }, body: JSON.stringify(request.body) };
 		res = await handle(`/xrpc/${nsid}`, { method: 'POST', ...sent });
 	}
-	const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-	if (res.ok) return data ?? {};
-	throw new XrpcError(nsid, res.status, typeof data?.error === 'string' ? data.error : null);
+	const answer = await readXrpc(res);
+	if (answer.ok) return answer.data;
+	throw answerError(nsid, answer);
+}
+
+/** `isRecordNotFound` for an answer not yet thrown. */
+export function answerIsRecordNotFound(answer: XrpcAnswer): boolean {
+	return !answer.ok && answer.status === 400 && answer.error === 'RecordNotFound';
 }
 
 /** The only answer that proves a record absent; a 5xx is not "absent". */
