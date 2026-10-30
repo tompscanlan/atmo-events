@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CALENDAR_RSVP_SCOPE } from '../scopes';
 
 const mocks = vi.hoisted(() => ({
 	listDeclaredGroups: vi.fn(),
@@ -78,8 +79,7 @@ describe('browseGroups', () => {
 });
 
 describe('your groups', () => {
-	const GRANTED =
-		'atproto space:group.opensocial.meta?authority=*&action=read space:group.opensocial.members?authority=*&action=read_self';
+	const GRANTED = `atproto space:group.opensocial.meta?authority=*&action=read space:group.opensocial.members?authority=*&action=read_self ${CALENDAR_RSVP_SCOPE}`;
 	const viewer = (scope: string) => ({
 		did: 'did:plc:alice',
 		session: { did: 'did:plc:alice', getTokenInfo: async () => ({ scope }), handle: vi.fn() }

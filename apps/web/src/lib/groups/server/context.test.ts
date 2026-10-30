@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
 import { TokenRefreshError } from '@atcute/oauth-node-client';
 import { XrpcError } from './xrpc';
+import { CALENDAR_RSVP_SCOPE } from '../scopes';
 
 const mocks = vi.hoisted(() => ({
 	resolveGroup: vi.fn(),
@@ -201,8 +202,7 @@ describe('requireGroupWriter', () => {
 });
 
 describe("groupView with the caller's own access", () => {
-	const GRANTED =
-		'atproto space:group.opensocial.meta?authority=*&action=read space:group.opensocial.members?authority=*&action=read_self';
+	const GRANTED = `atproto space:group.opensocial.meta?authority=*&action=read space:group.opensocial.members?authority=*&action=read_self ${CALENDAR_RSVP_SCOPE}`;
 	const signedIn = (scope = GRANTED) => ({
 		did: ALICE,
 		session: { did: ALICE, getTokenInfo: async () => ({ scope }), handle: vi.fn() }
