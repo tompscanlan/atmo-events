@@ -14,7 +14,8 @@
 		Settings,
 		Wrench,
 		Menu,
-		LockKeyhole
+		LockKeyhole,
+		Users
 	} from '@sketchyicons/svelte';
 	import { page } from '$app/state';
 	import { afterNavigate } from '$app/navigation';
@@ -81,6 +82,10 @@
 			href: '/cities',
 			active: path.startsWith('/cities')
 		},
+
+		...(data.groupsEnabled
+			? [{ label: 'Groups', icon: Users, href: '/groups', active: path.startsWith('/groups') }]
+			: []),
 
 		{
 			label: 'Search events',
