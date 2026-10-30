@@ -22,7 +22,8 @@ import {
 } from './group';
 import { holdsAcceptanceGrant, holdsGroupScopes, holdsMetaRead, holdsSpaceList } from '../scopes';
 import { callerSession, type CallerSession } from './caller';
-import { confirmOnVisit, groupSpacesOf, readMetaAsPerson } from './person';
+import { accept } from './acceptance';
+import { groupSpacesOf, isMemberAsPerson, readMetaAsPerson } from './person';
 import { groupHandle, groupSession, groupSignInAvailable } from './sign-in';
 import { isSpaceAccessDenied } from './space-credential';
 import { isAuthRefused, type XrpcHandle } from './xrpc';
@@ -47,6 +48,8 @@ export interface GroupView {
 	relink: boolean;
 	/** Present when the host let the caller read the group with their own access. */
 	personal: GroupMeta | null;
+	/** Whether the host counts the caller a member; null when it could not say. */
+	member: boolean | null;
 	/** Signed in, but their sign-in does not yet grant what groups need. */
 	askAccess: boolean;
 }
@@ -146,15 +149,22 @@ export async function groupView(actor: string, viewer: Viewer): Promise<GroupVie
 	// and such a group shows only through its declaration.
 	const caller = await callerSession(viewer.session ?? null);
 	let personal: GroupMeta | null = null;
+	let member: boolean | null = null;
 	let unsure = false;
-	if (!linked && atHost && caller && holdsMetaRead(caller.scope)) {
+	if (atHost && caller && holdsMetaRead(caller.scope)) {
 		({ meta: personal, unsure } = await personalRead(caller, group.did));
 		if (personal) {
 			await storeCard(group, personal).catch((e) => {
 				console.warn(`[groups] ${group.did}: the card could not be stored:`, e);
 			});
-			if (holdsAcceptanceGrant(caller.scope, group.did, 'create')) {
-				waitUntil(confirmOnVisit(caller, group.did));
+			member = await isMemberAsPerson(caller, group.did).catch((e) => {
+				console.warn(`[groups] ${group.did}: ${caller.did}'s membership could not be read:`, e);
+				return null;
+			});
+			// A member confirms by visiting; only after the host says they are one, since a
+			// write it refuses still lands in the writer's own repo.
+			if (member && holdsAcceptanceGrant(caller.scope, group.did, 'create')) {
+				waitUntil(accept(caller, group.did));
 			}
 		}
 	}
@@ -182,6 +192,7 @@ export async function groupView(actor: string, viewer: Viewer): Promise<GroupVie
 		linked,
 		relink,
 		personal,
+		member,
 		askAccess: atHost && caller !== null && !holdsGroupScopes(caller.scope)
 	};
 }
