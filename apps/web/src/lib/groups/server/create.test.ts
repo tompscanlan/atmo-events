@@ -55,24 +55,45 @@ describe('finishSetup', () => {
 		pds.beforeWrite = async () => seen.push(await pendingSetup(GROUP));
 
 		await finishSetup(pds.writer, group, setup);
-		expect(pds.writes).toEqual(['access', 'declare', 'profile']);
-		expect(seen).toEqual([setup, setup, setup]);
+		expect(pds.writes).toEqual(['calendar', 'access', 'declare', 'profile']);
+		expect(seen).toEqual([setup, setup, setup, setup]);
 		expect(await pendingSetup(GROUP)).toBeNull();
 	});
 
-	it('leaves the rest to its creator when a write stops, and finishing again completes it', async () => {
-		const pds = groupPds(GROUP);
-		pds.failNext = 'profile';
-		await expect(finishSetup(pds.writer, group, setup)).rejects.toBeInstanceOf(XrpcError);
+	for (const stop of ['calendar', 'profile'] as const) {
+		it(`leaves the rest to its creator when the ${stop} write stops, and finishing again completes it`, async () => {
+			const pds = groupPds(GROUP);
+			pds.failNext = stop;
+			await expect(finishSetup(pds.writer, group, setup)).rejects.toBeInstanceOf(XrpcError);
 
-		const left = await pendingSetup(GROUP);
-		expect(left).toEqual(setup);
-		await finishSetup(pds.writer, group, left as PendingSetup);
-		expect(pds.state).toMatchObject({
-			declared: true,
-			access: { public: true },
-			profile: { displayName: 'Knitters', joinPolicy: 'approval' }
+			const left = await pendingSetup(GROUP);
+			expect(left).toEqual(setup);
+			await finishSetup(pds.writer, group, left as PendingSetup);
+			expect(pds.state).toMatchObject({
+				declared: true,
+				access: { public: true },
+				profile: { displayName: 'Knitters', joinPolicy: 'approval' },
+				calendar: { public: false }
+			});
+			expect(await pendingSetup(GROUP)).toBeNull();
 		});
+	}
+
+	it('takes a calendar space already there, as after a stop the host did not report', async () => {
+		const pds = groupPds(GROUP, { calendar: { public: false, grants: [] } });
+		await finishSetup(pds.writer, group, setup);
+		expect(pds.writes).toEqual(['access', 'declare', 'profile']);
 		expect(await pendingSetup(GROUP)).toBeNull();
+	});
+
+	it("lets every role read the calendar space, and no one else, whatever the group's visibility", async () => {
+		const pds = groupPds(GROUP);
+		await finishSetup(pds.writer, group, setup);
+		const grants = pds.state.calendar?.grants as { role: string; scopes: string[] }[];
+		expect(pds.state.calendar?.public).toBe(false);
+		expect(grants.map((g) => g.role)).toEqual(['admin', 'member']);
+		expect(
+			grants.every((g) => g.scopes.includes('space:rsvp.atmo.group.calendar?action=read'))
+		).toBe(true);
 	});
 });

@@ -1,10 +1,11 @@
 // Making a group: the host makes the account and its spaces during the creator's sign-in
-// (`startGroupCreate`); this site then writes the settings as the group. Until they are
-// all written the group is not set up, and its creator is offered the rest: the marker
-// and the settings wait in KV, since there is no table to hold either.
+// (`startGroupCreate`); this site then makes its calendar space and writes the settings as
+// the group. Until all of it is done the group is not set up, and its creator is offered
+// the rest: the marker and the settings wait in KV, since there is no table to hold either.
 import { env } from 'cloudflare:workers';
 import type { GroupWriter } from './context';
 import type { ResolvedGroup } from './group';
+import { createCalendarSpace } from './host';
 import { applyGroupSettings, parseGroupSettings, type GroupSettings } from './settings';
 
 const SETUP_PREFIX = 'group:setup:';
@@ -24,14 +25,15 @@ export async function pendingSetup(groupDid: string): Promise<PendingSetup | nul
 	return settings && typeof kept?.by === 'string' ? { settings, by: kept.by } : null;
 }
 
-/** Writes the settings, keeping the marker until the last write lands. Throws on a stop;
- *  running it again finishes it. */
+/** Makes the calendar space and writes the settings, keeping the marker until the last
+ *  write lands. Throws on a stop; running it again finishes it. */
 export async function finishSetup(
 	writer: GroupWriter,
 	group: Pick<ResolvedGroup, 'did' | 'handle'>,
 	setup: PendingSetup
 ): Promise<void> {
 	await env.OAUTH_SESSIONS.put(SETUP_PREFIX + group.did, JSON.stringify(setup));
+	await createCalendarSpace(writer);
 	await applyGroupSettings(writer, group, setup.settings);
 	await env.OAUTH_SESSIONS.delete(SETUP_PREFIX + group.did);
 }

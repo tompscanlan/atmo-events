@@ -5,10 +5,11 @@
 import { GROUP_ROLES, type GroupRoleName } from '../permissions';
 import {
 	GROUP_MEMBERSHIP_COLLECTION,
+	groupAccessRecord,
 	groupMembershipRecord,
 	membershipRkey
 } from '../members-record';
-import { membersSpaceUri } from '../ids';
+import { CALENDAR_SPACE_TYPE, membersSpaceUri, SPACE_SKEY } from '../ids';
 import { accept, unaccept } from './acceptance';
 import type { CallerSession } from './caller';
 import type { GroupWriter } from './context';
@@ -193,4 +194,25 @@ export async function setMemberRole(
 /** The host answers the same for a record that is already gone. */
 export async function removeMember(writer: GroupWriter, did: string): Promise<void> {
 	await asGroup(writer, 'com.atproto.space.deleteRecord', { body: membership(writer, did) });
+}
+
+/** atmo's calendar space, for members-only events: every role reads it, whatever the group's
+ *  visibility. One already there is not a failure, so a setup that stopped can finish. */
+export async function createCalendarSpace(writer: GroupWriter): Promise<void> {
+	try {
+		await xrpc(writer.handle, `${NS}.createSpace`, {
+			body: {
+				type: CALENDAR_SPACE_TYPE,
+				skey: SPACE_SKEY,
+				access: groupAccessRecord({
+					spaceType: CALENDAR_SPACE_TYPE,
+					roles: GROUP_ROLES,
+					public: false
+				})
+			}
+		});
+	} catch (e) {
+		if (e instanceof XrpcError && e.error === 'SpaceAlreadyExists') return;
+		throw e;
+	}
 }
