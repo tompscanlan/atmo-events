@@ -62,6 +62,8 @@
 	let rkey: string = $derived(data.rkey);
 	let hostProfile = $derived(data.hostProfile);
 	let attendees = $derived(data.attendees);
+	/** False for an event with no public page to share, such as one only a group's members see. */
+	let shareable = $derived(data.shareable !== false);
 
 	let theme: EventTheme = $derived(eventData.theme ?? defaultTheme);
 
@@ -109,7 +111,7 @@
 
 	onMount(() => {
 		const url = new URL(window.location.href);
-		if (url.searchParams.has('created')) {
+		if (shareable && url.searchParams.has('created')) {
 			url.searchParams.delete('created');
 			history.replaceState({}, '', url.pathname);
 			launchConfetti();
@@ -172,7 +174,8 @@
 
 	let descriptionHtml = $derived(buildDescriptionHtml(eventData.description, eventData.facets));
 
-	let eventUri = $derived(`at://${did}/community.lexicon.calendar.event/${rkey}`);
+	// A page whose event is not in its creator's repo, such as a record in a space, names it.
+	let eventUri = $derived(data.eventUri ?? `at://${did}/community.lexicon.calendar.event/${rkey}`);
 
 	let ogImageUrl = $derived(data.ogImage ?? `${pageUrl.origin}${pageUrl.pathname}/og.png`);
 
@@ -213,7 +216,7 @@
 			handle: viewer.handle,
 			url: `/${viewer.handle || viewer.did}`
 		});
-		if (status === 'interested') return;
+		if (status === 'interested' || !shareable) return;
 		shareModalTitle = "You're going!";
 		shareModalText = `I'm going to "${eventData.name}".\n\n${shareUrl}`;
 		canSetEventComments = false;
