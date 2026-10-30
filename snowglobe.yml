@@ -1,0 +1,51 @@
+# A snowglobe for atmo: a private atproto network on this machine (@openmeet/snowglobe), with one
+# PDS, Jetstream and Slingshot. atmo reaches it through its network settings (apps/web/src/env.ts),
+# which the env below sets.
+#
+#   pnpm install
+#   pnpm globe:up     # starts it and makes alice and bob
+#   pnpm globe:dev    # atmo on it, at http://127.0.0.1:5454
+#   pnpm globe:e2e    # up if need be, then apps/web/scripts/network-e2e.mjs
+#   pnpm globe:down   # stops it, keeping its accounts
+#
+# Passwords are in ~/.local/share/snowglobe/atmo/accounts.env. Signing in from a browser also needs
+# atmo's permission sets on a lexicon authority, which this file does not set up yet.
+
+globe: atmo
+domain: local.snowglobe.at
+
+pds:
+  - name: main # https://main.local.snowglobe.at
+    image: ghcr.io/bluesky-social/pds:0.4.5037
+    bare_handles: true # handles <name>.local.snowglobe.at
+
+services:
+  jetstream: true
+  slingshot: true
+  pdsls: false
+
+accounts:
+  - alice@main
+  - bob@main
+
+apps:
+  - name: atmo
+    env:
+      # atmo's server reads its Worker env from wrangler.jsonc and .env. This adds the process
+      # environment, so the settings below reach it.
+      CLOUDFLARE_INCLUDE_PROCESS_ENV: 'true'
+      # Empty: atmo's loopback OAuth client at http://127.0.0.1:5454, which needs no keys.
+      OAUTH_PUBLIC_URL: ''
+      PUBLIC_PLC_URL: ${services.plc.url}
+      PUBLIC_SLINGSHOT_URL: ${services.slingshot.url}
+      # contrail takes Jetstream's origin, without /subscribe. contrail 0.27 reads Jetstream v2
+      # (/xrpc/network.bsky.jetstream.subscribeEvents). snowglobe 0.3.0 runs an older Jetstream,
+      # which answers 404 there, so atmo takes no records from it until snowglobe moves to
+      # Jetstream v0.4.6 or later.
+      PUBLIC_JETSTREAM_URL: ${services.jetstream.url}
+      PUBLIC_SIGNUP_PDS_URL: ${pds.main.url}
+      # Nothing here stands in for DNS-over-HTTPS, Constellation, the Bluesky API or the image
+      # CDN, so those stay public. With one PDS there is no relay.
+      E2E_PDS: ${pds.main.url}
+      E2E_HANDLE: ${accounts.alice.handle}
+      E2E_PASSWORD: ${accounts.alice.password}
