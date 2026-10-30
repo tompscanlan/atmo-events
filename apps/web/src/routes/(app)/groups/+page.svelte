@@ -1,0 +1,111 @@
+<script lang="ts">
+	import { Avatar, Badge, Button, Input, Label } from '@atmo-dev/kit';
+	import { resolve } from '$app/paths';
+
+	let { data } = $props();
+
+	// Paths are resolved; the query strings are appended to them.
+	const listUrl = (query: Record<string, string>) =>
+		`${resolve('/(app)/groups')}?${new URLSearchParams(query)}`;
+</script>
+
+<div class="min-h-screen px-6 py-12 sm:py-12">
+	<div class="mx-auto max-w-2xl">
+		{#if data.server}
+			<div class="mb-6">
+				<a
+					href={resolve('/(app)/groups')}
+					class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 text-sm font-medium transition-colors"
+				>
+					&larr; All groups
+				</a>
+			</div>
+			<h1 class="text-base-900 dark:text-base-50 text-2xl font-bold">
+				Groups at {data.server.host}
+			</h1>
+		{:else}
+			<h1 class="text-base-900 dark:text-base-50 text-2xl font-bold">Groups</h1>
+		{/if}
+
+		{#if data.notice}
+			<p role="status" class="text-muted mt-4 text-sm">{data.notice}</p>
+		{/if}
+
+		{#if data.canLink}
+			<form method="POST" action="/oauth/group/link" class="mt-6 flex flex-wrap items-end gap-2">
+				<div class="min-w-0 flex-1">
+					<Label for="group-link">Link a group you help run, to post its events</Label>
+					<Input id="group-link" name="group" placeholder="group.example.com" required />
+				</div>
+				<Button type="submit" variant="secondary">Link</Button>
+			</form>
+		{/if}
+
+		{#if data.declaredUnavailable}
+			<p class="text-muted mt-6 text-sm">The groups list could not be loaded. Try again shortly.</p>
+		{/if}
+
+		{#if data.groups.length > 0}
+			<ul class="mt-6 space-y-3">
+				{#each data.groups as group (group.did)}
+					<li>
+						<a
+							href={resolve('/(app)/groups/[actor]', { actor: group.did })}
+							class="flex items-start gap-3 rounded-lg p-2 hover:bg-black/5 dark:hover:bg-white/5"
+						>
+							<Avatar name={group.name} size={40} />
+							<span class="min-w-0 flex-1">
+								<span class="text-base-900 dark:text-base-50 flex items-center gap-2 font-medium">
+									<span class="truncate">{group.name}</span>
+									{#if group.linked}<Badge>Linked</Badge>{/if}
+								</span>
+								{#if group.handle}
+									<span class="text-muted block truncate text-sm">@{group.handle}</span>
+								{/if}
+								{#if group.description}
+									<span class="text-muted mt-1 line-clamp-2 block text-sm">{group.description}</span
+									>
+								{/if}
+							</span>
+						</a>
+					</li>
+				{/each}
+			</ul>
+			<!-- eslint-disable svelte/no-navigation-without-resolve -->
+			{#if data.cursor}
+				<a
+					href={listUrl({
+						...(data.server ? { server: data.server.origin } : {}),
+						cursor: data.cursor
+					})}
+					class="text-accent-600 dark:text-accent-400 mt-6 inline-block text-sm font-medium"
+					>More groups &rarr;</a
+				>
+			{/if}
+			{#if data.crowded.length > 0}
+				<section class="mt-10" aria-labelledby="more-by-server">
+					<h2 id="more-by-server" class="text-base-900 dark:text-base-50 font-semibold">
+						More groups by server
+					</h2>
+					<p class="text-muted mt-1 text-sm">
+						The list shows up to 20 groups from any one server but this site’s own. These have more.
+					</p>
+					<ul class="mt-3 space-y-1 text-sm">
+						{#each data.crowded as entry (entry.server)}
+							<li>
+								<a
+									href={listUrl({ server: entry.server })}
+									class="text-accent-600 dark:text-accent-400 font-medium">{entry.host}</a
+								>
+								<span class="text-muted">{entry.more} more</span>
+							</li>
+						{/each}
+					</ul>
+				</section>
+			{/if}
+			<!-- eslint-enable svelte/no-navigation-without-resolve -->
+		{:else if !data.declaredUnavailable}
+			<p class="text-muted py-12 text-center">No groups yet.</p>
+		{/if}
+	</div>
+</div>
