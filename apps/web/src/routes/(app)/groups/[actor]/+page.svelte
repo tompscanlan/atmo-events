@@ -4,7 +4,11 @@
 	import { resolve } from '$app/paths';
 	import { requestPermissions } from '@svelte-atproto/oauth/client';
 	import EventList from '#lib/components/EventList.svelte';
-	import { setGroupListed, unlinkGroupSession } from '#lib/groups/group.remote.js';
+	import {
+		finishGroupSetup,
+		setGroupListed,
+		unlinkGroupSession
+	} from '#lib/groups/group.remote.js';
 	import { cancelJoin, joinGroup, leave } from '#lib/groups/members.remote.js';
 	import { GROUP_PERSON_SCOPES } from '#lib/groups/scopes.js';
 
@@ -122,11 +126,29 @@
 			</section>
 		{/if}
 
+		{#if data.unfinished}
+			<div class="mt-6 flex flex-wrap items-center gap-3">
+				<Button
+					variant="primary"
+					disabled={busy}
+					onclick={() => act(() => finishGroupSetup({ groupDid: group.did }))}
+					>Finish setting up</Button
+				>
+				<span class="text-muted text-sm"
+					>Its name, visibility and listing are not all saved yet.</span
+				>
+			</div>
+		{/if}
+
 		{#if group.linked}
 			<section class="mt-6 flex flex-wrap items-center gap-2" aria-label="Manage this group">
 				<Button
 					href={resolve('/(app)/groups/[actor]/events/new', { actor: group.did })}
 					variant="primary">Post an event</Button
+				>
+				<Button
+					href={resolve('/(app)/groups/[actor]/settings', { actor: group.did })}
+					variant="secondary">Settings</Button
 				>
 				{#if group.linked.listed}
 					<Button

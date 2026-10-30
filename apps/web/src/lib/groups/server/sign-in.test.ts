@@ -35,11 +35,12 @@ vi.mock('#lib/atproto/network.js', () => ({ atprotoNetwork: () => undefined }));
 vi.mock('@svelte-atproto/oauth/network', () => ({ createActorResolver: () => ({}) }));
 
 import {
-	finishGroupLink,
+	finishGroupSignIn,
 	GROUP_SESSION_SCOPE,
 	groupClientMetadata,
 	groupSignInAvailable,
 	linkedGroups,
+	startGroupCreate,
 	startGroupLink,
 	unlinkGroup
 } from './sign-in';
@@ -94,12 +95,14 @@ describe('the group client', () => {
 		});
 	});
 
-	it('asks for the meta read as its own scope, events, declarations and memberships', () => {
+	it('asks for the meta read as its own scope, and the sets for settings and members', () => {
 		const scopes = GROUP_SESSION_SCOPE.split(' ');
 		expect(scopes).toContain('space:group.opensocial.meta?authority=self&action=read');
 		expect(GROUP_SESSION_SCOPE).toContain('group.opensocial.declaration');
 		expect(GROUP_SESSION_SCOPE).toContain('community.lexicon.calendar.event');
 		expect(scopes.filter((s) => s.startsWith('include:'))).toEqual([
+			'include:group.opensocial.configure',
+			'include:group.opensocial.manageSpaces',
 			'include:group.opensocial.manageMembers'
 		]);
 	});
@@ -136,11 +139,11 @@ describe('startGroupLink', () => {
 	});
 });
 
-describe('finishGroupLink', () => {
+describe('finishGroupSignIn', () => {
 	const params = (state: string) => new URLSearchParams({ state, code: 'c', iss: 'x' });
 
 	it('refuses a state it does not know', async () => {
-		expect(await finishGroupLink(params('nope'), ALICE)).toMatchObject({
+		expect(await finishGroupSignIn(params('nope'), ALICE)).toMatchObject({
 			ok: false,
 			groupDid: null
 		});
@@ -148,7 +151,10 @@ describe('finishGroupLink', () => {
 
 	it('refuses a browser signed in as someone else, and spends the state', async () => {
 		await storedState('s1', { groupDid: GROUP, by: ALICE });
-		expect(await finishGroupLink(params('s1'), BOB)).toMatchObject({ ok: false, groupDid: GROUP });
+		expect(await finishGroupSignIn(params('s1'), BOB)).toMatchObject({
+			ok: false,
+			groupDid: GROUP
+		});
 		expect(sessions.keys()).toEqual([]);
 		expect(mocks.built.every(({ client }) => client.callback.mock.calls.length === 0)).toBe(true);
 	});
@@ -160,7 +166,7 @@ describe('finishGroupLink', () => {
 		client.callback.mockResolvedValue({ session: { did: 'did:plc:other' }, state: null });
 		client.revoke.mockResolvedValue(undefined);
 
-		expect(await finishGroupLink(params('s1'), ALICE)).toMatchObject({ ok: false });
+		expect(await finishGroupSignIn(params('s1'), ALICE)).toMatchObject({ ok: false });
 		expect(client.revoke).toHaveBeenCalledWith('did:plc:other');
 	});
 
@@ -168,7 +174,7 @@ describe('finishGroupLink', () => {
 		await storedState('s1', { groupDid: GROUP, by: ALICE });
 		await startGroupLink(GROUP, ALICE);
 		latest().client.callback.mockRejectedValue(new Error('access_denied'));
-		expect(await finishGroupLink(params('s1'), ALICE)).toMatchObject({
+		expect(await finishGroupSignIn(params('s1'), ALICE)).toMatchObject({
 			ok: false,
 			groupDid: GROUP
 		});
@@ -178,7 +184,11 @@ describe('finishGroupLink', () => {
 		await storedState('s1', { groupDid: GROUP, by: ALICE });
 		await startGroupLink(GROUP, ALICE);
 		latest().client.callback.mockResolvedValue({ session: { did: GROUP }, state: null });
-		expect(await finishGroupLink(params('s1'), ALICE)).toEqual({ ok: true, groupDid: GROUP });
+		expect(await finishGroupSignIn(params('s1'), ALICE)).toEqual({
+			ok: true,
+			groupDid: GROUP,
+			created: null
+		});
 	});
 });
 
@@ -196,5 +206,47 @@ describe('linked groups', () => {
 		latest().client.revoke.mockRejectedValue(new Error('offline'));
 		await unlinkGroup(GROUP, ALICE);
 		expect(sessions.keys()).toEqual([]);
+	});
+});
+
+describe('making a group', () => {
+	const settings = {
+		name: 'Knitters',
+		description: null,
+		joinPolicy: 'open',
+		public: true,
+		listed: true
+	} as const;
+
+	it("sends the creator to the host's sign-up, with the settings waiting in the state", async () => {
+		const url = await startGroupCreate(ALICE, settings);
+		const { client } = latest();
+		expect(client.authorize).toHaveBeenCalledWith(
+			expect.objectContaining({
+				target: { type: 'pds', serviceUrl: 'https://host.example' },
+				prompt: 'create',
+				state: { create: settings, by: ALICE }
+			})
+		);
+		expect(url.searchParams.get('gh_name')).toBe('Knitters');
+	});
+
+	it('finishes as whatever new group the host made, with its settings', async () => {
+		await storedState('s1', { create: settings, by: ALICE });
+		await startGroupCreate(ALICE, settings);
+		latest().client.callback.mockResolvedValue({ session: { did: GROUP }, state: null });
+		expect(await finishGroupSignIn(new URLSearchParams({ state: 's1' }), ALICE)).toEqual({
+			ok: true,
+			groupDid: GROUP,
+			created: settings
+		});
+	});
+
+	it('refuses a state whose settings do not hold', async () => {
+		await storedState('s1', { create: { ...settings, name: '' }, by: ALICE });
+		expect(await finishGroupSignIn(new URLSearchParams({ state: 's1' }), ALICE)).toMatchObject({
+			ok: false,
+			groupDid: null
+		});
 	});
 });

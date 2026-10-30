@@ -27,6 +27,12 @@
 		{/if}
 
 		{#if data.canLink}
+			<p class="mt-6">
+				<a
+					href={resolve('/(app)/groups/create')}
+					class="text-accent-600 dark:text-accent-400 text-sm font-medium">Make a group &rarr;</a
+				>
+			</p>
 			<form method="POST" action="/oauth/group/link" class="mt-6 flex flex-wrap items-end gap-2">
 				<div class="min-w-0 flex-1">
 					<Label for="group-link">Link a group you help run, to post its events</Label>
