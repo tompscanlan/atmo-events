@@ -121,6 +121,14 @@
 			</form>
 		{/if}
 
+		{#if group.personal}
+			<a
+				href={resolve('/(app)/groups/[actor]/members', { actor: group.did })}
+				class="text-accent-600 dark:text-accent-400 mt-6 inline-block text-sm font-medium"
+				>Members &rarr;</a
+			>
+		{/if}
+
 		<h2 class="text-base-900 dark:text-base-50 mt-10 text-lg font-semibold">Upcoming events</h2>
 		{#if data.events.length > 0}
 			<div class="mt-4">
