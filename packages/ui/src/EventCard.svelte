@@ -8,10 +8,13 @@
 
 	let {
 		event,
-		actor
+		actor,
+		href
 	}: {
 		event: FlatEventRecord;
 		actor?: string;
+		/** Where the card links, for an event whose page is not its creator's. */
+		href?: string;
 	} = $props();
 
 	function formatDateTime(dateStr: string): string {
@@ -84,7 +87,7 @@
 </script>
 
 <a
-	href={eventUrl(event, actor)}
+	href={href ?? eventUrl(event, actor)}
 	class="group rounded-ui focus-visible:outline-focus grid grid-cols-[5rem_minmax(0,1fr)] gap-3 outline-offset-4 transition-colors focus-visible:outline-2 sm:grid-cols-[6rem_minmax(0,1fr)] sm:gap-3.5"
 >
 	<div class="w-full">

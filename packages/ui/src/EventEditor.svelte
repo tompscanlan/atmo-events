@@ -100,6 +100,7 @@
 	let selectedPreset: string | null = $state(
 		initialThumbnailFile ? null : eventData === null ? DEFAULT_PRESET : null
 	);
+	let images = $derived(adapter.features.images !== false);
 	let submitting = $state(false);
 	let error: string | null = $state(null);
 	let titleEditor = $state<Editor | null>(null);
@@ -141,7 +142,7 @@
 	}
 
 	function populateThumbnailFromEventData() {
-		if (!eventData) return;
+		if (!eventData || !images) return;
 		if (eventData.media && eventData.media.length > 0) {
 			const media = eventData.media.find((m) => m.role === 'thumbnail');
 			if (media?.content) {
@@ -224,7 +225,7 @@
 
 		try {
 			// Generate thumbnail from preset if selected and no custom upload
-			if (selectedPreset && !thumbnailFile) {
+			if (images && selectedPreset && !thumbnailFile) {
 				const rendered = await renderPresetThumbnail({
 					design: selectedPreset,
 					seed: hashSeed(rkey),
@@ -239,14 +240,18 @@
 			}
 
 			const existingMedia = (eventData?.media ?? []) as Array<Record<string, unknown>>;
-			const media = await buildThumbnailMedia({
-				isNew,
-				thumbnailChanged,
-				thumbnailFile,
-				existingMedia,
-				uploadBlob: (blob) =>
-					adapter.uploadBlob(blob) as unknown as Promise<Record<string, unknown>>
-			});
+			const media = images
+				? await buildThumbnailMedia({
+						isNew,
+						thumbnailChanged,
+						thumbnailFile,
+						existingMedia,
+						uploadBlob: (blob) =>
+							adapter.uploadBlob(blob) as unknown as Promise<Record<string, unknown>>
+					})
+				: existingMedia.length > 0
+					? existingMedia
+					: undefined;
 
 			const record = await buildEventRecord({
 				eventData,
@@ -338,16 +343,18 @@
 				<div
 					class="grid grid-cols-1 gap-8 md:grid-cols-[14rem_1fr] md:gap-x-10 md:gap-y-6 lg:grid-cols-[16rem_1fr]"
 				>
-					<ThumbnailSection
-						{rkey}
-						{name}
-						dateStr={thumbnailDateStr}
-						accent={eventTheme.accentColor}
-						bind:thumbnailFile
-						bind:thumbnailPreview
-						bind:thumbnailChanged
-						bind:selectedPreset
-					/>
+					{#if images}
+						<ThumbnailSection
+							{rkey}
+							{name}
+							dateStr={thumbnailDateStr}
+							accent={eventTheme.accentColor}
+							bind:thumbnailFile
+							bind:thumbnailPreview
+							bind:thumbnailChanged
+							bind:selectedPreset
+						/>
+					{/if}
 
 					<!-- Right column: event details -->
 					<div class="order-2 min-w-0 md:order-0 md:col-start-2 md:row-span-5 md:row-start-1">

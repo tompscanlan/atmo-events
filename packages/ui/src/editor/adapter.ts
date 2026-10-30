@@ -28,6 +28,9 @@ export type EditorAdapter = {
 	features: {
 		delete: boolean;
 		recurring: boolean;
+		/** False where an uploaded image would be public though the event is not: the editor
+		 *  then offers no image and uploads none. Absent is true. */
+		images?: boolean;
 	};
 	putRecord(opts: {
 		collection: string;
