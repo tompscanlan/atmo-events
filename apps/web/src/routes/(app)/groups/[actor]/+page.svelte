@@ -1,0 +1,138 @@
+<script lang="ts">
+	import { Avatar, Badge, Button } from '@atmo-dev/kit';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { resolve } from '$app/paths';
+	import EventList from '#lib/components/EventList.svelte';
+	import { setGroupListed, unlinkGroupSession } from '#lib/groups/group.remote.js';
+
+	let { data } = $props();
+
+	let group = $derived(data.group);
+	let busy = $state(false);
+	let failure: string | null = $state(null);
+
+	async function act(run: () => Promise<unknown>, after: () => Promise<void> = invalidateAll) {
+		busy = true;
+		failure = null;
+		try {
+			await run();
+			await after();
+		} catch {
+			failure = 'That did not work. Try again, or link the group again.';
+		} finally {
+			busy = false;
+		}
+	}
+</script>
+
+<div class="min-h-screen px-6 py-12 sm:py-12">
+	<div class="mx-auto max-w-2xl">
+		<div class="mb-6">
+			<a
+				href={resolve('/(app)/groups')}
+				class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 text-sm font-medium transition-colors"
+			>
+				&larr; All groups
+			</a>
+		</div>
+
+		<header class="flex items-start gap-4">
+			<Avatar name={group.name} size={56} />
+			<div class="min-w-0">
+				<h1 class="text-base-900 dark:text-base-50 text-2xl font-bold">{group.name}</h1>
+				{#if group.handle}<p class="text-muted text-sm">@{group.handle}</p>{/if}
+				{#if group.description}
+					<p class="text-base-700 dark:text-base-300 mt-2 whitespace-pre-line">
+						{group.description}
+					</p>
+				{/if}
+			</div>
+		</header>
+
+		{#if data.notice}<p role="status" class="text-muted mt-4 text-sm">{data.notice}</p>{/if}
+		{#if failure}<p role="alert" class="mt-4 text-sm text-red-600">{failure}</p>{/if}
+
+		{#if group.linked}
+			<section class="mt-6 flex flex-wrap items-center gap-2" aria-label="Manage this group">
+				<Button
+					href={resolve('/(app)/groups/[actor]/events/new', { actor: group.did })}
+					variant="primary">Post an event</Button
+				>
+				{#if group.linked.listed}
+					<Button
+						variant="secondary"
+						disabled={busy}
+						onclick={() => act(() => setGroupListed({ groupDid: group.did, listed: false }))}
+						>Remove from the groups list</Button
+					>
+				{:else if group.linked.meta.public}
+					<Button
+						variant="secondary"
+						disabled={busy}
+						onclick={() => act(() => setGroupListed({ groupDid: group.did, listed: true }))}
+						>Add to the groups list</Button
+					>
+				{:else}
+					<Badge>Private</Badge>
+				{/if}
+				<Button
+					variant="ghost"
+					disabled={busy}
+					onclick={() =>
+						act(
+							() => unlinkGroupSession({ groupDid: group.did }),
+							() => goto(resolve('/(app)/groups'), { invalidateAll: true })
+						)}>Unlink</Button
+				>
+			</section>
+		{:else if group.atHost && data.signedIn}
+			<form method="POST" action="/oauth/group/link" class="mt-6 flex flex-wrap items-center gap-3">
+				<input type="hidden" name="group" value={group.did} />
+				<Button type="submit" variant="secondary">
+					{group.relink ? 'Link again' : 'Link this group'}
+				</Button>
+				<span class="text-muted text-sm">
+					{group.relink
+						? 'Your link to this group stopped working.'
+						: 'If you have a role in this group, link it to post its events.'}
+				</span>
+			</form>
+		{/if}
+
+		<h2 class="text-base-900 dark:text-base-50 mt-10 text-lg font-semibold">Upcoming events</h2>
+		{#if data.events.length > 0}
+			<div class="mt-4">
+				<EventList
+					events={data.events}
+					cursor={data.cursor}
+					actor={group.did}
+					ongoingSeeAllHref={null}
+					gridClass="space-y-3"
+				/>
+			</div>
+			{#if group.linked}
+				<ul class="mt-6 space-y-1 text-sm" aria-label="Edit events">
+					{#each data.events as event (event.uri)}
+						<li class="flex justify-between gap-3">
+							<span class="truncate">{event.name}</span>
+							<a
+								class="text-accent-600 dark:text-accent-400 shrink-0 font-medium"
+								href={resolve('/(app)/groups/[actor]/events/[rkey]/edit', {
+									actor: group.did,
+									rkey: event.rkey
+								})}>Edit</a
+							>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		{:else}
+			<p class="text-muted py-8 text-center">No upcoming events.</p>
+		{/if}
+		<a
+			href={resolve('/(app)/p/[actor]/past-events', { actor: group.did })}
+			class="text-accent-600 dark:text-accent-400 mt-4 inline-block text-sm font-medium"
+			>Past events &rarr;</a
+		>
+	</div>
+</div>
