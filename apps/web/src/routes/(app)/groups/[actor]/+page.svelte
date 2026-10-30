@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Avatar, Badge, Button } from '@atmo-dev/kit';
+	import { EventCard } from '@atmo-dev/events-ui';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { requestPermissions } from '@svelte-atproto/oauth/client';
@@ -234,5 +235,26 @@
 			class="text-accent-600 dark:text-accent-400 mt-4 inline-block text-sm font-medium"
 			>Past events &rarr;</a
 		>
+
+		{#if data.membersOnly}
+			<h2 class="text-base-900 dark:text-base-50 mt-10 text-lg font-semibold">Members only</h2>
+			{#if data.membersOnly.notice}
+				<p role="status" class="text-muted mt-2 text-sm">{data.membersOnly.notice}</p>
+			{:else if data.membersOnly.events.length > 0}
+				<div class="mt-4 space-y-3">
+					{#each data.membersOnly.events as event (event.uri)}
+						<EventCard
+							{event}
+							href={resolve('/(app)/groups/[actor]/events/[rkey]', {
+								actor: group.did,
+								rkey: event.rkey
+							})}
+						/>
+					{/each}
+				</div>
+			{:else}
+				<p class="text-muted py-4 text-sm">No upcoming members-only events.</p>
+			{/if}
+		{/if}
 	</div>
 </div>

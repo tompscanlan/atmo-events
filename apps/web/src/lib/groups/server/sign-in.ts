@@ -16,7 +16,12 @@ import type { Did } from '@atcute/lexicons';
 import { createActorResolver } from '@svelte-atproto/oauth/network';
 import { oauthRequestLock } from '#lib/atproto/server/oauth.js';
 import { atprotoNetwork } from '#lib/atproto/network.js';
-import { GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION, META_SPACE_TYPE } from '../ids';
+import {
+	CALENDAR_SPACE_TYPE,
+	GROUP_DECLARATION_COLLECTION,
+	GROUP_EVENT_COLLECTION,
+	META_SPACE_TYPE
+} from '../ids';
 import { listKeys, prefixedKV } from './kv';
 import { parseGroupSettings, type GroupSettings } from './settings';
 import type { XrpcHandle } from './xrpc';
@@ -39,6 +44,10 @@ export const GROUP_SESSION_SCOPE = [
 	'include:group.opensocial.configure',
 	'include:group.opensocial.manageSpaces',
 	'include:group.opensocial.manageMembers',
+	// The sets cover the host's spaces only: atmo's calendar space, made at create, and the
+	// members-only events in it need their own.
+	'space:*?authority=self&manage=create',
+	`space:${CALENDAR_SPACE_TYPE}?authority=self&collection=${GROUP_EVENT_COLLECTION}&action=read&action=create&action=update&action=delete`,
 	scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
 	scope.blob({ accept: ['image/*'] })
 ].join(' ');

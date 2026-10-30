@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
 	unlistGroup: vi.fn(),
 	notifyIndex: vi.fn(),
 	unlinkGroup: vi.fn(),
+	putGroupEvent: vi.fn(),
+	deleteGroupEvent: vi.fn(),
 	handle: vi.fn()
 }));
 vi.mock('$app/server', () => ({
@@ -24,10 +26,16 @@ vi.mock('./server/group', () => ({
 	notifyIndex: mocks.notifyIndex
 }));
 vi.mock('./server/sign-in', () => ({ unlinkGroup: mocks.unlinkGroup }));
+vi.mock('./server/group-events', async (original) => ({
+	...(await original()),
+	putGroupEvent: mocks.putGroupEvent,
+	deleteGroupEvent: mocks.deleteGroupEvent
+}));
 
+import { GroupEventRefused } from './server/group-events';
 import {
-	deleteGroupEvent,
-	putGroupEvent,
+	removeGroupEvent,
+	saveGroupEvent,
 	setGroupListed,
 	unlinkGroupSession
 } from './group.remote';
@@ -42,49 +50,53 @@ beforeEach(() => {
 	mocks.handle.mockImplementation(async () => Response.json({ uri: 'at://u', cid: 'c' }));
 });
 
-describe('group writes', () => {
+describe('group event writes', () => {
+	const writer = () => ({ did: GROUP, handle: mocks.handle });
+
 	it("go out only on the caller's own linked session", async () => {
 		mocks.requireGroupWriter.mockImplementation(() => error(404, 'Group not found'));
-		await expect(putGroupEvent({ groupDid: GROUP, rkey: 'r', record: {} })).rejects.toMatchObject({
-			status: 404
-		});
+		await expect(
+			saveGroupEvent({ groupDid: GROUP, rkey: 'r', record: {}, placement: 'everyone' })
+		).rejects.toMatchObject({ status: 404 });
 		expect(mocks.requireGroupWriter).toHaveBeenCalledWith(GROUP, ALICE);
-		expect(mocks.handle).not.toHaveBeenCalled();
+		expect(mocks.putGroupEvent).not.toHaveBeenCalled();
 	});
 
-	it("write an event to the group's own repo and tell the index", async () => {
-		expect(await putGroupEvent({ groupDid: GROUP, rkey: 'r', record: { name: 'Meet' } })).toEqual({
+	it('go where the placement says, on that session', async () => {
+		mocks.putGroupEvent.mockResolvedValue({ uri: 'at://u', cid: 'c' });
+		mocks.deleteGroupEvent.mockResolvedValue(undefined);
+		const input = { rkey: 'r', record: { name: 'Meet' }, placement: 'members' } as const;
+		expect(await saveGroupEvent({ groupDid: GROUP, ...input })).toEqual({
 			uri: 'at://u',
 			cid: 'c'
 		});
-		const [pathname, init] = mocks.handle.mock.calls[0];
-		expect(pathname).toBe('/xrpc/com.atproto.repo.putRecord');
-		expect(JSON.parse(init.body)).toEqual({
-			repo: GROUP,
-			collection: 'community.lexicon.calendar.event',
+		expect(mocks.putGroupEvent).toHaveBeenCalledWith(writer(), input);
+
+		await removeGroupEvent({ groupDid: GROUP, rkey: 'r', placement: 'everyone' });
+		expect(mocks.deleteGroupEvent).toHaveBeenCalledWith(writer(), {
 			rkey: 'r',
-			record: { name: 'Meet' }
+			placement: 'everyone'
 		});
-		expect(mocks.notifyIndex).toHaveBeenCalledWith('at://u');
 	});
 
-	it('delete an event from the group repo and tell the index', async () => {
-		await deleteGroupEvent({ groupDid: GROUP, rkey: 'r' });
-		expect(mocks.handle.mock.calls[0][0]).toBe('/xrpc/com.atproto.repo.deleteRecord');
-		expect(mocks.notifyIndex).toHaveBeenCalledWith(
-			`at://${GROUP}/community.lexicon.calendar.event/r`
-		);
+	it('pass a refusal on in its own words, as a conflict', async () => {
+		const refused = new GroupEventRefused('moved');
+		mocks.putGroupEvent.mockRejectedValue(refused);
+		await expect(
+			saveGroupEvent({ groupDid: GROUP, rkey: 'r', record: {}, placement: 'everyone' })
+		).rejects.toMatchObject({ status: 409, body: { message: refused.message } });
 	});
 
-	it('report a refused write without the PDS wording', async () => {
-		mocks.handle.mockResolvedValue(
-			Response.json({ error: 'Forbidden', message: 'x' }, { status: 403 })
-		);
-		await expect(putGroupEvent({ groupDid: GROUP, rkey: 'r', record: {} })).rejects.toMatchObject({
-			status: 502,
-			body: { message: 'Saving the event failed' }
-		});
-		expect(mocks.notifyIndex).not.toHaveBeenCalled();
+	it("report any other failure without the PDS's wording", async () => {
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		mocks.deleteGroupEvent.mockRejectedValue(new Error('the PDS said something'));
+		const failed = await removeGroupEvent({
+			groupDid: GROUP,
+			rkey: 'r',
+			placement: 'members'
+		}).catch((e) => e);
+		expect(failed).toMatchObject({ status: 502 });
+		expect(failed.body.message).not.toContain('the PDS said');
 	});
 });
 
