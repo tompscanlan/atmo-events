@@ -33,7 +33,27 @@ describe('network settings', () => {
 		});
 		expect(validate('PUBLIC_PLC_URL', 'plc.test')).toHaveProperty('issues');
 		expect(validate('PUBLIC_PLC_URL', 'wss://plc.test')).toHaveProperty('issues');
-		expect(validate('PUBLIC_JETSTREAM_URL', 'https://jetstream.test')).toHaveProperty('issues');
+		expect(validate('PUBLIC_JETSTREAM_URL', 'ftp://jetstream.test')).toHaveProperty('issues');
+	});
+
+	it('refuse a user, password or #fragment', () => {
+		expect(validate('PUBLIC_PLC_URL', 'https://plc.test/#top')).toHaveProperty('issues');
+		expect(validate('PUBLIC_PLC_URL', 'https://me:pw@plc.test')).toHaveProperty('issues');
+		expect(validate('PUBLIC_DOH_URL', 'https://dns.test/dns-query')).toEqual({
+			value: 'https://dns.test/dns-query'
+		});
+	});
+
+	it('take Jetstream as an origin, over HTTP or WebSocket', () => {
+		for (const value of ['https://jetstream.test', 'wss://jetstream.test/']) {
+			expect(validate('PUBLIC_JETSTREAM_URL', value)).toEqual({ value });
+		}
+		expect(validate('PUBLIC_JETSTREAM_URL', 'wss://jetstream.test/subscribe')).toHaveProperty(
+			'issues'
+		);
+		expect(validate('PUBLIC_JETSTREAM_URL', 'wss://jetstream.test?compress=true')).toHaveProperty(
+			'issues'
+		);
 	});
 
 	it('take relays as a comma-separated list', () => {
