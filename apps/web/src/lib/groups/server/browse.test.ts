@@ -4,7 +4,8 @@ const mocks = vi.hoisted(() => ({
 	listDeclaredGroups: vi.fn(),
 	readCards: vi.fn(),
 	resolveGroup: vi.fn(),
-	linkedGroups: vi.fn()
+	linkedGroups: vi.fn(),
+	groupsOfPerson: vi.fn()
 }));
 vi.mock('./group', () => ({
 	listDeclaredGroups: mocks.listDeclaredGroups,
@@ -12,6 +13,7 @@ vi.mock('./group', () => ({
 	resolveGroup: mocks.resolveGroup
 }));
 vi.mock('./sign-in', () => ({ linkedGroups: mocks.linkedGroups }));
+vi.mock('./person', () => ({ groupsOfPerson: mocks.groupsOfPerson }));
 
 import { browseGroups } from './browse';
 
@@ -38,7 +40,7 @@ describe('browseGroups', () => {
 		);
 		mocks.resolveGroup.mockResolvedValue({ did: 'did:plc:private', handle: 'p.example' });
 
-		const { groups } = await browseGroups('did:plc:alice');
+		const { groups } = await browseGroups({ did: 'did:plc:alice', session: null });
 		expect(groups.map((g) => [g.did, g.name, g.linked])).toEqual([
 			['did:plc:a', 'a', true],
 			['did:plc:private', 'p.example', true],
@@ -49,9 +51,16 @@ describe('browseGroups', () => {
 
 	it('shows a declared group without a card by its DID, and looks nothing up', async () => {
 		mocks.listDeclaredGroups.mockResolvedValue([{ did: 'did:plc:b', indexedAt: 2 }]);
-		const { groups } = await browseGroups(null);
+		const { groups } = await browseGroups({ did: null, session: null });
 		expect(groups).toEqual([
-			{ did: 'did:plc:b', name: 'did:plc:b', handle: null, description: null, linked: false }
+			{
+				did: 'did:plc:b',
+				name: 'did:plc:b',
+				handle: null,
+				description: null,
+				linked: false,
+				member: false
+			}
 		]);
 		expect(mocks.resolveGroup).not.toHaveBeenCalled();
 		expect(mocks.linkedGroups).not.toHaveBeenCalled();
@@ -61,9 +70,42 @@ describe('browseGroups', () => {
 		mocks.listDeclaredGroups.mockRejectedValue(new Error('down'));
 		mocks.linkedGroups.mockResolvedValue(['did:plc:a']);
 		mocks.readCards.mockResolvedValue(new Map([['did:plc:a', card('a')]]));
-		expect(await browseGroups('did:plc:alice')).toMatchObject({
+		expect(await browseGroups({ did: 'did:plc:alice', session: null })).toMatchObject({
 			groups: [{ did: 'did:plc:a' }],
 			declaredUnavailable: true
 		});
+	});
+});
+
+describe('your groups', () => {
+	const GRANTED =
+		'atproto space:group.opensocial.meta?authority=*&action=read space:group.opensocial.members?authority=*&action=read_self';
+	const viewer = (scope: string) => ({
+		did: 'did:plc:alice',
+		session: { did: 'did:plc:alice', getTokenInfo: async () => ({ scope }), handle: vi.fn() }
+	});
+
+	it('lists the groups the person belongs to first, by their own read', async () => {
+		mocks.listDeclaredGroups.mockResolvedValue([{ did: 'did:plc:public', indexedAt: 2 }]);
+		mocks.groupsOfPerson.mockResolvedValue([
+			{
+				did: 'did:plc:private',
+				meta: { profile: { name: 'Quiet', description: null }, public: false }
+			}
+		]);
+		mocks.resolveGroup.mockResolvedValue({ did: 'did:plc:private', handle: 'quiet.example' });
+
+		const { groups } = await browseGroups(viewer(GRANTED) as never);
+		expect(groups.map((g) => [g.did, g.name, g.member])).toEqual([
+			['did:plc:private', 'Quiet', true],
+			['did:plc:public', 'did:plc:public', false]
+		]);
+		expect(mocks.readCards).toHaveBeenCalledWith(['did:plc:public']);
+	});
+
+	it('asks nothing of a sign-in without the group scopes', async () => {
+		mocks.listDeclaredGroups.mockResolvedValue([]);
+		await browseGroups(viewer('atproto') as never);
+		expect(mocks.groupsOfPerson).not.toHaveBeenCalled();
 	});
 });
