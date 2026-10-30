@@ -9,8 +9,26 @@ function url(...protocols: string[]) {
 	return (value: string | undefined) => {
 		const v = value?.trim();
 		if (!v) return undefined;
-		if (!protocols.includes(new URL(v).protocol)) {
+		const parsed = new URL(v);
+		if (!protocols.includes(parsed.protocol)) {
 			throw new Error(`must be a ${protocols.join(' or ')} URL`);
+		}
+		// The OAuth library refuses these too, but only when it is first used.
+		if (parsed.username || parsed.password || parsed.hash) {
+			throw new Error('must not have a user, password or #fragment');
+		}
+		return v;
+	};
+}
+
+// Contrail takes Jetstream as an origin and adds the path itself.
+function origin(...protocols: string[]) {
+	const one = url(...protocols);
+	return (value: string | undefined) => {
+		const v = one(value);
+		if (v) {
+			const { pathname, search } = new URL(v);
+			if (pathname !== '/' || search) throw new Error('must be an origin, with no path');
 		}
 		return v;
 	};
@@ -62,8 +80,8 @@ export const variables = defineEnvVars({
 	},
 	PUBLIC_JETSTREAM_URL: {
 		public: true,
-		schema: url('wss:', 'ws:'),
-		description: 'Jetstream that contrail ingests from.'
+		schema: origin('https:', 'http:', 'wss:', 'ws:'),
+		description: 'Jetstream that contrail ingests from, as an origin (no /subscribe).'
 	},
 	PUBLIC_RELAY_URLS: {
 		public: true,
