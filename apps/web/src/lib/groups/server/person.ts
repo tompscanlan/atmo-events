@@ -10,7 +10,6 @@ import {
 	membersSpaceUri,
 	metaSpaceUri
 } from '../ids';
-import { accept } from './acceptance';
 import type { CallerSession } from './caller';
 import { parseGroupProfile, type GroupMeta } from './group';
 import { isSpaceAccessDenied } from './space-credential';
@@ -111,14 +110,4 @@ export async function groupsOfPerson(caller: CallerSession): Promise<OwnGroup[]>
 		})
 	);
 	return checked.filter((group): group is OwnGroup => group !== null);
-}
-
-/** A member confirms by visiting: their acceptance, written after the host says they are a
- *  member, since a write the host refuses still lands in the writer's own repo. */
-export async function confirmOnVisit(caller: CallerSession, groupDid: string): Promise<void> {
-	try {
-		if (await isMemberAsPerson(caller, groupDid)) await accept(caller, groupDid);
-	} catch (e) {
-		console.warn(`[groups] ${caller.did}'s visit to ${groupDid} confirmed nothing:`, e);
-	}
 }
