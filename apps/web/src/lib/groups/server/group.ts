@@ -119,6 +119,14 @@ export async function heldAtGroupHost(): Promise<string[] | null> {
 	}
 }
 
+/** For right after the group host makes a group: the cached answer predates it, so without
+ *  this the list leaves the new group out until that answer expires. */
+export async function forgetHeldAtGroupHost(): Promise<void> {
+	await env.OAUTH_SESSIONS?.delete(HELD_KEY).catch((e) => {
+		console.warn('[groups] the cached answer of what the group host holds was not dropped:', e);
+	});
+}
+
 /** One page, newest first, the index's own order. Only the declaration at rkey `self`
  *  counts, so an account is listed once however many records it writes, and each server gets
  *  at most 20 places, except the groups this site's group host holds; `server` lists one

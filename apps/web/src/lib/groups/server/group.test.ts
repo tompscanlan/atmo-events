@@ -20,6 +20,7 @@ vi.mock('@svelte-atproto/oauth/network', () => ({
 
 import {
 	atGroupHost,
+	forgetHeldAtGroupHost,
 	heldAtGroupHost,
 	isDeclared,
 	listCrowdedServers,
@@ -298,6 +299,18 @@ describe('heldAtGroupHost', () => {
 		);
 		expect(hostFetch).toHaveBeenCalledTimes(2);
 		expect(await heldAtGroupHost()).toEqual([GROUP, 'did:plc:second']);
+		expect(hostFetch).toHaveBeenCalledTimes(2);
+	});
+
+	it('asks the host again once the cached answer is dropped, so a new group counts', async () => {
+		expect(await heldAtGroupHost()).toEqual([GROUP]);
+		hostHolds([
+			[GROUP, true],
+			['did:plc:new', true]
+		]);
+		expect(await heldAtGroupHost()).toEqual([GROUP]);
+		await forgetHeldAtGroupHost();
+		expect(await heldAtGroupHost()).toEqual([GROUP, 'did:plc:new']);
 		expect(hostFetch).toHaveBeenCalledTimes(2);
 	});
 
