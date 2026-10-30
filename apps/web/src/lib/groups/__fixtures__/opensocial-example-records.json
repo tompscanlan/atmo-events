@@ -1,0 +1,174 @@
+[
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/group.opensocial.declaration/self",
+    "value": {
+      "$type": "group.opensocial.declaration",
+      "meta": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.meta/self"
+    }
+  },
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.meta/self/did:plc:abcdefghijklmnopqrstuvwx/group.opensocial.profile/self",
+    "value": {
+      "$type": "group.opensocial.profile",
+      "displayName": "Neighborhood Garden",
+      "description": "A group for local gardeners.",
+      "joinPolicy": "approval",
+      "url": "https://garden.example.com/"
+    }
+  },
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.meta/self/did:plc:abcdefghijklmnopqrstuvwx/group.opensocial.rule/3jzfcijpj2z2a",
+    "value": {
+      "$type": "group.opensocial.rule",
+      "title": "Be considerate",
+      "text": "Treat other members with respect.",
+      "order": 0
+    }
+  },
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.members/self/did:plc:abcdefghijklmnopqrstuvwx/group.opensocial.role/admin",
+    "value": {
+      "$type": "group.opensocial.role",
+      "displayName": "Admin"
+    }
+  },
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.members/self/did:plc:abcdefghijklmnopqrstuvwx/group.opensocial.role/member",
+    "value": {
+      "$type": "group.opensocial.role",
+      "displayName": "Member",
+      "default": true
+    }
+  },
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.members/self/did:plc:abcdefghijklmnopqrstuvwx/group.opensocial.role/moderator",
+    "value": {
+      "$type": "group.opensocial.role",
+      "displayName": "Moderator"
+    }
+  },
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.members/self/did:plc:abcdefghijklmnopqrstuvwx/group.opensocial.permissions/self",
+    "value": {
+      "$type": "group.opensocial.permissions",
+      "grants": [
+        {
+          "role": "admin",
+          "scopes": [
+            "include:group.opensocial.configure",
+            "include:group.opensocial.manageSpaces",
+            "include:group.opensocial.manageMembers",
+            "include:group.opensocial.moderate",
+            "space:*?collection=com.atproto.label.label",
+            "space:*?collection=group.opensocial.access",
+            "space:*?manage=create&manage=delete"
+          ],
+          "assignable": ["admin", "moderator", "member"]
+        },
+        {
+          "role": "moderator",
+          "scopes": [
+            "include:group.opensocial.moderate",
+            "space:*?collection=com.atproto.label.label"
+          ],
+          "assignable": ["member"]
+        }
+      ]
+    }
+  },
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.meta/self/did:plc:abcdefghijklmnopqrstuvwx/group.opensocial.labeler/self",
+    "value": {
+      "$type": "group.opensocial.labeler",
+      "policies": {
+        "labelValues": ["!hide", "spoiler"],
+        "labelValueDefinitions": [
+          {
+            "identifier": "spoiler",
+            "severity": "none",
+            "blurs": "content",
+            "locales": [
+              {
+                "lang": "en",
+                "name": "Spoiler",
+                "description": "Reveals plot details."
+              }
+            ]
+          }
+        ]
+      },
+      "reasonTypes": [
+        "com.atproto.moderation.defs#reasonRude",
+        "com.atproto.moderation.defs#reasonOther"
+      ],
+      "subjectTypes": ["account", "record"],
+      "createdAt": "2026-09-29T12:00:00.000Z"
+    }
+  },
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.members/self/did:plc:abcdefghijklmnopqrstuvwx/group.opensocial.space/3jzfcijpj2z2a",
+    "value": {
+      "$type": "group.opensocial.space",
+      "space": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.meta/self",
+      "createdAt": "2026-09-29T12:00:00.000Z"
+    }
+  },
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.members/self/did:plc:abcdefghijklmnopqrstuvwx/group.opensocial.membership/did:plc:zyxwvutsrqponmlkjihgfedcb",
+    "value": {
+      "$type": "group.opensocial.membership",
+      "member": "did:plc:zyxwvutsrqponmlkjihgfedcb",
+      "roles": ["member"],
+      "createdAt": "2026-09-29T12:00:00.000Z"
+    }
+  },
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.members/self/did:plc:zyxwvutsrqponmlkjihgfedcb/group.opensocial.acceptance/self",
+    "value": {
+      "$type": "group.opensocial.acceptance",
+      "createdAt": "2026-09-29T12:00:00.000Z"
+    }
+  },
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.meta/self/did:plc:abcdefghijklmnopqrstuvwx/group.opensocial.access/self",
+    "value": {
+      "$type": "group.opensocial.access",
+      "public": true,
+      "grants": []
+    }
+  },
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.members/self/did:plc:abcdefghijklmnopqrstuvwx/group.opensocial.access/self",
+    "value": {
+      "$type": "group.opensocial.access",
+      "grants": [
+        {
+          "role": "member",
+          "scopes": ["space:group.opensocial.members?action=read"]
+        },
+        {
+          "role": "moderator",
+          "scopes": ["space:group.opensocial.members?action=read"]
+        }
+      ]
+    }
+  },
+  {
+    "uri": "at://did:plc:abcdefghijklmnopqrstuvwx/space/group.opensocial.members/self/did:plc:abcdefghijklmnopqrstuvwx/com.atproto.label.label/3jzfcijpj2z2a",
+    "value": {
+      "$type": "com.atproto.label.label",
+      "uri": "did:plc:zyxwvutsrqponmlkjihgfedcb",
+      "val": "!hide",
+      "createdAt": "2026-09-29T12:00:00.000Z"
+    }
+  },
+  {
+    "uri": "at://did:plc:zyxwvutsrqponmlkjihgfedcb/space/group.opensocial.invites/self/did:plc:abcdefghijklmnopqrstuvwx/group.opensocial.invite/3jzfcijpj2z2a",
+    "value": {
+      "$type": "group.opensocial.invite",
+      "createdAt": "2026-09-29T12:00:00.000Z",
+      "expiresAt": "2026-10-29T12:00:00.000Z",
+      "message": "Join our gardening group."
+    }
+  }
+]

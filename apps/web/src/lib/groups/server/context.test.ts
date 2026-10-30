@@ -16,7 +16,8 @@ const mocks = vi.hoisted(() => ({
 	groupSignInAvailable: vi.fn(),
 	hasGroupSession: vi.fn(),
 	readMetaAsPerson: vi.fn(),
-	groupSpacesOf: vi.fn()
+	groupSpacesOf: vi.fn(),
+	confirmOnVisit: vi.fn()
 }));
 vi.mock('./group', () => ({
 	resolveGroup: mocks.resolveGroup,
@@ -36,7 +37,8 @@ vi.mock('./sign-in', () => ({
 
 vi.mock('./person', () => ({
 	readMetaAsPerson: mocks.readMetaAsPerson,
-	groupSpacesOf: mocks.groupSpacesOf
+	groupSpacesOf: mocks.groupSpacesOf,
+	confirmOnVisit: mocks.confirmOnVisit
 }));
 
 import {
@@ -273,6 +275,17 @@ describe("groupView with the caller's own access", () => {
 		});
 		expect(mocks.isDeclared).not.toHaveBeenCalled();
 		expect(mocks.storeCard).toHaveBeenCalledWith(resolved, { ...meta, public: false });
+	});
+
+	it('confirms a member on the visit, only with a grant that can write the acceptance', async () => {
+		mocks.readMetaAsPerson.mockResolvedValue(meta);
+		mocks.confirmOnVisit.mockResolvedValue(undefined);
+		await view();
+		expect(mocks.confirmOnVisit).not.toHaveBeenCalled();
+		await view(
+			`${GRANTED} space:group.opensocial.members?authority=*&skey=self&collection=group.opensocial.acceptance`
+		);
+		expect(mocks.confirmOnVisit).toHaveBeenCalledOnce();
 	});
 
 	it('is the same 404 when the host turns them away from an undeclared group', async () => {
