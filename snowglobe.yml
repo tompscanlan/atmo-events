@@ -20,11 +20,11 @@ globe: atmogh
 domain: local.snowglobe.at
 
 pds:
-  # The alpha of 2026-10-22 (permissioned-data-alpha ac0c9f15), the latest; the group host runs
+  # The alpha of 2026-10-29 (permissioned-data-alpha 11c5d98c), the latest; the group host runs
   # this same build as a library. snowglobe's short name spaces-alpha is still the 2026-10-01
   # build, which the group host no longer takes, so this names the image itself.
   - name: alpha
-    image: ghcr.io/bluesky-social/atproto@sha256:3ebb6d0e2c587adb0142de6e95a9b11d5f4704a418cf1db33576d701688d945a
+    image: ghcr.io/bluesky-social/atproto@sha256:f003adf7ca7cbb8ff60a4d99323fd009dfc1259b208f468f71accf0366ecab1e
     bare_handles: true # handles <name>.local.snowglobe.at
     invites: required
   - name: regular # a current release, with no spaces
