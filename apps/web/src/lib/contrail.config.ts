@@ -2,6 +2,7 @@ import type { ContrailConfig } from '@atmo-dev/contrail';
 import { discoverableSql } from './contrail/discoverability';
 import { moderatorDids } from './moderation/config';
 import { cityConditions } from './server/cities';
+import { GROUP_DECLARATION_COLLECTION } from './groups/ids';
 
 const MAX_CITY_HYDRATION_URIS = 60;
 
@@ -122,6 +123,10 @@ export const config: ContrailConfig = {
 					field: 'subject.uri'
 				}
 			}
+		},
+		// A group's declaration marks its DID as a group; groups browse lists them.
+		declaration: {
+			collection: GROUP_DECLARATION_COLLECTION
 		}
 		// `follow` (app.bsky.graph.follow) is auto-added by contrail 0.5+ when
 		// `feeds` is configured: discover:false, subjectField:'subject' (so only
