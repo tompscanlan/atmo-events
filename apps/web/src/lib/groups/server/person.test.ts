@@ -5,13 +5,7 @@ import type { CallerSession } from './caller';
 const mocks = vi.hoisted(() => ({ get: vi.fn() }));
 vi.mock('./space-read', () => ({ credentialSpaceReader: () => ({ get: mocks.get }) }));
 
-import {
-	confirmOnVisit,
-	groupSpacesOf,
-	groupsOfPerson,
-	isMemberAsPerson,
-	readMetaAsPerson
-} from './person';
+import { groupSpacesOf, groupsOfPerson, isMemberAsPerson, readMetaAsPerson } from './person';
 
 const ALICE = 'did:plc:alice';
 
@@ -58,7 +52,7 @@ describe('readMetaAsPerson', () => {
 				: { value: { public: false } }
 		);
 		expect(await readMetaAsPerson(caller([]), 'did:plc:g')).toEqual({
-			profile: { name: 'Quiet', description: null },
+			profile: { name: 'Quiet', description: null, joinPolicy: 'invite' },
 			public: false
 		});
 	});
@@ -94,22 +88,5 @@ describe('membership', () => {
 			return { value: collection === 'group.opensocial.access' ? { public: true } : {} };
 		});
 		expect((await groupsOfPerson(c)).map((g) => g.did)).toEqual(['did:plc:in']);
-	});
-});
-
-describe('confirmOnVisit', () => {
-	it('writes the acceptance only after the host says they are a member', async () => {
-		const handle = vi.fn(async () => Response.json({ uri: 'x', cid: 'y' }));
-		const scope =
-			'space:group.opensocial.members?authority=*&skey=self&collection=group.opensocial.acceptance';
-		const member = { did: ALICE, scope, handle };
-
-		mocks.get.mockResolvedValueOnce(null);
-		await confirmOnVisit(member, 'did:plc:g');
-		expect(handle).not.toHaveBeenCalled();
-
-		mocks.get.mockResolvedValueOnce({ value: {} });
-		await confirmOnVisit(member, 'did:plc:g');
-		expect(handle).toHaveBeenCalledWith('/xrpc/com.atproto.space.createRecord', expect.anything());
 	});
 });
