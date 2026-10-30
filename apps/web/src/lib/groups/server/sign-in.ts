@@ -18,6 +18,7 @@ import { oauthRequestLock } from '#lib/atproto/server/oauth.js';
 import { atprotoNetwork } from '#lib/atproto/network.js';
 import { GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION, META_SPACE_TYPE } from '../ids';
 import { listKeys, prefixedKV } from './kv';
+import { parseGroupSettings, type GroupSettings } from './settings';
 import type { XrpcHandle } from './xrpc';
 
 export const GROUP_CLIENT_METADATA_PATH = '/oauth/group/client-metadata.json';
@@ -34,7 +35,9 @@ const STATE_TTL_SECONDS = 600;
 export const GROUP_SESSION_SCOPE = [
 	'atproto',
 	`space:${META_SPACE_TYPE}?authority=self&action=read`,
-	// Memberships, and the host's join requests.
+	// The profile; the spaces' access records; memberships and the host's join requests.
+	'include:group.opensocial.configure',
+	'include:group.opensocial.manageSpaces',
 	'include:group.opensocial.manageMembers',
 	scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
 	scope.blob({ accept: ['image/*'] })
@@ -92,12 +95,23 @@ interface LinkState {
 	by: string;
 }
 
-function linkState(value: unknown): LinkState | null {
+/** A create names no group yet: the host makes the account during the sign-in. */
+interface CreateState {
+	create: GroupSettings;
+	by: string;
+}
+
+function isDid(value: unknown): value is string {
+	return typeof value === 'string' && value.startsWith('did:');
+}
+
+function signInState(value: unknown): LinkState | CreateState | null {
 	if (!value || typeof value !== 'object') return null;
-	const { groupDid, by } = value as Record<string, unknown>;
-	if (typeof groupDid !== 'string' || !groupDid.startsWith('did:')) return null;
-	if (typeof by !== 'string' || !by.startsWith('did:')) return null;
-	return { groupDid, by };
+	const { groupDid, by, create } = value as Record<string, unknown>;
+	if (!isDid(by)) return null;
+	if (isDid(groupDid)) return { groupDid, by };
+	const settings = parseGroupSettings(create);
+	return settings ? { create: settings, by } : null;
 }
 
 /** Where to send the browser. The host signs the person in at their own PDS and turns them
@@ -113,52 +127,63 @@ export async function startGroupLink(groupDid: string, personDid: string): Promi
 	return url;
 }
 
-export type GroupLinkResult =
-	{ ok: true; groupDid: string } | { ok: false; groupDid: string | null; reason: string };
+/** Where to send the browser to make a group: the host's own sign-up page, which signs the
+ *  creator in at their own PDS. The group's settings wait in the sign-in state. */
+export async function startGroupCreate(personDid: string, settings: GroupSettings): Promise<URL> {
+	const { url } = await clientFor(personDid).authorize({
+		target: { type: 'pds', serviceUrl: env.GROUP_HOST_URL as string },
+		prompt: 'create',
+		scope: GROUP_SESSION_SCOPE,
+		state: { create: settings, by: personDid } satisfies CreateState
+	});
+	// Hints for the host's sign-up page, on the link: the PDS drops unknown request fields.
+	url.searchParams.set('gh_name', settings.name);
+	url.searchParams.set('gh_person', personDid);
+	return url;
+}
 
-/** Only the browser that started the link, still signed in as the same person, finishes it. */
-export async function finishGroupLink(
+export type GroupSignInResult =
+	| { ok: true; groupDid: string; created: GroupSettings | null }
+	| { ok: false; groupDid: string | null; reason: string };
+
+/** Only the browser that started the sign-in, still signed in as the same person, finishes
+ *  it. A link must come back as the group it named; a create as a new group at the host. */
+export async function finishGroupSignIn(
 	params: URLSearchParams,
 	signedInDid: string | null
-): Promise<GroupLinkResult> {
+): Promise<GroupSignInResult> {
 	const stateId = params.get('state');
 	const states = prefixedKV<string, StoredState>(env.OAUTH_SESSIONS, STATE_PREFIX);
 	const stored = stateId ? await states.get(stateId) : undefined;
-	const link = linkState(stored?.userState);
-	if (!stateId || !link) return { ok: false, groupDid: null, reason: 'unknown or expired state' };
+	const started = signInState(stored?.userState);
+	if (!stateId || !started)
+		return { ok: false, groupDid: null, reason: 'unknown or expired state' };
+	const named = 'groupDid' in started ? started.groupDid : null;
 
-	if (signedInDid !== link.by) {
+	if (signedInDid !== started.by) {
 		// Single use, as the client's own callback would make it.
 		await states.delete(stateId);
 		return {
 			ok: false,
-			groupDid: link.groupDid,
-			reason: `started by ${link.by}, finished by ${signedInDid ?? 'nobody'}`
+			groupDid: named,
+			reason: `started by ${started.by}, finished by ${signedInDid ?? 'nobody'}`
 		};
 	}
 
-	const client = clientFor(link.by);
+	const client = clientFor(started.by);
 	let session: OAuthSession;
 	try {
 		({ session } = await client.callback(params));
 	} catch (e) {
-		return {
-			ok: false,
-			groupDid: link.groupDid,
-			reason: e instanceof Error ? e.message : 'failed'
-		};
+		return { ok: false, groupDid: named, reason: e instanceof Error ? e.message : 'failed' };
 	}
-	if (session.did !== link.groupDid) {
+	if (named !== null && session.did !== named) {
 		await client.revoke(session.did).catch((e) => {
 			console.error(`[groups] revoking a session for ${session.did} failed:`, e);
 		});
-		return {
-			ok: false,
-			groupDid: link.groupDid,
-			reason: `${session.did} was authorized, not ${link.groupDid}`
-		};
+		return { ok: false, groupDid: named, reason: `${session.did} was authorized, not ${named}` };
 	}
-	return { ok: true, groupDid: link.groupDid };
+	return { ok: true, groupDid: session.did, created: 'create' in started ? started.create : null };
 }
 
 export async function hasGroupSession(groupDid: string, personDid: string): Promise<boolean> {

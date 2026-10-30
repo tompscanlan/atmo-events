@@ -3,9 +3,12 @@ import type { ActorIdentifier } from '@atcute/lexicons';
 import { getServerClient } from '#lib/contrail/index.js';
 import { hostingQuery } from '#lib/contrail/queries.js';
 import { groupView } from '#lib/groups/server/context.js';
+import { pendingSetup } from '#lib/groups/server/create.js';
 
-const LINK_NOTICES = {
-	linked: 'Linked. You can now post events for this group.'
+const NOTICES = {
+	'link=linked': 'Linked. You can now post events for this group.',
+	'created=done': 'Your group is ready.',
+	'created=stopped': 'Your group was made, but setting it up stopped partway. Finish it below.'
 } as const;
 
 export async function load({ params, locals, url }) {
@@ -15,7 +18,9 @@ export async function load({ params, locals, url }) {
 		{ actor: group.did as ActorIdentifier },
 		null
 	);
-	const link = url.searchParams.get('link');
+	const shown = [...url.searchParams].map(([key, value]) => `${key}=${value}`);
+	const notice = shown.find((pair): pair is keyof typeof NOTICES => pair in NOTICES);
+	const setup = group.linked && locals.did ? await pendingSetup(group.did) : null;
 	return {
 		pageTitle: group.name,
 		pageDescription: group.description ?? `Events from ${group.name}.`,
@@ -23,6 +28,7 @@ export async function load({ params, locals, url }) {
 		events: page.events,
 		cursor: page.cursor,
 		signedIn: Boolean(locals.did),
-		notice: link && link in LINK_NOTICES ? LINK_NOTICES[link as keyof typeof LINK_NOTICES] : null
+		notice: notice ? NOTICES[notice] : null,
+		unfinished: setup !== null && setup.by === locals.did
 	};
 }

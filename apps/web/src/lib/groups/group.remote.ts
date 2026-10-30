@@ -3,7 +3,9 @@ import { command, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
 import { GROUP_EVENT_COLLECTION } from './ids';
 import { requireGroupWriter } from './server/context';
-import { listGroup, notifyIndex, readGroupMeta, unlistGroup } from './server/group';
+import { finishSetup, pendingSetup } from './server/create';
+import { listGroup, notifyIndex, readGroupMeta, resolveGroup, unlistGroup } from './server/group';
+import { applyGroupSettings, parseGroupSettings } from './server/settings';
 import { unlinkGroup } from './server/sign-in';
 import { xrpc } from './server/xrpc';
 
@@ -73,3 +75,34 @@ export const uploadGroupBlob = command(
 		return result.blob as { $type: 'blob'; ref: { $link: string }; mimeType: string; size: number };
 	}
 );
+
+export const saveGroupSettings = command(
+	v.object({
+		groupDid: didSchema,
+		settings: v.record(v.string(), v.unknown()),
+		shownPublic: v.boolean()
+	}),
+	async ({ groupDid, settings, shownPublic }) => {
+		const parsed = parseGroupSettings(settings);
+		if (!parsed) error(400, 'A name is needed, up to 64 characters');
+		const writer = await requireGroupWriter(groupDid, callerDid());
+		const group = (await resolveGroup(groupDid)) ?? { did: groupDid, handle: null };
+		await applyGroupSettings(writer, group, parsed, shownPublic).catch(() =>
+			error(502, 'The save stopped partway. Saving again finishes it.')
+		);
+		return { ok: true };
+	}
+);
+
+/** For the creator of a group whose setup stopped: the rest of it. */
+export const finishGroupSetup = command(v.object({ groupDid: didSchema }), async ({ groupDid }) => {
+	const did = callerDid();
+	const writer = await requireGroupWriter(groupDid, did);
+	const setup = await pendingSetup(groupDid);
+	if (!setup || setup.by !== did) error(404, 'Nothing is left to set up');
+	const group = (await resolveGroup(groupDid)) ?? { did: groupDid, handle: null };
+	await finishSetup(writer, group, setup).catch(() =>
+		error(502, 'Setting up stopped again. Try once more shortly.')
+	);
+	return { ok: true };
+});
