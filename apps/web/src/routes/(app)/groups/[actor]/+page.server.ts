@@ -9,7 +9,7 @@ const LINK_NOTICES = {
 } as const;
 
 export async function load({ params, locals, url }) {
-	const group = await groupView(params.actor, locals.did);
+	const group = await groupView(params.actor, locals);
 	const page = await hostingQuery(
 		getServerClient(env.DB),
 		{ actor: group.did as ActorIdentifier },

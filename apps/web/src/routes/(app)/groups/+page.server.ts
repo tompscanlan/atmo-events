@@ -14,7 +14,7 @@ export async function load({ locals, url }) {
 	const asked = url.searchParams.get('server');
 	const server = serverOrigin(asked);
 	if (asked !== null && !server) error(404, 'Not found');
-	const { groups, cursor, declaredUnavailable, crowded } = await browseGroups(locals.did, {
+	const { groups, cursor, declaredUnavailable, crowded, askAccess } = await browseGroups(locals, {
 		cursor: url.searchParams.get('cursor'),
 		server
 	});
@@ -26,6 +26,7 @@ export async function load({ locals, url }) {
 		groups,
 		cursor,
 		declaredUnavailable,
+		askAccess,
 		server: server && host ? { origin: server, host } : null,
 		crowded: crowded.map((entry) => ({ ...entry, host: new URL(entry.server).host })),
 		canLink: Boolean(locals.did) && groupSignInAvailable(),
