@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => ({
 	groupSignInAvailable: vi.fn(),
 	readMetaAsPerson: vi.fn(),
 	groupSpacesOf: vi.fn(),
-	confirmOnVisit: vi.fn()
+	isMemberAsPerson: vi.fn(),
+	accept: vi.fn()
 }));
 vi.mock('./group', () => ({
 	resolveGroup: mocks.resolveGroup,
@@ -35,8 +36,9 @@ vi.mock('./sign-in', () => ({
 vi.mock('./person', () => ({
 	readMetaAsPerson: mocks.readMetaAsPerson,
 	groupSpacesOf: mocks.groupSpacesOf,
-	confirmOnVisit: mocks.confirmOnVisit
+	isMemberAsPerson: mocks.isMemberAsPerson
 }));
+vi.mock('./acceptance', () => ({ accept: mocks.accept }));
 
 import { GROUP_NOT_FOUND, GROUP_UNCHECKED, groupView, requireGroupWriter } from './context';
 import { SpaceAccessDenied } from './space-credential';
@@ -55,6 +57,7 @@ beforeEach(() => {
 	mocks.groupSession.mockResolvedValue(null);
 	mocks.groupSignInAvailable.mockReturnValue(true);
 	mocks.atGroupHost.mockReturnValue(true);
+	mocks.isMemberAsPerson.mockResolvedValue(false);
 });
 
 describe('groupView for a visitor', () => {
@@ -217,15 +220,26 @@ describe("groupView with the caller's own access", () => {
 		expect(mocks.storeCard).toHaveBeenCalledWith(resolved, { ...meta, public: false });
 	});
 
+	const WITH_ACCEPTANCE = `${GRANTED} space:group.opensocial.members?authority=*&skey=self&collection=group.opensocial.acceptance`;
+
 	it('confirms a member on the visit, only with a grant that can write the acceptance', async () => {
 		mocks.readMetaAsPerson.mockResolvedValue(meta);
-		mocks.confirmOnVisit.mockResolvedValue(undefined);
-		await view();
-		expect(mocks.confirmOnVisit).not.toHaveBeenCalled();
-		await view(
-			`${GRANTED} space:group.opensocial.members?authority=*&skey=self&collection=group.opensocial.acceptance`
+		mocks.isMemberAsPerson.mockResolvedValue(true);
+		mocks.accept.mockResolvedValue(true);
+		expect(await view()).toMatchObject({ member: true });
+		expect(mocks.accept).not.toHaveBeenCalled();
+		await view(WITH_ACCEPTANCE);
+		expect(mocks.accept).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({ did: ALICE }),
+			GROUP
 		);
-		expect(mocks.confirmOnVisit).toHaveBeenCalledOnce();
+	});
+
+	it('writes nothing for someone the host does not count a member', async () => {
+		mocks.readMetaAsPerson.mockResolvedValue(meta);
+		mocks.isMemberAsPerson.mockResolvedValue(false);
+		expect(await view(WITH_ACCEPTANCE)).toMatchObject({ member: false });
+		expect(mocks.accept).not.toHaveBeenCalled();
 	});
 
 	it('is the same 404 when the host turns them away from an undeclared group', async () => {
