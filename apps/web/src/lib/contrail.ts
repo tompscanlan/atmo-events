@@ -1,6 +1,7 @@
 import '../lexicon-types/index.js';
 import { getProfileUrl } from '@atmo-dev/events-ui';
-import { serviceUrl } from '#lib/atproto/network.js';
+import { getCDNImageBlobUrl } from '@svelte-atproto/oauth/bsky';
+import { atprotoNetwork } from '#lib/atproto/network.js';
 import type { EventData } from '#lib/event-types.js';
 import type { CityScope } from '#lib/cities.js';
 import type {
@@ -117,7 +118,11 @@ function getBlobCid(blob: unknown): string | null {
 export function getProfileBlobUrl(did: string, blob: unknown) {
 	const cid = getBlobCid(blob);
 	if (!cid) return undefined;
-	return `${serviceUrl('cdn')}/img/feed_thumbnail/plain/${did}/${cid}@webp`;
+	return getCDNImageBlobUrl({
+		did,
+		blob: { $type: 'blob', ref: { $link: cid } },
+		network: atprotoNetwork()
+	});
 }
 
 export function flattenEventRecord(record: FlattenableEventRecord): FlatEventRecord | null {

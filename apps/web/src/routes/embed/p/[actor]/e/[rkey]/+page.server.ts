@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:workers';
 import { error } from '@sveltejs/kit';
+import { getCDNImageBlobUrl } from '@svelte-atproto/oauth/bsky';
 import { getActor } from '#lib/actor.js';
-import { serviceUrl } from '#lib/atproto/network.js';
+import { atprotoNetwork } from '#lib/atproto/network.js';
 import {
 	flattenEventRecord,
 	getEventRecordFromContrail,
@@ -50,7 +51,11 @@ export async function load({ params, url }) {
 		if (eventData.media && eventData.media.length > 0) {
 			const thumb = eventData.media.find((m: any) => m.role === 'thumbnail');
 			if (thumb?.content?.ref?.$link) {
-				thumbnailUrl = `${serviceUrl('cdn')}/img/feed_thumbnail/plain/${did}/${thumb.content.ref.$link}@webp`;
+				thumbnailUrl = getCDNImageBlobUrl({
+					did,
+					blob: thumb.content,
+					network: atprotoNetwork()
+				});
 			}
 		}
 
