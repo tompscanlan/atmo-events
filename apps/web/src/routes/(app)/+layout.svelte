@@ -11,7 +11,8 @@
 		Search,
 		Plus,
 		LogIn,
-		Menu
+		Menu,
+		Users
 	} from '@sketchyicons/svelte';
 	import { page } from '$app/state';
 	import { afterNavigate } from '$app/navigation';
@@ -21,7 +22,7 @@
 	import CreateEventModal, { createEventModalState } from '#lib/components/CreateEventModal.svelte';
 	import AppFooter from '#lib/components/AppFooter.svelte';
 
-	let { children } = $props();
+	let { children, data } = $props();
 	let navigationOpen = $state(false);
 
 	afterNavigate(({ shallow, type }) => {
@@ -81,6 +82,10 @@
 			href: '/cities',
 			active: path.startsWith('/cities')
 		},
+
+		...(data.groupsEnabled
+			? [{ label: 'Groups', icon: Users, href: '/groups', active: path.startsWith('/groups') }]
+			: []),
 
 		{
 			label: 'Search events',
