@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Avatar, Badge, Button, Input, Label } from '@atmo-dev/kit';
 	import { resolve } from '$app/paths';
+	import { requestPermissions } from '@svelte-atproto/oauth/client';
+	import { GROUP_PERSON_SCOPES } from '#lib/groups/scopes.js';
 
 	let { data } = $props();
 </script>
@@ -11,6 +13,17 @@
 
 		{#if data.notice}
 			<p role="status" class="text-muted mt-4 text-sm">{data.notice}</p>
+		{/if}
+
+		{#if data.askAccess}
+			<div class="mt-6 flex flex-wrap items-center gap-3">
+				<Button variant="secondary" onclick={() => requestPermissions(GROUP_PERSON_SCOPES)}>
+					See your groups
+				</Button>
+				<span class="text-muted text-sm">
+					To list the groups you belong to, private ones too, allow atmo to read them.
+				</span>
+			</div>
 		{/if}
 
 		{#if data.canLink}
@@ -39,6 +52,7 @@
 							<span class="min-w-0 flex-1">
 								<span class="text-base-900 dark:text-base-50 flex items-center gap-2 font-medium">
 									<span class="truncate">{group.name}</span>
+									{#if group.member}<Badge>Member</Badge>{/if}
 									{#if group.linked}<Badge>Linked</Badge>{/if}
 								</span>
 								{#if group.handle}
