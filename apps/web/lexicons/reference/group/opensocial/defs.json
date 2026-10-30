@@ -1,0 +1,284 @@
+{
+  "lexicon": 1,
+  "id": "group.opensocial.defs",
+  "defs": {
+    "roleId": {
+      "type": "string",
+      "format": "record-key",
+      "maxLength": 512,
+      "description": "The rkey of a role record in the group's members space."
+    },
+    "joinPolicy": {
+      "type": "string",
+      "knownValues": ["open", "approval", "invite"],
+      "description": "open admits anyone; approval queues a join request; invite requires an invitation. An invitation admits its recipient under any policy."
+    },
+    "spaceGrant": {
+      "type": "object",
+      "description": "Scopes a role is granted in one space.",
+      "required": ["role", "scopes"],
+      "properties": {
+        "role": {
+          "type": "ref",
+          "ref": "group.opensocial.defs#roleId"
+        },
+        "scopes": {
+          "type": "array",
+          "maxLength": 100,
+          "description": "OAuth scopes, one per item. May include permission sets.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      }
+    },
+    "groupGrant": {
+      "type": "object",
+      "description": "Scopes a role is granted across the group, and the roles its holders may assign.",
+      "required": ["role", "scopes", "assignable"],
+      "properties": {
+        "role": {
+          "type": "ref",
+          "ref": "group.opensocial.defs#roleId"
+        },
+        "scopes": {
+          "type": "array",
+          "maxLength": 100,
+          "description": "OAuth scopes, one per item. May include permission sets.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "assignable": {
+          "type": "array",
+          "maxLength": 100,
+          "items": {
+            "type": "ref",
+            "ref": "group.opensocial.defs#roleId"
+          },
+          "description": "Roles holders may grant or revoke, and whose holders they may eject."
+        }
+      }
+    },
+    "accessConfig": {
+      "type": "object",
+      "description": "Contents of an access record.",
+      "required": ["grants"],
+      "properties": {
+        "public": {
+          "type": "boolean",
+          "default": false
+        },
+        "grants": {
+          "type": "array",
+          "maxLength": 100,
+          "items": {
+            "type": "ref",
+            "ref": "group.opensocial.defs#spaceGrant"
+          }
+        }
+      }
+    },
+    "labelerPolicies": {
+      "type": "object",
+      "required": ["labelValues"],
+      "properties": {
+        "labelValues": {
+          "type": "array",
+          "description": "Label values the group applies.",
+          "items": {
+            "type": "ref",
+            "ref": "com.atproto.label.defs#labelValue"
+          }
+        },
+        "labelValueDefinitions": {
+          "type": "array",
+          "description": "Definitions for group-defined label values.",
+          "items": {
+            "type": "ref",
+            "ref": "com.atproto.label.defs#labelValueDefinition"
+          }
+        }
+      }
+    },
+    "accountSubject": {
+      "type": "object",
+      "required": ["did"],
+      "properties": {
+        "did": {
+          "type": "string",
+          "format": "did"
+        }
+      }
+    },
+    "recordSubject": {
+      "type": "object",
+      "required": ["uri"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "format": "at-uri",
+          "description": "A record in one of the group's spaces."
+        },
+        "cid": {
+          "type": "string",
+          "format": "cid",
+          "description": "A specific version. Omit for the record as a whole."
+        }
+      }
+    },
+    "subjectStatus": {
+      "type": "string",
+      "enum": ["open", "escalated", "resolved"]
+    },
+    "subjectView": {
+      "type": "object",
+      "required": [
+        "subject",
+        "status",
+        "createdAt",
+        "updatedAt",
+        "reportCount"
+      ],
+      "properties": {
+        "subject": {
+          "type": "union",
+          "refs": [
+            "group.opensocial.defs#accountSubject",
+            "group.opensocial.defs#recordSubject"
+          ]
+        },
+        "status": {
+          "type": "ref",
+          "ref": "group.opensocial.defs#subjectStatus"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "datetime"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "datetime"
+        },
+        "reportCount": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "moderationEvent": {
+      "type": "object",
+      "description": "One event in the host's private moderation history.",
+      "required": ["id", "createdAt", "event"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "datetime"
+        },
+        "createdBy": {
+          "type": "string",
+          "format": "did",
+          "description": "Hosts may withhold this to protect reporters and moderators."
+        },
+        "event": {
+          "type": "union",
+          "refs": [
+            "group.opensocial.defs#reportEvent",
+            "group.opensocial.defs#statusEvent",
+            "group.opensocial.defs#labelEvent",
+            "group.opensocial.defs#ejectEvent"
+          ]
+        }
+      }
+    },
+    "reportEvent": {
+      "type": "object",
+      "required": ["reasonType"],
+      "properties": {
+        "reasonType": {
+          "type": "ref",
+          "ref": "com.atproto.moderation.defs#reasonType"
+        },
+        "reason": {
+          "type": "string",
+          "maxGraphemes": 2000,
+          "maxLength": 20000
+        },
+        "rule": {
+          "type": "string",
+          "format": "at-uri",
+          "description": "A rule in the group's meta space."
+        }
+      }
+    },
+    "statusEvent": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "ref",
+          "ref": "group.opensocial.defs#subjectStatus"
+        },
+        "note": {
+          "type": "string",
+          "maxGraphemes": 2000,
+          "maxLength": 20000
+        }
+      }
+    },
+    "labelEvent": {
+      "type": "object",
+      "description": "A label record was written or deleted.",
+      "required": ["uri", "val"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "format": "at-uri",
+          "description": "The label record."
+        },
+        "val": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "deleted": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "ejectEvent": {
+      "type": "object",
+      "description": "The subject's membership was deleted.",
+      "properties": {}
+    },
+    "joinRequest": {
+      "type": "object",
+      "required": ["member", "createdAt"],
+      "properties": {
+        "member": {
+          "type": "string",
+          "format": "did"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "datetime"
+        },
+        "message": {
+          "type": "string",
+          "maxGraphemes": 2000,
+          "maxLength": 20000
+        }
+      }
+    }
+  }
+}
