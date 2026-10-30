@@ -10,13 +10,14 @@ const LINK_NOTICES = {
 
 export async function load({ locals, url }) {
 	if (!env.GROUP_HOST_URL) error(404, 'Not found');
-	const { groups, declaredUnavailable } = await browseGroups(locals.did);
+	const { groups, declaredUnavailable, askAccess } = await browseGroups(locals);
 	const link = url.searchParams.get('link');
 	return {
 		pageTitle: 'Groups',
 		pageDescription: 'Groups on atmo and the events they host.',
 		groups,
 		declaredUnavailable,
+		askAccess,
 		canLink: Boolean(locals.did) && groupSignInAvailable(),
 		signedIn: Boolean(locals.did),
 		notice: link && link in LINK_NOTICES ? LINK_NOTICES[link as keyof typeof LINK_NOTICES] : null

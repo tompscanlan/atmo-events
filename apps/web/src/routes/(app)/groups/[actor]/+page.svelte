@@ -2,8 +2,10 @@
 	import { Avatar, Badge, Button } from '@atmo-dev/kit';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { requestPermissions } from '@svelte-atproto/oauth/client';
 	import EventList from '#lib/components/EventList.svelte';
 	import { setGroupListed, unlinkGroupSession } from '#lib/groups/group.remote.js';
+	import { GROUP_PERSON_SCOPES } from '#lib/groups/scopes.js';
 
 	let { data } = $props();
 
@@ -39,7 +41,10 @@
 		<header class="flex items-start gap-4">
 			<Avatar name={group.name} size={56} />
 			<div class="min-w-0">
-				<h1 class="text-base-900 dark:text-base-50 text-2xl font-bold">{group.name}</h1>
+				<h1 class="text-base-900 dark:text-base-50 flex items-center gap-2 text-2xl font-bold">
+					{group.name}
+					{#if group.personal && !group.personal.public}<Badge>Private</Badge>{/if}
+				</h1>
 				{#if group.handle}<p class="text-muted text-sm">@{group.handle}</p>{/if}
 				{#if group.description}
 					<p class="text-base-700 dark:text-base-300 mt-2 whitespace-pre-line">
@@ -51,6 +56,23 @@
 
 		{#if data.notice}<p role="status" class="text-muted mt-4 text-sm">{data.notice}</p>{/if}
 		{#if failure}<p role="alert" class="mt-4 text-sm text-red-600">{failure}</p>{/if}
+
+		{#if group.askAccess}
+			<div class="mt-6 flex flex-wrap items-center gap-3">
+				<Button
+					variant="secondary"
+					disabled={busy}
+					onclick={() =>
+						act(
+							() => requestPermissions(GROUP_PERSON_SCOPES),
+							async () => undefined
+						)}>See your groups</Button
+				>
+				<span class="text-muted text-sm">
+					To see the groups you belong to, private ones too, allow atmo to read them.
+				</span>
+			</div>
+		{/if}
 
 		{#if group.linked}
 			<section class="mt-6 flex flex-wrap items-center gap-2" aria-label="Manage this group">

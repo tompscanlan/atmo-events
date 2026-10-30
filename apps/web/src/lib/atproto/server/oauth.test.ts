@@ -36,6 +36,19 @@ describe('OAuth library configuration', () => {
 			})
 		);
 	});
+	it('declares the group scopes only when groups are on, and never asks for them at login', async () => {
+		const { env } = await import('cloudflare:workers');
+		Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
+		const { getAuth } = await import('./oauth');
+		const { GROUP_PERSON_SCOPES } = await import('../../groups/scopes');
+		const { getLoginScopes } = await import('../settings');
+		getAuth();
+		const config = mocks.create.mock.calls[0][0] as AtprotoAuthConfig;
+		expect(config.scope).toEqual([...scopes, ...GROUP_PERSON_SCOPES]);
+		expect(getLoginScopes(['include:app.bsky.authCreatePosts'])).not.toEqual(
+			expect.arrayContaining([...GROUP_PERSON_SCOPES])
+		);
+	});
 	it('uses direct Worker bindings and retains state TTL and session keys', async () => {
 		const sessions = { put: vi.fn(), get: vi.fn(), delete: vi.fn(), list: vi.fn() };
 		const states = { ...sessions, put: vi.fn() };
