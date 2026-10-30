@@ -34,6 +34,8 @@ const STATE_TTL_SECONDS = 600;
 export const GROUP_SESSION_SCOPE = [
 	'atproto',
 	`space:${META_SPACE_TYPE}?authority=self&action=read`,
+	// Memberships, and the host's join requests.
+	'include:group.opensocial.manageMembers',
 	scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
 	scope.blob({ accept: ['image/*'] })
 ].join(' ');

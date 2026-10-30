@@ -5,13 +5,24 @@
 	import { requestPermissions } from '@svelte-atproto/oauth/client';
 	import EventList from '#lib/components/EventList.svelte';
 	import { setGroupListed, unlinkGroupSession } from '#lib/groups/group.remote.js';
+	import { cancelJoin, joinGroup, leave } from '#lib/groups/members.remote.js';
 	import { GROUP_PERSON_SCOPES } from '#lib/groups/scopes.js';
 
 	let { data } = $props();
 
 	let group = $derived(data.group);
+	let joinPolicy = $derived(group.personal?.profile?.joinPolicy ?? 'invite');
 	let busy = $state(false);
 	let failure: string | null = $state(null);
+	let requested = $state(false);
+
+	/** A refusal the host gave comes back in words to show; anything else is generic. */
+	function messageOf(e: unknown): string {
+		const message = (e as { body?: { message?: unknown } })?.body?.message;
+		return typeof message === 'string' && (e as { status?: number }).status === 409
+			? message
+			: 'That did not work. Try again, or link the group again.';
+	}
 
 	async function act(run: () => Promise<unknown>, after: () => Promise<void> = invalidateAll) {
 		busy = true;
@@ -19,11 +30,18 @@
 		try {
 			await run();
 			await after();
-		} catch {
-			failure = 'That did not work. Try again, or link the group again.';
+		} catch (e) {
+			failure = messageOf(e);
 		} finally {
 			busy = false;
 		}
+	}
+
+	async function join() {
+		await act(async () => {
+			const { outcome } = await joinGroup({ groupDid: group.did });
+			requested = outcome === 'pending';
+		});
 	}
 </script>
 
@@ -72,6 +90,36 @@
 					To see the groups you belong to, private ones too, allow atmo to read them.
 				</span>
 			</div>
+		{/if}
+
+		{#if group.personal && group.member !== null}
+			<section class="mt-6 flex flex-wrap items-center gap-3" aria-label="Membership">
+				{#if group.member}
+					<Badge>Member</Badge>
+					<Button
+						variant="ghost"
+						disabled={busy}
+						onclick={() => act(() => leave({ groupDid: group.did }))}>Leave group</Button
+					>
+				{:else if requested}
+					<span class="text-muted text-sm">Request sent. An admin of the group will decide.</span>
+					<Button
+						variant="ghost"
+						disabled={busy}
+						onclick={() =>
+							act(async () => {
+								await cancelJoin({ groupDid: group.did });
+								requested = false;
+							})}>Withdraw</Button
+					>
+				{:else if joinPolicy === 'open'}
+					<Button variant="primary" disabled={busy} onclick={join}>Join</Button>
+				{:else if joinPolicy === 'approval'}
+					<Button variant="secondary" disabled={busy} onclick={join}>Ask to join</Button>
+				{:else}
+					<span class="text-muted text-sm">This group is invite-only.</span>
+				{/if}
+			</section>
 		{/if}
 
 		{#if group.linked}

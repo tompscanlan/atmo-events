@@ -80,9 +80,14 @@ export async function listDeclaredGroups(limit = 100): Promise<DeclaredGroup[]> 
 	}));
 }
 
+export const GROUP_JOIN_POLICIES = ['open', 'approval', 'invite'] as const;
+export type GroupJoinPolicy = (typeof GROUP_JOIN_POLICIES)[number];
+
 export interface GroupProfile {
 	name: string;
 	description: string | null;
+	/** An unknown policy reads as `invite`, the most closed. */
+	joinPolicy?: GroupJoinPolicy;
 }
 
 /** The profile requires `displayName`; a record without one reads as no profile. */
@@ -92,7 +97,10 @@ export function parseGroupProfile(value: unknown): GroupProfile | null {
 	const name = typeof raw.displayName === 'string' ? raw.displayName.trim() : '';
 	if (!name) return null;
 	const description = typeof raw.description === 'string' ? raw.description.trim() : '';
-	return { name, description: description || null };
+	const policy = (GROUP_JOIN_POLICIES as readonly unknown[]).includes(raw.joinPolicy)
+		? (raw.joinPolicy as GroupJoinPolicy)
+		: 'invite';
+	return { name, description: description || null, joinPolicy: policy };
 }
 
 export interface GroupMeta {
