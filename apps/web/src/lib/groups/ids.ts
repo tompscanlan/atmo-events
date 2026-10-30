@@ -24,6 +24,16 @@ export const GROUP_ACCEPTANCE_RKEY = 'self';
 /** A group's public events are ordinary events in its public repo. */
 export const GROUP_EVENT_COLLECTION = 'community.lexicon.calendar.event';
 
+/** atmo's own space type, for a group's members-only events and its members' RSVPs to them,
+ *  each RSVP in the member's own repo. It is in every URI in the space, so a rename strands
+ *  what was written under the old name, and it must resolve wherever a scope names it. */
+export const CALENDAR_SPACE_TYPE = 'rsvp.atmo.group.calendar';
+export const GROUP_RSVP_COLLECTION = 'community.lexicon.calendar.rsvp';
+
+/** The lexicon's `status` token suffixes. */
+export const RSVP_STATUSES = ['going', 'interested', 'notgoing'] as const;
+export type RsvpStatus = (typeof RSVP_STATUSES)[number];
+
 /** Every group space is keyed `self`, so its URI follows from the group's DID alone. */
 export const SPACE_SKEY = 'self';
 
@@ -47,6 +57,10 @@ export function membersSpaceUri(groupDid: string): string {
 	return spaceUri(groupDid, MEMBERS_SPACE_TYPE);
 }
 
+export function calendarSpaceUri(groupDid: string): string {
+	return spaceUri(groupDid, CALENDAR_SPACE_TYPE);
+}
+
 /** A space record's URI, in the form `getRecord` returns. */
 export function spaceRecordUri(
 	space: string,
@@ -55,6 +69,11 @@ export function spaceRecordUri(
 	rkey: string
 ): string {
 	return `${space}/${repo}/${collection}/${rkey}`;
+}
+
+/** The group's own record in its calendar space: the URI an RSVP to the event names. */
+export function membersOnlyEventUri(groupDid: string, rkey: string): string {
+	return spaceRecordUri(calendarSpaceUri(groupDid), groupDid, GROUP_EVENT_COLLECTION, rkey);
 }
 
 /** Collection and rkey are the last two segments of a plain and a space record URI alike. */
