@@ -143,8 +143,10 @@ describe('parseGroupProfile', () => {
 	it('needs a display name, and trims', () => {
 		expect(parseGroupProfile({ displayName: '  Knitters ', description: ' ' })).toEqual({
 			name: 'Knitters',
-			description: null
+			description: null,
+			joinPolicy: 'invite'
 		});
+		expect(parseGroupProfile({ displayName: 'K', joinPolicy: 'open' })?.joinPolicy).toBe('open');
 		expect(parseGroupProfile({ description: 'no name' })).toBeNull();
 		expect(parseGroupProfile(null)).toBeNull();
 	});
@@ -157,7 +159,7 @@ describe('readGroupMeta', () => {
 			'group.opensocial.access': { public: true }
 		});
 		expect(await readGroupMeta(handle, GROUP)).toEqual({
-			profile: { name: 'Knitters', description: null },
+			profile: { name: 'Knitters', description: null, joinPolicy: 'invite' },
 			public: true
 		});
 		expect(handle.mock.calls[0][0]).toContain(

@@ -94,12 +94,14 @@ describe('the group client', () => {
 		});
 	});
 
-	it('asks for the meta read as its own scope, and writes only declarations and events', () => {
+	it('asks for the meta read as its own scope, events, declarations and memberships', () => {
 		const scopes = GROUP_SESSION_SCOPE.split(' ');
 		expect(scopes).toContain('space:group.opensocial.meta?authority=self&action=read');
 		expect(GROUP_SESSION_SCOPE).toContain('group.opensocial.declaration');
 		expect(GROUP_SESSION_SCOPE).toContain('community.lexicon.calendar.event');
-		expect(scopes.some((s) => s.startsWith('include:'))).toBe(false);
+		expect(scopes.filter((s) => s.startsWith('include:'))).toEqual([
+			'include:group.opensocial.manageMembers'
+		]);
 	});
 
 	it('keeps sign-in state under its prefix in OAUTH_SESSIONS, never in the library store', async () => {
