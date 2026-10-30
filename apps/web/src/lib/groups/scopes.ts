@@ -1,6 +1,6 @@
 // What a person's own sign-in needs for groups, asked for at their first group action and
 // never at sign-in. Values and pure checks only, so the OAuth config can import them.
-import { MEMBERS_SPACE_TYPE, META_SPACE_TYPE } from './ids';
+import { GROUP_ACCEPTANCE_COLLECTION, MEMBERS_SPACE_TYPE, META_SPACE_TYPE } from './ids';
 
 /** The proposal's set for personal sessions: read groups, join, leave, confirm. */
 export const PARTICIPATE_SCOPE = 'include:group.opensocial.participate';
@@ -16,12 +16,16 @@ export const GROUP_PERSON_SCOPES: readonly string[] = [PARTICIPATE_SCOPE, LIST_G
 // `collection` allows reads only, which are collection-independent.
 const DEFAULT_ACTIONS: readonly string[] = ['read', 'create', 'update', 'delete'];
 
-function spaceGrants(scope: string, spaceType: string): URLSearchParams[] {
+/** Grants for any group, or for `groupDid` when given. */
+function spaceGrants(scope: string, spaceType: string, groupDid?: string): URLSearchParams[] {
 	return scope
 		.split(' ')
 		.filter((token) => token.startsWith(`space:${spaceType}?`) || token.startsWith('space:*?'))
 		.map((token) => new URLSearchParams(token.slice(token.indexOf('?') + 1)))
-		.filter((params) => params.get('authority') === '*');
+		.filter((params) => {
+			const authority = params.get('authority');
+			return authority === '*' || (groupDid !== undefined && authority === groupDid);
+		});
 }
 
 function actionsOf(params: URLSearchParams): readonly string[] {
@@ -45,4 +49,19 @@ export function holdsSpaceList(scope: string): boolean {
 
 export function holdsGroupScopes(scope: string): boolean {
 	return holdsMetaRead(scope) && holdsSpaceList(scope);
+}
+
+/** The set's grant for the member's own acceptance in the group's members space. */
+export function holdsAcceptanceGrant(
+	scope: string,
+	groupDid: string,
+	action: 'create' | 'delete'
+): boolean {
+	return spaceGrants(scope, MEMBERS_SPACE_TYPE, groupDid).some((p) => {
+		const collections = p.getAll('collection');
+		return (
+			actionsOf(p).includes(action) &&
+			(collections.includes('*') || collections.includes(GROUP_ACCEPTANCE_COLLECTION))
+		);
+	});
 }

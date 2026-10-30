@@ -2,7 +2,7 @@
 // a group. A visitor sees a group only through its declaration; a person the group's host
 // lets read its meta space sees it with their own access; someone who linked it sees it
 // as the group does. Every refusal is the same 404.
-import { env } from 'cloudflare:workers';
+import { env, waitUntil } from 'cloudflare:workers';
 import { error } from '@sveltejs/kit';
 import {
 	TokenInvalidError,
@@ -20,9 +20,9 @@ import {
 	storeCard,
 	type GroupMeta
 } from './group';
-import { holdsGroupScopes, holdsMetaRead, holdsSpaceList } from '../scopes';
+import { holdsAcceptanceGrant, holdsGroupScopes, holdsMetaRead, holdsSpaceList } from '../scopes';
 import { callerSession, type CallerSession } from './caller';
-import { groupSpacesOf, readMetaAsPerson } from './person';
+import { confirmOnVisit, groupSpacesOf, readMetaAsPerson } from './person';
 import { groupHandle, groupSession, groupSignInAvailable } from './sign-in';
 import { isSpaceAccessDenied } from './space-credential';
 import { isAuthRefused, type XrpcHandle } from './xrpc';
@@ -153,6 +153,9 @@ export async function groupView(actor: string, viewer: Viewer): Promise<GroupVie
 			await storeCard(group, personal).catch((e) => {
 				console.warn(`[groups] ${group.did}: the card could not be stored:`, e);
 			});
+			if (holdsAcceptanceGrant(caller.scope, group.did, 'create')) {
+				waitUntil(confirmOnVisit(caller, group.did));
+			}
 		}
 	}
 
