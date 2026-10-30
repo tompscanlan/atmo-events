@@ -107,6 +107,16 @@ describe('the group client', () => {
 		]);
 	});
 
+	it('asks to make its own spaces, and to write events only in its own calendar space', () => {
+		const scopes = GROUP_SESSION_SCOPE.split(' ');
+		expect(scopes).toContain('space:*?authority=self&manage=create');
+		const calendar = scopes.filter((s) => s.startsWith('space:rsvp.atmo.group.calendar?'));
+		expect(calendar).toHaveLength(1);
+		const params = new URLSearchParams(calendar[0].split('?')[1]);
+		expect(params.get('authority')).toBe('self');
+		expect(params.getAll('collection')).toEqual(['community.lexicon.calendar.event']);
+	});
+
 	it('keeps sign-in state under its prefix in OAUTH_SESSIONS, never in the library store', async () => {
 		await startGroupLink(GROUP, ALICE);
 		const { options } = latest();
