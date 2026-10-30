@@ -27,7 +27,7 @@ beforeEach(() => {
 describe('the groups list', () => {
 	it('names each crowded server by its host', async () => {
 		const page = await load(request());
-		expect(mocks.browseGroups).toHaveBeenCalledWith(null, { cursor: null, server: null });
+		expect(mocks.browseGroups).toHaveBeenCalledWith({ did: null }, { cursor: null, server: null });
 		expect(page).toMatchObject({
 			server: null,
 			crowded: [{ server: 'https://pds.example:8443', host: 'pds.example:8443', more: 4 }]
@@ -36,10 +36,13 @@ describe('the groups list', () => {
 
 	it("shows one server's groups for an origin, and is a 404 for anything else", async () => {
 		const page = await load(request('?server=https%3A%2F%2Fpds.example&cursor=c'));
-		expect(mocks.browseGroups).toHaveBeenCalledWith(null, {
-			cursor: 'c',
-			server: 'https://pds.example'
-		});
+		expect(mocks.browseGroups).toHaveBeenCalledWith(
+			{ did: null },
+			{
+				cursor: 'c',
+				server: 'https://pds.example'
+			}
+		);
 		expect(page).toMatchObject({
 			pageTitle: 'Groups at pds.example',
 			server: { origin: 'https://pds.example', host: 'pds.example' }
