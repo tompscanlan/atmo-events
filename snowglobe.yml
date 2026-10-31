@@ -83,3 +83,5 @@ apps:
       E2E_MEMBER_PASSWORD: ${accounts.bob.password}
       E2E_OUTSIDER_HANDLE: ${accounts.mallory.handle}
       E2E_OUTSIDER_PASSWORD: ${accounts.mallory.password}
+      E2E_NOSPACES_HANDLE: ${accounts.carol.handle}
+      E2E_NOSPACES_PASSWORD: ${accounts.carol.password}
