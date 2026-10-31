@@ -12,10 +12,9 @@ import {
 	type SpaceSigningKey
 } from './space-credential';
 import { credentialSpaceReader } from './space-read';
-import { MEMBERS_SPACE_TYPE } from '../ids';
+import { MEMBERS_SPACE_TYPE, spaceRecordUri, spaceUri } from '../ids';
 import { fakeKemHost, type FakeKemHost } from './__fixtures__/space-mac-host';
 import { recordCid } from './space-mac';
-import { spaceRecordUri, spaceUri } from '../ids';
 
 const GROUP_DID = 'did:plc:jcwgw6fcnb5vyoid7nz7sl26';
 const BOB = 'did:plc:hkymspvcjhy6sbujuydfj7sv';
@@ -26,6 +25,7 @@ const MEMBERS = spaceUri(GROUP_DID, MEMBERS_SPACE_TYPE, 'self');
 const GROUP_HOST = 'https://group.pds.test';
 
 const kem = await fakeKemHost();
+const otherKem = await fakeKemHost();
 const hosts: SpaceHosts = { repoHost: async () => GROUP_HOST, kemKey: async () => kem.did };
 
 const CREDENTIAL_SIG_INPUT =
@@ -39,24 +39,9 @@ function jwt(payload: Record<string, unknown>): string {
 	return `${base64url(JSON.stringify({ typ: 'atproto-space-credential+jwt' }))}.${base64url(JSON.stringify(payload))}.c2ln`;
 }
 
-function payloadOf(credential: string): { n?: unknown; holder?: unknown } | null {
-	try {
-		const payload = credential.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-		return JSON.parse(atob(payload + '='.repeat((4 - (payload.length % 4)) % 4)));
-	} catch {
-		return null;
-	}
-}
-
-function serial(credential: string): number | null {
-	const n = payloadOf(credential)?.n;
-	return typeof n === 'number' ? n : null;
-}
-
-function holderOf(credential: string): string | null {
-	const holder = payloadOf(credential)?.holder;
-	return typeof holder === 'string' ? holder : null;
-}
+/** A credential's claims; the authorization header that carries one reads the same. */
+const claims = (credential: string): { n?: number; holder?: string } =>
+	JSON.parse(atob(credential.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
 	return new Response(JSON.stringify(body), {
@@ -96,14 +81,10 @@ async function verifies(signer: SpaceSigningKey, base: string, header: string): 
 	);
 }
 
-async function newSigner(): Promise<SpaceSigningKey> {
-	const key = await P256PrivateKeyExportable.createKeypair();
-	return { key, keyId: await key.exportPublicKey('did') };
-}
-
 describe('spaceSigHeaders', () => {
 	it('signs a credential use over the authorization and the audience, as @atproto/space does', async () => {
-		const signer = await newSigner();
+		const key = await P256PrivateKeyExportable.createKeypair();
+		const signer = { key, keyId: await key.exportPublicKey('did') };
 		const headers = await spaceSigHeaders(signer, 'Atproto-Space-Credential cred.jwt', BOB);
 
 		expect(headers.authorization).toBe('Atproto-Space-Credential cred.jwt');
@@ -123,14 +104,9 @@ type ExchangeBody = { space?: unknown; credentialKid?: unknown; delegationToken?
 /** A holder's session answers `getDelegationToken` with a token naming them; the group's
  *  host exchanges it for a credential naming them and answers `getRecord`. */
 function network(options: {
-	answer?: (
-		did: string,
-		credential: string,
-		headers: Headers
-	) => Response | null | Promise<Response | null>;
+	answer?: (headers: Headers) => Response | null | Promise<Response | null>;
 	delegate?: () => Response | null;
 	exchange?: () => Response | null;
-	lifetimeMs?: number;
 }) {
 	let issued = 0;
 	const delegations: string[] = [];
@@ -156,18 +132,14 @@ function network(options: {
 			const refused = options.exchange?.();
 			if (refused) return refused;
 			issued++;
-			const exp = Math.floor((Date.now() + (options.lifetimeMs ?? 600_000)) / 1000);
+			const exp = Math.floor((Date.now() + 600_000) / 1000);
 			const holder = /^delegation-(did:[^-]+)-/.exec(String(body.delegationToken))?.[1];
 			return json(200, { credential: jwt({ exp, n: issued, holder }) });
 		}
 		if (url.pathname === '/xrpc/com.atproto.space.getRecord') {
 			reads.push({ url, headers });
 			const q = url.searchParams;
-			const credential = (headers.get('authorization') ?? '').replace(
-				/^Atproto-Space-Credential /,
-				''
-			);
-			const overridden = await options.answer?.(q.get('repo') ?? '', credential, headers);
+			const overridden = await options.answer?.(headers);
 			if (overridden) return overridden;
 			return recordResponse(kem, headers, {
 				uri: spaceRecordUri(q.get('space')!, q.get('repo')!, q.get('collection')!, q.get('rkey')!),
@@ -213,26 +185,31 @@ describe('exchangeSpaceCredential', () => {
 		expect(exchange.headers.get('authorization')).toBeNull();
 		expect(exchange.headers.get('signature')).toBeNull();
 		expect(cred.expiresAt).toBeGreaterThan(Date.now());
-		expect(holderOf(cred.token)).toBe(VIEWER);
+		expect(claims(cred.token).holder).toBe(VIEWER);
 	});
 
 	it.each([
-		['the holder’s session does not read the space', 'delegate', 403, 'ScopeMissingError'],
-		['the authority does not let the holder in', 'exchange', 400, 'UserNotAuthorized'],
-		['the authority does not let the app in', 'exchange', 400, 'AppNotAuthorized'],
-		['the authority does not say which it refused', 'exchange', 400, 'NotAuthorized']
-	] as const)('throws SpaceAccessDenied when %s', async (_why, step, status, error) => {
-		const refusal = () => json(status, { error, message: 'refused' });
-		const net = network(step === 'delegate' ? { delegate: refusal } : { exchange: refusal });
+		['the holder’s session does not read the space', 'delegate', 403, 'ScopeMissingError', false],
+		['the authority does not let the holder in', 'exchange', 400, 'UserNotAuthorized', false],
+		['the authority does not let the app in', 'exchange', 400, 'AppNotAuthorized', false],
+		['the authority does not say which it refused', 'exchange', 400, 'NotAuthorized', false],
+		// The 10-29 alpha refuses a person the host turns away with SpaceNotFound, and answers
+		// the same when it cannot reach the host's access check.
+		['the authority answers SpaceNotFound', 'exchange', 400, 'SpaceNotFound', true]
+	] as const)(
+		'throws SpaceAccessDenied, certain of it unless the answer is SpaceNotFound, when %s',
+		async (_why, step, status, error, ambiguous) => {
+			const refusal = () => json(status, { error, message: 'refused' });
+			const net = network(step === 'delegate' ? { delegate: refusal } : { exchange: refusal });
 
-		const thrown = await exchangeSpaceCredential(net.holder, MEMBERS, GROUP_HOST).catch((e) => e);
+			const thrown = await exchangeSpaceCredential(net.holder, MEMBERS, GROUP_HOST).catch((e) => e);
 
-		expect(thrown).toBeInstanceOf(SpaceAccessDenied);
-		expect(isSpaceAccessDenied(thrown)).toBe(true);
-		expect((thrown as SpaceAccessDenied).space).toBe(MEMBERS);
-		expect((thrown as SpaceAccessDenied).reason).toBe(`${status} ${error}`);
-		expect(net.exchanges).toHaveLength(step === 'delegate' ? 0 : 1);
-	});
+			expect(thrown).toBeInstanceOf(SpaceAccessDenied);
+			expect(isSpaceAccessDenied(thrown)).toBe(true);
+			expect(thrown).toMatchObject({ space: MEMBERS, reason: `${status} ${error}`, ambiguous });
+			expect(net.exchanges).toHaveLength(step === 'delegate' ? 0 : 1);
+		}
+	);
 
 	it('throws a plain error, not SpaceAccessDenied, for a refusal that does not name the holder', async () => {
 		for (const options of [
@@ -244,21 +221,6 @@ describe('exchangeSpaceCredential', () => {
 			expect(thrown).toBeInstanceOf(Error);
 			expect(isSpaceAccessDenied(thrown)).toBe(false);
 		}
-	});
-
-	// The 10-29 alpha refuses a person the host turns away with SpaceNotFound, and answers
-	// the same when it cannot reach the host's access check.
-	it('reads SpaceNotFound as a refusal it cannot be sure of', async () => {
-		const net = network({ exchange: () => json(400, { error: 'SpaceNotFound' }) });
-		const thrown = await exchangeSpaceCredential(net.holder, MEMBERS, GROUP_HOST).catch((e) => e);
-		expect(isSpaceAccessDenied(thrown)).toBe(true);
-		expect((thrown as SpaceAccessDenied).ambiguous).toBe(true);
-	});
-
-	it('reads a named refusal as certain', async () => {
-		const net = network({ exchange: () => json(403, { error: 'UserNotAuthorized' }) });
-		const thrown = await exchangeSpaceCredential(net.holder, MEMBERS, GROUP_HOST).catch((e) => e);
-		expect((thrown as SpaceAccessDenied).ambiguous).toBe(false);
 	});
 });
 
@@ -298,8 +260,8 @@ describe('a read with a credential', () => {
 
 	it('replaces a credential the host calls spent, once, and reads again', async () => {
 		const net = network({
-			answer: (_did, credential) =>
-				serial(credential) === 1 ? json(401, { error: 'JwtExpired' }) : null
+			answer: (headers) =>
+				claims(headers.get('authorization')!).n === 1 ? json(401, { error: 'JwtExpired' }) : null
 		});
 		expect(await readAs(net.holder)).toMatchObject({ value: { n: 1 } });
 		expect(net.exchanges).toHaveLength(2);
@@ -321,9 +283,7 @@ describe('a read with a credential', () => {
 			`delegation-${CAROL}-1`,
 			`delegation-${MALLORY}-2`
 		]);
-		const readers = net.reads.map((read) =>
-			holderOf((read.headers.get('authorization') ?? '').replace(/^Atproto-Space-Credential /, ''))
-		);
+		const readers = net.reads.map((read) => claims(read.headers.get('authorization')!).holder);
 		expect(readers).toEqual([CAROL, MALLORY, CAROL, MALLORY]);
 	});
 
@@ -360,11 +320,10 @@ describe('a read with a credential', () => {
 });
 
 describe('exchanges under way', () => {
-	const read = { space: MEMBERS, repo: GROUP_DID, collection: 'x.y.z', rkey: 'self' };
 	it('reads that start together share one exchange, and a refusal reaches them all without asking again', async () => {
 		const net = network({ exchange: () => json(400, { error: 'UserNotAuthorized' }) });
 		const reader = credentialSpaceReader(net.holder, hosts);
-		const reads = [reader.get(read), reader.get(read), reader.list(read)];
+		const reads = [reader.get(READ), reader.get(READ), reader.list(READ)];
 		for (const pending of reads) await expect(pending).rejects.toBeInstanceOf(SpaceAccessDenied);
 		expect(net.delegations).toHaveLength(1);
 		expect(net.exchanges).toHaveLength(1);
@@ -382,66 +341,58 @@ describe('exchanges under way', () => {
 			}
 		};
 		void credentialSpaceReader(holder, hosts)
-			.get(read)
+			.get(READ)
 			.catch(() => {});
 
-		expect(await credentialSpaceReader(holder, hosts).get(read)).toMatchObject({ value: { n: 1 } });
+		expect(await credentialSpaceReader(holder, hosts).get(READ)).toMatchObject({ value: { n: 1 } });
 		expect(net.exchanges).toHaveLength(1);
 	});
 });
 
 describe('a record read with a credential', () => {
-	const read = { space: MEMBERS, repo: GROUP_DID, collection: 'x.y.z', rkey: 'self' };
 	const record = { uri: `${MEMBERS}/${GROUP_DID}/x.y.z/self`, value: { n: 1 } };
 	const readWith = (answer: Parameters<typeof network>[0]['answer'], at = hosts) => {
-		clearSpaceCredentials();
 		const net = network({ answer });
-		return { net, pending: credentialSpaceReader(net.holder, at).get(read) };
+		return { net, pending: credentialSpaceReader(net.holder, at).get(READ) };
 	};
+	const macBy = (host: FakeKemHost | null) => (headers: Headers) =>
+		recordResponse(host, headers, record);
 
 	it('returns the record when its MAC verifies and its value is its CID’s', async () => {
-		const { pending } = readWith((_d, _c, headers) => recordResponse(kem, headers, record));
+		const { pending } = readWith(macBy(kem));
 		expect(await pending).toMatchObject({ uri: record.uri, value: record.value });
 	});
 
-	it('never returns a record with no MAC, or with a MAC from another key', async () => {
-		const other = await fakeKemHost();
-		for (const mac of [null, other]) {
-			const { pending } = readWith((_d, _c, headers) => recordResponse(mac, headers, record));
-			await expect(pending).rejects.toThrow();
-		}
-	});
-
-	it('never returns a value its CID does not name, though the MAC verifies', async () => {
-		const { pending } = readWith(async (_d, _c, headers) => {
-			const answered = await recordResponse(kem, headers, record);
-			const body = (await answered.json()) as Record<string, unknown>;
-			return json(200, { ...body, value: { n: 2 } }, Object.fromEntries(answered.headers));
-		});
-		await expect(pending).rejects.toThrow();
-	});
-
-	it('never returns another record than the one asked for, though its MAC verifies', async () => {
-		const { pending } = readWith((_d, _c, headers) =>
-			recordResponse(kem, headers, { ...record, uri: `${MEMBERS}/${GROUP_DID}/x.y.z/other` })
-		);
-		await expect(pending).rejects.toThrow();
+	it.each([
+		['with no MAC', macBy(null)],
+		['with a MAC from another key', macBy(otherKem)],
+		[
+			'with a value its CID does not name, though the MAC verifies',
+			async (headers: Headers) => {
+				const answered = await recordResponse(kem, headers, record);
+				const body = (await answered.json()) as Record<string, unknown>;
+				return json(200, { ...body, value: { n: 2 } }, Object.fromEntries(answered.headers));
+			}
+		],
+		[
+			'that is another record than the one asked for, though its MAC verifies',
+			(headers: Headers) =>
+				recordResponse(kem, headers, { ...record, uri: `${MEMBERS}/${GROUP_DID}/x.y.z/other` })
+		]
+	])('never returns a record %s', async (_why, answer) => {
+		await expect(readWith(answer).pending).rejects.toThrow();
 	});
 
 	it('reads the KEM key anew once when the MAC does not verify, as after a rotation', async () => {
-		const stale = await fakeKemHost();
 		const asked: boolean[] = [];
 		const rotated: SpaceHosts = {
 			...hosts,
 			kemKey: async (_did, fresh = false) => {
 				asked.push(fresh);
-				return fresh ? kem.did : stale.did;
+				return fresh ? kem.did : otherKem.did;
 			}
 		};
-		const { net, pending } = readWith(
-			(_d, _c, headers) => recordResponse(kem, headers, record),
-			rotated
-		);
+		const { net, pending } = readWith(macBy(kem), rotated);
 		expect(await pending).toMatchObject({ uri: record.uri });
 		expect(asked).toEqual([false, true]);
 		const shares = net.reads.map((r) => r.headers.get('atproto-space-want-mac'));
