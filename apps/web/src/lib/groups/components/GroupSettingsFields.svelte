@@ -44,7 +44,7 @@
 </fieldset>
 
 <label class="flex items-center gap-2 text-sm">
-	<Checkbox name="listed" defaultChecked={listed} disabled={visibility !== 'public'} />
+	<Checkbox name="listed" checked={listed} disabled={visibility !== 'public'} />
 	List it on the groups page
 </label>
 
