@@ -164,7 +164,10 @@ describe('groupView for someone who linked the group', () => {
 			);
 			mocks.repoHasDeclaration.mockResolvedValue(true);
 			mocks.isDeclared.mockResolvedValue(true);
-			expect(await groupView(GROUP, ALICE)).toMatchObject({ linked: null, relink: false });
+			expect(await groupView(GROUP, { did: ALICE, session: null })).toMatchObject({
+				linked: null,
+				relink: false
+			});
 			expect(mocks.storeCard).not.toHaveBeenCalled();
 		}
 	);
@@ -175,7 +178,9 @@ describe('groupView for someone who linked the group', () => {
 		);
 		mocks.repoHasDeclaration.mockResolvedValue(false);
 		mocks.isDeclared.mockResolvedValue(false);
-		await expect(groupView(GROUP, ALICE)).rejects.toMatchObject({ status: 404 });
+		await expect(groupView(GROUP, { did: ALICE, session: null })).rejects.toMatchObject({
+			status: 404
+		});
 	});
 
 	it("fails, rather than offering a link, when the group's PDS is down", async () => {
