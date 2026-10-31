@@ -1,5 +1,5 @@
 # A snowglobe for atmo: a private atproto network on this machine (@openmeet/snowglobe), with one
-# PDS, Jetstream and Slingshot. atmo reaches it through its network settings (apps/web/src/env.ts),
+# PDS, a relay, Jetstream and Slingshot. atmo reaches it through its network settings (apps/web/src/env.ts),
 # which the env below sets.
 #
 #   pnpm install
@@ -39,13 +39,13 @@ apps:
       PUBLIC_PLC_URL: ${services.plc.url}
       PUBLIC_SLINGSHOT_URL: ${services.slingshot.url}
       # contrail takes Jetstream's origin, without /subscribe. contrail 0.27 reads Jetstream v2
-      # (/xrpc/network.bsky.jetstream.subscribeEvents). snowglobe 0.3.0 runs an older Jetstream,
-      # which answers 404 there, so atmo takes no records from it until snowglobe moves to
-      # Jetstream v0.4.6 or later.
+      # (/xrpc/network.bsky.jetstream.subscribeEvents), which snowglobe serves from 0.4.0. Jetstream
+      # has only what is written after its first start, and it reads the relay, so the relay runs
+      # with one PDS too.
       PUBLIC_JETSTREAM_URL: ${services.jetstream.url}
       PUBLIC_SIGNUP_PDS_URL: ${pds.main.url}
       # Nothing here stands in for DNS-over-HTTPS, Constellation, the Bluesky API or the image
-      # CDN, so those stay public. With one PDS there is no relay.
+      # CDN, so those stay public.
       E2E_PDS: ${pds.main.url}
       E2E_HANDLE: ${accounts.alice.handle}
       E2E_PASSWORD: ${accounts.alice.password}
