@@ -130,8 +130,7 @@ async function allowGroups(page, who, groupUrl) {
 	await page.goto(groupUrl, { waitUntil: 'networkidle' });
 }
 
-async function postEvent(page, groupDid, placement, name) {
-	await page.goto(`${ATMO}/groups/${groupDid}/events/new`, { waitUntil: 'networkidle' });
+async function fillAndPublish(page, placement, name) {
 	await page.locator(`input[name=placement][value=${placement}]`).check();
 	await page.locator('main [contenteditable=true]').first().click();
 	await page.keyboard.type(name);
@@ -139,9 +138,31 @@ async function postEvent(page, groupDid, placement, name) {
 	await page.keyboard.press('ArrowRight'); // tomorrow, so the event is upcoming
 	await page.keyboard.press('Enter');
 	await page.getByRole('button', { name: /^publish event$/i }).click();
+}
+
+async function postEvent(page, groupDid, placement, name) {
+	await page.goto(`${ATMO}/groups/${groupDid}/events/new`, { waitUntil: 'networkidle' });
+	await fillAndPublish(page, placement, name);
 	await page.waitForURL((u) => !u.pathname.endsWith('/events/new'), { timeout: 45_000 });
 	await settle(page);
 	return new URL(page.url()).pathname.split('/').pop();
+}
+
+/** For a post that should be refused: how far it got, instead of throwing. */
+async function tryPostEvent(page, groupDid, name) {
+	const res = await page.goto(`${ATMO}/groups/${groupDid}/events/new`, {
+		waitUntil: 'networkidle'
+	});
+	const status = res?.status();
+	if (status !== 200) return { status, published: false };
+	await fillAndPublish(page, 'everyone', name);
+	const published = await page
+		.waitForURL((u) => !u.pathname.endsWith('/events/new'), { timeout: 30_000 })
+		.then(
+			() => true,
+			() => false
+		);
+	return { status, published };
 }
 
 async function saveSettings(page, groupDid, { visibility, listed = false }) {
@@ -408,6 +429,61 @@ async function main() {
 			'the former member asks again, the owner approves, and they are a member again',
 			`request seen ${askingAgain}`
 		);
+
+		// Roles. Made an admin, the member links the group and runs it; made a member again, the
+		// link they still hold no longer writes as the group. atmo checks no role before a write,
+		// so that refusal is the host's.
+		const rolePicker = (page, who) => page.getByLabel(`Role of ${who.handle}`, { exact: true });
+		const setRole = async (role) => {
+			await fresh.goto(`${groupUrl}/members`, { waitUntil: 'networkidle' });
+			await rolePicker(fresh, MEMBER).selectOption(role);
+			await settle(fresh);
+			await fresh.goto(`${groupUrl}/members`, { waitUntil: 'networkidle' });
+			return rolePicker(fresh, MEMBER).inputValue();
+		};
+		const promoted = await setRole('admin');
+		check(
+			promoted === 'admin',
+			'the owner makes the member an admin',
+			`their role reads ${promoted}`
+		);
+		await member.goto(groupUrl, { waitUntil: 'networkidle' });
+		await member.getByRole('button', { name: /^link this group$/i }).click();
+		await walk(member, MEMBER);
+		await settle(member);
+		const adminLanded = new URL(member.url());
+		await member.goto(`${groupUrl}/members`, { waitUntil: 'networkidle' });
+		const adminControls = await rolePicker(member, OWNER).count();
+		check(
+			adminLanded.searchParams.get('link') === 'linked' && adminControls === 1,
+			'the new admin links the group and gets the roster controls',
+			`landed on ${adminLanded.pathname}${adminLanded.search}, a role picker for the owner: ${adminControls}`
+		);
+		const adminEvent = `Admin's picnic ${RUN}`;
+		const adminRkey = await postEvent(member, groupDid, 'everyone', adminEvent);
+		check(
+			(await groupRepoEvents(groupDid)).some((e) => e.rkey === adminRkey && e.name === adminEvent),
+			"an event the new admin posts lands in the group's repo"
+		);
+		const demoted = await setRole('member');
+		const demotedPage = await member.goto(`${groupUrl}/members`, { waitUntil: 'networkidle' });
+		const demotedControls =
+			(await rolePicker(member, OWNER).count()) +
+			(await member.getByRole('button', { name: /^(remove|approve)$/i }).count());
+		check(
+			demoted === 'member' && demotedPage?.status() === 200 && demotedControls === 0,
+			'made a member again, they lose the roster controls',
+			`their role reads ${demoted}, their members page ${demotedPage?.status()}, roster controls shown ${demotedControls}`
+		);
+		const refusedEvent = `Not allowed ${RUN}`;
+		const attempt = await tryPostEvent(member, groupDid, refusedEvent);
+		const landedAnyway = (await groupRepoEvents(groupDid)).some((e) => e.name === refusedEvent);
+		check(
+			attempt.status < 500 && !attempt.published && !landedAnyway,
+			'an event posted through their old link is refused and never reaches the group',
+			`the new event page ${attempt.status}, published ${attempt.published}, in the group's repo ${landedAnyway}`
+		);
+
 		await fresh.goto(`${groupUrl}/members`, { waitUntil: 'networkidle' });
 		const remove = fresh
 			.locator('main li', { hasText: MEMBER.handle })
