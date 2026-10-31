@@ -13,20 +13,16 @@ import {
 	writeGrants,
 	type SpaceWrite
 } from './write-grants';
+import { spaceWrite } from './grants';
 
 const GROUP = 'did:plc:group';
 const MEMBERS = 'group.opensocial.members';
 const META = 'group.opensocial.meta';
 const MEMBERSHIP = 'group.opensocial.membership';
+const ACCESS = 'group.opensocial.access';
 
-const recordWrite = (
-	spaceType: string,
-	collection: string,
-	action: 'create' | 'update' | 'delete'
-): SpaceWrite => ({ spaceType, skey: 'self', collection, action });
-
-const allowedBy = (scopes: string[], write: SpaceWrite) =>
-	spacePermissions(scopes).some((p) => permits(p, GROUP, write));
+const allowedBy = (scope: string, write: SpaceWrite) =>
+	spacePermissions([scope]).some((p) => permits(p, GROUP, write));
 
 describe('parseSpaceScope', () => {
 	it("fills 0016's defaults for what a scope leaves out", () => {
@@ -60,67 +56,63 @@ describe('parseSpaceScope', () => {
 });
 
 describe('permits', () => {
+	const create = spaceWrite(MEMBERS, MEMBERSHIP, 'create');
+
 	it('lets a bare scope write the collections its space type declares', () => {
-		expect(allowedBy([`space:${MEMBERS}`], recordWrite(MEMBERS, MEMBERSHIP, 'create'))).toBe(true);
-		expect(allowedBy([`space:${MEMBERS}`], recordWrite(MEMBERS, 'x.y.z', 'create'))).toBe(false);
+		expect(allowedBy(`space:${MEMBERS}`, create)).toBe(true);
+		expect(allowedBy(`space:${MEMBERS}`, spaceWrite(MEMBERS, 'x.y.z', 'create'))).toBe(false);
 	});
 
 	it('gives a read scope no write', () => {
-		const read = [`space:${MEMBERS}?action=read`];
-		expect(allowedBy(read, recordWrite(MEMBERS, MEMBERSHIP, 'create'))).toBe(false);
+		expect(allowedBy(`space:${MEMBERS}?action=read`, create)).toBe(false);
 	});
 
 	it('holds a write to its action and collection', () => {
-		const scope = [`space:${MEMBERS}?collection=${MEMBERSHIP}&action=delete`];
-		expect(allowedBy(scope, recordWrite(MEMBERS, MEMBERSHIP, 'delete'))).toBe(true);
-		expect(allowedBy(scope, recordWrite(MEMBERS, MEMBERSHIP, 'update'))).toBe(false);
-		expect(allowedBy(scope, recordWrite(META, MEMBERSHIP, 'delete'))).toBe(false);
+		const scope = `space:${MEMBERS}?collection=${MEMBERSHIP}&action=delete`;
+		expect(allowedBy(scope, spaceWrite(MEMBERS, MEMBERSHIP, 'delete'))).toBe(true);
+		expect(allowedBy(scope, spaceWrite(MEMBERS, MEMBERSHIP, 'update'))).toBe(false);
+		expect(allowedBy(scope, spaceWrite(META, MEMBERSHIP, 'delete'))).toBe(false);
 	});
 
 	it('lets a type wildcard write only the collections it names', () => {
-		const access = ['space:*?collection=group.opensocial.access'];
-		expect(allowedBy(access, recordWrite(META, 'group.opensocial.access', 'update'))).toBe(true);
-		expect(allowedBy(['space:*'], recordWrite(META, 'group.opensocial.access', 'update'))).toBe(
-			false
-		);
+		const update = spaceWrite(META, ACCESS, 'update');
+		expect(allowedBy(`space:*?collection=${ACCESS}`, update)).toBe(true);
+		expect(allowedBy('space:*', update)).toBe(false);
 	});
 
 	it('governs the space itself by manage alone', () => {
-		const manage = ['space:*?manage=create&manage=delete'];
+		const manage = 'space:*?manage=create&manage=delete';
 		expect(allowedBy(manage, { spaceType: META, skey: 'self', manage: 'create' })).toBe(true);
 		expect(allowedBy(manage, { spaceType: META, skey: 'self', manage: 'update' })).toBe(false);
 	});
 
-	it('matches the group by self, by its DID, or by *, and no other authority', () => {
-		const write = recordWrite(MEMBERS, MEMBERSHIP, 'create');
-		expect(allowedBy([`space:${MEMBERS}?authority=${GROUP}`], write)).toBe(true);
-		expect(allowedBy([`space:${MEMBERS}?authority=*`], write)).toBe(true);
-		expect(allowedBy([`space:${MEMBERS}?authority=did:plc:other`], write)).toBe(false);
-	});
-
-	it('matches the space key', () => {
-		const write = recordWrite(MEMBERS, MEMBERSHIP, 'create');
-		expect(allowedBy([`space:${MEMBERS}?skey=self`], write)).toBe(true);
-		expect(allowedBy([`space:${MEMBERS}?skey=other`], write)).toBe(false);
+	it.each([
+		[`authority=${GROUP}`, true],
+		['authority=*', true],
+		['authority=did:plc:other', false],
+		['skey=self', true],
+		['skey=other', false]
+	])('matches the group by self, its DID or * and no other, and the space key: %s', (query, ok) => {
+		expect(allowedBy(`space:${MEMBERS}?${query}`, create)).toBe(ok);
 	});
 });
 
 describe('spacePermissions', () => {
 	it('expands a permission set from its lexicon', () => {
-		const set = ['include:group.opensocial.manageMembers'];
+		const set = 'include:group.opensocial.manageMembers';
 		for (const action of ['create', 'update', 'delete'] as const) {
-			expect(allowedBy(set, recordWrite(MEMBERS, MEMBERSHIP, action))).toBe(true);
+			expect(allowedBy(set, spaceWrite(MEMBERS, MEMBERSHIP, action))).toBe(true);
 		}
-		expect(allowedBy(set, recordWrite(MEMBERS, 'group.opensocial.role', 'update'))).toBe(false);
+		expect(allowedBy(set, spaceWrite(MEMBERS, 'group.opensocial.role', 'update'))).toBe(false);
 	});
 
 	it('expands configure to the profile in meta and the authz config in members', () => {
-		const set = ['include:group.opensocial.configure'];
-		expect(allowedBy(set, recordWrite(META, 'group.opensocial.profile', 'update'))).toBe(true);
-		expect(allowedBy(set, recordWrite(MEMBERS, 'group.opensocial.permissions', 'update'))).toBe(
+		const set = 'include:group.opensocial.configure';
+		expect(allowedBy(set, spaceWrite(META, 'group.opensocial.profile', 'update'))).toBe(true);
+		expect(allowedBy(set, spaceWrite(MEMBERS, 'group.opensocial.permissions', 'update'))).toBe(
 			true
 		);
-		expect(allowedBy(set, recordWrite(META, 'group.opensocial.access', 'update'))).toBe(false);
+		expect(allowedBy(set, spaceWrite(META, ACCESS, 'update'))).toBe(false);
 	});
 
 	it('grants nothing for an unknown set, an rpc scope, or a non-string', () => {
@@ -156,13 +148,13 @@ describe('writeGrants', () => {
 			permissions: [],
 			access: { [META]: [{ role: 'member', scopes: ['space:*?collection=x.y.z'] }] }
 		});
-		expect(allowsWrite(grants, GROUP, recordWrite(META, 'x.y.z', 'create'))).toBe(true);
-		expect(allowsWrite(grants, GROUP, recordWrite(MEMBERS, 'x.y.z', 'create'))).toBe(false);
+		expect(allowsWrite(grants, GROUP, spaceWrite(META, 'x.y.z', 'create'))).toBe(true);
+		expect(allowsWrite(grants, GROUP, spaceWrite(MEMBERS, 'x.y.z', 'create'))).toBe(false);
 	});
 
 	it('lets the group itself write anything, with no roles', () => {
-		expect(allowsWrite(GROUP_ITSELF, GROUP, recordWrite(META, 'x.y.z', 'delete'))).toBe(true);
-		expect(allowsWrite(GROUP_ITSELF, GROUP, recordWrite(MEMBERS, MEMBERSHIP, 'delete'))).toBe(true);
+		expect(allowsWrite(GROUP_ITSELF, GROUP, spaceWrite(META, 'x.y.z', 'delete'))).toBe(true);
+		expect(allowsWrite(GROUP_ITSELF, GROUP, spaceWrite(MEMBERS, MEMBERSHIP, 'delete'))).toBe(true);
 	});
 });
 
@@ -172,9 +164,9 @@ describe('withAccess', () => {
 			{ role: 'member', scopes: ['space:*?collection=x.y.z'] },
 			{ role: 'admin', scopes: ['space:*?collection=a.b.c'] }
 		]);
-		expect(allowsWrite(grants, GROUP, recordWrite(META, 'x.y.z', 'create'))).toBe(true);
-		expect(allowsWrite(grants, GROUP, recordWrite(META, 'a.b.c', 'create'))).toBe(false);
-		expect(allowsWrite(grants, GROUP, recordWrite(MEMBERS, 'x.y.z', 'create'))).toBe(false);
+		expect(allowsWrite(grants, GROUP, spaceWrite(META, 'x.y.z', 'create'))).toBe(true);
+		expect(allowsWrite(grants, GROUP, spaceWrite(META, 'a.b.c', 'create'))).toBe(false);
+		expect(allowsWrite(grants, GROUP, spaceWrite(MEMBERS, 'x.y.z', 'create'))).toBe(false);
 	});
 });
 
