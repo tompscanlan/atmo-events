@@ -30,6 +30,9 @@
 				<span>
 					<span class="font-medium">{option.label}</span>
 					<span class="text-muted block text-sm">{unavailable ?? option.help}</span>
+					{#if option.value === 'members' && !unavailable && data.membersOnlyUnseen}
+						<span class="text-muted block text-sm">{data.membersOnlyUnseen}</span>
+					{/if}
 				</span>
 			</label>
 		{/each}
