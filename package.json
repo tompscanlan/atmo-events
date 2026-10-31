@@ -16,7 +16,7 @@
 		"test": "pnpm test:kit-dev && pnpm -r test",
 		"lint": "pnpm -r lint",
 		"globe:up": "snowglobe up",
-		"globe:dev": "snowglobe run --app atmo -- pnpm --filter web dev --host 0.0.0.0 --strictPort",
+		"globe:dev": "snowglobe run --app atmo -- pnpm --filter web exec vite dev --config scripts/groups-e2e.vite.config.ts --host 0.0.0.0 --strictPort",
 		"globe:e2e": "snowglobe up && snowglobe run --app e2e -- node apps/web/scripts/groups-e2e.mjs",
 		"globe:down": "snowglobe down",
 		"format": "prettier --write .",
