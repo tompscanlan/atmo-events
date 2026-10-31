@@ -19,6 +19,7 @@ vi.mock('./person', () => ({ groupsOfPerson: mocks.groupsOfPerson }));
 import { browseGroups } from './browse';
 
 const card = (name: string) => ({ name, description: null, handle: `${name}.example` });
+const cards = (...names: string[]) => new Map(names.map((n) => [`did:plc:${n}`, card(n)] as const));
 
 beforeEach(() => {
 	vi.resetAllMocks();
@@ -33,12 +34,7 @@ describe('browseGroups', () => {
 			{ did: 'did:plc:a', indexedAt: 1 }
 		]);
 		mocks.linkedGroups.mockResolvedValue(['did:plc:a', 'did:plc:private']);
-		mocks.readCards.mockResolvedValue(
-			new Map([
-				['did:plc:a', card('a')],
-				['did:plc:b', card('b')]
-			])
-		);
+		mocks.readCards.mockResolvedValue(cards('a', 'b'));
 		mocks.resolveGroup.mockResolvedValue({ did: 'did:plc:private', handle: 'p.example' });
 
 		const { groups } = await browseGroups({ did: 'did:plc:alice', session: null });
@@ -70,7 +66,7 @@ describe('browseGroups', () => {
 	it('still lists linked groups when the index is down', async () => {
 		mocks.listDeclaredGroups.mockRejectedValue(new Error('down'));
 		mocks.linkedGroups.mockResolvedValue(['did:plc:a']);
-		mocks.readCards.mockResolvedValue(new Map([['did:plc:a', card('a')]]));
+		mocks.readCards.mockResolvedValue(cards('a'));
 		expect(await browseGroups({ did: 'did:plc:alice', session: null })).toMatchObject({
 			groups: [{ did: 'did:plc:a' }],
 			declaredUnavailable: true
@@ -87,12 +83,8 @@ describe('your groups', () => {
 
 	it('lists the groups the person belongs to first, by their own read', async () => {
 		mocks.listDeclaredGroups.mockResolvedValue([{ did: 'did:plc:public', indexedAt: 2 }]);
-		mocks.groupsOfPerson.mockResolvedValue([
-			{
-				did: 'did:plc:private',
-				meta: { profile: { name: 'Quiet', description: null }, public: false }
-			}
-		]);
+		const quiet = { profile: { name: 'Quiet', description: null }, public: false };
+		mocks.groupsOfPerson.mockResolvedValue([{ did: 'did:plc:private', meta: quiet }]);
 		mocks.resolveGroup.mockResolvedValue({ did: 'did:plc:private', handle: 'quiet.example' });
 
 		const { groups } = await browseGroups(viewer(GRANTED) as never);
