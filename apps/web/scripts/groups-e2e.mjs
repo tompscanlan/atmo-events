@@ -542,24 +542,32 @@ async function main() {
 		);
 		await seeGroups().click();
 		await walk(carol, NOSPACES);
+		// Once they asked and came back without them, a page explains instead of asking again: no See
+		// your groups, a small Try again, and the server with spaces support named as a link.
+		const explains = async () => {
+			const link = carol.locator('main a', { hasText: new URL(SPACES_PDS).host });
+			return {
+				asks: await seeGroups().count(),
+				tryAgain: await carol.getByRole('button', { name: /^try again$/i }).count(),
+				link: (await link.count()) ? await link.first().getAttribute('href') : null
+			};
+		};
+		const explained = (e) =>
+			e.asks === 0 && e.tryAgain === 1 && e.link === new URL(SPACES_PDS).origin;
 		const afterAsking = await carolVisit();
-		const asksAgain = await seeGroups().count();
+		const groupPage = await explains();
 		check(
-			afterAsking.status === 200 && asksAgain === 1,
-			'asked for group permissions, their server returns without them, and the group still loads',
-			`${JSON.stringify(afterAsking)}, asks again ${asksAgain}`
+			afterAsking.status === 200 && explained(groupPage),
+			'asked for group permissions, their server returns without them, and the group page explains instead of asking again',
+			`${JSON.stringify(afterAsking)}, ${JSON.stringify(groupPage)}`
 		);
-		// The members page says how to get group permissions and where, instead of "Group not found".
+		// The members page too, instead of "Group not found".
 		const membersRes = await carol.goto(`${groupUrl}/members`, { waitUntil: 'networkidle' });
-		const membersAsk = await seeGroups().count();
-		const pointer = await carol
-			.locator('main a', { hasText: new URL(SPACES_PDS).host })
-			.getAttribute('href')
-			.catch(() => null);
+		const membersPage = await explains();
 		check(
-			membersRes?.status() === 200 && membersAsk === 1 && pointer === new URL(SPACES_PDS).origin,
-			'their members page asks for group permissions and names a server with spaces support',
-			`status ${membersRes?.status()}, asks ${membersAsk}, link ${pointer}`
+			membersRes?.status() === 200 && explained(membersPage),
+			'their members page explains too, and names a server with spaces support',
+			`status ${membersRes?.status()}, ${JSON.stringify(membersPage)}`
 		);
 		const rosterPlace = async (who) => {
 			const res = await fresh.goto(`${groupUrl}/members`, { waitUntil: 'networkidle' });
