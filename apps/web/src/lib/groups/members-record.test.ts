@@ -28,19 +28,14 @@ describe('membershipRkey', () => {
 
 describe('membership records', () => {
 	it('keep every role id, known here or not, once each', () => {
-		const record = groupMembershipRecord({
-			subject: MEMBER,
-			roles: ['moderator', 'admin', 'admin']
-		});
+		const roles = ['moderator', 'admin', 'admin'];
+		const record = groupMembershipRecord({ subject: MEMBER, roles });
 		expect(record).toMatchObject({ member: MEMBER, roles: ['moderator', 'admin'] });
 		expect(parseGroupMembership(record, MEMBER)?.roles).toEqual(['moderator', 'admin']);
 	});
 
 	it('take the subject from the record key over a member field that disagrees', () => {
-		const parsed = parseGroupMembership(
-			{ member: 'did:plc:someone-else', roles: ['admin'] },
-			MEMBER
-		);
+		const parsed = parseGroupMembership({ member: 'did:plc:other', roles: ['admin'] }, MEMBER);
 		expect(parsed?.subject).toBe(MEMBER);
 	});
 
