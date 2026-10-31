@@ -44,6 +44,20 @@ export function groupHostOrigin(): string | null {
 	return url ? new URL(url).origin : null;
 }
 
+/** Where someone whose own server cannot grant group permissions could make an account.
+ *  Null when the site names none, or names something that is not a web address. */
+export function spacesServer(): { url: string; host: string } | null {
+	const value = env.SPACES_PDS_URL?.trim();
+	if (!value) return null;
+	try {
+		const url = new URL(value);
+		if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+		return { url: url.origin, host: url.host };
+	} catch {
+		return null;
+	}
+}
+
 /** This site changes only groups whose PDS is its own group host. */
 export function atGroupHost(group: Pick<ResolvedGroup, 'pds'>): boolean {
 	const origin = groupHostOrigin();
