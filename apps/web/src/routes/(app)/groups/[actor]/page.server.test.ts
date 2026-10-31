@@ -17,15 +17,19 @@ vi.mock('#lib/groups/server/calendar-read.js', async (original) => ({
 	readMembersOnlyEvents: mocks.readMembersOnlyEvents
 }));
 
+import { env } from 'cloudflare:workers';
+import { ASKED_COOKIE } from '#lib/groups/permissions-asked.js';
 import { load } from './+page.server';
 
 const GROUP = 'did:plc:group';
 const caller = { did: 'did:plc:alice', scope: 'x', handle: vi.fn() };
-const input = () =>
+/** `asked`: the DID this browser remembers asking for group permissions. */
+const input = (asked?: string) =>
 	({
 		params: { actor: GROUP },
 		locals: { did: caller.did, session: {} },
-		url: new URL(`https://atmo.example/groups/${GROUP}`)
+		url: new URL(`https://atmo.example/groups/${GROUP}`),
+		cookies: { get: (name: string) => (name === ASKED_COOKIE ? asked : undefined) }
 	}) as never;
 const at = (rkey: string, startsAt: string) => ({
 	rkey,
@@ -74,5 +78,35 @@ describe("the group page's members-only events", () => {
 		const data = (await load(input())) as { membersOnly: { events: unknown[]; notice: unknown } };
 		expect(data.membersOnly.events).toEqual([]);
 		expect(typeof data.membersOnly.notice).toBe('string');
+	});
+});
+
+describe("the group page's ask for group permissions", () => {
+	const needsAsking = { did: GROUP, name: 'Knitters', member: null, linked: null, askAccess: true };
+
+	it('offers See your groups until the person asks from this browser', async () => {
+		mocks.groupView.mockResolvedValue(needsAsking);
+		expect(await load(input())).toMatchObject({
+			access: 'ask',
+			you: caller.did,
+			spacesServer: null
+		});
+	});
+
+	it('explains, and names the server with spaces support, once they asked and came back without', async () => {
+		mocks.groupView.mockResolvedValue(needsAsking);
+		Object.assign(env, { SPACES_PDS_URL: 'https://pds.example.com' });
+		try {
+			expect(await load(input(caller.did))).toMatchObject({
+				access: 'refused',
+				spacesServer: { url: 'https://pds.example.com', host: 'pds.example.com' }
+			});
+		} finally {
+			Reflect.deleteProperty(env, 'SPACES_PDS_URL');
+		}
+	});
+
+	it('says nothing to someone who holds the permissions', async () => {
+		expect(await load(input(caller.did))).toMatchObject({ access: null });
 	});
 });
