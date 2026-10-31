@@ -48,6 +48,14 @@ import {
 const ALICE = 'did:plc:alice';
 const BOB = 'did:plc:bob';
 const GROUP = 'did:plc:group';
+const LINK = { groupDid: GROUP, by: ALICE };
+const SETTINGS = {
+	name: 'Knitters',
+	description: null,
+	joinPolicy: 'open',
+	public: true,
+	listed: true
+} as const;
 
 let sessions: MemoryKV;
 let states: MemoryKV;
@@ -57,10 +65,16 @@ function latest() {
 	return mocks.built.at(-1)!;
 }
 
-async function storedState(id: string, userState: unknown) {
+/** A sign-in ALICE started, as its stored state holds it, and the client that will finish it. */
+async function started(userState: unknown) {
 	const state = { userState, expiresAt: Date.now() + 60_000 } as unknown as StoredState;
-	await sessions.put(`group:state:${id}`, JSON.stringify(state));
+	await sessions.put('group:state:s1', JSON.stringify(state));
+	await startGroupLink(GROUP, ALICE);
+	return latest().client;
 }
+
+const finish = (signedIn: string) =>
+	finishGroupSignIn(new URLSearchParams({ state: 's1', code: 'c', iss: 'x' }), signedIn);
 
 beforeEach(() => {
 	mocks.built.length = 0;
@@ -86,6 +100,8 @@ describe('availability', () => {
 });
 
 describe('the group client', () => {
+	const scopes = GROUP_SESSION_SCOPE.split(' ');
+
 	it('is its own client, sharing only the library key', () => {
 		expect(groupClientMetadata()).toMatchObject({
 			client_id: 'https://atmo.example/oauth/group/client-metadata.json',
@@ -96,7 +112,6 @@ describe('the group client', () => {
 	});
 
 	it('asks for the meta read as its own scope, and the sets for settings and members', () => {
-		const scopes = GROUP_SESSION_SCOPE.split(' ');
 		expect(scopes).toContain('space:group.opensocial.meta?authority=self&action=read');
 		expect(GROUP_SESSION_SCOPE).toContain('group.opensocial.declaration');
 		expect(GROUP_SESSION_SCOPE).toContain('community.lexicon.calendar.event');
@@ -108,7 +123,6 @@ describe('the group client', () => {
 	});
 
 	it('asks to make its own spaces, and to write events only in its own calendar space', () => {
-		const scopes = GROUP_SESSION_SCOPE.split(' ');
 		expect(scopes).toContain('space:*?authority=self&manage=create');
 		const calendar = scopes.filter((s) => s.startsWith('space:rsvp.atmo.group.calendar?'));
 		expect(calendar).toHaveLength(1);
@@ -150,55 +164,34 @@ describe('startGroupLink', () => {
 });
 
 describe('finishGroupSignIn', () => {
-	const params = (state: string) => new URLSearchParams({ state, code: 'c', iss: 'x' });
-
 	it('refuses a state it does not know', async () => {
-		expect(await finishGroupSignIn(params('nope'), ALICE)).toMatchObject({
-			ok: false,
-			groupDid: null
-		});
+		expect(await finish(ALICE)).toMatchObject({ ok: false, groupDid: null });
 	});
 
 	it('refuses a browser signed in as someone else, and spends the state', async () => {
-		await storedState('s1', { groupDid: GROUP, by: ALICE });
-		expect(await finishGroupSignIn(params('s1'), BOB)).toMatchObject({
-			ok: false,
-			groupDid: GROUP
-		});
+		await started(LINK);
+		expect(await finish(BOB)).toMatchObject({ ok: false, groupDid: GROUP });
 		expect(sessions.keys()).toEqual([]);
 		expect(mocks.built.every(({ client }) => client.callback.mock.calls.length === 0)).toBe(true);
 	});
 
 	it('revokes a session that is not the group', async () => {
-		await storedState('s1', { groupDid: GROUP, by: ALICE });
-		await startGroupLink(GROUP, ALICE);
-		const { client } = latest();
+		const client = await started(LINK);
 		client.callback.mockResolvedValue({ session: { did: 'did:plc:other' }, state: null });
 		client.revoke.mockResolvedValue(undefined);
 
-		expect(await finishGroupSignIn(params('s1'), ALICE)).toMatchObject({ ok: false });
+		expect(await finish(ALICE)).toMatchObject({ ok: false, groupDid: GROUP });
 		expect(client.revoke).toHaveBeenCalledWith('did:plc:other');
 	});
 
 	it('reports a refusal at the host as a failed link', async () => {
-		await storedState('s1', { groupDid: GROUP, by: ALICE });
-		await startGroupLink(GROUP, ALICE);
-		latest().client.callback.mockRejectedValue(new Error('access_denied'));
-		expect(await finishGroupSignIn(params('s1'), ALICE)).toMatchObject({
-			ok: false,
-			groupDid: GROUP
-		});
+		(await started(LINK)).callback.mockRejectedValue(new Error('access_denied'));
+		expect(await finish(ALICE)).toMatchObject({ ok: false, groupDid: GROUP });
 	});
 
 	it('links the group for the person who started it', async () => {
-		await storedState('s1', { groupDid: GROUP, by: ALICE });
-		await startGroupLink(GROUP, ALICE);
-		latest().client.callback.mockResolvedValue({ session: { did: GROUP }, state: null });
-		expect(await finishGroupSignIn(params('s1'), ALICE)).toEqual({
-			ok: true,
-			groupDid: GROUP,
-			created: null
-		});
+		(await started(LINK)).callback.mockResolvedValue({ session: { did: GROUP }, state: null });
+		expect(await finish(ALICE)).toEqual({ ok: true, groupDid: GROUP, created: null });
 	});
 });
 
@@ -220,43 +213,27 @@ describe('linked groups', () => {
 });
 
 describe('making a group', () => {
-	const settings = {
-		name: 'Knitters',
-		description: null,
-		joinPolicy: 'open',
-		public: true,
-		listed: true
-	} as const;
-
 	it("sends the creator to the host's sign-up, with the settings waiting in the state", async () => {
-		const url = await startGroupCreate(ALICE, settings);
+		const url = await startGroupCreate(ALICE, SETTINGS);
 		const { client } = latest();
 		expect(client.authorize).toHaveBeenCalledWith(
 			expect.objectContaining({
 				target: { type: 'pds', serviceUrl: 'https://host.example' },
 				prompt: 'create',
-				state: { create: settings, by: ALICE }
+				state: { create: SETTINGS, by: ALICE }
 			})
 		);
 		expect(url.searchParams.get('gh_name')).toBe('Knitters');
 	});
 
 	it('finishes as whatever new group the host made, with its settings', async () => {
-		await storedState('s1', { create: settings, by: ALICE });
-		await startGroupCreate(ALICE, settings);
-		latest().client.callback.mockResolvedValue({ session: { did: GROUP }, state: null });
-		expect(await finishGroupSignIn(new URLSearchParams({ state: 's1' }), ALICE)).toEqual({
-			ok: true,
-			groupDid: GROUP,
-			created: settings
-		});
+		const client = await started({ create: SETTINGS, by: ALICE });
+		client.callback.mockResolvedValue({ session: { did: GROUP }, state: null });
+		expect(await finish(ALICE)).toEqual({ ok: true, groupDid: GROUP, created: SETTINGS });
 	});
 
 	it('refuses a state whose settings do not hold', async () => {
-		await storedState('s1', { create: { ...settings, name: '' }, by: ALICE });
-		expect(await finishGroupSignIn(new URLSearchParams({ state: 's1' }), ALICE)).toMatchObject({
-			ok: false,
-			groupDid: null
-		});
+		await started({ create: { ...SETTINGS, name: '' }, by: ALICE });
+		expect(await finish(ALICE)).toMatchObject({ ok: false, groupDid: null });
 	});
 });
