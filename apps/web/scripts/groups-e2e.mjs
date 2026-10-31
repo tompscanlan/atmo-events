@@ -28,6 +28,8 @@ function required(name) {
 
 const ATMO = required('E2E_ATMO');
 const GROUP_HOST = required('E2E_GROUP_HOST');
+// The globe's PDS with spaces support, which atmo names to people whose server has none.
+const SPACES_PDS = required('E2E_PDS');
 const person = (role, name = role.toLowerCase()) => ({
 	role,
 	name,
@@ -546,6 +548,18 @@ async function main() {
 			afterAsking.status === 200 && asksAgain === 1,
 			'asked for group permissions, their server returns without them, and the group still loads',
 			`${JSON.stringify(afterAsking)}, asks again ${asksAgain}`
+		);
+		// The members page says how to get group permissions and where, instead of "Group not found".
+		const membersRes = await carol.goto(`${groupUrl}/members`, { waitUntil: 'networkidle' });
+		const membersAsk = await seeGroups().count();
+		const pointer = await carol
+			.locator('main a', { hasText: new URL(SPACES_PDS).host })
+			.getAttribute('href')
+			.catch(() => null);
+		check(
+			membersRes?.status() === 200 && membersAsk === 1 && pointer === new URL(SPACES_PDS).origin,
+			'their members page asks for group permissions and names a server with spaces support',
+			`status ${membersRes?.status()}, asks ${membersAsk}, link ${pointer}`
 		);
 		const rosterPlace = async (who) => {
 			const res = await fresh.goto(`${groupUrl}/members`, { waitUntil: 'networkidle' });
