@@ -15,6 +15,7 @@ const GROUP = 'did:plc:group';
 const RSVP = 'community.lexicon.calendar.rsvp';
 const viewer = { isLoggedIn: true, did: 'did:plc:alice' };
 const adapter = () => createMembersOnlyRsvpAdapter(GROUP, 'e1', viewer);
+const atEvent = { groupDid: GROUP, rkey: 'e1' };
 // As the view's RSVP control builds it, with a key of its own.
 const going = {
 	collection: RSVP,
@@ -26,14 +27,8 @@ beforeEach(() => vi.resetAllMocks());
 
 describe('the members-only RSVP adapter', () => {
 	it("sends the answer and the version the page showed, at the event's key", async () => {
-		mocks.rsvp.mockResolvedValue({ ok: true });
 		await adapter().putRecord(going);
-		expect(mocks.rsvp).toHaveBeenCalledWith({
-			groupDid: GROUP,
-			rkey: 'e1',
-			status: 'going',
-			cid: 'cid-1'
-		});
+		expect(mocks.rsvp).toHaveBeenCalledWith({ ...atEvent, status: 'going', cid: 'cid-1' });
 	});
 
 	it('throws when the server refuses, so the view never shows an RSVP that was not saved', async () => {
@@ -44,9 +39,8 @@ describe('the members-only RSVP adapter', () => {
 	});
 
 	it("cancels at the event's key, whatever key the view kept", async () => {
-		mocks.cancel.mockResolvedValue({ ok: true });
 		await adapter().deleteRecord({ collection: RSVP, rkey: '3mxyz' });
-		expect(mocks.cancel).toHaveBeenCalledWith({ groupDid: GROUP, rkey: 'e1' });
+		expect(mocks.cancel).toHaveBeenCalledWith(atEvent);
 	});
 
 	it('writes nothing but RSVPs, and tells the index nothing', async () => {
