@@ -23,47 +23,40 @@ const WANT =
 const MAC =
 	'type="atproto-space-record", ver=1, mac=:sJjfUqOgnziWAzGFWUoXUjiPtpVnW+VqfBD7jnaY1sE=:';
 
-async function fixedEphemeral(): Promise<CryptoKeyPair> {
-	const alg = { name: 'ECDH', namedCurve: 'P-256' };
-	const { kty, crv, x, y } = EPHEMERAL;
-	return {
-		privateKey: await crypto.subtle.importKey('jwk', EPHEMERAL, alg, false, ['deriveBits']),
-		publicKey: await crypto.subtle.importKey('jwk', { kty, crv, x, y }, alg, true, [])
-	};
-}
+const ECDH = { name: 'ECDH', namedCurve: 'P-256' };
+const { kty, crv, x, y } = EPHEMERAL;
+const check = await recordMacCheck(REPO_KEM_KEY, {
+	privateKey: await crypto.subtle.importKey('jwk', EPHEMERAL, ECDH, false, ['deriveBits']),
+	publicKey: await crypto.subtle.importKey('jwk', { kty, crv, x, y }, ECDH, true, [])
+});
 
 describe('recordMacCheck', () => {
-	it('asks for the MAC as @atproto/space formats the request', async () => {
-		const check = await recordMacCheck(REPO_KEM_KEY, await fixedEphemeral());
+	it('asks for the MAC as @atproto/space formats the request', () => {
 		expect(check.header).toBe(WANT);
 	});
 
 	it('accepts the MAC the repo host computes for the record', async () => {
-		const check = await recordMacCheck(REPO_KEM_KEY, await fixedEphemeral());
 		expect(await check.verify(RECORD, MAC)).toBe(true);
 	});
 
-	it('refuses it for another record, another CID, or a MAC made for another request', async () => {
-		const check = await recordMacCheck(REPO_KEM_KEY, await fixedEphemeral());
-		expect(await check.verify({ ...RECORD, uri: `${RECORD.uri}x` }, MAC)).toBe(false);
-		expect(
-			await check.verify(
-				{ ...RECORD, cid: 'bafyreie5737gdxlw5i64vzichcalba3z2v5n6icifvx5xytvske7mr3hpa' },
-				MAC
-			)
-		).toBe(false);
+	it.each([
+		['for another record', { ...RECORD, uri: `${RECORD.uri}x` }, MAC],
+		[
+			'for another CID',
+			{ ...RECORD, cid: 'bafyreie5737gdxlw5i64vzichcalba3z2v5n6icifvx5xytvske7mr3hpa' },
+			MAC
+		],
+		['for a CID that does not parse', { ...RECORD, cid: 'Qmnotbase32' }, MAC],
+		['with no MAC', RECORD, null],
+		['with a MAC for a commit', RECORD, MAC.replace('atproto-space-record', 'atproto-space-repo')],
+		['with a MAC of another version', RECORD, MAC.replace('ver=1', 'ver=2')]
+	])('refuses an answer %s', async (_why, record, mac) => {
+		expect(await check.verify(record, mac)).toBe(false);
+	});
+
+	it('refuses a MAC made for another request', async () => {
 		const fresh = await recordMacCheck(REPO_KEM_KEY);
 		expect(fresh.header).not.toBe(WANT);
 		expect(await fresh.verify(RECORD, MAC)).toBe(false);
-	});
-
-	it('refuses an answer with no MAC, or one for a commit or another version', async () => {
-		const check = await recordMacCheck(REPO_KEM_KEY, await fixedEphemeral());
-		expect(await check.verify(RECORD, null)).toBe(false);
-		expect(
-			await check.verify(RECORD, MAC.replace('atproto-space-record', 'atproto-space-repo'))
-		).toBe(false);
-		expect(await check.verify(RECORD, MAC.replace('ver=1', 'ver=2'))).toBe(false);
-		expect(await check.verify({ ...RECORD, cid: 'Qmnotbase32' }, MAC)).toBe(false);
 	});
 });
