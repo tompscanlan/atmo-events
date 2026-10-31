@@ -104,6 +104,9 @@ declare global {
 			GEOCODER_USER_AGENT?: string;
 			/** The opensocial.group group host whose groups people may link; unset hides groups. */
 			GROUP_HOST_URL?: string;
+			/** A PDS with spaces support where people can make an account, suggested to someone
+			 *  whose own server cannot grant group permissions; unset suggests none. */
+			SPACES_PDS_URL?: string;
 		}
 	}
 }

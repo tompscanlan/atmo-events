@@ -2,6 +2,7 @@
 	import { Avatar, Badge, Button, Input, Label, Select } from '@atmo-dev/kit';
 	import { invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { requestPermissions } from '@svelte-atproto/oauth/client';
 	import {
 		addMember,
 		approveRequest,
@@ -10,6 +11,7 @@
 		remove
 	} from '#lib/groups/members.remote.js';
 	import { GROUP_ROLES } from '#lib/groups/permissions.js';
+	import { GROUP_PERSON_SCOPES } from '#lib/groups/scopes.js';
 
 	let { data } = $props();
 
@@ -53,7 +55,35 @@
 
 		<h1 class="text-base-900 dark:text-base-50 text-2xl font-bold">Members</h1>
 
-		{#if data.hidden}
+		{#if data.needsAccess}
+			<p class="text-muted mt-6">
+				To see who is in this group, allow atmo to read the groups you belong to.
+			</p>
+			{#if failure}<p role="alert" class="mt-4 text-sm text-red-600">{failure}</p>{/if}
+			<div class="mt-4">
+				<Button
+					variant="secondary"
+					disabled={busy}
+					onclick={() => act(() => requestPermissions(GROUP_PERSON_SCOPES))}>See your groups</Button
+				>
+			</div>
+			<p class="text-muted mt-4 text-sm">
+				This needs a server with spaces support, the part of atproto that keeps a group's members
+				private, and most servers do not have it yet.
+				{#if data.spacesServer}
+					You can make an account at
+					<!-- Another site's address, from this site's settings, so there is nothing to resolve. -->
+					<!-- eslint-disable svelte/no-navigation-without-resolve -->
+					<a
+						href={data.spacesServer.url}
+						rel="external noopener"
+						class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 font-medium"
+						>{data.spacesServer.host}</a
+					><!-- eslint-enable svelte/no-navigation-without-resolve -->, which does, and sign in to
+					atmo with it.
+				{/if}
+			</p>
+		{:else if data.hidden}
 			<p class="text-muted mt-6">Only members can see who is in this group.</p>
 		{:else}
 			{#if data.role}<p class="text-muted mt-2 text-sm">You are a {data.role}.</p>{/if}
