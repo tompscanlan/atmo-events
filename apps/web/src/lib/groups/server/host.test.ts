@@ -1,6 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CallerSession } from './caller';
-import type { GroupWriter } from './context';
 
 const mocks = vi.hoisted(() => ({ order: [] as string[], accept: vi.fn(), unaccept: vi.fn() }));
 vi.mock('./acceptance', () => ({ accept: mocks.accept, unaccept: mocks.unaccept }));
@@ -21,18 +19,13 @@ const MEMBERS = `at://${GROUP}/space/group.opensocial.members/self`;
 
 type Answer = (pathname: string, init: RequestInit) => Response;
 
-function person(answer: Answer): CallerSession {
-	return {
-		did: ALICE,
-		scope: '',
-		handle: vi.fn(async (p: string, i: RequestInit) => answer(p, i))
-	};
-}
-
-function admin(answer: Answer): GroupWriter & { calls: () => [string, RequestInit][] } {
-	const handle = vi.fn(async (p: string, i: RequestInit) => answer(p, i));
-	return { did: GROUP, handle, calls: () => handle.mock.calls };
-}
+const session = (did: string, answer: Answer) => ({
+	did,
+	scope: '',
+	handle: vi.fn(async (p: string, i: RequestInit) => answer(p, i))
+});
+const person = (answer: Answer) => session(ALICE, answer);
+const admin = (answer: Answer) => session(GROUP, answer);
 
 const body = (init: RequestInit) => JSON.parse(String(init.body));
 
@@ -47,7 +40,7 @@ describe("a person's own acts", () => {
 	it("go to the group's PDS on their own session, and an admitted join confirms", async () => {
 		const p = person(() => Response.json({ status: 'admitted' }));
 		expect(await requestJoin(p, GROUP, 'hi')).toBe('joined');
-		const [pathname, init] = vi.mocked(p.handle).mock.calls[0];
+		const [pathname, init] = p.handle.mock.calls[0];
 		expect(pathname).toBe('/xrpc/group.opensocial.requestJoin');
 		expect(init.headers).toMatchObject({ 'atproto-proxy': `${GROUP}#atproto_pds` });
 		expect(body(init)).toEqual({ group: GROUP, message: 'hi' });
@@ -83,7 +76,7 @@ describe("an admin's acts, as the group", () => {
 	it('admit with a membership keyed by the member’s DID', async () => {
 		const a = admin(() => Response.json({ uri: 'x', cid: 'y' }));
 		await admitMember(a, ALICE, 'member');
-		const [pathname, init] = a.calls()[0];
+		const [pathname, init] = a.handle.mock.calls[0];
 		expect(pathname).toBe('/xrpc/com.atproto.space.createRecord');
 		expect(body(init)).toMatchObject({
 			space: MEMBERS,
@@ -112,7 +105,7 @@ describe("an admin's acts, as the group", () => {
 				: Response.json({ uri: 'x', cid: 'y' })
 		);
 		await setMemberRole(a, ALICE, 'admin');
-		const [pathname, init] = a.calls()[1];
+		const [pathname, init] = a.handle.mock.calls[1];
 		expect(pathname).toBe('/xrpc/com.atproto.space.putRecord');
 		expect(body(init).record).toMatchObject({
 			roles: ['admin', 'moderator'],
@@ -146,6 +139,6 @@ describe("an admin's acts, as the group", () => {
 			[ALICE, 'hi'],
 			['did:plc:bob', null]
 		]);
-		expect(a.calls()[1][0]).toContain('cursor=c');
+		expect(a.handle.mock.calls[1][0]).toContain('cursor=c');
 	});
 });
