@@ -1,4 +1,5 @@
 import '../lexicon-types/index.js';
+import { serviceUrl } from '#lib/atproto/network.js';
 import type { EventData } from '#lib/event-types.js';
 import type { CityScope } from '#lib/cities.js';
 import type {
@@ -121,7 +122,7 @@ export function getProfileBlobUrl(
 	if (!cid) return undefined;
 	// Avatars need JPEG; banners and feed thumbnails support the smaller WebP variant.
 	const format = preset === 'avatar' ? 'jpeg' : 'webp';
-	return `https://cdn.bsky.app/img/${preset}/plain/${did}/${cid}@${format}`;
+	return `${serviceUrl('cdn')}/img/${preset}/plain/${did}/${cid}@${format}`;
 }
 
 export function flattenEventRecord(record: FlattenableEventRecord): FlatEventRecord | null {

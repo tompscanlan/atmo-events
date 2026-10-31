@@ -14,7 +14,8 @@
 	import { login, signup } from '#lib/atproto/auth.svelte.js';
 	import { LoginDialog, createActorSearch } from '@atmo-dev/kit';
 	import { loginPermissions } from '#lib/atproto/settings.js';
-	const searchActors = createActorSearch();
+	import { serviceUrl } from '#lib/atproto/network.js';
+	const searchActors = createActorSearch({ host: serviceUrl('appview') });
 </script>
 
 <LoginDialog
