@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { EventPlacement } from '../event-placement';
 import { groupPds, type GroupPds } from './__fixtures__/group-pds';
 import type { GroupWriter } from './context';
 
@@ -25,11 +26,19 @@ const EVENT = {
 /** The URIs the index was told of. */
 const told = () => mocks.post.mock.calls.flatMap(([, { input }]) => input.uris as string[]);
 
-const refusal = (run: Promise<unknown>) =>
-	run.then(
+const put = (writer: GroupWriter, placement: EventPlacement, record: object = EVENT) =>
+	putGroupEvent(writer, { rkey: 'e1', record: { ...record }, placement });
+
+/** Why the write was refused, once it is clear nothing was written and the index heard nothing. */
+async function refusal(pds: GroupPds, run: Promise<unknown>) {
+	const reason = await run.then(
 		() => null,
 		(e) => (e instanceof GroupEventRefused ? e.reason : e)
 	);
+	expect(pds.writes).toEqual([]);
+	expect(mocks.post).not.toHaveBeenCalled();
+	return reason;
+}
 
 /** Answers 500 to every read of `nsid`, and passes the rest to the PDS. */
 function failingReads(pds: GroupPds, nsid: string): GroupWriter {
@@ -49,106 +58,68 @@ beforeEach(() => {
 });
 
 describe('a public event', () => {
-	it("goes into the group's repo, and the index is told", async () => {
-		const pds = groupPds(GROUP, { calendar: PRIVATE });
-		const saved = await putGroupEvent(pds.writer, {
-			rkey: 'e1',
-			record: EVENT,
-			placement: 'everyone'
-		});
+	it("goes into the group's repo, needing no calendar space, and the index is told", async () => {
+		const pds = groupPds(GROUP);
+		const saved = await put(pds.writer, 'everyone');
 		expect(pds.writes).toEqual(['event']);
-		expect(pds.state.events.e1).toMatchObject({
-			...EVENT,
-			$type: 'community.lexicon.calendar.event'
-		});
+		expect(pds.state.events.e1).toEqual({ ...EVENT, $type: 'community.lexicon.calendar.event' });
 		expect(saved.uri).toBe(`at://${GROUP}/community.lexicon.calendar.event/e1`);
 		expect(told()).toEqual([saved.uri]);
-	});
-
-	it('needs no calendar space', async () => {
-		const pds = groupPds(GROUP);
-		await putGroupEvent(pds.writer, { rkey: 'e1', record: EVENT, placement: 'everyone' });
-		expect(pds.writes).toEqual(['event']);
 	});
 });
 
 describe('a members-only event', () => {
 	it('goes into the calendar space, named by its space URI, and the index never hears of it', async () => {
 		const pds = groupPds(GROUP, { calendar: PRIVATE });
-		const saved = await putGroupEvent(pds.writer, {
-			rkey: 'e1',
-			record: EVENT,
-			placement: 'members'
-		});
+		const saved = await put(pds.writer, 'members');
 		expect(pds.writes).toEqual(['members event']);
 		expect(pds.state.events).toEqual({});
 		expect(saved.uri).toBe(`${CALENDAR}/${GROUP}/community.lexicon.calendar.event/e1`);
 		expect(mocks.post).not.toHaveBeenCalled();
 	});
 
-	it('is refused, with nothing written, unless the calendar space is there and private', async () => {
-		const put = (pds: GroupPds) =>
-			refusal(putGroupEvent(pds.writer, { rkey: 'e1', record: EVENT, placement: 'members' }));
-
-		const missing = groupPds(GROUP);
-		expect(await put(missing)).toBe('no-calendar-space');
-		const readable = groupPds(GROUP, { calendar: { ...PRIVATE, public: true } });
-		expect(await put(readable)).toBe('calendar-space-readable');
-		const unparsed = groupPds(GROUP, { calendar: { public: false } });
-		expect(await put(unparsed)).toBe('calendar-space-unchecked');
-		for (const pds of [missing, readable, unparsed]) expect(pds.writes).toEqual([]);
+	it.each([
+		['missing', null, 'no-calendar-space'],
+		['readable by more than its members', { ...PRIVATE, public: true }, 'calendar-space-readable'],
+		['set to an access that does not parse', { public: false }, 'calendar-space-unchecked']
+	])('is refused, with nothing written, if the calendar space is %s', async (_, access, why) => {
+		const pds = groupPds(GROUP, { calendar: access });
+		expect(await refusal(pds, put(pds.writer, 'members'))).toBe(why);
 	});
 
 	it('is refused when the calendar space cannot be checked, never read as private', async () => {
 		const pds = groupPds(GROUP, { calendar: PRIVATE });
 		const writer = failingReads(pds, 'com.atproto.space.getRecord');
-		expect(
-			await refusal(putGroupEvent(writer, { rkey: 'e1', record: EVENT, placement: 'members' }))
-		).toBe('calendar-space-unchecked');
-		expect(pds.writes).toEqual([]);
+		expect(await refusal(pds, put(writer, 'members'))).toBe('calendar-space-unchecked');
 	});
 });
 
 describe('an event stays where it was first written', () => {
-	it('is not copied into the other container by a save with the other placement', async () => {
-		const members = groupPds(GROUP, { calendar: PRIVATE, membersEvents: { e1: EVENT } });
-		expect(
-			await refusal(
-				putGroupEvent(members.writer, { rkey: 'e1', record: EVENT, placement: 'everyone' })
-			)
-		).toBe('moved');
-		const everyone = groupPds(GROUP, { calendar: PRIVATE, events: { e1: EVENT } });
-		expect(
-			await refusal(
-				putGroupEvent(everyone.writer, { rkey: 'e1', record: EVENT, placement: 'members' })
-			)
-		).toBe('moved');
-		expect([...members.writes, ...everyone.writes]).toEqual([]);
-		expect(mocks.post).not.toHaveBeenCalled();
+	it.each([
+		['everyone', { membersEvents: { e1: EVENT } }],
+		['members', { events: { e1: EVENT } }]
+	] as const)('is not copied into the other container by a save for %s', async (placement, at) => {
+		const pds = groupPds(GROUP, { calendar: PRIVATE, ...at });
+		expect(await refusal(pds, put(pds.writer, placement))).toBe('moved');
 	});
 
 	it('is saved again where it is', async () => {
 		const pds = groupPds(GROUP, { calendar: PRIVATE, membersEvents: { e1: EVENT } });
 		const renamed = { ...EVENT, name: 'Trail day, moved to Sunday' };
-		await putGroupEvent(pds.writer, { rkey: 'e1', record: renamed, placement: 'members' });
+		await put(pds.writer, 'members', renamed);
 		expect(pds.state.membersEvents.e1).toMatchObject({ name: renamed.name });
 	});
 
 	it('is refused when where it is cannot be checked', async () => {
 		const pds = groupPds(GROUP, { calendar: PRIVATE });
 		const writer = failingReads(pds, 'com.atproto.repo.getRecord');
-		expect(
-			await refusal(putGroupEvent(writer, { rkey: 'e1', record: EVENT, placement: 'members' }))
-		).toBe('unchecked');
-		expect(pds.writes).toEqual([]);
+		expect(await refusal(pds, put(writer, 'members'))).toBe('unchecked');
 	});
 
 	it('is deleted only where it is, and a delete sent to the other container does nothing', async () => {
 		const pds = groupPds(GROUP, { calendar: PRIVATE, membersEvents: { e1: EVENT } });
-		expect(await refusal(deleteGroupEvent(pds.writer, { rkey: 'e1', placement: 'everyone' }))).toBe(
-			'wrong-delete'
-		);
-		expect(pds.writes).toEqual([]);
+		const wrong = deleteGroupEvent(pds.writer, { rkey: 'e1', placement: 'everyone' });
+		expect(await refusal(pds, wrong)).toBe('wrong-delete');
 
 		await deleteGroupEvent(pds.writer, { rkey: 'e1', placement: 'members' });
 		expect(pds.writes).toEqual(['delete members event']);
@@ -165,14 +136,10 @@ describe('an event stays where it was first written', () => {
 
 it('refuses a record that is not an event, writing nothing', async () => {
 	const pds = groupPds(GROUP, { calendar: PRIVATE });
-	const noDate: Record<string, unknown> = { ...EVENT };
-	delete noDate.createdAt;
+	const noDate = { name: EVENT.name, startsAt: EVENT.startsAt };
 	for (const placement of ['everyone', 'members'] as const) {
-		expect(
-			await refusal(putGroupEvent(pds.writer, { rkey: 'e1', record: noDate, placement }))
-		).toBe('not-an-event');
+		expect(await refusal(pds, put(pds.writer, placement, noDate))).toBe('not-an-event');
 	}
-	expect(pds.writes).toEqual([]);
 });
 
 it("takes a record as the event editor builds it, with fields the lexicon doesn't name", async () => {
