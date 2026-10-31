@@ -13,17 +13,16 @@ import { readMembersOnlyEvent, readMembersOnlyEvents, upcoming } from './calenda
 
 const GROUP = 'did:plc:group';
 const CALENDAR = `at://${GROUP}/space/rsvp.atmo.group.calendar/self`;
+const EVENT = 'community.lexicon.calendar.event';
+/** The group's events in its calendar space, as the reader is asked for them. */
+const EVENTS = { space: CALENDAR, repo: GROUP, collection: EVENT };
 const caller = (scope = `atproto ${CALENDAR_RSVP_SCOPE}`): CallerSession => ({
 	did: 'did:plc:alice',
 	scope,
 	handle: vi.fn()
 });
 const IMAGE = { role: 'thumbnail', content: { $type: 'blob', ref: { $link: 'bafyimage' } } };
-const record = (
-	rkey: string,
-	value: Record<string, unknown>,
-	collection = 'community.lexicon.calendar.event'
-) => ({
+const record = (rkey: string, value: Record<string, unknown>, collection = EVENT) => ({
 	uri: `${CALENDAR}/${GROUP}/${collection}/${rkey}`,
 	cid: `cid-${rkey}`,
 	collection,
@@ -42,11 +41,7 @@ describe('readMembersOnlyEvents', () => {
 			record('e2', { name: 'No start' })
 		]);
 		const events = await readMembersOnlyEvents(caller(), GROUP);
-		expect(mocks.list).toHaveBeenCalledWith({
-			space: CALENDAR,
-			repo: GROUP,
-			collection: 'community.lexicon.calendar.event'
-		});
+		expect(mocks.list).toHaveBeenCalledWith(EVENTS);
 		expect(events).toEqual([
 			expect.objectContaining({ name: 'Trail day', did: GROUP, rkey: 'e1', cid: 'cid-e1' })
 		]);
@@ -71,12 +66,7 @@ describe('readMembersOnlyEvent', () => {
 	it('reads one event by its key, without its image', async () => {
 		mocks.get.mockResolvedValue(record('e1', TRAIL));
 		const event = await readMembersOnlyEvent(caller(), GROUP, 'e1');
-		expect(mocks.get).toHaveBeenCalledWith({
-			space: CALENDAR,
-			repo: GROUP,
-			collection: 'community.lexicon.calendar.event',
-			rkey: 'e1'
-		});
+		expect(mocks.get).toHaveBeenCalledWith({ ...EVENTS, rkey: 'e1' });
 		expect(event).toMatchObject({ name: 'Trail day', cid: 'cid-e1' });
 		expect(event).not.toHaveProperty('media');
 	});
@@ -96,15 +86,12 @@ describe('upcoming', () => {
 		const now = Date.parse('2026-11-01T00:00:00.000Z');
 		const at = (rkey: string, startsAt: string, endsAt?: string) =>
 			({ rkey, startsAt, endsAt, did: GROUP, uri: rkey, name: rkey }) as never;
-		const kept = upcoming(
-			[
-				at('later', '2026-12-01T00:00:00.000Z'),
-				at('past', '2026-10-01T00:00:00.000Z'),
-				at('running', '2026-10-31T20:00:00.000Z', '2026-11-02T00:00:00.000Z'),
-				at('soon', '2026-11-02T00:00:00.000Z')
-			],
-			now
-		);
-		expect(kept.map((e: { rkey: string }) => e.rkey)).toEqual(['running', 'soon', 'later']);
+		const events = [
+			at('later', '2026-12-01T00:00:00.000Z'),
+			at('past', '2026-10-01T00:00:00.000Z'),
+			at('running', '2026-10-31T20:00:00.000Z', '2026-11-02T00:00:00.000Z'),
+			at('soon', '2026-11-02T00:00:00.000Z')
+		];
+		expect(upcoming(events, now).map((e) => e.rkey)).toEqual(['running', 'soon', 'later']);
 	});
 });
