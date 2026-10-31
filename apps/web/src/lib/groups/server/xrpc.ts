@@ -48,3 +48,12 @@ export function isRecordNotFound(e: unknown): boolean {
 export function isAuthRefused(e: unknown): boolean {
 	return e instanceof XrpcError && e.status === 401;
 }
+
+/** The session is sound, but the roles it carries no longer allow the call. */
+export function isRoleRefused(e: unknown): boolean {
+	return (
+		e instanceof XrpcError &&
+		e.status === 403 &&
+		(e.error === 'ScopeMissingError' || e.error === 'Forbidden')
+	);
+}

@@ -129,6 +129,28 @@ describe('groupView for someone who linked the group', () => {
 		expect(mocks.isDeclared).not.toHaveBeenCalled();
 	});
 
+	it.each(['ScopeMissingError', 'Forbidden'])(
+		'shows the group without the link when its roles no longer allow reading it (%s)',
+		async (name) => {
+			mocks.readGroupMeta.mockRejectedValue(
+				new XrpcError('com.atproto.space.getRecord', 403, name)
+			);
+			mocks.repoHasDeclaration.mockResolvedValue(true);
+			mocks.isDeclared.mockResolvedValue(true);
+			expect(await groupView(GROUP, ALICE)).toMatchObject({ linked: null, relink: false });
+			expect(mocks.storeCard).not.toHaveBeenCalled();
+		}
+	);
+
+	it('is the same 404 as for anyone when the link no longer reads an undeclared group', async () => {
+		mocks.readGroupMeta.mockRejectedValue(
+			new XrpcError('com.atproto.space.getRecord', 403, 'ScopeMissingError')
+		);
+		mocks.repoHasDeclaration.mockResolvedValue(false);
+		mocks.isDeclared.mockResolvedValue(false);
+		await expect(groupView(GROUP, ALICE)).rejects.toMatchObject({ status: 404 });
+	});
+
 	it("fails, rather than offering a link, when the group's PDS is down", async () => {
 		mocks.readGroupMeta.mockRejectedValue(new XrpcError('com.atproto.space.getRecord', 502, null));
 		mocks.repoHasDeclaration.mockResolvedValue(true);

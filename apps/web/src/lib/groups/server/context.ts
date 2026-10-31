@@ -20,7 +20,7 @@ import {
 	type GroupMeta
 } from './group';
 import { groupHandle, groupSession, groupSignInAvailable } from './sign-in';
-import { isAuthRefused, type XrpcHandle } from './xrpc';
+import { isAuthRefused, isRoleRefused, type XrpcHandle } from './xrpc';
 
 /** Byte for byte, so the causes cannot be told apart. */
 export const GROUP_NOT_FOUND = 'Group not found';
@@ -57,7 +57,7 @@ async function linkedRead(
 	session: OAuthSession,
 	groupDid: string,
 	personDid: string
-): Promise<{ meta: GroupMeta; listed: boolean } | 'refused'> {
+): Promise<{ meta: GroupMeta; listed: boolean } | 'refused' | 'no-role'> {
 	const handle = groupHandle(session, personDid);
 	try {
 		const [meta, listed] = await Promise.all([
@@ -67,6 +67,9 @@ async function linkedRead(
 		return { meta, listed };
 	} catch (e) {
 		if (needsRelink(e)) return 'refused';
+		// Their role was lowered or taken away: the page shows the group as they may see it
+		// without the link, since linking again would bring back the same link.
+		if (isRoleRefused(e)) return 'no-role';
 		throw e;
 	}
 }
@@ -91,7 +94,7 @@ export async function groupView(actor: string, callerDid: string | null): Promis
 	if (session && callerDid) {
 		const read = await linkedRead(session, group.did, callerDid);
 		if (read === 'refused') relink = true;
-		else {
+		else if (read !== 'no-role') {
 			linked = read;
 			await storeCard(group, read.meta).catch((e) => {
 				console.warn(`[groups] ${group.did}: the card could not be stored:`, e);
