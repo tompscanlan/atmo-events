@@ -30,11 +30,7 @@ vi.mock('#lib/groups/server/group-events.js', () => ({
 vi.mock('#lib/contrail/index.js', () => ({ getServerClient: () => ({}) }));
 vi.mock('#lib/contrail.js', () => ({
 	getEventRecordFromContrail: mocks.getEventRecordFromContrail,
-	flattenEventRecord: (record: { value: object; did: string; rkey: string }) => ({
-		...record.value,
-		did: record.did,
-		rkey: record.rkey
-	})
+	flattenEventRecord: (record: { value: object }) => record.value
 }));
 
 import { load as eventPage } from './[rkey]/+page.server';
@@ -84,11 +80,10 @@ describe("a members-only event's page", () => {
 	});
 
 	it('is the same 404 for someone the host does not count a member and for an event not there', async () => {
-		mocks.groupView.mockResolvedValue(view({ member: false }));
+		mocks.groupView.mockResolvedValueOnce(view({ member: false }));
 		const keptOut = await eventPage(input()).catch((e) => e);
 		expect(mocks.readMembersOnlyEvent).not.toHaveBeenCalled();
 
-		mocks.groupView.mockResolvedValue(view());
 		mocks.readMembersOnlyEvent.mockResolvedValue(null);
 		const absent = await eventPage(input()).catch((e) => e);
 		expect(keptOut).toMatchObject({ status: 404 });
@@ -109,8 +104,7 @@ describe('the new-event page', () => {
 		expect(mocks.calendarSpaceState).toHaveBeenCalledWith(writer);
 		for (const state of ['missing', 'readable', 'unchecked']) {
 			mocks.calendarSpaceState.mockResolvedValue(state);
-			const data = (await newPage(input())) as { membersOnlyUnavailable: unknown };
-			expect(typeof data.membersOnlyUnavailable).toBe('string');
+			expect(await newPage(input())).toMatchObject({ membersOnlyUnavailable: expect.any(String) });
 		}
 	});
 
