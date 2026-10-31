@@ -118,6 +118,26 @@ describe('the new-event page', () => {
 		await expect(newPage(input())).rejects.toMatchObject({ status: 404 });
 		expect(mocks.calendarSpaceState).not.toHaveBeenCalled();
 	});
+
+	it('tells a poster without group permissions that they will not see a members-only event', async () => {
+		mocks.calendarSpaceState.mockResolvedValue('ready');
+		const linked = { linked: { meta: {}, listed: false } };
+		mocks.groupView.mockResolvedValue(view(linked));
+		expect(await newPage(input())).toMatchObject({ membersOnlyUnseen: null });
+
+		mocks.groupView.mockResolvedValue(view({ ...linked, askAccess: true }));
+		const asked = (did?: string) =>
+			({
+				params: { actor: GROUP, rkey: 'e1' },
+				locals: { did: caller.did },
+				cookies: { get: () => did }
+			}) as never;
+		const before = (await newPage(asked())) as { membersOnlyUnseen: string };
+		const after = (await newPage(asked(caller.did))) as { membersOnlyUnseen: string };
+		expect(typeof before.membersOnlyUnseen).toBe('string');
+		expect(typeof after.membersOnlyUnseen).toBe('string');
+		expect(after.membersOnlyUnseen).not.toBe(before.membersOnlyUnseen);
+	});
 });
 
 describe('the edit page', () => {

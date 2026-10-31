@@ -7,6 +7,8 @@ import { readMembersOnlyEvents, upcoming } from '#lib/groups/server/calendar-rea
 import { callerSession } from '#lib/groups/server/caller.js';
 import { groupView, type GroupView, type Viewer } from '#lib/groups/server/context.js';
 import { pendingSetup } from '#lib/groups/server/create.js';
+import { spacesServer } from '#lib/groups/server/group.js';
+import { groupAccess } from '#lib/groups/permissions-asked.js';
 
 const NOTICES = {
 	'link=linked': 'Linked. You can now post events for this group.',
@@ -37,8 +39,9 @@ async function membersOnlySlice(
 	}
 }
 
-export async function load({ params, locals, url }) {
+export async function load({ params, locals, url, cookies }) {
 	const group = await groupView(params.actor, locals);
+	const access = groupAccess(group.askAccess, cookies, locals.did);
 	const [page, membersOnly] = await Promise.all([
 		hostingQuery(getServerClient(env.DB), { actor: group.did as ActorIdentifier }, null),
 		membersOnlySlice(group, locals)
@@ -54,6 +57,9 @@ export async function load({ params, locals, url }) {
 		cursor: page.cursor,
 		membersOnly,
 		signedIn: Boolean(locals.did),
+		you: locals.did ?? null,
+		access,
+		spacesServer: access === 'refused' ? spacesServer() : null,
 		notice: notice ? NOTICES[notice] : null,
 		unfinished: setup !== null && setup.by === locals.did
 	};
