@@ -28,14 +28,16 @@ function required(name) {
 
 const ATMO = required('E2E_ATMO');
 const GROUP_HOST = required('E2E_GROUP_HOST');
-const person = (role) => ({
+const person = (role, name = role.toLowerCase()) => ({
 	role,
+	name,
 	handle: required(`E2E_${role}_HANDLE`),
 	password: required(`E2E_${role}_PASSWORD`)
 });
 const OWNER = person('OWNER');
 const MEMBER = person('MEMBER');
 const OUTSIDER = person('OUTSIDER');
+const NOSPACES = person('NOSPACES', 'a person on a server with no spaces support');
 
 const RUN = Date.now().toString(36);
 const GROUP_NAME = `Trail club ${RUN}`;
@@ -117,7 +119,7 @@ async function signIn(browser, who, again = '') {
 	await settle(page);
 	check(
 		(await page.getByRole('button', { name: /^log in$/i }).count()) === 0,
-		`${who.role.toLowerCase()} signs in through their PDS${again}`
+		`${who.name} signs in through their PDS${again}`
 	);
 	return page;
 }
@@ -514,6 +516,62 @@ async function main() {
 			removedListed === 0 && removedDirect?.status() === 404,
 			'a removed member no longer sees the members-only event',
 			`listed ${removedListed}, its page ${removedDirect?.status()}`
+		);
+
+		// Someone whose own server has no spaces support, as most servers are today. They sign in
+		// and see the group as anyone does; their server cannot grant group permissions, so atmo
+		// reads nothing for them. An admin can still add them, and since their server cannot
+		// write the confirmation either, the admins' list keeps them as not confirmed yet.
+		const carol = await signIn(browser, NOSPACES);
+		const seeGroups = () => carol.getByRole('button', { name: /^see your groups$/i });
+		const carolVisit = async () => {
+			const res = await carol.goto(groupUrl, { waitUntil: 'networkidle' });
+			return {
+				status: res?.status(),
+				publicEvent: await carol.getByText(PUBLIC_EVENT).count(),
+				membersEvent: await carol.getByText(MEMBERS_EVENT).count()
+			};
+		};
+		const seen = await carolVisit();
+		check(
+			seen.status === 200 && seen.publicEvent > 0 && seen.membersEvent === 0,
+			'they see the public group as anyone does, and no members-only event',
+			JSON.stringify(seen)
+		);
+		await seeGroups().click();
+		await walk(carol, NOSPACES);
+		const afterAsking = await carolVisit();
+		const asksAgain = await seeGroups().count();
+		check(
+			afterAsking.status === 200 && asksAgain === 1,
+			'asked for group permissions, their server returns without them, and the group still loads',
+			`${JSON.stringify(afterAsking)}, asks again ${asksAgain}`
+		);
+		const rosterPlace = async (who) => {
+			const res = await fresh.goto(`${groupUrl}/members`, { waitUntil: 'networkidle' });
+			if (res?.status() !== 200) throw new Error(`the members page answered ${res?.status()}`);
+			const [confirmed, unconfirmed = ''] = (await text(fresh)).split('Not confirmed yet');
+			if (confirmed.includes(who.handle)) return 'confirmed';
+			return unconfirmed.includes(who.handle) ? 'not confirmed yet' : 'absent';
+		};
+		await fresh.goto(`${groupUrl}/members`, { waitUntil: 'networkidle' });
+		await fresh.fill('#add-member', NOSPACES.handle);
+		await fresh.getByRole('button', { name: /^add$/i }).click();
+		await settle(fresh);
+		const added = await rosterPlace(NOSPACES);
+		check(
+			added === 'not confirmed yet',
+			'an admin adds them by handle, and they wait under not confirmed yet',
+			added
+		);
+		const addedVisit = await carolVisit();
+		const afterVisit = await rosterPlace(NOSPACES);
+		check(
+			addedVisit.status === 200 &&
+				addedVisit.membersEvent === 0 &&
+				afterVisit === 'not confirmed yet',
+			'after their visit they are still not confirmed, and the group still loads for them',
+			`${JSON.stringify(addedVisit)}, on the roster: ${afterVisit}`
 		);
 	} catch (e) {
 		check(false, 'the run finished', e instanceof Error ? e.message.split('\n')[0] : String(e));
