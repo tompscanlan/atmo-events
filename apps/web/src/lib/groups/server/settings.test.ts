@@ -26,8 +26,17 @@ const settings = (over: Partial<GroupSettings> = {}): GroupSettings => ({
 	...over
 });
 
-const declaredWhilePrivate = (state: GroupPdsState) =>
-	state.declared && state.access?.public !== true;
+const WAS_PUBLIC = { access: PUBLIC, declared: true };
+const WAS_PRIVATE = { access: PRIVATE };
+const HIDDEN = { public: false, listed: false };
+type Save = [string, Partial<GroupPdsState>, Partial<GroupSettings>, boolean, GroupPdsWrite[]];
+
+/** Saves `over` the default settings from the form as `shown`, on a PDS that starts as `from`. */
+async function save(from: Partial<GroupPdsState>, over: Partial<GroupSettings>, shown?: boolean) {
+	const pds = groupPds(GROUP, from);
+	await applyGroupSettings(pds.writer, group, settings(over), shown);
+	return pds;
+}
 
 beforeEach(() => {
 	vi.restoreAllMocks();
@@ -36,41 +45,24 @@ beforeEach(() => {
 });
 
 describe('applyGroupSettings', () => {
-	it('takes a group private by withdrawing its declaration first, then access, then profile', async () => {
-		const pds = groupPds(GROUP, { access: PUBLIC, declared: true });
-		await applyGroupSettings(pds.writer, group, settings({ public: false, listed: false }), true);
-		expect(pds.writes).toEqual(['withdraw', 'access', 'profile']);
-		expect(pds.state).toMatchObject({ declared: false, access: { public: false } });
-	});
-
-	it('takes a group public before declaring it, and declares it only when listed', async () => {
-		const listed = groupPds(GROUP, { access: PRIVATE });
-		await applyGroupSettings(listed.writer, group, settings(), false);
-		expect(listed.writes).toEqual(['access', 'declare', 'profile']);
-
-		const unlisted = groupPds(GROUP, { access: PRIVATE });
-		await applyGroupSettings(unlisted.writer, group, settings({ listed: false }), false);
-		expect(unlisted.writes).toEqual(['access', 'profile']);
-	});
-
-	it('withdraws a public group that is no longer listed', async () => {
-		const pds = groupPds(GROUP, { access: PUBLIC, declared: true });
-		await applyGroupSettings(pds.writer, group, settings({ listed: false }), true);
-		expect(pds.writes).toEqual(['access', 'withdraw', 'profile']);
-		expect(pds.state).toMatchObject({ declared: false, access: { public: true } });
-	});
-
-	const saves: [string, Partial<GroupPdsState>, GroupSettings, boolean, GroupPdsWrite[]][] = [
-		[
-			'private',
-			{ access: PUBLIC, declared: true },
-			settings({ public: false, listed: false }),
-			true,
-			['withdraw', 'access', 'profile']
-		],
-		['public', { access: PRIVATE }, settings(), false, ['access', 'declare', 'profile']]
+	const saves: Save[] = [
+		['private', WAS_PUBLIC, HIDDEN, true, ['withdraw', 'access', 'profile']],
+		['public and listed', WAS_PRIVATE, {}, false, ['access', 'declare', 'profile']],
+		['public but unlisted', WAS_PRIVATE, { listed: false }, false, ['access', 'profile']],
+		['unlisted', WAS_PUBLIC, { listed: false }, true, ['access', 'withdraw', 'profile']]
 	];
-	for (const [to, from, wanted, shown, order] of saves) {
+
+	for (const [to, from, over, shown, order] of saves) {
+		const wanted = settings(over);
+		it(`takes a group ${to} by writing ${order.join(', then ')}`, async () => {
+			const pds = await save(from, over, shown);
+			expect(pds.writes).toEqual(order);
+			expect(pds.state).toMatchObject({
+				declared: wanted.listed,
+				access: { public: wanted.public }
+			});
+		});
+
 		it(`never leaves a private group declared when a save to ${to} stops, and saving again finishes it`, async () => {
 			for (const stop of order) {
 				const pds = groupPds(GROUP, structuredClone(from));
@@ -78,7 +70,7 @@ describe('applyGroupSettings', () => {
 				await expect(applyGroupSettings(pds.writer, group, wanted, shown)).rejects.toBeInstanceOf(
 					XrpcError
 				);
-				expect(declaredWhilePrivate(pds.state)).toBe(false);
+				expect(pds.state.declared && pds.state.access?.public !== true).toBe(false);
 
 				await applyGroupSettings(pds.writer, group, wanted, shown);
 				expect(pds.state).toMatchObject({
@@ -91,17 +83,14 @@ describe('applyGroupSettings', () => {
 	}
 
 	it('keeps a visibility someone changed after the form was shown, and its listing', async () => {
-		const madePublic = groupPds(GROUP, { access: PUBLIC, declared: true });
-		const stale = settings({ name: 'Renamed', public: false, listed: false });
-		await applyGroupSettings(madePublic.writer, group, stale, false);
+		const madePublic = await save(WAS_PUBLIC, { name: 'Renamed', ...HIDDEN }, false);
 		expect(madePublic.state).toMatchObject({
 			declared: true,
 			access: { public: true },
 			profile: { displayName: 'Renamed' }
 		});
 
-		const madePrivate = groupPds(GROUP, { access: PRIVATE });
-		await applyGroupSettings(madePrivate.writer, group, settings(), true);
+		const madePrivate = await save(WAS_PRIVATE, {}, true);
 		expect(madePrivate.state).toMatchObject({ declared: false, access: { public: false } });
 	});
 
@@ -115,13 +104,8 @@ describe('applyGroupSettings', () => {
 			banner: blob,
 			url: 'https://knit.example'
 		};
-		const pds = groupPds(GROUP, { access: PUBLIC, profile });
-		await applyGroupSettings(
-			pds.writer,
-			group,
-			settings({ name: 'New', description: null, joinPolicy: 'approval', listed: false }),
-			true
-		);
+		const over = { name: 'New', description: null, joinPolicy: 'approval', listed: false } as const;
+		const pds = await save({ access: PUBLIC, profile }, over, true);
 		expect(pds.state.profile).toEqual({
 			$type: 'group.opensocial.profile',
 			displayName: 'New',
@@ -134,31 +118,26 @@ describe('applyGroupSettings', () => {
 	});
 
 	it('gives a new group an access record its admins and members can read by', async () => {
-		const pds = groupPds(GROUP);
-		await applyGroupSettings(pds.writer, group, settings({ public: false, listed: false }));
-		const grants = pds.state.access?.grants as { role: string }[];
-		expect(pds.state.access?.public).toBe(false);
-		expect(grants.map((g) => g.role)).toEqual(['admin', 'member']);
+		const pds = await save({}, HIDDEN);
+		expect(pds.state.access).toMatchObject({
+			public: false,
+			grants: [{ role: 'admin' }, { role: 'member' }]
+		});
 	});
 
 	it("shows visitors a public group's card, and removes a private group's", async () => {
-		const pds = groupPds(GROUP, { access: PRIVATE });
-		await applyGroupSettings(pds.writer, group, settings(), false);
-		expect((await readCards([GROUP])).get(GROUP)).toMatchObject({
-			name: 'Knitters',
-			handle: 'knit.example'
-		});
+		const pds = await save(WAS_PRIVATE, {}, false);
+		const card = (await readCards([GROUP])).get(GROUP);
+		expect(card).toMatchObject({ name: 'Knitters', handle: 'knit.example' });
 
-		await applyGroupSettings(pds.writer, group, settings({ public: false, listed: false }), true);
+		await applyGroupSettings(pds.writer, group, settings(HIDDEN), true);
 		expect((await readCards([GROUP])).has(GROUP)).toBe(false);
 	});
 
 	it('saves even when the card cannot be stored', async () => {
 		vi.spyOn(kv, 'put').mockRejectedValue(new Error('KV down'));
 		vi.spyOn(console, 'warn').mockImplementation(() => {});
-		const pds = groupPds(GROUP, { access: PRIVATE });
-		await expect(applyGroupSettings(pds.writer, group, settings(), false)).resolves.toBeUndefined();
-		expect(pds.writes).toEqual(['access', 'declare', 'profile']);
+		expect((await save(WAS_PRIVATE, {}, false)).writes).toEqual(['access', 'declare', 'profile']);
 	});
 });
 
