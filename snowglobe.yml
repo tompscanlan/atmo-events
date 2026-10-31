@@ -67,6 +67,8 @@ apps:
       PUBLIC_JETSTREAM_URL: ${services.jetstream.url}
       PUBLIC_RELAY_URLS: ${services.relay.url}
       PUBLIC_SIGNUP_PDS_URL: ${pds.alpha.url}
+      # Where a person whose server has no spaces support is pointed to make an account.
+      SPACES_PDS_URL: ${pds.alpha.url}
       # Nothing here stands in for DNS-over-HTTPS, Constellation, the Bluesky API or the image
       # CDN, so those stay public.
 
