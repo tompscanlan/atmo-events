@@ -17,12 +17,18 @@ vi.mock('#lib/groups/server/roster.js', () => ({
 	handlesOf: vi.fn(async () => ({}))
 }));
 
+import { ASKED_COOKIE } from '#lib/groups/permissions-asked.js';
 import { load } from './+page.server';
 
 const GROUP = 'did:plc:group';
 const caller = { did: 'did:plc:carol', scope: 'atproto', handle: vi.fn() };
-const input = () =>
-	({ params: { actor: GROUP }, locals: { did: caller.did, session: {} } }) as never;
+/** `asked`: the DID this browser remembers asking for group permissions. */
+const input = (asked?: string) =>
+	({
+		params: { actor: GROUP },
+		locals: { did: caller.did, session: {} },
+		cookies: { get: (name: string) => (name === ASKED_COOKIE ? asked : undefined) }
+	}) as never;
 const view = (over: Record<string, unknown>) => ({
 	did: GROUP,
 	name: 'Knitters',
@@ -46,9 +52,16 @@ describe('the members page for someone without group permissions', () => {
 		expect(await load(input())).toMatchObject({
 			hidden: true,
 			needsAccess: true,
+			access: 'ask',
+			you: caller.did,
 			spacesServer: null
 		});
 		expect(mocks.readRoster).not.toHaveBeenCalled();
+	});
+
+	it('explains instead of asking again once they asked and came back without them', async () => {
+		mocks.groupView.mockResolvedValue(view({ askAccess: true }));
+		expect(await load(input(caller.did))).toMatchObject({ needsAccess: true, access: 'refused' });
 	});
 
 	it("points to the site's server with spaces support when it names one", async () => {
