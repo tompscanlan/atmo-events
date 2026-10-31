@@ -48,7 +48,8 @@ function check(ok, label, detail) {
 	console.log(
 		`${ok ? 'PASS' : 'FAIL'} ${passed + failed + 1}. ${label}${!ok && detail ? `: ${detail}` : ''}`
 	);
-	ok ? passed++ : failed++;
+	if (ok) passed++;
+	else failed++;
 	return ok;
 }
 
