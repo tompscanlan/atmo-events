@@ -25,17 +25,12 @@ import { readGroupMembers, splitRoster } from './members-read';
 
 const caller = (did: string) => ({ did, scope: '', handle: vi.fn() });
 const roster = { [ADMIN]: 'admin', [MEMBER]: 'member', [NEW]: 'member' } as const;
+const confirmed = { [ADMIN]: true, [MEMBER]: true, [NEW]: false };
 
 beforeEach(() => {
 	vi.resetAllMocks();
 	mocks.reader = recordsReader(GROUP, authzRecords(GROUP, roster));
-	mocks.accepted.mockResolvedValue(
-		new Map([
-			[ADMIN, true],
-			[MEMBER, true],
-			[NEW, false]
-		])
-	);
+	mocks.accepted.mockResolvedValue(new Map(Object.entries(confirmed)));
 	mocks.accept.mockResolvedValue(true);
 });
 
