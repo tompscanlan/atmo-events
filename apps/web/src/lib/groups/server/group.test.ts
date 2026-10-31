@@ -83,10 +83,8 @@ describe('the declaration index', () => {
 	});
 
 	it('lists declared groups newest first with no profiles', async () => {
-		mocks.get.mockResolvedValue({
-			ok: true,
-			data: { records: [{ did: GROUP, time_us: 2_000_000 }] }
-		});
+		const records = [{ did: GROUP, time_us: 2_000_000 }];
+		mocks.get.mockResolvedValue({ ok: true, data: { records } });
 		expect(await listDeclaredGroups()).toEqual([{ did: GROUP, indexedAt: 2000 }]);
 		expect(mocks.get.mock.calls[0][1].params).not.toHaveProperty('profiles');
 	});
@@ -162,12 +160,10 @@ describe('cards', () => {
 	const group = { did: GROUP, handle: 'knit.example' };
 
 	it("keeps a public group's name for visitors", async () => {
-		await storeCard(group, { profile: { name: 'Knitters', description: 'Yarn' }, public: true });
-		expect((await readCards([GROUP, 'did:plc:none'])).get(GROUP)).toEqual({
-			name: 'Knitters',
-			description: 'Yarn',
-			handle: 'knit.example'
-		});
+		const profile = { name: 'Knitters', description: 'Yarn' };
+		await storeCard(group, { profile, public: true });
+		const cards = await readCards([GROUP, 'did:plc:none']);
+		expect(cards.get(GROUP)).toEqual({ ...profile, handle: 'knit.example' });
 	});
 
 	it("removes a group's card once it is private", async () => {
