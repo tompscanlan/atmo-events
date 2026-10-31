@@ -19,14 +19,10 @@ vi.mock('./server/caller', () => ({ callerSession: mocks.callerSession }));
 vi.mock('./server/context', () => ({ requireGroupWriter: mocks.requireGroupWriter }));
 vi.mock('./server/group', () => ({ resolveGroup: mocks.resolveGroup }));
 vi.mock('./server/host', async (importActual) => ({
-	GroupActionError: (await importActual<typeof import('./server/host')>()).GroupActionError,
+	...(await importActual<typeof import('./server/host')>()),
 	requestJoin: mocks.requestJoin,
 	admitMember: mocks.admitMember,
-	removeMember: mocks.removeMember,
-	cancelJoinRequest: vi.fn(),
-	leaveGroup: vi.fn(),
-	denyJoinRequest: vi.fn(),
-	setMemberRole: vi.fn()
+	removeMember: mocks.removeMember
 }));
 
 import { GroupActionError } from './server/host';
@@ -34,6 +30,7 @@ import { addMember, joinGroup, remove } from './members.remote';
 
 const GROUP = 'did:plc:group';
 const ALICE = 'did:plc:alice';
+const BOB = 'did:plc:bob';
 const caller = { did: ALICE, scope: '', handle: vi.fn() };
 const writer = { did: GROUP, handle: vi.fn() };
 
@@ -71,18 +68,16 @@ describe("a person's own acts", () => {
 describe("an admin's acts", () => {
 	it("go out only on the caller's own linked session", async () => {
 		mocks.requireGroupWriter.mockImplementation(() => error(404, 'Group not found'));
-		await expect(remove({ groupDid: GROUP, did: 'did:plc:bob' })).rejects.toMatchObject({
-			status: 404
-		});
+		await expect(remove({ groupDid: GROUP, did: BOB })).rejects.toMatchObject({ status: 404 });
 		expect(mocks.requireGroupWriter).toHaveBeenCalledWith(GROUP, ALICE);
 		expect(mocks.removeMember).not.toHaveBeenCalled();
 	});
 
 	it('add someone by handle, resolved to their DID', async () => {
-		mocks.resolveGroup.mockResolvedValue({ did: 'did:plc:bob', handle: 'bob.example' });
+		mocks.resolveGroup.mockResolvedValue({ did: BOB, handle: 'bob.example' });
 		await addMember({ groupDid: GROUP, actor: '@bob.example', role: 'member' });
 		expect(mocks.resolveGroup).toHaveBeenCalledWith('bob.example');
-		expect(mocks.admitMember).toHaveBeenCalledWith(writer, 'did:plc:bob', 'member');
+		expect(mocks.admitMember).toHaveBeenCalledWith(writer, BOB, 'member');
 	});
 
 	it('refuse a handle that does not resolve', async () => {
