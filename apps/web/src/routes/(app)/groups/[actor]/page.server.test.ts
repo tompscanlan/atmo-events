@@ -27,13 +27,7 @@ const input = () =>
 		locals: { did: caller.did, session: {} },
 		url: new URL(`https://atmo.example/groups/${GROUP}`)
 	}) as never;
-const at = (rkey: string, startsAt: string) => ({
-	rkey,
-	startsAt,
-	did: GROUP,
-	uri: rkey,
-	name: rkey
-});
+const at = (rkey: string, startsAt: string) => ({ rkey, startsAt, did: GROUP, uri: rkey });
 
 beforeEach(() => {
 	vi.resetAllMocks();
