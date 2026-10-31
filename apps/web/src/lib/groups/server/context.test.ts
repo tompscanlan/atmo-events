@@ -48,6 +48,10 @@ const GROUP = 'did:plc:group';
 const ALICE = 'did:plc:alice';
 const resolved = { did: GROUP, handle: 'knit.example', pds: 'https://host.example' };
 const meta = { profile: { name: 'Knitters', description: 'Yarn' }, public: true };
+const VISITOR = { did: null, session: null };
+const AS_ALICE = { did: ALICE, session: null } as const;
+const NOT_FOUND = { status: 404, body: { message: GROUP_NOT_FOUND } };
+const GET_RECORD = 'com.atproto.space.getRecord';
 
 beforeEach(() => {
 	vi.resetAllMocks();
@@ -62,30 +66,18 @@ beforeEach(() => {
 });
 
 describe('groupView for a visitor', () => {
-	it('is the same 404 with groups off, for an unknown actor, and for an undeclared group', async () => {
-		mocks.isDeclared.mockResolvedValue(false);
-		await expect(groupView(GROUP, { did: null, session: null })).rejects.toMatchObject({
-			status: 404,
-			body: { message: GROUP_NOT_FOUND }
-		});
-
-		mocks.resolveGroup.mockResolvedValueOnce(null);
-		await expect(groupView('nobody.example', { did: null, session: null })).rejects.toMatchObject({
-			status: 404
-		});
-
-		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
-		await expect(groupView(GROUP, { did: null, session: null })).rejects.toMatchObject({
-			status: 404,
-			body: { message: GROUP_NOT_FOUND }
-		});
+	it.each([
+		['with groups off', () => Reflect.deleteProperty(env, 'GROUP_HOST_URL')],
+		['for an unknown actor', () => mocks.resolveGroup.mockResolvedValueOnce(null)],
+		['for an undeclared group', () => mocks.isDeclared.mockResolvedValue(false)]
+	])('is the same 404 %s', async (_why, arrange) => {
+		arrange();
+		await expect(groupView(GROUP, VISITOR)).rejects.toMatchObject(NOT_FOUND);
 	});
 
 	it('is a 503 when the index cannot say, never a 404', async () => {
 		mocks.isDeclared.mockRejectedValue(new Error('index down'));
-		await expect(groupView(GROUP, { did: null, session: null })).rejects.toMatchObject({
-			status: 503
-		});
+		await expect(groupView(GROUP, VISITOR)).rejects.toMatchObject({ status: 503 });
 	});
 
 	it("shows a declared group by its card's name", async () => {
@@ -93,7 +85,7 @@ describe('groupView for a visitor', () => {
 		mocks.readCards.mockResolvedValue(
 			new Map([[GROUP, { name: 'Knitters', description: 'Yarn', handle: 'knit.example' }]])
 		);
-		expect(await groupView(GROUP, { did: ALICE, session: null })).toMatchObject({
+		expect(await groupView(GROUP, AS_ALICE)).toMatchObject({
 			did: GROUP,
 			name: 'Knitters',
 			description: 'Yarn',
@@ -105,7 +97,7 @@ describe('groupView for a visitor', () => {
 
 	it('falls back to the handle when there is no card', async () => {
 		mocks.isDeclared.mockResolvedValue(true);
-		expect((await groupView(GROUP, { did: null, session: null })).name).toBe('knit.example');
+		expect((await groupView(GROUP, VISITOR)).name).toBe('knit.example');
 	});
 });
 
@@ -117,7 +109,7 @@ describe('groupView for someone who linked the group', () => {
 	it('reads as the group, stores the card, and needs no declaration', async () => {
 		mocks.readGroupMeta.mockResolvedValue({ ...meta, public: false });
 		mocks.repoHasDeclaration.mockResolvedValue(false);
-		const view = await groupView(GROUP, { did: ALICE, session: null });
+		const view = await groupView(GROUP, AS_ALICE);
 		expect(view).toMatchObject({
 			name: 'Knitters',
 			linked: { meta: { public: false }, listed: false },
@@ -128,47 +120,33 @@ describe('groupView for someone who linked the group', () => {
 		expect(mocks.isDeclared).not.toHaveBeenCalled();
 	});
 
-	it('asks to link again when the PDS refuses the session', async () => {
-		mocks.readGroupMeta.mockRejectedValue(new XrpcError('com.atproto.space.getRecord', 401, null));
+	it.each([
+		['the PDS refuses the session', mocks.readGroupMeta, new XrpcError(GET_RECORD, 401, null)],
+		[
+			'the session can no longer refresh',
+			mocks.readGroupMeta,
+			new TokenRefreshError(GROUP, 'invalid_grant')
+		],
+		['the stored session does not restore', mocks.groupSession, new Error('corrupt session')]
+	])('asks to link again when %s', async (_why, failing, e) => {
+		failing.mockRejectedValue(e);
 		mocks.repoHasDeclaration.mockResolvedValue(true);
-		expect(await groupView(GROUP, { did: ALICE, session: null })).toMatchObject({
-			linked: null,
-			relink: true
-		});
+		expect(await groupView(GROUP, AS_ALICE)).toMatchObject({ linked: null, relink: true });
 		expect(mocks.storeCard).not.toHaveBeenCalled();
-	});
-
-	it('asks to link again when the session can no longer refresh', async () => {
-		mocks.readGroupMeta.mockRejectedValue(new TokenRefreshError(GROUP, 'invalid_grant'));
-		mocks.repoHasDeclaration.mockResolvedValue(true);
-		expect(await groupView(GROUP, { did: ALICE, session: null })).toMatchObject({
-			linked: null,
-			relink: true
-		});
-	});
-
-	it('asks to link again when the stored session does not restore', async () => {
-		mocks.groupSession.mockRejectedValue(new Error('corrupt session'));
-		expect(await groupView(GROUP, { did: ALICE, session: null })).toMatchObject({
-			linked: null,
-			relink: true
-		});
 		expect(mocks.isDeclared).not.toHaveBeenCalled();
 	});
 
 	it("fails, rather than offering a link, when the group's PDS is down", async () => {
-		mocks.readGroupMeta.mockRejectedValue(new XrpcError('com.atproto.space.getRecord', 502, null));
+		mocks.readGroupMeta.mockRejectedValue(new XrpcError(GET_RECORD, 502, null));
 		mocks.repoHasDeclaration.mockResolvedValue(true);
-		await expect(groupView(GROUP, { did: ALICE, session: null })).rejects.toMatchObject({
-			status: 502
-		});
+		await expect(groupView(GROUP, AS_ALICE)).rejects.toMatchObject({ status: 502 });
 	});
 });
 
 describe('requireGroupWriter', () => {
 	it('is the same 404 without a linked session', async () => {
-		await expect(requireGroupWriter(GROUP, ALICE)).rejects.toMatchObject({ status: 404 });
-		await expect(requireGroupWriter(GROUP, null)).rejects.toMatchObject({ status: 404 });
+		await expect(requireGroupWriter(GROUP, ALICE)).rejects.toMatchObject(NOT_FOUND);
+		await expect(requireGroupWriter(GROUP, null)).rejects.toMatchObject(NOT_FOUND);
 		expect(mocks.groupSession).toHaveBeenCalledOnce();
 	});
 
@@ -223,7 +201,7 @@ describe("groupView with the caller's own access", () => {
 	it('is the same 404 when the host turns them away from an undeclared group', async () => {
 		mocks.readMetaAsPerson.mockRejectedValue(new SpaceAccessDenied('s', '403 UserNotAuthorized'));
 		mocks.isDeclared.mockResolvedValue(false);
-		await expect(view()).rejects.toMatchObject({ status: 404, body: { message: GROUP_NOT_FOUND } });
+		await expect(view()).rejects.toMatchObject(NOT_FOUND);
 		expect(mocks.groupSpacesOf).not.toHaveBeenCalled();
 	});
 
@@ -238,7 +216,7 @@ describe("groupView with the caller's own access", () => {
 		mocks.readMetaAsPerson.mockRejectedValue(new SpaceAccessDenied('s', '400 SpaceNotFound', true));
 		mocks.groupSpacesOf.mockResolvedValue(['did:plc:other']);
 		mocks.isDeclared.mockResolvedValue(false);
-		await expect(view()).rejects.toMatchObject({ status: 404, body: { message: GROUP_NOT_FOUND } });
+		await expect(view()).rejects.toMatchObject(NOT_FOUND);
 	});
 
 	it('still shows a declared group when the host read fails', async () => {
