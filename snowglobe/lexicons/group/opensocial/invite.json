@@ -1,0 +1,30 @@
+{
+	"lexicon": 1,
+	"id": "group.opensocial.invite",
+	"defs": {
+		"main": {
+			"type": "record",
+			"description": "An invitation, written by the group in its own repo in the invitee's invites space. Deleting it revokes it.",
+			"key": "tid",
+			"record": {
+				"type": "object",
+				"required": ["createdAt"],
+				"properties": {
+					"createdAt": {
+						"type": "string",
+						"format": "datetime"
+					},
+					"expiresAt": {
+						"type": "string",
+						"format": "datetime"
+					},
+					"message": {
+						"type": "string",
+						"maxGraphemes": 2000,
+						"maxLength": 20000
+					}
+				}
+			}
+		}
+	}
+}

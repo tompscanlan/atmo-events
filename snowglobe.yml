@@ -1,51 +1,85 @@
-# A snowglobe for atmo: a private atproto network on this machine (@openmeet/snowglobe), with one
-# PDS, a relay, Jetstream and Slingshot. atmo reaches it through its network settings (apps/web/src/env.ts),
-# which the env below sets.
+# A snowglobe for atmo's groups: a private atproto network on this machine (@openmeet/snowglobe)
+# with an opensocial.group group host built from your checkout, the 2026-10-29 permissioned-spaces
+# alpha, and a current PDS release. atmo reaches it through its network settings
+# (apps/web/src/env.ts), which the env below sets.
 #
 #   pnpm install
-#   pnpm globe:up     # starts it and makes alice and bob
-#   pnpm globe:dev    # atmo on it, at http://127.0.0.1:5454
-#   pnpm globe:e2e    # up if need be, then apps/web/scripts/network-e2e.mjs
-#   pnpm globe:down   # stops it, keeping its accounts
+#   pnpm globe:up   # builds the group host from ../atproto-group-host, makes the accounts
+#   pnpm globe:dev  # atmo at https://atmo.app.local.snowglobe.at
+#   pnpm globe:e2e  # up if need be, then apps/web/scripts/groups-e2e.mjs
+#   pnpm globe:down # stops it, keeping its accounts
 #
-# Passwords are in ~/.local/share/snowglobe/atmo/accounts.env. Signing in from a browser also needs
-# atmo's permission sets on a lexicon authority, which this file does not set up yet.
+# The first time, also run `pnpm --filter web env:setup-dev` for atmo's client key and cookie
+# secret (apps/web/.env): the group sign-in is a confidential client. Passwords are in
+# ~/.local/share/snowglobe/atmogroups/accounts.env.
 
-globe: atmo
+globe: atmogroups
 domain: local.snowglobe.at
 
 pds:
-  - name: main # https://main.local.snowglobe.at
-    image: ghcr.io/bluesky-social/pds:0.4.5037
+  # The alpha of 2026-10-29 (permissioned-data-alpha 11c5d98c); the group host runs this same
+  # build as a library.
+  - name: alpha
+    image: ghcr.io/bluesky-social/atproto@sha256:f003adf7ca7cbb8ff60a4d99323fd009dfc1259b208f468f71accf0366ecab1e
     bare_handles: true # handles <name>.local.snowglobe.at
+    invites: required
+  - name: regular # a current release, with no spaces
+    image: ghcr.io/bluesky-social/pds:0.4.5037
+
+grouphosts:
+  - name: gh # https://gh.local.snowglobe.at; groups' handles are <group>.gh.local.snowglobe.at
+    kind: opensocial
+    build: ../atproto-group-host # a checkout beside this one
 
 services:
   jetstream: true
   slingshot: true
   pdsls: false
 
+lexicons:
+  authority: alpha
+  # The permission sets and space types atmo's sign-ins ask for: the calendar's authFull (from
+  # its real authority, 2026-10-31), Bluesky's authCreatePosts, the opensocial.group proposal's
+  # lexicons (main 2b41a9b, 2026-10-19) and atmo's calendar space type, rsvp.atmo.group.calendar.
+  publish: snowglobe/lexicons
+
+# Owner, member and outsider on the alpha, and carol on a PDS with no spaces.
 accounts:
-  - alice@main
-  - bob@main
+  - alice@alpha
+  - bob@alpha
+  - mallory@alpha
+  - carol@regular
 
 apps:
   - name: atmo
+    local: { port: 5454 } # DEV_PORT in apps/web/src/lib/atproto/settings.ts
     env:
       # atmo's server reads its Worker env from wrangler.jsonc and .env. This adds the process
       # environment, so the settings below reach it.
       CLOUDFLARE_INCLUDE_PROCESS_ENV: 'true'
-      # Empty: atmo's loopback OAuth client at http://127.0.0.1:5454, which needs no keys.
-      OAUTH_PUBLIC_URL: ''
+      # A public https address: the group sign-in is a confidential client, which a loopback
+      # address cannot be.
+      OAUTH_PUBLIC_URL: ${apps.atmo.url}
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: ${apps.atmo.host}
+      GROUP_HOST_URL: ${grouphosts.gh.url}
       PUBLIC_PLC_URL: ${services.plc.url}
       PUBLIC_SLINGSHOT_URL: ${services.slingshot.url}
-      # contrail takes Jetstream's origin, without /subscribe. contrail 0.27 reads Jetstream v2
-      # (/xrpc/network.bsky.jetstream.subscribeEvents), which snowglobe serves from 0.4.0. Jetstream
-      # has only what is written after its first start, and it reads the relay, so the relay runs
-      # with one PDS too.
       PUBLIC_JETSTREAM_URL: ${services.jetstream.url}
-      PUBLIC_SIGNUP_PDS_URL: ${pds.main.url}
+      PUBLIC_RELAY_URLS: ${services.relay.url}
+      PUBLIC_SIGNUP_PDS_URL: ${pds.alpha.url}
       # Nothing here stands in for DNS-over-HTTPS, Constellation, the Bluesky API or the image
       # CDN, so those stay public.
-      E2E_PDS: ${pds.main.url}
-      E2E_HANDLE: ${accounts.alice.handle}
-      E2E_PASSWORD: ${accounts.alice.password}
+
+  # atmo's groups e2e: apps/web/scripts/groups-e2e.mjs
+  - name: e2e
+    env:
+      E2E_ATMO: ${apps.atmo.url}
+      E2E_GROUP_HOST: ${grouphosts.gh.url}
+      E2E_PLC_URL: ${services.plc.url}
+      E2E_PDS: ${pds.alpha.url}
+      E2E_OWNER_HANDLE: ${accounts.alice.handle}
+      E2E_OWNER_PASSWORD: ${accounts.alice.password}
+      E2E_MEMBER_HANDLE: ${accounts.bob.handle}
+      E2E_MEMBER_PASSWORD: ${accounts.bob.password}
+      E2E_OUTSIDER_HANDLE: ${accounts.mallory.handle}
+      E2E_OUTSIDER_PASSWORD: ${accounts.mallory.password}
