@@ -16,8 +16,8 @@ importers:
         specifier: ^2.31.0
         version: 2.31.0(@types/node@22.20.0)
       '@openmeet/snowglobe':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.4.0
+        version: 0.4.0
       prettier:
         specifier: ^3.8.1
         version: 3.8.1
@@ -430,9 +430,11 @@ packages:
 
   '@atmo-dev/contrail-appview@0.12.2':
     resolution: {integrity: sha512-FekVluCYzXW58fKPiAORFo+7BdPYrImxv7+oA8l3LHuuNOaKe+FEjmq4cI74Nz9vBLURDSb27xr/gCPuHfHxUg==}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
 
   '@atmo-dev/contrail-authority@0.12.2':
     resolution: {integrity: sha512-FJRjucOB8n0QxU7yWKkiGFGL3P4E4UeoPwG4rcda4992POVacmX2Zvly0Xse4Md5ovWTEHbWpZWsVfMD+qp6pQ==}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
 
   '@atmo-dev/contrail-base@0.12.2':
     resolution: {integrity: sha512-7dYTfmfXhuDJK8KHnTZ/Qj4dkLxhApuyysZTQaxFwkdRlr/mPspeZ5wAyPU5uAy045GwVLRLZnrJLTHdW9QuUw==}
@@ -448,6 +450,7 @@ packages:
 
   '@atmo-dev/contrail-record-host@0.12.2':
     resolution: {integrity: sha512-IdXwnU9K18zl1Fk6FvRHP/QMiXq3noJElP2A8wgbjTZe5ueOBpTUcI1hvlrm4AW794UUkJmWSU0cBdIzjJkjaA==}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
 
   '@atmo-dev/contrail@0.12.2':
     resolution: {integrity: sha512-VrJpZeV+Tv5c25Dksn0X550oBTMh4sxcWUPLSRcd7FjhCGcyV2tA7z5HTQyPGeFMKGNReMs2Bnjp80sy2s9plA==}
@@ -1301,8 +1304,8 @@ packages:
     peerDependencies:
       svelte: ^4 || ^5
 
-  '@openmeet/snowglobe@0.3.0':
-    resolution: {integrity: sha512-/TCjmn/1i6FCgD6/u/OPM+qzG2xtxyG02OOE/SGQcE8mNC8GsuzKew/yRu2b4CkGO9BpMcpubnVpxS2YIc3iCA==}
+  '@openmeet/snowglobe@0.4.0':
+    resolution: {integrity: sha512-kRo/vcWz1VNrYVTQmZmCh1vDsnf0tABS0kpXpStKicrOidXd9MDFRtc1xA/iueBbQ2MrKylhvbM/DXkCrc//CQ==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -4873,7 +4876,7 @@ snapshots:
       number-flow: 0.6.0
       svelte: 5.55.0
 
-  '@openmeet/snowglobe@0.3.0':
+  '@openmeet/snowglobe@0.4.0':
     dependencies:
       '@peculiar/asn1-schema': 2.11.0
       '@peculiar/asn1-x509': 2.11.0
