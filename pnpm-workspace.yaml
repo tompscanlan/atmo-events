@@ -18,3 +18,4 @@ minimumReleaseAgeExclude:
   - '@atmo-dev/*'
   - '@svelte-atproto/*'
   - svelte@5.57.3
+  - '@openmeet/snowglobe@0.4.0'
