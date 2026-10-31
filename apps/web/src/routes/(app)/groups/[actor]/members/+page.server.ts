@@ -6,8 +6,9 @@ import { listJoinRequests, type JoinRequest } from '#lib/groups/server/host.js';
 import { splitRoster } from '#lib/groups/server/members-read.js';
 import { handlesOf, readRoster } from '#lib/groups/server/roster.js';
 import { isSpaceAccessDenied } from '#lib/groups/server/space-credential.js';
+import { groupAccess } from '#lib/groups/permissions-asked.js';
 
-export async function load({ params, locals }) {
+export async function load({ params, locals, cookies }) {
 	const group = await groupView(params.actor, locals);
 	const caller = await callerSession(locals.session);
 	const base = {
@@ -16,11 +17,14 @@ export async function load({ params, locals }) {
 	};
 	// Someone who can see the group but holds no group permissions, perhaps because their server
 	// cannot grant them: say how to get them, instead of answering that there is no group.
-	if (!group.personal && caller && group.askAccess) {
+	const access = groupAccess(group.askAccess, cookies, caller?.did);
+	if (!group.personal && caller && access) {
 		return {
 			...base,
 			hidden: true as const,
 			needsAccess: true as const,
+			access,
+			you: caller.did,
 			spacesServer: spacesServer()
 		};
 	}

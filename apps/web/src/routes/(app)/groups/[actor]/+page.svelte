@@ -3,15 +3,14 @@
 	import { EventCard } from '@atmo-dev/events-ui';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { requestPermissions } from '@svelte-atproto/oauth/client';
 	import EventList from '#lib/components/EventList.svelte';
+	import GroupAccessNotice from '#lib/groups/components/GroupAccessNotice.svelte';
 	import {
 		finishGroupSetup,
 		setGroupListed,
 		unlinkGroupSession
 	} from '#lib/groups/group.remote.js';
 	import { cancelJoin, joinGroup, leave } from '#lib/groups/members.remote.js';
-	import { GROUP_PERSON_SCOPES } from '#lib/groups/scopes.js';
 
 	let { data } = $props();
 
@@ -80,21 +79,13 @@
 		{#if data.notice}<p role="status" class="text-muted mt-4 text-sm">{data.notice}</p>{/if}
 		{#if failure}<p role="alert" class="mt-4 text-sm text-red-600">{failure}</p>{/if}
 
-		{#if group.askAccess}
-			<div class="mt-6 flex flex-wrap items-center gap-3">
-				<Button
-					variant="secondary"
-					disabled={busy}
-					onclick={() =>
-						act(
-							() => requestPermissions(GROUP_PERSON_SCOPES),
-							async () => undefined
-						)}>See your groups</Button
-				>
-				<span class="text-muted text-sm">
-					To see the groups you belong to, private ones too, allow atmo to read them.
-				</span>
-			</div>
+		{#if data.access && data.you}
+			<GroupAccessNotice
+				access={data.access}
+				did={data.you}
+				purpose="To see the groups you belong to, private ones too, allow atmo to read them."
+				spacesServer={data.spacesServer}
+			/>
 		{/if}
 
 		{#if group.personal && group.member !== null}
