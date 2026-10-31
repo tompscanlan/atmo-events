@@ -349,6 +349,47 @@ async function main() {
 			),
 			"an event posted through the new link lands in the group's repo"
 		);
+
+		// Leaving. The host deletes the membership, and atmo asks the host on every visit whether
+		// the person is a member, so the members-only events go at once: the cut does not wait for
+		// the space credentials atmo holds for them to run out.
+		// The members page needs the group permissions. atmo keeps one sign-in per person, so the
+		// fresh one replaced the first browser's, and neither holds them until asked again.
+		await allowGroups(fresh, OWNER, groupUrl);
+		const rosterHas = async (page, who) => {
+			const res = await page.goto(`${groupUrl}/members`, { waitUntil: 'networkidle' });
+			if (res?.status() !== 200) throw new Error(`the members page answered ${res?.status()}`);
+			return (await text(page)).includes(who.handle);
+		};
+		const onRoster = await rosterHas(fresh, MEMBER);
+		await member.goto(groupUrl, { waitUntil: 'networkidle' });
+		await member.getByRole('button', { name: /^leave group$/i }).click();
+		await member
+			.getByRole('button', { name: /^ask to join$/i })
+			.waitFor({ timeout: 30_000 })
+			.catch(() => {});
+		await member.reload({ waitUntil: 'networkidle' });
+		const offered = await buttons(member);
+		check(
+			!offered.some((b) => /^leave group$/i.test(b)) &&
+				offered.some((b) => /^ask to join$/i.test(b)),
+			'the member leaves, and their next visit offers to ask to join again',
+			offered.join(', ')
+		);
+		check(
+			onRoster && !(await rosterHas(fresh, MEMBER)),
+			"the owner's roster drops them",
+			`on the roster before leaving: ${onRoster}`
+		);
+		const stillListed = await member.getByText(MEMBERS_EVENT).count();
+		const stillDirect = await member.goto(`${groupUrl}/events/${membersRkey}`, {
+			waitUntil: 'networkidle'
+		});
+		check(
+			stillListed === 0 && stillDirect?.status() === 404,
+			'the former member no longer sees the members-only event',
+			`listed ${stillListed}, its page ${stillDirect?.status()}`
+		);
 	} catch (e) {
 		check(false, 'the run finished', e instanceof Error ? e.message.split('\n')[0] : String(e));
 	} finally {
