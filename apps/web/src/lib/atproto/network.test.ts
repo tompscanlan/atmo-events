@@ -4,6 +4,7 @@ import { variables } from '../../env';
 afterEach(() => {
 	vi.doUnmock('$app/env/public');
 	vi.resetModules();
+	vi.unstubAllGlobals();
 });
 
 /** The network module, as a deployment with these settings sees it. */
@@ -26,41 +27,31 @@ describe('network settings', () => {
 		}
 	});
 
-	it('take a URL of the service’s scheme', () => {
-		expect(validate('PUBLIC_PLC_URL', ' https://plc.test ')).toEqual({ value: 'https://plc.test' });
-		expect(validate('PUBLIC_JETSTREAM_URL', 'wss://jetstream.test')).toEqual({
-			value: 'wss://jetstream.test'
-		});
-		expect(validate('PUBLIC_PLC_URL', 'plc.test')).toHaveProperty('issues');
-		expect(validate('PUBLIC_PLC_URL', 'wss://plc.test')).toHaveProperty('issues');
-		expect(validate('PUBLIC_JETSTREAM_URL', 'ftp://jetstream.test')).toHaveProperty('issues');
-	});
-
-	it('refuse a user, password or #fragment', () => {
-		expect(validate('PUBLIC_PLC_URL', 'https://plc.test/#top')).toHaveProperty('issues');
-		expect(validate('PUBLIC_PLC_URL', 'https://me:pw@plc.test')).toHaveProperty('issues');
-		expect(validate('PUBLIC_DOH_URL', 'https://dns.test/dns-query')).toEqual({
-			value: 'https://dns.test/dns-query'
-		});
-	});
-
-	it('take Jetstream as an origin, over HTTP or WebSocket', () => {
-		for (const value of ['https://jetstream.test', 'wss://jetstream.test/']) {
-			expect(validate('PUBLIC_JETSTREAM_URL', value)).toEqual({ value });
+	it.each([
+		['PUBLIC_PLC_URL', ' https://plc.test ', 'https://plc.test'],
+		['PUBLIC_DOH_URL', 'https://dns.test/dns-query', 'https://dns.test/dns-query'],
+		['PUBLIC_JETSTREAM_URL', 'wss://jetstream.test', 'wss://jetstream.test'],
+		['PUBLIC_JETSTREAM_URL', 'wss://jetstream.test/', 'wss://jetstream.test/'],
+		['PUBLIC_JETSTREAM_URL', 'https://jetstream.test', 'https://jetstream.test'],
+		['PUBLIC_RELAY_URLS', 'https://a.test, https://b.test,', ['https://a.test', 'https://b.test']]
+	] as const)(
+		'take a URL of the service’s scheme, Jetstream as an origin, relays as a list: %s %j',
+		(name, value, expected) => {
+			expect(validate(name, value)).toEqual({ value: expected });
 		}
-		expect(validate('PUBLIC_JETSTREAM_URL', 'wss://jetstream.test/subscribe')).toHaveProperty(
-			'issues'
-		);
-		expect(validate('PUBLIC_JETSTREAM_URL', 'wss://jetstream.test?compress=true')).toHaveProperty(
-			'issues'
-		);
-	});
+	);
 
-	it('take relays as a comma-separated list', () => {
-		expect(validate('PUBLIC_RELAY_URLS', 'https://a.test, https://b.test,')).toEqual({
-			value: ['https://a.test', 'https://b.test']
-		});
-		expect(validate('PUBLIC_RELAY_URLS', 'https://a.test,b.test')).toHaveProperty('issues');
+	it.each([
+		['a bare host', 'PUBLIC_PLC_URL', 'plc.test'],
+		['another service’s scheme', 'PUBLIC_PLC_URL', 'wss://plc.test'],
+		['a scheme neither HTTP nor WebSocket', 'PUBLIC_JETSTREAM_URL', 'ftp://jetstream.test'],
+		['a #fragment', 'PUBLIC_PLC_URL', 'https://plc.test/#top'],
+		['a user and password', 'PUBLIC_PLC_URL', 'https://me:pw@plc.test'],
+		['a Jetstream path', 'PUBLIC_JETSTREAM_URL', 'wss://jetstream.test/subscribe'],
+		['a Jetstream query', 'PUBLIC_JETSTREAM_URL', 'wss://jetstream.test?compress=true'],
+		['a relay that is not a URL', 'PUBLIC_RELAY_URLS', 'https://a.test,b.test']
+	] as const)('refuse %s: %s set to %j', (_why, name, value) => {
+		expect(validate(name, value)).toHaveProperty('issues');
 	});
 });
 
@@ -111,32 +102,25 @@ describe('contrailNetwork', () => {
 			PUBLIC_JETSTREAM_URL: 'wss://jetstream.test',
 			PUBLIC_RELAY_URLS: ['https://relay.test']
 		});
-		const network = contrailNetwork();
-		expect(network).toMatchObject({
+		expect(contrailNetwork()).toMatchObject({
 			jetstreams: ['wss://jetstream.test'],
 			relays: ['https://relay.test'],
 			constellation: { url: 'https://constellation.test' },
 			networkOverrides: {
 				// The method's URL, since contrail only appends ?identifier=.
-				slingshotUrl: 'https://slingshot.test/xrpc/com.bad-example.identity.resolveMiniDoc'
+				slingshotUrl: 'https://slingshot.test/xrpc/com.bad-example.identity.resolveMiniDoc',
+				resolver: expect.anything()
 			}
 		});
-		expect(network.networkOverrides?.resolver).toBeDefined();
 	});
 
 	it('resolves did:plc documents at the PLC directory a setting names', async () => {
 		const fetch = vi.fn(async () => new Response('{}', { status: 404 }));
 		vi.stubGlobal('fetch', fetch);
-		try {
-			const { contrailNetwork } = await withSettings({ PUBLIC_PLC_URL: 'https://plc.test' });
-			await contrailNetwork()
-				.networkOverrides?.resolver?.resolve('did:plc:abcdefghijklmnopqrstuvwx')
-				.catch(() => {});
-			expect(new URL(String((fetch.mock.calls[0] as unknown[])[0])).origin).toBe(
-				'https://plc.test'
-			);
-		} finally {
-			vi.unstubAllGlobals();
-		}
+		const { contrailNetwork } = await withSettings({ PUBLIC_PLC_URL: 'https://plc.test' });
+		await contrailNetwork()
+			.networkOverrides?.resolver?.resolve('did:plc:abcdefghijklmnopqrstuvwx')
+			.catch(() => {});
+		expect(new URL(String((fetch.mock.calls[0] as unknown[])[0])).origin).toBe('https://plc.test');
 	});
 });
