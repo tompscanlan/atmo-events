@@ -86,6 +86,11 @@ async function walk(page, who, label) {
 				await page.fill('input[name=handle]', who.handle);
 			await page.locator('form button').first().click();
 			await gone(page.locator('input[name=label]'));
+		} else if (await page.locator('form input[name=handle]').count()) {
+			// The host's page to act as a group that exists: who you are, then your own PDS.
+			await page.fill('input[name=handle]', who.handle);
+			await page.locator('form button').first().click();
+			await gone(page.locator('input[name=handle]'));
 		} else {
 			const { origin, pathname } = new URL(page.url());
 			throw new Error(`a page this script does not know: ${origin}${pathname}`);
@@ -94,7 +99,7 @@ async function walk(page, who, label) {
 	throw new Error('never got back to atmo');
 }
 
-async function signIn(browser, who) {
+async function signIn(browser, who, again = '') {
 	const page = await (await browser.newContext({ ignoreHTTPSErrors: true })).newPage();
 	await page.goto(`${ATMO}/`, { waitUntil: 'networkidle' });
 	await page
@@ -111,7 +116,7 @@ async function signIn(browser, who) {
 	await settle(page);
 	check(
 		(await page.getByRole('button', { name: /^log in$/i }).count()) === 0,
-		`${who.role.toLowerCase()} signs in through their PDS`
+		`${who.role.toLowerCase()} signs in through their PDS${again}`
 	);
 	return page;
 }
@@ -304,6 +309,44 @@ async function main() {
 			publicAgain?.status() === 200 && eventShown > 0,
 			'made public and listed again, it shows signed out',
 			`status ${publicAgain?.status()}, event shown ${eventShown}`
+		);
+
+		// Linking a group that already exists. A link is kept under the person, not the browser,
+		// so the owner unlinks first; then, in a browser that has never seen the group, links it
+		// from the groups page and posts as it through the new link. By its DID, not its handle:
+		// snowglobe run fixes its names when atmo starts, so a group made during the run has a
+		// handle atmo's server cannot resolve on the globe.
+		const settingsLink = (page) => page.locator(`main a[href$="/groups/${groupDid}/settings"]`);
+		await owner.goto(groupUrl, { waitUntil: 'networkidle' });
+		await owner.getByRole('button', { name: /^unlink$/i }).click();
+		await owner.waitForURL((u) => u.pathname === '/groups', { timeout: 30_000 });
+		await owner.goto(groupUrl, { waitUntil: 'networkidle' });
+		check(
+			(await settingsLink(owner).count()) === 0 &&
+				(await owner.getByRole('button', { name: /^link this group$/i }).count()) > 0,
+			'the owner unlinks the group'
+		);
+		const fresh = await signIn(browser, OWNER, ' again, in a fresh browser');
+		await fresh.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+		await fresh.fill('#group-link', groupDid);
+		await fresh.getByRole('button', { name: /^link$/i }).click();
+		await walk(fresh, OWNER);
+		await settle(fresh);
+		const landed = new URL(fresh.url());
+		check(
+			landed.pathname === `/groups/${groupDid}` &&
+				landed.searchParams.get('link') === 'linked' &&
+				(await settingsLink(fresh).count()) > 0,
+			"linked again from the groups page in a fresh browser, the group is the owner's to run",
+			fresh.url()
+		);
+		const relinkEvent = `Relinked meetup ${RUN}`;
+		const relinkRkey = await postEvent(fresh, groupDid, 'everyone', relinkEvent);
+		check(
+			(await groupRepoEvents(groupDid)).some(
+				(e) => e.rkey === relinkRkey && e.name === relinkEvent
+			),
+			"an event posted through the new link lands in the group's repo"
 		);
 	} catch (e) {
 		check(false, 'the run finished', e instanceof Error ? e.message.split('\n')[0] : String(e));
