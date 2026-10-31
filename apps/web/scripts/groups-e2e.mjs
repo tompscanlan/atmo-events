@@ -390,6 +390,55 @@ async function main() {
 			'the former member no longer sees the members-only event',
 			`listed ${stillListed}, its page ${stillDirect?.status()}`
 		);
+
+		// Back in, then removed by the owner. The roster offers Remove only for a member who has
+		// confirmed, so the member visits once after the approval.
+		await member.goto(groupUrl, { waitUntil: 'networkidle' });
+		await member.getByRole('button', { name: /^ask to join$/i }).click();
+		await member
+			.getByRole('button', { name: /^withdraw$/i })
+			.waitFor({ timeout: 30_000 })
+			.catch(() => {});
+		const askingAgain = await rosterHas(fresh, MEMBER);
+		await fresh.getByRole('button', { name: /^approve$/i }).click();
+		await settle(fresh);
+		await member.goto(groupUrl, { waitUntil: 'networkidle' });
+		check(
+			askingAgain && (await buttons(member)).some((b) => /^leave group$/i.test(b)),
+			'the former member asks again, the owner approves, and they are a member again',
+			`request seen ${askingAgain}`
+		);
+		await fresh.goto(`${groupUrl}/members`, { waitUntil: 'networkidle' });
+		const remove = fresh
+			.locator('main li', { hasText: MEMBER.handle })
+			.getByRole('button', { name: /^remove$/i });
+		const removable = (await remove.count()) === 1;
+		if (removable) {
+			await remove.click();
+			await settle(fresh);
+		}
+		check(
+			removable && !(await rosterHas(fresh, MEMBER)),
+			'the owner removes them, and the roster drops them',
+			`a Remove button for them: ${removable}`
+		);
+		await member.goto(groupUrl, { waitUntil: 'networkidle' });
+		const offeredRemoved = await buttons(member);
+		check(
+			!offeredRemoved.some((b) => /^leave group$/i.test(b)) &&
+				offeredRemoved.some((b) => /^ask to join$/i.test(b)),
+			'a removed member is not a member on their next visit',
+			offeredRemoved.join(', ')
+		);
+		const removedListed = await member.getByText(MEMBERS_EVENT).count();
+		const removedDirect = await member.goto(`${groupUrl}/events/${membersRkey}`, {
+			waitUntil: 'networkidle'
+		});
+		check(
+			removedListed === 0 && removedDirect?.status() === 404,
+			'a removed member no longer sees the members-only event',
+			`listed ${removedListed}, its page ${removedDirect?.status()}`
+		);
 	} catch (e) {
 		check(false, 'the run finished', e instanceof Error ? e.message.split('\n')[0] : String(e));
 	} finally {
