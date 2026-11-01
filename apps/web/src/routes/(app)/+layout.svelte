@@ -19,6 +19,7 @@
 	import { page } from '$app/state';
 	import { afterNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { PUBLIC_NETWORK_NOTICE, PUBLIC_NETWORK_NOTICE_URL } from '$app/env/public';
 	import { ModeWatcher } from 'mode-watcher';
 	import LoginModal from '#lib/components/LoginModal.svelte';
 	import CreateEventModal, { createEventModalState } from '#lib/components/CreateEventModal.svelte';
@@ -163,6 +164,20 @@
 </IconRail>
 
 <div class="flex min-h-dvh flex-col sm:ml-18">
+	{#if PUBLIC_NETWORK_NOTICE}
+		<div
+			role="note"
+			class="bg-amber-100 px-4 py-1.5 text-center text-sm text-amber-950 dark:bg-amber-900 dark:text-amber-50"
+		>
+			{PUBLIC_NETWORK_NOTICE}
+			{#if PUBLIC_NETWORK_NOTICE_URL}
+				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- another site -->
+				<a href={PUBLIC_NETWORK_NOTICE_URL} class="ml-1 font-medium whitespace-nowrap underline"
+					>More about it</a
+				>
+			{/if}
+		</div>
+	{/if}
 	<header
 		class={hideBrand
 			? 'mx-auto flex w-full max-w-3xl items-center px-6 pt-3 sm:hidden'
