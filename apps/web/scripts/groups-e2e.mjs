@@ -30,6 +30,7 @@ const ATMO = required('E2E_ATMO');
 const GROUP_HOST = required('E2E_GROUP_HOST');
 // The globe's PDS with spaces support, which atmo names to people whose server has none.
 const SPACES_PDS = required('E2E_PDS');
+const PLC = required('E2E_PLC_URL');
 const person = (role, name = role.toLowerCase()) => ({
 	role,
 	name,
@@ -176,6 +177,13 @@ async function saveSettings(page, groupDid, { visibility, listed = false }) {
 	await page.getByRole('button', { name: /^save$/i }).click();
 	await page.waitForURL((u) => !u.pathname.endsWith('/settings'), { timeout: 60_000 });
 	await settle(page);
+}
+
+// The handle a DID's document names, read from the globe's PLC.
+async function handleOf(did) {
+	const doc = await (await fetch(`${PLC}/${did}`)).json();
+	const aka = (doc.alsoKnownAs ?? []).find((a) => a.startsWith('at://'));
+	return aka ? aka.slice('at://'.length) : null;
 }
 
 async function groupRepoEvents(groupDid) {
@@ -339,9 +347,14 @@ async function main() {
 
 		// Linking a group that already exists. A link is kept under the person, not the browser,
 		// so the owner unlinks first; then, in a browser that has never seen the group, links it
-		// from the groups page and posts as it through the new link. By its DID, not its handle:
-		// snowglobe run fixes its names when atmo starts, so a group made during the run has a
-		// handle atmo's server cannot resolve on the globe.
+		// by its handle from the groups page and posts as it through the new link. The group was
+		// made after atmo started, so this also shows atmo resolving a handle that is new to it.
+		const groupHandle = await handleOf(groupDid);
+		check(
+			groupHandle?.endsWith(`.${new URL(GROUP_HOST).hostname}`) === true,
+			"the group's handle is under the group host's name",
+			String(groupHandle)
+		);
 		const settingsLink = (page) => page.locator(`main a[href$="/groups/${groupDid}/settings"]`);
 		await owner.goto(groupUrl, { waitUntil: 'networkidle' });
 		await owner.getByRole('button', { name: /^unlink$/i }).click();
@@ -354,7 +367,7 @@ async function main() {
 		);
 		const fresh = await signIn(browser, OWNER, ' again, in a fresh browser');
 		await fresh.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
-		await fresh.fill('#group-link', groupDid);
+		await fresh.fill('#group-link', groupHandle ?? '');
 		await fresh.getByRole('button', { name: /^link$/i }).click();
 		await walk(fresh, OWNER);
 		await settle(fresh);
