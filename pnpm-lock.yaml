@@ -12,8 +12,8 @@ importers:
         specifier: ^3.0.3
         version: 3.0.3
       '@openmeet/snowglobe':
-        specifier: ^0.4.0
-        version: 0.4.0
+        specifier: ^0.5.0
+        version: 0.5.0
       prettier:
         specifier: ^3.9.10
         version: 3.9.10
@@ -1242,8 +1242,8 @@ packages:
   '@oomfware/kempt@0.1.4':
     resolution: {integrity: sha512-7ik6b58VC17dMX2SZq0LUHaOYupavbtXFA3UxIsAPV2Gc8+HXv9BLJ9Di52zn/8RkDWhoLf0TAcfGYHlnHUiuw==}
 
-  '@openmeet/snowglobe@0.4.0':
-    resolution: {integrity: sha512-kRo/vcWz1VNrYVTQmZmCh1vDsnf0tABS0kpXpStKicrOidXd9MDFRtc1xA/iueBbQ2MrKylhvbM/DXkCrc//CQ==}
+  '@openmeet/snowglobe@0.5.0':
+    resolution: {integrity: sha512-ljYeut8tVmjLx6BN1n2RMfvUtDJNyl/Einf91+jAMFWZN/L6spjcZk2K8DVkerus8fBBSBZNgoqpu2R/N+ROBw==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -4333,7 +4333,7 @@ snapshots:
 
   '@oomfware/kempt@0.1.4': {}
 
-  '@openmeet/snowglobe@0.4.0':
+  '@openmeet/snowglobe@0.5.0':
     dependencies:
       '@peculiar/asn1-schema': 2.11.1
       '@peculiar/asn1-x509': 2.11.1
