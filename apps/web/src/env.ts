@@ -118,5 +118,16 @@ export const variables = defineEnvVars({
 		public: true,
 		schema: origin('https:'),
 		description: 'PDS where the sign-up button creates accounts, over HTTPS.'
+	},
+	// A deployment on a test or demo network says so on every page. Unset, nothing shows.
+	PUBLIC_NETWORK_NOTICE: {
+		public: true,
+		schema: (value: string | undefined) => value?.trim() || undefined,
+		description: 'Text of a strip at the top of every page, for a test or demo network.'
+	},
+	PUBLIC_NETWORK_NOTICE_URL: {
+		public: true,
+		schema: url('https:', 'http:'),
+		description: 'A page that says more about the network notice (optional).'
 	}
 });
