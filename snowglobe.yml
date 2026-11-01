@@ -5,7 +5,7 @@
 #
 #   pnpm install
 #   pnpm globe:up   # builds the group host from ../atproto-group-host, makes the accounts
-#   pnpm globe:dev  # atmo at https://atmo.app.local.snowglobe.at
+#   pnpm globe:dev  # atmo at https://atmo.app.atmogroups.local.snowglobe.at
 #   pnpm globe:e2e  # up if need be, then apps/web/scripts/groups-e2e.mjs
 #   pnpm globe:down # stops it, keeping its accounts
 #
@@ -13,21 +13,20 @@
 # secret (apps/web/.env): the group sign-in is a confidential client. Passwords are in
 # ~/.local/share/snowglobe/atmogroups/accounts.env.
 
-globe: atmogroups
-domain: local.snowglobe.at
+globe: atmogroups # its names are under atmogroups.local.snowglobe.at
 
 pds:
   # The alpha of 2026-10-29 (permissioned-data-alpha 11c5d98c); the group host runs this same
   # build as a library.
   - name: alpha
     image: ghcr.io/bluesky-social/atproto@sha256:f003adf7ca7cbb8ff60a4d99323fd009dfc1259b208f468f71accf0366ecab1e
-    bare_handles: true # handles <name>.local.snowglobe.at
+    bare_handles: true # handles <name>.atmogroups.local.snowglobe.at
     invites: required
   - name: regular # a current release, with no spaces
     image: ghcr.io/bluesky-social/pds:0.4.5037
 
 grouphosts:
-  - name: gh # https://gh.local.snowglobe.at; groups' handles are <group>.gh.local.snowglobe.at
+  - name: gh # https://gh.atmogroups.local.snowglobe.at; groups' handles are under it
     kind: opensocial
     build: ../atproto-group-host # a checkout beside this one
 
