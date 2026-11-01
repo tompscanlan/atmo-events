@@ -9,3 +9,5 @@ export const PUBLIC_CDN_URL: string | undefined = undefined;
 export const PUBLIC_JETSTREAM_URL: string | undefined = undefined;
 export const PUBLIC_RELAY_URLS: string[] | undefined = undefined;
 export const PUBLIC_SIGNUP_PDS_URL: string | undefined = undefined;
+export const PUBLIC_NETWORK_NOTICE: string | undefined = undefined;
+export const PUBLIC_NETWORK_NOTICE_URL: string | undefined = undefined;
