@@ -1,6 +1,6 @@
 # A private atproto network on this machine, for atmo's end-to-end tests (@openmeet/snowglobe, in
-# Docker): a PDS, a relay, Jetstream, Slingshot and a PLC directory. atmo reaches it through its
-# network settings (apps/web/src/env.ts), which the env below sets.
+# Docker): a PDS, a relay, Jetstream, Slingshot, an image CDN and a PLC directory. atmo reaches it
+# through its network settings (apps/web/src/env.ts), which the env below sets.
 #
 #   pnpm install
 #   pnpm test:e2e   # starts the network if need be, then the tests in apps/web/e2e
@@ -22,6 +22,7 @@ services:
   jetstream: true
   slingshot: true
   pdsls: false
+  cdn: true # event pictures and avatars, in the shape of Bluesky's image CDN
 
 lexicons:
   # Every PDS here resolves lexicons from this one: the permission sets atmo's sign-in asks for.
@@ -52,8 +53,10 @@ apps:
       BOT_IDENTIFIER: ${accounts.atmobot.handle}
       BOT_APP_PASSWORD: ${accounts.atmobot.password}
       BOT_PDS_URL: ${pds.regular.url}
-      # Nothing here stands in for DNS-over-HTTPS, Constellation, the Bluesky API or the image
-      # CDN, so those stay public.
+      # The public image CDN cannot reach this network's PDS, so event pictures come from its own.
+      PUBLIC_CDN_URL: ${services.cdn.url}
+      # Nothing here stands in for DNS-over-HTTPS, Constellation or the Bluesky API, so those stay
+      # public.
 
   # The tests in apps/web/e2e.
   - name: e2e

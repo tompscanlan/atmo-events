@@ -83,6 +83,31 @@ describe('a new person on a local atproto network', () => {
 		).toBe(eventName);
 	});
 
+	it("shows a visitor the event's picture, from the network's own image CDN", async () => {
+		type Media = { media?: { content?: { ref?: { $link?: string } } }[] };
+		const published = (await records<Media>(host.handle, EVENT)).find((r) => r.uri === event.uri);
+		const picture = published?.value.media?.[0]?.content?.ref?.$link;
+		expect(picture).toBeDefined();
+
+		// A visitor of their own, so the host's page keeps atmo's offer to share the new event.
+		const visitor = await browser.newContext({ ignoreHTTPSErrors: true });
+		try {
+			const page = await visitor.newPage();
+			await page.goto(eventPage(), { waitUntil: 'networkidle' });
+			const img = page.locator(`img[src*="${picture}"]`).first();
+			await img.waitFor({ state: 'attached' });
+			// Loaded, not just linked: the public CDN answers 404 for an account on this network.
+			await expect
+				.poll(
+					() => img.evaluate((el: HTMLImageElement) => (el.complete ? el.naturalWidth : 0)),
+					soon
+				)
+				.toBeGreaterThan(0);
+		} finally {
+			await visitor.close();
+		}
+	});
+
 	it('shares it to Bluesky: the post links the event, and the event links the post', async () => {
 		const { page } = host;
 		// atmo offers to share a new event as soon as it is published.
