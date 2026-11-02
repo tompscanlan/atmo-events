@@ -5,9 +5,9 @@ import { config as appConfig } from '../contrail.config';
 
 // What contrail's own CLI loads (`pnpm backfill`), outside SvelteKit. The Worker adds the
 // network from $app/env/public (contrail/index.ts); the CLI has no $app, so it reads the same
-// settings from the env wrangler builds for the Worker (wrangler.jsonc vars, .dev.vars or .env,
-// and the process env under CLOUDFLARE_INCLUDE_PROCESS_ENV), which contrail passes to this
-// function. Without it, a backfill on another network reads the public one.
+// settings from the shell's environment. Without them a backfill reads the public network, so
+// run it where they are set: `pnpm e2e:backfill` runs it with the test network's. Settings kept
+// only in apps/web/.env do not reach it.
 
 /** The network settings in a raw env, checked as src/env.ts checks them. */
 export function networkSettingsFrom(env: Record<string, unknown>): NetworkSettings {
@@ -24,7 +24,7 @@ export function networkSettingsFrom(env: Record<string, unknown>): NetworkSettin
 	return settings as NetworkSettings;
 }
 
-export const config = (env: Record<string, unknown>): ContrailConfig => ({
+export const config: ContrailConfig = {
 	...appConfig,
-	...contrailNetworkOf(networkSettingsFrom(env))
-});
+	...contrailNetworkOf(networkSettingsFrom(process.env))
+};
