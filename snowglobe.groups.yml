@@ -12,6 +12,10 @@
 # The first time, also run `pnpm --filter web env:setup-dev` for atmo's client key and cookie
 # secret (apps/web/.env): the group sign-in is a confidential client. Passwords are in
 # ~/.local/share/snowglobe/atmogroups/accounts.env.
+#
+# This file sits beside snowglobe.yml, the network e2e's globe, so both run from one checkout. The
+# globe:* scripts read it through SG_FILE=snowglobe.groups.yml; a bare snowglobe command for this
+# globe needs the same.
 
 globe: atmogroups # its names are under atmogroups.local.snowglobe.at
 
