@@ -6,25 +6,29 @@ and the parts that live outside this repo.
 
 ## Which branch is deployed
 
-This branch, `deploy/lighthouse-prs-2`, runs the commits we send upstream, so reviewers can try
-them on a globe. It is a stack of PRs, each a branch of final-state commits on the one below, so
-each release can take the ones it wants; then two commits of our own that never go upstream:
+This branch, `deploy/lighthouse-private-events`, runs a person's private events, so people can try
+them on a globe. It is `feat/private-events` on upstream main, plus two commits of our own that
+never go upstream: the demo strip (`PUBLIC_NETWORK_NOTICE`) and this folder.
 
 ```
-upstream/main (flo-bit, the UI redesign, SvelteKit 3, contrail 0.27)
-  └ feat/network-addresses-4   the network PR: atmo pointed at a network other than Bluesky
-     └ feat/groups-link-6       link a group, list it, post its events as the group
-        └ feat/groups-members-4  a person's group permissions, roster, members-only events
-           └ deploy/lighthouse-prs-2  + the demo strip (PUBLIC_NETWORK_NOTICE) and this folder
+upstream/main (flo-bit, with the network settings and without packages/ui)
+  └ feat/private-events                private events on a person's own account
+     └ deploy/lighthouse-private-events  + the demo strip and this folder
 ```
 
-It is rebuilt, not merged: when a PR changes, rebuild every branch above it under a new name
-(`-N+1`) rather than force-pushing. The settings are the network PR's (`PUBLIC_PLC_URL` and the
-rest, apps/web/.env.example) plus `GROUP_HOST_URL`, `SPACES_PDS_URL` and the demo strip's
+It has no groups code: that stack comes back on top of `feat/private-events` later. The groups on
+a globe stay on its group host and PDS, but this build has no pages for them.
+
+It is rebuilt, not merged. The settings are the network settings (`PUBLIC_PLC_URL` and the rest,
+apps/web/.env.example) plus `PRIVATE_EVENTS=true`, `SPACES_PDS_URL` and the demo strip's
 `PUBLIC_NETWORK_NOTICE` and `PUBLIC_NETWORK_NOTICE_URL`, all read when atmo starts. Two names
 changed from the pre-redesign line: `PUBLIC_JETSTREAM_URLS` is now `PUBLIC_JETSTREAM_URL` (one
 origin), and `PUBLIC_IMAGE_URL_TEMPLATE` is now `PUBLIC_CDN_URL` (the CDN's origin; atmo adds
 `/img/<preset>/plain/<did>/<cid>@<format>`).
+
+The space type `rsvp.atmo.calendar` (apps/web/lexicons/spaces) must be published where the globe's
+PDSes look for lexicons, before anyone's first private-event permission: a failed lookup sticks
+for about 5 minutes.
 
 Secrets are unchanged: `COOKIE_SECRET`, `CLIENT_ASSERTION_KEY` and `CRON_SECRET`
 (seal-secrets.sh). The worker's timer posts to `/api/cron` with `CRON_SECRET`, so without it
