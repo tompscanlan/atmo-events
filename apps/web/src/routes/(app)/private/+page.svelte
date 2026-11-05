@@ -6,6 +6,13 @@
 	let { data } = $props();
 </script>
 
+{#snippet linkIsTheInvitation()}
+	<p class="text-muted mt-4 text-sm" data-testid="link-is-invitation">
+		The link is the invitation. atmo doesn't tell you when a host adds you, so an event you're
+		invited to shows here only after you open the host's link and answer.
+	</p>
+{/snippet}
+
 <svelte:head><meta name="robots" content="noindex" /></svelte:head>
 
 <div class="mx-auto max-w-2xl px-6 pt-12 pb-24">
@@ -20,10 +27,8 @@
 			spacesServer={data.spacesServer}
 		/>
 	{:else if data.events.length === 0}
-		<p class="text-muted mt-4">
-			None yet. Events you host show here, and ones you've answered. A host sends you the link to an
-			event you were added to.
-		</p>
+		<p class="text-muted mt-4">None yet. Events you host show here, and ones you've answered.</p>
+		{@render linkIsTheInvitation()}
 	{:else}
 		<ul class="mt-6 space-y-4" data-testid="private-events">
 			{#each data.events as item (item.href)}
@@ -35,5 +40,6 @@
 				</li>
 			{/each}
 		</ul>
+		{@render linkIsTheInvitation()}
 	{/if}
 </div>
