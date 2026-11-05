@@ -4,7 +4,7 @@ import { spaceRecordUri, spaceUri } from '#lib/spaces/uri.js';
 
 /** It is in every URI in the space, so a rename strands what was written under the old name, and
  *  it must resolve wherever a scope names it. */
-export const PRIVATE_CALENDAR_TYPE = 'rsvp.atmo.calendar';
+export const PRIVATE_CALENDAR_TYPE = 'rsvp.atmo.calendarSpace';
 export const EVENT_COLLECTION = 'community.lexicon.calendar.event';
 export const RSVP_COLLECTION = 'community.lexicon.calendar.rsvp';
 

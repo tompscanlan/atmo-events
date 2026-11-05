@@ -26,7 +26,7 @@ changed from the pre-redesign line: `PUBLIC_JETSTREAM_URLS` is now `PUBLIC_JETST
 origin), and `PUBLIC_IMAGE_URL_TEMPLATE` is now `PUBLIC_CDN_URL` (the CDN's origin; atmo adds
 `/img/<preset>/plain/<did>/<cid>@<format>`).
 
-The space type `rsvp.atmo.calendar` (apps/web/lexicons/spaces) must be published where the globe's
+The space type `rsvp.atmo.calendarSpace` (apps/web/lexicons/spaces) must be published where the globe's
 PDSes look for lexicons, before anyone's first private-event permission: a failed lookup sticks
 for about 5 minutes.
 
