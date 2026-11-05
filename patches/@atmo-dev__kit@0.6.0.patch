@@ -162,19 +162,29 @@ index 38dfdf6e0995131ce1b1fa84bca533eba9e7d9c3..5de230a30e98423db26d8f97f34c497f
  						<!-- Date row -->
  						<div class="mb-5 grid min-w-0 gap-2">
 diff --git a/dist/events/EventView.svelte b/dist/events/EventView.svelte
-index 72574d6ebe421f58002ac79c348771cef617da0a..4f0f986f4f7464fa39225e6e5cac45a03c4f4211 100644
+index 72574d6ebe421f58002ac79c348771cef617da0a..b7641649170c504db66ccb7e86c54deea9a3e4c5 100644
 --- a/dist/events/EventView.svelte
 +++ b/dist/events/EventView.svelte
 @@ -65,6 +65,8 @@
  	let rkey: string = $derived(data.rkey);
  	let hostProfile = $derived(data.hostProfile);
  	let attendees = $derived(data.attendees);
-+	/** False for an event with no public page to share, such as one only a group's members see. */
++	/** False for an event with no public page to share, such as a private one. */
 +	let shareable = $derived(data.shareable !== false);
  
  	let theme: EventTheme = $derived(eventData.theme ?? defaultTheme);
  
-@@ -130,7 +132,7 @@
+@@ -90,6 +92,9 @@
+ 	$effect(() => {
+ 		let active = true;
+ 		geoLocation = null;
++		// The geocoder and the map's tiles are other people's servers, and neither gets told where an
++		// event is that only its guests may know about. The address still shows and links out.
++		if (!shareable) return;
+ 		void resolveGeoLocation(locations).then((resolved) => {
+ 			if (active) geoLocation = resolved;
+ 		});
+@@ -130,7 +135,7 @@
  
  	onMount(() => {
  		const url = new URL(window.location.href);
@@ -183,7 +193,7 @@ index 72574d6ebe421f58002ac79c348771cef617da0a..4f0f986f4f7464fa39225e6e5cac45a0
  			url.searchParams.delete('created');
  			history.replaceState({}, '', url.pathname);
  			launchConfetti();
-@@ -191,7 +193,8 @@
+@@ -191,7 +196,8 @@
  		return null;
  	});
  
@@ -193,7 +203,7 @@ index 72574d6ebe421f58002ac79c348771cef617da0a..4f0f986f4f7464fa39225e6e5cac45a0
  
  	let ogImageUrl = $derived(data.ogImage ?? `${pageUrl.origin}${pageUrl.pathname}/og.png`);
  
-@@ -232,7 +235,7 @@
+@@ -232,7 +238,7 @@
  			handle: viewer.handle,
  			url: `/p/${encodeURIComponent(viewer.handle || viewer.did)}`
  		});
@@ -264,7 +274,7 @@ index 3573a138af7a8d4fd4d4dafb56156fa5011b46c1..18ae3c692ff54fa3da9046eb1b7f0f8c
  export function compressImage(file, maxSize = 900 * 1024, maxDimension = 2048) {
      return new Promise((resolve, reject) => {
 diff --git a/dist/events/editor/adapter.d.ts b/dist/events/editor/adapter.d.ts
-index f24fa9a15be71e64749398d706515589cf7672e5..5588d16d266b2a7c73775cc2c157eae95111c7b9 100644
+index f24fa9a15be71e64749398d706515589cf7672e5..28281198c84f39cb99e5904a9734089e3540bcb6 100644
 --- a/dist/events/editor/adapter.d.ts
 +++ b/dist/events/editor/adapter.d.ts
 @@ -33,6 +33,10 @@ export type EditorAdapter = {
