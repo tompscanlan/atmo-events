@@ -12,8 +12,8 @@ const permissionSets = scopes
 describe('the e2e network’s lexicons', () => {
 	it('publish the space type private events use, as atmo defines it', () => {
 		const read = (path: string) => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
-		expect(read('./lexicons/rsvp/atmo/calendar.json')).toEqual(
-			read('../lexicons/spaces/rsvp/atmo/calendar.json')
+		expect(read('./lexicons/rsvp/atmo/calendarSpace.json')).toEqual(
+			read('../lexicons/spaces/rsvp/atmo/calendarSpace.json')
 		);
 	});
 
