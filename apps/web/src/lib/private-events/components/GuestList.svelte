@@ -55,7 +55,9 @@
 <section class="mt-6" data-testid="guest-list">
 	<h2 class="text-base-900 dark:text-base-50 text-sm font-semibold">Guests</h2>
 	<p class="text-muted mt-1 text-sm">
-		Only people you add can see this event. atmo doesn't tell them, so send them the link yourself.
+		Only people you add can see this event. atmo doesn't tell them they were added, and nothing
+		shows on their side until they open the link. The link is the invitation, so send it to them
+		yourself.
 	</p>
 	<Button class="mt-2 w-full" size="sm" variant="secondary" onclick={copyLink}>
 		{copied ? 'Link copied' : 'Copy the link'}

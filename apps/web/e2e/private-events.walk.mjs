@@ -295,6 +295,10 @@ await step('5. alice adds guests by handle', async () => {
 	await addGuest(p, P.bob.handle);
 	await guestRow(p, 'bob').waitFor({ timeout: 20000 });
 	check('bob listed, not confirmed', /hasn't answered/.test(await guestRow(p, 'bob').innerText()));
+	check(
+		'the host is told the link is the invitation',
+		/link is the invitation/i.test(await text(p, '[data-testid=guest-list]'))
+	);
 	await addGuest(p, P.dana.handle);
 	await guestRow(p, 'dana').waitFor({ timeout: 20000 });
 	await addGuest(p, P.carol.handle);
@@ -437,6 +441,10 @@ await step('11. /private lists it for host and guest', async () => {
 	check(
 		'the card opens the private page',
 		(await pages.bob.locator(`[data-testid=private-events] a[href$="/private/${KEY}"]`).count()) > 0
+	);
+	check(
+		'the page says the link is the invitation',
+		/link is the invitation/i.test(await text(pages.bob, '[data-testid=link-is-invitation]'))
 	);
 	await open(pages.mallory, '/private');
 	check('mallory: not listed', !(await text(pages.mallory, 'main')).includes(NAME));
