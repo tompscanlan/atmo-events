@@ -162,19 +162,29 @@ index 38dfdf6e0995131ce1b1fa84bca533eba9e7d9c3..5de230a30e98423db26d8f97f34c497f
  						<!-- Date row -->
  						<div class="mb-5 grid min-w-0 gap-2">
 diff --git a/dist/events/EventView.svelte b/dist/events/EventView.svelte
-index ae619a55c7eef3a3b173708d18a7010ad975c556..b23e92d58caedf27d105f30d021135d357346da3 100644
+index ae619a55c7eef3a3b173708d18a7010ad975c556..b92b7e8c1814721e6bce1039485b29ae53a813e4 100644
 --- a/dist/events/EventView.svelte
 +++ b/dist/events/EventView.svelte
 @@ -66,6 +66,8 @@
  	let rkey: string = $derived(data.rkey);
  	let hostProfile = $derived(data.hostProfile);
  	let attendees = $derived(data.attendees);
-+	/** False for an event with no public page to share, such as one only a group's members see. */
++	/** False for an event with no public page to share, such as a private one. */
 +	let shareable = $derived(data.shareable !== false);
  
  	let theme: EventTheme = $derived(eventData.theme ?? defaultTheme);
  
-@@ -129,7 +131,7 @@
+@@ -91,6 +93,9 @@
+ 	$effect(() => {
+ 		let active = true;
+ 		geoLocation = null;
++		// The geocoder and the map's tiles are other people's servers, and neither gets told where an
++		// event is that only its guests may know about. The address still shows and links out.
++		if (!shareable) return;
+ 		void resolveGeoLocation(locations).then((resolved) => {
+ 			if (active) geoLocation = resolved;
+ 		});
+@@ -129,7 +134,7 @@
  
  	onMount(() => {
  		const url = new URL(window.location.href);
@@ -183,7 +193,7 @@ index ae619a55c7eef3a3b173708d18a7010ad975c556..b23e92d58caedf27d105f30d021135d3
  			url.searchParams.delete('created');
  			history.replaceState({}, '', url.pathname);
  			launchConfetti();
-@@ -190,7 +192,8 @@
+@@ -190,7 +195,8 @@
  		return null;
  	});
  
@@ -193,7 +203,7 @@ index ae619a55c7eef3a3b173708d18a7010ad975c556..b23e92d58caedf27d105f30d021135d3
  
  	let ogImageUrl = $derived(data.ogImage ?? `${pageUrl.origin}${pageUrl.pathname}/og.png`);
  
-@@ -231,7 +234,7 @@
+@@ -231,7 +237,7 @@
  			handle: viewer.handle,
  			url: `/p/${encodeURIComponent(viewer.handle || viewer.did)}`
  		});
