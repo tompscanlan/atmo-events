@@ -8,8 +8,9 @@ import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 
 const EVENT_NOT_AVAILABLE = "This event isn't available.";
 
-export async function load({ params, locals }) {
+export async function load({ params, locals, setHeaders }) {
 	if (!privateEventsEnabled()) error(404, 'Not found');
+	setHeaders({ 'cache-control': 'no-store' });
 	const host = await getActor(params.actor, timeLimitedNetwork());
 	const caller = await callerSession(locals.session ?? null);
 	if (!host || caller?.did !== host || !holdsHostGrant(caller.scope, caller.did)) {
