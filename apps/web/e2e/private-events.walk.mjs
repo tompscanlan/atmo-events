@@ -43,6 +43,7 @@ const args = process.env.WALK_RESOLVER
 	? [`--host-resolver-rules=${process.env.WALK_RESOLVER}`]
 	: [];
 const browser = await chromium.launch({ args });
+let pageErrors = 0;
 const shot = (page, name) =>
 	page.screenshot({ path: path.join(OUT, `${name}.png`), fullPage: true }).catch(() => {});
 const pageFor = async (who) => {
@@ -51,17 +52,16 @@ const pageFor = async (who) => {
 		viewport: { width: 1100, height: 850 }
 	});
 	const page = await ctx.newPage();
-	page.on('pageerror', (e) => log(`  [${who}] browser error: ${clean(e.message, 200)}`));
+	page.on('pageerror', (e) => {
+		pageErrors++;
+		log(`  [${who}] browser error: ${clean(e.message, 200)}`);
+	});
 	return page;
 };
+// Whole, and it throws rather than giving '', so a check that something is absent can't pass on a page
+// that never loaded or on what lies past a cut.
 const text = async (page, sel = 'body') =>
-	clean(
-		await page
-			.locator(sel)
-			.first()
-			.innerText()
-			.catch(() => '')
-	);
+	clean(await page.locator(sel).first().innerText({ timeout: 15000 }), Infinity);
 
 async function throughPds(page, who) {
 	for (let i = 0; i < 160; i++) {
@@ -97,7 +97,7 @@ async function throughPds(page, who) {
 		await sleep(400);
 	}
 	throw new Error(
-		`stuck at the PDS for ${who.who}: ${page.url().split('?')[0]} ${await text(page)}`
+		`stuck at the PDS for ${who.who}: ${page.url().split('?')[0]} ${await text(page).catch(() => '')}`
 	);
 }
 async function signInForm(page, who) {
@@ -151,10 +151,30 @@ async function checker(who) {
 		const r = await fetch(u, { headers: { authorization: `Bearer ${accessJwt}` } });
 		return { status: r.status, data: await r.json().catch(() => null) };
 	};
-	return { ...who, did, call };
+	const write = async (collection, record) => {
+		const r = await fetch(`${who.pds}/xrpc/com.atproto.repo.createRecord`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', authorization: `Bearer ${accessJwt}` },
+			body: JSON.stringify({ repo: did, collection, record: { $type: collection, ...record } })
+		});
+		if (!r.ok) throw new Error(`createRecord ${who.who}: ${r.status}`);
+		return r.json();
+	};
+	return { ...who, did, call, write };
 }
 const C = {};
 for (const [k, v] of Object.entries(P)) C[k] = await checker(v);
+const JETSTREAM = need('JETSTREAM_URL');
+const CRON_SECRET = need('CRON_SECRET');
+const runCron = async () => {
+	const r = await fetch(`${ATMO}/api/cron`, {
+		method: 'POST',
+		// As the built Worker's own scheduled() sends it: SvelteKit 3 refuses a POST with no content type.
+		headers: { 'X-Cron-Secret': CRON_SECRET, 'content-type': 'application/json' }
+	});
+	if (!r.ok) throw new Error(`atmo's cron: ${r.status}`);
+};
+await runCron();
 
 let failures = 0;
 const check = (label, ok, detail = '') => {
@@ -181,11 +201,13 @@ let KEY, SPACE, EVENT_PATH;
 // Its own name each run: accounts outlive a run, and so can an earlier run's event.
 const NAME = `Dinner ${Date.now().toString(36)}`;
 const RENAMED = `${NAME} at eight`;
+const PUBLIC_NAME = `Public control ${Date.now().toString(36)}`;
 const NOT_AVAILABLE = "This event isn't available";
-const members = async () =>
-	(await C.alice.call('com.atproto.memberspace.listMembers', { space: SPACE })).data?.members?.map(
-		(m) => m.did
-	) ?? [];
+const members = async () => {
+	const r = await C.alice.call('com.atproto.memberspace.listMembers', { space: SPACE });
+	if (r.status !== 200) throw new Error(`listMembers: ${r.status}`);
+	return r.data.members.map((m) => m.did);
+};
 const ownRsvp = async (name) => {
 	const c = C[name];
 	const r = await c.call('com.atproto.space.getRecord', {
@@ -194,14 +216,17 @@ const ownRsvp = async (name) => {
 		collection: RSVP,
 		rkey: KEY
 	});
-	return r.status === 200 ? r.data.value.status.split('#')[1] : null;
+	if (r.status === 200) return r.data.value.status.split('#')[1];
+	if (r.data?.error === 'RecordNotFound') return null;
+	throw new Error(`getRecord ${name}: ${r.status} ${r.data?.error}`);
 };
 const publicCount = async (name, collection) => {
 	const c = C[name];
 	const r = await fetch(
 		`${c.pds}/xrpc/com.atproto.repo.listRecords?${new URLSearchParams({ repo: c.did, collection })}`
 	);
-	return (await r.json()).records?.length ?? 0;
+	if (!r.ok) throw new Error(`listRecords ${name}: ${r.status}`);
+	return (await r.json()).records.length;
 };
 // Under vite dev a click before hydration does nothing, so wait for the network to settle.
 const settle = (page) => page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
@@ -211,6 +236,70 @@ const open = async (page, target = EVENT_PATH) => {
 	return res?.status();
 };
 // Opening one tells the host's server who is asking, so a guest chooses to, on an ordinary POST.
+// What someone kept out receives, with the address itself removed. `+page.server.ts` says these match
+// byte for byte, so that a person can't tell an event that exists from one that doesn't.
+const received = async (page, target) => {
+	const t0 = Date.now();
+	const res = await page.goto(`${ATMO}${target}`, { waitUntil: 'load', timeout: 60000 });
+	const ms = Date.now() - t0;
+	const keyOf = target.split('/').at(-1);
+	return {
+		ms,
+		status: res.status(),
+		cache: res.headers()['cache-control'] ?? '',
+		type: res.headers()['content-type'] ?? '',
+		body: (await res.text()).split(keyOf).join('<key>')
+	};
+};
+const firstDifference = (a, b) => {
+	let i = 0;
+	while (i < a.length && i < b.length && a[i] === b[i]) i++;
+	return `at ${i} of ${a.length}/${b.length}: ${clean(a.slice(i, i + 90))} | ${clean(b.slice(i, i + 90))}`;
+};
+const sameAsMadeUp = async (who, page, label) => {
+	const made = EVENT_PATH.replace(KEY, '3kzzzzzzzzzzz');
+	// Opening is asked per address, so go through that at the made-up one, as they did at the real one.
+	await open(page, made);
+	if (await page.locator('[data-testid=open-first]').count()) await chooseToOpen(page);
+	const a = await received(page, EVENT_PATH);
+	const b = await received(page, made);
+	check(
+		`${label}: 404 at the real address and a made-up one`,
+		a.status === 404 && b.status === 404,
+		`${a.status} ${b.status}`
+	);
+	check(
+		`${label}: the same headers`,
+		a.cache === b.cache && a.type === b.type,
+		`${a.cache} ${b.cache}`
+	);
+	check(
+		`${label}: the same bytes`,
+		a.body === b.body,
+		a.body === b.body ? '' : firstDifference(a.body, b.body)
+	);
+	check(`${label}: not the event's name in the response`, !a.body.includes(NAME));
+	log(`  [${who}] ms real ${a.ms} made-up ${b.ms}`);
+};
+const listLoads = async (page, label) => {
+	const status = await open(page, '/private');
+	check(`${label}: /private loaded`, status === 200, `${status}`);
+};
+// The attendee list, not the host's guest list, which names everyone added. The page shows only
+// avatars there, so this opens the list of names.
+const inAttendees = async (page, group, handle) => {
+	const opener = page
+		.locator('main button', { hasText: new RegExp(`\\d+\\s*${group}`, 'i') })
+		.first();
+	if ((await opener.count()) === 0) return false;
+	await opener.click({ timeout: 10000 });
+	const dialog = page.getByRole('dialog');
+	await dialog.waitFor({ timeout: 10000 });
+	const found = (await dialog.locator(`a[href="/p/${encodeURIComponent(handle)}"]`).count()) > 0;
+	await page.keyboard.press('Escape');
+	await dialog.waitFor({ state: 'detached', timeout: 10000 });
+	return found;
+};
 const openFirst = (page) => page.locator('[data-testid=open-first]').waitFor({ timeout: 30000 });
 const chooseToOpen = async (page) => {
 	await page.getByRole('button', { name: /^open this event$/i }).click({ timeout: 30000 });
@@ -289,8 +378,8 @@ await step('3. alice fills in the editor and publishes', async () => {
 	const blobs = await C.alice.call('com.atproto.sync.listBlobs', { did: C.alice.did });
 	check(
 		'no blob uploaded',
-		(blobs.data?.cids?.length ?? 0) === 0,
-		`${blobs.data?.cids?.length ?? '?'}`
+		blobs.status === 200 && blobs.data.cids.length === 0,
+		`${blobs.status}`
 	);
 });
 
@@ -382,17 +471,16 @@ await step('7. bob says going, and the host sees his answer', async () => {
 	await settle(a);
 	await guestRow(a, 'bob').waitFor({ timeout: 20000 });
 	check('alice sees he is going', /\bGoing\b/.test(await guestRow(a, 'bob').innerText()));
-	check(
-		'alice sees him going, by handle',
-		(await a.locator('main').innerText()).includes(P.bob.handle)
-	);
+	check('alice sees him going, by handle', await inAttendees(a, 'going', P.bob.handle));
 	await shot(a, '07-host-after-going');
 	await p.reload({ waitUntil: 'load' });
 	await settle(p);
 	await sleep(500);
+	const note = await text(p, '[data-testid=private-note]');
 	check(
 		'bob still sees his answer after a reload',
-		!/Answer to let the host know/.test(await text(p, '[data-testid=private-note]'))
+		!/Answer to let the host know/.test(note),
+		note
 	);
 });
 
@@ -434,8 +522,8 @@ await step('9. mallory, not invited, gets what a made-up address gets', async ()
 	check('both 404', realStatus === 404 && made === 404, `${realStatus} ${made}`);
 	check('the same words', real === madeText, real.slice(0, 120));
 	check('the name nowhere', !real.includes(NAME));
-	const none = await C.alice.call('com.atproto.memberspace.listMembers', { space: SPACE });
-	check('not added', !(none.data?.members ?? []).some((m) => m.did === C.mallory.did));
+	await sameAsMadeUp('mallory', p, 'mallory, on the host’s PDS');
+	check('not added', !(await members()).includes(C.mallory.did));
 });
 
 await step(
@@ -480,13 +568,14 @@ await step('11. /private lists it for host and guest', async () => {
 		'the page says the link is the invitation',
 		/link is the invitation/i.test(await text(pages.bob, '[data-testid=link-is-invitation]'))
 	);
-	await open(pages.mallory, '/private');
+	await listLoads(pages.mallory, 'mallory');
 	check('mallory: not listed', !(await text(pages.mallory, 'main')).includes(NAME));
 });
 
 await step('12. alice removes dana, who loses it at once, then lets her back', async () => {
 	const a = pages.alice;
 	await open(a);
+	check('she is on alice’s attendees before', await inAttendees(a, 'interested', P.dana.handle));
 	await guestRow(a, 'dana')
 		.getByRole('button', { name: /remove/i })
 		.click();
@@ -494,15 +583,12 @@ await step('12. alice removes dana, who loses it at once, then lets her back', a
 	const d = pages.dana;
 	const status = await open(d);
 	check('dana gets a 404 right after', status === 404, `${status}`);
+	await sameAsMadeUp('dana', d, 'dana, removed, on another PDS');
 	check('her record stays in her repo', (await ownRsvp('dana')) === 'interested');
-	const going = await text(a, 'main');
 	await a.reload({ waitUntil: 'load' });
 	await settle(a);
-	check(
-		'she is off alice’s attendees',
-		!(await text(a, 'main')).includes(P.dana.handle),
-		going.length ? '' : ''
-	);
+	check('she is off alice’s attendees', !(await inAttendees(a, 'interested', P.dana.handle)));
+	check('and off alice’s page', !(await text(a, 'main')).includes(P.dana.handle));
 	await addGuest(a, P.dana.handle);
 	await guestRow(a, 'dana').waitFor({ timeout: 20000 });
 	check(
@@ -583,6 +669,94 @@ await step('14. a plain login in a second browser, then alice’s own page', asy
 	check('guests kept reading throughout', b === 200, `${b}`);
 });
 
+await step('14b. nothing reached the public network or atmo, and a public event did', async () => {
+	const control = await C.mallory.write(EVENT, {
+		name: PUBLIC_NAME,
+		startsAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+		createdAt: new Date().toISOString(),
+		mode: `${EVENT}#inperson`,
+		status: `${EVENT}#scheduled`
+	});
+	const controlKey = control.uri.split('/').at(-1);
+
+	// What anyone can read from the public firehose: everything from the start of the network.
+	const seen = await new Promise((resolve, reject) => {
+		const ws = new WebSocket(`${JETSTREAM.replace(/^http/, 'ws')}/subscribe?cursor=0`);
+		const found = { messages: 0, control: false, leaks: [], collections: {} };
+		// Not the space type's name: its lexicon is a public record on purpose.
+		const needles = [NAME, RENAMED, KEY, SPACE];
+		let quiet;
+		const finish = () => {
+			ws.close();
+			resolve(found);
+		};
+		const giveUp = setTimeout(finish, 60000);
+		ws.onerror = () => {
+			clearTimeout(giveUp);
+			clearTimeout(quiet);
+			reject(new Error('jetstream connection failed'));
+		};
+		ws.onmessage = async (m) => {
+			const raw = typeof m.data === 'string' ? m.data : await m.data.text();
+			found.messages++;
+			const c = JSON.parse(raw).commit?.collection;
+			if (c) found.collections[c] = (found.collections[c] ?? 0) + 1;
+			if (raw.includes(PUBLIC_NAME)) found.control = true;
+			for (const n of needles) if (raw.includes(n)) found.leaks.push(n);
+			clearTimeout(quiet);
+			quiet = setTimeout(() => (found.control ? (clearTimeout(giveUp), finish()) : null), 3000);
+		};
+	});
+	log(`  jetstream: ${seen.messages} messages, ${JSON.stringify(seen.collections)}`);
+	check('the public event is on the firehose, so the firehose works', seen.control);
+	check('nothing of the private event is on it', seen.leaks.length === 0, seen.leaks.join(', '));
+	check(
+		'the only event on it is the public one',
+		seen.collections[EVENT] === 1,
+		`${seen.collections[EVENT]}`
+	);
+	check('no RSVP on it at all', !seen.collections[RSVP], `${seen.collections[RSVP] ?? 0}`);
+
+	// A repo's public export, raw, where a record's text sits as it was written.
+	const exported = async (c) => {
+		const r = await fetch(
+			`${c.pds}/xrpc/com.atproto.sync.getRepo?${new URLSearchParams({ did: c.did })}`
+		);
+		if (!r.ok) throw new Error(`getRepo ${c.who}: ${r.status}`);
+		return Buffer.from(await r.arrayBuffer());
+	};
+	check(
+		'the public event is in its person’s exported repo',
+		(await exported(C.mallory)).includes(PUBLIC_NAME)
+	);
+	for (const name of ['alice', 'bob', 'dana']) {
+		check(`nothing of it in ${name}’s exported repo`, !(await exported(C[name])).includes(NAME));
+	}
+
+	// atmo's own index, after real ingest. Each run reads the network's Jetstream for up to 20 s.
+	let indexed = null;
+	for (let i = 0; i < 6 && !indexed; i++) {
+		await runCron();
+		const r = await fetch(`${ATMO}/p/${C.mallory.handle}/e/${controlKey}/data.json`);
+		if (r.ok) indexed = await r.json();
+		else if (r.status !== 404) throw new Error(`atmo's event data: ${r.status}`);
+	}
+	check('atmo indexed the public event, so ingest works', indexed?.value?.name === PUBLIC_NAME);
+	const hidden = await fetch(`${ATMO}/p/${C.alice.handle}/e/${KEY}/data.json`);
+	check('atmo has no public copy of the private event', hidden.status === 404, `${hidden.status}`);
+	const listing = await pages.mallory.request.get(`${ATMO}/events?filter=all`);
+	const html = await listing.text();
+	check('/events loaded', listing.status() === 200, `${listing.status()}`);
+	check('/events shows the public event', html.includes(PUBLIC_NAME));
+	check('/events has nothing of the private one', !html.includes(NAME) && !html.includes(KEY));
+	const profile = await pages.mallory.request.get(`${ATMO}/p/${C.alice.handle}`);
+	check(
+		'alice’s public page has nothing of it',
+		!(await profile.text()).includes(NAME),
+		`${profile.status()}`
+	);
+});
+
 await step('15. alice cancels, and a guest gets the same page as anyone', async () => {
 	const a = pages.alice;
 	await open(a, `${EVENT_PATH}/edit`);
@@ -593,16 +767,19 @@ await step('15. alice cancels, and a guest gets the same page as anyone', async 
 	const confirm = a.getByRole('button', { name: /^delete/i }).last();
 	await confirm.click({ timeout: 10000 }).catch(() => {});
 	await a.waitForURL((u) => u.pathname === '/private', { timeout: 30000 });
+	await listLoads(a, 'alice');
 	check('off her list', !(await text(a, 'main')).includes(NAME));
 	const status = await open(pages.bob);
 	check('bob gets a 404, not a 500', status === 404, `${status}`);
 	check('in the same words', (await text(pages.bob, 'main')).includes(NOT_AVAILABLE));
 	await shot(pages.bob, '12-guest-after-cancel');
+	await sameAsMadeUp('bob', pages.bob, 'bob, after the cancel');
 	check('his record stays in his repo', (await ownRsvp('bob')) === 'going');
-	await open(pages.bob, '/private');
+	await listLoads(pages.bob, 'bob');
 	check('off bob’s list', !(await text(pages.bob, 'main')).includes(NAME));
 });
 
+check('no uncaught error in any browser', pageErrors === 0, `${pageErrors}`);
 await browser.close();
 log(failures ? `\n${failures} CHECK(S) FAILED` : '\nEVERY CHECK PASSED');
 process.exit(failures ? 1 : 0);
