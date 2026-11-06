@@ -31,11 +31,11 @@ export function createPrivateEventAdapter(viewer: EditorViewer): EditorAdapter {
 		},
 		onSaved({ rkey }) {
 			goto(resolve('/(app)/p/[actor]/private/[rkey]', { actor: handleOrDid(viewer), rkey }), {
-				invalidateAll: true
+				refreshAll: true
 			});
 		},
 		onDeleted() {
-			goto(resolve('/(app)/private'), { invalidateAll: true });
+			goto(resolve('/(app)/private'), { refreshAll: true });
 		},
 		async notifyUpdate() {}
 	};
