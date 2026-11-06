@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { getEventExternalImage } from '@atmo-dev/kit/events-data';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { HOST_SCOPE, GUEST_SCOPE } from '../scopes';
 import { EVENT_COLLECTION, privateEventSpace, privateEventUri, RSVP_COLLECTION } from '../ids';
@@ -343,6 +344,29 @@ describe('readPrivateEventPage', () => {
 		reader.writers.mockResolvedValue([]);
 		const page = await readPrivateEventPage(caller(GUEST, GUEST_SCOPE), HOST, RKEY);
 		expect(page?.event).not.toHaveProperty('media');
+	});
+
+	it.each([
+		['poster', { poster: { url: 'https://images.example.com/a.webp' } }],
+		['link', { uris: [{ name: 'Event Image', uri: 'https://images.example.com/b.webp' }] }]
+	])(
+		'gives the page no external image from a %s to load in a guest’s browser',
+		async (_, image) => {
+			theSpaceHolds({}, { ...RECORD, ...image } as unknown as typeof RECORD);
+			reader.writers.mockResolvedValue([]);
+			const page = await readPrivateEventPage(caller(GUEST, GUEST_SCOPE), HOST, RKEY);
+			expect(page?.event.name).toBe(RECORD.name);
+			expect(getEventExternalImage(page!.event)).toBeNull();
+		}
+	);
+
+	it('keeps an image link as an ordinary link, and the event’s other links as they are', async () => {
+		const tickets = { name: 'Tickets', uri: 'https://tickets.example.com' };
+		const image = { name: 'Event Image', uri: 'https://images.example.com/b.webp' };
+		theSpaceHolds({}, { ...RECORD, uris: [image, tickets] } as unknown as typeof RECORD);
+		reader.writers.mockResolvedValue([]);
+		const page = await readPrivateEventPage(caller(GUEST, GUEST_SCOPE), HOST, RKEY);
+		expect(page?.event.uris).toEqual([{ uri: image.uri }, tickets]);
 	});
 
 	it('splits answers, keeps "not going" off both lists, and finds the viewer’s own', async () => {
