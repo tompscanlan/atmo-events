@@ -59,6 +59,7 @@ apps:
       ALPHA_URL: ${pds.alpha.url}
       BETA_URL: ${pds.beta.url}
       REGULAR_URL: ${pds.regular.url}
+      JETSTREAM_URL: ${services.jetstream.url}
       ALICE_HANDLE: ${accounts.alice.handle}
       ALICE_PASSWORD: ${accounts.alice.password}
       BOB_HANDLE: ${accounts.bob.handle}
