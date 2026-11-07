@@ -18,7 +18,7 @@ import {
 	storeCachedProfile,
 	type GroupMeta
 } from './group';
-import { groupsEnabled } from './enabled';
+import { requireGroupsEnabled } from './enabled';
 import { groupHandle, groupSession, groupSignInAvailable, hasGroupSession } from './sign-in';
 import { isAuthRefused, isRoleRefused, type XrpcHandle } from './xrpc';
 
@@ -77,7 +77,7 @@ async function linkedRead(
 }
 
 export async function groupView(actor: string, callerDid: string | null): Promise<GroupView> {
-	if (!groupsEnabled()) error(404, GROUP_NOT_FOUND);
+	requireGroupsEnabled();
 	const group = await resolveGroup(actor);
 	if (!group) error(404, GROUP_NOT_FOUND);
 
@@ -140,7 +140,8 @@ export async function requireGroupWriter(
 	groupDid: string,
 	callerDid: string | null
 ): Promise<GroupWriter> {
-	if (!callerDid || !groupsEnabled()) error(404, GROUP_NOT_FOUND);
+	requireGroupsEnabled();
+	if (!callerDid) error(404, GROUP_NOT_FOUND);
 	const session = await groupSession(groupDid, callerDid).catch(() => null);
 	if (!session) error(404, GROUP_NOT_FOUND);
 	return { did: groupDid, handle: groupHandle(session, callerDid) };
@@ -152,7 +153,8 @@ export async function requireStoredLink(
 	groupDid: string,
 	callerDid: string | null
 ): Promise<string> {
-	if (!callerDid || !groupsEnabled()) error(404, GROUP_NOT_FOUND);
+	requireGroupsEnabled();
+	if (!callerDid) error(404, GROUP_NOT_FOUND);
 	if (!(await hasGroupSession(groupDid, callerDid))) error(404, GROUP_NOT_FOUND);
 	return callerDid;
 }
