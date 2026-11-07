@@ -5,6 +5,7 @@
 import { GROUP_ACCEPTANCE_COLLECTION, GROUP_ACCEPTANCE_RKEY, membersSpaceUri } from '../ids';
 import { holdsAcceptanceGrant } from '../scopes';
 import type { CallerSession } from './caller';
+import type { GroupSpaceReader } from './space-read';
 import { xrpc, XrpcError } from './xrpc';
 
 /** A create, so an existing acceptance keeps its date and no read is needed. `skipped` when
@@ -70,4 +71,31 @@ export async function unaccept(member: CallerSession, groupDid: string): Promise
 	} catch (e) {
 		console.warn(`[groups] ${member.did}'s acceptance in ${groupDid} stays:`, e);
 	}
+}
+
+/** At each member's own PDS, on the reader's credential, which reading the memberships already got.
+ *  Only the DIDs passed in are read, so an acceptance with no membership never counts. Any failure
+ *  reads as absent and is logged, as for a member whose PDS serves no spaces. */
+export async function readAcceptances(
+	reader: GroupSpaceReader,
+	space: string,
+	dids: readonly string[]
+): Promise<Map<string, boolean>> {
+	const reads = await Promise.all(
+		[...new Set(dids)].map(async (did) => {
+			try {
+				const found = await reader.get({
+					space,
+					repo: did,
+					collection: GROUP_ACCEPTANCE_COLLECTION,
+					rkey: GROUP_ACCEPTANCE_RKEY
+				});
+				return [did, found !== null] as const;
+			} catch (e) {
+				console.info(`[groups] acceptance read for ${did} in ${space} failed:`, e);
+				return [did, false] as const;
+			}
+		})
+	);
+	return new Map(reads);
 }

@@ -1,7 +1,8 @@
-import { env } from 'cloudflare:workers';
 import { error } from '@sveltejs/kit';
+import { forgetAsked, groupAccess } from '#lib/groups/permissions-asked.js';
 import { browseGroups } from '#lib/groups/server/browse.js';
 import { serverOrigin } from '#lib/groups/server/declared.js';
+import { groupsEnabled } from '#lib/groups/server/enabled.js';
 import { groupSignInAvailable } from '#lib/groups/server/sign-in.js';
 
 const LINK_NOTICES = {
@@ -9,8 +10,8 @@ const LINK_NOTICES = {
 	failed: 'The group was not linked. Only someone with a role in the group can link it.'
 } as const;
 
-export async function load({ locals, url }) {
-	if (!env.GROUP_HOST_URL) error(404, 'Not found');
+export async function load({ locals, url, cookies }) {
+	if (!groupsEnabled()) error(404, 'Not found');
 	const asked = url.searchParams.get('server');
 	const server = serverOrigin(asked);
 	if (asked !== null && !server) error(404, 'Not found');
@@ -18,6 +19,7 @@ export async function load({ locals, url }) {
 		cursor: url.searchParams.get('cursor'),
 		server
 	});
+	if (locals.did && !askAccess) forgetAsked(cookies);
 	const host = server ? new URL(server).host : null;
 	const link = url.searchParams.get('link');
 	return {
@@ -26,7 +28,8 @@ export async function load({ locals, url }) {
 		groups,
 		cursor,
 		declaredUnavailable,
-		askAccess,
+		access: groupAccess(askAccess, cookies, locals.did),
+		you: locals.did ?? null,
 		server: server && host ? { origin: server, host } : null,
 		crowded: crowded.map((entry) => ({ ...entry, host: new URL(entry.server).host })),
 		canLink: Boolean(locals.did) && groupSignInAvailable(),

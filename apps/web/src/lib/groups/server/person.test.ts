@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SpaceAccessDenied } from './space-credential';
+import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import type { CallerSession } from './caller';
 
 const mocks = vi.hoisted(() => ({ get: vi.fn() }));
@@ -70,7 +70,7 @@ describe('membership', () => {
 	});
 
 	it('reads a refusal as not a member, and anything else as an error', async () => {
-		mocks.get.mockRejectedValueOnce(new SpaceAccessDenied('s', '400 SpaceNotFound', true));
+		mocks.get.mockRejectedValueOnce(new SpaceAccessDenied('s', '400 SpaceNotFound'));
 		expect(await isMemberAsPerson(caller([]), 'did:plc:g')).toBe(false);
 		mocks.get.mockRejectedValueOnce(new Error('down'));
 		await expect(isMemberAsPerson(caller([]), 'did:plc:g')).rejects.toThrow('down');

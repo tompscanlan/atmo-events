@@ -8,7 +8,7 @@ import { callerSession } from '#lib/groups/server/caller.js';
 import { groupView, type GroupView, type Viewer } from '#lib/groups/server/context.js';
 import { pendingSetup } from '#lib/groups/server/create.js';
 import { spacesServer } from '#lib/groups/server/group.js';
-import { groupAccess } from '#lib/groups/permissions-asked.js';
+import { forgetAsked, groupAccess } from '#lib/groups/permissions-asked.js';
 
 const NOTICES = {
 	'link=linked': 'Linked. You can now post events for this group.',
@@ -39,8 +39,11 @@ async function membersOnlySlice(
 	}
 }
 
-export async function load({ params, locals, url, cookies }) {
+export async function load({ params, locals, url, cookies, setHeaders }) {
+	// What's on it depends on who's asking, and may be members-only.
+	setHeaders({ 'cache-control': 'no-store' });
 	const group = await groupView(params.actor, locals);
+	if (group.holdsAccess) forgetAsked(cookies);
 	const access = groupAccess(group.askAccess, cookies, locals.did);
 	const [page, membersOnly] = await Promise.all([
 		hostingQuery(getServerClient(env.DB), { actor: group.did as ActorIdentifier }, null),

@@ -51,7 +51,7 @@ import {
 	requireGroupWriter,
 	requireStoredLink
 } from './context';
-import { SpaceAccessDenied } from './space-credential';
+import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 
 const GROUP = 'did:plc:group';
 const ALICE = 'did:plc:alice';
@@ -310,14 +310,14 @@ describe("groupView with the caller's own access", () => {
 	});
 
 	it('says "try again", never acts, when SpaceNotFound comes for a group they wrote into', async () => {
-		mocks.readMetaAsPerson.mockRejectedValue(new SpaceAccessDenied('s', '400 SpaceNotFound', true));
+		mocks.readMetaAsPerson.mockRejectedValue(new SpaceAccessDenied('s', '400 SpaceNotFound'));
 		mocks.groupSpacesOf.mockResolvedValue([GROUP]);
 		mocks.isDeclared.mockResolvedValue(false);
 		await expect(view()).rejects.toMatchObject({ status: 503, body: { message: GROUP_UNCHECKED } });
 	});
 
 	it('is the same 404 on SpaceNotFound for a group they never wrote into', async () => {
-		mocks.readMetaAsPerson.mockRejectedValue(new SpaceAccessDenied('s', '400 SpaceNotFound', true));
+		mocks.readMetaAsPerson.mockRejectedValue(new SpaceAccessDenied('s', '400 SpaceNotFound'));
 		mocks.groupSpacesOf.mockResolvedValue(['did:plc:other']);
 		mocks.isDeclared.mockResolvedValue(false);
 		await expect(view()).rejects.toMatchObject({ status: 404, body: { message: GROUP_NOT_FOUND } });

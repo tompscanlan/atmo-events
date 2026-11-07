@@ -27,7 +27,8 @@ const input = (asked?: string) =>
 	({
 		params: { actor: GROUP },
 		locals: { did: caller.did, session: {} },
-		cookies: { get: (name: string) => (name === ASKED_COOKIE ? asked : undefined) }
+		setHeaders: () => {},
+		cookies: { get: (name: string) => (name === ASKED_COOKIE ? asked : undefined), delete: () => {} }
 	}) as never;
 const view = (over: Record<string, unknown>) => ({
 	did: GROUP,

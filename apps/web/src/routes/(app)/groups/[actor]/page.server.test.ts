@@ -29,7 +29,8 @@ const input = (asked?: string) =>
 		params: { actor: GROUP },
 		locals: { did: caller.did, session: {} },
 		url: new URL(`https://atmo.example/groups/${GROUP}`),
-		cookies: { get: (name: string) => (name === ASKED_COOKIE ? asked : undefined) }
+		setHeaders: () => {},
+		cookies: { get: (name: string) => (name === ASKED_COOKIE ? asked : undefined), delete: () => {} }
 	}) as never;
 const at = (rkey: string, startsAt: string) => ({
 	rkey,

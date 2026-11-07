@@ -5,7 +5,7 @@ import type { FlatEventRecord } from '#lib/contrail.js';
 import { calendarSpaceUri, GROUP_EVENT_COLLECTION } from '../ids';
 import { holdsCalendarGrant } from '../scopes';
 import type { CallerSession } from './caller';
-import { isSpaceAccessDenied } from './space-credential';
+import { isSpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { credentialSpaceReader, type GroupSpaceRecord } from './space-read';
 
 /** As the event components take it: the record whole, its address beside it. Null with no

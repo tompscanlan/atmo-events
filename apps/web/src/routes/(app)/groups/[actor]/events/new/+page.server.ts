@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import { now as tidNow } from '@atcute/tid';
 import { GROUP_NOT_FOUND, groupView, requireGroupWriter } from '#lib/groups/server/context.js';
 import { calendarSpaceState } from '#lib/groups/server/group-events.js';
-import { groupAccess } from '#lib/groups/permissions-asked.js';
+import { forgetAsked, groupAccess } from '#lib/groups/permissions-asked.js';
 
 const MEMBERS_ONLY_UNAVAILABLE = {
 	missing: 'This group has no calendar space for members-only events.',
@@ -16,8 +16,10 @@ const MEMBERS_ONLY_UNSEEN = {
 	refused: "You won't see it yourself: your server did not give atmo group permissions."
 } as const;
 
-export async function load({ params, locals, cookies }) {
+export async function load({ params, locals, cookies, setHeaders }) {
+	setHeaders({ 'cache-control': 'no-store' });
 	const group = await groupView(params.actor, locals);
+	if (group.holdsAccess) forgetAsked(cookies);
 	if (!group.linked) error(404, GROUP_NOT_FOUND);
 	// Asked here, since the editor reports any failed save in the same words.
 	const calendar = await calendarSpaceState(await requireGroupWriter(group.did, locals.did));

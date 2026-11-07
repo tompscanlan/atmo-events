@@ -5,11 +5,13 @@ import { spacesServer } from '#lib/groups/server/group.js';
 import { listJoinRequests, type JoinRequest } from '#lib/groups/server/host.js';
 import { splitRoster } from '#lib/groups/server/members-read.js';
 import { handlesOf, readRoster } from '#lib/groups/server/roster.js';
-import { isSpaceAccessDenied } from '#lib/groups/server/space-credential.js';
-import { groupAccess } from '#lib/groups/permissions-asked.js';
+import { isSpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
+import { forgetAsked, groupAccess } from '#lib/groups/permissions-asked.js';
 
-export async function load({ params, locals, cookies }) {
+export async function load({ params, locals, cookies, setHeaders }) {
+	setHeaders({ 'cache-control': 'no-store' });
 	const group = await groupView(params.actor, locals);
+	if (group.holdsAccess) forgetAsked(cookies);
 	const caller = await callerSession(locals.session);
 	const base = {
 		pageTitle: `Members - ${group.name}`,

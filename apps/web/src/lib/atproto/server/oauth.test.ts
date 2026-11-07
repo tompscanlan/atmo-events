@@ -62,6 +62,18 @@ describe('OAuth library configuration', () => {
 			expect.arrayContaining([...GROUP_PERSON_SCOPES])
 		);
 	});
+	it('declares both features together once each, with the guest grant only once', async () => {
+		const { env } = await import('cloudflare:workers');
+		Object.assign(env, { GROUP_HOST_URL: 'https://host.example', PRIVATE_EVENTS: 'true' });
+		const { getAuth } = await import('./oauth');
+		const { GROUP_PERSON_SCOPES } = await import('../../groups/scopes');
+		const { GUEST_SCOPE, PRIVATE_EVENT_SCOPES } = await import('../../private-events/scopes');
+		getAuth();
+		const declared = (mocks.create.mock.calls[0][0] as AtprotoAuthConfig).scope as string[];
+		expect(declared).toEqual(expect.arrayContaining([...PRIVATE_EVENT_SCOPES, ...GROUP_PERSON_SCOPES]));
+		expect(declared.filter((s) => s === GUEST_SCOPE)).toHaveLength(1);
+		expect(new Set(declared).size).toBe(declared.length);
+	});
 	it('uses direct Worker bindings and retains state TTL and session keys', async () => {
 		const sessions = { put: vi.fn(), get: vi.fn(), delete: vi.fn(), list: vi.fn() };
 		const states = { ...sessions, put: vi.fn() };

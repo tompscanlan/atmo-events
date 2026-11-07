@@ -8,7 +8,7 @@ import { listGroup, readGroupMeta, resolveGroup, unlistGroup } from './server/gr
 import { deleteGroupEvent, GroupEventRefused, putGroupEvent } from './server/group-events';
 import { applyGroupSettings, parseGroupSettings } from './server/settings';
 import { unlinkGroup } from './server/sign-in';
-import { xrpc } from './server/xrpc';
+import { xrpcBlob } from './server/xrpc';
 
 const didSchema = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,2048}$/));
 const rkeySchema = v.pipe(v.string(), v.regex(/^[a-zA-Z0-9._:~-]{1,512}$/));
@@ -78,7 +78,7 @@ export const uploadGroupBlob = command(
 	async ({ groupDid, bytes, mimeType }) => {
 		const writer = await requireGroupWriter(groupDid, callerDid());
 		const blob = new Blob([new Uint8Array(bytes)], { type: mimeType });
-		const result = await xrpc(writer.handle, 'com.atproto.repo.uploadBlob', { blob }).catch(() =>
+		const result = await xrpcBlob(writer.handle, 'com.atproto.repo.uploadBlob', blob).catch(() =>
 			error(502, 'Upload failed')
 		);
 		return result.blob as { $type: 'blob'; ref: { $link: string }; mimeType: string; size: number };

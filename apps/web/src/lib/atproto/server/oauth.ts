@@ -13,6 +13,7 @@ import { oauthOrigin } from './origin';
 import { PRIVATE_EVENT_SCOPES } from '../../private-events/scopes';
 import { privateEventsEnabled } from '../../private-events/server/enabled';
 import { GROUP_PERSON_SCOPES } from '../../groups/scopes';
+import { groupsEnabled } from '../../groups/server/enabled';
 
 /** Declared, so a person can grant them when they first use a feature; never asked for at a
  *  login. Only with that feature on, since a PDS resolves each type's lexicon to grant it. */
@@ -21,7 +22,7 @@ function declaredScopes(): string[] {
 		...new Set([
 			...scopes,
 			...(privateEventsEnabled() ? PRIVATE_EVENT_SCOPES : []),
-			...(env.GROUP_HOST_URL ? GROUP_PERSON_SCOPES : [])
+			...(groupsEnabled() ? GROUP_PERSON_SCOPES : [])
 		])
 	];
 }

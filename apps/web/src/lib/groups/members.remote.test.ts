@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { error } from '@sveltejs/kit';
 
 const mocks = vi.hoisted(() => ({
+	groupsEnabled: vi.fn(),
 	getRequestEvent: vi.fn(),
 	callerSession: vi.fn(),
 	requireGroupWriter: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock('$app/server', () => ({
 		Object.assign(handler as object, { __: { type: 'command' } }),
 	getRequestEvent: mocks.getRequestEvent
 }));
+vi.mock('./server/enabled', () => ({ groupsEnabled: mocks.groupsEnabled }));
 vi.mock('./server/caller', () => ({ callerSession: mocks.callerSession }));
 vi.mock('./server/context', () => ({ requireGroupWriter: mocks.requireGroupWriter }));
 vi.mock('./server/group', () => ({ resolveGroup: mocks.resolveGroup }));
@@ -39,12 +41,19 @@ const writer = { did: GROUP, handle: vi.fn() };
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	mocks.groupsEnabled.mockReturnValue(true);
 	mocks.getRequestEvent.mockReturnValue({ locals: { did: ALICE, session: {} } });
 	mocks.callerSession.mockResolvedValue(caller);
 	mocks.requireGroupWriter.mockResolvedValue(writer);
 });
 
 describe("a person's own acts", () => {
+	it('answer 404 with groups off', async () => {
+		mocks.groupsEnabled.mockReturnValue(false);
+		await expect(joinGroup({ groupDid: GROUP })).rejects.toMatchObject({ status: 404 });
+		expect(mocks.requestJoin).not.toHaveBeenCalled();
+	});
+
 	it('need a signed-in session', async () => {
 		mocks.callerSession.mockResolvedValue(null);
 		await expect(joinGroup({ groupDid: GROUP })).rejects.toMatchObject({ status: 401 });

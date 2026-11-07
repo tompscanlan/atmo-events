@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CALENDAR_RSVP_SCOPE } from '../scopes';
 import type { CallerSession } from './caller';
-import { SpaceAccessDenied } from './space-credential';
+import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import type { GroupSpaceReader } from './space-read';
 
 const mocks = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn() }));

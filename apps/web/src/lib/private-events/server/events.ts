@@ -446,7 +446,8 @@ export async function myPrivateEvents(caller: CallerSession): Promise<MyPrivateE
 	const events = await Promise.all(
 		spaces.map(async (uri): Promise<MyPrivateEvent | null> => {
 			const parsed = parseSpaceUri(uri);
-			if (!parsed) return null;
+			// A group's calendar is keyed `self`, and its events are on the group's own page.
+			if (!parsed || parsed.key === 'self') return null;
 			const event = await readEvent(reader, parsed.authority, parsed.key).catch((e) => {
 				console.info(`[private-events] ${uri} unread for ${caller.did}:`, e);
 				unread++;

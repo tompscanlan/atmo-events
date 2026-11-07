@@ -1,5 +1,6 @@
 // What a person's own sign-in needs for groups, asked for at their first group action and
 // never at sign-in. Values and pure checks only, so the OAuth config can import them.
+import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 import {
 	CALENDAR_SPACE_TYPE,
 	GROUP_ACCEPTANCE_COLLECTION,
@@ -16,8 +17,9 @@ export const PARTICIPATE_SCOPE = 'include:group.opensocial.participate';
 export const LIST_GROUP_SPACES_SCOPE = `space:${MEMBERS_SPACE_TYPE}?authority=*&action=read_self`;
 
 /** A member's RSVPs in any group's calendar space; with it their PDS also lets them read the
- *  space, so it is what shows them members-only events. */
-export const CALENDAR_RSVP_SCOPE = `space:${CALENDAR_SPACE_TYPE}?authority=*&collection=${GROUP_RSVP_COLLECTION}&action=read&action=create&action=update&action=delete`;
+ *  space, so it is what shows them members-only events. The same words as a private event's guest,
+ *  so holding one holds the other. */
+export const CALENDAR_RSVP_SCOPE = GUEST_SCOPE;
 
 export const GROUP_PERSON_SCOPES: readonly string[] = [
 	PARTICIPATE_SCOPE,

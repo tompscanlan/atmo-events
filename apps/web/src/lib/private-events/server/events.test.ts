@@ -483,6 +483,25 @@ describe('myPrivateEvents', () => {
 		expect(guest.sent[0].query.has('did')).toBe(false);
 	});
 
+	it('spends no call on a group’s calendar, keyed self, and doesn’t call the list incomplete', async () => {
+		reader.get.mockImplementation(async ({ rkey }: { rkey: string }) => ({
+			...spaceRecord(HOST, EVENT_COLLECTION, RECORD),
+			rkey
+		}));
+		const member = caller(GUEST, GUEST_SCOPE, {
+			'com.atproto.space.listSpaces': () =>
+				Response.json({
+					spaces: [{ uri: `at://${OTHER}/space/rsvp.atmo.calendarSpace/self` }, { uri: SPACE }]
+				})
+		});
+		reader.get.mockClear();
+		const { events, incomplete } = await myPrivateEvents(member);
+		expect(events.map((e) => e.event.rkey)).toEqual([RKEY]);
+		expect(incomplete).toBe(false);
+		expect(reader.get).toHaveBeenCalledTimes(1);
+		expect(reader.get.mock.calls[0][0]).toMatchObject({ space: SPACE });
+	});
+
 	it('asks only for their own spaces without a guest’s grant, which is all the PDS would give', async () => {
 		const host = caller(HOST, HOST_SCOPE, {
 			'com.atproto.space.listSpaces': () => Response.json({ spaces: [] })

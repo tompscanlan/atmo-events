@@ -14,11 +14,7 @@ const mocks = vi.hoisted(() => ({
 	accept: vi.fn()
 }));
 vi.mock('./space-read', () => ({ credentialSpaceReader: () => mocks.reader }));
-vi.mock('./space-credential', async (importActual) => ({
-	...(await importActual<typeof import('./space-credential')>()),
-	credentialAcceptanceReader: () => ({ accepted: mocks.accepted })
-}));
-vi.mock('./acceptance', () => ({ accept: mocks.accept }));
+vi.mock('./acceptance', () => ({ accept: mocks.accept, readAcceptances: mocks.accepted }));
 
 import { readRoster } from './roster';
 import { readGroupMembers, splitRoster } from './members-read';

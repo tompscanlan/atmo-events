@@ -12,7 +12,7 @@ import {
 } from '../ids';
 import type { CallerSession } from './caller';
 import { parseGroupProfile, type GroupMeta } from './group';
-import { isSpaceAccessDenied } from './space-credential';
+import { isSpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { credentialSpaceReader } from './space-read';
 import { xrpc } from './xrpc';
 

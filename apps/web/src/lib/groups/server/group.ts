@@ -5,7 +5,7 @@ import { env } from 'cloudflare:workers';
 import type { ActorIdentifier } from '@atcute/lexicons';
 import type { ResourceUri } from '@atcute/lexicons/syntax';
 import { createActorResolver } from '@svelte-atproto/oauth/network';
-import { atprotoNetwork } from '#lib/atproto/network.js';
+import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 import { getServerClient } from '#lib/contrail/index.js';
 import {
 	declarationUri,
@@ -31,7 +31,7 @@ export interface ResolvedGroup {
 let resolver: ReturnType<typeof createActorResolver> | undefined;
 
 export async function resolveGroup(actor: string): Promise<ResolvedGroup | null> {
-	resolver ??= createActorResolver({ network: atprotoNetwork() });
+	resolver ??= createActorResolver({ network: timeLimitedNetwork() });
 	try {
 		const { did, handle, pds } = await resolver.resolve(actor as ActorIdentifier);
 		return { did, handle: handle === 'handle.invalid' ? null : handle, pds };

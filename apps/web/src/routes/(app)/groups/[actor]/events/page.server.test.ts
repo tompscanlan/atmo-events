@@ -55,7 +55,7 @@ const view = (over: object = {}) => ({
 });
 const TRAIL = { name: 'Trail day', startsAt: '2026-11-07T15:00:00.000Z', cid: 'cid-e1' };
 const input = (rkey = 'e1') =>
-	({ params: { actor: GROUP, rkey }, locals: { did: caller.did } }) as never;
+	({ params: { actor: GROUP, rkey }, locals: { did: caller.did }, setHeaders: () => {} }) as never;
 
 beforeEach(() => {
 	vi.resetAllMocks();
@@ -130,7 +130,8 @@ describe('the new-event page', () => {
 			({
 				params: { actor: GROUP, rkey: 'e1' },
 				locals: { did: caller.did },
-				cookies: { get: () => did }
+				setHeaders: () => {},
+				cookies: { get: () => did, delete: () => {} }
 			}) as never;
 		const before = (await newPage(asked())) as { membersOnlyUnseen: string };
 		const after = (await newPage(asked(caller.did))) as { membersOnlyUnseen: string };

@@ -4,6 +4,7 @@ import * as v from 'valibot';
 import { GROUP_ROLES } from './permissions';
 import { callerSession, type CallerSession } from './server/caller';
 import { requireGroupWriter } from './server/context';
+import { groupsEnabled } from './server/enabled';
 import { resolveGroup } from './server/group';
 import {
 	admitMember,
@@ -20,6 +21,7 @@ const didSchema = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,204
 const roleSchema = v.picklist(GROUP_ROLES);
 
 async function member(): Promise<CallerSession> {
+	if (!groupsEnabled()) error(404, 'Not found');
 	const caller = await callerSession(getRequestEvent().locals.session);
 	if (!caller) error(401, 'Sign in first');
 	return caller;

@@ -3,12 +3,14 @@ import { command, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
 import { RSVP_STATUSES } from './ids';
 import { callerSession, type CallerSession } from './server/caller';
+import { groupsEnabled } from './server/enabled';
 import { deleteMembersOnlyRsvp, putMembersOnlyRsvp, RsvpRefused } from './server/member-rsvp';
 
 const didSchema = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,2048}$/));
 const rkeySchema = v.pipe(v.string(), v.regex(/^[a-zA-Z0-9._:~-]{1,512}$/));
 
 async function member(): Promise<CallerSession> {
+	if (!groupsEnabled()) error(404, 'Not found');
 	const caller = await callerSession(getRequestEvent().locals.session);
 	if (!caller) error(401, 'Sign in first');
 	return caller;

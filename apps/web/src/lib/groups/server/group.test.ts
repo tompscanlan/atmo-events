@@ -13,7 +13,7 @@ vi.mock('./declared', () => ({ crowdedServers: mocks.crowdedServers }));
 vi.mock('#lib/contrail/index.js', () => ({
 	getServerClient: () => ({ get: mocks.get, post: mocks.post })
 }));
-vi.mock('#lib/atproto/network.js', () => ({ atprotoNetwork: () => undefined }));
+vi.mock('#lib/atproto/network.js', () => ({ atprotoNetwork: () => ({ fetch: vi.fn() }) }));
 vi.mock('@svelte-atproto/oauth/network', () => ({
 	createActorResolver: () => ({ resolve: mocks.resolve })
 }));

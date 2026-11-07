@@ -10,7 +10,8 @@ const EVENT_NOT_FOUND = 'Event not found';
 
 // A members-only event, read with the viewer's own access. Its public counterpart is the
 // ordinary event page; nothing here reaches the index or a public URL.
-export async function load({ params, locals }) {
+export async function load({ params, locals, setHeaders }) {
+	setHeaders({ 'cache-control': 'no-store' });
 	const group = await groupView(params.actor, locals);
 	const caller = group.member ? await callerSession(locals.session ?? null) : null;
 	if (!caller) error(404, EVENT_NOT_FOUND);

@@ -9,7 +9,8 @@ import { readMembersOnlyEventAsGroup } from '#lib/groups/server/group-events.js'
 
 // The event is where it was first written, and stays there: the index has a public one, and
 // the group's calendar space a members-only one, read here as the group.
-export async function load({ params, locals }) {
+export async function load({ params, locals, setHeaders }) {
+	setHeaders({ 'cache-control': 'no-store' });
 	const group = await groupView(params.actor, locals);
 	if (!group.linked) error(404, GROUP_NOT_FOUND);
 

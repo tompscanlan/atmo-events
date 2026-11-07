@@ -2,7 +2,7 @@
 // a group. A visitor sees a group only through its declaration; a person the group's host
 // lets read its meta space sees it with their own access; someone who linked it sees it
 // as the group does. Every refusal is the same 404.
-import { env, waitUntil } from 'cloudflare:workers';
+import { waitUntil } from 'cloudflare:workers';
 import { error } from '@sveltejs/kit';
 import {
 	TokenInvalidError,
@@ -24,8 +24,9 @@ import { holdsAcceptanceGrant, holdsGroupScopes, holdsMetaRead, holdsSpaceList }
 import { callerSession, type CallerSession } from './caller';
 import { accept } from './acceptance';
 import { groupSpacesOf, isMemberAsPerson, readMetaAsPerson } from './person';
+import { groupsEnabled } from './enabled';
 import { groupHandle, groupSession, groupSignInAvailable, hasGroupSession } from './sign-in';
-import { isSpaceAccessDenied } from './space-credential';
+import { isSpaceAccessDenied, type SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { isAuthRefused, isRoleRefused, type XrpcHandle } from './xrpc';
 
 /** Byte for byte, so the causes cannot be told apart. */
@@ -54,6 +55,8 @@ export interface GroupView {
 	member: boolean | null;
 	/** Signed in, but their sign-in does not yet grant what groups need. */
 	askAccess: boolean;
+	/** Signed in, and it does: nothing about their server is worth remembering. */
+	holdsAccess: boolean;
 }
 
 export interface GroupWriter {
@@ -103,6 +106,10 @@ async function knowsGroup(caller: CallerSession, groupDid: string): Promise<bool
 	}
 }
 
+/** A PDS answers SpaceNotFound for a refusal and also when the authority's access check could not be
+ *  reached: a reason to hide the space, never to act on it. */
+const isAmbiguousDenial = (e: SpaceAccessDenied) => e.reason.endsWith('SpaceNotFound');
+
 /** The host's answer for the caller. `unsure` when it could not be had for a group the
  *  caller knows, or at all: never a reason to act, only to say "try again". */
 async function personalRead(
@@ -113,7 +120,7 @@ async function personalRead(
 		return { meta: await readMetaAsPerson(caller, groupDid), unsure: false };
 	} catch (e) {
 		if (isSpaceAccessDenied(e)) {
-			return { meta: null, unsure: e.ambiguous && (await knowsGroup(caller, groupDid)) };
+			return { meta: null, unsure: isAmbiguousDenial(e) && (await knowsGroup(caller, groupDid)) };
 		}
 		console.error(`[groups] ${groupDid}: the meta space could not be read for ${caller.did}:`, e);
 		return { meta: null, unsure: true };
@@ -121,7 +128,7 @@ async function personalRead(
 }
 
 export async function groupView(actor: string, viewer: Viewer): Promise<GroupView> {
-	if (!env.GROUP_HOST_URL) error(404, GROUP_NOT_FOUND);
+	if (!groupsEnabled()) error(404, GROUP_NOT_FOUND);
 	const group = await resolveGroup(actor);
 	if (!group) error(404, GROUP_NOT_FOUND);
 	const callerDid = viewer.did;
@@ -203,7 +210,8 @@ export async function groupView(actor: string, viewer: Viewer): Promise<GroupVie
 		hasLink,
 		personal,
 		member,
-		askAccess: atHost && caller !== null && !holdsGroupScopes(caller.scope)
+		askAccess: atHost && caller !== null && !holdsGroupScopes(caller.scope),
+		holdsAccess: caller !== null && holdsGroupScopes(caller.scope)
 	};
 }
 
@@ -212,7 +220,7 @@ export async function requireGroupWriter(
 	groupDid: string,
 	callerDid: string | null
 ): Promise<GroupWriter> {
-	if (!callerDid || !env.GROUP_HOST_URL) error(404, GROUP_NOT_FOUND);
+	if (!callerDid || !groupsEnabled()) error(404, GROUP_NOT_FOUND);
 	const session = await groupSession(groupDid, callerDid).catch(() => null);
 	if (!session) error(404, GROUP_NOT_FOUND);
 	return { did: groupDid, handle: groupHandle(session, callerDid) };
@@ -224,7 +232,7 @@ export async function requireStoredLink(
 	groupDid: string,
 	callerDid: string | null
 ): Promise<string> {
-	if (!callerDid || !env.GROUP_HOST_URL) error(404, GROUP_NOT_FOUND);
+	if (!callerDid || !groupsEnabled()) error(404, GROUP_NOT_FOUND);
 	if (!(await hasGroupSession(groupDid, callerDid))) error(404, GROUP_NOT_FOUND);
 	return callerDid;
 }

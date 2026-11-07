@@ -2,7 +2,8 @@ import { error } from '@sveltejs/kit';
 import { GROUP_NOT_FOUND, groupView } from '#lib/groups/server/context.js';
 
 // Writes as the group, so only someone who linked it gets the page.
-export async function load({ params, locals }) {
+export async function load({ params, locals, setHeaders }) {
+	setHeaders({ 'cache-control': 'no-store' });
 	const group = await groupView(params.actor, locals);
 	if (!group.linked) error(404, GROUP_NOT_FOUND);
 	const { meta, listed } = group.linked;
