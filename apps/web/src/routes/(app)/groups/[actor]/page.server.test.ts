@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { env } from 'cloudflare:workers';
 
 const mocks = vi.hoisted(() => ({ groupView: vi.fn(), hostingQuery: vi.fn() }));
 vi.mock('#lib/groups/server/context.js', () => ({ groupView: mocks.groupView }));
@@ -18,6 +19,7 @@ const request = (query = '') =>
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 	mocks.groupView.mockResolvedValue({ did: GROUP, name: 'Knitters', description: null });
 	mocks.hostingQuery.mockResolvedValue({ events: [], cursor: null });
 });

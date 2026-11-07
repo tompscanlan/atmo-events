@@ -3,12 +3,14 @@ import type { ActorIdentifier } from '@atcute/lexicons';
 import { getServerClient } from '#lib/contrail/index.js';
 import { hostingQuery } from '#lib/contrail/queries.js';
 import { groupView } from '#lib/groups/server/context.js';
+import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
 
 const LINK_NOTICES = {
 	linked: 'Linked. You can now post events for this group.'
 } as const;
 
 export async function load({ params, locals, url, setHeaders }) {
+	requireGroupsEnabled();
 	// What's on it depends on who's asking.
 	setHeaders({ 'cache-control': 'no-store' });
 	const group = await groupView(params.actor, locals.did);
