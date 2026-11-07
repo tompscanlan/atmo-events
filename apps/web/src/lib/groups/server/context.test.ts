@@ -61,11 +61,9 @@ describe('groupView for a visitor', () => {
 		mocks.resolveGroup.mockResolvedValueOnce(null);
 		await expect(groupView('nobody.example', null)).rejects.toMatchObject({ status: 404 });
 
+		// Worded as an unknown address: off-state.test.ts.
 		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
-		await expect(groupView(GROUP, null)).rejects.toMatchObject({
-			status: 404,
-			body: { message: GROUP_NOT_FOUND }
-		});
+		await expect(groupView(GROUP, null)).rejects.toMatchObject({ status: 404 });
 	});
 
 	it('is a 503 when the index cannot say, never a 404', async () => {
