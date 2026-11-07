@@ -77,6 +77,51 @@ const dids = (page: { records: { did: string }[] }) => page.records.map((record)
 const held = (declarations: Declaration[]) => JSON.stringify(declarations.map(([did]) => did));
 
 describe('rsvp.atmo.declaration.listDeclared', () => {
+	it("lists one server's groups without reading every account contrail knows", async () => {
+		const { sqlite, db } = setup(groupsAt('https://a.example', 'a', 3));
+		try {
+			const ran: { sql: string; params: SQLInputValue[] }[] = [];
+			const spy: Database = {
+				...db,
+				prepare(sql: string) {
+					const statement = (params: SQLInputValue[]): Statement => ({
+						bind: (...values: unknown[]) => statement(values as SQLInputValue[]),
+						all: async <T>() => {
+							ran.push({ sql, params });
+							return db
+								.prepare(sql)
+								.bind(...params)
+								.all<T>();
+						},
+						first: async <T>() =>
+							db
+								.prepare(sql)
+								.bind(...params)
+								.first<T>(),
+						run: async () =>
+							db
+								.prepare(sql)
+								.bind(...params)
+								.run()
+					});
+					return statement([]);
+				}
+			};
+			expect(dids(await listDeclared(spy, { server: 'https://a.example' }))).toHaveLength(3);
+			const plan = ran.flatMap(({ sql, params }) =>
+				(sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as { detail: string }[]).map(
+					(row) => row.detail
+				)
+			);
+			expect(plan.filter((detail) => /^SCAN i\b/.test(detail))).toEqual([]);
+			expect(plan.some((detail) => /^SEARCH i (EXISTS )?USING .*\(did=\?\)/.test(detail))).toBe(
+				true
+			);
+		} finally {
+			sqlite.close();
+		}
+	});
+
 	it('lists only the declaration at rkey self, so an account counts once, newest first', async () => {
 		const { sqlite, db } = setup([
 			['did:plc:old', 'self', 100, 'https://a.example'],
