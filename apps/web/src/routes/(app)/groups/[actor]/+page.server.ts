@@ -25,6 +25,9 @@ export async function load({ params, locals, url, setHeaders }) {
 		events: page.events,
 		cursor: page.cursor,
 		signedIn: Boolean(locals.did),
-		notice: link && link in LINK_NOTICES ? LINK_NOTICES[link as keyof typeof LINK_NOTICES] : null
+		notice:
+			link && Object.hasOwn(LINK_NOTICES, link)
+				? LINK_NOTICES[link as keyof typeof LINK_NOTICES]
+				: null
 	};
 }
