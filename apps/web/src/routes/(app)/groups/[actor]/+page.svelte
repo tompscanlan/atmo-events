@@ -101,6 +101,11 @@
 					<Button variant="ghost" disabled={busy} onclick={unlink}>Unlink</Button>
 				{/if}
 			</div>
+		{:else if group.hasLink}
+			<!-- Not at this site's group host any more, so it can't be linked again, only unlinked. -->
+			<div class="mt-6">
+				<Button variant="ghost" disabled={busy} onclick={unlink}>Unlink</Button>
+			</div>
 		{/if}
 
 		<h2 class="text-base-900 dark:text-base-50 mt-10 text-lg font-semibold">Upcoming events</h2>

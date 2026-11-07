@@ -142,21 +142,40 @@ describe('groupView for someone who linked the group', () => {
 		});
 	});
 
-	it('is the same 404 as for anyone when a broken link points at an undeclared group', async () => {
+	// Only what a visitor could learn anyway, the handle, so they can unlink it: never a cached name.
+	const bareView = {
+		name: 'knit.example',
+		description: null,
+		linked: null,
+		hasLink: true
+	};
+
+	it('shows a broken link to an undeclared group bare, so it can still be unlinked', async () => {
 		mocks.readCachedProfiles.mockResolvedValue(
 			new Map([[GROUP, { name: 'Old Name', description: 'Old', handle: 'knit.example' }]])
 		);
 		mocks.isDeclared.mockResolvedValue(false);
 		mocks.groupSession.mockRejectedValue(new Error('corrupt session'));
-		await expect(groupView(GROUP, ALICE)).rejects.toMatchObject({
-			status: 404,
-			body: { message: GROUP_NOT_FOUND }
-		});
+		expect(await groupView(GROUP, ALICE)).toEqual(
+			expect.objectContaining({ ...bareView, relink: true })
+		);
 
 		mocks.groupSession.mockResolvedValue({ did: GROUP });
 		mocks.readGroupMeta.mockRejectedValue(new XrpcError('com.atproto.space.getRecord', 401, null));
 		mocks.repoHasDeclaration.mockResolvedValue(true);
-		await expect(groupView(GROUP, ALICE)).rejects.toMatchObject({ status: 404 });
+		expect(await groupView(GROUP, ALICE)).toEqual(
+			expect.objectContaining({ ...bareView, relink: true })
+		);
+		expect(mocks.readCachedProfiles).not.toHaveBeenCalled();
+	});
+
+	it('is the same 404 for an undeclared group to someone with no link stored', async () => {
+		mocks.isDeclared.mockResolvedValue(false);
+		mocks.groupSession.mockResolvedValue(null);
+		await expect(groupView(GROUP, ALICE)).rejects.toMatchObject({
+			status: 404,
+			body: { message: GROUP_NOT_FOUND }
+		});
 	});
 
 	it.each(['ScopeMissingError', 'Forbidden'])(
@@ -176,13 +195,16 @@ describe('groupView for someone who linked the group', () => {
 		}
 	);
 
-	it('is the same 404 as for anyone when the link no longer reads an undeclared group', async () => {
+	it('shows an undeclared group bare when the link no longer reads it, so it can be unlinked', async () => {
 		mocks.readGroupMeta.mockRejectedValue(
 			new XrpcError('com.atproto.space.getRecord', 403, 'ScopeMissingError')
 		);
 		mocks.repoHasDeclaration.mockResolvedValue(false);
 		mocks.isDeclared.mockResolvedValue(false);
-		await expect(groupView(GROUP, ALICE)).rejects.toMatchObject({ status: 404 });
+		expect(await groupView(GROUP, ALICE)).toEqual(
+			expect.objectContaining({ ...bareView, relink: false })
+		);
+		expect(mocks.readCachedProfiles).not.toHaveBeenCalled();
 	});
 
 	it("fails the page, rather than offering a link, when the group's PDS is down", async () => {
