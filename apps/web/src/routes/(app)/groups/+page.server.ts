@@ -10,9 +10,9 @@ const LINK_NOTICES = {
 } as const;
 
 export async function load({ locals, url, setHeaders }) {
+	requireGroupsEnabled();
 	// Linked groups lead the list, so it depends on who's asking.
 	setHeaders({ 'cache-control': 'no-store' });
-	requireGroupsEnabled();
 	const asked = url.searchParams.get('server');
 	const server = serverOrigin(asked);
 	if (asked !== null && !server) error(404, 'Not found');
