@@ -65,7 +65,8 @@ export function declaredSource(params: URLSearchParams): RecordSource {
 		return {
 			conditions: [
 				`r.rkey = 'self'`,
-				`r.did IN (SELECT i.did FROM identities i WHERE ${serverOf('i')} = ?)`,
+				// One key lookup per declaration: the server is an expression no index covers.
+				`EXISTS (SELECT 1 FROM identities i WHERE i.did = r.did AND ${serverOf('i')} = ?)`,
 				...(atHome ? [`r.did IN (SELECT value FROM json_each(?))`] : [])
 			],
 			params: atHome ? [only, held] : [only]
