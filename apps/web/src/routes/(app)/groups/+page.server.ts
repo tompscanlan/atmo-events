@@ -32,6 +32,9 @@ export async function load({ locals, url, setHeaders }) {
 		crowded: crowded.map((entry) => ({ ...entry, host: new URL(entry.server).host })),
 		canLink: Boolean(locals.did) && groupSignInAvailable(),
 		signedIn: Boolean(locals.did),
-		notice: link && link in LINK_NOTICES ? LINK_NOTICES[link as keyof typeof LINK_NOTICES] : null
+		notice:
+			link && Object.hasOwn(LINK_NOTICES, link)
+				? LINK_NOTICES[link as keyof typeof LINK_NOTICES]
+				: null
 	};
 }
