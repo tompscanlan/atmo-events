@@ -107,7 +107,10 @@ export async function groupView(actor: string, callerDid: string | null): Promis
 	}
 
 	// Without a working link the caller sees what any visitor does, so the declaration decides,
-	// even for someone whose link broke.
+	// even for someone whose link broke. Except that someone with a link stored here still gets the
+	// page, to unlink it: bare, with only what anyone could learn, its handle and public events,
+	// never a cached name.
+	let bare = false;
 	if (!linked) {
 		let declared: boolean;
 		try {
@@ -116,12 +119,12 @@ export async function groupView(actor: string, callerDid: string | null): Promis
 			console.error(`[groups] ${group.did}: the declaration could not be read:`, e);
 			error(503, 'Groups are unavailable right now');
 		}
-		if (!declared) error(404, GROUP_NOT_FOUND);
+		if (!declared && !hasLink) error(404, GROUP_NOT_FOUND);
+		bare = !declared;
 	}
 
-	const cached = linked?.meta.profile
-		? null
-		: (await readCachedProfiles([group.did])).get(group.did);
+	const cached =
+		linked?.meta.profile || bare ? null : (await readCachedProfiles([group.did])).get(group.did);
 	const profile = linked?.meta.profile ?? cached ?? null;
 	return {
 		did: group.did,
