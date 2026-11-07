@@ -299,6 +299,41 @@ describe('heldAtGroupHost', () => {
 		expect(hostFetch).toHaveBeenCalledTimes(2);
 	});
 
+	it('gives up on a host that never answers, so the list treats it like any server', async () => {
+		const limit = new AbortController();
+		const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(limit.signal);
+		try {
+			hostFetch.mockImplementation(
+				(_input, init) =>
+					new Promise((_resolve, reject) => {
+						const signal = init?.signal;
+						if (signal?.aborted) reject(signal.reason);
+						signal?.addEventListener('abort', () => reject(signal.reason));
+					})
+			);
+			const held = heldAtGroupHost();
+			limit.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+			expect(await held).toBeNull();
+			expect(kv.ttlOf('groups:held-at-host')).toBe(60);
+		} finally {
+			timeout.mockRestore();
+		}
+	});
+
+	it('remembers for a minute that the host did not answer, so the next page does not wait again', async () => {
+		hostFetch.mockRejectedValueOnce(new Error('offline'));
+		expect(await heldAtGroupHost()).toBeNull();
+		expect(kv.ttlOf('groups:held-at-host')).toBe(60);
+		hostHolds([[GROUP, true]]);
+		expect(await heldAtGroupHost()).toBeNull();
+		expect(hostFetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('asks the host once for two lists that want it at the same time', async () => {
+		expect(await Promise.all([heldAtGroupHost(), heldAtGroupHost()])).toEqual([[GROUP], [GROUP]]);
+		expect(hostFetch).toHaveBeenCalledTimes(1);
+	});
+
 	it('is null with no group host, or when the host does not answer', async () => {
 		hostFetch.mockRejectedValue(new Error('offline'));
 		expect(await heldAtGroupHost()).toBeNull();
