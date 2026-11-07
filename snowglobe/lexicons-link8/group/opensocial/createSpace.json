@@ -1,0 +1,77 @@
+{
+	"lexicon": 1,
+	"id": "group.opensocial.createSpace",
+	"defs": {
+		"main": {
+			"type": "procedure",
+			"description": "Create a space under the group with its access record and, unless index is false, an index entry. Requires manage=create for the space type.",
+			"input": {
+				"encoding": "application/json",
+				"schema": {
+					"type": "object",
+					"required": ["type", "access"],
+					"properties": {
+						"type": {
+							"type": "string",
+							"format": "nsid"
+						},
+						"skey": {
+							"type": "string",
+							"format": "record-key",
+							"description": "Omit to generate a TID."
+						},
+						"access": {
+							"type": "ref",
+							"ref": "group.opensocial.defs#accessConfig"
+						},
+						"index": {
+							"type": "boolean",
+							"default": true,
+							"description": "Add the space to the group's index."
+						}
+					}
+				}
+			},
+			"output": {
+				"encoding": "application/json",
+				"schema": {
+					"type": "object",
+					"required": ["space", "access"],
+					"properties": {
+						"space": {
+							"type": "string",
+							"format": "space-ref"
+						},
+						"access": {
+							"type": "ref",
+							"ref": "com.atproto.repo.strongRef#main"
+						},
+						"index": {
+							"type": "ref",
+							"ref": "com.atproto.repo.strongRef#main",
+							"description": "Present when the space was indexed."
+						}
+					}
+				}
+			},
+			"errors": [
+				{
+					"name": "SpaceAlreadyExists",
+					"description": "A space with this type and skey already exists."
+				},
+				{
+					"name": "ReservedSpace",
+					"description": "The meta and members spaces can't be created or deleted."
+				},
+				{
+					"name": "UnknownRole",
+					"description": "A grant names a role that doesn't exist."
+				},
+				{
+					"name": "InvalidScope",
+					"description": "A grant isn't a valid OAuth scope."
+				}
+			]
+		}
+	}
+}
