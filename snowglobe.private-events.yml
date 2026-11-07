@@ -4,6 +4,7 @@
 #
 #   SG_FILE=snowglobe.private-events.yml pnpm exec snowglobe up
 #   SG_FILE=snowglobe.private-events.yml pnpm exec snowglobe run --app atmo -- pnpm --filter web dev --strictPort
+#   SG_FILE=snowglobe.private-events.yml pnpm exec snowglobe run --app walk -- pnpm --filter web exec node e2e/private-events.walk.mjs
 
 globe: atmoprivate # every name below is under atmoprivate.local.snowglobe.at
 
@@ -44,6 +45,8 @@ apps:
       LOCAL_STATE_DIR: .wrangler/snowglobe-private
       # Empty: atmo's loopback OAuth client, which needs no keys.
       OAUTH_PUBLIC_URL: ''
+      # Only for this local network. The walk sends it to run atmo's ingest.
+      CRON_SECRET: local-network-only
       PRIVATE_EVENTS: 'true'
       SPACES_PDS_URL: ${pds.alpha.url}
       PUBLIC_PLC_URL: ${services.plc.url}
@@ -60,6 +63,7 @@ apps:
       BETA_URL: ${pds.beta.url}
       REGULAR_URL: ${pds.regular.url}
       JETSTREAM_URL: ${services.jetstream.url}
+      CRON_SECRET: local-network-only
       ALICE_HANDLE: ${accounts.alice.handle}
       ALICE_PASSWORD: ${accounts.alice.password}
       BOB_HANDLE: ${accounts.bob.handle}

@@ -235,7 +235,6 @@ const open = async (page, target = EVENT_PATH) => {
 	await settle(page);
 	return res?.status();
 };
-// Opening one tells the host's server who is asking, so a guest chooses to, on an ordinary POST.
 // What someone kept out receives, with the address itself removed. `+page.server.ts` says these match
 // byte for byte, so that a person can't tell an event that exists from one that doesn't.
 const received = async (page, target) => {
@@ -243,12 +242,16 @@ const received = async (page, target) => {
 	const res = await page.goto(`${ATMO}${target}`, { waitUntil: 'load', timeout: 60000 });
 	const ms = Date.now() - t0;
 	const keyOf = target.split('/').at(-1);
+	const withoutKey = (text) => text.split(keyOf).join('<key>');
+	// Every header but the clock, so that any header telling the two apart shows here.
+	const headers = Object.entries(res.headers())
+		.filter(([name]) => name !== 'date')
+		.sort(([a], [b]) => a.localeCompare(b));
 	return {
 		ms,
 		status: res.status(),
-		cache: res.headers()['cache-control'] ?? '',
-		type: res.headers()['content-type'] ?? '',
-		body: (await res.text()).split(keyOf).join('<key>')
+		headers: withoutKey(JSON.stringify(headers)),
+		body: withoutKey(await res.text())
 	};
 };
 const firstDifference = (a, b) => {
@@ -270,8 +273,8 @@ const sameAsMadeUp = async (who, page, label) => {
 	);
 	check(
 		`${label}: the same headers`,
-		a.cache === b.cache && a.type === b.type,
-		`${a.cache} ${b.cache}`
+		a.headers === b.headers,
+		a.headers === b.headers ? '' : firstDifference(a.headers, b.headers)
 	);
 	check(
 		`${label}: the same bytes`,
@@ -301,6 +304,7 @@ const inAttendees = async (page, group, handle) => {
 	return found;
 };
 const openFirst = (page) => page.locator('[data-testid=open-first]').waitFor({ timeout: 30000 });
+// Opening one tells the host's server who is asking, so a guest chooses to, on an ordinary POST.
 const chooseToOpen = async (page) => {
 	await page.getByRole('button', { name: /^open this event$/i }).click({ timeout: 30000 });
 	await page.waitForLoadState('load');
@@ -679,12 +683,13 @@ await step('14b. nothing reached the public network or atmo, and a public event 
 	});
 	const controlKey = control.uri.split('/').at(-1);
 
+	// Not the space type's name: its lexicon is a public record on purpose.
+	const needles = [NAME, RENAMED, KEY, SPACE];
+
 	// What anyone can read from the public firehose: everything from the start of the network.
 	const seen = await new Promise((resolve, reject) => {
 		const ws = new WebSocket(`${JETSTREAM.replace(/^http/, 'ws')}/subscribe?cursor=0`);
-		const found = { messages: 0, control: false, leaks: [], collections: {} };
-		// Not the space type's name: its lexicon is a public record on purpose.
-		const needles = [NAME, RENAMED, KEY, SPACE];
+		const found = { messages: 0, control: false, leaks: [], collections: {}, notControls: 0 };
 		let quiet;
 		const finish = () => {
 			ws.close();
@@ -699,8 +704,11 @@ await step('14b. nothing reached the public network or atmo, and a public event 
 		ws.onmessage = async (m) => {
 			const raw = typeof m.data === 'string' ? m.data : await m.data.text();
 			found.messages++;
-			const c = JSON.parse(raw).commit?.collection;
+			const message = JSON.parse(raw);
+			const c = message.commit?.collection;
 			if (c) found.collections[c] = (found.collections[c] ?? 0) + 1;
+			// From the start of the network, so an earlier walk's control shows too. Those are mallory's.
+			if (c === EVENT && message.did !== C.mallory.did) found.notControls++;
 			if (raw.includes(PUBLIC_NAME)) found.control = true;
 			for (const n of needles) if (raw.includes(n)) found.leaks.push(n);
 			clearTimeout(quiet);
@@ -711,9 +719,9 @@ await step('14b. nothing reached the public network or atmo, and a public event 
 	check('the public event is on the firehose, so the firehose works', seen.control);
 	check('nothing of the private event is on it', seen.leaks.length === 0, seen.leaks.join(', '));
 	check(
-		'the only event on it is the public one',
-		seen.collections[EVENT] === 1,
-		`${seen.collections[EVENT]}`
+		'the only events on it are public controls',
+		seen.notControls === 0,
+		`${seen.notControls} of ${seen.collections[EVENT]}`
 	);
 	check('no RSVP on it at all', !seen.collections[RSVP], `${seen.collections[RSVP] ?? 0}`);
 
@@ -730,7 +738,9 @@ await step('14b. nothing reached the public network or atmo, and a public event 
 		(await exported(C.mallory)).includes(PUBLIC_NAME)
 	);
 	for (const name of ['alice', 'bob', 'dana']) {
-		check(`nothing of it in ${name}’s exported repo`, !(await exported(C[name])).includes(NAME));
+		const repo = await exported(C[name]);
+		const leaks = needles.filter((needle) => repo.includes(needle));
+		check(`nothing of it in ${name}’s exported repo`, leaks.length === 0, leaks.join(', '));
 	}
 
 	// atmo's own index, after real ingest. Each run reads the network's Jetstream for up to 20 s.
@@ -750,10 +760,11 @@ await step('14b. nothing reached the public network or atmo, and a public event 
 	check('/events shows the public event', html.includes(PUBLIC_NAME));
 	check('/events has nothing of the private one', !html.includes(NAME) && !html.includes(KEY));
 	const profile = await pages.mallory.request.get(`${ATMO}/p/${C.alice.handle}`);
+	const publicPage = await profile.text();
+	check('alice’s public page loaded', profile.status() === 200, `${profile.status()}`);
 	check(
 		'alice’s public page has nothing of it',
-		!(await profile.text()).includes(NAME),
-		`${profile.status()}`
+		!publicPage.includes(NAME) && !publicPage.includes(KEY)
 	);
 });
 
