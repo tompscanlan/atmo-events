@@ -11,15 +11,27 @@ afterEach(() => {
 /** The config contrail's CLI loads, in a shell with only these network settings. */
 async function cliConfig(settings: Record<string, string>) {
 	vi.resetModules();
-	for (const name of Object.keys(variables)) vi.stubEnv(name, settings[name] ?? '');
+	for (const name of [...Object.keys(variables), 'GROUP_HOST_URL']) {
+		vi.stubEnv(name, settings[name] ?? '');
+	}
 	return (await import('./cli.config')).config;
 }
 
 describe('the config contrail’s CLI loads', () => {
 	it('is the app’s config on contrail’s defaults when no network is set', async () => {
 		const cli = await cliConfig({});
-		const { config: appConfig } = await import('../contrail.config');
-		expect(cli).toEqual({ ...appConfig, networkOverrides: {} });
+		const { servedConfig } = await import('../contrail.config');
+		expect(cli).toEqual({ ...servedConfig(false), networkOverrides: {} });
+	});
+
+	it('leaves groups’ declarations out unless its shell names a group host, as the Worker does', async () => {
+		expect((await cliConfig({})).collections).not.toHaveProperty('declaration');
+		expect((await cliConfig({ GROUP_HOST_URL: ' ' })).collections).not.toHaveProperty(
+			'declaration'
+		);
+		expect(
+			(await cliConfig({ GROUP_HOST_URL: 'https://host.example' })).collections
+		).toHaveProperty('declaration');
 	});
 
 	it('reads the network its shell names', async () => {
