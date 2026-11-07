@@ -17,7 +17,8 @@ import {
 import type { Did } from '@atcute/lexicons';
 import { createActorResolver } from '@svelte-atproto/oauth/network';
 import { oauthRequestLock } from '#lib/atproto/server/oauth.js';
-import { atprotoNetwork } from '#lib/atproto/network.js';
+import { oauthOrigin } from '#lib/atproto/server/origin.js';
+import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 import { GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION, META_SPACE_TYPE } from '../ids';
 import { groupsEnabled } from './enabled';
 import { listKeys, prefixedKV } from './kv';
@@ -63,7 +64,11 @@ function clientFor(personDid: string | null): OAuthClient {
 	const key = personDid ?? '';
 	let client = byPerson.get(key);
 	if (!client) {
-		const origin = env.OAUTH_PUBLIC_URL;
+		// The library's origin, so a trailing slash in the setting is the same client.
+		const origin = oauthOrigin(env.OAUTH_PUBLIC_URL);
+		// Every call to the group host, its sign-in and the group's own session alike, with the same
+		// time limit as other servers: a page waits on them.
+		const network = timeLimitedNetwork();
 		client = new OAuthClient({
 			metadata: {
 				client_id: origin + GROUP_CLIENT_METADATA_PATH,
@@ -72,7 +77,8 @@ function clientFor(personDid: string | null): OAuthClient {
 				jwks_uri: origin + JWKS_PATH
 			},
 			keyset: [JSON.parse(env.CLIENT_ASSERTION_KEY) as ClientAssertionPrivateJwk],
-			actorResolver: createActorResolver({ network: atprotoNetwork() }),
+			actorResolver: createActorResolver({ network }),
+			fetch: network.fetch as typeof fetch,
 			stores: {
 				sessions: prefixedKV<Did, StoredSession>(kv, personPrefix(key)),
 				states: prefixedKV<string, StoredState>(kv, STATE_PREFIX, { ttl: STATE_TTL_SECONDS })
