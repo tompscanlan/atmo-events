@@ -19,6 +19,9 @@ pds:
     invites: required
   - name: regular
     image: ghcr.io/bluesky-social/pds:0.4.5037
+  # Open sign-up, for the read probe's 100 members.
+  - name: crowd
+    image: ghcr.io/bluesky-social/atproto@sha256:f003adf7ca7cbb8ff60a4d99323fd009dfc1259b208f468f71accf0366ecab1e
 
 grouphosts:
   - name: gh
@@ -67,6 +70,7 @@ apps:
       ALPHA_URL: ${pds.alpha.url}
       BETA_URL: ${pds.beta.url}
       REGULAR_URL: ${pds.regular.url}
+      CROWD_URL: ${pds.crowd.url}
       PLC_URL: ${services.plc.url}
       GROUP_HOST_URL: ${grouphosts.gh.url}
       JETSTREAM_URL: ${services.jetstream.url}
