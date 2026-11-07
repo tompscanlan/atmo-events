@@ -1,0 +1,92 @@
+# A snowglobe for atmo's groups: a private atproto network on this machine (@openmeet/snowglobe)
+# with an opensocial.group group host built from your checkout, the 2026-10-29 permissioned-spaces
+# alpha, and a current PDS release. atmo reaches it through its network settings
+# (apps/web/src/env.ts), which the env below sets.
+#
+#   pnpm install
+#   pnpm globe:up   # builds the group host from ../atproto-group-host, makes the accounts
+#   pnpm globe:dev  # atmo at https://atmo.app.atmogroups.local.snowglobe.at
+#   pnpm globe:e2e  # up if need be, then apps/web/scripts/groups-e2e.mjs
+#   pnpm globe:down # stops it, keeping its accounts
+#
+# The first time, also run `pnpm --filter web env:setup-dev` for atmo's client key and cookie
+# secret (apps/web/.env): the group sign-in is a confidential client. Passwords are in
+# ~/.local/share/snowglobe/atmogroups/accounts.env.
+#
+# This file sits beside snowglobe.yml, the network e2e's globe, so both run from one checkout. The
+# globe:* scripts read it through SG_FILE=snowglobe.groups.yml; a bare snowglobe command for this
+# globe needs the same.
+
+globe: atmogroups # its names are under atmogroups.local.snowglobe.at
+
+pds:
+  # The alpha of 2026-10-29 (permissioned-data-alpha 11c5d98c); the group host runs this same
+  # build as a library.
+  - name: alpha
+    image: ghcr.io/bluesky-social/atproto@sha256:f003adf7ca7cbb8ff60a4d99323fd009dfc1259b208f468f71accf0366ecab1e
+    bare_handles: true # handles <name>.atmogroups.local.snowglobe.at
+    invites: required
+  - name: regular # a current release, with no spaces
+    image: ghcr.io/bluesky-social/pds:0.4.5037
+
+grouphosts:
+  - name: gh # https://gh.atmogroups.local.snowglobe.at; groups' handles are under it
+    kind: opensocial
+    build: ../atproto-group-host # a checkout beside this one
+
+services:
+  jetstream: true
+  slingshot: true
+  pdsls: false
+
+lexicons:
+  authority: alpha
+  # The permission sets and space types atmo's sign-ins ask for: the calendar's authFull (from
+  # its real authority, 2026-10-31), Bluesky's authCreatePosts, the opensocial.group proposal's
+  # lexicons (main 2b41a9b, 2026-10-19) and atmo's calendar space type, rsvp.atmo.group.calendar.
+  publish: snowglobe/lexicons
+
+# Owner, member and outsider on the alpha, and carol on a PDS with no spaces.
+accounts:
+  - alice@alpha
+  - bob@alpha
+  - mallory@alpha
+  - carol@regular
+
+apps:
+  - name: atmo
+    local: { port: 5454 } # DEV_PORT in apps/web/src/lib/atproto/settings.ts
+    env:
+      # atmo's server reads its Worker env from wrangler.jsonc and .env. This adds the process
+      # environment, so the settings below reach it.
+      CLOUDFLARE_INCLUDE_PROCESS_ENV: 'true'
+      # A public https address: the group sign-in is a confidential client, which a loopback
+      # address cannot be.
+      OAUTH_PUBLIC_URL: ${apps.atmo.url}
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: ${apps.atmo.host}
+      GROUP_HOST_URL: ${grouphosts.gh.url}
+      PUBLIC_PLC_URL: ${services.plc.url}
+      PUBLIC_SLINGSHOT_URL: ${services.slingshot.url}
+      PUBLIC_JETSTREAM_URL: ${services.jetstream.url}
+      PUBLIC_RELAY_URLS: ${services.relay.url}
+      PUBLIC_SIGNUP_PDS_URL: ${pds.alpha.url}
+      # Where a person whose server has no spaces support is pointed to make an account.
+      SPACES_PDS_URL: ${pds.alpha.url}
+      # Nothing here stands in for DNS-over-HTTPS, Constellation, the Bluesky API or the image
+      # CDN, so those stay public.
+
+  # atmo's groups e2e: apps/web/scripts/groups-e2e.mjs
+  - name: e2e
+    env:
+      E2E_ATMO: ${apps.atmo.url}
+      E2E_GROUP_HOST: ${grouphosts.gh.url}
+      E2E_PLC_URL: ${services.plc.url}
+      E2E_PDS: ${pds.alpha.url}
+      E2E_OWNER_HANDLE: ${accounts.alice.handle}
+      E2E_OWNER_PASSWORD: ${accounts.alice.password}
+      E2E_MEMBER_HANDLE: ${accounts.bob.handle}
+      E2E_MEMBER_PASSWORD: ${accounts.bob.password}
+      E2E_OUTSIDER_HANDLE: ${accounts.mallory.handle}
+      E2E_OUTSIDER_PASSWORD: ${accounts.mallory.password}
+      E2E_NOSPACES_HANDLE: ${accounts.carol.handle}
+      E2E_NOSPACES_PASSWORD: ${accounts.carol.password}

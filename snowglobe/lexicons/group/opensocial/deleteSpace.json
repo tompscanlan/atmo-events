@@ -1,0 +1,33 @@
+{
+	"lexicon": 1,
+	"id": "group.opensocial.deleteSpace",
+	"defs": {
+		"main": {
+			"type": "procedure",
+			"description": "Delete a group space and its index entry. Requires manage=delete for the space type.",
+			"input": {
+				"encoding": "application/json",
+				"schema": {
+					"type": "object",
+					"required": ["space"],
+					"properties": {
+						"space": {
+							"type": "string",
+							"format": "space-ref"
+						}
+					}
+				}
+			},
+			"errors": [
+				{
+					"name": "SpaceNotFound",
+					"description": "The group has no such space."
+				},
+				{
+					"name": "ReservedSpace",
+					"description": "The meta and members spaces can't be created or deleted."
+				}
+			]
+		}
+	}
+}
