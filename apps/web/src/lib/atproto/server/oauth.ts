@@ -12,6 +12,19 @@ import { atprotoNetwork } from '../network';
 import { oauthOrigin } from './origin';
 import { PRIVATE_EVENT_SCOPES } from '../../private-events/scopes';
 import { privateEventsEnabled } from '../../private-events/server/enabled';
+import { GROUP_PERSON_SCOPES } from '../../groups/scopes';
+
+/** Declared, so a person can grant them when they first use a feature; never asked for at a
+ *  login. Only with that feature on, since a PDS resolves each type's lexicon to grant it. */
+function declaredScopes(): string[] {
+	return [
+		...new Set([
+			...scopes,
+			...(privateEventsEnabled() ? PRIVATE_EVENT_SCOPES : []),
+			...(env.GROUP_HOST_URL ? GROUP_PERSON_SCOPES : [])
+		])
+	];
+}
 
 const pending = new Map<string, Promise<unknown>>();
 
@@ -39,8 +52,7 @@ export function getAuth(): AtprotoAuth {
 		origin: oauthOrigin(env.OAUTH_PUBLIC_URL),
 		cookieSecret: env.COOKIE_SECRET,
 		clientAssertionKey: env.CLIENT_ASSERTION_KEY,
-		// Declared when a deployment offers them; requested only when someone first hosts or opens one.
-		scope: privateEventsEnabled() ? [...scopes, ...PRIVATE_EVENT_SCOPES] : scopes,
+		scope: declaredScopes(),
 		signupPDS: ALLOW_SIGNUP
 			? (PUBLIC_SIGNUP_PDS_URL ?? signUpPDS[dev ? 'development' : 'production'])
 			: undefined,

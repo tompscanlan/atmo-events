@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Avatar, Badge, Button, Input, Label } from '@atmo-dev/kit';
 	import { resolve } from '$app/paths';
+	import { requestPermissions } from '@svelte-atproto/oauth/client';
+	import { GROUP_PERSON_SCOPES } from '#lib/groups/scopes.js';
 
 	let { data } = $props();
 
@@ -31,7 +33,24 @@
 			<p role="status" class="text-muted mt-4 text-sm">{data.notice}</p>
 		{/if}
 
+		{#if data.askAccess}
+			<div class="mt-6 flex flex-wrap items-center gap-3">
+				<Button variant="secondary" onclick={() => requestPermissions(GROUP_PERSON_SCOPES)}>
+					See your groups
+				</Button>
+				<span class="text-muted text-sm">
+					To list the groups you belong to, private ones too, allow atmo to read them.
+				</span>
+			</div>
+		{/if}
+
 		{#if data.canLink}
+			<p class="mt-6">
+				<a
+					href={resolve('/(app)/groups/create')}
+					class="text-accent-600 dark:text-accent-400 text-sm font-medium">Make a group &rarr;</a
+				>
+			</p>
 			<form method="POST" action="/oauth/group/link" class="mt-6 flex flex-wrap items-end gap-2">
 				<div class="min-w-0 flex-1">
 					<Label for="group-link">Link a group you help run, to post its events</Label>
@@ -57,6 +76,7 @@
 							<span class="min-w-0 flex-1">
 								<span class="text-base-900 dark:text-base-50 flex items-center gap-2 font-medium">
 									<span class="truncate">{group.name}</span>
+									{#if group.member}<Badge>Member</Badge>{/if}
 									{#if group.linked}<Badge>Linked</Badge>{/if}
 								</span>
 								{#if group.handle}

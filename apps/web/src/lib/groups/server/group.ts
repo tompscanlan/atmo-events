@@ -45,6 +45,20 @@ export function groupHostOrigin(): string | null {
 	return url ? new URL(url).origin : null;
 }
 
+/** Where someone whose own server cannot grant group permissions could make an account.
+ *  Null when the site names none, or names something that is not a web address. */
+export function spacesServer(): { url: string; host: string } | null {
+	const value = env.SPACES_PDS_URL?.trim();
+	if (!value) return null;
+	try {
+		const url = new URL(value);
+		if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+		return { url: url.origin, host: url.host };
+	} catch {
+		return null;
+	}
+}
+
 /** This site changes only groups whose PDS is its own group host. */
 export function atGroupHost(group: Pick<ResolvedGroup, 'pds'>): boolean {
 	const origin = groupHostOrigin();
@@ -119,6 +133,14 @@ export async function heldAtGroupHost(): Promise<string[] | null> {
 	}
 }
 
+/** For right after the group host makes a group: the cached answer predates it, so without
+ *  this the list leaves the new group out until that answer expires. */
+export async function forgetHeldAtGroupHost(): Promise<void> {
+	await env.OAUTH_SESSIONS?.delete(HELD_KEY).catch((e) => {
+		console.warn('[groups] the cached answer of what the group host holds was not dropped:', e);
+	});
+}
+
 /** One page, newest first, the index's own order. Only the declaration at rkey `self`
  *  counts, so an account is listed once however many records it writes, and each server gets
  *  at most 20 places, except the groups this site's group host holds; `server` lists one
@@ -163,9 +185,14 @@ export function readCachedHandles(dids: string[]): Promise<Map<string, string>> 
 	return cachedHandles(env.DB, dids);
 }
 
+export const GROUP_JOIN_POLICIES = ['open', 'approval', 'invite'] as const;
+export type GroupJoinPolicy = (typeof GROUP_JOIN_POLICIES)[number];
+
 export interface GroupProfile {
 	name: string;
 	description: string | null;
+	/** An unknown policy reads as `invite`, the most closed. */
+	joinPolicy?: GroupJoinPolicy;
 }
 
 /** The profile requires `displayName`; a record without one reads as no profile. */
@@ -175,7 +202,10 @@ export function parseGroupProfile(value: unknown): GroupProfile | null {
 	const name = typeof raw.displayName === 'string' ? raw.displayName.trim() : '';
 	if (!name) return null;
 	const description = typeof raw.description === 'string' ? raw.description.trim() : '';
-	return { name, description: description || null };
+	const policy = (GROUP_JOIN_POLICIES as readonly unknown[]).includes(raw.joinPolicy)
+		? (raw.joinPolicy as GroupJoinPolicy)
+		: 'invite';
+	return { name, description: description || null, joinPolicy: policy };
 }
 
 export interface GroupMeta {

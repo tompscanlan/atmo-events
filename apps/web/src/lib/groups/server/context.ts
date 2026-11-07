@@ -1,7 +1,8 @@
 // The one way into a group page, so no route makes a lookup of its own that could reveal
-// a group. A visitor sees a group only through its declaration; someone who linked it
-// sees it as the group does. Every refusal is the same 404.
-import { env } from 'cloudflare:workers';
+// a group. A visitor sees a group only through its declaration; a person the group's host
+// lets read its meta space sees it with their own access; someone who linked it sees it
+// as the group does. Every refusal is the same 404.
+import { env, waitUntil } from 'cloudflare:workers';
 import { error } from '@sveltejs/kit';
 import {
 	TokenInvalidError,
@@ -19,11 +20,20 @@ import {
 	storeCachedProfile,
 	type GroupMeta
 } from './group';
+import { holdsAcceptanceGrant, holdsGroupScopes, holdsMetaRead, holdsSpaceList } from '../scopes';
+import { callerSession, type CallerSession } from './caller';
+import { accept } from './acceptance';
+import { groupSpacesOf, isMemberAsPerson, readMetaAsPerson } from './person';
 import { groupHandle, groupSession, groupSignInAvailable, hasGroupSession } from './sign-in';
+import { isSpaceAccessDenied } from './space-credential';
 import { isAuthRefused, isRoleRefused, type XrpcHandle } from './xrpc';
 
 /** Byte for byte, so the causes cannot be told apart. */
 export const GROUP_NOT_FOUND = 'Group not found';
+
+export const GROUP_UNCHECKED = 'This group could not be checked right now. Try again shortly.';
+
+export type Viewer = Pick<App.Locals, 'did' | 'session'>;
 
 export interface GroupView {
 	did: string;
@@ -38,6 +48,12 @@ export interface GroupView {
 	relink: boolean;
 	/** The caller has a link stored here, working or not, so they can unlink it. */
 	hasLink: boolean;
+	/** Present when the host let the caller read the group with their own access. */
+	personal: GroupMeta | null;
+	/** Whether the host counts the caller a member; null when it could not say. */
+	member: boolean | null;
+	/** Signed in, but their sign-in does not yet grant what groups need. */
+	askAccess: boolean;
 }
 
 export interface GroupWriter {
@@ -76,10 +92,40 @@ async function linkedRead(
 	}
 }
 
-export async function groupView(actor: string, callerDid: string | null): Promise<GroupView> {
+/** Whether the caller's own PDS lists a space of the group's: someone who wrote into it. */
+async function knowsGroup(caller: CallerSession, groupDid: string): Promise<boolean> {
+	if (!holdsSpaceList(caller.scope)) return false;
+	try {
+		return (await groupSpacesOf(caller)).includes(groupDid);
+	} catch (e) {
+		console.warn(`[groups] ${caller.did}'s group spaces could not be listed:`, e);
+		return false;
+	}
+}
+
+/** The host's answer for the caller. `unsure` when it could not be had for a group the
+ *  caller knows, or at all: never a reason to act, only to say "try again". */
+async function personalRead(
+	caller: CallerSession,
+	groupDid: string
+): Promise<{ meta: GroupMeta | null; unsure: boolean }> {
+	try {
+		return { meta: await readMetaAsPerson(caller, groupDid), unsure: false };
+	} catch (e) {
+		if (isSpaceAccessDenied(e)) {
+			return { meta: null, unsure: e.ambiguous && (await knowsGroup(caller, groupDid)) };
+		}
+		console.error(`[groups] ${groupDid}: the meta space could not be read for ${caller.did}:`, e);
+		return { meta: null, unsure: true };
+	}
+}
+
+export async function groupView(actor: string, viewer: Viewer): Promise<GroupView> {
 	if (!env.GROUP_HOST_URL) error(404, GROUP_NOT_FOUND);
 	const group = await resolveGroup(actor);
 	if (!group) error(404, GROUP_NOT_FOUND);
+	const callerDid = viewer.did;
+	const atHost = atGroupHost(group);
 
 	let linked: GroupView['linked'] = null;
 	let relink = false;
@@ -106,32 +152,58 @@ export async function groupView(actor: string, callerDid: string | null): Promis
 		}
 	}
 
-	// Without a working link the caller sees what any visitor does, so the declaration decides,
-	// even for someone whose link broke.
-	if (!linked) {
+	// Only for a group at this site's host: elsewhere a DID's PDS answers whatever it likes,
+	// and such a group shows only through its declaration.
+	const caller = await callerSession(viewer.session ?? null);
+	let personal: GroupMeta | null = null;
+	let member: boolean | null = null;
+	let unsure = false;
+	if (atHost && caller && holdsMetaRead(caller.scope)) {
+		({ meta: personal, unsure } = await personalRead(caller, group.did));
+		if (personal) {
+			await storeCachedProfile(group, personal).catch((e) => {
+				console.warn(`[groups] ${group.did}: the cached profile could not be stored:`, e);
+			});
+			member = await isMemberAsPerson(caller, group.did).catch((e) => {
+				console.warn(`[groups] ${group.did}: ${caller.did}'s membership could not be read:`, e);
+				return null;
+			});
+			// A member confirms by visiting; only after the host says they are one, since a
+			// write it refuses still lands in the writer's own repo.
+			if (member && holdsAcceptanceGrant(caller.scope, group.did, 'create')) {
+				waitUntil(accept(caller, group.did));
+			}
+		}
+	}
+
+	// Without a working link or their own access the caller sees what any visitor does, so the
+	// declaration decides, even for someone whose link broke.
+	if (!linked && !personal) {
 		let declared: boolean;
 		try {
 			declared = await isDeclared(group.did);
 		} catch (e) {
 			console.error(`[groups] ${group.did}: the declaration could not be read:`, e);
-			error(503, 'Groups are unavailable right now');
+			error(503, GROUP_UNCHECKED);
 		}
-		if (!declared) error(404, GROUP_NOT_FOUND);
+		if (!declared) error(unsure ? 503 : 404, unsure ? GROUP_UNCHECKED : GROUP_NOT_FOUND);
 	}
 
-	const cached = linked?.meta.profile
-		? null
-		: (await readCachedProfiles([group.did])).get(group.did);
-	const profile = linked?.meta.profile ?? cached ?? null;
+	const read = linked?.meta.profile ?? personal?.profile;
+	const cached = read ? null : (await readCachedProfiles([group.did])).get(group.did);
+	const profile = read ?? cached ?? null;
 	return {
 		did: group.did,
 		handle: group.handle,
 		name: profile?.name ?? group.handle ?? group.did,
 		description: profile?.description ?? null,
-		atHost: groupSignInAvailable() && atGroupHost(group),
+		atHost: groupSignInAvailable() && atHost,
 		linked,
 		relink,
-		hasLink
+		hasLink,
+		personal,
+		member,
+		askAccess: atHost && caller !== null && !holdsGroupScopes(caller.scope)
 	};
 }
 

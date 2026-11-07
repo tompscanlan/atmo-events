@@ -20,6 +20,7 @@ vi.mock('@svelte-atproto/oauth/network', () => ({
 
 import {
 	atGroupHost,
+	forgetHeldAtGroupHost,
 	heldAtGroupHost,
 	isDeclared,
 	listCrowdedServers,
@@ -183,8 +184,10 @@ describe('parseGroupProfile', () => {
 	it('needs a display name, and trims', () => {
 		expect(parseGroupProfile({ displayName: '  Knitters ', description: ' ' })).toEqual({
 			name: 'Knitters',
-			description: null
+			description: null,
+			joinPolicy: 'invite'
 		});
+		expect(parseGroupProfile({ displayName: 'K', joinPolicy: 'open' })?.joinPolicy).toBe('open');
 		expect(parseGroupProfile({ description: 'no name' })).toBeNull();
 		expect(parseGroupProfile(null)).toBeNull();
 	});
@@ -197,7 +200,7 @@ describe('readGroupMeta', () => {
 			'group.opensocial.access': { public: true }
 		});
 		expect(await readGroupMeta(handle, GROUP)).toEqual({
-			profile: { name: 'Knitters', description: null },
+			profile: { name: 'Knitters', description: null, joinPolicy: 'invite' },
 			public: true
 		});
 		expect(handle.mock.calls[0][0]).toContain(
@@ -296,6 +299,18 @@ describe('heldAtGroupHost', () => {
 		);
 		expect(hostFetch).toHaveBeenCalledTimes(2);
 		expect(await heldAtGroupHost()).toEqual([GROUP, 'did:plc:second']);
+		expect(hostFetch).toHaveBeenCalledTimes(2);
+	});
+
+	it('asks the host again once the cached answer is dropped, so a new group counts', async () => {
+		expect(await heldAtGroupHost()).toEqual([GROUP]);
+		hostHolds([
+			[GROUP, true],
+			['did:plc:new', true]
+		]);
+		expect(await heldAtGroupHost()).toEqual([GROUP]);
+		await forgetHeldAtGroupHost();
+		expect(await heldAtGroupHost()).toEqual([GROUP, 'did:plc:new']);
 		expect(hostFetch).toHaveBeenCalledTimes(2);
 	});
 
