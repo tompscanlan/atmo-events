@@ -42,6 +42,7 @@ accounts:
   - alice@alpha
   - bob@alpha
   - mallory@alpha
+  - erin@alpha
   - dana@beta
   - carol@regular
 
@@ -81,6 +82,8 @@ apps:
       BOB_PASSWORD: ${accounts.bob.password}
       MALLORY_HANDLE: ${accounts.mallory.handle}
       MALLORY_PASSWORD: ${accounts.mallory.password}
+      ERIN_HANDLE: ${accounts.erin.handle}
+      ERIN_PASSWORD: ${accounts.erin.password}
       DANA_HANDLE: ${accounts.dana.handle}
       DANA_PASSWORD: ${accounts.dana.password}
       CAROL_HANDLE: ${accounts.carol.handle}
