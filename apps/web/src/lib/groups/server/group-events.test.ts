@@ -14,7 +14,7 @@ import {
 } from './group-events';
 
 const GROUP = 'did:plc:group';
-const CALENDAR = `at://${GROUP}/space/rsvp.atmo.group.calendar/self`;
+const CALENDAR = `at://${GROUP}/space/rsvp.atmo.calendarSpace/self`;
 const PRIVATE = { public: false, grants: [{ role: 'member', scopes: ['space:x?action=read'] }] };
 const EVENT = {
 	name: 'Trail day',

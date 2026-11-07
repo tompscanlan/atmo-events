@@ -110,7 +110,7 @@ describe('the group client', () => {
 	it('asks to make its own spaces, and to write events only in its own calendar space', () => {
 		const scopes = GROUP_SESSION_SCOPE.split(' ');
 		expect(scopes).toContain('space:*?authority=self&manage=create');
-		const calendar = scopes.filter((s) => s.startsWith('space:rsvp.atmo.group.calendar?'));
+		const calendar = scopes.filter((s) => s.startsWith('space:rsvp.atmo.calendarSpace?'));
 		expect(calendar).toHaveLength(1);
 		const params = new URLSearchParams(calendar[0].split('?')[1]);
 		expect(params.get('authority')).toBe('self');

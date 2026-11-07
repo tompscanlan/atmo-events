@@ -14,7 +14,7 @@ import {
 
 const GROUP = 'did:plc:group';
 const ALICE = 'did:plc:alice';
-const CALENDAR = `at://${GROUP}/space/rsvp.atmo.group.calendar/self`;
+const CALENDAR = `at://${GROUP}/space/rsvp.atmo.calendarSpace/self`;
 const EVENT_URI = `${CALENDAR}/${GROUP}/community.lexicon.calendar.event/e1`;
 
 type Answer = (pathname: string, init: RequestInit) => Response;

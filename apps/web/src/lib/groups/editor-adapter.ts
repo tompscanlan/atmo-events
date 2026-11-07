@@ -1,7 +1,10 @@
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
-import { createInAppAdapter } from '#lib/components/editor/adapter.js';
-import type { EditorAdapter, EditorViewer } from '@atmo-dev/events-ui';
+import {
+	createInAppAdapter,
+	type EditorAdapter,
+	type EditorViewer
+} from '#lib/components/editor/adapter.js';
 import type { EventPlacement } from './event-placement';
 import { removeGroupEvent, saveGroupEvent, uploadGroupBlob } from './group.remote';
 
@@ -28,7 +31,9 @@ export function createGroupAdapter(
 	const membersOnly = placement === 'members';
 	return {
 		...base,
-		features: { delete: true, recurring: false, images: !membersOnly },
+		// A members-only event links to no public record and has no Public / Unlisted of its own.
+		linkedRecords: membersOnly ? undefined : base.linkedRecords,
+		features: { delete: true, recurring: false, images: !membersOnly, visibility: !membersOnly },
 		async putRecord({ rkey, record }) {
 			return saveGroupEvent({ groupDid, rkey, record, placement });
 		},

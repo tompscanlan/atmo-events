@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Avatar, Badge, Button } from '@atmo-dev/kit';
-	import { EventCard } from '@atmo-dev/events-ui';
+	import { EventCard } from '@atmo-dev/kit/events';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import EventList from '#lib/components/EventList.svelte';

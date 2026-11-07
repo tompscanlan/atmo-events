@@ -102,7 +102,7 @@ describe('finishSetup', () => {
 		expect(pds.state.calendar?.public).toBe(false);
 		expect(grants.map((g) => g.role)).toEqual(['admin', 'member']);
 		expect(
-			grants.every((g) => g.scopes.includes('space:rsvp.atmo.group.calendar?action=read'))
+			grants.every((g) => g.scopes.includes('space:rsvp.atmo.calendarSpace?action=read'))
 		).toBe(true);
 	});
 });

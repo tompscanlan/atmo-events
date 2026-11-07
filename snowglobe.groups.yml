@@ -43,7 +43,7 @@ lexicons:
   authority: alpha
   # The permission sets and space types atmo's sign-ins ask for: the calendar's authFull (from
   # its real authority, 2026-10-31), Bluesky's authCreatePosts, the opensocial.group proposal's
-  # lexicons (main 2b41a9b, 2026-10-19) and atmo's calendar space type, rsvp.atmo.group.calendar.
+  # lexicons (main 2b41a9b, 2026-10-19) and atmo's calendar space type, rsvp.atmo.calendarSpace.
   publish: snowglobe/lexicons
 
 # Owner, member and outsider on the alpha, and carol on a PDS with no spaces.

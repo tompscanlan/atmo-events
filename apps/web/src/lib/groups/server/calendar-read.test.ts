@@ -12,7 +12,7 @@ vi.mock('./space-read', () => ({
 import { readMembersOnlyEvent, readMembersOnlyEvents, upcoming } from './calendar-read';
 
 const GROUP = 'did:plc:group';
-const CALENDAR = `at://${GROUP}/space/rsvp.atmo.group.calendar/self`;
+const CALENDAR = `at://${GROUP}/space/rsvp.atmo.calendarSpace/self`;
 const caller = (scope = `atproto ${CALENDAR_RSVP_SCOPE}`): CallerSession => ({
 	did: 'did:plc:alice',
 	scope,

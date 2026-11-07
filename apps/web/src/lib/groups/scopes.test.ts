@@ -52,7 +52,7 @@ describe('group scope checks', () => {
 	});
 
 	it('writes RSVPs only with a grant naming their collection, while any read grant reads', () => {
-		const readOnly = 'space:rsvp.atmo.group.calendar?authority=*&action=read';
+		const readOnly = 'space:rsvp.atmo.calendarSpace?authority=*&action=read';
 		expect(holdsCalendarGrant(readOnly, 'read')).toBe(true);
 		expect(holdsCalendarGrant(readOnly, 'create')).toBe(false);
 		const events = CALENDAR_RSVP_SCOPE.replace(

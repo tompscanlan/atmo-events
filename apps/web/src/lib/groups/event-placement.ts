@@ -16,8 +16,6 @@ export const PLACEMENT_OPTIONS: readonly { value: EventPlacement; label: string;
 		{
 			value: 'members',
 			label: 'Members only',
-			// The last sentence is about the editor's Public / Unlisted switch, which lists only
-			// a public event.
-			help: "Only the group's members can see it, and it can't be made public later. It has no image or recurring copies for now. The Public / Unlisted setting doesn't apply."
+			help: "Only the group's members can see it, and it can't be made public later. It has no image or recurring copies for now."
 		}
 	];

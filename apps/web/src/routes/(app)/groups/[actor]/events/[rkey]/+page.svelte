@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button } from '@atmo-dev/kit';
-	import { EventView } from '@atmo-dev/events-ui';
+	import { EventView } from '@atmo-dev/kit/events';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { user } from '#lib/atproto/auth.svelte.js';

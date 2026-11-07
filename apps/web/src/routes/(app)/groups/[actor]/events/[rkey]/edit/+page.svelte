@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { EventEditor } from '@atmo-dev/events-ui';
+	import { EventEditor } from '@atmo-dev/kit/events';
 	import { createGroupAdapter, groupViewer } from '#lib/groups/editor-adapter.js';
 	import { PLACEMENT_OPTIONS } from '#lib/groups/event-placement.js';
 

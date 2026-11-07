@@ -42,7 +42,7 @@ import { load as editPage } from './[rkey]/edit/+page.server';
 import { load as newPage } from './new/+page.server';
 
 const GROUP = 'did:plc:group';
-const CALENDAR = `at://${GROUP}/space/rsvp.atmo.group.calendar/self`;
+const CALENDAR = `at://${GROUP}/space/rsvp.atmo.calendarSpace/self`;
 const writer = { did: GROUP, handle: vi.fn() };
 const caller = { did: 'did:plc:alice', scope: 'x', handle: vi.fn() };
 const view = (over: object = {}) => ({

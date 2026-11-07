@@ -1,5 +1,7 @@
 // Collections, space types and URIs for groups, as the opensocial.group proposal names them.
 // Values only, so the contrail config and the pages can import them.
+import { PRIVATE_CALENDAR_TYPE } from '#lib/private-events/ids.js';
+import { spaceRecordUri, spaceUri as spaceAt } from '#lib/spaces/uri.js';
 
 /** In the group's public repo while its meta space is public and it is listed. */
 export const GROUP_DECLARATION_COLLECTION = 'group.opensocial.declaration';
@@ -27,7 +29,7 @@ export const GROUP_EVENT_COLLECTION = 'community.lexicon.calendar.event';
 /** atmo's own space type, for a group's members-only events and its members' RSVPs to them,
  *  each RSVP in the member's own repo. It is in every URI in the space, so a rename strands
  *  what was written under the old name, and it must resolve wherever a scope names it. */
-export const CALENDAR_SPACE_TYPE = 'rsvp.atmo.group.calendar';
+export const CALENDAR_SPACE_TYPE = PRIVATE_CALENDAR_TYPE;
 export const GROUP_RSVP_COLLECTION = 'community.lexicon.calendar.rsvp';
 
 /** The lexicon's `status` token suffixes. */
@@ -38,7 +40,7 @@ export type RsvpStatus = (typeof RSVP_STATUSES)[number];
 export const SPACE_SKEY = 'self';
 
 export function spaceUri(ownerDid: string, type: string, skey = SPACE_SKEY): string {
-	return `at://${ownerDid}/space/${type}/${skey}`;
+	return spaceAt(ownerDid, type, skey);
 }
 
 export function metaSpaceUri(groupDid: string): string {
@@ -61,15 +63,7 @@ export function calendarSpaceUri(groupDid: string): string {
 	return spaceUri(groupDid, CALENDAR_SPACE_TYPE);
 }
 
-/** A space record's URI, in the form `getRecord` returns. */
-export function spaceRecordUri(
-	space: string,
-	repo: string,
-	collection: string,
-	rkey: string
-): string {
-	return `${space}/${repo}/${collection}/${rkey}`;
-}
+export { spaceRecordUri };
 
 /** The group's own record in its calendar space: the URI an RSVP to the event names. */
 export function membersOnlyEventUri(groupDid: string, rkey: string): string {
