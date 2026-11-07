@@ -4,6 +4,7 @@ import type { OAuthClientOptions, StoredState } from '@atcute/oauth-node-client'
 import { memoryKV, type MemoryKV } from './__fixtures__/kv';
 
 const mocks = vi.hoisted(() => ({
+	networkFetch: vi.fn<typeof fetch>(),
 	built: [] as Array<{
 		options: OAuthClientOptions;
 		client: Record<string, ReturnType<typeof vi.fn>>;
@@ -31,7 +32,9 @@ vi.mock('@atcute/oauth-node-client', async (importActual) => {
 vi.mock('#lib/atproto/server/oauth.js', () => ({
 	oauthRequestLock: (_name: string, operation: () => unknown) => operation()
 }));
-vi.mock('#lib/atproto/network.js', () => ({ atprotoNetwork: () => undefined }));
+vi.mock('#lib/atproto/network.js', () => ({
+	atprotoNetwork: () => ({ fetch: mocks.networkFetch, isolated: false, assertUrl: () => {} })
+}));
 vi.mock('@svelte-atproto/oauth/network', () => ({ createActorResolver: () => ({}) }));
 
 import {
@@ -92,6 +95,38 @@ describe('the group client', () => {
 			jwks_uri: 'https://atmo.example/oauth/jwks.json',
 			scope: GROUP_SESSION_SCOPE
 		});
+	});
+
+	it('takes the public address as an origin, as the library does', () => {
+		Object.assign(env, { OAUTH_PUBLIC_URL: 'https://atmo.example/' });
+		expect(groupClientMetadata()).toMatchObject({
+			client_id: 'https://atmo.example/oauth/group/client-metadata.json',
+			redirect_uris: ['https://atmo.example/oauth/group/callback'],
+			jwks_uri: 'https://atmo.example/oauth/jwks.json'
+		});
+	});
+
+	it('waits on the group host at most the time limit', async () => {
+		groupClientMetadata();
+		const send = latest().options.fetch;
+		expect(send).toEqual(expect.any(Function));
+		const limit = new AbortController();
+		const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(limit.signal);
+		try {
+			mocks.networkFetch.mockImplementation(
+				(_input, init) =>
+					new Promise((_resolve, reject) => {
+						const signal = init?.signal;
+						if (signal?.aborted) reject(signal.reason);
+						signal?.addEventListener('abort', () => reject(signal.reason));
+					})
+			);
+			const pending = send!('https://host.example/oauth/par', { method: 'POST' });
+			limit.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+			await expect(pending).rejects.toMatchObject({ name: 'TimeoutError' });
+		} finally {
+			timeout.mockRestore();
+		}
 	});
 
 	it('asks for the meta read as its own scope, and writes only declarations and events', () => {
