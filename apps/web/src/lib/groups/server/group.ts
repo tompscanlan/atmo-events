@@ -77,27 +77,44 @@ const HELD_KEY = 'groups:held-at-host';
 const HELD_TTL_SECONDS = 600;
 /** listRepos pages read at most, 1000 accounts each; groups past them are not counted as there. */
 const HELD_PAGES = 10;
+/** For the whole read, every page in it: a host that hangs costs the list this wait, no more. */
+const HELD_TIME_LIMIT_MS = 8_000;
+/** KV's shortest expiry. */
+const HELD_FAILURE_TTL_SECONDS = 60;
 
 /** The DIDs this site's group host says it holds, from its listRepos, cached for ten minutes.
  *  A DID document can name the host without the host holding the account, so this, not the
  *  document, decides which groups are at the host. Null when there is no host or it did not
- *  answer: then no group counts as at the host, and the host is limited like any server. */
+ *  answer: then no group counts as at the host, and the host is limited like any server. A host
+ *  that did not answer is remembered for a minute, and readers at the same time share one read,
+ *  so a host that is down costs one wait, not one per page. */
 export async function heldAtGroupHost(): Promise<string[] | null> {
 	const origin = groupHostOrigin();
 	if (!origin) return null;
+	const cached = await env.OAUTH_SESSIONS?.get<{ origin: string; dids?: string[] }>(
+		HELD_KEY,
+		'json'
+	).catch(() => null);
+	if (cached?.origin === origin) return cached.dids ?? null;
+	heldReading ??= readHeld(origin).finally(() => {
+		heldReading = null;
+	});
+	return heldReading;
+}
+
+let heldReading: Promise<string[] | null> | null = null;
+
+async function readHeld(origin: string): Promise<string[] | null> {
 	const kv = env.OAUTH_SESSIONS;
-	const cached = await kv
-		?.get<{ origin: string; dids: string[] }>(HELD_KEY, 'json')
-		.catch(() => null);
-	if (cached?.origin === origin) return cached.dids;
 	try {
+		const signal = AbortSignal.timeout(HELD_TIME_LIMIT_MS);
 		const dids: string[] = [];
 		let cursor: string | null = null;
 		for (let page = 0; page < HELD_PAGES; page++) {
 			const url = new URL('/xrpc/com.atproto.sync.listRepos', origin);
 			url.searchParams.set('limit', '1000');
 			if (cursor) url.searchParams.set('cursor', cursor);
-			const res = await fetch(url);
+			const res = await fetch(url, { signal });
 			if (!res.ok) throw new Error(`listRepos answered ${res.status}`);
 			const body = (await res.json()) as {
 				repos?: { did?: unknown; active?: unknown }[];
@@ -115,6 +132,9 @@ export async function heldAtGroupHost(): Promise<string[] | null> {
 		return dids;
 	} catch (e) {
 		console.warn('[groups] the group host did not say which groups it holds:', e);
+		await kv
+			?.put(HELD_KEY, JSON.stringify({ origin }), { expirationTtl: HELD_FAILURE_TTL_SECONDS })
+			.catch(() => {});
 		return null;
 	}
 }
