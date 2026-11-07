@@ -2,7 +2,8 @@ import { env } from 'cloudflare:workers';
 import { Contrail } from '@atmo-dev/contrail';
 import { createHandler } from '@atmo-dev/contrail/server';
 import { Client } from '@atcute/client';
-import { config } from '../contrail.config';
+import { servedConfig } from '../contrail.config';
+import { groupsEnabled } from '../groups/server/enabled';
 import { moderatorDids } from '../moderation/config';
 import { contrailNetwork } from '../atproto/network';
 
@@ -21,7 +22,7 @@ function instance(db: D1Database) {
 	let state = instances.get(db);
 	if (!state) {
 		const contrail = new Contrail({
-			...config,
+			...servedConfig(groupsEnabled()),
 			...contrailNetwork(),
 			moderation: { moderators: moderatorDids(env.MODERATOR_DIDS), reports: false }
 		});
