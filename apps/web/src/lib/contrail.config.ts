@@ -133,7 +133,8 @@ export const config: ContrailConfig = {
 				}
 			}
 		},
-		// A group's declaration marks its DID as a group; groups browse lists them.
+		// A group's declaration marks its DID as a group; groups browse lists them. Served only
+		// while groups are on: see servedConfig.
 		declaration: {
 			collection: GROUP_DECLARATION_COLLECTION,
 			pipelineQueries: {
@@ -165,3 +166,17 @@ export const config: ContrailConfig = {
 		}
 	}
 };
+
+/** What the Worker serves. Groups' declarations only while groups are on, so with them off a
+ *  deployment has the same tables as one without groups, subscribes to nothing more, and answers
+ *  rsvp.atmo.declaration.* as an unknown method. Turning groups on adds the table at the next start,
+ *  and indexes declarations written from then on; `contrail backfill --only records`, run with the same
+ *  GROUP_HOST_URL in its shell, catches up older ones. Turning them off again leaves the table unread.
+ *  Lexicon generation reads `config`, which always has them. */
+export function servedConfig(groups: boolean): ContrailConfig {
+	if (groups) return config;
+	const collections = Object.fromEntries(
+		Object.entries(config.collections).filter(([name]) => name !== 'declaration')
+	);
+	return { ...config, collections };
+}
