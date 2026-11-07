@@ -60,6 +60,13 @@ describe('the groups list', () => {
 		}
 	});
 
+	it('shows only its own notices, so a made-up ?link= is no notice at all', async () => {
+		expect((await load(request('?link=failed'))).notice).toEqual(expect.any(String));
+		for (const link of ['toString', 'constructor', '__proto__', 'nope']) {
+			expect((await load(request(`?link=${link}`))).notice).toBeNull();
+		}
+	});
+
 	it('is a 404 with groups off', async () => {
 		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
 		await expect(load(request())).rejects.toMatchObject({ status: 404 });
