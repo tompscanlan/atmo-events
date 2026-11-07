@@ -26,7 +26,10 @@ import { accept } from './acceptance';
 import { groupSpacesOf, isMemberAsPerson, readMetaAsPerson } from './person';
 import { groupsEnabled } from './enabled';
 import { groupHandle, groupSession, groupSignInAvailable, hasGroupSession } from './sign-in';
-import { isSpaceAccessDenied, type SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
+import {
+	isSpaceAccessDenied,
+	type SpaceAccessDenied
+} from '#lib/spaces/server/space-credential.js';
 import { isAuthRefused, isRoleRefused, type XrpcHandle } from './xrpc';
 
 /** Byte for byte, so the causes cannot be told apart. */

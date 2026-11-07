@@ -30,7 +30,10 @@ const input = (asked?: string) =>
 		locals: { did: caller.did, session: {} },
 		url: new URL(`https://atmo.example/groups/${GROUP}`),
 		setHeaders: () => {},
-		cookies: { get: (name: string) => (name === ASKED_COOKIE ? asked : undefined), delete: () => {} }
+		cookies: {
+			get: (name: string) => (name === ASKED_COOKIE ? asked : undefined),
+			delete: () => {}
+		}
 	}) as never;
 const at = (rkey: string, startsAt: string) => ({
 	rkey,

@@ -63,7 +63,9 @@ describe("groups' reader", () => {
 				})
 			)
 			.mockImplementationOnce(() =>
-				json(200, { records: [{ collection: COLLECTION, rkey: 'two', cid: 'c2', value: { n: 2 } }] })
+				json(200, {
+					records: [{ collection: COLLECTION, rkey: 'two', cid: 'c2', value: { n: 2 } }]
+				})
 			);
 		const person = holder();
 		const records = await credentialSpaceReader(person, hosts).list({

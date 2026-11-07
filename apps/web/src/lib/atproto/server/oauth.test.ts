@@ -70,7 +70,9 @@ describe('OAuth library configuration', () => {
 		const { GUEST_SCOPE, PRIVATE_EVENT_SCOPES } = await import('../../private-events/scopes');
 		getAuth();
 		const declared = (mocks.create.mock.calls[0][0] as AtprotoAuthConfig).scope as string[];
-		expect(declared).toEqual(expect.arrayContaining([...PRIVATE_EVENT_SCOPES, ...GROUP_PERSON_SCOPES]));
+		expect(declared).toEqual(
+			expect.arrayContaining([...PRIVATE_EVENT_SCOPES, ...GROUP_PERSON_SCOPES])
+		);
 		expect(declared.filter((s) => s === GUEST_SCOPE)).toHaveLength(1);
 		expect(new Set(declared).size).toBe(declared.length);
 	});
