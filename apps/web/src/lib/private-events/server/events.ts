@@ -52,6 +52,22 @@ function requireHost(caller: CallerSession): void {
 	if (!holdsHostGrant(caller.scope, caller.did)) throw new PrivateEventRefused('no-grant');
 }
 
+/** Writes to the person's own PDS. If that fails, what the PDS said goes only to the log, and the
+ *  page is told in our words. */
+async function write(
+	caller: CallerSession,
+	nsid: string,
+	body: Record<string, unknown>,
+	failed: string
+): Promise<void> {
+	try {
+		await xrpc(caller.handle, nsid, { body });
+	} catch (e) {
+		console.error(`[private-events] ${caller.did}: ${failed}:`, e);
+		throw new PrivateEventRefused('refused');
+	}
+}
+
 function isAlreadyThere(e: unknown): boolean {
 	return e instanceof XrpcError && e.error === 'SpaceAlreadyExists';
 }
@@ -111,14 +127,8 @@ export async function savePrivateEvent(
 /** Deleting the space ends every guest's access. Their answers stay in their own repos, unreadable. */
 export async function cancelPrivateEvent(caller: CallerSession, rkey: string): Promise<void> {
 	requireHost(caller);
-	try {
-		await xrpc(caller.handle, 'com.atproto.space.deleteSpace', {
-			body: { space: privateEventSpace(caller.did, rkey) }
-		});
-	} catch (e) {
-		console.error(`[private-events] ${caller.did}: event ${rkey} not cancelled:`, e);
-		throw new PrivateEventRefused('refused');
-	}
+	const space = privateEventSpace(caller.did, rkey);
+	await write(caller, 'com.atproto.space.deleteSpace', { space }, `event ${rkey} not cancelled`);
 }
 
 /** As the event components take it: the record whole, its address beside it, and no image, since a
@@ -327,22 +337,14 @@ export async function putPrivateRsvp(
 	});
 	if (!event?.cid) throw new PrivateEventRefused('no-event');
 	if (input.cid !== event.cid) throw new PrivateEventRefused('changed');
-	try {
-		await xrpc(caller.handle, 'com.atproto.space.putRecord', {
-			body: {
-				...ownRsvp(caller, host, input.rkey),
-				record: {
-					$type: RSVP_COLLECTION,
-					status: `${RSVP_COLLECTION}#${input.status}`,
-					subject: { uri: privateEventUri(host, input.rkey), cid: event.cid },
-					createdAt: new Date().toISOString()
-				}
-			}
-		});
-	} catch (e) {
-		console.error(`[private-events] ${caller.did}'s answer to ${input.rkey}:`, e);
-		throw new PrivateEventRefused('refused');
-	}
+	const record = {
+		$type: RSVP_COLLECTION,
+		status: `${RSVP_COLLECTION}#${input.status}`,
+		subject: { uri: privateEventUri(host, input.rkey), cid: event.cid },
+		createdAt: new Date().toISOString()
+	};
+	const body = { ...ownRsvp(caller, host, input.rkey), record };
+	await write(caller, 'com.atproto.space.putRecord', body, `answer to ${input.rkey} not saved`);
 }
 
 export async function deletePrivateRsvp(
@@ -374,14 +376,9 @@ export async function addGuest(
 	const did = await actorToDid(actor, timeLimitedNetwork()).catch(() => null);
 	if (!did) throw new PrivateEventRefused('no-such-person');
 	if (did === caller.did) throw new PrivateEventRefused('own-event');
-	try {
-		await xrpc(caller.handle, 'com.atproto.memberspace.putMember', {
-			body: { space: privateEventSpace(caller.did, input.rkey), did, read: true, write: true }
-		});
-	} catch (e) {
-		console.error(`[private-events] ${caller.did}: guest not added to ${input.rkey}:`, e);
-		throw new PrivateEventRefused('refused');
-	}
+	const body = { space: privateEventSpace(caller.did, input.rkey), did, read: true, write: true };
+	const failed = `guest not added to ${input.rkey}`;
+	await write(caller, 'com.atproto.memberspace.putMember', body, failed);
 	return { did, handle: await verifiedHandle(did), answer: null, answerUnread: false };
 }
 
@@ -390,14 +387,9 @@ export async function removeGuest(
 	input: { rkey: string; did: string }
 ): Promise<void> {
 	requireHost(caller);
-	try {
-		await xrpc(caller.handle, 'com.atproto.memberspace.removeMember', {
-			body: { space: privateEventSpace(caller.did, input.rkey), did: input.did }
-		});
-	} catch (e) {
-		console.error(`[private-events] ${caller.did}: guest not removed from ${input.rkey}:`, e);
-		throw new PrivateEventRefused('refused');
-	}
+	const body = { space: privateEventSpace(caller.did, input.rkey), did: input.did };
+	const failed = `guest not removed from ${input.rkey}`;
+	await write(caller, 'com.atproto.memberspace.removeMember', body, failed);
 }
 
 export interface MyPrivateEvent {

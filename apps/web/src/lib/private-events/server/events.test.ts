@@ -517,3 +517,32 @@ describe('myPrivateEvents', () => {
 		expect(incomplete).toBe(true);
 	});
 });
+
+describe('a write the person’s own PDS refuses', () => {
+	const refusing = { error: 'Nope', message: 'secret detail' };
+	const refuses = (did: string, scope: string, nsid: string) =>
+		caller(did, scope, { [nsid]: () => Response.json(refusing, { status: 500 }) });
+	const host = (nsid: string) => refuses(HOST, HOST_SCOPE, nsid);
+	const answer = { rkey: RKEY, status: 'going' as const, cid: `cid-of-${HOST}` };
+	const writes: Record<string, (nsid: string) => Promise<unknown>> = {
+		'com.atproto.space.deleteSpace': (nsid) => cancelPrivateEvent(host(nsid), RKEY),
+		'com.atproto.space.putRecord': (nsid) =>
+			putPrivateRsvp(refuses(GUEST, GUEST_SCOPE, nsid), HOST, answer),
+		'com.atproto.memberspace.putMember': (nsid) =>
+			addGuest(host(nsid), { rkey: RKEY, handleOrDid: 'guest.example.com' }),
+		'com.atproto.memberspace.removeMember': (nsid) =>
+			removeGuest(host(nsid), { rkey: RKEY, did: GUEST })
+	};
+
+	it.each(Object.entries(writes))(
+		'%s is refused in our words, never the PDS’s',
+		async (nsid, run) => {
+			theSpaceHolds({});
+			actorToDid.mockResolvedValue(GUEST);
+			await expect(run(nsid)).rejects.toMatchObject({
+				reason: 'refused',
+				message: new PrivateEventRefused('refused').message
+			});
+		}
+	);
+});
