@@ -179,7 +179,7 @@ export async function fetchWithCredential(
 			throw new Error(`${GET_RECORD} at ${call.host} answered ${String(body.uri)} for ${uri}`);
 		}
 		const cid = String(body.cid ?? '');
-		if (await mac.verify({ uri, cid }, res.headers.get(MAC_HEADER))) {
+		if (mac.verify({ uri, cid }, res.headers.get(MAC_HEADER))) {
 			if ((await recordCid(body.value).catch(() => null)) !== cid) {
 				throw new Error(`${GET_RECORD} at ${call.host}: the value of ${uri} is not its CID's`);
 			}
