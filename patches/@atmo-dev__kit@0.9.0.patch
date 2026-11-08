@@ -40,18 +40,19 @@ index 87e8baa..f919451 100644
  declare const EventCard: import("svelte").Component<$$ComponentProps, {}, "">;
  type EventCard = ReturnType<typeof EventCard>;
 diff --git a/dist/events/EventEditor.svelte b/dist/events/EventEditor.svelte
-index b1216be..98b7b91 100644
+index b1216be..72f29ce 100644
 --- a/dist/events/EventEditor.svelte
 +++ b/dist/events/EventEditor.svelte
-@@ -94,6 +94,7 @@
+@@ -94,6 +94,8 @@
  	let selectedPreset: string | null = $state(
  		initialThumbnailFile ? null : eventData === null ? DEFAULT_PRESET : null
  	);
 +	let images = $derived(adapter.features.images !== false);
++	let showVisibility = $derived(adapter.features.visibility !== false);
  	let submitting = $state(false);
  	let error: string | null = $state(null);
  	let titleEditor = $state<Editor | null>(null);
-@@ -132,7 +133,7 @@
+@@ -132,7 +134,7 @@
  	}
  
  	function populateThumbnailFromEventData() {
@@ -60,7 +61,7 @@ index b1216be..98b7b91 100644
  		if (eventData.media && eventData.media.length > 0) {
  			const media = getEventThumbnail(eventData.media);
  			if (media?.content) {
-@@ -212,7 +213,7 @@
+@@ -212,7 +214,7 @@
  
  		try {
  			// Generate thumbnail from preset if selected and no custom upload
@@ -69,7 +70,7 @@ index b1216be..98b7b91 100644
  				const rendered = await renderPresetThumbnail({
  					design: selectedPreset,
  					seed: hashSeed(rkey),
-@@ -227,14 +228,18 @@
+@@ -227,14 +229,18 @@
  			}
  
  			const existingMedia = (eventData?.media ?? []) as Array<Record<string, unknown>>;
@@ -96,16 +97,26 @@ index b1216be..98b7b91 100644
  
  			const record = await buildEventRecord({
  				eventData,
-@@ -245,7 +250,7 @@
+@@ -245,7 +251,7 @@
  				endsAt,
  				timezone,
  				mode,
 -				visibility,
-+				visibility: adapter.features.visibility === false ? null : visibility,
++				visibility: showVisibility ? visibility : null,
  				theme: eventTheme,
  				links,
  				location,
-@@ -326,16 +331,18 @@
+@@ -288,7 +294,8 @@
+ 				collection: 'community.lexicon.calendar.event',
+ 				rkey
+ 			});
+-			const eventUri = `at://${viewer.did}/community.lexicon.calendar.event/${rkey}`;
++			const eventUri =
++				eventData?.uri || `at://${viewer.did}/community.lexicon.calendar.event/${rkey}`;
+ 			await adapter.notifyUpdate?.(eventUri);
+ 			adapter.onDeleted?.();
+ 		} catch (e) {
+@@ -326,16 +333,18 @@
  				<div
  					class="grid grid-cols-1 gap-8 md:grid-cols-[14rem_1fr] md:gap-x-10 md:gap-y-6 lg:grid-cols-[16rem_1fr]"
  				>
@@ -134,7 +145,7 @@ index b1216be..98b7b91 100644
  
  					<!-- Right column: event details -->
  					<div class="order-2 min-w-0 md:order-0 md:col-start-2 md:row-span-5 md:row-start-1">
-@@ -371,29 +378,31 @@
+@@ -371,29 +380,31 @@
  						</div>
  
  						<!-- Visibility toggle -->
@@ -145,7 +156,7 @@ index b1216be..98b7b91 100644
 -									() => visibility,
 -									(val) => {
 -										if (val) visibility = val as Visibility;
-+						{#if adapter.features.visibility !== false}
++						{#if showVisibility}
 +							<div class="mb-8">
 +								<ToggleGroup
 +									type="single"
@@ -266,14 +277,18 @@ index e761652..186a5fe 100644
      extraActions?: Snippet;
      /** App-owned actions below the attendee lists, with current RSVP counts. */
 diff --git a/dist/events/editor/adapter.d.ts b/dist/events/editor/adapter.d.ts
-index f24fa9a..cdfdf57 100644
+index f24fa9a..36b26bf 100644
 --- a/dist/events/editor/adapter.d.ts
 +++ b/dist/events/editor/adapter.d.ts
-@@ -33,6 +33,13 @@ export type EditorAdapter = {
+@@ -33,6 +33,17 @@ export type EditorAdapter = {
      features: {
          delete: boolean;
          recurring: boolean;
-+        /** False for an event whose page can't show an image, such as one that isn't public. */
++        /**
++         * False to offer and upload no cover image in the editor, for an event whose page can't
++         * show one, such as one that isn't public. EventView doesn't read it: it shows whatever
++         * `eventData.media` holds.
++         */
 +        images?: boolean;
 +        /**
 +         * False for an event with no public listing to appear in: no Public / Unlisted switch, and
