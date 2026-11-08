@@ -55,7 +55,3 @@ export async function fakeKemHost(): Promise<FakeKemHost> {
 		}
 	};
 }
-
-/** A key the shared fixtures can publish for every DID, so any of their hosts can MAC any of
- *  their records. */
-export const fixtureKem = fakeKemHost();

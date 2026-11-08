@@ -37,27 +37,8 @@ const hosts: SpaceHosts = { repoHost: async () => GROUP_HOST, kemKey: async () =
 const CREDENTIAL_SIG_INPUT =
 	'("authorization" "atproto-space-audience");tag="atproto-space-credential"';
 
-function base64url(text: string): string {
-	return btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function jwt(payload: Record<string, unknown>): string {
-	return `${base64url(JSON.stringify({ typ: 'atproto-space-credential+jwt' }))}.${base64url(JSON.stringify(payload))}.c2ln`;
-}
-
-function payloadOf(credential: string): { holder?: unknown } | null {
-	try {
-		const payload = credential.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-		return JSON.parse(atob(payload + '='.repeat((4 - (payload.length % 4)) % 4)));
-	} catch {
-		return null;
-	}
-}
-
-function holderOf(credential: string): string | null {
-	const holder = payloadOf(credential)?.holder;
-	return typeof holder === 'string' ? holder : null;
-}
+/** atmo never looks inside a credential, so the fake one only names who it was issued to. */
+const credentialFor = (holder: string | undefined) => `credential-for-${holder}`;
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
 	return new Response(JSON.stringify(body), {
@@ -132,14 +113,14 @@ function network(options: {
 	const exchanges: { headers: Headers; body: ExchangeBody }[] = [];
 	const reads: { url: URL; headers: Headers }[] = [];
 
-	const holderFor = (did: string): SpaceHolder => ({
+	const holder: SpaceHolder = {
 		handle: async (pathname) => {
 			delegations.push(pathname);
 			return (
-				options.delegate?.() ?? json(200, { token: `delegation-${did}-${delegations.length}` })
+				options.delegate?.() ?? json(200, { token: `delegation-${VIEWER}-${delegations.length}` })
 			);
 		}
-	});
+	};
 
 	vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
 		const url = new URL(String(input));
@@ -149,8 +130,8 @@ function network(options: {
 			exchanges.push({ headers, body });
 			const refused = options.exchange?.();
 			if (refused) return refused;
-			const holder = /^delegation-(did:[^-]+)-/.exec(String(body.delegationToken))?.[1];
-			return json(200, { credential: jwt({ holder }) });
+			const issuedTo = /^delegation-(did:[^-]+)-/.exec(String(body.delegationToken))?.[1];
+			return json(200, { credential: credentialFor(issuedTo) });
 		}
 		if (url.pathname === '/xrpc/com.atproto.space.getRecord') {
 			reads.push({ url, headers });
@@ -165,7 +146,7 @@ function network(options: {
 		return json(404, { error: 'NotFound' });
 	});
 
-	return { holder: holderFor(VIEWER), holderFor, delegations, exchanges, reads };
+	return { holder, delegations, exchanges, reads };
 }
 
 const READ = { space: MEMBERS, repo: GROUP_DID, collection: 'x.y.z', rkey: 'self' };
@@ -192,7 +173,7 @@ describe('exchangeSpaceCredential', () => {
 		});
 		expect(exchange.headers.get('authorization')).toBeNull();
 		expect(exchange.headers.get('signature')).toBeNull();
-		expect(holderOf(cred.token)).toBe(VIEWER);
+		expect(cred.token).toBe(credentialFor(VIEWER));
 	});
 
 	it.each([
@@ -473,7 +454,7 @@ describe('calls to servers other people chose', () => {
 
 	it('keeps to an isolated network, which may use http', async () => {
 		const { createAtprotoNetwork } = await import('@svelte-atproto/oauth/network');
-		const sent = vi.fn(async () => json(200, { credential: jwt({}) }));
+		const sent = vi.fn(async () => json(200, { credential: credentialFor(VIEWER) }));
 		net.current = createAtprotoNetwork({
 			mode: 'isolated',
 			namespace: 'test',

@@ -17,7 +17,7 @@ const RECORD = {
 };
 
 const setHeaders = vi.fn();
-const reader = { get: vi.fn(), list: vi.fn(), writers: vi.fn() };
+const reader = { get: vi.fn(), writers: vi.fn() };
 const credentialSpaceReader = vi.fn(() => reader);
 vi.mock('#lib/spaces/server/space-read.js', () => ({
 	credentialSpaceReader: () => credentialSpaceReader()
