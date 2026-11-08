@@ -86,6 +86,12 @@ describe('where an event is', () => {
 		);
 	});
 
+	it('maps a public event’s place, so this spec would see a map', async () => {
+		watchRequests();
+		await eventPage([COORDINATES], true);
+		await expect.element(page.getByText('Location:', { exact: true })).toBeVisible();
+	});
+
 	it('shows no map of a private event’s place, whose tiles would say where it is', async () => {
 		watchRequests();
 		await eventPage([COORDINATES], false);

@@ -474,9 +474,11 @@ await step('6. bob opens the link, signs in, allows it, sees the event', async (
 await step('7. bob says going, and the host sees his answer', async () => {
 	const p = pages.bob;
 	check('his answer is in his own repo in the space', await answer(p, /^going$/i, 'bob', 'going'));
+	// The pop-up would open once the page has its answer back, so wait for the page to say so.
+	await p.getByText("You're Going", { exact: true }).first().waitFor({ timeout: 20000 });
 	check(
 		'no pop-up asks him to share it',
-		!(await p.getByText("You're going!", { exact: true }).isVisible())
+		(await p.getByText("You're going!", { exact: true }).count()) === 0
 	);
 	check('0 RSVPs in his public repo', (await publicCount('bob', RSVP)) === 0);
 	const a = pages.alice;
