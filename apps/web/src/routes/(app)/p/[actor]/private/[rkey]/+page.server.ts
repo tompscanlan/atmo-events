@@ -11,6 +11,7 @@ import { holdsGuestGrant, holdsHostGrant } from '#lib/private-events/scopes.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
 import { readPrivateEventPage } from '#lib/private-events/server/events.js';
+import { parseEventDescription } from '#lib/server/event-description.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 
 /** Byte for byte, so someone kept out can't tell an event that exists from one that doesn't, or from
@@ -55,6 +56,7 @@ export async function load({ params, locals, cookies, setHeaders }) {
 		view: 'event' as const,
 		pageTitle: found.event.name,
 		eventData: found.event,
+		description: parseEventDescription(found.event),
 		actorDid: host,
 		rkey: params.rkey,
 		hostProfile: { did: host, handle: found.hostHandle ?? undefined },

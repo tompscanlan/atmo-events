@@ -80,22 +80,26 @@ const open = (event: never) =>
 	(route as unknown as { actions: { open(e: never): Promise<unknown> } }).actions.open(event);
 const page = (data: unknown) => render(EventPage, { props: { data } as never }).body;
 
-beforeEach(() => {
-	credentialSpaceReader.mockClear();
-	reader.get.mockReset();
-	reader.writers.mockReset();
-	reader.writers.mockResolvedValue([]);
-	reader.get.mockImplementation(async ({ collection }: { collection: string }) =>
+/** The host's space holds this event and nothing else. */
+function spaceHolds(value: Record<string, unknown>) {
+	return async ({ collection }: { collection: string }) =>
 		collection === EVENT_COLLECTION
 			? {
 					uri: `${privateEventSpace(HOST, RKEY)}/${HOST}/${EVENT_COLLECTION}/${RKEY}`,
 					cid: 'cid',
 					collection,
 					rkey: RKEY,
-					value: RECORD
+					value
 				}
-			: null
-	);
+			: null;
+}
+
+beforeEach(() => {
+	credentialSpaceReader.mockClear();
+	reader.get.mockReset();
+	reader.writers.mockReset();
+	reader.writers.mockResolvedValue([]);
+	reader.get.mockImplementation(spaceHolds(RECORD));
 	vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
@@ -149,6 +153,21 @@ describe('opening a private event', () => {
 			request(HOST, HOST_SCOPE, browser(), `https://atmo.example.com${PATH}`, answers)
 		);
 		expect(data.view).toBe('event');
+	});
+});
+
+describe('a description written in Markdown', () => {
+	it('is formatted the way a public event page formats it, with HTML kept as text', async () => {
+		const description = '## Plan\n\nBring **snacks** <script>x</script>';
+		reader.get.mockImplementation(spaceHolds({ ...RECORD, description }));
+		const data = await load(
+			request(HOST, HOST_SCOPE, browser(), `https://atmo.example.com${PATH}`, { members: [] })
+		);
+		const body = page(data).replace(/<!--.*?-->/g, '');
+		expect(body).toMatch(/<h3[^>]*>Plan<\/h3>/);
+		expect(body).toMatch(/<strong[^>]*>snacks<\/strong>/);
+		expect(body).not.toContain('**snacks**');
+		expect(body).toContain('&lt;script>x&lt;/script>');
 	});
 });
 
