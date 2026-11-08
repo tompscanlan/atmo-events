@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { P256PrivateKeyExportable } from '@atcute/crypto';
+import { P256Keypair } from '@atproto/crypto';
 import type { AtprotoNetwork } from '@svelte-atproto/oauth/network';
 import {
 	clearSpaceLookups,
@@ -7,10 +7,8 @@ import {
 	exchangeSpaceCredential,
 	isSpaceAccessDenied,
 	SpaceAccessDenied,
-	spaceSigHeaders,
 	type SpaceHolder,
-	type SpaceHosts,
-	type SpaceSigningKey
+	type SpaceHosts
 } from './space-credential';
 import { credentialSpaceReader } from './space-read';
 import { fakeKemHost, type FakeKemHost } from './__fixtures__/space-mac-host';
@@ -58,14 +56,34 @@ async function recordResponse(
 	return json(200, { ...record, cid: answered.cid }, answered.headers);
 }
 
-async function verifies(signer: SpaceSigningKey, base: string, header: string): Promise<boolean> {
-	const match = /^atproto-space-credential=:([A-Za-z0-9+/=]+):$/.exec(header);
+/** A fixed key for the credential, private scalar 0x22…22, with its did:key and public JWK
+ *  as @atproto/space wrote them in the alpha image sha256:3ebb6d0e. */
+const SIGNER = new Uint8Array(32).fill(0x22);
+const SIGNER_DID = 'did:key:zDnaex62me84JZnkEzmeYRa8FCLNe7y1asoSwBMK26GBYpL7c';
+const SIGNER_JWK = {
+	kty: 'EC',
+	crv: 'P-256',
+	x: '1lqTl3yqPRsIGFL_V6eeRl8WYFdzBLrq1QXdOkhYnPM',
+	y: 'UBheiVNy32Ih6joTdVfkc_3bZ1XwW9UHw8Uz_OnJEoU'
+};
+
+/** Whether a request's signature verifies under `jwk`, with WebCrypto rather than the
+ *  package that signed it, over the authorization and the audience it was sent with. */
+async function signedWith(jwk: JsonWebKey, headers: Headers): Promise<boolean> {
+	const match = /^atproto-space-credential=:([A-Za-z0-9+/=]+):$/.exec(
+		headers.get('signature') ?? ''
+	);
 	if (!match) return false;
 	const signature = Uint8Array.from(atob(match[1]), (c) => c.charCodeAt(0));
 	expect(signature.length).toBe(64);
+	const base = [
+		`"authorization": ${headers.get('authorization')}`,
+		`"atproto-space-audience": ${headers.get('atproto-space-audience')}`,
+		`"@signature-params": ${CREDENTIAL_SIG_INPUT}`
+	].join('\n');
 	const publicKey = await crypto.subtle.importKey(
 		'jwk',
-		await signer.key.exportPublicKey('jwk'),
+		jwk,
 		{ name: 'ECDSA', namedCurve: 'P-256' },
 		false,
 		['verify']
@@ -77,28 +95,6 @@ async function verifies(signer: SpaceSigningKey, base: string, header: string): 
 		new TextEncoder().encode(base)
 	);
 }
-
-async function newSigner(): Promise<SpaceSigningKey> {
-	const key = await P256PrivateKeyExportable.createKeypair();
-	return { key, keyId: await key.exportPublicKey('did') };
-}
-
-describe('spaceSigHeaders', () => {
-	it('signs a credential use over the authorization and the audience, as @atproto/space does', async () => {
-		const signer = await newSigner();
-		const headers = await spaceSigHeaders(signer, 'Atproto-Space-Credential cred.jwt', BOB);
-
-		expect(headers.authorization).toBe('Atproto-Space-Credential cred.jwt');
-		expect(headers['atproto-space-audience']).toBe(BOB);
-		expect(headers['signature-input']).toBe(`atproto-space-credential=${CREDENTIAL_SIG_INPUT}`);
-		const base = [
-			'"authorization": Atproto-Space-Credential cred.jwt',
-			`"atproto-space-audience": ${BOB}`,
-			`"@signature-params": ${CREDENTIAL_SIG_INPUT}`
-		].join('\n');
-		expect(await verifies(signer, base, headers.signature)).toBe(true);
-	});
-});
 
 type ExchangeBody = { space?: unknown; credentialKid?: unknown; delegationToken?: unknown };
 
@@ -165,10 +161,10 @@ describe('exchangeSpaceCredential', () => {
 		]);
 		expect(net.exchanges).toHaveLength(1);
 		const [exchange] = net.exchanges;
-		expect(cred.signer.keyId).toMatch(/^did:key:zDn/);
+		expect(cred.signer.did()).toMatch(/^did:key:zDn/);
 		expect(exchange.body).toEqual({
 			space: MEMBERS,
-			credentialKid: cred.signer.keyId,
+			credentialKid: cred.signer.did(),
 			delegationToken: `delegation-${VIEWER}-1`
 		});
 		expect(exchange.headers.get('authorization')).toBeNull();
@@ -215,17 +211,33 @@ describe('exchangeSpaceCredential', () => {
 });
 
 describe('a read with a credential', () => {
-	it('is signed for the repo and asks for the record’s MAC', async () => {
+	it('is signed for the repo by the credential’s own key, and asks for the record’s MAC', async () => {
 		const net = network({});
+		// The first key made is the credential's. The MAC check makes the next one.
+		const made = vi
+			.spyOn(P256Keypair, 'create')
+			.mockResolvedValueOnce(await P256Keypair.import(SIGNER));
 		await readAs(net.holder);
+		made.mockRestore();
 
+		const [exchange] = net.exchanges;
+		expect(exchange.body.credentialKid).toBe(SIGNER_DID);
 		const [read] = net.reads;
 		expect(read.url.origin).toBe(GROUP_HOST);
-		expect(read.headers.get('authorization')).toMatch(/^Atproto-Space-Credential /);
+		expect(read.headers.get('authorization')).toBe(
+			`Atproto-Space-Credential ${credentialFor(VIEWER)}`
+		);
 		expect(read.headers.get('atproto-space-audience')).toBe(GROUP_DID);
 		expect(read.headers.get('signature-input')).toBe(
 			`atproto-space-credential=${CREDENTIAL_SIG_INPUT}`
 		);
+		expect(await signedWith(SIGNER_JWK, read.headers)).toBe(true);
+		const other = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+			'sign',
+			'verify'
+		]);
+		const otherJwk = await crypto.subtle.exportKey('jwk', other.publicKey);
+		expect(await signedWith(otherJwk, read.headers)).toBe(false);
 		expect(read.headers.get('atproto-space-want-mac')).toMatch(
 			/^type="atproto-space-record", ver=1, key_share="did:key:zDn[1-9A-HJ-NP-Za-km-z]+"$/
 		);

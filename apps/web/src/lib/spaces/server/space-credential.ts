@@ -1,8 +1,10 @@
 // A space credential and the reads made with it: a delegation token from the holder's
 // PDS, exchanged at the authority's host for a credential bound to a fresh P-256 key,
-// which signs every request (RFC 9421). A record read also checks the MAC (./space-mac.ts).
-import { P256PrivateKeyExportable, type P256PrivateKey } from '@atcute/crypto';
+// which signs every request (RFC 9421, by @atproto/space). A record read also checks the
+// MAC (./space-mac.ts).
 import type { Did } from '@atcute/lexicons';
+import { P256Keypair } from '@atproto/crypto';
+import { createSpaceSigHeaders } from '@atproto/space';
 import { createActorResolver, createDidDocumentResolver } from '@svelte-atproto/oauth/network';
 import { spaceRecordUri } from '../uri';
 import { fetchOtherServer, timeLimitedNetwork } from './other-servers';
@@ -12,19 +14,14 @@ import { MAC_HEADER, recordCid, recordMacCheck, WANT_MAC_HEADER } from './space-
 const describeFailure = (answer: { status: number; error: string | null }) =>
 	`${answer.status}${answer.error ? ` ${answer.error}` : ''}`;
 
-const SIGNATURE_LABEL = 'atproto-space-credential';
 const AUTH_SCHEME = 'Atproto-Space-Credential';
 export const GET_RECORD = 'com.atproto.space.getRecord';
-
-export interface SpaceSigningKey {
-	key: P256PrivateKey;
-	keyId: string;
-}
 
 export interface SpaceCredential {
 	/** Never logged. */
 	token: string;
-	signer: SpaceSigningKey;
+	/** The key the credential is bound to, which signs each use of it. */
+	signer: P256Keypair;
 }
 
 export interface SpaceHolder {
@@ -70,32 +67,6 @@ export interface SpaceHosts {
 	kemKey(did: string, fresh?: boolean): Promise<string>;
 }
 
-function toBase64(bytes: Uint8Array): string {
-	let out = '';
-	for (const byte of bytes) out += String.fromCharCode(byte);
-	return btoa(out);
-}
-
-export async function spaceSigHeaders(
-	signer: SpaceSigningKey,
-	authorization: string,
-	audience: string
-): Promise<Record<string, string>> {
-	const params = `("authorization" "atproto-space-audience");tag="${SIGNATURE_LABEL}"`;
-	const lines = [
-		`"authorization": ${authorization}`,
-		`"atproto-space-audience": ${audience}`,
-		`"@signature-params": ${params}`
-	];
-	const signature = await signer.key.sign(new TextEncoder().encode(lines.join('\n')));
-	return {
-		authorization,
-		'atproto-space-audience': audience,
-		'signature-input': `${SIGNATURE_LABEL}=${params}`,
-		signature: `${SIGNATURE_LABEL}=:${toBase64(signature)}:`
-	};
-}
-
 export async function exchangeSpaceCredential(
 	holder: SpaceHolder,
 	space: string,
@@ -116,14 +87,13 @@ export async function exchangeSpaceCredential(
 		throw new Error('com.atproto.space.getDelegationToken returned no token');
 	}
 
-	const key = await P256PrivateKeyExportable.createKeypair();
-	const signer: SpaceSigningKey = { key, keyId: await key.exportPublicKey('did') };
+	const signer = await P256Keypair.create();
 	const res = await fetchOtherServer(
 		new URL('/xrpc/com.atproto.space.getSpaceCredential', authorityHost),
 		{
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ space, credentialKid: signer.keyId, delegationToken: token })
+			body: JSON.stringify({ space, credentialKid: signer.did(), delegationToken: token })
 		}
 	);
 	const issued = await readXrpc(res);
@@ -162,7 +132,10 @@ export async function fetchWithCredential(
 	call: SpaceCall
 ): Promise<Response> {
 	const url = new URL(`/xrpc/${call.nsid}?${new URLSearchParams(call.query)}`, call.host);
-	const headers = await spaceSigHeaders(cred.signer, `${AUTH_SCHEME} ${cred.token}`, call.audience);
+	const headers = await createSpaceSigHeaders(cred.signer, {
+		authorization: `${AUTH_SCHEME} ${cred.token}`,
+		audience: call.audience as Did
+	});
 	if (call.nsid !== GET_RECORD) return fetchOtherServer(url, { method: 'GET', headers });
 
 	const { space, repo, collection, rkey } = call.query;
