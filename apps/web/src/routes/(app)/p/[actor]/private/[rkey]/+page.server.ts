@@ -1,6 +1,5 @@
 import { error, redirect } from '@sveltejs/kit';
 import { getActor } from '#lib/actor.js';
-import { privateEventUri } from '#lib/private-events/ids.js';
 import {
 	forgetAsked,
 	hasOpened,
@@ -64,8 +63,6 @@ export async function load({ params, locals, cookies, setHeaders }) {
 		answersUnread: found.answersUnread,
 		viewerRsvpStatus: found.viewerStatus,
 		viewerRsvpRkey: found.viewerStatus ? params.rkey : null,
-		eventUri: privateEventUri(host, params.rkey),
-		shareable: false,
 		loggedIn: true,
 		guests: found.guests
 	};

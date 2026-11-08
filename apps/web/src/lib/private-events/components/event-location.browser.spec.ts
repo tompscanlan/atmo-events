@@ -26,7 +26,7 @@ const adapter = {
 	notifyUpdate: async () => {}
 };
 
-function eventPage(locations: unknown[], shareable: boolean) {
+function eventPage(locations: unknown[], map: boolean) {
 	const data = {
 		eventData: {
 			name: 'Dinner',
@@ -44,15 +44,14 @@ function eventPage(locations: unknown[], shareable: boolean) {
 		attendees: { going: [], interested: [], goingCount: 0, interestedCount: 0 },
 		viewerRsvpStatus: null,
 		viewerRsvpRkey: null,
-		eventUri: `at://${HOST}/space/x/3kabc`,
-		shareable,
 		loggedIn: true
 	};
 	return render(EventView, {
 		data,
 		adapter,
 		viewer,
-		pageUrl: new URL('https://atmo.example.com/p/host/private/3kabc')
+		pageUrl: new URL('https://atmo.example.com/p/host/private/3kabc'),
+		map
 	} as never);
 }
 

@@ -1,5 +1,5 @@
 diff --git a/dist/events/EventCard.svelte b/dist/events/EventCard.svelte
-index 04b5ec10..747187b9 100644
+index 04b5ec1..747187b 100644
 --- a/dist/events/EventCard.svelte
 +++ b/dist/events/EventCard.svelte
 @@ -9,10 +9,13 @@
@@ -27,7 +27,7 @@ index 04b5ec10..747187b9 100644
  >
  	<div class="w-full">
 diff --git a/dist/events/EventCard.svelte.d.ts b/dist/events/EventCard.svelte.d.ts
-index 87e8baa6..f9194513 100644
+index 87e8baa..f919451 100644
 --- a/dist/events/EventCard.svelte.d.ts
 +++ b/dist/events/EventCard.svelte.d.ts
 @@ -2,6 +2,8 @@ import { type FlatEventRecord } from './contrail.js';
@@ -40,7 +40,7 @@ index 87e8baa6..f9194513 100644
  declare const EventCard: import("svelte").Component<$$ComponentProps, {}, "">;
  type EventCard = ReturnType<typeof EventCard>;
 diff --git a/dist/events/EventEditor.svelte b/dist/events/EventEditor.svelte
-index b1216be6..a606eb93 100644
+index b1216be..98b7b91 100644
 --- a/dist/events/EventEditor.svelte
 +++ b/dist/events/EventEditor.svelte
 @@ -94,6 +94,7 @@
@@ -96,6 +96,15 @@ index b1216be6..a606eb93 100644
  
  			const record = await buildEventRecord({
  				eventData,
+@@ -245,7 +250,7 @@
+ 				endsAt,
+ 				timezone,
+ 				mode,
+-				visibility,
++				visibility: adapter.features.visibility === false ? null : visibility,
+ 				theme: eventTheme,
+ 				links,
+ 				location,
 @@ -326,16 +331,18 @@
  				<div
  					class="grid grid-cols-1 gap-8 md:grid-cols-[14rem_1fr] md:gap-x-10 md:gap-y-6 lg:grid-cols-[16rem_1fr]"
@@ -125,100 +134,191 @@ index b1216be6..a606eb93 100644
  
  					<!-- Right column: event details -->
  					<div class="order-2 min-w-0 md:order-0 md:col-start-2 md:row-span-5 md:row-start-1">
-@@ -371,6 +378,7 @@
+@@ -371,29 +378,31 @@
  						</div>
  
  						<!-- Visibility toggle -->
+-						<div class="mb-8">
+-							<ToggleGroup
+-								type="single"
+-								bind:value={
+-									() => visibility,
+-									(val) => {
+-										if (val) visibility = val as Visibility;
 +						{#if adapter.features.visibility !== false}
- 						<div class="mb-8">
- 							<ToggleGroup
- 								type="single"
-@@ -394,6 +402,7 @@
- 								{/if}
++							<div class="mb-8">
++								<ToggleGroup
++									type="single"
++									bind:value={
++										() => visibility,
++										(val) => {
++											if (val) visibility = val as Visibility;
++										}
+ 									}
+-								}
+-								class="w-fit"
+-								size="xs"
+-							>
+-								<ToggleGroupItem value="public">Public</ToggleGroupItem>
+-								<ToggleGroupItem value="unlisted">Unlisted</ToggleGroupItem>
+-							</ToggleGroup>
+-							<div class="mt-1.5 text-xs text-muted">
+-								{#if visibility === 'public'}
+-									Anyone can view and it appears in discovery.
+-								{:else}
+-									Public to anyone with the link, but hidden from discovery.
+-								{/if}
++									class="w-fit"
++									size="xs"
++								>
++									<ToggleGroupItem value="public">Public</ToggleGroupItem>
++									<ToggleGroupItem value="unlisted">Unlisted</ToggleGroupItem>
++								</ToggleGroup>
++								<div class="mt-1.5 text-xs text-muted">
++									{#if visibility === 'public'}
++										Anyone can view and it appears in discovery.
++									{:else}
++										Public to anyone with the link, but hidden from discovery.
++									{/if}
++								</div>
  							</div>
- 						</div>
+-						</div>
 +						{/if}
  
  						<!-- Date row -->
  						<div class="mb-5 grid min-w-0 gap-2">
 diff --git a/dist/events/EventView.svelte b/dist/events/EventView.svelte
-index 3de25540..ba55bf07 100644
+index 3de2554..4c72620 100644
 --- a/dist/events/EventView.svelte
 +++ b/dist/events/EventView.svelte
-@@ -67,6 +67,8 @@
- 	let rkey: string = $derived(data.rkey);
- 	let hostProfile = $derived(data.hostProfile);
- 	let attendees = $derived(data.attendees);
-+	/** False for an event with no public page to share, such as a private one. */
-+	let shareable = $derived(data.shareable !== false);
- 
- 	let theme: EventTheme = $derived(eventData.theme ?? defaultTheme);
- 
-@@ -92,6 +94,9 @@
+@@ -43,6 +43,8 @@
+ 		pageUrl,
+ 		embedMode = false,
+ 		shareUrlOverride,
++		share = true,
++		map = true,
+ 		extraActions,
+ 		attendeeActions
+ 	}: {
+@@ -56,6 +58,12 @@
+ 		 *  of the canonical atmo.rsvp event URL. Useful for embedders that want
+ 		 *  share links to point at their own event page. */
+ 		shareUrlOverride?: string;
++		/** False for an event with no public page to share, such as a private one: no share pop-up
++		 *  after creating the event or answering Going. */
++		share?: boolean;
++		/** False to show no map, so neither a geocoder nor map tiles are told where the event is.
++		 *  The address still shows and links out. */
++		map?: boolean;
+ 		/** App-owned actions such as private reporting; omitted in embeds. */
+ 		extraActions?: Snippet;
+ 		/** App-owned actions below the attendee lists, with current RSVP counts. */
+@@ -92,6 +100,7 @@
  	$effect(() => {
  		let active = true;
  		geoLocation = null;
-+		// The geocoder and the map's tiles are other people's servers, and neither gets told where an
-+		// event is that only its guests may know about. The address still shows and links out.
-+		if (!shareable) return;
++		if (!map) return;
  		void resolveGeoLocation(locations).then((resolved) => {
  			if (active) geoLocation = resolved;
  		});
-@@ -130,7 +135,7 @@
- 
- 	onMount(() => {
- 		const url = new URL(window.location.href);
--		if (url.searchParams.has('created')) {
-+		if (shareable && url.searchParams.has('created')) {
+@@ -134,6 +143,7 @@
  			url.searchParams.delete('created');
  			history.replaceState({}, '', url.pathname);
  			launchConfetti();
-@@ -191,7 +196,8 @@
++			if (!share) return;
+ 			shareModalTitle = 'Event created!';
+ 			shareModalText = `I'm hosting "${eventData.name}"!\n\n${shareUrl}`;
+ 			canSetEventComments = isHost;
+@@ -191,7 +201,8 @@
  		return null;
  	});
  
 -	let eventUri = $derived(`at://${did}/community.lexicon.calendar.event/${rkey}`);
-+	// A page whose event is not in its creator's repo, such as a record in a space, names it.
-+	let eventUri = $derived(data.eventUri ?? `at://${did}/community.lexicon.calendar.event/${rkey}`);
++	// The record's own address, which isn't in its creator's repo for every event (one in a space).
++	let eventUri = $derived(eventData.uri || `at://${did}/community.lexicon.calendar.event/${rkey}`);
  
  	let ogImageUrl = $derived(data.ogImage ?? `${pageUrl.origin}${pageUrl.pathname}/og.png`);
  
-@@ -234,7 +240,7 @@
+@@ -234,7 +245,7 @@
  			handle: viewer.handle,
  			url: `/p/${encodeURIComponent(viewer.handle || viewer.did)}`
  		});
 -		if (status === 'interested') return;
-+		if (status === 'interested' || !shareable) return;
++		if (status === 'interested' || !share) return;
  		shareModalTitle = "You're going!";
  		shareModalText = `I'm going to "${eventData.name}".\n\n${shareUrl}`;
  		canSetEventComments = false;
+diff --git a/dist/events/EventView.svelte.d.ts b/dist/events/EventView.svelte.d.ts
+index e761652..186a5fe 100644
+--- a/dist/events/EventView.svelte.d.ts
++++ b/dist/events/EventView.svelte.d.ts
+@@ -13,6 +13,12 @@ type $$ComponentProps = {
+      *  of the canonical atmo.rsvp event URL. Useful for embedders that want
+      *  share links to point at their own event page. */
+     shareUrlOverride?: string;
++    /** False for an event with no public page to share, such as a private one: no share pop-up
++     *  after creating the event or answering Going. */
++    share?: boolean;
++    /** False to show no map, so neither a geocoder nor map tiles are told where the event is.
++     *  The address still shows and links out. */
++    map?: boolean;
+     /** App-owned actions such as private reporting; omitted in embeds. */
+     extraActions?: Snippet;
+     /** App-owned actions below the attendee lists, with current RSVP counts. */
 diff --git a/dist/events/editor/adapter.d.ts b/dist/events/editor/adapter.d.ts
-index f24fa9a1..28281198 100644
+index f24fa9a..cdfdf57 100644
 --- a/dist/events/editor/adapter.d.ts
 +++ b/dist/events/editor/adapter.d.ts
-@@ -33,6 +33,10 @@ export type EditorAdapter = {
+@@ -33,6 +33,13 @@ export type EditorAdapter = {
      features: {
          delete: boolean;
          recurring: boolean;
 +        /** False for an event whose page can't show an image, such as one that isn't public. */
 +        images?: boolean;
-+        /** False for an event with no public listing to appear in, so no Public / Unlisted switch. */
++        /**
++         * False for an event with no public listing to appear in: no Public / Unlisted switch, and
++         * the record's discovery preference is left as it is.
++         */
 +        visibility?: boolean;
      };
      putRecord(opts: {
          collection: string;
-diff --git a/dist/events/view-data.d.ts b/dist/events/view-data.d.ts
-index f8e38607..7710948f 100644
---- a/dist/events/view-data.d.ts
-+++ b/dist/events/view-data.d.ts
-@@ -20,6 +20,10 @@ export interface EventViewData {
-     };
-     viewerRsvpStatus?: 'going' | 'interested' | 'notgoing' | null;
-     viewerRsvpRkey?: string | null;
-+    /** The event's URI when it is not in its creator's public repo, such as a record in a space. */
-+    eventUri?: string;
-+    /** False for an event with no public page to share. */
-+    shareable?: boolean;
-     ogImage?: string;
-     speakerProfiles?: Array<{
-         id?: string;
+diff --git a/dist/events/editor/save.d.ts b/dist/events/editor/save.d.ts
+index c996aa2..2d311e2 100644
+--- a/dist/events/editor/save.d.ts
++++ b/dist/events/editor/save.d.ts
+@@ -30,7 +30,8 @@ export declare function buildEventRecord(args: {
+     endsAt: string;
+     timezone: string;
+     mode: EventMode;
+-    visibility: Visibility;
++    /** Null when no Public / Unlisted choice was offered: the discovery preference is left as it is. */
++    visibility: Visibility | null;
+     theme: EventTheme;
+     links: Array<{
+         uri: string;
+diff --git a/dist/events/editor/save.js b/dist/events/editor/save.js
+index 12c08db..56c1d02 100644
+--- a/dist/events/editor/save.js
++++ b/dist/events/editor/save.js
+@@ -158,11 +158,14 @@ export async function buildEventRecord(args) {
+     if (Array.isArray(record.locations)) {
+         record.locations = normalizeEventLocations(record.locations);
+     }
+-    const existingPrefs = (record.preferences ??
+-        {});
+-    record.preferences = {
+-        ...existingPrefs,
+-        showInDiscovery: visibility !== 'unlisted'
+-    };
++    // With no Public / Unlisted choice offered, the record keeps whatever preference it had.
++    if (visibility !== null) {
++        const existingPrefs = (record.preferences ??
++            {});
++        record.preferences = {
++            ...existingPrefs,
++            showInDiscovery: visibility !== 'unlisted'
++        };
++    }
+     return record;
+ }

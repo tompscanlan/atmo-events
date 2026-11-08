@@ -377,6 +377,11 @@ await step('3. alice fills in the editor and publishes', async () => {
 	});
 	check('the event is in the space', inSpace.status === 200, inSpace.data?.value?.name);
 	check('it has no image', !inSpace.data?.value?.media?.length);
+	check(
+		'it has no discovery preference, since nothing lists it',
+		inSpace.data?.value?.preferences === undefined,
+		JSON.stringify(inSpace.data?.value?.preferences)
+	);
 	const policy = await C.alice.call('com.atproto.space.getSpace', { space: SPACE });
 	check('memberspace policy', policy.data?.policy?.$type === 'com.atproto.memberspace.policy');
 	const blobs = await C.alice.call('com.atproto.sync.listBlobs', { did: C.alice.did });
@@ -469,6 +474,10 @@ await step('6. bob opens the link, signs in, allows it, sees the event', async (
 await step('7. bob says going, and the host sees his answer', async () => {
 	const p = pages.bob;
 	check('his answer is in his own repo in the space', await answer(p, /^going$/i, 'bob', 'going'));
+	check(
+		'no pop-up asks him to share it',
+		!(await p.getByText("You're going!", { exact: true }).isVisible())
+	);
 	check('0 RSVPs in his public repo', (await publicCount('bob', RSVP)) === 0);
 	const a = pages.alice;
 	await a.reload({ waitUntil: 'load' });
