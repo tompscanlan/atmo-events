@@ -6,8 +6,8 @@ const EVENT = 'community.lexicon.calendar.event';
 const RSVP = 'community.lexicon.calendar.rsvp';
 
 // As the spaces alpha hands a host's grant back: its authority as their DID, no `action`.
-const HOST_AS_GRANTED = `space:rsvp.atmo.calendarSpace?authority=${DID}&collection=${EVENT}&collection=${RSVP}&manage=create&manage=update&manage=delete`;
-const GUEST_AS_GRANTED = `space:rsvp.atmo.calendarSpace?authority=*&collection=${RSVP}&action=read&action=create&action=update&action=delete`;
+const HOST_AS_GRANTED = `space:rsvp.atmo.dev.space?authority=${DID}&collection=${EVENT}&collection=${RSVP}&manage=create&manage=update&manage=delete`;
+const GUEST_AS_GRANTED = `space:rsvp.atmo.dev.space?authority=*&collection=${RSVP}&action=read&action=create&action=update&action=delete`;
 
 describe('private event grants', () => {
 	it('reads a host’s grant as a PDS hands it back', () => {
@@ -39,7 +39,7 @@ describe('private event grants', () => {
 	});
 
 	it('does not take a grant for another space type', () => {
-		const other = GUEST_AS_GRANTED.replace('rsvp.atmo.calendarSpace', 'com.example.forum');
+		const other = GUEST_AS_GRANTED.replace('rsvp.atmo.dev.space', 'com.example.forum');
 		expect(holdsGuestGrant(`atproto ${other}`)).toBe(false);
 	});
 });

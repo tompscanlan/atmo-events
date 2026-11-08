@@ -119,7 +119,7 @@ describe('savePrivateEvent', () => {
 			'com.atproto.space.putRecord'
 		]);
 		expect(host.sent[0].body).toMatchObject({
-			spaceType: 'rsvp.atmo.calendarSpace',
+			spaceType: 'rsvp.atmo.dev.space',
 			skey: RKEY,
 			policy: { $type: 'com.atproto.memberspace.policy' }
 		});
@@ -479,7 +479,7 @@ describe('myPrivateEvents', () => {
 		expect(events.map((e) => e.event.rkey)).toEqual([RKEY, '3lbbbbbbbbbbb']);
 		expect(incomplete).toBe(false);
 		expect(events[0]).toMatchObject({ hosting: false, href: expect.stringContaining('/private/') });
-		expect(guest.sent[0].query.get('spaceType')).toBe('rsvp.atmo.calendarSpace');
+		expect(guest.sent[0].query.get('spaceType')).toBe('rsvp.atmo.dev.space');
 		expect(guest.sent[0].query.has('did')).toBe(false);
 	});
 
