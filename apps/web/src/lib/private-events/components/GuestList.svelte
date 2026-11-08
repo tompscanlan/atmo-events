@@ -4,13 +4,7 @@
 	import { page } from '$app/state';
 	import type { RsvpStatus } from '../ids';
 	import { addGuest, removeGuest } from '../private-events.remote';
-
-	type Guest = {
-		did: string;
-		handle: string | null;
-		answer: RsvpStatus | null;
-		answerUnread: boolean;
-	};
+	import type { Guest } from '../server/events';
 
 	const ANSWER_WORDS: Record<RsvpStatus, string> = {
 		going: 'Going',
@@ -35,13 +29,12 @@
 		return typeof message === 'string' ? message : 'That did not work. Try again.';
 	}
 
-	async function add(event: SubmitEvent) {
-		event.preventDefault();
+	/** One change at a time. The page's data is read again after it, and a refusal shows here. */
+	async function change(run: () => Promise<unknown>) {
 		busy = true;
 		failure = null;
 		try {
-			await addGuest({ rkey, handleOrDid: handle });
-			handle = '';
+			await run();
 			await invalidateAll();
 		} catch (e) {
 			failure = refusal(e);
@@ -50,18 +43,15 @@
 		}
 	}
 
-	async function remove(did: string) {
-		busy = true;
-		failure = null;
-		try {
-			await removeGuest({ rkey, did });
-			await invalidateAll();
-		} catch (e) {
-			failure = refusal(e);
-		} finally {
-			busy = false;
-		}
+	function add(event: SubmitEvent) {
+		event.preventDefault();
+		return change(async () => {
+			await addGuest({ rkey, handleOrDid: handle });
+			handle = '';
+		});
 	}
+
+	const remove = (did: string) => change(() => removeGuest({ rkey, did }));
 
 	async function copyLink() {
 		await navigator.clipboard.writeText(page.url.origin + page.url.pathname);
