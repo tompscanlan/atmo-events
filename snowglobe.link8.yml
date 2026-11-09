@@ -89,6 +89,7 @@ apps:
       E2E_GROUP_HOST: ${grouphosts.gh.url}
       E2E_PLC_URL: ${services.plc.url}
       E2E_CRON_SECRET: local-network-only
+      E2E_RELAY_URL: ${services.relay.url}
       E2E_PDS: ${pds.alpha.url}
       E2E_OWNER_HANDLE: ${accounts.alice.handle}
       E2E_OWNER_PASSWORD: ${accounts.alice.password}

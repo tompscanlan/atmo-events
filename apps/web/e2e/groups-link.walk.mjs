@@ -29,6 +29,7 @@ const ATMO = need('E2E_ATMO');
 const HOST = need('E2E_GROUP_HOST');
 const PLC = need('E2E_PLC_URL');
 const CRON_SECRET = need('E2E_CRON_SECRET');
+const RELAY = need('E2E_RELAY_URL');
 const person = (role, name) => ({
 	name,
 	handle: need(`E2E_${role}_HANDLE`),
@@ -280,6 +281,16 @@ const status = async (page, url) => (await page.goto(url, { waitUntil: 'networki
 try {
 	// Before anything is written, so the index's place in Jetstream comes before this walk's records.
 	await runCron();
+	// The network's relay follows only the servers it started with. Ask it to follow the group host
+	// too, as a host asks any relay, so the host's writes reach Jetstream and atmo's index.
+	const crawl = await fetch(`${RELAY}/xrpc/com.atproto.sync.requestCrawl`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ hostname: new URL(HOST).hostname })
+	});
+	log(
+		`note: the relay answered ${crawl.status} to following the group host ${(await crawl.text()).slice(0, 160)}`
+	);
 	const session = await makeGroup(ALICE);
 	const did = session.did;
 	const handle = await handleOf(did);
