@@ -82,14 +82,13 @@ function watchRequests() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('a private event’s page', () => {
-	it('shows a guest the address and sends it to no geocoder', async () => {
+	it('shows a guest the address and looks up its place, as for any event', async () => {
 		const requests = watchRequests();
 		render(EventPage, { data: guestView() } as never);
 		await expect.element(page.getByText('12 Secret Lane', { exact: false }).first()).toBeVisible();
-		await new Promise((settled) => setTimeout(settled, 200));
-		expect(requests().filter((url) => url.includes('Secret') || url.includes('geocoding'))).toEqual(
-			[]
-		);
+		await expect
+			.poll(() => requests().filter((url) => url.includes('/api/geocoding')))
+			.toHaveLength(1);
 	});
 
 	it('asks a guest who answers Going to share nothing', async () => {

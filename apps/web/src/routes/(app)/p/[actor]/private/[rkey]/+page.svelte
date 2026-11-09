@@ -25,8 +25,8 @@
 
 {#if data.view === 'event'}
 	{@const adapter = createPrivateRsvpAdapter(data.actorDid, data.rkey, viewer)}
-	<!-- A private event has no public page to share, and its place goes to no geocoder or map. -->
-	<EventView {data} {adapter} {viewer} pageUrl={new URL(page.url.href)} share={false} map={false}>
+	<!-- A private event has no public page to share, so the page offers no Bluesky post. -->
+	<EventView {data} {adapter} {viewer} pageUrl={new URL(page.url.href)} share={false}>
 		{#snippet extraActions()}
 			{#if data.answersUnread}
 				<p class="text-muted text-sm" role="status" data-testid="answers-unread">
