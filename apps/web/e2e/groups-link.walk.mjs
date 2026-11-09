@@ -53,7 +53,9 @@ const DECLARATION = 'group.opensocial.declaration';
 let passed = 0;
 let failed = 0;
 function check(label, ok, detail) {
-	log(`${ok ? 'PASS' : 'FAIL'} ${passed + failed + 1}. ${label}${!ok && detail ? `: ${detail}` : ''}`);
+	log(
+		`${ok ? 'PASS' : 'FAIL'} ${passed + failed + 1}. ${label}${!ok && detail ? `: ${detail}` : ''}`
+	);
 	if (ok) passed++;
 	else failed++;
 	return ok;
@@ -71,19 +73,32 @@ async function pageFor(who) {
 	return page;
 }
 const settle = (page) => page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => {});
-const main = async (page) => (await page.locator('main').innerText({ timeout: 15_000 })).replace(/\s+/g, ' ');
+const main = async (page) =>
+	(await page.locator('main').innerText({ timeout: 15_000 })).replace(/\s+/g, ' ');
 
 /** The PDS and group host pages a click led to, until `done(url)`. Never reads the recovery page. */
 async function through(page, who, done, { label } = {}) {
 	for (let i = 0; i < 200; i++) {
 		const u = new URL(page.url());
 		if (done(u)) return;
-		if (u.origin === HOST && (await page.locator('#recovery').count().catch(() => 0))) {
+		if (
+			u.origin === HOST &&
+			(await page
+				.locator('#recovery')
+				.count()
+				.catch(() => 0))
+		) {
 			await page.click('#continue');
 			await page.locator('#recovery').waitFor({ state: 'detached', timeout: 45_000 });
 			continue;
 		}
-		if (u.origin === HOST && (await page.locator('#consent').isVisible().catch(() => false))) {
+		if (
+			u.origin === HOST &&
+			(await page
+				.locator('#consent')
+				.isVisible()
+				.catch(() => false))
+		) {
 			await page.click('#go');
 			await sleep(1000);
 			continue;
@@ -126,9 +141,15 @@ async function through(page, who, done, { label } = {}) {
 async function signIn(who) {
 	const page = await pageFor(who.name);
 	await page.goto(ATMO, { waitUntil: 'networkidle', timeout: 60_000 });
-	await page.getByRole('button', { name: /^log in$/i }).first().click();
+	await page
+		.getByRole('button', { name: /^log in$/i })
+		.first()
+		.click();
 	await page.locator('input[name=handle]').last().fill(who.handle);
-	await page.getByRole('button', { name: /^log in/i }).last().click();
+	await page
+		.getByRole('button', { name: /^log in/i })
+		.last()
+		.click();
 	await page.getByRole('button', { name: /^continue to log in/i }).click({ timeout: 15_000 });
 	await page.waitForURL((u) => u.origin !== new URL(ATMO).origin, { timeout: 30_000 });
 	await through(page, who, (u) => u.origin === new URL(ATMO).origin);
@@ -173,7 +194,10 @@ async function makeGroup(who) {
 		actorResolver: new LocalActorResolver({
 			handleResolver: new WellKnownHandleResolver(),
 			didDocumentResolver: new CompositeDidDocumentResolver({
-				methods: { plc: new PlcDidDocumentResolver({ apiUrl: PLC }), web: new WebDidDocumentResolver() }
+				methods: {
+					plc: new PlcDidDocumentResolver({ apiUrl: PLC }),
+					web: new WebDidDocumentResolver()
+				}
 			})
 		}),
 		stores: { sessions: new MemoryStore(), states: new MemoryStore({ ttl: 600_000 }) }
@@ -267,11 +291,16 @@ try {
 	await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
 	check(
 		'signed in, /groups offers to link a group; signed out it does not',
-		(await alice.locator('#group-link').count()) === 1 && (await anon.locator('#group-link').count()) === 0
+		(await alice.locator('#group-link').count()) === 1 &&
+			(await anon.locator('#group-link').count()) === 0
 	);
 
 	const before = [await status(alice, groupUrl), await status(anon, groupUrl)];
-	check('not linked and not listed, its page is a 404, signed in or out', before.every((s) => s === 404), before.join(' '));
+	check(
+		'not linked and not listed, its page is a 404, signed in or out',
+		before.every((s) => s === 404),
+		before.join(' ')
+	);
 
 	await alice.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
 	await alice.fill('#group-link', handle);
@@ -304,7 +333,8 @@ try {
 	);
 	check(
 		'the group page and /groups are never stored',
-		groupRes?.headers()['cache-control'] === 'no-store' && listRes?.headers()['cache-control'] === 'no-store',
+		groupRes?.headers()['cache-control'] === 'no-store' &&
+			listRes?.headers()['cache-control'] === 'no-store',
 		`${groupRes?.headers()['cache-control']} ${listRes?.headers()['cache-control']}`
 	);
 	await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
@@ -313,7 +343,11 @@ try {
 		await status(anon, `${ATMO}/groups?link=toString`),
 		await status(alice, `${groupUrl}?link=constructor`)
 	];
-	check('a made-up ?link= is a page, not a 500', madeUp.every((s) => s === 200), madeUp.join(' '));
+	check(
+		'a made-up ?link= is a page, not a 500',
+		madeUp.every((s) => s === 200),
+		madeUp.join(' ')
+	);
 
 	await alice.goto(groupUrl, { waitUntil: 'networkidle' });
 	check(
@@ -361,15 +395,23 @@ try {
 		() => repoRecords(did, EVENTS),
 		(rs) => rs.some((r) => r.rkey === rkey && r.value?.name === RENAMED)
 	);
-	check("alice edits it, and the group's repo holds the new name", edited.ok, JSON.stringify(edited.last?.map((r) => r.value?.name)));
+	check(
+		"alice edits it, and the group's repo holds the new name",
+		edited.ok,
+		JSON.stringify(edited.last?.map((r) => r.value?.name))
+	);
 
 	await alice.goto(groupUrl, { waitUntil: 'networkidle' });
 	await alice.getByRole('button', { name: /^add to the groups list$/i }).click();
-	const listed = await until(() => repoRecords(did, DECLARATION), (rs) => rs.some((r) => r.rkey === 'self'));
+	const listed = await until(
+		() => repoRecords(did, DECLARATION),
+		(rs) => rs.some((r) => r.rkey === 'self')
+	);
 	await alice.goto(groupUrl, { waitUntil: 'networkidle' });
 	check(
 		'alice adds it to the groups list: its declaration is in its repo',
-		listed.ok && (await alice.getByRole('button', { name: /^remove from the groups list$/i }).count()) === 1
+		listed.ok &&
+			(await alice.getByRole('button', { name: /^remove from the groups list$/i }).count()) === 1
 	);
 	const anonGroup = await status(anon, groupUrl);
 	const anonSees = (await main(anon)).includes(RENAMED);
@@ -385,18 +427,25 @@ try {
 	const offered = await bob.getByRole('button', { name: /^link this group$/i }).count();
 	let refusedAt = null;
 	bob.on('response', (r) => {
-		if (r.request().isNavigationRequest() && new URL(r.url()).origin === HOST && r.status() === 403) refusedAt = r.status();
+		if (r.request().isNavigationRequest() && new URL(r.url()).origin === HOST && r.status() === 403)
+			refusedAt = r.status();
 	});
 	await bob.getByRole('button', { name: /^link this group$/i }).click();
 	await bob.waitForURL((u) => u.origin !== new URL(ATMO).origin, { timeout: 30_000 });
-	await through(bob, BOB, (u) => u.origin === new URL(ATMO).origin || refusedAt !== null).catch((e) => log(`  bob: ${e.message}`));
-	check('bob, with no role, is offered the link and turned away by the host', offered === 1 && refusedAt === 403, `offered ${offered}, host ${refusedAt}`);
+	await through(bob, BOB, (u) => u.origin === new URL(ATMO).origin || refusedAt !== null).catch(
+		(e) => log(`  bob: ${e.message}`)
+	);
+	check(
+		'bob, with no role, is offered the link and turned away by the host',
+		offered === 1 && refusedAt === 403,
+		`offered ${offered}, host ${refusedAt}`
+	);
 	await bob.goto(groupUrl, { waitUntil: 'networkidle' });
 	const bobPost = await status(bob, `${groupUrl}/events/new`);
 	const bobEdit = await status(bob, `${groupUrl}/events/${rkey}/edit`);
 	await bob.goto(groupUrl, { waitUntil: 'networkidle' });
 	check(
-		"no link is kept for bob: no controls, and the editor is a 404",
+		'no link is kept for bob: no controls, and the editor is a 404',
 		(await bob.getByRole('link', { name: /^post an event$/i }).count()) === 0 &&
 			(await bob.getByRole('button', { name: /^unlink$/i }).count()) === 0 &&
 			bobPost === 404 &&
@@ -412,7 +461,10 @@ try {
 	);
 
 	await fresh.getByRole('button', { name: /^remove from the groups list$/i }).click();
-	const unlisted = await until(() => repoRecords(did, DECLARATION), (rs) => rs.length === 0);
+	const unlisted = await until(
+		() => repoRecords(did, DECLARATION),
+		(rs) => rs.length === 0
+	);
 	const anonAfter = await status(anon, groupUrl);
 	await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
 	check(
@@ -425,7 +477,10 @@ try {
 	await fresh.getByRole('button', { name: /^delete event$/i }).click();
 	await fresh.getByRole('button', { name: /^delete$/i }).click();
 	await fresh.waitForURL((u) => u.pathname === `/groups/${did}`, { timeout: 45_000 });
-	const deleted = await until(() => repoRecords(did, EVENTS), (rs) => !rs.some((r) => r.rkey === rkey));
+	const deleted = await until(
+		() => repoRecords(did, EVENTS),
+		(rs) => !rs.some((r) => r.rkey === rkey)
+	);
 	check("alice deletes the event: it leaves the group's repo", deleted.ok);
 
 	await fresh.goto(groupUrl, { waitUntil: 'networkidle' });
