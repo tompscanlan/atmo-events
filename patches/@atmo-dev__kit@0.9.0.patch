@@ -199,40 +199,28 @@ index b1216be..72f29ce 100644
  						<!-- Date row -->
  						<div class="mb-5 grid min-w-0 gap-2">
 diff --git a/dist/events/EventView.svelte b/dist/events/EventView.svelte
-index 3de2554..4c72620 100644
+index 3de2554..4109290 100644
 --- a/dist/events/EventView.svelte
 +++ b/dist/events/EventView.svelte
-@@ -43,6 +43,8 @@
+@@ -43,6 +43,7 @@
  		pageUrl,
  		embedMode = false,
  		shareUrlOverride,
 +		share = true,
-+		map = true,
  		extraActions,
  		attendeeActions
  	}: {
-@@ -56,6 +58,12 @@
+@@ -56,6 +57,9 @@
  		 *  of the canonical atmo.rsvp event URL. Useful for embedders that want
  		 *  share links to point at their own event page. */
  		shareUrlOverride?: string;
 +		/** False for an event with no public page to share, such as a private one: no share pop-up
 +		 *  after creating the event or answering Going. */
 +		share?: boolean;
-+		/** False to show no map, so neither a geocoder nor map tiles are told where the event is.
-+		 *  The address still shows and links out. */
-+		map?: boolean;
  		/** App-owned actions such as private reporting; omitted in embeds. */
  		extraActions?: Snippet;
  		/** App-owned actions below the attendee lists, with current RSVP counts. */
-@@ -92,6 +100,7 @@
- 	$effect(() => {
- 		let active = true;
- 		geoLocation = null;
-+		if (!map) return;
- 		void resolveGeoLocation(locations).then((resolved) => {
- 			if (active) geoLocation = resolved;
- 		});
-@@ -134,6 +143,7 @@
+@@ -134,6 +138,7 @@
  			url.searchParams.delete('created');
  			history.replaceState({}, '', url.pathname);
  			launchConfetti();
@@ -240,7 +228,7 @@ index 3de2554..4c72620 100644
  			shareModalTitle = 'Event created!';
  			shareModalText = `I'm hosting "${eventData.name}"!\n\n${shareUrl}`;
  			canSetEventComments = isHost;
-@@ -191,7 +201,8 @@
+@@ -191,7 +196,8 @@
  		return null;
  	});
  
@@ -250,7 +238,7 @@ index 3de2554..4c72620 100644
  
  	let ogImageUrl = $derived(data.ogImage ?? `${pageUrl.origin}${pageUrl.pathname}/og.png`);
  
-@@ -234,7 +245,7 @@
+@@ -234,7 +240,7 @@
  			handle: viewer.handle,
  			url: `/p/${encodeURIComponent(viewer.handle || viewer.did)}`
  		});
@@ -260,19 +248,16 @@ index 3de2554..4c72620 100644
  		shareModalText = `I'm going to "${eventData.name}".\n\n${shareUrl}`;
  		canSetEventComments = false;
 diff --git a/dist/events/EventView.svelte.d.ts b/dist/events/EventView.svelte.d.ts
-index e761652..186a5fe 100644
+index e761652..624b0f5 100644
 --- a/dist/events/EventView.svelte.d.ts
 +++ b/dist/events/EventView.svelte.d.ts
-@@ -13,6 +13,12 @@ type $$ComponentProps = {
+@@ -13,6 +13,9 @@ type $$ComponentProps = {
       *  of the canonical atmo.rsvp event URL. Useful for embedders that want
       *  share links to point at their own event page. */
      shareUrlOverride?: string;
 +    /** False for an event with no public page to share, such as a private one: no share pop-up
 +     *  after creating the event or answering Going. */
 +    share?: boolean;
-+    /** False to show no map, so neither a geocoder nor map tiles are told where the event is.
-+     *  The address still shows and links out. */
-+    map?: boolean;
      /** App-owned actions such as private reporting; omitted in embeds. */
      extraActions?: Snippet;
      /** App-owned actions below the attendee lists, with current RSVP counts. */
