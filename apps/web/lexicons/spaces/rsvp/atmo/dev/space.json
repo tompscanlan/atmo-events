@@ -4,9 +4,9 @@
 	"defs": {
 		"main": {
 			"type": "space",
-			"description": "For development and testing of atmo.rsvp spaces.",
 			"key": "any",
 			"name": "atmo.rsvp development",
+			"description": "For development and testing of atmo.rsvp spaces.",
 			"collections": []
 		}
 	}
