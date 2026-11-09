@@ -302,6 +302,12 @@ try {
 	);
 	log(`note: the group is ${did}`);
 	await putMeta(session, did, 'group.opensocial.profile', { displayName: NAME });
+	// The last check's group is made now, before any page lists groups: atmo reads which groups
+	// its group host holds once and keeps that for ten minutes, and a group the host holds counts
+	// only if it is in that read.
+	const other = await makeGroup(ALICE, `${LABEL}b`, DECLARING);
+	const otherHandle = await handleOf(other.did);
+	await putMeta(other, other.did, 'group.opensocial.access', { public: true });
 
 	const alice = await signIn(ALICE);
 	const bob = await signIn(BOB);
@@ -520,12 +526,9 @@ try {
 		`page ${pageAfter}`
 	);
 
-	// A second group lists itself through an app of its own, and nobody opens it as the group in
-	// atmo, so atmo holds no cached profile for it. The list must name it by the handle the index
-	// holds, not by its DID. The index learns of it from Jetstream alone: nothing tells atmo.
-	const other = await makeGroup(ALICE, `${LABEL}b`, DECLARING);
-	const otherHandle = await handleOf(other.did);
-	await putMeta(other, other.did, 'group.opensocial.access', { public: true });
+	// The second group (made at the start) lists itself through an app of its own, and nobody opens
+	// it as the group in atmo, so atmo holds no cached profile for it. The list must name it by the
+	// handle the index holds, not by its DID. The index learns of it from Jetstream alone.
 	await asGroup(other, 'com.atproto.repo.putRecord', {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
