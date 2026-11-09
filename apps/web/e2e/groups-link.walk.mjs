@@ -28,6 +28,7 @@ const need = (n) => {
 const ATMO = need('E2E_ATMO');
 const HOST = need('E2E_GROUP_HOST');
 const PLC = need('E2E_PLC_URL');
+const CRON_SECRET = need('E2E_CRON_SECRET');
 const person = (role, name) => ({
 	name,
 	handle: need(`E2E_${role}_HANDLE`),
@@ -177,6 +178,15 @@ async function until(read, want, tries = 40) {
 	}
 	return { ok: false, last };
 }
+/** One ingest cycle, as the built Worker's own scheduled() sends it: what atmo's index learns
+ *  from the network's Jetstream, rather than from a page that tells it. */
+async function runCron() {
+	const r = await fetch(`${ATMO}/api/cron`, {
+		method: 'POST',
+		headers: { 'X-Cron-Secret': CRON_SECRET, 'content-type': 'application/json' }
+	});
+	if (!r.ok) throw new Error(`atmo's cron: ${r.status}`);
+}
 
 // ---------- making the group, as any app could ----------
 const CB_PORT = 39421;
@@ -187,10 +197,12 @@ const SCOPES = [
 	'include:group.opensocial.configure',
 	'include:group.opensocial.manageSpaces'
 ].join(' ');
+/** For a group that lists itself, as another app could, without atmo. */
+const DECLARING = `${SCOPES} repo:${DECLARATION}`;
 
-async function makeGroup(who) {
+async function makeGroup(who, label = LABEL, scopes = SCOPES) {
 	const app = new OAuthClient({
-		metadata: { redirect_uris: [REDIRECT], scope: SCOPES },
+		metadata: { redirect_uris: [REDIRECT], scope: scopes },
 		actorResolver: new LocalActorResolver({
 			handleResolver: new WellKnownHandleResolver(),
 			didDocumentResolver: new CompositeDidDocumentResolver({
@@ -204,7 +216,7 @@ async function makeGroup(who) {
 	});
 	const { url } = await app.authorize({
 		target: { type: 'pds', serviceUrl: HOST },
-		scope: SCOPES,
+		scope: scopes,
 		prompt: 'create'
 	});
 	let cb = null;
@@ -216,7 +228,7 @@ async function makeGroup(who) {
 	try {
 		const page = await pageFor('maker');
 		await page.goto(url.toString(), { waitUntil: 'load', timeout: 60_000 });
-		await through(page, who, () => cb !== null, { label: LABEL });
+		await through(page, who, () => cb !== null, { label });
 		await page.context().close();
 	} finally {
 		await new Promise((r) => server.close(r));
@@ -266,6 +278,8 @@ async function editorPublish(page, name) {
 const status = async (page, url) => (await page.goto(url, { waitUntil: 'networkidle' }))?.status();
 
 try {
+	// Before anything is written, so the index's place in Jetstream comes before this walk's records.
+	await runCron();
 	const session = await makeGroup(ALICE);
 	const did = session.did;
 	const handle = await handleOf(did);
@@ -493,6 +507,43 @@ try {
 		'alice unlinks it: off her list, and unlisted, its page is a 404 for her',
 		!listAfter.includes(NAME) && pageAfter === 404,
 		`page ${pageAfter}`
+	);
+
+	// A second group lists itself through an app of its own, and nobody opens it as the group in
+	// atmo, so atmo holds no cached profile for it. The list must name it by the handle the index
+	// holds, not by its DID. The index learns of it from Jetstream alone: nothing tells atmo.
+	const other = await makeGroup(ALICE, `${LABEL}b`, DECLARING);
+	const otherHandle = await handleOf(other.did);
+	await putMeta(other, other.did, 'group.opensocial.access', { public: true });
+	await asGroup(other, 'com.atproto.repo.putRecord', {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({
+			repo: other.did,
+			collection: DECLARATION,
+			rkey: 'self',
+			record: { $type: DECLARATION, meta: `at://${other.did}/space/${META}/self` }
+		})
+	});
+	const entry = await until(
+		async () => {
+			await runCron();
+			await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+			const item = anon
+				.locator('main ul li')
+				.filter({ has: anon.locator(`a[href$="/groups/${other.did}"]`) });
+			return (await item.count()) ? (await item.first().innerText()).replace(/\s+/g, ' ') : null;
+		},
+		(text) => text !== null,
+		20
+	);
+	check(
+		'a group listed by another app, never opened as the group: signed out, /groups names it by its handle, not its DID',
+		entry.ok &&
+			otherHandle !== null &&
+			entry.last.includes(otherHandle) &&
+			!entry.last.includes(other.did),
+		`${other.did} ${otherHandle}: ${entry.last ?? 'not listed'}`
 	);
 } catch (e) {
 	check('the walk finished', false, e instanceof Error ? e.message.split('\n')[0] : String(e));
