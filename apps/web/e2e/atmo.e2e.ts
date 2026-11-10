@@ -4,8 +4,8 @@
 // request), not from what a page says after a click.
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { chromium, type Browser, type Page } from 'playwright';
+import { ATMO, runCron } from './atmo-server';
 import {
-	ATMO,
 	BOT_HANDLE,
 	CDN,
 	EVENT,
@@ -18,7 +18,6 @@ import {
 	createRecord,
 	records,
 	rkeyOf,
-	runCron,
 	signIn,
 	signUp,
 	type Person

@@ -1,10 +1,8 @@
-// What the e2e tests know about the local network (snowglobe.yml, app e2e), and how they act on
-// it: make accounts and write records at its PDS, run atmo's cron, and walk a browser through
-// sign-up and sign-in at the PDS.
+// What the e2e tests know about the local network in snowglobe.yml (app e2e), and how they act on
+// it: make accounts and write records at its PDS, read an event as atmo has it, and walk a browser
+// through sign-up and sign-in at the PDS. atmo-server.ts has atmo's address and its cron.
 import type { Browser, Page } from 'playwright';
-
-/** atmo's dev server. Its loopback OAuth client returns here (DEV_PORT in src/lib/atproto/settings.ts). */
-export const ATMO = 'http://127.0.0.1:5454';
+import { ATMO, required } from './atmo-server';
 
 export const EVENT = 'community.lexicon.calendar.event';
 export const RSVP = 'community.lexicon.calendar.rsvp';
@@ -12,18 +10,10 @@ export const POST = 'app.bsky.feed.post';
 export const STARTER_PACK = 'app.bsky.graph.starterpack';
 export const LIST_ITEM = 'app.bsky.graph.listitem';
 
-function required(name: string) {
-	const value = process.env[name]?.trim();
-	if (!value) throw new Error(`${name} is not set. Run the e2e tests with pnpm test:e2e.`);
-	return value;
-}
-
 export const PDS = required('E2E_PDS');
 export const BOT_HANDLE = required('E2E_BOT_HANDLE');
 /** The network's image CDN, which atmo's PUBLIC_CDN_URL names. */
 export const CDN = required('E2E_CDN');
-/** atmo's local database on this network, relative to apps/web (LOCAL_STATE_DIR in snowglobe.yml). */
-export const ATMO_STATE_DIR = required('E2E_ATMO_STATE_DIR');
 
 async function xrpc<T>(
 	nsid: string,
@@ -89,15 +79,6 @@ export async function createRecord(who: Person, collection: string, record: obje
 		body: { repo: who.did, collection, record: { $type: collection, ...record } },
 		token: who.token
 	});
-}
-
-/** One run of atmo's cron, which takes new records from the network's Jetstream. */
-export async function runCron(secret: string) {
-	const response = await fetch(`${ATMO}/api/cron`, {
-		method: 'POST',
-		headers: { 'X-Cron-Secret': secret }
-	});
-	if (!response.ok) throw new Error(`atmo's cron: ${response.status}`);
 }
 
 /** An event as atmo has it, or undefined while atmo does not. */

@@ -5,7 +5,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { TestProject } from 'vitest/node';
-import { ATMO, ATMO_STATE_DIR } from './network';
+import { ATMO, required } from './atmo-server';
 
 declare module 'vitest' {
 	export interface ProvidedContext {
@@ -48,7 +48,8 @@ async function start(project: TestProject) {
 
 	// A fresh database each run, so nothing an earlier network left in it carries over: a
 	// restarted Jetstream counts from 1 again, and atmo would wait past where it stopped before.
-	const state = resolve(webRoot, ATMO_STATE_DIR);
+	// The folder is atmo's LOCAL_STATE_DIR on this network, relative to apps/web.
+	const state = resolve(webRoot, required('E2E_ATMO_STATE_DIR'));
 	const inWrangler = relative(join(webRoot, '.wrangler'), state);
 	if (!inWrangler || inWrangler.startsWith('..') || isAbsolute(inWrangler)) {
 		throw new Error('E2E_ATMO_STATE_DIR must be a folder inside apps/web/.wrangler.');
