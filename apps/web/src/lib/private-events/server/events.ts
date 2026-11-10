@@ -36,6 +36,7 @@ const REFUSALS = {
 	changed: 'This event changed since you opened it. Reload to see the latest, then answer again.',
 	unchecked: "That couldn't be saved just now. Try again shortly.",
 	refused: "Your server didn't take the change, so nothing changed.",
+	'no-answer': "Your server didn't answer in time. Reload to see whether the change went through.",
 	'no-such-person': "No one with that handle was found, so they weren't added.",
 	'own-event': "You're the host, so you're already on your own event."
 } as const;
@@ -46,6 +47,13 @@ export class PrivateEventRefused extends Error {
 		super(REFUSALS[reason]);
 		this.name = 'PrivateEventRefused';
 	}
+}
+
+/** A write that ran out of time may still land after atmo stops waiting, so the page can't say
+ *  nothing changed. */
+function writeFailed(e: unknown): PrivateEventRefused {
+	const timedOut = (e as { name?: unknown } | null)?.name === 'TimeoutError';
+	return new PrivateEventRefused(timedOut ? 'no-answer' : 'refused');
 }
 
 function requireHost(caller: CallerSession): void {
@@ -64,7 +72,7 @@ async function write(
 		await xrpc(caller.handle, nsid, { body });
 	} catch (e) {
 		console.error(`[private-events] ${caller.did}: ${failed}:`, e);
-		throw new PrivateEventRefused('refused');
+		throw writeFailed(e);
 	}
 }
 
@@ -120,7 +128,7 @@ export async function savePrivateEvent(
 	} catch (e) {
 		if (e instanceof PrivateEventRefused) throw e;
 		console.error(`[private-events] ${caller.did}: event ${input.rkey} not saved:`, e);
-		throw new PrivateEventRefused('refused');
+		throw writeFailed(e);
 	}
 }
 
@@ -360,7 +368,7 @@ export async function deletePrivateRsvp(
 	} catch (e) {
 		if (isRecordNotFound(e)) return;
 		console.error(`[private-events] ${caller.did}'s answer to ${rkey} not deleted:`, e);
-		throw new PrivateEventRefused('refused');
+		throw writeFailed(e);
 	}
 }
 
