@@ -3,12 +3,14 @@
 # Beside snowglobe.yml, so one checkout can run both. A snowglobe command reads it through SG_FILE.
 #
 #   pnpm test:e2e:private   # starts the network if need be, then apps/web/e2e/private-events.e2e.ts
+#   E2E_ATMO_RUNNING=1 pnpm test:e2e:private   # the same, on an atmo already at 127.0.0.1:5454
+#                           # with this network's settings (a built Worker, say); none is started
 #   SG_FILE=snowglobe.private-events.yml pnpm exec snowglobe up
 #   SG_FILE=snowglobe.private-events.yml pnpm exec snowglobe run --app atmo -- pnpm --filter web dev --strictPort
 #   SG_FILE=snowglobe.private-events.yml pnpm exec snowglobe down
 #
 # As on snowglobe.yml, the tests empty atmo's local database (.wrangler/snowglobe-private) before
-# each run.
+# each run, unless they use an atmo already running.
 
 globe: atmoprivate # every name below is under atmoprivate.local.snowglobe.at
 

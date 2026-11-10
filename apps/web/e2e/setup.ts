@@ -1,4 +1,5 @@
-// Starts atmo's dev server on the local network for the e2e run, and stops it afterwards.
+// Starts atmo's dev server on the local network for the e2e run, and stops it afterwards. With
+// E2E_ATMO_RUNNING set, it uses an atmo already running instead (useRunning, below).
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
@@ -37,6 +38,8 @@ export default async function setup(project: TestProject) {
 }
 
 async function start(project: TestProject) {
+	if (process.env.E2E_ATMO_RUNNING) return useRunning(project);
+
 	// The sign-in returns to this exact address, so the port has to be ours.
 	if (await answers(ATMO)) {
 		throw new Error(`Something already answers at ${ATMO}. Stop it and run the tests again.`);
@@ -118,4 +121,19 @@ async function start(project: TestProject) {
 
 	project.provide('cronSecret', cronSecret);
 	return stop;
+}
+
+/** An atmo started by hand at ATMO with this network's settings, such as a built Worker under
+ *  wrangler dev, which vite dev is not. The tests use it as it is: nothing here starts, empties or
+ *  stops it, so start it on a fresh database. */
+async function useRunning(project: TestProject) {
+	if (!(await answers(ATMO))) {
+		throw new Error(`E2E_ATMO_RUNNING is set, but nothing answers at ${ATMO}.`);
+	}
+	// The cron secret is the one it was started with, so the tests can't make one up.
+	const cronSecret = process.env.E2E_CRON_SECRET?.trim();
+	if (!cronSecret) {
+		throw new Error('E2E_ATMO_RUNNING needs E2E_CRON_SECRET, the running atmo’s CRON_SECRET.');
+	}
+	project.provide('cronSecret', cronSecret);
 }
