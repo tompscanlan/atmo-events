@@ -47,7 +47,11 @@ const REFUSALS = {
 	changed: 'This event changed since you opened it. Reload to see the latest, then answer again.',
 	unchecked: "That couldn't be saved just now. Try again shortly.",
 	refused: "Your server didn't take the change, so nothing changed.",
-	'no-answer': "Your server didn't answer in time. Reload to see whether the change went through.",
+	uncertain: "atmo couldn't tell whether your server took the change. Check before you try again.",
+	'space-only':
+		"Your server made a space for this event, but the event itself wasn't saved. Try saving again.",
+	'space-uncertain':
+		"Your server made a space for this event, but atmo couldn't tell whether the event itself was saved. Check before you try again.",
 	'no-such-person': "No one with that handle was found, so they weren't added.",
 	'own-event': "You're the host, so you're already on your own event."
 } as const;
@@ -60,11 +64,11 @@ export class PrivateEventRefused extends Error {
 	}
 }
 
-/** A write that ran out of time may still land after atmo stops waiting, so the page can't say
- *  nothing changed. */
+/** Only a 4xx says the PDS turned the write down. A write that timed out, a 5xx or a lost
+ *  connection may still have landed, so the page can't say nothing changed. */
 function writeFailed(e: unknown): PrivateEventRefused {
-	const timedOut = (e as { name?: unknown } | null)?.name === 'TimeoutError';
-	return new PrivateEventRefused(timedOut ? 'no-answer' : 'refused');
+	const turnedDown = e instanceof XrpcError && e.status >= 400 && e.status < 500;
+	return new PrivateEventRefused(turnedDown ? 'refused' : 'uncertain');
 }
 
 function requireHost(caller: CallerSession): void {
@@ -123,8 +127,8 @@ async function checkPrivateSpace(
 	return space;
 }
 
-/** Makes a space of the caller's own if need be, then checks it. */
-async function ensurePrivateSpace(caller: CallerSession, spaceKey: string): Promise<string> {
+/** Makes a space of the caller's own. False when it was already there, so this made nothing. */
+async function createPrivateSpace(caller: CallerSession, spaceKey: string): Promise<boolean> {
 	try {
 		await xrpc(caller.handle, 'com.atproto.space.createSpace', {
 			body: {
@@ -133,10 +137,11 @@ async function ensurePrivateSpace(caller: CallerSession, spaceKey: string): Prom
 				policy: { $type: 'com.atproto.memberspace.policy', publishPolicy: true }
 			}
 		});
+		return true;
 	} catch (e) {
 		if (!isAlreadyThere(e)) throw e;
+		return false;
 	}
-	return checkPrivateSpace(caller, spaceKey, 'refused');
 }
 
 /** A link the kit would load as the event's picture by itself. */
@@ -175,8 +180,12 @@ export async function savePrivateEvent(
 	}
 	const address = singleEvent(caller.did, input.rkey);
 	const reader = credentialSpaceReader(caller);
+	// Once this save has made the space, a later failure leaves it behind, so the page says so.
+	let made = false;
+	let writing = false;
 	try {
-		const space = await ensurePrivateSpace(caller, address.spaceKey);
+		made = await createPrivateSpace(caller, address.spaceKey);
+		const space = await checkPrivateSpace(caller, address.spaceKey, 'refused');
 		const stored = await reader.get({
 			space,
 			repo: caller.did,
@@ -184,6 +193,7 @@ export async function savePrivateEvent(
 			rkey: address.rkey
 		});
 		keepUnshown(record, stored?.value);
+		writing = true;
 		const saved = await xrpc(caller.handle, 'com.atproto.space.putRecord', {
 			body: {
 				space,
@@ -195,6 +205,12 @@ export async function savePrivateEvent(
 		});
 		return { uri: eventUri(address), cid: String(saved.cid) };
 	} catch (e) {
+		if (made) {
+			console.error(`[private-events] event not saved, its space was made: ${errorKind(e)}`);
+			// Only the write itself can have landed without an answer.
+			const unknown = writing && writeFailed(e).reason === 'uncertain';
+			throw new PrivateEventRefused(unknown ? 'space-uncertain' : 'space-only');
+		}
 		if (e instanceof PrivateEventRefused) throw e;
 		console.error(`[private-events] event not saved: ${errorKind(e)}`);
 		throw writeFailed(e);

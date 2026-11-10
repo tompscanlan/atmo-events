@@ -216,6 +216,35 @@ describe('savePrivateEvent', () => {
 		expect(host.sent).toHaveLength(0);
 	});
 
+	it('says the space was made when the write into it is turned down', async () => {
+		const host = caller(HOST, HOST_SCOPE, {
+			'com.atproto.space.getSpace': privateSpace,
+			'com.atproto.space.putRecord': refuse(400, 'InvalidRequest')
+		});
+		const refused = await savePrivateEvent(host, input).catch((e) => e);
+		expect(refused).toMatchObject({ reason: 'space-only' });
+		expect(refused.message).toContain('made a space');
+		expect(refused.message).not.toContain('nothing');
+		expect(host.nsids()).toContain('com.atproto.space.createSpace');
+	});
+
+	it('says the space was made when the check of it turns the event away', async () => {
+		const host = caller(HOST, HOST_SCOPE, {
+			'com.atproto.space.getSpace': () =>
+				Response.json({ policy: { $type: 'com.atproto.memberspace.policy', publicRead: true } })
+		});
+		await expect(savePrivateEvent(host, input)).rejects.toMatchObject({ reason: 'space-only' });
+	});
+
+	it('still says nothing changed when the space was already there and the write is turned down', async () => {
+		const host = caller(HOST, HOST_SCOPE, {
+			'com.atproto.space.createSpace': refuse(400, 'SpaceAlreadyExists'),
+			'com.atproto.space.getSpace': privateSpace,
+			'com.atproto.space.putRecord': refuse(400, 'InvalidRequest')
+		});
+		await expect(savePrivateEvent(host, input)).rejects.toMatchObject({ reason: 'refused' });
+	});
+
 	it('never passes on what a PDS said when it refuses', async () => {
 		const host = caller(HOST, HOST_SCOPE, {
 			'com.atproto.space.createSpace': () =>
@@ -857,12 +886,12 @@ describe('myPrivateEvents', () => {
 	});
 });
 
-describe('a write the person’s own PDS refuses', () => {
-	const refusing = { error: 'Nope', message: 'secret detail' };
+describe('a write the person’s own PDS turns down', () => {
+	const refusing = { error: 'InvalidRequest', message: 'secret detail' };
 	const refuses = (did: string, scope: string, nsid: string) =>
 		caller(did, scope, {
 			'com.atproto.space.getSpace': privateSpace,
-			[nsid]: () => Response.json(refusing, { status: 500 })
+			[nsid]: () => Response.json(refusing, { status: 400 })
 		});
 	const host = (nsid: string) => refuses(HOST, HOST_SCOPE, nsid);
 	const answer = { status: 'going' as const, cid: `cid-of-${HOST}` };
@@ -984,8 +1013,17 @@ describe('every write', () => {
 			]
 				// An answer's check is its read of the event, which a space never made turns away.
 				.filter(([space]) => before && (before.length > 0 || space === 'was never made'))
+				// A new event's space is made first, so a refusal after that leaves the space behind.
 				.map(
-					([space, getSpace, reason]) => [what, space, write, getSpace, reason, before!] as const
+					([space, getSpace, reason]) =>
+						[
+							what,
+							space,
+							write,
+							getSpace,
+							what === 'a new event' ? 'space-only' : reason,
+							before!
+						] as const
 				)
 		)
 	)(
@@ -1004,45 +1042,62 @@ describe('every write', () => {
 	);
 });
 
-describe('a write the person’s own PDS does not answer in time', () => {
-	// What the session's time limit rejects with.
-	const timesOut = () => {
-		throw new DOMException('The operation timed out.', 'TimeoutError');
-	};
+// A write that fails these ways may still have landed, so the page must not say nothing changed.
+describe.each([
+	[
+		'does not answer in time',
+		() => {
+			// What the session's time limit rejects with.
+			throw new DOMException('The operation timed out.', 'TimeoutError');
+		}
+	],
+	['answers with a 5xx', () => Response.json({ error: 'InternalServerError' }, { status: 500 })],
+	[
+		'drops the connection',
+		() => {
+			throw new TypeError('fetch failed');
+		}
+	]
+])('a write when the person’s own PDS %s', (_how, fails: () => Response) => {
 	const answer = { status: 'going' as const, cid: `cid-of-${HOST}` };
 	const writes: Record<string, () => Promise<unknown>> = {
 		'saving an event': () =>
 			savePrivateEvent(
 				caller(HOST, HOST_SCOPE, {
 					'com.atproto.space.getSpace': privateSpace,
-					'com.atproto.space.putRecord': timesOut
+					'com.atproto.space.putRecord': fails
 				}),
 				{ rkey: RKEY, record: RECORD }
 			),
+		'saving an event, at the check of its space': () =>
+			savePrivateEvent(caller(HOST, HOST_SCOPE, { 'com.atproto.space.getSpace': fails }), {
+				rkey: RKEY,
+				record: RECORD
+			}),
 		'cancelling it': () =>
 			cancelPrivateEvent(
 				caller(HOST, HOST_SCOPE, {
 					'com.atproto.space.getSpace': privateSpace,
-					'com.atproto.space.deleteSpace': timesOut
+					'com.atproto.space.deleteSpace': fails
 				}),
 				RKEY
 			),
 		answering: () =>
 			putPrivateRsvp(
-				caller(GUEST, GUEST_SCOPE, { 'com.atproto.space.putRecord': timesOut }),
+				caller(GUEST, GUEST_SCOPE, { 'com.atproto.space.putRecord': fails }),
 				EVENT,
 				answer
 			),
 		'taking an answer back': () =>
 			deletePrivateRsvp(
-				caller(GUEST, GUEST_SCOPE, { 'com.atproto.space.deleteRecord': timesOut }),
+				caller(GUEST, GUEST_SCOPE, { 'com.atproto.space.deleteRecord': fails }),
 				EVENT
 			),
 		'adding a guest': () =>
 			addGuest(
 				caller(HOST, HOST_SCOPE, {
 					'com.atproto.space.getSpace': privateSpace,
-					'com.atproto.memberspace.putMembers': timesOut
+					'com.atproto.memberspace.putMembers': fails
 				}),
 				{
 					rkey: RKEY,
@@ -1053,7 +1108,7 @@ describe('a write the person’s own PDS does not answer in time', () => {
 			removeGuest(
 				caller(HOST, HOST_SCOPE, {
 					'com.atproto.space.getSpace': privateSpace,
-					'com.atproto.memberspace.removeMembers': timesOut
+					'com.atproto.memberspace.removeMembers': fails
 				}),
 				{
 					rkey: RKEY,
@@ -1062,10 +1117,20 @@ describe('a write the person’s own PDS does not answer in time', () => {
 			)
 	};
 
-	// It may still land, so the page must not say nothing changed.
-	it.each(Object.entries(writes))('%s is not called refused', async (_name, run) => {
-		theSpaceHolds({});
-		actorToDid.mockResolvedValue(GUEST);
-		await expect(run()).rejects.toMatchObject({ reason: 'no-answer' });
-	});
+	// A new event's space is made before either of its two steps, so it says so.
+	const reasonOf = (name: string) =>
+		name === 'saving an event'
+			? 'space-uncertain'
+			: name.startsWith('saving an event, at')
+				? 'space-only'
+				: 'uncertain';
+
+	it.each(Object.entries(writes))(
+		'%s says it can’t tell, not that nothing changed',
+		async (name, run) => {
+			theSpaceHolds({});
+			actorToDid.mockResolvedValue(GUEST);
+			await expect(run()).rejects.toMatchObject({ reason: reasonOf(name) });
+		}
+	);
 });
