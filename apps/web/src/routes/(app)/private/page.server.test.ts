@@ -8,7 +8,8 @@ const reader = { get: vi.fn(), writers: vi.fn() };
 vi.mock('#lib/spaces/server/space-read.js', () => ({ credentialSpaceReader: () => reader }));
 vi.mock('#lib/actor.js', () => ({ actorToDid: vi.fn() }));
 vi.mock('#lib/private-events/server/people.js', () => ({
-	verifiedHandle: async (did: string) => `${did.split(':').at(-1)}.example.com`
+	verifiedHandle: async (did: string) => `${did.split(':').at(-1)}.example.com`,
+	publicProfile: async () => null
 }));
 vi.mock('#lib/private-events/server/enabled.js', () => ({
 	privateEventsEnabled: () => true,

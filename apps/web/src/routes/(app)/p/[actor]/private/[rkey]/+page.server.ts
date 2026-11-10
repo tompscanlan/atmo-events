@@ -58,7 +58,11 @@ export async function load({ params, locals, cookies, setHeaders }) {
 		description: parseEventDescription(found.event),
 		actorDid: host,
 		rkey: params.rkey,
-		hostProfile: { did: host, handle: found.hostHandle ?? undefined },
+		hostProfile: {
+			did: host,
+			handle: found.host.handle,
+			displayName: found.host.value?.displayName
+		},
 		attendees: found.attendees,
 		answersUnread: found.answersUnread,
 		viewerRsvpStatus: found.viewerStatus,
