@@ -4,6 +4,8 @@ import { EVENT_COLLECTION, privateEventSpace } from '#lib/private-events/ids.js'
 import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 
 const setHeaders = vi.fn();
+const beta = vi.hoisted(() => vi.fn());
+vi.mock('#lib/private-events/server/beta.js', () => ({ privateEventsBeta: beta }));
 const reader = { get: vi.fn(), writers: vi.fn() };
 vi.mock('#lib/spaces/server/space-read.js', () => ({ credentialSpaceReader: () => reader }));
 vi.mock('#lib/actor.js', () => ({ actorToDid: vi.fn() }));
@@ -46,6 +48,7 @@ async function renderedPrivatePage() {
 
 beforeEach(() => {
 	reader.get.mockReset();
+	beta.mockResolvedValue(false);
 	vi.spyOn(console, 'error').mockImplementation(() => {});
 	vi.spyOn(console, 'info').mockImplementation(() => {});
 });
@@ -111,5 +114,21 @@ describe('/private with a record a host wrote badly', () => {
 		expect(body).toContain('Dinner');
 		expect(body).not.toContain('Broken');
 		expect(body.match(/\/private\/3l[a-z]+/g)).toEqual(['/private/3laaaaaaaaaaa']);
+	});
+});
+
+describe('/private and the beta', () => {
+	it('warns that private events made in the beta will be lost', async () => {
+		reader.get.mockResolvedValue(null);
+		expect(await renderedPrivatePage()).toContain('will be lost');
+	});
+	it('points someone without the beta at Settings to make their own', async () => {
+		reader.get.mockResolvedValue(null);
+		expect(await renderedPrivatePage()).toMatch(/turn on private events in\s*<a href="\/settings"/);
+	});
+	it('does not, once they turned it on', async () => {
+		beta.mockResolvedValue(true);
+		reader.get.mockResolvedValue(null);
+		expect(await renderedPrivatePage()).not.toContain('turn on private events in');
 	});
 });

@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { user } from '#lib/atproto/auth.svelte.js';
 	import { atProtoLoginModalState } from '#lib/components/LoginModal.svelte';
+	import { BETA_WARNING } from '#lib/private-events/beta.js';
 	import GuestList from '#lib/private-events/components/GuestList.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { createPrivateRsvpAdapter } from '#lib/private-events/rsvp-adapter.js';
@@ -28,6 +29,9 @@
 	<!-- A private event has no public page to share, so the page offers no Bluesky post. -->
 	<EventView {data} {adapter} {viewer} pageUrl={new URL(page.url.href)} share={false}>
 		{#snippet extraActions()}
+			<p class="text-base-600 dark:text-base-400 text-sm" data-testid="beta-notice">
+				{BETA_WARNING}
+			</p>
 			{#if data.answersUnread}
 				<p
 					class="text-base-600 dark:text-base-400 text-sm"
@@ -51,6 +55,9 @@
 {:else}
 	<div class="mx-auto max-w-3xl px-6 py-8 sm:py-12">
 		<h1 class="text-base-900 dark:text-base-50 text-2xl font-bold">Private event</h1>
+		<p class="text-base-600 dark:text-base-400 mt-2 text-sm" data-testid="beta-notice">
+			{BETA_WARNING}
+		</p>
 		{#if data.view === 'signed-out'}
 			<p class="text-base-600 dark:text-base-400 mt-2">Sign in to see whether you were invited.</p>
 			<Button class="mt-4" onclick={() => atProtoLoginModalState.show()}>Sign in</Button>

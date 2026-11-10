@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { EventCard } from '@atmo-dev/kit/events';
+	import { resolve } from '$app/paths';
+	import { BETA_WARNING } from '#lib/private-events/beta.js';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { GUEST_SCOPES } from '#lib/private-events/scopes.js';
 
@@ -17,6 +19,14 @@
 
 <div class="mx-auto max-w-3xl px-6 py-8 sm:py-12">
 	<h1 class="text-base-900 dark:text-base-50 text-2xl font-bold">Your private events</h1>
+	<p class="text-base-600 dark:text-base-400 mt-2 text-sm" data-testid="beta-notice">
+		{BETA_WARNING}
+		{#if !data.beta}To make your own, turn on private events in
+			<a
+				href={resolve('/(app)/settings')}
+				class="text-accent-600 dark:text-accent-400 hover:underline">Settings</a
+			>.{/if}
+	</p>
 	{#if data.events === null}
 		<PrivateEventAccessNotice
 			access={data.access ?? 'ask'}
