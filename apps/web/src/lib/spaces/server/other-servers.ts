@@ -1,5 +1,6 @@
 // Calls to servers other people chose: a guest's PDS, a host's, the domain behind a did:web or a
-// handle. A page waits on them together, so any one of them could hold it up for everyone.
+// handle, and the signed-in person's own PDS. A page waits on them together, so any one of them
+// could hold it up for everyone.
 import type { AtprotoNetwork } from '@svelte-atproto/oauth/network';
 import { atprotoNetwork } from '#lib/atproto/network.js';
 
@@ -32,10 +33,12 @@ export function timeLimitedNetwork(): AtprotoNetwork {
 	const { fetch: send } = network;
 	return {
 		...network,
-		fetch: (input, init) => {
-			const limit = AbortSignal.timeout(TIME_LIMIT_MS);
-			const signal = init?.signal ? AbortSignal.any([init.signal, limit]) : limit;
-			return send(input, { ...init, signal });
-		}
+		fetch: (input, init) => send(input, withTimeLimit(init))
 	};
+}
+
+/** `init` with the time limit, joined to any signal it already carries so that one still stops it. */
+export function withTimeLimit(init?: RequestInit): RequestInit {
+	const limit = AbortSignal.timeout(TIME_LIMIT_MS);
+	return { ...init, signal: init?.signal ? AbortSignal.any([init.signal, limit]) : limit };
 }
