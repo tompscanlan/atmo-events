@@ -72,42 +72,44 @@
 </script>
 
 {#if data.privateEvents}
-	<div class="mx-auto max-w-2xl px-6 pt-12" data-testid="audience">
-		<fieldset>
-			<legend class="text-base-900 dark:text-base-50 text-lg font-semibold">
-				Who can see this event?
-			</legend>
-			<label class="mt-3 flex items-start gap-3">
-				<input type="radio" name="audience" class="mt-1" value="everyone" bind:group={audience} />
-				<span>
-					<span class="font-medium">Everyone</span>
-					<span class="text-base-600 dark:text-base-400 block text-sm"
-						>Anyone can see it, and it can't be made private later.</span
-					>
-				</span>
-			</label>
-			<label class="mt-3 flex items-start gap-3">
-				<input type="radio" name="audience" class="mt-1" value={INVITED} bind:group={audience} />
-				<span>
-					<span class="font-medium">Invited people only</span>
-					<span class="text-base-600 dark:text-base-400 block text-sm"
-						>Only people you add can see it, and it can't be made public later. It has no image or
-						repeats for now.</span
-					>
-				</span>
-			</label>
-		</fieldset>
-		{#if invited && data.hostAccess}
-			<PrivateEventAccessNotice
-				access={data.hostAccess}
-				did={data.actorDid}
-				scopes={HOST_SCOPES}
-				purpose="A private event is kept on your own server. atmo needs your permission to create it there and manage its guest list."
-				label="Allow atmo to host private events"
-				returnTo="/create?audience={INVITED}"
-				spacesServer={data.spacesServer}
-			/>
-		{/if}
+	<div class="px-6 pt-12" data-testid="audience">
+		<div class="mx-auto max-w-3xl">
+			<fieldset>
+				<legend class="text-base-900 dark:text-base-50 text-lg font-semibold">
+					Who can see this event?
+				</legend>
+				<label class="mt-3 flex items-start gap-3">
+					<input type="radio" name="audience" class="mt-1" value="everyone" bind:group={audience} />
+					<span>
+						<span class="font-medium">Everyone</span>
+						<span class="text-base-600 dark:text-base-400 block text-sm"
+							>Anyone can see it, and it can't be made private later.</span
+						>
+					</span>
+				</label>
+				<label class="mt-3 flex items-start gap-3">
+					<input type="radio" name="audience" class="mt-1" value={INVITED} bind:group={audience} />
+					<span>
+						<span class="font-medium">Invited people only</span>
+						<span class="text-base-600 dark:text-base-400 block text-sm"
+							>Only people you add can see it, and it can't be made public later. It has no image or
+							repeats for now.</span
+						>
+					</span>
+				</label>
+			</fieldset>
+			{#if invited && data.hostAccess}
+				<PrivateEventAccessNotice
+					access={data.hostAccess}
+					did={data.actorDid}
+					scopes={HOST_SCOPES}
+					purpose="A private event is kept on your own server. atmo needs your permission to create it there and manage its guest list."
+					label="Allow atmo to host private events"
+					returnTo="/create?audience={INVITED}"
+					spacesServer={data.spacesServer}
+				/>
+			{/if}
+		</div>
 	</div>
 {/if}
 

@@ -49,8 +49,7 @@
 		<a
 			href={spacesServer.url}
 			rel="external noopener"
-			class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 font-medium"
-			>{spacesServer.host}</a
+			class="text-accent-600 dark:text-accent-400 hover:underline">{spacesServer.host}</a
 		><!-- eslint-enable svelte/no-navigation-without-resolve -->, which can, and sign in to atmo
 		with it.
 	{/if}
@@ -60,7 +59,9 @@
 	class="rounded-ui border-base-200 dark:border-base-800 mt-4 border p-4"
 	data-testid="grant-notice"
 >
-	{#if failure}<p role="alert" class="mb-2 text-sm text-red-600">{failure}</p>{/if}
+	{#if failure}<p role="alert" class="text-base-950 dark:text-base-50 mb-2 text-sm">
+			{failure}
+		</p>{/if}
 	{#if access === 'ask'}
 		<p class="text-base-700 dark:text-base-300 text-sm">{purpose}</p>
 		<Button class="mt-3" disabled={busy} onclick={ask}>{label}</Button>

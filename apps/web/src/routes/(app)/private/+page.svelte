@@ -15,8 +15,8 @@
 
 <svelte:head><meta name="robots" content="noindex" /></svelte:head>
 
-<div class="mx-auto max-w-2xl px-6 pt-12 pb-24">
-	<h1 class="text-base-900 dark:text-base-50 text-2xl font-semibold">Your private events</h1>
+<div class="mx-auto max-w-3xl px-6 py-8 sm:py-12">
+	<h1 class="text-base-900 dark:text-base-50 text-2xl font-bold">Your private events</h1>
 	{#if data.events === null}
 		<PrivateEventAccessNotice
 			access={data.access ?? 'ask'}
@@ -43,7 +43,7 @@
 			</p>
 		{/if}
 		{#if data.events.length > 0}
-			<ul class="mt-6 space-y-4" data-testid="private-events">
+			<ul class="mt-6 space-y-3" data-testid="private-events">
 				{#each data.events as item (item.href)}
 					<li>
 						<EventCard event={item.event} href={item.href} />

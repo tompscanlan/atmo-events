@@ -49,8 +49,8 @@
 		{/snippet}
 	</EventView>
 {:else}
-	<div class="mx-auto max-w-xl px-6 pt-12 pb-24">
-		<h1 class="text-base-900 dark:text-base-50 text-2xl font-semibold">Private event</h1>
+	<div class="mx-auto max-w-3xl px-6 py-8 sm:py-12">
+		<h1 class="text-base-900 dark:text-base-50 text-2xl font-bold">Private event</h1>
 		{#if data.view === 'signed-out'}
 			<p class="text-base-600 dark:text-base-400 mt-2">Sign in to see whether you were invited.</p>
 			<Button class="mt-4" onclick={() => atProtoLoginModalState.show()}>Sign in</Button>
