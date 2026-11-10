@@ -519,10 +519,10 @@ describe('myPrivateEvents', () => {
 	});
 });
 
-describe('a write the person’s own PDS refuses', () => {
-	const refusing = { error: 'Nope', message: 'secret detail' };
+describe('a write the person’s own PDS turns down', () => {
+	const refusing = { error: 'InvalidRequest', message: 'secret detail' };
 	const refuses = (did: string, scope: string, nsid: string) =>
-		caller(did, scope, { [nsid]: () => Response.json(refusing, { status: 500 }) });
+		caller(did, scope, { [nsid]: () => Response.json(refusing, { status: 400 }) });
 	const host = (nsid: string) => refuses(HOST, HOST_SCOPE, nsid);
 	const answer = { rkey: RKEY, status: 'going' as const, cid: `cid-of-${HOST}` };
 	const writes: Record<string, (nsid: string) => Promise<unknown>> = {
@@ -548,54 +548,73 @@ describe('a write the person’s own PDS refuses', () => {
 	);
 });
 
-describe('a write the person’s own PDS does not answer in time', () => {
-	// What the session's time limit rejects with.
-	const timesOut = () => {
-		throw new DOMException('The operation timed out.', 'TimeoutError');
-	};
+// A write that fails these ways may still have landed, so the page must not say nothing changed.
+describe.each([
+	[
+		'does not answer in time',
+		() => {
+			// What the session's time limit rejects with.
+			throw new DOMException('The operation timed out.', 'TimeoutError');
+		}
+	],
+	['answers with a 5xx', () => Response.json({ error: 'InternalServerError' }, { status: 500 })],
+	[
+		'drops the connection',
+		() => {
+			throw new TypeError('fetch failed');
+		}
+	]
+])('a write when the person’s own PDS %s', (_how, fails: () => Response) => {
 	const answer = { rkey: RKEY, status: 'going' as const, cid: `cid-of-${HOST}` };
 	const writes: Record<string, () => Promise<unknown>> = {
 		'saving an event': () =>
 			savePrivateEvent(
 				caller(HOST, HOST_SCOPE, {
 					'com.atproto.space.getSpace': privateSpace,
-					'com.atproto.space.putRecord': timesOut
+					'com.atproto.space.putRecord': fails
 				}),
 				{ rkey: RKEY, record: RECORD }
 			),
+		'saving an event, at the check of its space': () =>
+			savePrivateEvent(caller(HOST, HOST_SCOPE, { 'com.atproto.space.getSpace': fails }), {
+				rkey: RKEY,
+				record: RECORD
+			}),
 		'cancelling it': () =>
 			cancelPrivateEvent(
-				caller(HOST, HOST_SCOPE, { 'com.atproto.space.deleteSpace': timesOut }),
+				caller(HOST, HOST_SCOPE, { 'com.atproto.space.deleteSpace': fails }),
 				RKEY
 			),
 		answering: () =>
 			putPrivateRsvp(
-				caller(GUEST, GUEST_SCOPE, { 'com.atproto.space.putRecord': timesOut }),
+				caller(GUEST, GUEST_SCOPE, { 'com.atproto.space.putRecord': fails }),
 				HOST,
 				answer
 			),
 		'taking an answer back': () =>
 			deletePrivateRsvp(
-				caller(GUEST, GUEST_SCOPE, { 'com.atproto.space.deleteRecord': timesOut }),
+				caller(GUEST, GUEST_SCOPE, { 'com.atproto.space.deleteRecord': fails }),
 				HOST,
 				RKEY
 			),
 		'adding a guest': () =>
-			addGuest(caller(HOST, HOST_SCOPE, { 'com.atproto.memberspace.putMember': timesOut }), {
+			addGuest(caller(HOST, HOST_SCOPE, { 'com.atproto.memberspace.putMember': fails }), {
 				rkey: RKEY,
 				handleOrDid: 'guest.example.com'
 			}),
 		'removing one': () =>
-			removeGuest(caller(HOST, HOST_SCOPE, { 'com.atproto.memberspace.removeMember': timesOut }), {
+			removeGuest(caller(HOST, HOST_SCOPE, { 'com.atproto.memberspace.removeMember': fails }), {
 				rkey: RKEY,
 				did: GUEST
 			})
 	};
 
-	// It may still land, so the page must not say nothing changed.
-	it.each(Object.entries(writes))('%s is not called refused', async (_name, run) => {
-		theSpaceHolds({});
-		actorToDid.mockResolvedValue(GUEST);
-		await expect(run()).rejects.toMatchObject({ reason: 'no-answer' });
-	});
+	it.each(Object.entries(writes))(
+		'%s says it can’t tell, not that nothing changed',
+		async (_name, run) => {
+			theSpaceHolds({});
+			actorToDid.mockResolvedValue(GUEST);
+			await expect(run()).rejects.toMatchObject({ reason: 'uncertain' });
+		}
+	);
 });

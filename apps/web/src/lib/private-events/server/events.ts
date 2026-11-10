@@ -36,7 +36,7 @@ const REFUSALS = {
 	changed: 'This event changed since you opened it. Reload to see the latest, then answer again.',
 	unchecked: "That couldn't be saved just now. Try again shortly.",
 	refused: "Your server didn't take the change, so nothing changed.",
-	'no-answer': "Your server didn't answer in time. Reload to see whether the change went through.",
+	uncertain: "atmo couldn't tell whether your server took the change. Check before you try again.",
 	'no-such-person': "No one with that handle was found, so they weren't added.",
 	'own-event': "You're the host, so you're already on your own event."
 } as const;
@@ -49,11 +49,11 @@ export class PrivateEventRefused extends Error {
 	}
 }
 
-/** A write that ran out of time may still land after atmo stops waiting, so the page can't say
- *  nothing changed. */
+/** Only a 4xx says the PDS turned the write down. A write that timed out, a 5xx or a lost
+ *  connection may still have landed, so the page can't say nothing changed. */
 function writeFailed(e: unknown): PrivateEventRefused {
-	const timedOut = (e as { name?: unknown } | null)?.name === 'TimeoutError';
-	return new PrivateEventRefused(timedOut ? 'no-answer' : 'refused');
+	const turnedDown = e instanceof XrpcError && e.status >= 400 && e.status < 500;
+	return new PrivateEventRefused(turnedDown ? 'refused' : 'uncertain');
 }
 
 function requireHost(caller: CallerSession): void {
