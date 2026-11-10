@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { isRecordNotFound, xrpc, XrpcError, type XrpcHandle } from './xrpc';
+import { isRecordNotFound, readXrpc, xrpc, XrpcError, type XrpcHandle } from './xrpc';
 
 const answering = (status: number, body: unknown) =>
 	vi.fn<XrpcHandle>(async () => new Response(JSON.stringify(body), { status }));
@@ -42,5 +42,22 @@ describe('xrpc', () => {
 		const outage = await xrpc(answering(502, {}), 'x.y', { query: {} }).catch((e: unknown) => e);
 		expect(isRecordNotFound(outage)).toBe(false);
 		expect(outage).toMatchObject({ status: 502, error: null });
+	});
+
+	it('reads a body that is not JSON as empty', async () => {
+		const answer = await readXrpc(new Response('<html>', { status: 200 }));
+		expect(answer).toEqual({ ok: true, status: 200, data: {} });
+	});
+
+	// Otherwise a list cut off by the time limit would read as an empty list.
+	it('throws when the body never arrived, rather than reading it as empty', async () => {
+		const cutOff = new ReadableStream({
+			start(controller) {
+				controller.error(new DOMException('The operation timed out.', 'TimeoutError'));
+			}
+		});
+		await expect(readXrpc(new Response(cutOff, { status: 200 }))).rejects.toMatchObject({
+			name: 'TimeoutError'
+		});
 	});
 });
