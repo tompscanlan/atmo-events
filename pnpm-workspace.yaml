@@ -20,8 +20,6 @@ minimumReleaseAgeExclude:
   # Runs the e2e tests' local network. Exempt so a new release can be tested as
   # soon as it is published.
   - '@openmeet/snowglobe'
-patchedDependencies:
-  '@atmo-dev/kit@0.9.0': patches/@atmo-dev__kit@0.9.0.patch
 # @atproto/space is published only as dated spaces alphas, which depend on each other
 # through caret ranges. Those ranges also match 0.0.0-stage, which sorts above every alpha
 # and was published with workspace: dependencies that cannot install. These pin the alpha's
