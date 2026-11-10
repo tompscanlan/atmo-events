@@ -1,6 +1,6 @@
 // Calls to servers other people chose: a guest's PDS, a host's, the domain behind a did:web or a
-// handle, and the signed-in person's own PDS. A page waits on them together, so any one of them
-// could hold it up for everyone.
+// handle, and the signed-in person's own PDS when a call goes through their session. A page waits on
+// them together, so any one of them could hold it up for everyone.
 import type { AtprotoNetwork } from '@svelte-atproto/oauth/network';
 import { atprotoNetwork } from '#lib/atproto/network.js';
 
