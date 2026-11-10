@@ -1,5 +1,6 @@
 import { error, redirect } from '@sveltejs/kit';
 import { getActor } from '#lib/actor.js';
+import { getProfileBlobUrl } from '#lib/contrail.js';
 import {
 	forgetAsked,
 	hasOpened,
@@ -61,7 +62,8 @@ export async function load({ params, locals, cookies, setHeaders }) {
 		hostProfile: {
 			did: host,
 			handle: found.host.handle,
-			displayName: found.host.value?.displayName
+			displayName: found.host.value?.displayName,
+			avatar: getProfileBlobUrl(host, found.host.value?.avatar)
 		},
 		attendees: found.attendees,
 		answersUnread: found.answersUnread,

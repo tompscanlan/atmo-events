@@ -200,11 +200,12 @@ export interface PrivateEventPage {
 	guests: Guest[] | null;
 }
 
-/** Someone the page shows: the handle only once it points back at them, and their public name. */
+/** Someone the page shows: the handle only once it points back at them, and their public name and
+ *  avatar. A viewer's browser loads the avatar from the image service any public page uses. */
 export interface Person {
 	did: string;
 	handle?: string;
-	value?: { displayName?: string };
+	value?: { displayName?: string; avatar?: unknown };
 }
 
 async function person(did: string): Promise<Person> {
@@ -212,7 +213,7 @@ async function person(did: string): Promise<Person> {
 	return {
 		did,
 		...(handle ? { handle } : {}),
-		...(profile?.displayName ? { value: { displayName: profile.displayName } } : {})
+		...(profile ? { value: { displayName: profile.displayName, avatar: profile.avatar } } : {})
 	};
 }
 

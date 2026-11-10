@@ -23,9 +23,12 @@ vi.mock('#lib/spaces/server/space-read.js', () => ({
 	credentialSpaceReader: () => credentialSpaceReader()
 }));
 vi.mock('#lib/actor.js', () => ({ getActor: async (actor: string) => actor, actorToDid: vi.fn() }));
+const publicProfile = vi.fn<(did: string) => Promise<Record<string, unknown> | null>>(
+	async () => null
+);
 vi.mock('#lib/private-events/server/people.js', () => ({
 	verifiedHandle: async (did: string) => `${did.split(':').at(-1)}.example.com`,
-	publicProfile: async () => null
+	publicProfile: (did: string) => publicProfile(did)
 }));
 vi.mock('#lib/private-events/server/enabled.js', () => ({
 	privateEventsEnabled: () => true,
@@ -193,5 +196,27 @@ describe('a host whose guests’ answers could not be read', () => {
 		expect(body).toContain('data-testid="answers-unread"');
 		expect(body).not.toContain('hasn&#39;t answered');
 		expect(body).not.toContain("hasn't answered");
+	});
+});
+
+describe('the host', () => {
+	it('shows by their public name and avatar, as on a public event', async () => {
+		publicProfile.mockImplementation(async (did) =>
+			did === HOST
+				? { displayName: 'Host Person', avatar: { ref: { $link: 'bafkreihost' } } }
+				: null
+		);
+		reader.get.mockImplementation(spaceHolds(RECORD));
+		const data = await load(
+			request(HOST, HOST_SCOPE, browser(), `https://atmo.example.com${PATH}`, { members: [] })
+		);
+		publicProfile.mockReset();
+		publicProfile.mockResolvedValue(null);
+
+		expect(data.hostProfile).toMatchObject({
+			displayName: 'Host Person',
+			avatar: expect.stringContaining(`${HOST}/bafkreihost`)
+		});
+		expect(page(data)).toContain('Host Person');
 	});
 });
