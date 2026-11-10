@@ -69,7 +69,9 @@
 			Your server did not give atmo permission for private events. Most servers can't do them yet:
 			it takes spaces support, the part of atproto that keeps them private.
 		</p>
-		{#if spacesServer}<p class="text-muted mt-2 text-sm">{@render pointer()}</p>{/if}
+		{#if spacesServer}<p class="text-base-600 dark:text-base-400 mt-2 text-sm">
+				{@render pointer()}
+			</p>{/if}
 		<Button class="mt-3" size="sm" variant="ghost" disabled={busy} onclick={ask}>Try again</Button>
 	{/if}
 </div>

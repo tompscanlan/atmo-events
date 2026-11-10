@@ -61,7 +61,7 @@
 
 <section class="mt-6" data-testid="guest-list">
 	<h2 class="text-base-900 dark:text-base-50 text-sm font-semibold">Guests</h2>
-	<p class="text-muted mt-1 text-sm">
+	<p class="text-base-600 dark:text-base-400 mt-1 text-sm">
 		Only people you add can see this event. atmo doesn't tell them they were added, and nothing
 		shows on their side until they open the link. The link is the invitation, so send it to them
 		yourself.
@@ -81,7 +81,7 @@
 	</form>
 	{#if failure}<p role="alert" class="mt-2 text-sm text-red-600">{failure}</p>{/if}
 	{#if guests.length === 0}
-		<p class="text-muted mt-3 text-sm">No guests yet.</p>
+		<p class="text-base-600 dark:text-base-400 mt-3 text-sm">No guests yet.</p>
 	{:else}
 		<ul class="mt-3 space-y-2">
 			{#each guests as guest (guest.did)}
@@ -90,7 +90,7 @@
 						<span class="text-base-900 dark:text-base-50 block truncate font-medium"
 							>{guest.handle ?? guest.did}</span
 						>
-						<span class="text-muted block text-xs">{answerWords(guest)}</span>
+						<span class="text-base-600 dark:text-base-400 block text-xs">{answerWords(guest)}</span>
 					</span>
 					<Button size="sm" variant="ghost" disabled={busy} onclick={() => remove(guest.did)}
 						>Remove</Button

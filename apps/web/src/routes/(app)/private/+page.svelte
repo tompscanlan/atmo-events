@@ -7,7 +7,7 @@
 </script>
 
 {#snippet linkIsTheInvitation()}
-	<p class="text-muted mt-4 text-sm" data-testid="link-is-invitation">
+	<p class="text-base-600 dark:text-base-400 mt-4 text-sm" data-testid="link-is-invitation">
 		The link is the invitation. atmo doesn't tell you when a host adds you, so an event you're
 		invited to shows here only after you open the host's link and answer.
 	</p>
@@ -27,11 +27,17 @@
 			spacesServer={data.spacesServer}
 		/>
 	{:else if data.events.length === 0 && !data.incomplete}
-		<p class="text-muted mt-4">None yet. Events you host show here, and ones you've answered.</p>
+		<p class="text-base-600 dark:text-base-400 mt-4">
+			None yet. Events you host show here, and ones you've answered.
+		</p>
 		{@render linkIsTheInvitation()}
 	{:else}
 		{#if data.incomplete}
-			<p class="text-muted mt-4 text-sm" role="status" data-testid="private-events-incomplete">
+			<p
+				class="text-base-600 dark:text-base-400 mt-4 text-sm"
+				role="status"
+				data-testid="private-events-incomplete"
+			>
 				Some of your private events couldn't be read just now, so there may be more than these. Try
 				again shortly.
 			</p>
@@ -41,7 +47,7 @@
 				{#each data.events as item (item.href)}
 					<li>
 						<EventCard event={item.event} href={item.href} />
-						<p class="text-muted mt-1 text-xs">
+						<p class="text-base-600 dark:text-base-400 mt-1 text-xs">
 							{item.hosting ? 'You are hosting' : `Hosted by ${item.hostHandle ?? item.event.did}`}
 						</p>
 					</li>

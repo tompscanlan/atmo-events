@@ -81,7 +81,7 @@
 				<input type="radio" name="audience" class="mt-1" value="everyone" bind:group={audience} />
 				<span>
 					<span class="font-medium">Everyone</span>
-					<span class="text-muted block text-sm"
+					<span class="text-base-600 dark:text-base-400 block text-sm"
 						>Anyone can see it, and it can't be made private later.</span
 					>
 				</span>
@@ -90,7 +90,7 @@
 				<input type="radio" name="audience" class="mt-1" value={INVITED} bind:group={audience} />
 				<span>
 					<span class="font-medium">Invited people only</span>
-					<span class="text-muted block text-sm"
+					<span class="text-base-600 dark:text-base-400 block text-sm"
 						>Only people you add can see it, and it can't be made public later. It has no image or
 						repeats for now.</span
 					>
