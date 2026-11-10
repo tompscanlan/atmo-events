@@ -24,7 +24,7 @@ pds:
 grouphosts:
   - name: gh
     kind: opensocial
-    build: /home/tscanlan/work/atproto-group-host
+    build: ../atproto-group-host
 
 services:
   jetstream: true
