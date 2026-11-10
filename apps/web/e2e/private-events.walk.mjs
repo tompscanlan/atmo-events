@@ -160,10 +160,31 @@ async function checker(who) {
 		if (!r.ok) throw new Error(`createRecord ${who.who}: ${r.status}`);
 		return r.json();
 	};
-	return { ...who, did, call, write };
+	const put = async (collection, rkey, record) => {
+		const r = await fetch(`${who.pds}/xrpc/com.atproto.repo.putRecord`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', authorization: `Bearer ${accessJwt}` },
+			body: JSON.stringify({
+				repo: did,
+				collection,
+				rkey,
+				record: { $type: collection, ...record }
+			})
+		});
+		if (!r.ok) throw new Error(`putRecord ${who.who}: ${r.status}`);
+		return r.json();
+	};
+	return { ...who, did, call, write, put };
 }
 const C = {};
 for (const [k, v] of Object.entries(P)) C[k] = await checker(v);
+// Public names for two of them. atmo's index fetches a profile the first time it is asked and
+// remembers what it found, so these are set before anyone signs in, and the walk needs a network
+// whose atmo hasn't looked these accounts up before.
+const NAMES = { alice: 'Alice Host', bob: 'Bob Guest' };
+for (const [k, displayName] of Object.entries(NAMES)) {
+	await C[k].put('app.bsky.actor.profile', 'self', { displayName });
+}
 const JETSTREAM = need('JETSTREAM_URL');
 const CRON_SECRET = need('CRON_SECRET');
 const runCron = async () => {
@@ -302,6 +323,20 @@ const inAttendees = async (page, group, handle) => {
 	await page.keyboard.press('Escape');
 	await dialog.waitFor({ state: 'detached', timeout: 10000 });
 	return found;
+};
+// What the attendee list shows, as text.
+const attendeesText = async (page, group) => {
+	const opener = page
+		.locator('main button', { hasText: new RegExp(`\\d+\\s*${group}`, 'i') })
+		.first();
+	if ((await opener.count()) === 0) return '';
+	await opener.click({ timeout: 10000 });
+	const dialog = page.getByRole('dialog');
+	await dialog.waitFor({ timeout: 10000 });
+	const shown = await dialog.innerText();
+	await page.keyboard.press('Escape');
+	await dialog.waitFor({ state: 'detached', timeout: 10000 });
+	return shown;
 };
 const openFirst = (page) => page.locator('[data-testid=open-first]').waitFor({ timeout: 30000 });
 // Opening one tells the host's server who is asking, so a guest chooses to, on an ordinary POST.
@@ -487,9 +522,14 @@ await step('7. bob says going, and the host sees his answer', async () => {
 	await guestRow(a, 'bob').waitFor({ timeout: 20000 });
 	check('alice sees he is going', /\bGoing\b/.test(await guestRow(a, 'bob').innerText()));
 	check('alice sees him going, by handle', await inAttendees(a, 'going', P.bob.handle));
+	check('alice sees him by his public name', (await attendeesText(a, 'going')).includes(NAMES.bob));
 	await shot(a, '07-host-after-going');
 	await p.reload({ waitUntil: 'load' });
 	await settle(p);
+	check(
+		'bob sees the host by her public name',
+		(await p.locator('main').innerText()).includes(NAMES.alice)
+	);
 	await sleep(500);
 	const note = await text(p, '[data-testid=private-note]');
 	check(
