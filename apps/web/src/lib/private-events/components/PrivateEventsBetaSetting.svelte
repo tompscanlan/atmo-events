@@ -91,7 +91,7 @@
 					>Try private events</span
 				>
 				<span class="text-base-600 dark:text-base-400 mt-1 block text-xs leading-relaxed">
-					Adds “Invited people only” when you create an event.
+					Adds a Private events tab, and “Invited people only” when you create an event.
 				</span>
 			</span>
 		</label>
