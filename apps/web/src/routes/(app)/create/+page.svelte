@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ToggleGroup, ToggleGroupItem } from '@atmo-dev/kit';
 	import { EventEditor, type EventEditorPrefill } from '@atmo-dev/kit/events';
 	import { onMount } from 'svelte';
 	import { user } from '#lib/atproto/auth.svelte.js';
@@ -74,30 +75,32 @@
 {#if data.privateEvents}
 	<div class="px-6 pt-12" data-testid="audience">
 		<div class="mx-auto max-w-3xl">
-			<fieldset>
-				<legend class="text-base-900 dark:text-base-50 text-lg font-semibold">
-					Who can see this event?
-				</legend>
-				<label class="mt-3 flex items-start gap-3">
-					<input type="radio" name="audience" class="mt-1" value="everyone" bind:group={audience} />
-					<span>
-						<span class="font-medium">Everyone</span>
-						<span class="text-base-600 dark:text-base-400 block text-sm"
-							>Anyone can see it, and it can't be made private later.</span
-						>
-					</span>
-				</label>
-				<label class="mt-3 flex items-start gap-3">
-					<input type="radio" name="audience" class="mt-1" value={INVITED} bind:group={audience} />
-					<span>
-						<span class="font-medium">Invited people only</span>
-						<span class="text-base-600 dark:text-base-400 block text-sm"
-							>Only people you add can see it, and it can't be made public later. It has no image or
-							repeats for now.</span
-						>
-					</span>
-				</label>
-			</fieldset>
+			<h2 id="audience-heading" class="text-base-900 dark:text-base-50 text-lg font-semibold">
+				Who can see this event?
+			</h2>
+			<ToggleGroup
+				aria-labelledby="audience-heading"
+				class="mt-3 w-fit"
+				bind:value={
+					() => audience ?? '',
+					(value) => {
+						if (value === 'everyone' || value === INVITED) audience = value;
+					}
+				}
+			>
+				<ToggleGroupItem value="everyone">Everyone</ToggleGroupItem>
+				<ToggleGroupItem value={INVITED}>Invited people only</ToggleGroupItem>
+			</ToggleGroup>
+			<ul class="text-base-600 dark:text-base-400 mt-3 space-y-1 text-sm">
+				<li>
+					<span class="text-base-900 dark:text-base-50 font-medium">Everyone:</span> anyone can see it,
+					and it can't be made private later.
+				</li>
+				<li>
+					<span class="text-base-900 dark:text-base-50 font-medium">Invited people only:</span> only people
+					you add can see it, and it can't be made public later. It has no image or repeats for now.
+				</li>
+			</ul>
 			{#if invited && data.hostAccess}
 				<PrivateEventAccessNotice
 					access={data.hostAccess}

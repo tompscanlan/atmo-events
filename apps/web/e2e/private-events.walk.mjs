@@ -333,7 +333,7 @@ await step('2. alice picks invited people only on /create and allows it', async 
 			.isVisible()
 			.catch(() => false))
 	);
-	await p.getByLabel(/invited people only/i).check();
+	await p.getByRole('radio', { name: /invited people only/i }).click();
 	await p.locator('[data-testid=grant-notice]').waitFor({ timeout: 10000 });
 	await shot(p, '01-create-ask');
 	await allow(p, /allow atmo to host/i, P.alice);
