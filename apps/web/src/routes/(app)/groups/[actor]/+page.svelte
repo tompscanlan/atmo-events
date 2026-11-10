@@ -60,7 +60,9 @@
 		{#if data.notice}<p role="status" class="text-base-600 dark:text-base-400 mt-4 text-sm">
 				{data.notice}
 			</p>{/if}
-		{#if failure}<p role="alert" class="mt-4 text-sm text-red-600">{failure}</p>{/if}
+		{#if failure}<p role="alert" class="text-base-950 dark:text-base-50 mt-4 text-sm">
+				{failure}
+			</p>{/if}
 
 		{#if group.linked}
 			<section class="mt-6 flex flex-wrap items-center gap-2" aria-label="Manage this group">
@@ -112,7 +114,7 @@
 			</div>
 		{/if}
 
-		<h2 class="text-base-900 dark:text-base-50 mt-10 text-lg font-semibold">Upcoming events</h2>
+		<h2 class="text-base-900 dark:text-base-50 mt-8 text-lg font-semibold">Upcoming events</h2>
 		{#if data.events.length > 0}
 			<div class="mt-4">
 				<EventList
@@ -124,12 +126,12 @@
 				/>
 			</div>
 			{#if group.linked}
-				<ul class="mt-6 space-y-1 text-sm" aria-label="Edit events">
+				<ul class="mt-6 space-y-2 text-sm" aria-label="Edit events">
 					{#each data.events as event (event.uri)}
 						<li class="flex justify-between gap-3">
 							<span class="truncate">{event.name}</span>
 							<a
-								class="text-accent-600 dark:text-accent-400 shrink-0 font-medium"
+								class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 shrink-0 font-medium transition-colors"
 								href={resolve('/(app)/groups/[actor]/events/[rkey]/edit', {
 									actor: group.did,
 									rkey: event.rkey
@@ -140,11 +142,11 @@
 				</ul>
 			{/if}
 		{:else}
-			<p class="text-base-600 dark:text-base-400 py-8 text-center">No upcoming events.</p>
+			<p class="text-base-600 dark:text-base-400 py-12 text-center">No upcoming events.</p>
 		{/if}
 		<a
 			href={resolve('/(app)/p/[actor]/past-events', { actor: group.did })}
-			class="text-accent-600 dark:text-accent-400 mt-4 inline-block text-sm font-medium"
+			class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 mt-4 inline-block text-sm font-medium transition-colors"
 			>Past events &rarr;</a
 		>
 	</div>
