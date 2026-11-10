@@ -23,5 +23,8 @@ export async function runCron(secret: string) {
 		// CSRF-checks a POST with no content type.
 		headers: { 'X-Cron-Secret': secret, 'content-type': 'application/json' }
 	});
+	if (response.status === 401) {
+		throw new Error("atmo's cron: 401, so atmo's CRON_SECRET is not the tests' E2E_CRON_SECRET");
+	}
 	if (!response.ok) throw new Error(`atmo's cron: ${response.status}`);
 }

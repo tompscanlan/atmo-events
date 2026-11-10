@@ -1,5 +1,5 @@
 // Starts atmo's dev server on the local network for the e2e run, and stops it afterwards. With
-// E2E_ATMO_RUNNING set, it uses an atmo already running instead (useRunning, below).
+// E2E_ATMO_RUNNING=1, it uses an atmo already running instead (useRunning, below).
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
@@ -38,7 +38,7 @@ export default async function setup(project: TestProject) {
 }
 
 async function start(project: TestProject) {
-	if (process.env.E2E_ATMO_RUNNING) return useRunning(project);
+	if (process.env.E2E_ATMO_RUNNING === '1') return useRunning(project);
 
 	// The sign-in returns to this exact address, so the port has to be ours.
 	if (await answers(ATMO)) {
@@ -128,7 +128,7 @@ async function start(project: TestProject) {
  *  stops it, so start it on a fresh database. */
 async function useRunning(project: TestProject) {
 	if (!(await answers(ATMO))) {
-		throw new Error(`E2E_ATMO_RUNNING is set, but nothing answers at ${ATMO}.`);
+		throw new Error(`E2E_ATMO_RUNNING=1, but nothing answers at ${ATMO}.`);
 	}
 	// The cron secret is the one it was started with, so the tests can't make one up.
 	const cronSecret = process.env.E2E_CRON_SECRET?.trim();

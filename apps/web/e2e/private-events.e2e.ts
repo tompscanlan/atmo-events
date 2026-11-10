@@ -338,13 +338,19 @@ function step(title: string, fn: () => Promise<void>, timeout?: number) {
 		title,
 		async ({ skip }) => {
 			skip(broken !== undefined, `step "${broken}" failed, and this one needs it`);
+			// Marked before it runs and cleared when it ends: a step that times out goes on running,
+			// and the steps after it must not start on the same pages.
+			broken = title;
 			try {
 				await fn();
+				broken = undefined;
 			} catch (error) {
-				broken = title;
 				for (const [name, page] of Object.entries(pages)) await shot(page, `fail-${name}`);
 				log(`  screenshots: ${OUT}`);
-				throw error;
+				// An error can carry what was typed into a page, so it leaves masked, and without the
+				// original as its cause, which a report would print in full.
+				// eslint-disable-next-line preserve-caught-error
+				throw new Error(clean(error instanceof Error ? error.message : error, 2000));
 			}
 		},
 		timeout
