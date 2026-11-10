@@ -3,7 +3,7 @@
 # through its network settings (apps/web/src/env.ts), which the env below sets.
 #
 #   pnpm install
-#   pnpm test:e2e       # starts the network if need be, then the tests in apps/web/e2e
+#   pnpm test:e2e       # starts the network if need be, then apps/web/e2e/atmo.e2e.ts
 #   pnpm e2e:dev        # atmo on the network, at http://127.0.0.1:5454, to try it by hand
 #   pnpm e2e:backfill   # backfills that atmo's database from the network, as `pnpm backfill` does
 #   pnpm e2e:down       # stops the network, keeping its accounts

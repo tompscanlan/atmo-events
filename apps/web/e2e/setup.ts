@@ -56,7 +56,9 @@ async function start(project: TestProject) {
 	}
 	rmSync(state, { recursive: true, force: true });
 
-	const cronSecret = randomBytes(16).toString('hex');
+	// A network that gives atmo a cron secret of its own names it to the tests too, because a
+	// snowglobe app's settings win over the one this passes.
+	const cronSecret = process.env.E2E_CRON_SECRET?.trim() || randomBytes(16).toString('hex');
 	// atmo gets the network's settings from `snowglobe run --app atmo`, and none of the test
 	// accounts' passwords. Nor Vitest's own variables (VITEST*, NODE_ENV=test): with them, the
 	// dev server stopped during startup.

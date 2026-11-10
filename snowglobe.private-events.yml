@@ -2,9 +2,13 @@
 # server than the host, and a stock release without it, for the person whose server can't take part.
 # Beside snowglobe.yml, so one checkout can run both. A snowglobe command reads it through SG_FILE.
 #
+#   pnpm test:e2e:private   # starts the network if need be, then apps/web/e2e/private-events.e2e.ts
 #   SG_FILE=snowglobe.private-events.yml pnpm exec snowglobe up
 #   SG_FILE=snowglobe.private-events.yml pnpm exec snowglobe run --app atmo -- pnpm --filter web dev --strictPort
-#   SG_FILE=snowglobe.private-events.yml pnpm exec snowglobe run --app walk -- pnpm --filter web exec node e2e/private-events.walk.mjs
+#   SG_FILE=snowglobe.private-events.yml pnpm exec snowglobe down
+#
+# As on snowglobe.yml, the tests empty atmo's local database (.wrangler/snowglobe-private) before
+# each run.
 
 globe: atmoprivate # every name below is under atmoprivate.local.snowglobe.at
 
@@ -42,11 +46,11 @@ apps:
   - name: atmo
     env:
       CLOUDFLARE_INCLUDE_PROCESS_ENV: 'true'
-      LOCAL_STATE_DIR: .wrangler/snowglobe-private
+      LOCAL_STATE_DIR: &atmo-state .wrangler/snowglobe-private
       # Empty: atmo's loopback OAuth client, which needs no keys.
       OAUTH_PUBLIC_URL: ''
-      # Only for this local network. The walk sends it to run atmo's ingest.
-      CRON_SECRET: local-network-only
+      # Only for this local network. The tests send it to run atmo's ingest.
+      CRON_SECRET: &cron-secret local-network-only
       PRIVATE_EVENTS: 'true'
       SPACES_PDS_URL: ${pds.alpha.url}
       PUBLIC_PLC_URL: ${services.plc.url}
@@ -56,21 +60,27 @@ apps:
       PUBLIC_SIGNUP_PDS_URL: ${pds.alpha.url}
       PUBLIC_CDN_URL: ${services.cdn.url}
 
-  # What a test or a walk through atmo's pages needs to know.
-  - name: walk
+  # The tests in apps/web/e2e. Every name starts E2E_, so the setup keeps them, the passwords
+  # included, out of atmo's environment.
+  - name: e2e
     env:
-      ALPHA_URL: ${pds.alpha.url}
-      BETA_URL: ${pds.beta.url}
-      REGULAR_URL: ${pds.regular.url}
-      JETSTREAM_URL: ${services.jetstream.url}
-      CRON_SECRET: local-network-only
-      ALICE_HANDLE: ${accounts.alice.handle}
-      ALICE_PASSWORD: ${accounts.alice.password}
-      BOB_HANDLE: ${accounts.bob.handle}
-      BOB_PASSWORD: ${accounts.bob.password}
-      MALLORY_HANDLE: ${accounts.mallory.handle}
-      MALLORY_PASSWORD: ${accounts.mallory.password}
-      DANA_HANDLE: ${accounts.dana.handle}
-      DANA_PASSWORD: ${accounts.dana.password}
-      CAROL_HANDLE: ${accounts.carol.handle}
-      CAROL_PASSWORD: ${accounts.carol.password}
+      # The suite for this network: apps/web/e2e/private-events.e2e.ts.
+      E2E_SUITE: private-events
+      # The setup empties atmo's local database before each run.
+      E2E_ATMO_STATE_DIR: *atmo-state
+      # atmo's own, above: a snowglobe app's settings win over the secret the setup would make.
+      E2E_CRON_SECRET: *cron-secret
+      E2E_ALPHA_PDS: ${pds.alpha.url}
+      E2E_BETA_PDS: ${pds.beta.url}
+      E2E_REGULAR_PDS: ${pds.regular.url}
+      E2E_JETSTREAM: ${services.jetstream.url}
+      E2E_ALICE_HANDLE: ${accounts.alice.handle}
+      E2E_ALICE_PASSWORD: ${accounts.alice.password}
+      E2E_BOB_HANDLE: ${accounts.bob.handle}
+      E2E_BOB_PASSWORD: ${accounts.bob.password}
+      E2E_MALLORY_HANDLE: ${accounts.mallory.handle}
+      E2E_MALLORY_PASSWORD: ${accounts.mallory.password}
+      E2E_DANA_HANDLE: ${accounts.dana.handle}
+      E2E_DANA_PASSWORD: ${accounts.dana.password}
+      E2E_CAROL_HANDLE: ${accounts.carol.handle}
+      E2E_CAROL_PASSWORD: ${accounts.carol.password}

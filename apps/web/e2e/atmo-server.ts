@@ -7,7 +7,11 @@ export const ATMO = 'http://127.0.0.1:5454';
 /** A setting from the network's e2e app (apps[].env in its snowglobe file). */
 export function required(name: string) {
 	const value = process.env[name]?.trim();
-	if (!value) throw new Error(`${name} is not set. Run the e2e tests with pnpm test:e2e.`);
+	if (!value) {
+		throw new Error(
+			`${name} is not set. Run the e2e tests with pnpm test:e2e or test:e2e:private.`
+		);
+	}
 	return value;
 }
 
