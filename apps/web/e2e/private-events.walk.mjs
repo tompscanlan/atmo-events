@@ -120,8 +120,8 @@ async function signIn(page, who) {
 		.click();
 	await signInForm(page, who);
 }
-async function allow(page, name, who) {
-	await page.getByRole('button', { name }).click({ timeout: 30000 });
+async function allow(page, name, who, within = page) {
+	await within.getByRole('button', { name }).click({ timeout: 30000 });
 	await page.waitForURL((u) => u.origin !== ATMO, { timeout: 30000 });
 	await throughPds(page, who);
 	await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
@@ -320,6 +320,40 @@ const addGuest = async (page, who) => {
 await step('1. alice signs in with the ordinary login', async () => {
 	pages.alice = await pageFor('alice');
 	await signIn(pages.alice, P.alice);
+});
+
+await step('1b. alice turns on the private events beta in Settings', async () => {
+	const p = pages.alice;
+	await open(p, '/create');
+	await p.getByRole('button', { name: /^publish/i }).waitFor({ timeout: 30000 });
+	check(
+		'no private choice before the beta is on',
+		!(await p
+			.getByText('Who can see this event?')
+			.isVisible()
+			.catch(() => false))
+	);
+	await open(p, '/settings');
+	const section = p.locator('[data-testid=private-events-beta]');
+	await section.waitFor({ timeout: 20000 });
+	check('Settings says what the beta costs', /will be lost/.test(await section.innerText()));
+	// Settings has one "Authorize now" per setting, so this is the private events one.
+	await allow(p, /authorize now/i, P.alice, section);
+	await settle(p);
+	await section.getByRole('checkbox', { name: /try private events/i }).click({ timeout: 20000 });
+	await section.getByRole('button', { name: /^save$/i }).click();
+	await section.getByText('Saved.').waitFor({ timeout: 20000 });
+	await shot(p, '00-settings-beta');
+	const saved = await C.alice.call('com.atproto.repo.getRecord', {
+		repo: C.alice.did,
+		collection: 'rsvp.atmo.actor.privateEventsBeta',
+		rkey: 'self'
+	});
+	check(
+		'the switch is a record in her own repo',
+		saved.status === 200 && saved.data?.value?.privateEvents === true,
+		JSON.stringify(saved.data?.value ?? saved.status)
+	);
 });
 
 await step('2. alice picks invited people only on /create and allows it', async () => {
@@ -568,9 +602,19 @@ await step('11. /private lists it for host and guest', async () => {
 		'alice: hosting',
 		/You are hosting/.test(await text(pages.alice, '[data-testid=private-events]'))
 	);
+	check(
+		'alice: no pointer to Settings, her beta is on',
+		!/turn on private events in/i.test(await text(pages.alice, '[data-testid=beta-notice]'))
+	);
 	await shot(pages.alice, '09-private-host');
 	await open(pages.bob, '/private');
 	await pages.bob.locator('[data-testid=private-events]').waitFor({ timeout: 20000 });
+	check(
+		'bob: warned, and pointed at Settings to make his own',
+		/will be lost[\s\S]*turn on private events in/i.test(
+			await text(pages.bob, '[data-testid=beta-notice]')
+		)
+	);
 	check(
 		'bob: hosted by alice',
 		(await text(pages.bob, '[data-testid=private-events]')).includes(P.alice.handle)

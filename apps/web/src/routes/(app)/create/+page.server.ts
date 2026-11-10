@@ -3,6 +3,7 @@ import { now as tidNow } from '@atcute/tid';
 import { forgetAsked, privateEventAccess } from '#lib/private-events/permissions-asked.js';
 import { holdsHostGrant } from '#lib/private-events/scopes.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
+import { privateEventsBeta } from '#lib/private-events/server/beta.js';
 import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
 
 /** Why "invited people only" needs a step first; null when it doesn't. */
@@ -19,7 +20,8 @@ export async function load({ locals, cookies }) {
 		redirect(303, '/login');
 	}
 
-	const enabled = privateEventsEnabled();
+	// Offered to those who turned the beta on in Settings.
+	const enabled = privateEventsEnabled() && (await privateEventsBeta(locals));
 	return {
 		pageTitle: 'Create Event',
 		actorDid: locals.did,
