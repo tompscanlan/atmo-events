@@ -1003,3 +1003,69 @@ describe('every write', () => {
 		}
 	);
 });
+
+describe('a write the person’s own PDS does not answer in time', () => {
+	// What the session's time limit rejects with.
+	const timesOut = () => {
+		throw new DOMException('The operation timed out.', 'TimeoutError');
+	};
+	const answer = { status: 'going' as const, cid: `cid-of-${HOST}` };
+	const writes: Record<string, () => Promise<unknown>> = {
+		'saving an event': () =>
+			savePrivateEvent(
+				caller(HOST, HOST_SCOPE, {
+					'com.atproto.space.getSpace': privateSpace,
+					'com.atproto.space.putRecord': timesOut
+				}),
+				{ rkey: RKEY, record: RECORD }
+			),
+		'cancelling it': () =>
+			cancelPrivateEvent(
+				caller(HOST, HOST_SCOPE, {
+					'com.atproto.space.getSpace': privateSpace,
+					'com.atproto.space.deleteSpace': timesOut
+				}),
+				RKEY
+			),
+		answering: () =>
+			putPrivateRsvp(
+				caller(GUEST, GUEST_SCOPE, { 'com.atproto.space.putRecord': timesOut }),
+				EVENT,
+				answer
+			),
+		'taking an answer back': () =>
+			deletePrivateRsvp(
+				caller(GUEST, GUEST_SCOPE, { 'com.atproto.space.deleteRecord': timesOut }),
+				EVENT
+			),
+		'adding a guest': () =>
+			addGuest(
+				caller(HOST, HOST_SCOPE, {
+					'com.atproto.space.getSpace': privateSpace,
+					'com.atproto.memberspace.putMembers': timesOut
+				}),
+				{
+					rkey: RKEY,
+					handleOrDid: 'guest.example.com'
+				}
+			),
+		'removing one': () =>
+			removeGuest(
+				caller(HOST, HOST_SCOPE, {
+					'com.atproto.space.getSpace': privateSpace,
+					'com.atproto.memberspace.removeMembers': timesOut
+				}),
+				{
+					rkey: RKEY,
+					did: GUEST
+				}
+			)
+	};
+
+	// It may still land, so the page must not say nothing changed.
+	it.each(Object.entries(writes))('%s is not called refused', async (_name, run) => {
+		theSpaceHolds({});
+		actorToDid.mockResolvedValue(GUEST);
+		await expect(run()).rejects.toMatchObject({ reason: 'no-answer' });
+	});
+});
