@@ -46,7 +46,9 @@
 			<Avatar name={group.name} size={56} />
 			<div class="min-w-0">
 				<h1 class="text-base-900 dark:text-base-50 text-2xl font-bold">{group.name}</h1>
-				{#if group.handle}<p class="text-muted text-sm">@{group.handle}</p>{/if}
+				{#if group.handle}<p class="text-base-600 dark:text-base-400 text-sm">
+						@{group.handle}
+					</p>{/if}
 				{#if group.description}
 					<p class="text-base-700 dark:text-base-300 mt-2 whitespace-pre-line">
 						{group.description}
@@ -55,7 +57,9 @@
 			</div>
 		</header>
 
-		{#if data.notice}<p role="status" class="text-muted mt-4 text-sm">{data.notice}</p>{/if}
+		{#if data.notice}<p role="status" class="text-base-600 dark:text-base-400 mt-4 text-sm">
+				{data.notice}
+			</p>{/if}
 		{#if failure}<p role="alert" class="mt-4 text-sm text-red-600">{failure}</p>{/if}
 
 		{#if group.linked}
@@ -90,7 +94,7 @@
 					<Button type="submit" variant="secondary">
 						{group.relink ? 'Link again' : 'Link this group'}
 					</Button>
-					<span class="text-muted text-sm">
+					<span class="text-base-600 dark:text-base-400 text-sm">
 						{group.relink
 							? 'Your link to this group stopped working.'
 							: 'If you have a role in this group, link it to post its events.'}
@@ -136,7 +140,7 @@
 				</ul>
 			{/if}
 		{:else}
-			<p class="text-muted py-8 text-center">No upcoming events.</p>
+			<p class="text-base-600 dark:text-base-400 py-8 text-center">No upcoming events.</p>
 		{/if}
 		<a
 			href={resolve('/(app)/p/[actor]/past-events', { actor: group.did })}
