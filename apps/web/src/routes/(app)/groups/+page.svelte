@@ -28,7 +28,7 @@
 		{/if}
 
 		{#if data.notice}
-			<p role="status" class="text-muted mt-4 text-sm">{data.notice}</p>
+			<p role="status" class="text-base-600 dark:text-base-400 mt-4 text-sm">{data.notice}</p>
 		{/if}
 
 		{#if data.canLink}
@@ -42,7 +42,9 @@
 		{/if}
 
 		{#if data.declaredUnavailable}
-			<p class="text-muted mt-6 text-sm">The groups list could not be loaded. Try again shortly.</p>
+			<p class="text-base-600 dark:text-base-400 mt-6 text-sm">
+				The groups list could not be loaded. Try again shortly.
+			</p>
 		{/if}
 
 		{#if data.groups.length > 0}
@@ -60,10 +62,13 @@
 									{#if group.linked}<Badge>Linked</Badge>{/if}
 								</span>
 								{#if group.handle}
-									<span class="text-muted block truncate text-sm">@{group.handle}</span>
+									<span class="text-base-600 dark:text-base-400 block truncate text-sm"
+										>@{group.handle}</span
+									>
 								{/if}
 								{#if group.description}
-									<span class="text-muted mt-1 line-clamp-2 block text-sm">{group.description}</span
+									<span class="text-base-600 dark:text-base-400 mt-1 line-clamp-2 block text-sm"
+										>{group.description}</span
 									>
 								{/if}
 							</span>
@@ -87,7 +92,7 @@
 					<h2 id="more-by-server" class="text-base-900 dark:text-base-50 font-semibold">
 						More groups by server
 					</h2>
-					<p class="text-muted mt-1 text-sm">
+					<p class="text-base-600 dark:text-base-400 mt-1 text-sm">
 						The list shows up to 20 groups from any one server but this site’s own. These have more.
 					</p>
 					<ul class="mt-3 space-y-1 text-sm">
@@ -97,7 +102,7 @@
 									href={listUrl({ server: entry.server })}
 									class="text-accent-600 dark:text-accent-400 font-medium">{entry.host}</a
 								>
-								<span class="text-muted">{entry.more} more</span>
+								<span class="text-base-600 dark:text-base-400">{entry.more} more</span>
 							</li>
 						{/each}
 					</ul>
@@ -105,7 +110,7 @@
 			{/if}
 			<!-- eslint-enable svelte/no-navigation-without-resolve -->
 		{:else if !data.declaredUnavailable}
-			<p class="text-muted py-12 text-center">No groups yet.</p>
+			<p class="text-base-600 dark:text-base-400 py-12 text-center">No groups yet.</p>
 		{/if}
 	</div>
 </div>
