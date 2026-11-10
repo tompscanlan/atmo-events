@@ -82,5 +82,7 @@ export const setPrivateEventsBeta = command(v.object({ on: v.boolean() }), async
 			e instanceof BetaNotSaved ? e.message : 'Could not reach your data server. Try again.'
 		);
 	}
+	// The page asks for the setting with the save (.updates), which needs the refresh to be done here.
+	await getPrivateEventsBeta().refresh();
 	return { on };
 });
