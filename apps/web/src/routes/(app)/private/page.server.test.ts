@@ -9,7 +9,7 @@ vi.mock('#lib/spaces/server/space-read.js', () => ({ credentialSpaceReader: () =
 vi.mock('#lib/actor.js', () => ({ actorToDid: vi.fn() }));
 vi.mock('#lib/private-events/server/people.js', () => ({
 	verifiedHandle: async (did: string) => `${did.split(':').at(-1)}.example.com`,
-	publicProfile: async () => null
+	publicProfiles: async () => new Map()
 }));
 vi.mock('#lib/private-events/server/enabled.js', () => ({
 	privateEventsEnabled: () => true,
