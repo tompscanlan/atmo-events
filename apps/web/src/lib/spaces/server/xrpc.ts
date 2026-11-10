@@ -21,9 +21,13 @@ export type XrpcAnswer =
 	| { ok: true; status: number; data: Record<string, unknown> }
 	| { ok: false; status: number; error: string | null };
 
-/** For a caller that acts on the answer itself. A body that is not JSON reads as empty. */
+/** For a caller that acts on the answer itself. A body that is not JSON reads as empty. One that
+ *  never arrived, because the time limit or the connection ended first, throws: it is no answer. */
 export async function readXrpc(res: Response): Promise<XrpcAnswer> {
-	const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+	const data = (await res.json().catch((e) => {
+		if (e instanceof SyntaxError) return null;
+		throw e;
+	})) as Record<string, unknown> | null;
 	if (res.ok) return { ok: true, status: res.status, data: data ?? {} };
 	return {
 		ok: false,
