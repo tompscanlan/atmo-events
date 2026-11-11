@@ -261,9 +261,6 @@ const firstDifference = (a, b) => {
 };
 const sameAsMadeUp = async (who, page, label) => {
 	const made = EVENT_PATH.replace(KEY, '3kzzzzzzzzzzz');
-	// Opening is asked per address, so go through that at the made-up one, as they did at the real one.
-	await open(page, made);
-	if (await page.locator('[data-testid=open-first]').count()) await chooseToOpen(page);
 	const a = await received(page, EVENT_PATH);
 	const b = await received(page, made);
 	check(
@@ -302,13 +299,6 @@ const inAttendees = async (page, group, handle) => {
 	await page.keyboard.press('Escape');
 	await dialog.waitFor({ state: 'detached', timeout: 10000 });
 	return found;
-};
-const openFirst = (page) => page.locator('[data-testid=open-first]').waitFor({ timeout: 30000 });
-// Opening one tells the host's server who is asking, so a guest chooses to, on an ordinary POST.
-const chooseToOpen = async (page) => {
-	await page.getByRole('button', { name: /^open this event$/i }).click({ timeout: 30000 });
-	await page.waitForLoadState('load');
-	await settle(page);
 };
 const guestRow = (page, name) => page.locator(`[data-guest="${C[name].did}"]`);
 const addGuest = async (page, who) => {
@@ -485,11 +475,11 @@ await step('6. bob opens the link, signs in, allows it, sees the event', async (
 	await p.locator('[data-testid=grant-notice]').waitFor({ timeout: 30000 });
 	await shot(p, '05-guest-ask');
 	await allow(p, /allow atmo to open/i, P.bob);
-	await openFirst(p);
-	await shot(p, '05b-guest-open-first');
-	check('asked before anything is read', !(await text(p, 'main')).includes(NAME));
-	await chooseToOpen(p);
 	await p.getByRole('heading', { name: NAME }).first().waitFor({ timeout: 30000 });
+	check(
+		'he lands on the event, with no step before it',
+		(await p.getByRole('button', { name: /^open this event$/i }).count()) === 0
+	);
 	const again = await open(p);
 	check(
 		'and not asked again',
@@ -538,8 +528,6 @@ await step('8. dana on another PDS answers interested', async () => {
 	await signIn(p, P.dana);
 	await open(p);
 	await allow(p, /allow atmo to open/i, P.dana);
-	await openFirst(p);
-	await chooseToOpen(p);
 	await p.getByRole('heading', { name: NAME }).first().waitFor({ timeout: 30000 });
 	check('her answer is in her own repo', await answer(p, /^interested$/i, 'dana', 'interested'));
 	const a = pages.alice;
@@ -557,15 +545,9 @@ await step('9. mallory, not invited, gets what a made-up address gets', async ()
 	await signIn(p, P.mallory);
 	await open(p);
 	await allow(p, /allow atmo to open/i, P.mallory);
-	await openFirst(p);
 	const madeUp = EVENT_PATH.replace(KEY, '3kzzzzzzzzzzz');
-	const askedHere = await text(p, 'main');
-	await chooseToOpen(p);
 	const realStatus = await open(p);
 	const real = await text(p, 'main');
-	await open(p, madeUp);
-	check('asked the same words at either address', (await text(p, 'main')) === askedHere);
-	await chooseToOpen(p);
 	const made = await open(p, madeUp);
 	const madeText = await text(p, 'main');
 	check('both 404', realStatus === 404 && made === 404, `${realStatus} ${made}`);

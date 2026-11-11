@@ -1,11 +1,6 @@
-import { error, redirect } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import { getActor } from '#lib/actor.js';
-import {
-	forgetAsked,
-	hasOpened,
-	markOpened,
-	privateEventAccess
-} from '#lib/private-events/permissions-asked.js';
+import { forgetAsked, privateEventAccess } from '#lib/private-events/permissions-asked.js';
 import { holdsGuestGrant, holdsHostGrant } from '#lib/private-events/scopes.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
@@ -42,8 +37,8 @@ export async function load({ params, locals, cookies, setHeaders }) {
 		};
 	}
 	forgetAsked(cookies);
-	if (!isHost && !hasOpened(cookies, caller.did)) return { ...base, view: 'open' as const };
-
+	// Reading it asks the host's server, which learns who is asking and when. A guest was once asked
+	// to choose that first; it cost every guest a click on every event, so the read is direct.
 	const found = await readPrivateEventPage(caller, host, params.rkey).catch((e) => {
 		console.error(`[private-events] ${host}: event ${params.rkey} unread for ${caller.did}:`, e);
 		error(503, 'This event could not be read right now. Try again shortly.');
@@ -67,12 +62,3 @@ export async function load({ params, locals, cookies, setHeaders }) {
 		guests: found.guests
 	};
 }
-
-export const actions = {
-	open: async ({ locals, cookies, url }) => {
-		if (!privateEventsEnabled()) error(404, 'Not found');
-		const caller = await callerSession(locals.session ?? null);
-		if (caller) markOpened(cookies, url, caller.did);
-		redirect(303, url.pathname);
-	}
-};

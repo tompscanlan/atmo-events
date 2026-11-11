@@ -5,7 +5,6 @@ import { GUEST_SCOPE, HOST_SCOPE } from '#lib/private-events/scopes.js';
 
 const HOST = 'did:plc:hosthosthosthosthosthost';
 const GUEST = 'did:plc:guestguestguestguestgues';
-const OTHER = 'did:plc:otherotherotherotherothe';
 const RKEY = '3lzzzzzzzzzzz';
 const PATH = privateEventPath(HOST, RKEY);
 const NAME = 'Dinner at the secret place';
@@ -76,8 +75,6 @@ function request(
 }
 
 const load = (event: never) => route.load(event) as Promise<Record<string, unknown>>;
-const open = (event: never) =>
-	(route as unknown as { actions: { open(e: never): Promise<unknown> } }).actions.open(event);
 const page = (data: unknown) => render(EventPage, { props: { data } as never }).body;
 
 /** The host's space holds this event and nothing else. */
@@ -104,50 +101,17 @@ beforeEach(() => {
 });
 
 describe('opening a private event', () => {
-	it('asks a guest first, and contacts nothing until they do', async () => {
+	it('shows a guest the event at once, with no step before it', async () => {
 		const data = await load(request(GUEST, GUEST_SCOPE, browser()));
-		expect(data.view).toBe('open');
-		expect(credentialSpaceReader).not.toHaveBeenCalled();
-		const body = page(data);
-		expect(body).toContain('action="?/open"');
-		expect(body).toMatch(/method="POST"/i);
-		expect(body).not.toContain(NAME);
+		expect(data.view).toBe('event');
+		expect(page(data)).toContain(NAME);
 	});
 
-	it('reads it once they click, and on later visits from that browser', async () => {
-		const cookies = browser();
-		await expect(open(request(GUEST, GUEST_SCOPE, cookies))).rejects.toMatchObject({
-			status: 303,
-			location: PATH
-		});
-		expect(credentialSpaceReader).not.toHaveBeenCalled();
-
-		expect((await load(request(GUEST, GUEST_SCOPE, cookies))).view).toBe('event');
-		expect((await load(request(GUEST, GUEST_SCOPE, cookies))).view).toBe('event');
+	it('has no action a form could post to', () => {
+		expect((route as { actions?: unknown }).actions).toBeUndefined();
 	});
 
-	it('does not take a link as the click', async () => {
-		const data = await load(
-			request(GUEST, GUEST_SCOPE, browser(), `https://atmo.example.com${PATH}?/open&open=1`)
-		);
-		expect(data.view).toBe('open');
-		expect(credentialSpaceReader).not.toHaveBeenCalled();
-	});
-
-	it('asks again for someone else on the same browser', async () => {
-		const cookies = browser();
-		await open(request(GUEST, GUEST_SCOPE, cookies)).catch(() => {});
-		expect((await load(request(OTHER, GUEST_SCOPE, cookies))).view).toBe('open');
-		expect(credentialSpaceReader).not.toHaveBeenCalled();
-	});
-
-	it('remembers nothing for someone signed out', async () => {
-		const cookies = browser();
-		await open(request(null, '', cookies)).catch(() => {});
-		expect(cookies.size()).toBe(0);
-	});
-
-	it('does not ask the host, whose own server it is', async () => {
+	it('shows the host theirs', async () => {
 		const answers = { members: [] };
 		const data = await load(
 			request(HOST, HOST_SCOPE, browser(), `https://atmo.example.com${PATH}`, answers)
@@ -174,9 +138,7 @@ describe('a description written in Markdown', () => {
 describe('what a browser or cache keeps', () => {
 	it('keeps no copy of a private page', async () => {
 		setHeaders.mockClear();
-		const cookies = browser();
-		await open(request(GUEST, GUEST_SCOPE, cookies)).catch(() => {});
-		await load(request(GUEST, GUEST_SCOPE, cookies));
+		await load(request(GUEST, GUEST_SCOPE, browser()));
 		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'no-store' });
 	});
 });

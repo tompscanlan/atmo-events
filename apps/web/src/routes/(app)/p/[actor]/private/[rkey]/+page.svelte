@@ -61,14 +61,6 @@
 		{#if data.view === 'signed-out'}
 			<p class="text-base-600 dark:text-base-400 mt-2">Sign in to see whether you were invited.</p>
 			<Button class="mt-4" onclick={() => atProtoLoginModalState.show()}>Sign in</Button>
-		{:else if data.view === 'open'}
-			<p class="text-base-600 dark:text-base-400 mt-2" data-testid="open-first">
-				Only the host's server knows whether you're on this event's guest list. Opening it asks that
-				server, which tells it who you are.
-			</p>
-			<form method="POST" action="?/open" class="mt-4">
-				<Button type="submit">Open this event</Button>
-			</form>
 		{:else}
 			<PrivateEventAccessNotice
 				access={data.access}
