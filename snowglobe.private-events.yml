@@ -48,6 +48,7 @@ apps:
       # Only for this local network. The walk sends it to run atmo's ingest.
       CRON_SECRET: local-network-only
       PRIVATE_EVENTS: 'true'
+      PRIVATE_EVENT_INVITATIONS: 'true'
       SPACES_PDS_URL: ${pds.alpha.url}
       PUBLIC_PLC_URL: ${services.plc.url}
       PUBLIC_SLINGSHOT_URL: ${services.slingshot.url}

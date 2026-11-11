@@ -1,10 +1,14 @@
 import { redirect, type Cookies } from '@sveltejs/kit';
 import { now as tidNow } from '@atcute/tid';
 import { forgetAsked, privateEventAccess } from '#lib/private-events/permissions-asked.js';
-import { holdsHostGrant } from '#lib/private-events/scopes.js';
+import { holdsHostGrant, hostScopes } from '#lib/private-events/scopes.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsBeta } from '#lib/private-events/server/beta.js';
-import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
+import {
+	invitationsEnabled,
+	privateEventsEnabled,
+	spacesServer
+} from '#lib/private-events/server/enabled.js';
 
 /** Why "invited people only" needs a step first; null when it doesn't. */
 async function hostAccess(locals: App.Locals, cookies: Cookies) {
@@ -28,6 +32,8 @@ export async function load({ locals, cookies }) {
 		rkey: tidNow(),
 		privateEvents: enabled,
 		hostAccess: enabled ? await hostAccess(locals, cookies) : null,
+		hostScopes: hostScopes(invitationsEnabled()),
+		invitations: invitationsEnabled(),
 		spacesServer: enabled ? spacesServer() : null
 	};
 }

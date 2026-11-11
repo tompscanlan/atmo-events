@@ -8,7 +8,6 @@
 	import GuestList from '#lib/private-events/components/GuestList.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { createPrivateRsvpAdapter } from '#lib/private-events/rsvp-adapter.js';
-	import { GUEST_SCOPES, HOST_SCOPES } from '#lib/private-events/scopes.js';
 
 	let { data } = $props();
 
@@ -43,7 +42,7 @@
 				</p>
 			{/if}
 			{#if data.guests}
-				<GuestList rkey={data.rkey} guests={data.guests} />
+				<GuestList rkey={data.rkey} guests={data.guests} invites={data.invitesGuests} />
 			{:else}
 				<p class="text-base-600 dark:text-base-400 text-sm" data-testid="private-note">
 					Private event. Only people the host added can see it.
@@ -65,10 +64,12 @@
 			<PrivateEventAccessNotice
 				access={data.access}
 				did={data.did}
-				scopes={data.isHost ? HOST_SCOPES : GUEST_SCOPES}
+				scopes={data.scopes}
 				purpose={data.isHost
 					? 'Your sign-in no longer lets atmo open your private events. Allow it again to see this one and its guest list.'
-					: 'Private events are kept on the host’s server. atmo needs your permission to open them for you and save your answer in your own account.'}
+					: data.invitations
+						? 'Private events are kept on the host’s server. atmo needs your permission to open them for you, save your answer in your own account, and keep an invitations inbox there that hosts put invitations in and only you can read.'
+						: 'Private events are kept on the host’s server. atmo needs your permission to open them for you and save your answer in your own account.'}
 				label={data.isHost ? 'Allow atmo again' : 'Allow atmo to open private events'}
 				spacesServer={data.spacesServer}
 			/>

@@ -9,12 +9,25 @@ export const PRIVATE_CALENDAR_TYPE = 'rsvp.atmo.dev.space';
 export const EVENT_COLLECTION = 'community.lexicon.calendar.event';
 export const RSVP_COLLECTION = 'community.lexicon.calendar.rsvp';
 
+/** A person's invitation inbox: one space on their own PDS that anyone may write to and only they
+ *  read, since a PDS lists a space for someone only after they write in it and tells nobody they
+ *  were added. A host writes an invite into each guest's. The pattern is the opensocial.group
+ *  proposal's invites space; its invite can't name an event, so these are atmo's own, with testing
+ *  names like the calendar type's. */
+export const INBOX_TYPE = 'rsvp.atmo.dev.inbox';
+export const INBOX_KEY = 'self';
+export const INVITE_COLLECTION = 'rsvp.atmo.dev.invite';
+
 /** The lexicon's `status` token suffixes. */
 export const RSVP_STATUSES = ['going', 'interested', 'notgoing'] as const;
 export type RsvpStatus = (typeof RSVP_STATUSES)[number];
 
 export function privateEventSpace(host: string, rkey: string): string {
 	return spaceUri(host, PRIVATE_CALENDAR_TYPE, rkey);
+}
+
+export function inboxSpace(owner: string): string {
+	return spaceUri(owner, INBOX_TYPE, INBOX_KEY);
 }
 
 /** The host's own record in the space: the URI an RSVP to the event names. */

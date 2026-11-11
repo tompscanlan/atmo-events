@@ -1,7 +1,7 @@
 import { render } from 'svelte/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EVENT_COLLECTION, privateEventPath, privateEventSpace } from '#lib/private-events/ids.js';
-import { GUEST_SCOPE, HOST_SCOPE } from '#lib/private-events/scopes.js';
+import { GUEST_SCOPE, guestScopes, HOST_SCOPE, hostScopes } from '#lib/private-events/scopes.js';
 
 const HOST = 'did:plc:hosthosthosthosthosthost';
 const GUEST = 'did:plc:guestguestguestguestgues';
@@ -25,8 +25,10 @@ vi.mock('#lib/actor.js', () => ({ getActor: async (actor: string) => actor, acto
 vi.mock('#lib/private-events/server/people.js', () => ({
 	verifiedHandle: async (did: string) => `${did.split(':').at(-1)}.example.com`
 }));
+const invitationsOn = vi.hoisted(() => ({ value: false }));
 vi.mock('#lib/private-events/server/enabled.js', () => ({
 	privateEventsEnabled: () => true,
+	invitationsEnabled: () => invitationsOn.value,
 	spacesServer: () => null
 }));
 vi.mock('#lib/private-events/private-events.remote', () => ({
@@ -98,6 +100,27 @@ beforeEach(() => {
 	reader.writers.mockResolvedValue([]);
 	reader.get.mockImplementation(spaceHolds(RECORD));
 	vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+describe('what someone without permission is asked for', () => {
+	const asked = async (did: string) => (await load(request(did, 'atproto', browser()))).scopes;
+
+	it('is what it was before invitations, where the deployment leaves them off', async () => {
+		invitationsOn.value = false;
+		expect(await asked(GUEST)).toEqual(guestScopes(false));
+		expect(await asked(HOST)).toEqual(hostScopes(false));
+		expect(String(await asked(HOST))).not.toContain('inbox');
+	});
+
+	it('adds an inbox for a guest, and inviting for a host, where they are on', async () => {
+		invitationsOn.value = true;
+		try {
+			expect(await asked(GUEST)).toEqual(guestScopes(true));
+			expect(await asked(HOST)).toEqual(hostScopes(true));
+		} finally {
+			invitationsOn.value = false;
+		}
+	});
 });
 
 describe('opening a private event', () => {

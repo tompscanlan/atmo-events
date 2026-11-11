@@ -432,8 +432,8 @@ await step('5. alice adds guests by handle', async () => {
 	await guestRow(p, 'bob').waitFor({ timeout: 20000 });
 	check('bob listed, not answered', /hasn't answered/.test(await guestRow(p, 'bob').innerText()));
 	check(
-		'the host is told the link is the invitation',
-		/link is the invitation/i.test(await text(p, '[data-testid=guest-list]'))
+		'the host is told to send the link too, since atmo can’t tell who has an inbox',
+		/send them the link too/i.test(await text(p, '[data-testid=how-guests-hear]'))
 	);
 	await addGuest(p, P.dana.handle);
 	await guestRow(p, 'dana').waitFor({ timeout: 20000 });
@@ -480,11 +480,7 @@ await step('6. bob opens the link, signs in, allows it, sees the event', async (
 		'he lands on the event, with no step before it',
 		(await p.getByRole('button', { name: /^open this event$/i }).count()) === 0
 	);
-	const again = await open(p);
-	check(
-		'and not asked again',
-		again === 200 && !(await text(p, 'main')).includes('Open this event')
-	);
+	check('and a reload shows it again', (await open(p)) === 200);
 	check(
 		'tells him to answer',
 		/Answer to let the host know/.test(await text(p, '[data-testid=private-note]'))
@@ -606,12 +602,141 @@ await step('11. /private lists it for host and guest', async () => {
 		(await pages.bob.locator(`[data-testid=private-events] a[href$="/private/${KEY}"]`).count()) > 0
 	);
 	check(
-		'the page says the link is the invitation',
-		/link is the invitation/i.test(await text(pages.bob, '[data-testid=link-is-invitation]'))
+		'the page says how an invitation arrives, and that the link works either way',
+		/link works either way/i.test(await text(pages.bob, '[data-testid=how-invitations-arrive]'))
+	);
+	check(
+		'bob was added before he had an inbox, so that invitation never shows',
+		(await pages.bob.locator('[data-testid=invitations]').count()) === 0
 	);
 	await listLoads(pages.mallory, 'mallory');
 	check('mallory: not listed', !(await text(pages.mallory, 'main')).includes(NAME));
 });
+
+await step(
+	'11b. a second event: bob and dana are invited and get there without the link',
+	async () => {
+		const INVITE = 'rsvp.atmo.dev.invite';
+		const NAME2 = 'Invited without a link';
+		const inbox = (who) => `at://${C[who].did}/space/rsvp.atmo.dev.inbox/self`;
+		for (const who of ['bob', 'dana', 'mallory']) {
+			const made = await C[who].call('com.atproto.space.getSpace', { space: inbox(who) });
+			check(
+				`${who} has an inbox only they read, made when they allowed private events`,
+				made.status === 200 &&
+					made.data?.policy?.publicWrite === true &&
+					made.data?.policy?.publicRead === false,
+				`${made.status} ${JSON.stringify(made.data?.policy ?? made.data?.error)}`
+			);
+		}
+
+		const a = pages.alice;
+		await open(a, '/create?audience=invited');
+		await a.locator('main [contenteditable=true]').first().waitFor({ timeout: 30000 });
+		await a.locator('main [contenteditable=true]').first().click();
+		await a.keyboard.type(NAME2);
+		await a.getByRole('button', { name: /^start date/i }).click();
+		await a.keyboard.press('ArrowRight');
+		await a.keyboard.press('Enter');
+		await a.getByRole('button', { name: /^publish/i }).click();
+		await a.waitForURL((u) => /\/private\/[^/]+$/.test(u.pathname), { timeout: 45000 });
+		await settle(a);
+		const path2 = new URL(a.url()).pathname;
+		const key2 = path2.split('/').at(-1);
+		const space2 = `at://${C.alice.did}/space/${TYPE}/${key2}`;
+		const invited = (who) =>
+			C.alice.call('com.atproto.space.getRecord', {
+				space: inbox(who),
+				repo: C.alice.did,
+				collection: INVITE,
+				rkey: key2
+			});
+		const invitationsOf = async (who) => {
+			await open(pages[who], '/private');
+			await pages[who].locator('[data-testid=how-invitations-arrive]').waitFor({ timeout: 30000 });
+			const section = pages[who].locator('[data-testid=invitations]');
+			return (await section.count()) ? section : null;
+		};
+
+		await addGuest(a, P.bob.handle);
+		await guestRow(a, 'bob').waitFor({ timeout: 20000 });
+		await addGuest(a, P.dana.handle);
+		await guestRow(a, 'dana').waitFor({ timeout: 20000 });
+		const sent = await invited('bob');
+		check(
+			'alice’s invite is in her own repo in bob’s inbox, naming the event and nothing about it',
+			sent.status === 200 &&
+				sent.data?.value?.subject?.uri === `${space2}/${C.alice.did}/${EVENT}/${key2}` &&
+				Object.keys(sent.data.value).sort().join() === '$type,createdAt,subject',
+			`${sent.status} ${JSON.stringify(sent.data?.value ?? sent.data?.error)}`
+		);
+
+		// Bob, on the host's PDS, was never given this event's address.
+		const b = pages.bob;
+		const bobs = await invitationsOf('bob');
+		check('bob sees an invitation on /private', bobs !== null);
+		check('it names alice', (await text(b, '[data-testid=invitations]')).includes(P.alice.handle));
+		check('it does not give the event’s name', !(await text(b, 'main')).includes(NAME2));
+		await shot(b, '09b-invited');
+		await bobs.locator(`a[href$="/private/${key2}"]`).click({ timeout: 20000 });
+		await b.waitForURL((u) => u.pathname.endsWith(`/private/${key2}`), { timeout: 30000 });
+		await b.getByRole('heading', { name: NAME2 }).first().waitFor({ timeout: 30000 });
+		await b
+			.getByRole('button', { name: /^going$/i })
+			.first()
+			.click({ timeout: 20000 });
+		let answered = null;
+		for (let i = 0; i < 40 && answered !== `${RSVP}#going`; i++) {
+			await sleep(250);
+			const own = await C.bob.call('com.atproto.space.getRecord', {
+				space: space2,
+				repo: C.bob.did,
+				collection: RSVP,
+				rkey: key2
+			});
+			answered = own.data?.value?.status ?? null;
+		}
+		check('bob’s answer is in his own repo in the event’s space', answered === `${RSVP}#going`);
+		check('once answered it is no longer an invitation', (await invitationsOf('bob')) === null);
+		check(
+			'and is on his list',
+			(await b.locator(`[data-testid=private-events] a[href$="/private/${key2}"]`).count()) > 0
+		);
+
+		// Dana is on another PDS than alice.
+		const danas = await invitationsOf('dana');
+		check('dana, on another PDS, sees the invitation', danas !== null);
+		check(
+			'hers leads to the event too',
+			danas !== null && (await danas.locator(`a[href$="/private/${key2}"]`).count()) === 1
+		);
+		check('mallory, not invited, sees none', (await invitationsOf('mallory')) === null);
+
+		await guestRow(a, 'dana')
+			.getByRole('button', { name: /^remove$/i })
+			.click();
+		await guestRow(a, 'dana').waitFor({ state: 'detached', timeout: 20000 });
+		check('removing dana deletes alice’s invite', (await invited('dana')).status !== 200);
+		check('and dana’s invitation is gone', (await invitationsOf('dana')) === null);
+
+		await addGuest(a, P.dana.handle);
+		await guestRow(a, 'dana').waitFor({ timeout: 20000 });
+		check('added again, she is invited again', (await invitationsOf('dana')) !== null);
+		await open(a, `${path2}/edit`);
+		await a
+			.getByRole('button', { name: /^delete/i })
+			.first()
+			.click({ timeout: 20000 });
+		await a
+			.getByRole('button', { name: /^delete/i })
+			.last()
+			.click({ timeout: 10000 })
+			.catch(() => {});
+		await a.waitForURL((u) => u.pathname === '/private', { timeout: 30000 });
+		check('cancelling the event deletes the invite', (await invited('dana')).status !== 200);
+		check('and takes dana’s invitation with it', (await invitationsOf('dana')) === null);
+	}
+);
 
 await step('12. alice removes dana, who loses it at once, then lets her back', async () => {
 	const a = pages.alice;
