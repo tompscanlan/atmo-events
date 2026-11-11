@@ -17,6 +17,7 @@ import {
 } from '../ids';
 import { holdsInboxGrant, holdsInviterGrant } from '../scopes';
 import type { CallerSession } from './caller';
+import { invitationsEnabled } from './enabled';
 import { verifiedHandle } from './people';
 
 const INBOX_COOKIE = 'atmo_private_inbox';
@@ -33,7 +34,7 @@ export async function ensureInbox(
 	url: URL,
 	again = false
 ): Promise<void> {
-	if (!holdsInboxGrant(caller.scope, caller.did)) return;
+	if (!invitationsEnabled() || !holdsInboxGrant(caller.scope, caller.did)) return;
 	if (!again && cookies.get(INBOX_COOKIE) === caller.did) return;
 	try {
 		await xrpc(caller.handle, 'com.atproto.space.createSpace', {
@@ -58,6 +59,11 @@ export async function ensureInbox(
 	});
 }
 
+/** A grant held from when invitations were on does nothing once a deployment turns them off. */
+export function canInvite(caller: CallerSession): boolean {
+	return invitationsEnabled() && holdsInviterGrant(caller.scope);
+}
+
 function invite(host: string, guest: string, rkey: string) {
 	return { space: inboxSpace(guest), repo: host, collection: INVITE_COLLECTION, rkey };
 }
@@ -70,7 +76,7 @@ export async function sendInvite(
 	guest: string,
 	rkey: string
 ): Promise<void> {
-	if (!holdsInviterGrant(caller.scope)) return;
+	if (!canInvite(caller)) return;
 	const record = {
 		$type: INVITE_COLLECTION,
 		subject: { uri: privateEventUri(caller.did, rkey) },
@@ -87,7 +93,7 @@ export async function takeBackInvite(
 	guest: string,
 	rkey: string
 ): Promise<void> {
-	if (!holdsInviterGrant(caller.scope)) return;
+	if (!canInvite(caller)) return;
 	await xrpc(caller.handle, 'com.atproto.space.deleteRecord', {
 		body: invite(caller.did, guest, rkey)
 	}).catch((e) =>

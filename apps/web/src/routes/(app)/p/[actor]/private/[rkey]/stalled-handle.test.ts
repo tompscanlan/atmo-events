@@ -8,6 +8,7 @@ vi.mock('#lib/atproto/network.js', async () => {
 });
 vi.mock('#lib/private-events/server/enabled.js', () => ({
 	privateEventsEnabled: () => true,
+	invitationsEnabled: () => false,
 	spacesServer: () => null
 }));
 

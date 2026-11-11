@@ -8,7 +8,6 @@
 	import { page } from '$app/state';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { createPrivateEventAdapter } from '#lib/private-events/editor-adapter.js';
-	import { HOST_SCOPES } from '#lib/private-events/scopes.js';
 
 	let { data } = $props();
 
@@ -105,8 +104,10 @@
 				<PrivateEventAccessNotice
 					access={data.hostAccess}
 					did={data.actorDid}
-					scopes={HOST_SCOPES}
-					purpose="A private event is kept on your own server. atmo needs your permission to create it there, manage its guest list, and put an invitation in each guest’s invitations inbox."
+					scopes={data.hostScopes}
+					purpose={data.invitations
+						? 'A private event is kept on your own server. atmo needs your permission to create it there, manage its guest list, and put an invitation in each guest’s invitations inbox.'
+						: 'A private event is kept on your own server. atmo needs your permission to create it there and manage its guest list.'}
 					label="Allow atmo to host private events"
 					returnTo="/create?audience={INVITED}"
 					spacesServer={data.spacesServer}

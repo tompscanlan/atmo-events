@@ -9,6 +9,14 @@ export function privateEventsEnabled(): boolean {
 	return env.PRIVATE_EVENTS === 'true';
 }
 
+/** Invitations in atmo, off unless a deployment turns them on as well. Their permissions name the
+ *  inbox space type, and a PDS refuses a whole sign-in that names a type it can't find, so with this
+ *  on before that type is published nobody could allow private events at all. Off, the sign-in asks
+ *  for what it did before invitations, and no inbox is made, written to or read. */
+export function invitationsEnabled(): boolean {
+	return privateEventsEnabled() && env.PRIVATE_EVENT_INVITATIONS === 'true';
+}
+
 /** A PDS with spaces support to point people at; null when the deployment names none. */
 export function spacesServer(): { url: string; host: string } | null {
 	const value = env.SPACES_PDS_URL?.trim();

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
 	GUEST_SCOPE,
-	GUEST_SCOPES,
 	HOST_SCOPE,
-	HOST_SCOPES,
+	guestScopes,
+	hostScopes,
 	holdsGuestGrant,
 	holdsHostGrant,
 	holdsInboxGrant,
@@ -86,7 +86,7 @@ describe('invitation inbox grants', () => {
 	});
 
 	it('asks a guest to let atmo make their inbox, and for no other manage right', () => {
-		const manage = GUEST_SCOPES.flatMap((scope) =>
+		const manage = guestScopes(true).flatMap((scope) =>
 			new URLSearchParams(scope.slice(scope.indexOf('?') + 1)).getAll('manage')
 		);
 		expect(manage).toEqual(['create']);
@@ -108,7 +108,12 @@ describe('invitation inbox grants', () => {
 	});
 
 	it('asks a guest for an inbox and a host for both, with what each already held', () => {
-		expect(GUEST_SCOPES).toEqual([GUEST_SCOPE, INBOX_OWNER_SCOPE]);
-		expect(HOST_SCOPES).toEqual([HOST_SCOPE, GUEST_SCOPE, INBOX_OWNER_SCOPE, INVITER_SCOPE]);
+		expect(guestScopes(true)).toEqual([GUEST_SCOPE, INBOX_OWNER_SCOPE]);
+		expect(hostScopes(true)).toEqual([HOST_SCOPE, GUEST_SCOPE, INBOX_OWNER_SCOPE, INVITER_SCOPE]);
+	});
+
+	it('asks for what it did before invitations where a deployment leaves them off', () => {
+		expect(guestScopes(false)).toEqual([GUEST_SCOPE]);
+		expect(hostScopes(false)).toEqual([HOST_SCOPE, GUEST_SCOPE]);
 	});
 });

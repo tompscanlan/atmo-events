@@ -3,17 +3,18 @@
 	import { resolve } from '$app/paths';
 	import { BETA_WARNING } from '#lib/private-events/beta.js';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
-	import { GUEST_SCOPES } from '#lib/private-events/scopes.js';
 
 	let { data } = $props();
 </script>
 
 {#snippet howInvitationsArrive()}
-	{#if data.invitationScopes}
+	{#if data.invitationScopes || !data.invitationsOn}
 		<p class="text-base-600 dark:text-base-400 mt-4 text-sm" data-testid="link-is-invitation">
 			The link is the invitation. atmo doesn't tell you when a host adds you, so an event you're
 			invited to shows here only after you open the host's link and answer.
 		</p>
+	{/if}
+	{#if data.invitationScopes}
 		<PrivateEventAccessNotice
 			access="ask"
 			did={data.did}
@@ -21,7 +22,7 @@
 			purpose="atmo can show invitations here without the link. It needs your permission to keep an invitations inbox in your account, which hosts put invitations in and only you can read."
 			label="Allow invitations"
 		/>
-	{:else}
+	{:else if data.invitationsOn}
 		<p class="text-base-600 dark:text-base-400 mt-4 text-sm" data-testid="how-invitations-arrive">
 			An invitation shows here when the host adds you in atmo after you turned on private events.
 			The host's link works either way.
@@ -45,8 +46,10 @@
 		<PrivateEventAccessNotice
 			access={data.access ?? 'ask'}
 			did={data.did}
-			scopes={GUEST_SCOPES}
-			purpose="Private events are kept on each host’s server. atmo needs your permission to open them for you, save your answer in your own account, and keep an invitations inbox there that hosts put invitations in and only you can read."
+			scopes={data.scopes ?? []}
+			purpose={data.invitationsOn
+				? 'Private events are kept on each host’s server. atmo needs your permission to open them for you, save your answer in your own account, and keep an invitations inbox there that hosts put invitations in and only you can read.'
+				: 'Private events are kept on each host’s server. atmo needs your permission to open them for you and save your answer in your own account.'}
 			label="Allow atmo to open private events"
 			spacesServer={data.spacesServer}
 		/>

@@ -12,7 +12,9 @@ const base = {
 	incomplete: false,
 	invitations: [],
 	invitationsIncomplete: false,
-	invitationScopes: null
+	invitationScopes: null,
+	invitationsOn: true,
+	scopes: null
 };
 const event = {
 	name: 'A party',
@@ -68,5 +70,15 @@ describe('/private', () => {
 		} as never);
 		await expect.element(page.getByTestId('link-is-invitation')).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Allow invitations' })).toBeVisible();
+	});
+
+	it('says the link is the invitation, and offers nothing, where invitations are off', async () => {
+		render(PrivatePage, {
+			data: { ...base, events: listed, invitations: null, invitationsOn: false }
+		} as never);
+		await expect.element(page.getByTestId('link-is-invitation')).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'Allow invitations' }))
+			.not.toBeInTheDocument();
 	});
 });

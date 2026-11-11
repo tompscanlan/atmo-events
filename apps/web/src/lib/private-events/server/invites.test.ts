@@ -5,6 +5,8 @@ import { inboxSpace, INVITE_COLLECTION, privateEventSpace, privateEventUri } fro
 import { GUEST_SCOPE, INBOX_OWNER_SCOPE, INVITER_SCOPE } from '../scopes';
 import type { CallerSession } from './caller';
 
+const invitationsOn = vi.hoisted(() => ({ value: true }));
+vi.mock('./enabled', () => ({ invitationsEnabled: () => invitationsOn.value }));
 const reader = { get: vi.fn(), list: vi.fn(), writers: vi.fn() };
 vi.mock('#lib/spaces/server/space-read.js', () => ({ credentialSpaceReader: () => reader }));
 vi.mock('./people', () => ({
@@ -66,6 +68,7 @@ function theInboxHolds(byWriter: Record<string, unknown[] | Error>) {
 }
 
 beforeEach(() => {
+	invitationsOn.value = true;
 	reader.get.mockReset();
 	reader.list.mockReset();
 	reader.writers.mockReset();
@@ -163,6 +166,21 @@ describe('sendInvite and takeBackInvite', () => {
 		await sendInvite(session, ME, RKEY);
 		await takeBackInvite(session, ME, RKEY);
 		expect(sent).toHaveLength(0);
+	});
+});
+
+describe('where a deployment leaves invitations off', () => {
+	it('makes no inbox and writes no invite, though the grants are held from when they were on', async () => {
+		invitationsOn.value = false;
+		const owner = caller(ME, OWNER);
+		const cookies = cookieJar();
+		await ensureInbox(owner.session, cookies, URL_HTTPS);
+		const host = caller(HOST, INVITER_SCOPE);
+		await sendInvite(host.session, ME, RKEY);
+		await takeBackInvite(host.session, ME, RKEY);
+		expect(owner.sent).toHaveLength(0);
+		expect(host.sent).toHaveLength(0);
+		expect(cookies.set).not.toHaveBeenCalled();
 	});
 });
 

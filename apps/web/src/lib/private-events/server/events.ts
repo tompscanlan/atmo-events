@@ -24,9 +24,9 @@ import {
 	RSVP_STATUSES,
 	type RsvpStatus
 } from '../ids';
-import { holdsGuestGrant, holdsHostGrant, holdsInviterGrant } from '../scopes';
+import { holdsGuestGrant, holdsHostGrant } from '../scopes';
 import type { CallerSession } from './caller';
-import { sendInvite, takeBackInvite } from './invites';
+import { canInvite, sendInvite, takeBackInvite } from './invites';
 import { verifiedHandle } from './people';
 
 const REFUSALS = {
@@ -134,7 +134,7 @@ const TAKE_BACK_TOGETHER = 10;
 export async function cancelPrivateEvent(caller: CallerSession, rkey: string): Promise<void> {
 	requireHost(caller);
 	const space = privateEventSpace(caller.did, rkey);
-	const invited = holdsInviterGrant(caller.scope)
+	const invited = canInvite(caller)
 		? await listMembers(caller, space).catch((e) => {
 				console.info(`[private-events] ${caller.did}: guests of ${rkey} unread at cancel:`, e);
 				return [];

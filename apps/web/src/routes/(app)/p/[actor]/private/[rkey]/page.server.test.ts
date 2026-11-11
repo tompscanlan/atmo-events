@@ -28,6 +28,7 @@ vi.mock('#lib/private-events/server/people.js', () => ({
 }));
 vi.mock('#lib/private-events/server/enabled.js', () => ({
 	privateEventsEnabled: () => true,
+	invitationsEnabled: () => false,
 	spacesServer: () => null
 }));
 vi.mock('#lib/private-events/private-events.remote', () => ({

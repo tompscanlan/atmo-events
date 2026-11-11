@@ -1,15 +1,19 @@
 import { error, redirect } from '@sveltejs/kit';
 import { forgetAsked, privateEventAccess } from '#lib/private-events/permissions-asked.js';
 import {
-	GUEST_SCOPES,
+	guestScopes,
 	holdsGuestGrant,
 	holdsHostGrant,
 	holdsInboxGrant,
-	HOST_SCOPES
+	hostScopes
 } from '#lib/private-events/scopes.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsBeta } from '#lib/private-events/server/beta.js';
-import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
+import {
+	invitationsEnabled,
+	privateEventsEnabled,
+	spacesServer
+} from '#lib/private-events/server/enabled.js';
 import { myPrivateEvents } from '#lib/private-events/server/events.js';
 import { ensureInbox, readInvitations } from '#lib/private-events/server/invites.js';
 
@@ -24,9 +28,12 @@ export async function load({ locals, cookies, setHeaders, url }) {
 		beta: await privateEventsBeta(locals)
 	};
 	const hosts = holdsHostGrant(caller.scope, caller.did);
+	const invitationsOn = invitationsEnabled();
 	if (!holdsGuestGrant(caller.scope) && !hosts) {
 		return {
 			...base,
+			scopes: guestScopes(invitationsOn),
+			invitationsOn,
 			events: null,
 			invitations: null,
 			invitationsIncomplete: false,
@@ -39,7 +46,7 @@ export async function load({ locals, cookies, setHeaders, url }) {
 	forgetAsked(cookies);
 	// Someone who allowed private events before invitations existed has no inbox grant: the page
 	// works as it did, and offers it. A new grant replaces the old, so it asks for what they hold too.
-	const hasInbox = holdsInboxGrant(caller.scope, caller.did);
+	const hasInbox = invitationsOn && holdsInboxGrant(caller.scope, caller.did);
 	await ensureInbox(caller, cookies, url);
 	const [{ events, spaces, incomplete }, inbox] = await Promise.all([
 		myPrivateEvents(caller).catch((e) => {
@@ -59,7 +66,10 @@ export async function load({ locals, cookies, setHeaders, url }) {
 		incomplete,
 		invitations: inbox?.invitations.filter((invitation) => !listed.has(invitation.space)) ?? null,
 		invitationsIncomplete: inbox?.incomplete ?? false,
-		invitationScopes: hasInbox ? null : hosts ? HOST_SCOPES : GUEST_SCOPES,
+		invitationScopes:
+			!invitationsOn || hasInbox ? null : hosts ? hostScopes(true) : guestScopes(true),
+		scopes: null,
+		invitationsOn,
 		access: null,
 		spacesServer: null
 	};

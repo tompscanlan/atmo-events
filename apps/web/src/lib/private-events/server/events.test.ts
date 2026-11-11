@@ -11,6 +11,7 @@ import {
 } from '../ids';
 import type { CallerSession } from './caller';
 
+vi.mock('./enabled', () => ({ invitationsEnabled: () => true }));
 const reader = { get: vi.fn(), writers: vi.fn() };
 const credentialSpaceReader = vi.fn<(...args: unknown[]) => typeof reader>(() => reader);
 vi.mock('#lib/spaces/server/space-read.js', () => ({

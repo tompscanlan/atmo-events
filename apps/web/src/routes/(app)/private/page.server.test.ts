@@ -17,8 +17,10 @@ vi.mock('#lib/actor.js', () => ({ actorToDid: vi.fn() }));
 vi.mock('#lib/private-events/server/people.js', () => ({
 	verifiedHandle: async (did: string) => `${did.split(':').at(-1)}.example.com`
 }));
+const invitationsOn = vi.hoisted(() => ({ value: true }));
 vi.mock('#lib/private-events/server/enabled.js', () => ({
 	privateEventsEnabled: () => true,
+	invitationsEnabled: () => invitationsOn.value,
 	spacesServer: () => null
 }));
 
@@ -53,6 +55,7 @@ async function renderedPrivatePage(scope = GUEST_SCOPE) {
 }
 
 beforeEach(() => {
+	invitationsOn.value = true;
 	reader.get.mockReset();
 	reader.list.mockReset();
 	reader.writers.mockReset();
@@ -211,6 +214,16 @@ describe('/private and invitations', () => {
 		expect(body).toContain('Dinner');
 		expect(body).toContain('data-testid="link-is-invitation"');
 		expect(body).toContain('Allow invitations');
+	});
+
+	it('reads no inbox and offers nothing where the deployment leaves invitations off, whatever grant is held', async () => {
+		invitationsOn.value = false;
+		everyEventReads();
+		const body = await renderedPrivatePage(WITH_INBOX);
+		expect(reader.writers).not.toHaveBeenCalled();
+		expect(body).toContain('Dinner');
+		expect(body).toContain('data-testid="link-is-invitation"');
+		expect(body).not.toContain('Allow invitations');
 	});
 
 	it('makes the inbox again when the PDS no longer has the one this browser remembers', async () => {

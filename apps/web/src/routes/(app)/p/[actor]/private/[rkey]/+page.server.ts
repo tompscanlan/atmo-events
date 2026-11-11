@@ -6,11 +6,20 @@ import {
 	markOpened,
 	privateEventAccess
 } from '#lib/private-events/permissions-asked.js';
-import { holdsGuestGrant, holdsHostGrant, holdsInviterGrant } from '#lib/private-events/scopes.js';
+import {
+	guestScopes,
+	holdsGuestGrant,
+	holdsHostGrant,
+	hostScopes
+} from '#lib/private-events/scopes.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
-import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
+import {
+	invitationsEnabled,
+	privateEventsEnabled,
+	spacesServer
+} from '#lib/private-events/server/enabled.js';
 import { readPrivateEventPage } from '#lib/private-events/server/events.js';
-import { ensureInbox } from '#lib/private-events/server/invites.js';
+import { canInvite, ensureInbox } from '#lib/private-events/server/invites.js';
 import { parseEventDescription } from '#lib/server/event-description.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 
@@ -37,6 +46,8 @@ export async function load({ params, locals, cookies, setHeaders, url }) {
 			...base,
 			view: 'grant' as const,
 			isHost,
+			scopes: isHost ? hostScopes(invitationsEnabled()) : guestScopes(invitationsEnabled()),
+			invitations: invitationsEnabled(),
 			did: caller.did,
 			access: privateEventAccess(cookies, caller.did),
 			spacesServer: spacesServer()
@@ -68,7 +79,7 @@ export async function load({ params, locals, cookies, setHeaders, url }) {
 		viewerRsvpRkey: found.viewerStatus ? params.rkey : null,
 		loggedIn: true,
 		guests: found.guests,
-		invitesGuests: holdsInviterGrant(caller.scope)
+		invitesGuests: canInvite(caller)
 	};
 }
 

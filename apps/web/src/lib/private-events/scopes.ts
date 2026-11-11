@@ -27,15 +27,20 @@ export const INBOX_OWNER_SCOPE = `space:${INBOX_TYPE}?authority=self&collection=
 /** Putting an invite into a guest's inbox and taking it back. It reads nobody's inbox. */
 export const INVITER_SCOPE = `space:${INBOX_TYPE}?authority=*&collection=${INVITE_COLLECTION}&action=create&action=delete`;
 
-/** A host may also be someone else's guest, and a new grant must not cost them the other. */
-export const HOST_SCOPES: readonly string[] = [
-	HOST_SCOPE,
-	GUEST_SCOPE,
-	INBOX_OWNER_SCOPE,
-	INVITER_SCOPE
-];
-export const GUEST_SCOPES: readonly string[] = [GUEST_SCOPE, INBOX_OWNER_SCOPE];
-export const PRIVATE_EVENT_SCOPES: readonly string[] = HOST_SCOPES;
+/** What a host is asked for. A host may also be someone else's guest, and a new grant must not cost
+ *  them the other. `invitations` is the deployment's setting: off, nothing names the inbox type. */
+export function hostScopes(invitations: boolean): readonly string[] {
+	return invitations
+		? [HOST_SCOPE, GUEST_SCOPE, INBOX_OWNER_SCOPE, INVITER_SCOPE]
+		: [HOST_SCOPE, GUEST_SCOPE];
+}
+
+export function guestScopes(invitations: boolean): readonly string[] {
+	return invitations ? [GUEST_SCOPE, INBOX_OWNER_SCOPE] : [GUEST_SCOPE];
+}
+
+/** Every one a sign-in may ask for, which the client has to declare. */
+export const privateEventScopes = hostScopes;
 
 const DEFAULT_ACTIONS: readonly string[] = ['read', 'create', 'update', 'delete'];
 
