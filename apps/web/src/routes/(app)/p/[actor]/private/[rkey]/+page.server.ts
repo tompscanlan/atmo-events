@@ -6,10 +6,11 @@ import {
 	markOpened,
 	privateEventAccess
 } from '#lib/private-events/permissions-asked.js';
-import { holdsGuestGrant, holdsHostGrant } from '#lib/private-events/scopes.js';
+import { holdsGuestGrant, holdsHostGrant, holdsInviterGrant } from '#lib/private-events/scopes.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
 import { readPrivateEventPage } from '#lib/private-events/server/events.js';
+import { ensureInbox } from '#lib/private-events/server/invites.js';
 import { parseEventDescription } from '#lib/server/event-description.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 
@@ -19,7 +20,7 @@ const EVENT_NOT_AVAILABLE =
 	"This event isn't available. It may have been cancelled, or you may not be on its guest list.";
 
 // Each step below is the same at any address, so it says nothing about whether this event exists.
-export async function load({ params, locals, cookies, setHeaders }) {
+export async function load({ params, locals, cookies, setHeaders, url }) {
 	if (!privateEventsEnabled()) error(404, 'Not found');
 	setHeaders({ 'cache-control': 'no-store' });
 	const host = await getActor(params.actor, timeLimitedNetwork());
@@ -42,6 +43,8 @@ export async function load({ params, locals, cookies, setHeaders }) {
 		};
 	}
 	forgetAsked(cookies);
+	// Most people first allow private events here, from a host's link.
+	await ensureInbox(caller, cookies, url);
 	if (!isHost && !hasOpened(cookies, caller.did)) return { ...base, view: 'open' as const };
 
 	const found = await readPrivateEventPage(caller, host, params.rkey).catch((e) => {
@@ -64,7 +67,8 @@ export async function load({ params, locals, cookies, setHeaders }) {
 		viewerRsvpStatus: found.viewerStatus,
 		viewerRsvpRkey: found.viewerStatus ? params.rkey : null,
 		loggedIn: true,
-		guests: found.guests
+		guests: found.guests,
+		invitesGuests: holdsInviterGrant(caller.scope)
 	};
 }
 

@@ -106,7 +106,7 @@
 					access={data.hostAccess}
 					did={data.actorDid}
 					scopes={HOST_SCOPES}
-					purpose="A private event is kept on your own server. atmo needs your permission to create it there and manage its guest list."
+					purpose="A private event is kept on your own server. atmo needs your permission to create it there, manage its guest list, and put an invitation in each guest’s invitations inbox."
 					label="Allow atmo to host private events"
 					returnTo="/create?audience={INVITED}"
 					spacesServer={data.spacesServer}

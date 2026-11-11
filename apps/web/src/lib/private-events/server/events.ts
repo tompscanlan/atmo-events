@@ -24,8 +24,9 @@ import {
 	RSVP_STATUSES,
 	type RsvpStatus
 } from '../ids';
-import { holdsGuestGrant, holdsHostGrant } from '../scopes';
+import { holdsGuestGrant, holdsHostGrant, holdsInviterGrant } from '../scopes';
 import type { CallerSession } from './caller';
+import { sendInvite, takeBackInvite } from './invites';
 import { verifiedHandle } from './people';
 
 const REFUSALS = {
@@ -124,11 +125,19 @@ export async function savePrivateEvent(
 	}
 }
 
-/** Deleting the space ends every guest's access. Their answers stay in their own repos, unreadable. */
+/** Deleting the space ends every guest's access. Their answers stay in their own repos, unreadable.
+ *  The guest list goes with the space, so it is read first to take each invitation back. */
 export async function cancelPrivateEvent(caller: CallerSession, rkey: string): Promise<void> {
 	requireHost(caller);
 	const space = privateEventSpace(caller.did, rkey);
+	const invited = holdsInviterGrant(caller.scope)
+		? await listMembers(caller, space).catch((e) => {
+				console.info(`[private-events] ${caller.did}: guests of ${rkey} unread at cancel:`, e);
+				return [];
+			})
+		: [];
 	await write(caller, 'com.atproto.space.deleteSpace', { space }, `event ${rkey} not cancelled`);
+	await Promise.all(invited.map((guest) => takeBackInvite(caller, guest, rkey)));
 }
 
 /** As the event components take it: the record whole, its address beside it, and no image, since a
@@ -364,7 +373,8 @@ export async function deletePrivateRsvp(
 	}
 }
 
-/** Puts them on the event's list, which is all it takes to let them read. A PDS answers the same
+/** Puts them on the event's list, which is all it takes to let them read, then puts an invitation
+ *  in their inbox, which shows only if they have one. A PDS answers the same
  *  for someone whose own server has no spaces, who can never get in, and only their own sign-in
  *  can show that, so the host's page says who has answered. */
 export async function addGuest(
@@ -379,6 +389,7 @@ export async function addGuest(
 	const body = { space: privateEventSpace(caller.did, input.rkey), did, read: true, write: true };
 	const failed = `guest not added to ${input.rkey}`;
 	await write(caller, 'com.atproto.memberspace.putMember', body, failed);
+	await sendInvite(caller, did, input.rkey);
 	return { did, handle: await verifiedHandle(did), answer: null, answerUnread: false };
 }
 
@@ -390,6 +401,7 @@ export async function removeGuest(
 	const body = { space: privateEventSpace(caller.did, input.rkey), did: input.did };
 	const failed = `guest not removed from ${input.rkey}`;
 	await write(caller, 'com.atproto.memberspace.removeMember', body, failed);
+	await takeBackInvite(caller, input.did, input.rkey);
 }
 
 export interface MyPrivateEvent {
@@ -401,6 +413,8 @@ export interface MyPrivateEvent {
 
 export interface MyPrivateEvents {
 	events: MyPrivateEvent[];
+	/** Every space their PDS listed, read or not: the events they host or have written in. */
+	spaces: string[];
 	/** A server didn't answer, or there were too many to list, so there may be more than these. */
 	incomplete: boolean;
 }
@@ -458,6 +472,7 @@ export async function myPrivateEvents(caller: CallerSession): Promise<MyPrivateE
 		events: events
 			.filter((event): event is MyPrivateEvent => event !== null)
 			.sort((a, b) => Date.parse(a.event.startsAt) - Date.parse(b.event.startsAt)),
+		spaces,
 		incomplete: cutOff || unread > 0
 	};
 }

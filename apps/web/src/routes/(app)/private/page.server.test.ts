@@ -1,12 +1,17 @@
 import { render } from 'svelte/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { EVENT_COLLECTION, privateEventSpace } from '#lib/private-events/ids.js';
-import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
+import {
+	EVENT_COLLECTION,
+	INVITE_COLLECTION,
+	privateEventSpace,
+	privateEventUri
+} from '#lib/private-events/ids.js';
+import { GUEST_SCOPE, INBOX_OWNER_SCOPE } from '#lib/private-events/scopes.js';
 
 const setHeaders = vi.fn();
 const beta = vi.hoisted(() => vi.fn());
 vi.mock('#lib/private-events/server/beta.js', () => ({ privateEventsBeta: beta }));
-const reader = { get: vi.fn(), writers: vi.fn() };
+const reader = { get: vi.fn(), list: vi.fn(), writers: vi.fn() };
 vi.mock('#lib/spaces/server/space-read.js', () => ({ credentialSpaceReader: () => reader }));
 vi.mock('#lib/actor.js', () => ({ actorToDid: vi.fn() }));
 vi.mock('#lib/private-events/server/people.js', () => ({
@@ -32,22 +37,25 @@ const RECORD = {
 };
 
 /** A guest of both events, signed in, whose PDS lists both spaces. */
-async function renderedPrivatePage() {
+async function renderedPrivatePage(scope = GUEST_SCOPE) {
 	const session = {
 		did: GUEST,
-		getTokenInfo: async () => ({ scope: GUEST_SCOPE }),
+		getTokenInfo: async () => ({ scope }),
 		handle: async () => Response.json({ spaces: [{ uri: SOUND }, { uri: BROKEN }] })
 	};
 	const data = await load({
 		locals: { session },
-		cookies: { get: () => undefined, delete: () => {} },
-		setHeaders
+		cookies: { get: () => undefined, set: () => {}, delete: () => {} },
+		setHeaders,
+		url: new URL('https://atmo.example/private')
 	} as never);
 	return render(PrivatePage, { props: { data } as never }).body;
 }
 
 beforeEach(() => {
 	reader.get.mockReset();
+	reader.list.mockReset();
+	reader.writers.mockReset();
 	beta.mockResolvedValue(false);
 	vi.spyOn(console, 'error').mockImplementation(() => {});
 	vi.spyOn(console, 'info').mockImplementation(() => {});
@@ -130,5 +138,78 @@ describe('/private and the beta', () => {
 		beta.mockResolvedValue(true);
 		reader.get.mockResolvedValue(null);
 		expect(await renderedPrivatePage()).not.toContain('turn on private events in');
+	});
+});
+
+describe('/private and invitations', () => {
+	const WITH_INBOX = `${GUEST_SCOPE} ${INBOX_OWNER_SCOPE}`;
+	const NEW = '3lccccccccccc';
+	const invite = (rkey: string) => ({
+		rkey,
+		cid: `cid-${rkey}`,
+		value: {
+			$type: INVITE_COLLECTION,
+			subject: { uri: privateEventUri(HOST, rkey) },
+			createdAt: '2026-11-10T12:00:00.000Z'
+		}
+	});
+	const everyEventReads = () =>
+		reader.get.mockImplementation(async ({ space, rkey }: { space: string; rkey: string }) => ({
+			uri: `${space}/${HOST}/${EVENT_COLLECTION}/${rkey}`,
+			cid: `cid-of-${rkey}`,
+			rkey,
+			value: RECORD
+		}));
+
+	it('shows an invitation the person has not answered, with who sent it and the way there', async () => {
+		everyEventReads();
+		reader.writers.mockResolvedValue([HOST]);
+		reader.list.mockResolvedValue({ records: [invite(NEW)], more: false });
+		const body = await renderedPrivatePage(WITH_INBOX);
+		expect(body).toContain('data-testid="invitations"');
+		expect(body).toContain('hosthosthosthosthosthost.example.com invited you');
+		expect(body).toContain(`href="/p/hosthosthosthosthosthost.example.com/private/${NEW}"`);
+	});
+
+	it('shows nothing of the invited event itself, which is read only once the guest opens it', async () => {
+		everyEventReads();
+		reader.writers.mockResolvedValue([HOST]);
+		reader.list.mockResolvedValue({ records: [invite(NEW)], more: false });
+		await renderedPrivatePage(WITH_INBOX);
+		expect(reader.get.mock.calls.map(([q]) => q.rkey)).not.toContain(NEW);
+	});
+
+	it('does not call an event already on their list an invitation', async () => {
+		everyEventReads();
+		reader.writers.mockResolvedValue([HOST]);
+		reader.list.mockResolvedValue({ records: [invite('3laaaaaaaaaaa')], more: false });
+		const body = await renderedPrivatePage(WITH_INBOX);
+		expect(body).not.toContain('data-testid="invitations"');
+		expect(body).toContain('Dinner');
+	});
+
+	it('still lists their events when the inbox cannot be read, and says invitations may be missing', async () => {
+		everyEventReads();
+		reader.writers.mockRejectedValue(new Error('503'));
+		const body = await renderedPrivatePage(WITH_INBOX);
+		expect(body).toContain('Dinner');
+		expect(body).toContain('data-testid="invitations-incomplete"');
+	});
+
+	it('no longer says the link is the only way, once they have an inbox', async () => {
+		everyEventReads();
+		reader.writers.mockResolvedValue([]);
+		const body = await renderedPrivatePage(WITH_INBOX);
+		expect(body).not.toContain('data-testid="link-is-invitation"');
+		expect(body).toContain('data-testid="how-invitations-arrive"');
+	});
+
+	it('works as before for someone who allowed private events before invitations, and offers them', async () => {
+		everyEventReads();
+		const body = await renderedPrivatePage(GUEST_SCOPE);
+		expect(reader.writers).not.toHaveBeenCalled();
+		expect(body).toContain('Dinner');
+		expect(body).toContain('data-testid="link-is-invitation"');
+		expect(body).toContain('Allow invitations');
 	});
 });

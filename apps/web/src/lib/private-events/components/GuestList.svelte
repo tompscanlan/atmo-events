@@ -12,7 +12,16 @@
 		notgoing: 'Not going'
 	};
 
-	let { rkey, guests }: { rkey: string; guests: Guest[] } = $props();
+	let {
+		rkey,
+		guests,
+		invites
+	}: {
+		rkey: string;
+		guests: Guest[];
+		/** Adding a guest also puts an invitation in their inbox, if they have one. */
+		invites: boolean;
+	} = $props();
 
 	let handle = $state('');
 	let busy = $state(false);
@@ -63,10 +72,16 @@
 	<h2 class="text-base-600 dark:text-base-400 mb-3 text-xs font-semibold tracking-wider uppercase">
 		Guests
 	</h2>
-	<p class="text-base-600 dark:text-base-400 text-sm">
-		Only people you add can see this event. atmo doesn't tell them they were added, and nothing
-		shows on their side until they open the link. The link is the invitation, so send it to them
-		yourself.
+	<p class="text-base-600 dark:text-base-400 text-sm" data-testid="how-guests-hear">
+		{#if invites}
+			Only people you add can see this event. Someone who has turned on private events in atmo sees
+			an invitation there when you add them. atmo can't tell whether they have, so send them the
+			link too.
+		{:else}
+			Only people you add can see this event. atmo doesn't tell them they were added, and nothing
+			shows on their side until they open the link. The link is the invitation, so send it to them
+			yourself.
+		{/if}
 	</p>
 	<Button class="mt-2 w-full" size="sm" variant="secondary" onclick={copyLink}>
 		{copied ? 'Link copied' : 'Copy the link'}

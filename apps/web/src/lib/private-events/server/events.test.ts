@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
-import { HOST_SCOPE, GUEST_SCOPE } from '../scopes';
-import { EVENT_COLLECTION, privateEventSpace, privateEventUri, RSVP_COLLECTION } from '../ids';
+import { HOST_SCOPE, GUEST_SCOPE, INVITER_SCOPE } from '../scopes';
+import {
+	EVENT_COLLECTION,
+	inboxSpace,
+	INVITE_COLLECTION,
+	privateEventSpace,
+	privateEventUri,
+	RSVP_COLLECTION
+} from '../ids';
 import type { CallerSession } from './caller';
 
 const reader = { get: vi.fn(), writers: vi.fn() };
@@ -458,6 +465,107 @@ describe('removeGuest', () => {
 			pathname: '/xrpc/com.atproto.memberspace.removeMember',
 			body: { space: SPACE, did: GUEST }
 		});
+	});
+});
+
+describe('a host who can invite', () => {
+	const INVITING = `${HOST_SCOPE} ${INVITER_SCOPE}`;
+	const INVITE = {
+		space: inboxSpace(GUEST),
+		repo: HOST,
+		collection: INVITE_COLLECTION,
+		rkey: RKEY
+	};
+
+	it('puts an invite naming the event in the guest’s inbox, after adding them', async () => {
+		actorToDid.mockResolvedValue(GUEST);
+		const host = caller(HOST, INVITING);
+		await addGuest(host, { rkey: RKEY, handleOrDid: 'guest.example.com' });
+		expect(host.nsids()).toEqual([
+			'com.atproto.memberspace.putMember',
+			'com.atproto.space.putRecord'
+		]);
+		expect(host.sent[1].body).toMatchObject({
+			...INVITE,
+			record: { $type: INVITE_COLLECTION, subject: { uri: EVENT_URI } }
+		});
+	});
+
+	it('puts no event details in the invite, which outlives the guest’s place on the list', async () => {
+		actorToDid.mockResolvedValue(GUEST);
+		const host = caller(HOST, INVITING);
+		await addGuest(host, { rkey: RKEY, handleOrDid: 'guest.example.com' });
+		const record = host.sent[1].body?.record as Record<string, unknown>;
+		expect(Object.keys(record).sort()).toEqual(['$type', 'createdAt', 'subject']);
+	});
+
+	it('still adds the guest when the invite is refused', async () => {
+		actorToDid.mockResolvedValue(GUEST);
+		const host = caller(HOST, INVITING, {
+			'com.atproto.space.putRecord': refuse(403, 'ScopeMissingError')
+		});
+		await expect(
+			addGuest(host, { rkey: RKEY, handleOrDid: 'guest.example.com' })
+		).resolves.toMatchObject({ did: GUEST });
+	});
+
+	it('writes no invite when the guest was not added', async () => {
+		actorToDid.mockResolvedValue(GUEST);
+		const host = caller(HOST, INVITING, {
+			'com.atproto.memberspace.putMember': refuse(500, 'InternalServerError')
+		});
+		await expect(
+			addGuest(host, { rkey: RKEY, handleOrDid: 'guest.example.com' })
+		).rejects.toMatchObject({ reason: 'refused' });
+		expect(host.nsids()).toEqual(['com.atproto.memberspace.putMember']);
+	});
+
+	it('takes the invite back from a guest it removes', async () => {
+		const host = caller(HOST, INVITING);
+		await removeGuest(host, { rkey: RKEY, did: GUEST });
+		expect(host.sent[1]).toMatchObject({
+			pathname: '/xrpc/com.atproto.space.deleteRecord',
+			body: INVITE
+		});
+	});
+
+	it('takes every guest’s invite back when the event is cancelled, reading the list before it goes', async () => {
+		const host = caller(HOST, INVITING, {
+			'com.atproto.memberspace.listMembers': () =>
+				Response.json({ members: [{ did: GUEST }, { did: OTHER }] })
+		});
+		await cancelPrivateEvent(host, RKEY);
+		expect(host.nsids().slice(0, 2)).toEqual([
+			'com.atproto.memberspace.listMembers',
+			'com.atproto.space.deleteSpace'
+		]);
+		const takenBack = host.sent.filter((s) => s.pathname.endsWith('.deleteRecord'));
+		expect(takenBack.map((s) => s.body?.space).sort()).toEqual(
+			[inboxSpace(GUEST), inboxSpace(OTHER)].sort()
+		);
+	});
+
+	it('still cancels when the guest list cannot be read', async () => {
+		const host = caller(HOST, INVITING, {
+			'com.atproto.memberspace.listMembers': refuse(500, 'InternalServerError')
+		});
+		await cancelPrivateEvent(host, RKEY);
+		expect(host.nsids()).toContain('com.atproto.space.deleteSpace');
+	});
+});
+
+describe('a host who allowed private events before invitations', () => {
+	it('adds, removes and cancels as before, and writes into no inbox', async () => {
+		actorToDid.mockResolvedValue(GUEST);
+		const host = caller(HOST, HOST_SCOPE);
+		await addGuest(host, { rkey: RKEY, handleOrDid: 'guest.example.com' });
+		await removeGuest(host, { rkey: RKEY, did: GUEST });
+		await cancelPrivateEvent(host, RKEY);
+		expect(host.nsids()).toEqual([
+			'com.atproto.memberspace.putMember',
+			'com.atproto.memberspace.removeMember',
+			'com.atproto.space.deleteSpace'
+		]);
 	});
 });
 

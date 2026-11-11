@@ -43,7 +43,7 @@
 				</p>
 			{/if}
 			{#if data.guests}
-				<GuestList rkey={data.rkey} guests={data.guests} />
+				<GuestList rkey={data.rkey} guests={data.guests} invites={data.invitesGuests} />
 			{:else}
 				<p class="text-base-600 dark:text-base-400 text-sm" data-testid="private-note">
 					Private event. Only people the host added can see it.
@@ -76,7 +76,7 @@
 				scopes={data.isHost ? HOST_SCOPES : GUEST_SCOPES}
 				purpose={data.isHost
 					? 'Your sign-in no longer lets atmo open your private events. Allow it again to see this one and its guest list.'
-					: 'Private events are kept on the host’s server. atmo needs your permission to open them for you and save your answer in your own account.'}
+					: 'Private events are kept on the host’s server. atmo needs your permission to open them for you, save your answer in your own account, and keep an invitations inbox there that hosts put invitations in and only you can read.'}
 				label={data.isHost ? 'Allow atmo again' : 'Allow atmo to open private events'}
 				spacesServer={data.spacesServer}
 			/>
