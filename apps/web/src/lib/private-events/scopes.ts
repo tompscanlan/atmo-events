@@ -14,8 +14,8 @@ const RECORD_ACTIONS = 'action=read&action=create&action=update&action=delete';
 /** Their own events and their own answers to them, and managing each event's space. */
 export const HOST_SCOPE = `space:${PRIVATE_CALENDAR_TYPE}?authority=self&collection=${EVENT_COLLECTION}&collection=${RSVP_COLLECTION}&${RECORD_ACTIONS}&manage=create&manage=update&manage=delete`;
 
-/** Reading any private event that lets them in, and their own answer to it. No manage rights: a
- *  guest is never asked to let atmo run spaces on their behalf. */
+/** Reading any private event that lets them in, and their own answer to it. No manage rights here:
+ *  the only one a guest is asked for is making their own invitation inbox, below. */
 export const GUEST_SCOPE = `space:${PRIVATE_CALENDAR_TYPE}?authority=*&collection=${RSVP_COLLECTION}&${RECORD_ACTIONS}`;
 
 /** Making their own invitation inbox and reading the invites in it. The one manage right a guest is

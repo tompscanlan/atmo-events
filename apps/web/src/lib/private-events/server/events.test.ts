@@ -529,20 +529,31 @@ describe('a host who can invite', () => {
 		});
 	});
 
-	it('takes every guest’s invite back when the event is cancelled, reading the list before it goes', async () => {
+	it('takes every guest’s invite back before the cancelled event’s space and its list go', async () => {
 		const host = caller(HOST, INVITING, {
 			'com.atproto.memberspace.listMembers': () =>
 				Response.json({ members: [{ did: GUEST }, { did: OTHER }] })
 		});
 		await cancelPrivateEvent(host, RKEY);
-		expect(host.nsids().slice(0, 2)).toEqual([
+		expect(host.nsids()).toEqual([
 			'com.atproto.memberspace.listMembers',
+			'com.atproto.space.deleteRecord',
+			'com.atproto.space.deleteRecord',
 			'com.atproto.space.deleteSpace'
 		]);
 		const takenBack = host.sent.filter((s) => s.pathname.endsWith('.deleteRecord'));
 		expect(takenBack.map((s) => s.body?.space).sort()).toEqual(
 			[inboxSpace(GUEST), inboxSpace(OTHER)].sort()
 		);
+	});
+
+	it('still cancels when an invite cannot be taken back', async () => {
+		const host = caller(HOST, INVITING, {
+			'com.atproto.memberspace.listMembers': () => Response.json({ members: [{ did: GUEST }] }),
+			'com.atproto.space.deleteRecord': refuse(500, 'InternalServerError')
+		});
+		await cancelPrivateEvent(host, RKEY);
+		expect(host.nsids().at(-1)).toBe('com.atproto.space.deleteSpace');
 	});
 
 	it('still cancels when the guest list cannot be read', async () => {

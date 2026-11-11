@@ -522,6 +522,14 @@ describe('a repo’s records listed with a credential', () => {
 		expect((await pending).more).toBe(true);
 	});
 
+	it('gives no more rows than asked for, nor one key twice, whatever the host sends', async () => {
+		const row = (rkey: string) => ({ rkey, cid: 'c', value: {} });
+		const { pending } = listing(() =>
+			json(200, { records: [row('a'), row('a'), row('b'), row('c'), row('d')] })
+		);
+		expect(await pending).toEqual({ records: [row('a')], more: true });
+	});
+
 	it('drops a row with no key, and throws rather than read a refusal as none', async () => {
 		const { pending } = listing(() => json(200, { records: [{ value: { n: 1 } }, null] }));
 		expect((await pending).records).toEqual([]);

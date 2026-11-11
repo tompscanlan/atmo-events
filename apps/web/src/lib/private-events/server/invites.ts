@@ -24,15 +24,17 @@ const INBOX_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
 /** Makes the person's inbox the first time a page sees their grant for it, and remembers that in
  *  this browser so later pages make no call. An invite written before the inbox exists is never
- *  listed in it afterwards, so it is made as early as the grant allows. A failure is only logged:
- *  the page it ran on has nothing to do with invitations. */
+ *  listed in it afterwards, so it is made as early as the grant allows. `again` when the inbox was
+ *  found missing since, as after it was deleted elsewhere. A failure is only logged: the page it
+ *  ran on has nothing to do with invitations. */
 export async function ensureInbox(
 	caller: CallerSession,
 	cookies: Pick<Cookies, 'get' | 'set'>,
-	url: URL
+	url: URL,
+	again = false
 ): Promise<void> {
 	if (!holdsInboxGrant(caller.scope, caller.did)) return;
-	if (cookies.get(INBOX_COOKIE) === caller.did) return;
+	if (!again && cookies.get(INBOX_COOKIE) === caller.did) return;
 	try {
 		await xrpc(caller.handle, 'com.atproto.space.createSpace', {
 			body: {
@@ -105,19 +107,25 @@ export interface Invitation {
 
 export interface Invitations {
 	invitations: Invitation[];
-	/** A server didn't answer, or there were too many to read, so there may be more than these. */
+	/** A server didn't answer in time, or there were too many to read, so there may be more. */
 	incomplete: boolean;
+	/** Their PDS has no inbox for them, so nothing can have arrived. */
+	noInbox: boolean;
 }
 
 const MAX_INVITERS = 50;
 const MAX_INVITES_EACH = 20;
+/** For every inviter's server together, so one that stalls can't hold the page. */
+const INVITERS_TIME_LIMIT_MS = 4_000;
+const RKEY = /^[a-zA-Z0-9._:~-]{1,512}$/;
+const DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 
-/** What is in the person's inbox, newest first. Each inviter's invites are read from that inviter's
- *  own server, which is all that can vouch for them, so an invite counts only when it names an
- *  event of the same person who wrote it. The event itself is not read here: opening it asks the
- *  host's server who is let in, which stays the guest's choice on the event's page. Who has written
- *  is not shown from the writer list alone, since that keeps someone after they take an invite
- *  back. */
+/** What is in the person's inbox, newest first. Each inviter's invites are in that inviter's own
+ *  repo, so they are read from that inviter's server, which is all that can vouch for them: an
+ *  invite counts only when it names an event of the same person who wrote it. That read tells each
+ *  server that has ever written here that this person looked at their invitations, and a writer
+ *  stays on the inbox's list after taking an invite back. The event itself is not read: which
+ *  invitation they open, if any, stays their choice on the event's page. */
 export async function readInvitations(caller: CallerSession): Promise<Invitations> {
 	const space = inboxSpace(caller.did);
 	const reader = credentialSpaceReader(caller);
@@ -125,42 +133,56 @@ export async function readInvitations(caller: CallerSession): Promise<Invitation
 	try {
 		writers = (await reader.writers(space)).filter((did) => did !== caller.did);
 	} catch (e) {
-		// No inbox yet reads as an empty one.
-		if (isSpaceAccessDenied(e)) return { invitations: [], incomplete: false };
+		if (isSpaceAccessDenied(e)) return { invitations: [], incomplete: false, noInbox: true };
 		console.error(`[private-events] ${caller.did}: invitation inbox unread:`, e);
-		return { invitations: [], incomplete: true };
+		return { invitations: [], incomplete: true, noInbox: false };
 	}
 
+	// Which fifty is the PDS's order, so past that an invitation can go unseen: the page says so.
 	let incomplete = writers.length > MAX_INVITERS;
-	const found = await Promise.all(
-		writers.slice(0, MAX_INVITERS).map(async (host): Promise<Invitation[]> => {
-			const listed = await reader
-				.list({ space, repo: host, collection: INVITE_COLLECTION, limit: MAX_INVITES_EACH })
-				.catch((e) => {
-					console.info(`[private-events] ${host}'s invites to ${caller.did} unread:`, e);
-					return null;
-				});
-			if (!listed || listed.more) incomplete = true;
-			const theirs = (listed?.records ?? []).flatMap(({ rkey, value }) => {
-				const subject = value.subject as { uri?: unknown } | undefined;
-				const invitedAt = value.createdAt;
-				if (subject?.uri !== privateEventUri(host, rkey)) return [];
-				if (typeof invitedAt !== 'string' || Number.isNaN(Date.parse(invitedAt))) return [];
-				return [{ rkey, invitedAt }];
+	const invitations: Invitation[] = [];
+	const now = Date.now();
+	const each = writers.slice(0, MAX_INVITERS).map(async (host) => {
+		const listed = await reader
+			.list({ space, repo: host, collection: INVITE_COLLECTION, limit: MAX_INVITES_EACH })
+			.catch((e) => {
+				console.info(`[private-events] ${host}'s invites to ${caller.did} unread:`, e);
+				return null;
 			});
-			if (theirs.length === 0) return [];
-			const hostHandle = await verifiedHandle(host);
-			return theirs.map(({ rkey, invitedAt }) => ({
+		if (!listed || listed.more) incomplete = true;
+		const theirs = (listed?.records ?? []).flatMap(({ rkey, value }) => {
+			const subject = value.subject as { uri?: unknown } | undefined;
+			const invitedAt = value.createdAt;
+			// A key of dots would turn the link into another address.
+			if (!RKEY.test(rkey) || /^\.+$/.test(rkey)) return [];
+			if (subject?.uri !== privateEventUri(host, rkey)) return [];
+			if (typeof invitedAt !== 'string' || !DATETIME.test(invitedAt)) return [];
+			const at = Date.parse(invitedAt);
+			// The inviter's own word: a date ahead of now would hold theirs at the top.
+			if (Number.isNaN(at)) return [];
+			return [{ rkey, invitedAt: new Date(Math.min(at, now)).toISOString() }];
+		});
+		if (theirs.length === 0) return;
+		const hostHandle = await verifiedHandle(host);
+		for (const { rkey, invitedAt } of theirs) {
+			invitations.push({
 				space: privateEventSpace(host, rkey),
 				host,
 				hostHandle,
 				invitedAt,
 				href: privateEventPath(hostHandle ?? host, rkey)
-			}));
-		})
-	);
+			});
+		}
+	});
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<'late'>((resolve) => {
+		timer = setTimeout(() => resolve('late'), INVITERS_TIME_LIMIT_MS);
+	});
+	if ((await Promise.race([Promise.all(each), late])) === 'late') incomplete = true;
+	clearTimeout(timer);
 	return {
-		invitations: found.flat().sort((a, b) => Date.parse(b.invitedAt) - Date.parse(a.invitedAt)),
-		incomplete
+		invitations: [...invitations].sort((a, b) => Date.parse(b.invitedAt) - Date.parse(a.invitedAt)),
+		incomplete,
+		noInbox: false
 	};
 }

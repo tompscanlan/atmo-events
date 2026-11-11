@@ -48,6 +48,9 @@ export async function load({ locals, cookies, setHeaders, url }) {
 		}),
 		hasInbox ? readInvitations(caller) : null
 	]);
+	// The browser remembers an inbox their PDS no longer has: make it again, since until then
+	// every invitation sent to them is lost without a word to anyone.
+	if (inbox?.noInbox) await ensureInbox(caller, cookies, url, true);
 	// An event they host or have written in is on the list below, or was and they were taken off.
 	const listed = new Set(spaces);
 	return {

@@ -28,8 +28,8 @@ export interface SpaceReader {
 		rkey: string;
 	}): Promise<SpaceRecord | null>;
 	/** One repo's records of a collection, as that repo's host gives them. Unlike `get`, nothing
-	 *  checks a row against the repo's key, so it is that host's word alone. `more` when there were
-	 *  more than `limit`. */
+	 *  checks a row against the repo's key, so it is that host's word alone. Never more than `limit`
+	 *  rows nor two with one key, whatever the host sends; `more` when it had more. */
 	list(query: {
 		space: string;
 		repo: string;
@@ -96,14 +96,19 @@ export function credentialSpaceReader(
 			});
 			if (!answer.ok) throw answerError(LIST_RECORDS, answer);
 			const rows = Array.isArray(answer.data.records) ? answer.data.records : [];
-			const records = rows.flatMap((row) => {
+			const byKey = new Map<string, Omit<SpaceRecord, 'uri'>>();
+			for (const row of rows.slice(0, limit)) {
 				// A row has no `uri`: its key, CID and value only.
 				const { rkey, cid, value } = asRecord(row);
-				return typeof rkey === 'string'
-					? [{ rkey, cid: String(cid ?? ''), value: asRecord(value) }]
-					: [];
-			});
-			return { records, more: typeof answer.data.cursor === 'string' && rows.length >= limit };
+				if (typeof rkey === 'string' && !byKey.has(rkey)) {
+					byKey.set(rkey, { rkey, cid: String(cid ?? ''), value: asRecord(value) });
+				}
+			}
+			return {
+				records: [...byKey.values()],
+				more:
+					rows.length > limit || (typeof answer.data.cursor === 'string' && rows.length >= limit)
+			};
 		},
 		async writers(space) {
 			const authority = spaceAuthority(space);

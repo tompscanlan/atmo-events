@@ -76,8 +76,9 @@
 									>{invitation.hostHandle ?? invitation.host} invited you to a private event</span
 								>
 								<span class="text-base-600 dark:text-base-400 block text-xs"
-									>{new Date(invitation.invitedAt).toLocaleDateString(undefined, {
-										dateStyle: 'medium'
+									>{new Date(invitation.invitedAt).toLocaleDateString('en-US', {
+										dateStyle: 'medium',
+										timeZone: 'UTC'
 									})}. Anyone can send one, so open it only if you know them.</span
 								>
 							</span>

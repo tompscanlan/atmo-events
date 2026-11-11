@@ -119,6 +119,12 @@ describe('ensureInbox', () => {
 		expect(sent).toHaveLength(2);
 	});
 
+	it('makes it again when told the PDS no longer has it, whatever this browser remembers', async () => {
+		const { session, sent } = caller(ME, OWNER);
+		await ensureInbox(session, cookieJar({ atmo_private_inbox: ME }), URL_HTTPS, true);
+		expect(sent).toHaveLength(1);
+	});
+
 	it('makes one for whoever is signed in now, not for whoever this browser last made one', async () => {
 		const { session, sent } = caller(ME, OWNER);
 		await ensureInbox(session, cookieJar({ atmo_private_inbox: OTHER }), URL_HTTPS);
@@ -185,7 +191,8 @@ describe('readInvitations', () => {
 					href: '/p/hosthosthosthosthosthost.example.com/private/3laaaaaaaaaaa'
 				}
 			],
-			incomplete: false
+			incomplete: false,
+			noInbox: false
 		});
 	});
 
@@ -198,7 +205,7 @@ describe('readInvitations', () => {
 		);
 	});
 
-	it('never reads the event, which would tell the host’s server who is looking', async () => {
+	it('reads only the invites from an inviter’s server, never the event, so not which one they open', async () => {
 		theInboxHolds({ [HOST]: [invite(HOST, RKEY)] });
 		await readInvitations(me());
 		expect(reader.get).not.toHaveBeenCalled();
@@ -217,7 +224,9 @@ describe('readInvitations', () => {
 			'with no date',
 			{ rkey: RKEY, cid: 'c', value: { subject: { uri: privateEventUri(HOST, RKEY) } } }
 		],
-		['with a date that is not one', invite(HOST, RKEY, 'soon')]
+		['with a date that is not one', invite(HOST, RKEY, 'soon')],
+		['with a date only some clocks would read', invite(HOST, RKEY, 'Nov 10, 2026')],
+		['whose key would lead the link somewhere else', invite(HOST, '..')]
 	])('ignores an invite %s', async (_, row) => {
 		theInboxHolds({ [HOST]: [row, invite(HOST, '3lgoodgoodgoo')] });
 		const { invitations } = await readInvitations(me());
@@ -226,7 +235,7 @@ describe('readInvitations', () => {
 
 	it('shows no one who only once wrote, since the writer list keeps them after a take-back', async () => {
 		theInboxHolds({ [HOST]: [] });
-		expect(await readInvitations(me())).toEqual({ invitations: [], incomplete: false });
+		expect(await readInvitations(me())).toMatchObject({ invitations: [], incomplete: false });
 	});
 
 	it('names an inviter by DID when their handle does not check out', async () => {
@@ -239,14 +248,50 @@ describe('readInvitations', () => {
 		});
 	});
 
-	it('reads no inbox yet as an empty one', async () => {
+	it('says so when their PDS has no inbox for them, which is not an empty one', async () => {
 		reader.writers.mockRejectedValue(new SpaceAccessDenied(inboxSpace(ME), '400 SpaceNotFound'));
-		expect(await readInvitations(me())).toEqual({ invitations: [], incomplete: false });
+		expect(await readInvitations(me())).toEqual({
+			invitations: [],
+			incomplete: false,
+			noInbox: true
+		});
 	});
 
 	it('does not pass an outage off as no invitations', async () => {
 		reader.writers.mockRejectedValue(new Error('503'));
-		expect(await readInvitations(me())).toEqual({ invitations: [], incomplete: true });
+		expect(await readInvitations(me())).toEqual({
+			invitations: [],
+			incomplete: true,
+			noInbox: false
+		});
+	});
+
+	it('does not wait on an inviter’s server that stalls, and says there may be more', async () => {
+		vi.useFakeTimers();
+		try {
+			reader.writers.mockResolvedValue([HOST, OTHER]);
+			reader.list.mockImplementation(({ repo }: { repo: string }) =>
+				repo === HOST
+					? Promise.resolve({ records: [invite(HOST, RKEY)], more: false })
+					: new Promise(() => {})
+			);
+			const pending = readInvitations(me());
+			await vi.advanceTimersByTimeAsync(4_000);
+			const found = await pending;
+			expect(found.invitations.map((i) => i.host)).toEqual([HOST]);
+			expect(found.incomplete).toBe(true);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('does not let an inviter hold theirs at the top with a date ahead of now', async () => {
+		theInboxHolds({
+			[HOST]: [invite(HOST, '3laaaaaaaaaaa', '2999-01-01T00:00:00.000Z')],
+			[OTHER]: [invite(OTHER, '3lbbbbbbbbbbb', new Date().toISOString())]
+		});
+		const [first] = (await readInvitations(me())).invitations;
+		expect(Date.parse(first.invitedAt)).toBeLessThanOrEqual(Date.now());
 	});
 
 	it('keeps what it read when one inviter’s server is down, and says there may be more', async () => {

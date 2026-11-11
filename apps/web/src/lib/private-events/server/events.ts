@@ -125,8 +125,12 @@ export async function savePrivateEvent(
 	}
 }
 
+const TAKE_BACK_TOGETHER = 10;
+
 /** Deleting the space ends every guest's access. Their answers stay in their own repos, unreadable.
- *  The guest list goes with the space, so it is read first to take each invitation back. */
+ *  The guest list goes with the space, so each invitation is taken back first, a few at a time. If
+ *  the list can't be read the event is still cancelled, and those invitations stay, leading to an
+ *  event nobody can open. */
 export async function cancelPrivateEvent(caller: CallerSession, rkey: string): Promise<void> {
 	requireHost(caller);
 	const space = privateEventSpace(caller.did, rkey);
@@ -136,8 +140,11 @@ export async function cancelPrivateEvent(caller: CallerSession, rkey: string): P
 				return [];
 			})
 		: [];
+	for (let i = 0; i < invited.length; i += TAKE_BACK_TOGETHER) {
+		const some = invited.slice(i, i + TAKE_BACK_TOGETHER);
+		await Promise.all(some.map((guest) => takeBackInvite(caller, guest, rkey)));
+	}
 	await write(caller, 'com.atproto.space.deleteSpace', { space }, `event ${rkey} not cancelled`);
-	await Promise.all(invited.map((guest) => takeBackInvite(caller, guest, rkey)));
 }
 
 /** As the event components take it: the record whole, its address beside it, and no image, since a

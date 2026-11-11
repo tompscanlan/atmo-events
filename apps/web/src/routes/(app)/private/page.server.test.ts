@@ -212,4 +212,26 @@ describe('/private and invitations', () => {
 		expect(body).toContain('data-testid="link-is-invitation"');
 		expect(body).toContain('Allow invitations');
 	});
+
+	it('makes the inbox again when the PDS no longer has the one this browser remembers', async () => {
+		const { SpaceAccessDenied } = await import('#lib/spaces/server/space-credential.js');
+		everyEventReads();
+		reader.writers.mockRejectedValue(new SpaceAccessDenied('at://x', '400 SpaceNotFound'));
+		const made: string[] = [];
+		const session = {
+			did: GUEST,
+			getTokenInfo: async () => ({ scope: WITH_INBOX }),
+			handle: async (pathname: string) => {
+				if (pathname.includes('createSpace')) made.push(pathname);
+				return Response.json({ spaces: [] });
+			}
+		};
+		await load({
+			locals: { session },
+			cookies: { get: () => GUEST, set: () => {}, delete: () => {} },
+			setHeaders,
+			url: new URL('https://atmo.example/private')
+		} as never);
+		expect(made).toHaveLength(1);
+	});
 });
