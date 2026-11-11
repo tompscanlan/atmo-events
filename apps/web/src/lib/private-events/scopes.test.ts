@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { GUEST_SCOPE, HOST_SCOPE, holdsGuestGrant, holdsHostGrant } from './scopes';
+import {
+	GUEST_SCOPE,
+	HOST_SCOPE,
+	guestScopes,
+	hostScopes,
+	holdsGuestGrant,
+	holdsHostGrant,
+	holdsInboxGrant,
+	holdsInviterGrant,
+	INBOX_OWNER_SCOPE,
+	INVITER_SCOPE
+} from './scopes';
 
 const DID = 'did:plc:clv7dvrmqbpocpi5mt5sfsux';
 const EVENT = 'community.lexicon.calendar.event';
@@ -41,5 +52,68 @@ describe('private event grants', () => {
 	it('does not take a grant for another space type', () => {
 		const other = GUEST_AS_GRANTED.replace('rsvp.atmo.dev.space', 'com.example.forum');
 		expect(holdsGuestGrant(`atproto ${other}`)).toBe(false);
+	});
+});
+
+// As the spaces alpha hands an inbox owner's grant back: its authority as their DID.
+const OWNER_AS_GRANTED = `space:rsvp.atmo.dev.inbox?authority=${DID}&collection=rsvp.atmo.dev.invite&action=read&manage=create`;
+
+describe('invitation inbox grants', () => {
+	it('reads an owner’s grant as a PDS hands it back', () => {
+		expect(holdsInboxGrant(`atproto ${OWNER_AS_GRANTED}`, DID)).toBe(true);
+		expect(holdsInboxGrant(`atproto ${INBOX_OWNER_SCOPE}`, DID)).toBe(true);
+	});
+
+	it('does not read a grant over someone else’s inbox as owning one', () => {
+		expect(holdsInboxGrant(`atproto ${OWNER_AS_GRANTED}`, 'did:plc:someoneelse')).toBe(false);
+	});
+
+	it('tells an owner from an inviter', () => {
+		expect(holdsInviterGrant(`atproto ${INVITER_SCOPE}`)).toBe(true);
+		expect(holdsInviterGrant(`atproto ${OWNER_AS_GRANTED}`)).toBe(false);
+		expect(holdsInboxGrant(`atproto ${INVITER_SCOPE}`, DID)).toBe(false);
+	});
+
+	it('finds neither in the private event grants of before invitations', () => {
+		const before = `atproto ${HOST_AS_GRANTED} ${GUEST_AS_GRANTED}`;
+		expect(holdsInboxGrant(before, DID)).toBe(false);
+		expect(holdsInviterGrant(before)).toBe(false);
+	});
+
+	it('finds neither in what a stock PDS leaves after dropping the grants', () => {
+		expect(holdsInboxGrant('atproto', DID)).toBe(false);
+		expect(holdsInviterGrant('atproto')).toBe(false);
+	});
+
+	it('asks a guest to let atmo make their inbox, and for no other manage right', () => {
+		const manage = guestScopes(true).flatMap((scope) =>
+			new URLSearchParams(scope.slice(scope.indexOf('?') + 1)).getAll('manage')
+		);
+		expect(manage).toEqual(['create']);
+		expect(INBOX_OWNER_SCOPE).toContain('authority=self');
+	});
+
+	it('lets an inviter write and take back invites, and read or change none', () => {
+		const grant = new URLSearchParams(INVITER_SCOPE.slice(INVITER_SCOPE.indexOf('?') + 1));
+		expect(grant.getAll('action').sort()).toEqual(['create', 'delete']);
+		expect(grant.getAll('manage')).toEqual([]);
+		expect(grant.getAll('collection')).toEqual(['rsvp.atmo.dev.invite']);
+	});
+
+	it('names a collection and an action in each, since a PDS widens a grant that names only a type', () => {
+		for (const scope of [INBOX_OWNER_SCOPE, INVITER_SCOPE]) {
+			expect(scope).toContain('collection=');
+			expect(scope).toContain('action=');
+		}
+	});
+
+	it('asks a guest for an inbox and a host for both, with what each already held', () => {
+		expect(guestScopes(true)).toEqual([GUEST_SCOPE, INBOX_OWNER_SCOPE]);
+		expect(hostScopes(true)).toEqual([HOST_SCOPE, GUEST_SCOPE, INBOX_OWNER_SCOPE, INVITER_SCOPE]);
+	});
+
+	it('asks for what it did before invitations where a deployment leaves them off', () => {
+		expect(guestScopes(false)).toEqual([GUEST_SCOPE]);
+		expect(hostScopes(false)).toEqual([HOST_SCOPE, GUEST_SCOPE]);
 	});
 });

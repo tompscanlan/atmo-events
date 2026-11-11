@@ -11,7 +11,10 @@ vi.mock('#lib/private-events/scopes.js', () => ({ holdsHostGrant: () => true }))
 vi.mock('#lib/private-events/server/caller.js', () => ({
 	callerSession: (session: unknown) => callerSession(session)
 }));
-vi.mock('#lib/private-events/server/enabled.js', () => ({ privateEventsEnabled: () => true }));
+vi.mock('#lib/private-events/server/enabled.js', () => ({
+	privateEventsEnabled: () => true,
+	invitationsEnabled: () => false
+}));
 vi.mock('#lib/private-events/server/events.js', () => ({
 	readPrivateEventForEdit: async () => ({ name: 'Dinner at the secret place' })
 }));

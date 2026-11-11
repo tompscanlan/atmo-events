@@ -485,3 +485,55 @@ describe('calls to servers other people chose', () => {
 		expect(sent).toHaveBeenCalledOnce();
 	});
 });
+
+describe('a repo’s records listed with a credential', () => {
+	const listing = (answer: () => Response) => {
+		const { holder } = network({});
+		const exchange = globalThis.fetch;
+		const lists: { url: URL; headers: Headers }[] = [];
+		vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
+			const url = new URL(String(input));
+			if (url.pathname !== '/xrpc/com.atproto.space.listRecords') return exchange(input, init);
+			lists.push({ url, headers: new Headers(init?.headers) });
+			return answer();
+		});
+		const query = { space: MEMBERS, repo: BOB, collection: 'x.y.z', limit: 2 };
+		return { lists, pending: credentialSpaceReader(holder, hosts).list(query) };
+	};
+
+	it('asks the repo’s host for that repo, signed for it, and gives each row’s key and value', async () => {
+		const { lists, pending } = listing(() =>
+			json(200, { records: [{ collection: 'x.y.z', rkey: 'a', cid: 'cid-a', value: { n: 1 } }] })
+		);
+		expect(await pending).toEqual({
+			records: [{ rkey: 'a', cid: 'cid-a', value: { n: 1 } }],
+			more: false
+		});
+		expect(lists[0].url.searchParams.get('repo')).toBe(BOB);
+		expect(lists[0].headers.get('atproto-space-audience')).toBe(BOB);
+		expect(lists[0].headers.get('authorization')).toBe(
+			`Atproto-Space-Credential ${credentialFor(VIEWER)}`
+		);
+	});
+
+	it('says there are more when the host stopped at the limit', async () => {
+		const row = (rkey: string) => ({ rkey, cid: 'c', value: {} });
+		const { pending } = listing(() => json(200, { records: [row('a'), row('b')], cursor: 'next' }));
+		expect((await pending).more).toBe(true);
+	});
+
+	it('gives no more rows than asked for, nor one key twice, whatever the host sends', async () => {
+		const row = (rkey: string) => ({ rkey, cid: 'c', value: {} });
+		const { pending } = listing(() =>
+			json(200, { records: [row('a'), row('a'), row('b'), row('c'), row('d')] })
+		);
+		expect(await pending).toEqual({ records: [row('a')], more: true });
+	});
+
+	it('drops a row with no key, and throws rather than read a refusal as none', async () => {
+		const { pending } = listing(() => json(200, { records: [{ value: { n: 1 } }, null] }));
+		expect((await pending).records).toEqual([]);
+		const refused = listing(() => json(500, { error: 'InternalServerError' }));
+		await expect(refused.pending).rejects.toBeDefined();
+	});
+});

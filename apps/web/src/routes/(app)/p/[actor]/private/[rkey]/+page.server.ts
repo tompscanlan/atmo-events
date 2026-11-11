@@ -1,10 +1,20 @@
 import { error } from '@sveltejs/kit';
 import { getActor } from '#lib/actor.js';
 import { forgetAsked, privateEventAccess } from '#lib/private-events/permissions-asked.js';
-import { holdsGuestGrant, holdsHostGrant } from '#lib/private-events/scopes.js';
+import {
+	guestScopes,
+	holdsGuestGrant,
+	holdsHostGrant,
+	hostScopes
+} from '#lib/private-events/scopes.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
-import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
+import {
+	invitationsEnabled,
+	privateEventsEnabled,
+	spacesServer
+} from '#lib/private-events/server/enabled.js';
 import { readPrivateEventPage } from '#lib/private-events/server/events.js';
+import { canInvite, ensureInbox } from '#lib/private-events/server/invites.js';
 import { parseEventDescription } from '#lib/server/event-description.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 
@@ -14,7 +24,7 @@ const EVENT_NOT_AVAILABLE =
 	"This event isn't available. It may have been cancelled, or you may not be on its guest list.";
 
 // Each step below is the same at any address, so it says nothing about whether this event exists.
-export async function load({ params, locals, cookies, setHeaders }) {
+export async function load({ params, locals, cookies, setHeaders, url }) {
 	if (!privateEventsEnabled()) error(404, 'Not found');
 	setHeaders({ 'cache-control': 'no-store' });
 	const host = await getActor(params.actor, timeLimitedNetwork());
@@ -31,12 +41,17 @@ export async function load({ params, locals, cookies, setHeaders }) {
 			...base,
 			view: 'grant' as const,
 			isHost,
+			scopes: isHost ? hostScopes(invitationsEnabled()) : guestScopes(invitationsEnabled()),
+			invitations: invitationsEnabled(),
 			did: caller.did,
 			access: privateEventAccess(cookies, caller.did),
 			spacesServer: spacesServer()
 		};
 	}
 	forgetAsked(cookies);
+	// Most people first allow private events here, from a host's link.
+	await ensureInbox(caller, cookies, url);
+
 	// Reading it asks the host's server, which learns who is asking and when. A guest was once asked
 	// to choose that first; it cost every guest a click on every event, so the read is direct.
 	const found = await readPrivateEventPage(caller, host, params.rkey).catch((e) => {
@@ -59,6 +74,7 @@ export async function load({ params, locals, cookies, setHeaders }) {
 		viewerRsvpStatus: found.viewerStatus,
 		viewerRsvpRkey: found.viewerStatus ? params.rkey : null,
 		loggedIn: true,
-		guests: found.guests
+		guests: found.guests,
+		invitesGuests: canInvite(caller)
 	};
 }

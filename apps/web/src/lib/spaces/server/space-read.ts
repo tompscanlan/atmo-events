@@ -27,11 +27,21 @@ export interface SpaceReader {
 		collection: string;
 		rkey: string;
 	}): Promise<SpaceRecord | null>;
+	/** One repo's records of a collection, as that repo's host gives them. Unlike `get`, nothing
+	 *  checks a row against the repo's key, so it is that host's word alone. Never more than `limit`
+	 *  rows nor two with one key, whatever the host sends; `more` when it had more. */
+	list(query: {
+		space: string;
+		repo: string;
+		collection: string;
+		limit: number;
+	}): Promise<{ records: Omit<SpaceRecord, 'uri'>[]; more: boolean }>;
 	/** The repos the space's authority tracks as writers: on its list, and written since. Every
 	 *  page, or a throw. */
 	writers(space: string): Promise<string[]>;
 }
 
+const LIST_RECORDS = 'com.atproto.space.listRecords';
 const LIST_REPOS = 'com.atproto.space.listRepos';
 const LIST_REPOS_LIMIT = 100;
 const MAX_WRITER_PAGES = 10;
@@ -76,6 +86,29 @@ export function credentialSpaceReader(
 			// `getRecord` returns `uri` without `collection` and `rkey`. The URI, MAC and CID are checked.
 			const { uri, cid, value } = answer.data;
 			return { uri: String(uri), cid: String(cid), rkey: query.rkey, value: asRecord(value) };
+		},
+		async list({ space, repo, collection, limit }) {
+			const answer = await ask(space, {
+				host: await hosts.repoHost(repo),
+				audience: repo,
+				nsid: LIST_RECORDS,
+				query: { space, repo, collection, limit: String(limit) }
+			});
+			if (!answer.ok) throw answerError(LIST_RECORDS, answer);
+			const rows = Array.isArray(answer.data.records) ? answer.data.records : [];
+			const byKey = new Map<string, Omit<SpaceRecord, 'uri'>>();
+			for (const row of rows.slice(0, limit)) {
+				// A row has no `uri`: its key, CID and value only.
+				const { rkey, cid, value } = asRecord(row);
+				if (typeof rkey === 'string' && !byKey.has(rkey)) {
+					byKey.set(rkey, { rkey, cid: String(cid ?? ''), value: asRecord(value) });
+				}
+			}
+			return {
+				records: [...byKey.values()],
+				more:
+					rows.length > limit || (typeof answer.data.cursor === 'string' && rows.length >= limit)
+			};
 		},
 		async writers(space) {
 			const authority = spaceAuthority(space);

@@ -1,0 +1,24 @@
+{
+	"lexicon": 1,
+	"id": "rsvp.atmo.dev.invite",
+	"defs": {
+		"main": {
+			"type": "record",
+			"key": "any",
+			"description": "For development and testing. An invitation to a private event, written by the host in their own repo in the invited person's inbox space. Its key is the event's key. Deleting it takes the invitation back.",
+			"record": {
+				"type": "object",
+				"required": ["subject", "createdAt"],
+				"properties": {
+					"subject": {
+						"type": "object",
+						"description": "The event's record in its own space.",
+						"required": ["uri"],
+						"properties": { "uri": { "type": "string" } }
+					},
+					"createdAt": { "type": "string", "format": "datetime" }
+				}
+			}
+		}
+	}
+}

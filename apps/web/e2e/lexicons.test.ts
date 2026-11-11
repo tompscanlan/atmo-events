@@ -10,10 +10,17 @@ const permissionSets = scopes
 	.map((scope) => scope.slice('include:'.length).split('?')[0]);
 
 describe('the e2e network’s lexicons', () => {
+	const read = (path: string) => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
+
 	it('publish the space type private events use, as atmo.rsvp publishes it', () => {
-		const read = (path: string) => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
 		expect(read('./lexicons/rsvp/atmo/dev/space.json')).toEqual(
 			read('../lexicons/spaces/rsvp/atmo/dev/space.json')
+		);
+	});
+
+	it('publish the invitation inbox type, which a sign-in names too', () => {
+		expect(read('./lexicons/rsvp/atmo/dev/inbox.json')).toEqual(
+			read('../lexicons/spaces/rsvp/atmo/dev/inbox.json')
 		);
 	});
 

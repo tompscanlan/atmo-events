@@ -1,0 +1,13 @@
+{
+	"lexicon": 1,
+	"id": "rsvp.atmo.dev.inbox",
+	"defs": {
+		"main": {
+			"type": "space",
+			"key": "literal:self",
+			"name": "atmo.rsvp invitations (development)",
+			"description": "For development and testing. A person's invitation inbox: hosts write invites into it, and only the person reads it.",
+			"collections": ["rsvp.atmo.dev.invite"]
+		}
+	}
+}

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ enabled: vi.fn(), beta: vi.fn() }));
 vi.mock('#lib/private-events/server/enabled.js', () => ({
 	privateEventsEnabled: mocks.enabled,
+	invitationsEnabled: () => false,
 	spacesServer: () => null
 }));
 vi.mock('#lib/private-events/server/beta.js', () => ({ privateEventsBeta: mocks.beta }));

@@ -91,6 +91,7 @@ declare global {
 			CRON_SECRET: string;
 			/** 'true' offers private events: spaces on each person's own PDS, read directly. */
 			PRIVATE_EVENTS?: string;
+			PRIVATE_EVENT_INVITATIONS?: string;
 			/** A PDS with spaces support, to point people at when theirs can't do private events. */
 			SPACES_PDS_URL?: string;
 			/** Handle or DID of the reply bot, e.g. `going.atmo.rsvp`. */
