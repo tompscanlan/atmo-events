@@ -130,8 +130,8 @@ const DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2}
  *  repo, so they are read from that inviter's server, which is all that can vouch for them: an
  *  invite counts only when it names an event of the same person who wrote it. That read tells each
  *  server that has ever written here that this person looked at their invitations, and a writer
- *  stays on the inbox's list after taking an invite back. The event itself is not read: which
- *  invitation they open, if any, stays their choice on the event's page. */
+ *  stays on the inbox's list after taking an invite back. The event itself is not read
+ *  here, so the list shows nothing of it. */
 export async function readInvitations(caller: CallerSession): Promise<Invitations> {
 	const space = inboxSpace(caller.did);
 	const reader = credentialSpaceReader(caller);
