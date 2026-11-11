@@ -12,6 +12,7 @@ const appFixture = fileURLToPath(new URL('./src/lib/meet/test-app.ts', import.me
 const publicEnvFixture = fileURLToPath(
 	new URL('./src/lib/atproto/test-env-public.ts', import.meta.url)
 );
+const envFixture = fileURLToPath(new URL('./src/lib/atproto/test-env.ts', import.meta.url));
 
 export default defineConfig({
 	plugins: [svelte(), tailwindcss()],
@@ -33,7 +34,9 @@ export default defineConfig({
 			'$app/forms': appFixture,
 			'$app/navigation': appFixture,
 			'$app/paths': appFixture,
-			'$app/env/public': publicEnvFixture
+			'$app/env/public': publicEnvFixture,
+			// After $app/env/public: an alias also matches the paths below it, and the first match wins.
+			'$app/env': envFixture
 		}
 	},
 	test: {
