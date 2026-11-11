@@ -85,10 +85,13 @@
 									})}. Anyone can send one, so open it only if you know them.</span
 								>
 							</span>
-							<!-- Built from the host's handle or DID and the event's key, not a route id. -->
+							<!-- Built from the host's handle or DID and the event's key, not a route id. No preload:
+							     loading the event asks the inviter's server, which a pointer passing over the
+							     link shouldn't do for someone who may be a stranger. -->
 							<!-- eslint-disable svelte/no-navigation-without-resolve -->
 							<a
 								href={invitation.href}
+								data-sveltekit-preload-data="off"
 								class="text-accent-600 dark:text-accent-400 shrink-0 hover:underline">See it</a
 							><!-- eslint-enable svelte/no-navigation-without-resolve -->
 						</li>

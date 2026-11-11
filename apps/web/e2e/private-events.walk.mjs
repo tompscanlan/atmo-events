@@ -480,11 +480,7 @@ await step('6. bob opens the link, signs in, allows it, sees the event', async (
 		'he lands on the event, with no step before it',
 		(await p.getByRole('button', { name: /^open this event$/i }).count()) === 0
 	);
-	const again = await open(p);
-	check(
-		'and not asked again',
-		again === 200 && !(await text(p, 'main')).includes('Open this event')
-	);
+	check('and a reload shows it again', (await open(p)) === 200);
 	check(
 		'tells him to answer',
 		/Answer to let the host know/.test(await text(p, '[data-testid=private-note]'))

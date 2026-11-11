@@ -9,9 +9,11 @@ each person turns them on in Settings.
 - `PRIVATE_EVENTS=true` turns private events on. Unset, `/private` and the event pages return 404.
 - `PRIVATE_EVENT_INVITATIONS=true` turns invitations on as well. It does nothing without the
   first. Leave it off until the inbox space type (`rsvp.atmo.dev.inbox`,
-  `lexicons/spaces/rsvp/atmo/dev/inbox.json`) is published where people's PDSes can find it: a PDS
-  refuses a whole sign-in that names a type it can't find, so with this on too early nobody could
-  allow private events at all.
+  `apps/web/lexicons/spaces/rsvp/atmo/dev/inbox.json`) is published where people's PDSes can find
+  it: a PDS refuses a whole sign-in that names a type it can't find, so with this on too early nobody could
+  allow private events at all. Turning it back off has a cost, as turning private events off does:
+  anyone who granted the invitation permissions can't be asked for a new permission until they
+  sign in again, and invites already written stay in people's inboxes.
 - `SPACES_PDS_URL`, optional: a PDS with spaces support to point people at.
 
 ## Invitations
@@ -36,7 +38,8 @@ What it can't do:
 - A PDS accepts an invite whether or not the guest has an inbox, so a host is never told it
   arrived. The guest list still says to send the link.
 - An invite written before the guest's inbox exists is never listed in it.
-- Anyone can write into an inbox. Every invite shows, by the inviter's verified handle.
+- Anyone can write into an inbox. Every invite that names an event of its own writer shows, by the
+  inviter's verified handle, unless that event is already on the person's list.
 - `/private` reads at most 50 inviters and 20 invites from each, and gives all their servers 4
   seconds together. Past any of those it says there may be more.
 
@@ -50,7 +53,8 @@ later, perhaps as a setting a person can turn on.
   An earlier version showed a page with an "Open this event" button first. A guest now lands on
   the event directly.
 - **Loading `/private`** asks each server that has ever written into the person's inbox for its
-  invites, so each learns that the person looked at their invitations, though not which one they
-  opened. A writer stays on an inbox's list after deleting their invite, and anyone can write, so a
-  stranger can cause this with one write. Not built: reading only from hosts the person already
+  invites, so each learns that the person looked at their invitations. Which one they open it
+  learns only when they follow the link, which is not preloaded on hover. A writer stays on an
+  inbox's list after deleting their invite, and anyone can write, so a stranger can cause this
+  with one write. Not built: reading only from hosts the person already
   knows, with a button to check the rest.

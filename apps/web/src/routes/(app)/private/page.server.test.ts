@@ -174,6 +174,16 @@ describe('/private and invitations', () => {
 		expect(body).toContain(`href="/p/hosthosthosthosthosthost.example.com/private/${NEW}"`);
 	});
 
+	it('does not load the event when a pointer passes over the invitation’s link', async () => {
+		everyEventReads();
+		reader.writers.mockResolvedValue([HOST]);
+		reader.list.mockResolvedValue({ records: [invite(NEW)], more: false });
+		const body = await renderedPrivatePage(WITH_INBOX);
+		expect(body).toMatch(
+			new RegExp(`<a[^>]*href="[^"]*/private/${NEW}"[^>]*data-sveltekit-preload-data="off"`)
+		);
+	});
+
 	it('shows nothing of the invited event itself, which is read only once the guest opens it', async () => {
 		everyEventReads();
 		reader.writers.mockResolvedValue([HOST]);
