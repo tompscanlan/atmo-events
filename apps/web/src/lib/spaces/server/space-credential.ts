@@ -9,13 +9,14 @@ import { createActorResolver, createDidDocumentResolver } from '@svelte-atproto/
 import { spaceRecordUri } from '../uri';
 import { fetchOtherServer, timeLimitedNetwork } from './other-servers';
 import { answerError, readXrpc, type XrpcHandle } from './xrpc';
-import { MAC_HEADER, recordCid, recordMacCheck, WANT_MAC_HEADER } from './space-mac';
+import { MAC_REQUEST_HEADER, recordCid, recordMacCheck } from './space-mac';
 
 const describeFailure = (answer: { status: number; error: string | null }) =>
 	`${answer.status}${answer.error ? ` ${answer.error}` : ''}`;
 
 const AUTH_SCHEME = 'Atproto-Space-Credential';
 export const GET_RECORD = 'com.atproto.space.getRecord';
+const AUTHORIZE_SYNC = 'com.atproto.space.authorizeSpaceSync';
 
 export interface SpaceCredential {
 	/** Never logged. */
@@ -45,7 +46,7 @@ export function isSpaceAccessDenied(e: unknown): e is SpaceAccessDenied {
 
 const DENIED: Record<string, true> = {
 	ScopeMissingError: true,
-	UserNotAuthorized: true,
+	AccountNotAuthorized: true,
 	AppNotAuthorized: true,
 	NotAuthorized: true,
 	// A PDS answers this for a refusal, and also when the authority's access check could not be
@@ -88,21 +89,18 @@ export async function exchangeSpaceCredential(
 	}
 
 	const signer = await P256Keypair.create();
-	const res = await fetchOtherServer(
-		new URL('/xrpc/com.atproto.space.getSpaceCredential', authorityHost),
-		{
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ space, credentialKid: signer.did(), delegationToken: token })
-		}
-	);
+	const res = await fetchOtherServer(new URL(`/xrpc/${AUTHORIZE_SYNC}`, authorityHost), {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ space, credentialKey: signer.did(), delegationToken: token })
+	});
 	const issued = await readXrpc(res);
 	if (!issued.ok) {
-		throw refusal(space, issued) ?? answerError('com.atproto.space.getSpaceCredential', issued);
+		throw refusal(space, issued) ?? answerError(AUTHORIZE_SYNC, issued);
 	}
 	const { credential } = issued.data;
 	if (typeof credential !== 'string') {
-		throw new Error('com.atproto.space.getSpaceCredential returned no credential');
+		throw new Error(`${AUTHORIZE_SYNC} returned no credential`);
 	}
 	return { token: credential, signer };
 }
@@ -132,9 +130,10 @@ export async function fetchWithCredential(
 	call: SpaceCall
 ): Promise<Response> {
 	const url = new URL(`/xrpc/${call.nsid}?${new URLSearchParams(call.query)}`, call.host);
-	const headers = await createSpaceSigHeaders(cred.signer, {
+	const { headers } = await createSpaceSigHeaders({
 		authorization: `${AUTH_SCHEME} ${cred.token}`,
-		audience: call.audience as Did
+		audience: call.audience as Did,
+		keypair: cred.signer
 	});
 	if (call.nsid !== GET_RECORD) return fetchOtherServer(url, { method: 'GET', headers });
 
@@ -144,7 +143,7 @@ export async function fetchWithCredential(
 		const mac = await recordMacCheck(await hosts.kemKey(repo, attempt > 0));
 		const res = await fetchOtherServer(url, {
 			method: 'GET',
-			headers: { ...headers, [WANT_MAC_HEADER]: mac.header }
+			headers: { ...headers, [MAC_REQUEST_HEADER]: mac.header }
 		});
 		if (!res.ok) return res;
 		const body = (await res.clone().json()) as { uri?: unknown; cid?: unknown; value?: unknown };
@@ -152,7 +151,7 @@ export async function fetchWithCredential(
 			throw new Error(`${GET_RECORD} at ${call.host} answered ${String(body.uri)} for ${uri}`);
 		}
 		const cid = String(body.cid ?? '');
-		if (mac.verify({ uri, cid }, res.headers.get(MAC_HEADER))) {
+		if (mac.verify({ uri, cid }, res.headers)) {
 			if ((await recordCid(body.value).catch(() => null)) !== cid) {
 				throw new Error(`${GET_RECORD} at ${call.host}: the value of ${uri} is not its CID's`);
 			}

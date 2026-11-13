@@ -27,13 +27,16 @@ export interface SpaceReader {
 		collection: string;
 		rkey: string;
 	}): Promise<SpaceRecord | null>;
-	/** The repos the space's authority tracks as writers: on its list, and written since. Every
-	 *  page, or a throw. */
+	/** The repos the space's authority tracks as writers: on its list, and written since. A repo
+	 *  taken off the writer set is listed as removed, and left out here. Every page, or a throw. */
 	writers(space: string): Promise<string[]>;
 }
 
-const LIST_REPOS = 'com.atproto.space.listRepos';
-const LIST_REPOS_LIMIT = 100;
+const LIST_WRITERS = 'com.atproto.space.listWriters';
+const LIST_WRITERS_LIMIT = 100;
+// Each entry is the repo's latest state; the other kind, `#repoRemoved`, is a repo taken off
+// the writer set. Anything else isn't counted either.
+const REPO_WRITE = 'com.atproto.space.defs#repoWrite';
 const MAX_WRITER_PAGES = 10;
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -86,24 +89,25 @@ export function credentialSpaceReader(
 				const answer = await ask(space, {
 					host,
 					audience: authority,
-					nsid: LIST_REPOS,
+					nsid: LIST_WRITERS,
 					query: {
 						space,
-						limit: String(LIST_REPOS_LIMIT),
+						limit: String(LIST_WRITERS_LIMIT),
 						...(cursor ? { cursor } : {})
 					}
 				});
-				if (!answer.ok) throw answerError(LIST_REPOS, answer);
+				if (!answer.ok) throw answerError(LIST_WRITERS, answer);
 				const repos = Array.isArray(answer.data.repos) ? answer.data.repos : [];
-				for (const repo of repos) {
-					const did = (repo as { did?: unknown } | null)?.did;
-					if (typeof did === 'string' && !dids.includes(did)) dids.push(did);
+				for (const entry of repos) {
+					const { $type, repo } = asRecord(entry);
+					if ($type !== REPO_WRITE) continue;
+					if (typeof repo === 'string' && !dids.includes(repo)) dids.push(repo);
 				}
 				const next = typeof answer.data.cursor === 'string' ? answer.data.cursor : undefined;
 				if (!next || repos.length === 0) return dids;
 				cursor = next;
 			}
-			throw new Error(`${LIST_REPOS} went past ${MAX_WRITER_PAGES} pages`);
+			throw new Error(`${LIST_WRITERS} went past ${MAX_WRITER_PAGES} pages`);
 		}
 	};
 }

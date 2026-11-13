@@ -70,9 +70,7 @@ const SIGNER_JWK = {
 /** Whether a request's signature verifies under `jwk`, with WebCrypto rather than the
  *  package that signed it, over the authorization and the audience it was sent with. */
 async function signedWith(jwk: JsonWebKey, headers: Headers): Promise<boolean> {
-	const match = /^atproto-space-credential=:([A-Za-z0-9+/=]+):$/.exec(
-		headers.get('signature') ?? ''
-	);
+	const match = /^sig=:([A-Za-z0-9+/=]+):$/.exec(headers.get('signature') ?? '');
 	if (!match) return false;
 	const signature = Uint8Array.from(atob(match[1]), (c) => c.charCodeAt(0));
 	expect(signature.length).toBe(64);
@@ -96,7 +94,7 @@ async function signedWith(jwk: JsonWebKey, headers: Headers): Promise<boolean> {
 	);
 }
 
-type ExchangeBody = { space?: unknown; credentialKid?: unknown; delegationToken?: unknown };
+type ExchangeBody = { space?: unknown; credentialKey?: unknown; delegationToken?: unknown };
 
 /** A holder's session answers `getDelegationToken` with a token naming them; the group's
  *  host exchanges it for a credential naming them and answers `getRecord`. */
@@ -104,10 +102,13 @@ function network(options: {
 	answer?: (headers: Headers) => Response | null | Promise<Response | null>;
 	delegate?: () => Response | null;
 	exchange?: () => Response | null;
+	/** `listWriters` pages, by the cursor asked with ('' for the first). */
+	writers?: Record<string, unknown>;
 }) {
 	const delegations: string[] = [];
 	const exchanges: { headers: Headers; body: ExchangeBody }[] = [];
 	const reads: { url: URL; headers: Headers }[] = [];
+	const listed: URL[] = [];
 
 	const holder: SpaceHolder = {
 		handle: async (pathname) => {
@@ -121,7 +122,7 @@ function network(options: {
 	vi.stubGlobal('fetch', async (input: URL | string, init?: RequestInit) => {
 		const url = new URL(String(input));
 		const headers = new Headers(init?.headers);
-		if (url.pathname === '/xrpc/com.atproto.space.getSpaceCredential') {
+		if (url.pathname === '/xrpc/com.atproto.space.authorizeSpaceSync') {
 			const body = JSON.parse(String(init?.body)) as ExchangeBody;
 			exchanges.push({ headers, body });
 			const refused = options.exchange?.();
@@ -139,10 +140,15 @@ function network(options: {
 				value: { n: 1 }
 			});
 		}
+		if (url.pathname === '/xrpc/com.atproto.space.listWriters') {
+			listed.push(url);
+			const page = options.writers?.[url.searchParams.get('cursor') ?? ''];
+			return json(200, page ?? { repos: [] });
+		}
 		return json(404, { error: 'NotFound' });
 	});
 
-	return { holder, delegations, exchanges, reads };
+	return { holder, delegations, exchanges, reads, listed };
 }
 
 const READ = { space: MEMBERS, repo: GROUP_DID, collection: 'x.y.z', rkey: 'self' };
@@ -164,7 +170,7 @@ describe('exchangeSpaceCredential', () => {
 		expect(cred.signer.did()).toMatch(/^did:key:zDn/);
 		expect(exchange.body).toEqual({
 			space: MEMBERS,
-			credentialKid: cred.signer.did(),
+			credentialKey: cred.signer.did(),
 			delegationToken: `delegation-${VIEWER}-1`
 		});
 		expect(exchange.headers.get('authorization')).toBeNull();
@@ -174,7 +180,7 @@ describe('exchangeSpaceCredential', () => {
 
 	it.each([
 		['the holder’s session does not read the space', 'delegate', 403, 'ScopeMissingError'],
-		['the authority does not let the holder in', 'exchange', 400, 'UserNotAuthorized'],
+		['the authority does not let the holder in', 'exchange', 400, 'AccountNotAuthorized'],
 		['the authority does not let the app in', 'exchange', 400, 'AppNotAuthorized'],
 		['the authority does not say which it refused', 'exchange', 400, 'NotAuthorized'],
 		// The spaces alpha answers this for a refusal, and when it cannot reach the access check.
@@ -221,16 +227,14 @@ describe('a read with a credential', () => {
 		made.mockRestore();
 
 		const [exchange] = net.exchanges;
-		expect(exchange.body.credentialKid).toBe(SIGNER_DID);
+		expect(exchange.body.credentialKey).toBe(SIGNER_DID);
 		const [read] = net.reads;
 		expect(read.url.origin).toBe(GROUP_HOST);
 		expect(read.headers.get('authorization')).toBe(
 			`Atproto-Space-Credential ${credentialFor(VIEWER)}`
 		);
 		expect(read.headers.get('atproto-space-audience')).toBe(GROUP_DID);
-		expect(read.headers.get('signature-input')).toBe(
-			`atproto-space-credential=${CREDENTIAL_SIG_INPUT}`
-		);
+		expect(read.headers.get('signature-input')).toBe(`sig=${CREDENTIAL_SIG_INPUT}`);
 		expect(await signedWith(SIGNER_JWK, read.headers)).toBe(true);
 		const other = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
 			'sign',
@@ -238,8 +242,8 @@ describe('a read with a credential', () => {
 		]);
 		const otherJwk = await crypto.subtle.exportKey('jwk', other.publicKey);
 		expect(await signedWith(otherJwk, read.headers)).toBe(false);
-		expect(read.headers.get('atproto-space-want-mac')).toMatch(
-			/^type="atproto-space-record", ver=1, key_share="did:key:zDn[1-9A-HJ-NP-Za-km-z]+"$/
+		expect(read.headers.get('accept-signature')).toMatch(
+			/^mac=\("atproto-space-record";sf\);keyid="did:key:zDn[1-9A-HJ-NP-Za-km-z]+";tag="atproto-space-record"$/
 		);
 	});
 });
@@ -264,7 +268,7 @@ describe('a reader holds its credentials for one request', () => {
 describe('exchanges under way', () => {
 	const read = { space: MEMBERS, repo: GROUP_DID, collection: 'x.y.z', rkey: 'self' };
 	it('reads that start together share one exchange, and a refusal reaches them all without asking again', async () => {
-		const net = network({ exchange: () => json(400, { error: 'UserNotAuthorized' }) });
+		const net = network({ exchange: () => json(400, { error: 'AccountNotAuthorized' }) });
 		const reader = credentialSpaceReader(net.holder, hosts);
 		const reads = [reader.get(read), reader.get(read), reader.writers(MEMBERS)];
 		for (const pending of reads) await expect(pending).rejects.toBeInstanceOf(SpaceAccessDenied);
@@ -288,6 +292,62 @@ describe('exchanges under way', () => {
 
 		expect(await credentialSpaceReader(holder, hosts).get(read)).toMatchObject({ value: { n: 1 } });
 		expect(net.exchanges).toHaveLength(1);
+	});
+});
+
+describe('the writers of a space', () => {
+	const WRITE = 'com.atproto.space.defs#repoWrite';
+	const REMOVED = 'com.atproto.space.defs#repoRemoved';
+	const GUEST = 'did:plc:guestguestguestguestgues';
+	const written = (repo: string, spaceRev: string) => ({
+		$type: WRITE,
+		repo,
+		repoRev: '3mwcj3b6uak2f',
+		data: { $bytes: 'AAAA' },
+		spaceRev
+	});
+
+	it('counts the repos on the writer set, and leaves out one taken off it', async () => {
+		const net = network({
+			writers: {
+				'': {
+					repos: [
+						written(BOB, '3mwcj3b6uak2a'),
+						{ $type: REMOVED, repo: GUEST, spaceRev: '3mwcj3b6uak2b' }
+					],
+					cursor: '3mwcj3b6uak2b'
+				}
+			}
+		});
+		expect(await credentialSpaceReader(net.holder, hosts).writers(MEMBERS)).toEqual([BOB]);
+		const [first] = net.listed;
+		expect(first.origin).toBe(GROUP_HOST);
+		expect(first.searchParams.get('space')).toBe(MEMBERS);
+	});
+
+	it('counts no entry that is not a write, such as the shape listRepos gave', async () => {
+		const net = network({
+			writers: { '': { repos: [{ did: BOB, rev: '3mwcj3b6uak2f' }, { repo: GUEST }] } }
+		});
+		expect(await credentialSpaceReader(net.holder, hosts).writers(MEMBERS)).toEqual([]);
+	});
+
+	it('reads every page, and counts a repo once', async () => {
+		const net = network({
+			writers: {
+				'': { repos: [written(BOB, '3mwcj3b6uak2a')], cursor: '3mwcj3b6uak2a' },
+				'3mwcj3b6uak2a': {
+					repos: [written(GUEST, '3mwcj3b6uak2c'), written(BOB, '3mwcj3b6uak2d')],
+					cursor: '3mwcj3b6uak2d'
+				}
+			}
+		});
+		expect(await credentialSpaceReader(net.holder, hosts).writers(MEMBERS)).toEqual([BOB, GUEST]);
+		expect(net.listed.map((url) => url.searchParams.get('cursor'))).toEqual([
+			null,
+			'3mwcj3b6uak2a',
+			'3mwcj3b6uak2d'
+		]);
 	});
 });
 
@@ -344,7 +404,7 @@ describe('a record read with a credential', () => {
 		const { net, pending } = readWith((headers) => recordResponse(kem, headers, record), rotated);
 		expect(await pending).toMatchObject({ uri: record.uri });
 		expect(asked).toEqual([false, true]);
-		const shares = net.reads.map((r) => r.headers.get('atproto-space-want-mac'));
+		const shares = net.reads.map((r) => r.headers.get('accept-signature'));
 		expect(shares).toHaveLength(2);
 		expect(shares[0]).not.toBe(shares[1]);
 	});
@@ -361,7 +421,7 @@ describe('calls to servers other people chose', () => {
 	const onlyExchanges = () => {
 		const exchange = globalThis.fetch;
 		vi.stubGlobal('fetch', (input: URL | string, init?: RequestInit) =>
-			String(input).includes('getSpaceCredential')
+			String(input).includes('authorizeSpaceSync')
 				? exchange(input, init)
 				: neverAnswers(input, init)
 		);

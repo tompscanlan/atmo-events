@@ -1,18 +1,20 @@
 // A repo host's side of the record MAC (../space-mac.ts), for fakes: one KEM key that
 // every fake repo publishes as `#atproto_kem`, and a record read's answer as a host gives
 // it, computed by @atproto/space as on a real host. The reader's side is checked against
-// fixed values in ../space-mac.test.ts.
+// values computed outside the package in ../space-mac.test.ts.
 import { P256Keypair } from '@atproto/crypto';
 import { parseCid } from '@atproto/lex-data';
 import {
-	computeRecordMac,
+	createRecordMacHeaders,
 	decapsulate,
-	formatMacHeader,
-	parseWantMacHeader,
-	RECORD_MAC_TYPE
+	parseMacRequest,
+	RECORD_MAC_PROFILE,
+	SpaceMacError
 } from '@atproto/space';
 
-import { MAC_HEADER, recordCid, WANT_MAC_HEADER } from '../space-mac';
+import { MAC_REQUEST_HEADER, recordCid } from '../space-mac';
+
+type AtUriString = Parameters<typeof createRecordMacHeaders>[0];
 
 export interface FakeKemHost {
 	/** The key as a did:key, what `SpaceHosts.kemKey` resolves to. */
@@ -28,11 +30,12 @@ export interface FakeKemHost {
 	): Promise<{ cid: string; headers: Record<string, string> }>;
 }
 
-function keyShareOf(request: Headers): string | null {
+function macRequestOf(request: Headers) {
 	try {
-		return parseWantMacHeader(request.get(WANT_MAC_HEADER) ?? undefined, RECORD_MAC_TYPE);
-	} catch {
-		return null;
+		return parseMacRequest(request.get(MAC_REQUEST_HEADER) ?? undefined, RECORD_MAC_PROFILE);
+	} catch (e) {
+		if (e instanceof SpaceMacError) return undefined;
+		throw e;
 	}
 }
 
@@ -43,11 +46,15 @@ export async function fakeKemHost(): Promise<FakeKemHost> {
 		did,
 		multibase: did.slice('did:key:'.length),
 		async recordAnswer(request, { uri, cid, value }): ReturnType<FakeKemHost['recordAnswer']> {
-			const keyShare = keyShareOf(request);
-			if (!keyShare) return { cid, headers: {} };
+			const asked = macRequestOf(request);
+			if (!asked) return { cid, headers: {} };
 			const real = await recordCid(value);
-			const mac = computeRecordMac(decapsulate(pair, keyShare), uri, parseCid(real));
-			return { cid: real, headers: { [MAC_HEADER]: formatMacHeader(RECORD_MAC_TYPE, mac) } };
+			const sharedSecret = decapsulate(pair, asked.keyShare);
+			const { headers } = createRecordMacHeaders(uri as AtUriString, parseCid(real), {
+				...asked,
+				sharedSecret
+			});
+			return { cid: real, headers };
 		}
 	};
 }
