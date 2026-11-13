@@ -36,7 +36,7 @@ async function renderedPrivatePage() {
 	const session = {
 		did: GUEST,
 		getTokenInfo: async () => ({ scope: GUEST_SCOPE }),
-		handle: async () => Response.json({ spaces: [{ uri: SOUND }, { uri: BROKEN }] })
+		handle: async () => Response.json({ spaces: [{ space: SOUND }, { space: BROKEN }] })
 	};
 	const data = await load({
 		locals: { session },
