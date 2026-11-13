@@ -20,6 +20,15 @@ minimumReleaseAgeExclude:
   # Runs the e2e tests' local network. Exempt so a new release can be tested as
   # soon as it is published.
   - '@openmeet/snowglobe'
+  # Lighthouse deploy branch only, not #105 (TS 2026-11-13): build the image before the 11/12
+  # spaces alpha is 24 h old (published 2026-11-12, 20:44 to 20:46 UTC). Exact versions only.
+  - '@atproto/crypto@0.0.0-spaces-alpha-20261112204144'
+  - '@atproto/lex-cbor@0.0.0-spaces-alpha-20261112204144'
+  - '@atproto/lex-data@0.0.0-spaces-alpha-20261112204144'
+  - '@atproto/lex-schema@0.0.0-spaces-alpha-20261112204144'
+  - '@atproto/space@0.0.0-spaces-alpha-20261112204144'
+  - '@atproto/star@0.0.0-spaces-alpha-20261112204144'
+  - '@atproto/syntax@0.0.0-spaces-alpha-20261112204144'
 # @atproto/space is published only as dated spaces alphas, which depend on each other
 # through caret ranges. Those ranges also match 0.0.0-stage, which sorts above every alpha
 # and was published with workspace: dependencies that cannot install. These pin the alpha's
