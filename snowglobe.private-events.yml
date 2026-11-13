@@ -9,12 +9,12 @@
 globe: atmoprivate # every name below is under atmoprivate.local.snowglobe.at
 
 pds:
-  - name: alpha # the spaces alpha; handles <name>.atmoprivate.local.snowglobe.at
-    image: ghcr.io/bluesky-social/atproto@sha256:f003adf7ca7cbb8ff60a4d99323fd009dfc1259b208f468f71accf0366ecab1e
+  - name: alpha # the spaces alpha of 11/12 (pds-b27a037c7); handles <name>.atmoprivate.local.snowglobe.at
+    image: ghcr.io/bluesky-social/atproto@sha256:1b3113b40eac2581b8f928bcec8840c8a0912c3a3d90bf3b965a775f8a97067a
     bare_handles: true
     invites: required
   - name: beta
-    image: ghcr.io/bluesky-social/atproto@sha256:f003adf7ca7cbb8ff60a4d99323fd009dfc1259b208f468f71accf0366ecab1e
+    image: ghcr.io/bluesky-social/atproto@sha256:1b3113b40eac2581b8f928bcec8840c8a0912c3a3d90bf3b965a775f8a97067a
     invites: required
   - name: regular
     image: ghcr.io/bluesky-social/pds:0.4.5037
