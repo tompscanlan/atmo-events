@@ -6,42 +6,48 @@ and the parts that live outside this repo.
 
 ## Which branch is deployed
 
-This branch, `deploy/lighthouse-private-events-2`, runs a person's private events, so people can
-try them on a globe. It is `feat/private-events-5`, the code of pull request #105, plus two commits
-of our own that never go upstream: the demo strip (`PUBLIC_NETWORK_NOTICE`) and this folder.
+This branch, `deploy/lighthouse-private-events-6`, runs a person's private events, so people can
+try them on a globe. It is `feat/private-events-4`, the code of pull request #105 (at `e56ede18`,
+on Bluesky's 11/12 spaces alpha), plus three commits of our own that never go upstream:
 
 ```
 upstream/main (flo-bit)
-  └ feat/private-events-5                private events on a person's own account
-     └ deploy/lighthouse-private-events-2  + the demo strip and this folder
+  └ feat/private-events-4                 #105: private events on a person's own account
+     └ deploy/lighthouse-private-events-6  + the demo strip (PUBLIC_NETWORK_NOTICE)
+                                           + this folder
+                                           + pnpm-workspace.yaml: the 11/12 alpha packages exempt
+                                             from pnpm's 24 h release-age wait, by exact version
 ```
+
+The last one only let the image build on the day the alpha came out. It can be dropped from the
+next rebuild: #105 keeps the wait.
 
 It has no groups code: that stack comes back on top of the private events branch later. The groups
 on a globe stay on its group host and PDS, but this build has no pages for them.
 
-It is rebuilt, not merged. A rebuild gets a new branch name, so the commit behind the last image
-stays on the fork. The settings are the network settings (`PUBLIC_PLC_URL` and the rest,
-apps/web/.env.example) plus `PRIVATE_EVENTS=true`, `SPACES_PDS_URL` and the demo strip's
-`PUBLIC_NETWORK_NOTICE` and `PUBLIC_NETWORK_NOTICE_URL`, all read when atmo starts. Two names
-changed from the pre-redesign line: `PUBLIC_JETSTREAM_URLS` is now `PUBLIC_JETSTREAM_URL` (one
-origin), and `PUBLIC_IMAGE_URL_TEMPLATE` is now `PUBLIC_CDN_URL` (the CDN's origin; atmo adds
-`/img/<preset>/plain/<did>/<cid>@<format>`).
+It is rebuilt, not merged: the three commits are cherry-picked onto #105's newest head. A rebuild
+gets a new branch name, so the commit behind the last image stays on the fork; a fix to the same
+build fast-forwards it.
 
-The space type `rsvp.atmo.calendarSpace` (apps/web/lexicons/spaces) must be published where the globe's
-PDSes look for lexicons, before anyone's first private-event permission: a failed lookup sticks
-for about 5 minutes.
+## What the globe must run
 
-Secrets are unchanged: `COOKIE_SECRET`, `CLIENT_ASSERTION_KEY` and `CRON_SECRET`
-(seal-secrets.sh). The worker's timer posts to `/api/cron` with `CRON_SECRET`, so without it
-nothing is ingested.
+- **A PDS on the same spaces alpha as #105.** #105 follows the 11/12 alpha (permissioned-data-alpha
+  `b27a037c7`) and calls its methods, so a globe whose PDS runs an older alpha breaks every private
+  event page, and an older atmo breaks on an 11/12 PDS. When the alpha moves, the PDS and atmo move
+  in one lab-infra commit. The PDS migrates its databases (on start, and per account on first open),
+  so it cannot go back by image alone: back up its `/data` first.
+- **The space type `rsvp.atmo.dev.space`** (apps/web/lexicons/spaces/rsvp/atmo/dev/space.json),
+  published where the globe's PDSes look for lexicons, before anyone's first private-event
+  permission: a failed lookup sticks for about 5 minutes. Its `title` is what the 11/12 consent
+  screen shows; without it the screen shows the type's name.
 
-The pre-redesign line, `deploy/lighthouse-prs`, is what lighthouse ran until this branch. Its
-contrail 0.12 tables are converted in place on the first start (upstream's contrail upgrade;
-apps/web/src/lib/contrail/fts-indexing.test.ts). Rehearse the move on a copy of the data volume
-before switching a globe that holds groups.
+## Settings
 
-Upstream PRs are cut separately from this line, as final-state commits on `upstream/main` (the
-groups cut is `feat/groups-pr` and `test/groups-e2e-pr`).
+The network settings (`PUBLIC_PLC_URL` and the rest, apps/web/.env.example) plus
+`PRIVATE_EVENTS=true`, `SPACES_PDS_URL` and the demo strip's `PUBLIC_NETWORK_NOTICE` and
+`PUBLIC_NETWORK_NOTICE_URL`, all read when atmo starts. Secrets: `COOKIE_SECRET`,
+`CLIENT_ASSERTION_KEY` and `CRON_SECRET` (seal-secrets.sh). The worker's timer posts to
+`/api/cron` with `CRON_SECRET`, so without it nothing is ingested.
 
 ## Build, check, push the image
 
@@ -52,7 +58,7 @@ T=$(git rev-parse --short=12 HEAD)
 docker build -q -f deploy/snowglobe/Dockerfile -t ghcr.io/openmeet-team/snowglobe-atmo:$T .
 ```
 
-Check the image offline before pushing: it should start with no network and serve its home page.
+Check the image before pushing. Offline, it should start with no network and serve its home page.
 The image has no wget or curl, so use node:
 
 ```
@@ -62,6 +68,13 @@ docker run -d --name atmo-smoke --network none -e ATMO_PUBLIC_HOST=atmo.smoke.te
 docker exec atmo-smoke node -e 'fetch("http://127.0.0.1:8787/").then(r=>console.log(r.status))'
 docker rm -f atmo-smoke
 ```
+
+Then on the globe's own settings: its pages answer, and `/oauth-client-metadata.json` (without
+`jwks`) matches the running atmo's. If it differs, a lexicon step comes first, and the PDS caches
+client metadata for about 10.5 minutes, so read a sign-in failure after a deploy only after that.
+
+A change to server-side fetches also gets a walk as a built Worker on a local globe before the
+push: vite dev allows calls a built Worker refuses.
 
 Push to ghcr. In the scratch pod, docker's default credential helper has no ghcr login, so a
 push says `denied` even after a successful login. Push with a throwaway config made from
@@ -80,27 +93,24 @@ rm -rf $DC
 The globe runs whatever digest `lab-infra` pins (git.tompscanlan.me/tompscanlan/lab-infra,
 `globes/<globe>/atmo/workload.yaml`, both containers). ArgoCD app `atmo-<globe>` syncs it from
 `main`. To deploy, change both `snowglobe-atmo@sha256:` digests to the new one, commit, and push
-`main`. This is a production deploy: an agent needs Tom's go, and the auto-mode classifier
-blocks an agent's push there even with that go, so Tom runs the push.
+`main`; a PDS move goes in the same commit (`globes/<globe>/snowglobe.yml`, then snowglobe-cloud's
+`k8s/stamp.mjs` writes `10-workloads.yaml`). This is a production deploy: an agent needs Tom's go,
+and the auto-mode classifier may block an agent's push there even with that go, so then Tom runs
+the push.
 
 Each boot applies the og image's tables (run.sh). A new D1 migration from upstream would need
 the same treatment; check `apps/web/migrations` in the merge.
 
-After the rollout, check from outside the cluster:
+After the rollout, check from outside the cluster: the pages answer, the demo strip shows, the
+demo events list, images load, and the timer's ingest runs with no failed ticks. Then sign in as
+the seeded people: `deploy/snowglobe/seed.sh <globe>` is a no-op when the globe is already seeded
+and supplies their logins to a check script. `walk.mjs` and `probe-proposal.mjs` here are from the
+groups line (group create, joins, opensocial.group cases); this build has no group pages, so they
+do not apply to it.
 
-```
-SMOKE_URL=https://atmo.<globe>.snowglobe.at SMOKE_HANDLE=bob.<globe>.snowglobe.at \
-SMOKE_OUTSIDE_HANDLE=bsky.app SMOKE_HOSTS=<globe>.snowglobe.at \
-  node apps/web/scripts/smoke.mjs        # read-only, 9 checks
-deploy/snowglobe/seed.sh <globe>          # a no-op when the globe is already seeded
-deploy/snowglobe/seed.sh <globe> walk.mjs # Deny at sign-in and mid group create; an approval-only join
-deploy/snowglobe/seed.sh <globe> probe-proposal.mjs # opensocial.group cases, puts back what it changes
-```
-
-The smoke and walk checks need Playwright; the scripts' headers say where they find it. To run
-either from a phone instead of a desktop browser, add `SMOKE_DEVICE='Pixel 7'` or
-`SEED_DEVICE='Pixel 7'` (any Playwright device name; it is still Chromium, so an Android device is
-the faithful one). This stands in for walking it on a real phone.
+The checks need Playwright; the scripts' headers say where they find it. To run one from a phone
+instead of a desktop browser, add `SEED_DEVICE='Pixel 7'` (any Playwright device name; it is still
+Chromium, so an Android device is the faithful one).
 
 ## Secrets
 
