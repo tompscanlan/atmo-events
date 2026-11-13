@@ -34,8 +34,9 @@ export interface SpaceReader {
 
 const LIST_WRITERS = 'com.atproto.space.listWriters';
 const LIST_WRITERS_LIMIT = 100;
-// Each entry is the repo's latest state; the other kind, `#repoRemoved`, is a repo taken off
-// the writer set. Anything else isn't counted either.
+// Each entry is a repo's latest state, in the order of the space's revisions; the other kind,
+// `#repoRemoved`, is a repo taken off the writer set. A repo changed while the pages are read
+// shows up again on a later page, so its last entry wins, and only a write counts.
 const REPO_WRITE = 'com.atproto.space.defs#repoWrite';
 const MAX_WRITER_PAGES = 10;
 
@@ -83,7 +84,7 @@ export function credentialSpaceReader(
 		async writers(space) {
 			const authority = spaceAuthority(space);
 			const host = await hosts.repoHost(authority);
-			const dids: string[] = [];
+			const dids = new Set<string>();
 			let cursor: string | undefined;
 			for (let page = 0; page < MAX_WRITER_PAGES; page++) {
 				const answer = await ask(space, {
@@ -100,11 +101,12 @@ export function credentialSpaceReader(
 				const repos = Array.isArray(answer.data.repos) ? answer.data.repos : [];
 				for (const entry of repos) {
 					const { $type, repo } = asRecord(entry);
-					if ($type !== REPO_WRITE) continue;
-					if (typeof repo === 'string' && !dids.includes(repo)) dids.push(repo);
+					if (typeof repo !== 'string') continue;
+					if ($type === REPO_WRITE) dids.add(repo);
+					else dids.delete(repo);
 				}
 				const next = typeof answer.data.cursor === 'string' ? answer.data.cursor : undefined;
-				if (!next || repos.length === 0) return dids;
+				if (!next || repos.length === 0) return [...dids];
 				cursor = next;
 			}
 			throw new Error(`${LIST_WRITERS} went past ${MAX_WRITER_PAGES} pages`);

@@ -49,8 +49,8 @@ const DENIED: Record<string, true> = {
 	AccountNotAuthorized: true,
 	AppNotAuthorized: true,
 	NotAuthorized: true,
-	// A PDS answers this for a refusal, and also when the authority's access check could not be
-	// reached: a reason to hide the space, never to act on it.
+	// A PDS answers this for an account it refuses, so as not to say whether the space exists: a
+	// reason to hide the space, never to act on it. A managing app it cannot reach is an outage.
 	SpaceNotFound: true,
 	// The authority deleted the space: nothing there to read, and no reason to retry.
 	SpaceDeleted: true

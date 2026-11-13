@@ -183,8 +183,8 @@ describe('exchangeSpaceCredential', () => {
 		['the authority does not let the holder in', 'exchange', 400, 'AccountNotAuthorized'],
 		['the authority does not let the app in', 'exchange', 400, 'AppNotAuthorized'],
 		['the authority does not say which it refused', 'exchange', 400, 'NotAuthorized'],
-		// The spaces alpha answers this for a refusal, and when it cannot reach the access check.
-		['the authority cannot be told from a refusal', 'exchange', 400, 'SpaceNotFound']
+		// The spaces alpha answers this for an account it refuses, so as not to say the space exists.
+		['the authority hides whether the space exists', 'exchange', 400, 'SpaceNotFound']
 	] as const)('throws SpaceAccessDenied when %s', async (_why, step, status, error) => {
 		const refusal = () => json(status, { error, message: 'refused' });
 		const net = network(step === 'delegate' ? { delegate: refusal } : { exchange: refusal });
@@ -330,6 +330,22 @@ describe('the writers of a space', () => {
 			writers: { '': { repos: [{ did: BOB, rev: '3mwcj3b6uak2f' }, { repo: GUEST }] } }
 		});
 		expect(await credentialSpaceReader(net.holder, hosts).writers(MEMBERS)).toEqual([]);
+	});
+
+	it('leaves out a repo taken off the writer set while the pages are read', async () => {
+		const net = network({
+			writers: {
+				'': { repos: [written(GUEST, '3mwcj3b6uak2a')], cursor: '3mwcj3b6uak2a' },
+				'3mwcj3b6uak2a': {
+					repos: [
+						written(BOB, '3mwcj3b6uak2b'),
+						{ $type: REMOVED, repo: GUEST, spaceRev: '3mwcj3b6uak2c' }
+					],
+					cursor: '3mwcj3b6uak2c'
+				}
+			}
+		});
+		expect(await credentialSpaceReader(net.holder, hosts).writers(MEMBERS)).toEqual([BOB]);
 	});
 
 	it('reads every page, and counts a repo once', async () => {
