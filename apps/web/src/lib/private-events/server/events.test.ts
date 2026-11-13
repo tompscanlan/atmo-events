@@ -413,8 +413,8 @@ describe('addGuest', () => {
 		await addGuest(host, { rkey: RKEY, handleOrDid: '@guest.example.com ' });
 		expect(actorToDid).toHaveBeenCalledWith('guest.example.com');
 		expect(host.sent[0]).toMatchObject({
-			pathname: '/xrpc/com.atproto.memberspace.putMember',
-			body: { space: SPACE, did: GUEST, read: true, write: true }
+			pathname: '/xrpc/com.atproto.memberspace.putMembers',
+			body: { space: SPACE, members: [{ did: GUEST, read: true, write: true }] }
 		});
 	});
 
@@ -455,8 +455,8 @@ describe('removeGuest', () => {
 		const host = caller(HOST, HOST_SCOPE);
 		await removeGuest(host, { rkey: RKEY, did: GUEST });
 		expect(host.sent[0]).toMatchObject({
-			pathname: '/xrpc/com.atproto.memberspace.removeMember',
-			body: { space: SPACE, did: GUEST }
+			pathname: '/xrpc/com.atproto.memberspace.removeMembers',
+			body: { space: SPACE, dids: [GUEST] }
 		});
 	});
 });
@@ -473,14 +473,14 @@ describe('myPrivateEvents', () => {
 		});
 		const guest = caller(GUEST, GUEST_SCOPE, {
 			'com.atproto.space.listSpaces': () =>
-				Response.json({ spaces: [{ uri: later }, { uri: KEPT_OUT }, { uri: SPACE }] })
+				Response.json({ spaces: [{ space: later }, { space: KEPT_OUT }, { space: SPACE }] })
 		});
 		const { events, incomplete } = await myPrivateEvents(guest);
 		expect(events.map((e) => e.event.rkey)).toEqual([RKEY, '3lbbbbbbbbbbb']);
 		expect(incomplete).toBe(false);
 		expect(events[0]).toMatchObject({ hosting: false, href: expect.stringContaining('/private/') });
 		expect(guest.sent[0].query.get('spaceType')).toBe('rsvp.atmo.dev.space');
-		expect(guest.sent[0].query.has('did')).toBe(false);
+		expect(guest.sent[0].query.has('spaceDid')).toBe(false);
 	});
 
 	it('asks only for their own spaces without a guest’s grant, which is all the PDS would give', async () => {
@@ -488,7 +488,7 @@ describe('myPrivateEvents', () => {
 			'com.atproto.space.listSpaces': () => Response.json({ spaces: [] })
 		});
 		await myPrivateEvents(host);
-		expect(host.sent[0].query.get('did')).toBe(HOST);
+		expect(host.sent[0].query.get('spaceDid')).toBe(HOST);
 	});
 
 	it('says the list is incomplete when an event could not be read', async () => {
@@ -499,7 +499,7 @@ describe('myPrivateEvents', () => {
 		});
 		const guest = caller(GUEST, GUEST_SCOPE, {
 			'com.atproto.space.listSpaces': () =>
-				Response.json({ spaces: [{ uri: down }, { uri: SPACE }] })
+				Response.json({ spaces: [{ space: down }, { space: SPACE }] })
 		});
 		const { events, incomplete } = await myPrivateEvents(guest);
 		expect(events).toHaveLength(1);
@@ -510,7 +510,7 @@ describe('myPrivateEvents', () => {
 		reader.get.mockResolvedValue(spaceRecord(HOST, EVENT_COLLECTION, RECORD));
 		const guest = caller(GUEST, GUEST_SCOPE, {
 			'com.atproto.space.listSpaces': () =>
-				Response.json({ spaces: [{ uri: SPACE }], cursor: 'more' })
+				Response.json({ spaces: [{ space: SPACE }], cursor: 'more' })
 		});
 		const { incomplete } = await myPrivateEvents(guest);
 		expect(guest.sent).toHaveLength(10);
@@ -528,9 +528,9 @@ describe('a write the person’s own PDS refuses', () => {
 		'com.atproto.space.deleteSpace': (nsid) => cancelPrivateEvent(host(nsid), RKEY),
 		'com.atproto.space.putRecord': (nsid) =>
 			putPrivateRsvp(refuses(GUEST, GUEST_SCOPE, nsid), HOST, answer),
-		'com.atproto.memberspace.putMember': (nsid) =>
+		'com.atproto.memberspace.putMembers': (nsid) =>
 			addGuest(host(nsid), { rkey: RKEY, handleOrDid: 'guest.example.com' }),
-		'com.atproto.memberspace.removeMember': (nsid) =>
+		'com.atproto.memberspace.removeMembers': (nsid) =>
 			removeGuest(host(nsid), { rkey: RKEY, did: GUEST })
 	};
 

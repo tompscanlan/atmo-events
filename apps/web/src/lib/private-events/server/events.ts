@@ -376,9 +376,10 @@ export async function addGuest(
 	const did = await actorToDid(actor, timeLimitedNetwork()).catch(() => null);
 	if (!did) throw new PrivateEventRefused('no-such-person');
 	if (did === caller.did) throw new PrivateEventRefused('own-event');
-	const body = { space: privateEventSpace(caller.did, input.rkey), did, read: true, write: true };
+	const space = privateEventSpace(caller.did, input.rkey);
+	const body = { space, members: [{ did, read: true, write: true }] };
 	const failed = `guest not added to ${input.rkey}`;
-	await write(caller, 'com.atproto.memberspace.putMember', body, failed);
+	await write(caller, 'com.atproto.memberspace.putMembers', body, failed);
 	return { did, handle: await verifiedHandle(did), answer: null, answerUnread: false };
 }
 
@@ -387,9 +388,9 @@ export async function removeGuest(
 	input: { rkey: string; did: string }
 ): Promise<void> {
 	requireHost(caller);
-	const body = { space: privateEventSpace(caller.did, input.rkey), did: input.did };
+	const body = { space: privateEventSpace(caller.did, input.rkey), dids: [input.did] };
 	const failed = `guest not removed from ${input.rkey}`;
-	await write(caller, 'com.atproto.memberspace.removeMember', body, failed);
+	await write(caller, 'com.atproto.memberspace.removeMembers', body, failed);
 }
 
 export interface MyPrivateEvent {
@@ -417,14 +418,14 @@ export async function myPrivateEvents(caller: CallerSession): Promise<MyPrivateE
 				spaceType: PRIVATE_CALENDAR_TYPE,
 				limit: String(LIST_LIMIT),
 				// Without a guest's grant, the PDS answers only for their own spaces.
-				...(holdsGuestGrant(caller.scope) ? {} : { did: caller.did }),
+				...(holdsGuestGrant(caller.scope) ? {} : { spaceDid: caller.did }),
 				...(cursor ? { cursor } : {})
 			}
 		});
 		const listed = Array.isArray(found.spaces) ? found.spaces : [];
 		for (const entry of listed) {
-			const uri = (entry as { uri?: unknown } | null)?.uri;
-			if (typeof uri === 'string') spaces.push(uri);
+			const space = (entry as { space?: unknown } | null)?.space;
+			if (typeof space === 'string') spaces.push(space);
 		}
 		cursor = typeof found.cursor === 'string' ? found.cursor : undefined;
 		if (!cursor || listed.length === 0) {
