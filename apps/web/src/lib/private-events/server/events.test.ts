@@ -201,7 +201,7 @@ describe('savePrivateEvent', () => {
 describe('cancelPrivateEvent', () => {
 	it('deletes the space of the caller’s own event', async () => {
 		const host = caller(HOST, HOST_SCOPE);
-		await cancelPrivateEvent(host, RKEY);
+		await cancelPrivateEvent(host, { spaceKey: RKEY, rkey: RKEY });
 		expect(host.sent[0]).toMatchObject({
 			pathname: '/xrpc/com.atproto.space.deleteSpace',
 			body: { space: SPACE }
@@ -609,7 +609,8 @@ describe('a write the person’s own PDS refuses', () => {
 	const host = (nsid: string) => refuses(HOST, HOST_SCOPE, nsid);
 	const answer = { status: 'going' as const, cid: `cid-of-${HOST}` };
 	const writes: Record<string, (nsid: string) => Promise<unknown>> = {
-		'com.atproto.space.deleteSpace': (nsid) => cancelPrivateEvent(host(nsid), RKEY),
+		'com.atproto.space.deleteSpace': (nsid) =>
+			cancelPrivateEvent(host(nsid), { spaceKey: RKEY, rkey: RKEY }),
 		'com.atproto.space.putRecord': (nsid) =>
 			putPrivateRsvp(refuses(GUEST, GUEST_SCOPE, nsid), EVENT, answer),
 		'com.atproto.memberspace.putMembers': (nsid) =>
