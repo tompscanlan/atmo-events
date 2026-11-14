@@ -141,9 +141,10 @@ beforeEach(() => {
 describe('making a shared calendar', () => {
 	it('makes a member-only space under a calendar key, then names it in the owner’s own repo there', async () => {
 		const host = owner();
-		const { key } = await createCalendar(host, { name: '  Supper club ' });
+		const { key, actor } = await createCalendar(host, { name: '  Supper club ' });
 
 		expect(key).toMatch(/^cal-[a-z2-7]{13}$/);
+		expect(actor).toBe('ownerownerownerownerowner.example.com');
 		expect(host.nsids()).toEqual([
 			'com.atproto.space.createSpace',
 			'com.atproto.space.getSpace',
@@ -677,10 +678,7 @@ describe('/private with single events and calendars', () => {
 		expect(events[0]).toMatchObject({
 			hosting: false,
 			href: `/p/ownerownerownerownerowner.example.com/calendar/${KEY}/3lfirst`,
-			calendar: {
-				name: 'Supper club',
-				href: `/p/ownerownerownerownerowner.example.com/calendar/${KEY}`
-			}
+			calendar: { name: 'Supper club', key: KEY }
 		});
 		expect(events[1].calendar).toBeUndefined();
 		expect(calendars).toEqual([

@@ -82,11 +82,11 @@ async function putName(caller: CallerSession, space: string, record: Record<stri
 	);
 }
 
-/** A new calendar of the caller's own, with only them on it. */
+/** A new calendar of the caller's own, with only them on it, and how its page names them. */
 export async function createCalendar(
 	caller: CallerSession,
 	input: { name: string }
-): Promise<{ key: string }> {
+): Promise<{ key: string; actor: string }> {
 	requireCalendarHost(caller);
 	const name = validName(input.name);
 	const key = calendarKey(tidNow());
@@ -107,7 +107,7 @@ export async function createCalendar(
 		);
 		throw e;
 	}
-	return { key };
+	return { key, actor: (await verifiedHandle(caller.did)) ?? caller.did };
 }
 
 export async function renameCalendar(
@@ -370,7 +370,7 @@ export async function myPrivateEventsAndCalendars(
 				hosting: host === caller.did,
 				hostHandle: ownerHandle,
 				href: eventPath(ownerHandle ?? host, { spaceKey: key, rkey: event.rkey }),
-				calendar: { name, href }
+				calendar: { name, key }
 			}));
 			return { summary, events };
 		})
