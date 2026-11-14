@@ -20,8 +20,8 @@
 	const CALENDAR = 'calendar';
 	type Audience = 'everyone' | typeof INVITED | typeof CALENDAR;
 	const asked = page.url.searchParams.get('audience');
-	const askedPrivate = asked === INVITED;
-	let audience = $state<Audience | null>(asked === INVITED || asked === CALENDAR ? asked : null);
+	const askedPrivate = asked === INVITED || asked === CALENDAR;
+	let audience = $state<Audience | null>(askedPrivate ? asked : null);
 	let picked = $state(page.url.searchParams.get('calendar') ?? '');
 	// The one picked, or else the first, so the picker never shows one it isn't using.
 	let calendar = $derived(
