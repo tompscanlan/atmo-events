@@ -27,10 +27,23 @@ export interface SpaceReader {
 		collection: string;
 		rkey: string;
 	}): Promise<SpaceRecord | null>;
+	/** One repo's records of one collection in the space. A listing carries no MAC, so it gives
+	 *  only their keys, and each record is then read as `get` reads it, with its URI, MAC and CID
+	 *  checked. One gone between the two is left out. Up to a limit of pages, so `capped` says
+	 *  there may be more; any failure throws, so "could not read" never passes for "none". */
+	list(query: {
+		space: string;
+		repo: string;
+		collection: string;
+	}): Promise<{ records: SpaceRecord[]; capped: boolean }>;
 	/** The repos the space's authority tracks as writers: on its list, and written since. A repo
 	 *  taken off the writer set is listed as removed, and left out here. Every page, or a throw. */
 	writers(space: string): Promise<string[]>;
 }
+
+const LIST_RECORDS = 'com.atproto.space.listRecords';
+const LIST_RECORDS_LIMIT = 100;
+const MAX_LIST_PAGES = 10;
 
 const LIST_WRITERS = 'com.atproto.space.listWriters';
 const LIST_WRITERS_LIMIT = 100;
@@ -65,21 +78,59 @@ export function credentialSpaceReader(
 		return readXrpc(await fetchWithCredential(await credential, hosts, call));
 	};
 
+	const get: SpaceReader['get'] = async (query) => {
+		const answer = await ask(query.space, {
+			host: await hosts.repoHost(query.repo),
+			audience: query.repo,
+			nsid: GET_RECORD,
+			query
+		});
+		// RecordNotFound is the only 400 that means absent. Anything else throws, so a gate
+		// fails closed rather than read "no records".
+		if (answerIsRecordNotFound(answer)) return null;
+		if (!answer.ok) throw answerError(GET_RECORD, answer);
+		// `getRecord` returns `uri` without `collection` and `rkey`. The URI, MAC and CID are checked.
+		const { uri, cid, value } = answer.data;
+		return { uri: String(uri), cid: String(cid), rkey: query.rkey, value: asRecord(value) };
+	};
+
 	return {
-		async get(query) {
-			const answer = await ask(query.space, {
-				host: await hosts.repoHost(query.repo),
-				audience: query.repo,
-				nsid: GET_RECORD,
-				query
-			});
-			// RecordNotFound is the only 400 that means absent. Anything else throws, so a gate
-			// fails closed rather than read "no records".
-			if (answerIsRecordNotFound(answer)) return null;
-			if (!answer.ok) throw answerError(GET_RECORD, answer);
-			// `getRecord` returns `uri` without `collection` and `rkey`. The URI, MAC and CID are checked.
-			const { uri, cid, value } = answer.data;
-			return { uri: String(uri), cid: String(cid), rkey: query.rkey, value: asRecord(value) };
+		get,
+		async list(query) {
+			const host = await hosts.repoHost(query.repo);
+			const rkeys = new Set<string>();
+			let cursor: string | undefined;
+			let capped = true;
+			for (let page = 0; page < MAX_LIST_PAGES; page++) {
+				const answer = await ask(query.space, {
+					host,
+					audience: query.repo,
+					nsid: LIST_RECORDS,
+					query: {
+						space: query.space,
+						repo: query.repo,
+						collection: query.collection,
+						excludeValues: 'true',
+						limit: String(LIST_RECORDS_LIMIT),
+						...(cursor ? { cursor } : {})
+					}
+				});
+				if (!answer.ok) throw answerError(LIST_RECORDS, answer);
+				const listed = Array.isArray(answer.data.records) ? answer.data.records : [];
+				for (const entry of listed) {
+					const { collection, rkey } = asRecord(entry);
+					if (collection === query.collection && typeof rkey === 'string') rkeys.add(rkey);
+				}
+				const next = typeof answer.data.cursor === 'string' ? answer.data.cursor : undefined;
+				if (!next || listed.length === 0) {
+					capped = false;
+					break;
+				}
+				if (next === cursor) throw new Error(`${LIST_RECORDS} repeated its cursor`);
+				cursor = next;
+			}
+			const found = await Promise.all([...rkeys].map((rkey) => get({ ...query, rkey })));
+			return { records: found.filter((record) => record !== null), capped };
 		},
 		async writers(space) {
 			const authority = spaceAuthority(space);
