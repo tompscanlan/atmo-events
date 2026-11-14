@@ -1,6 +1,7 @@
 // A person's private event: written to a space on their own PDS, and read directly from the PDS
 // with each person's own access, so the PDS alone decides who sees it. It never reaches the index
-// or a public URL. The event's key is the space's key, so each event has its own guest list.
+// or a public URL. A single event has a space of its own, under the event's key, so each one has
+// its own guest list.
 import * as v from '@atcute/lexicons/validations';
 import type { AttendeeInfo, FlatEventRecord } from '#lib/contrail.js';
 import { actorToDid } from '#lib/actor.js';
@@ -16,12 +17,16 @@ import { parseSpaceUri } from '#lib/spaces/uri.js';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
 import {
 	EVENT_COLLECTION,
+	eventPath,
+	eventSpace,
+	eventUri,
 	PRIVATE_CALENDAR_TYPE,
-	privateEventPath,
 	privateEventSpace,
-	privateEventUri,
 	RSVP_COLLECTION,
 	RSVP_STATUSES,
+	singleEvent,
+	type EventAddress,
+	type EventKeys,
 	type RsvpStatus
 } from '../ids';
 import { holdsGuestGrant, holdsHostGrant } from '../scopes';
@@ -74,13 +79,13 @@ function isAlreadyThere(e: unknown): boolean {
 
 /** Makes the event's space if need be, then checks it: a write into a space that was never made
  *  succeeds anyway, and one that lets everyone read would publish the event. */
-async function ensurePrivateSpace(caller: CallerSession, rkey: string): Promise<string> {
-	const space = privateEventSpace(caller.did, rkey);
+async function ensurePrivateSpace(caller: CallerSession, spaceKey: string): Promise<string> {
+	const space = privateEventSpace(caller.did, spaceKey);
 	try {
 		await xrpc(caller.handle, 'com.atproto.space.createSpace', {
 			body: {
 				spaceType: PRIVATE_CALENDAR_TYPE,
-				skey: rkey,
+				skey: spaceKey,
 				policy: { $type: 'com.atproto.memberspace.policy', publishPolicy: true }
 			}
 		});
@@ -105,18 +110,19 @@ export async function savePrivateEvent(
 	delete record.media;
 	// A PDS doesn't validate a space record at all.
 	if (!v.safeParse(eventSchema, record).ok) throw new PrivateEventRefused('not-an-event');
+	const address = singleEvent(caller.did, input.rkey);
 	try {
-		const space = await ensurePrivateSpace(caller, input.rkey);
+		const space = await ensurePrivateSpace(caller, address.spaceKey);
 		const saved = await xrpc(caller.handle, 'com.atproto.space.putRecord', {
 			body: {
 				space,
 				repo: caller.did,
 				collection: EVENT_COLLECTION,
-				rkey: input.rkey,
+				rkey: address.rkey,
 				record
 			}
 		});
-		return { uri: privateEventUri(caller.did, input.rkey), cid: String(saved.cid) };
+		return { uri: eventUri(address), cid: String(saved.cid) };
 	} catch (e) {
 		if (e instanceof PrivateEventRefused) throw e;
 		console.error(`[private-events] ${caller.did}: event ${input.rkey} not saved:`, e);
@@ -127,7 +133,7 @@ export async function savePrivateEvent(
 /** Deleting the space ends every guest's access. Their answers stay in their own repos, unreadable. */
 export async function cancelPrivateEvent(caller: CallerSession, rkey: string): Promise<void> {
 	requireHost(caller);
-	const space = privateEventSpace(caller.did, rkey);
+	const space = eventSpace(singleEvent(caller.did, rkey));
 	await write(caller, 'com.atproto.space.deleteSpace', { space }, `event ${rkey} not cancelled`);
 }
 
@@ -149,29 +155,29 @@ function flatEvent(host: string, record: SpaceRecord): FlatEventRecord | null {
 }
 
 /** Null for an event that isn't there and for a caller kept out alike, so a page can't tell one
- *  from the other. Any other failure throws, so "could not read" never passes for "none". */
+ *  from the other. Any other failure throws, so "could not read" never passes for "none". Only the
+ *  host's own record is the event. */
 async function readEvent(
 	reader: SpaceReader,
-	host: string,
-	rkey: string
+	address: EventAddress
 ): Promise<FlatEventRecord | null> {
 	try {
 		const found = await reader.get({
-			space: privateEventSpace(host, rkey),
-			repo: host,
+			space: eventSpace(address),
+			repo: address.host,
 			collection: EVENT_COLLECTION,
-			rkey
+			rkey: address.rkey
 		});
-		return found ? flatEvent(host, found) : null;
+		return found ? flatEvent(address.host, found) : null;
 	} catch (e) {
 		if (isSpaceAccessDenied(e)) return null;
 		throw e;
 	}
 }
 
-function rsvpStatus(host: string, rkey: string, value: Record<string, unknown>): RsvpStatus | null {
+function rsvpStatus(address: EventAddress, value: Record<string, unknown>): RsvpStatus | null {
 	const subject = value.subject as { uri?: unknown } | undefined;
-	if (subject?.uri !== privateEventUri(host, rkey)) return null;
+	if (subject?.uri !== eventUri(address)) return null;
 	return RSVP_STATUSES.find((s) => value.status === `${RSVP_COLLECTION}#${s}`) ?? null;
 }
 
@@ -226,14 +232,14 @@ async function listMembers(caller: CallerSession, space: string): Promise<string
  *  they answer again, so they see no answer of theirs until they do. */
 export async function readPrivateEventPage(
 	caller: CallerSession,
-	host: string,
-	rkey: string
+	address: EventAddress
 ): Promise<PrivateEventPage | null> {
+	const { host, rkey } = address;
 	const reader = credentialSpaceReader(caller);
-	const event = await readEvent(reader, host, rkey);
+	const event = await readEvent(reader, address);
 	if (!event) return null;
 
-	const space = privateEventSpace(host, rkey);
+	const space = eventSpace(address);
 	const writers = await reader.writers(space).catch((e) => {
 		console.error(`[private-events] ${host}: writers of ${rkey} unread for ${caller.did}:`, e);
 		return null;
@@ -252,7 +258,7 @@ export async function readPrivateEventPage(
 					unread.add(did);
 					return null;
 				});
-			const status = found ? rsvpStatus(host, rkey, found.value) : null;
+			const status = found ? rsvpStatus(address, found.value) : null;
 			if (!status) return;
 			answers.set(did, status);
 			if (did === caller.did) viewerStatus = status;
@@ -297,13 +303,13 @@ export async function readPrivateEventPage(
 	};
 }
 
-/** The event as stored, for its edit page; null when absent. */
+/** The caller's own event as stored, for its edit page; null when absent. */
 export async function readPrivateEventForEdit(
 	caller: CallerSession,
-	rkey: string
+	keys: EventKeys
 ): Promise<FlatEventRecord | null> {
 	requireHost(caller);
-	return readEvent(credentialSpaceReader(caller), caller.did, rkey);
+	return readEvent(credentialSpaceReader(caller), { ...keys, host: caller.did });
 }
 
 function requireAccess(caller: CallerSession, host: string): void {
@@ -312,12 +318,12 @@ function requireAccess(caller: CallerSession, host: string): void {
 	if (!held) throw new PrivateEventRefused('no-grant');
 }
 
-function ownRsvp(caller: CallerSession, host: string, rkey: string) {
+function ownRsvp(caller: CallerSession, address: EventAddress) {
 	return {
-		space: privateEventSpace(host, rkey),
+		space: eventSpace(address),
 		repo: caller.did,
 		collection: RSVP_COLLECTION,
-		rkey
+		rkey: address.rkey
 	};
 }
 
@@ -327,12 +333,13 @@ function ownRsvp(caller: CallerSession, host: string, rkey: string) {
  *  they never saw. */
 export async function putPrivateRsvp(
 	caller: CallerSession,
-	host: string,
-	input: { rkey: string; status: RsvpStatus; cid: string | null }
+	address: EventAddress,
+	input: { status: RsvpStatus; cid: string | null }
 ): Promise<void> {
+	const { host, rkey } = address;
 	requireAccess(caller, host);
-	const event = await readEvent(credentialSpaceReader(caller), host, input.rkey).catch((e) => {
-		console.error(`[private-events] ${host}: event ${input.rkey} unread for ${caller.did}:`, e);
+	const event = await readEvent(credentialSpaceReader(caller), address).catch((e) => {
+		console.error(`[private-events] ${host}: event ${rkey} unread for ${caller.did}:`, e);
 		throw new PrivateEventRefused('unchecked');
 	});
 	if (!event?.cid) throw new PrivateEventRefused('no-event');
@@ -340,22 +347,22 @@ export async function putPrivateRsvp(
 	const record = {
 		$type: RSVP_COLLECTION,
 		status: `${RSVP_COLLECTION}#${input.status}`,
-		subject: { uri: privateEventUri(host, input.rkey), cid: event.cid },
+		subject: { uri: eventUri(address), cid: event.cid },
 		createdAt: new Date().toISOString()
 	};
-	const body = { ...ownRsvp(caller, host, input.rkey), record };
-	await write(caller, 'com.atproto.space.putRecord', body, `answer to ${input.rkey} not saved`);
+	const body = { ...ownRsvp(caller, address), record };
+	await write(caller, 'com.atproto.space.putRecord', body, `answer to ${rkey} not saved`);
 }
 
 export async function deletePrivateRsvp(
 	caller: CallerSession,
-	host: string,
-	rkey: string
+	address: EventAddress
 ): Promise<void> {
+	const { host, rkey } = address;
 	requireAccess(caller, host);
 	try {
 		await xrpc(caller.handle, 'com.atproto.space.deleteRecord', {
-			body: ownRsvp(caller, host, rkey)
+			body: ownRsvp(caller, address)
 		});
 	} catch (e) {
 		if (isRecordNotFound(e)) return;
@@ -376,7 +383,7 @@ export async function addGuest(
 	const did = await actorToDid(actor, timeLimitedNetwork()).catch(() => null);
 	if (!did) throw new PrivateEventRefused('no-such-person');
 	if (did === caller.did) throw new PrivateEventRefused('own-event');
-	const space = privateEventSpace(caller.did, input.rkey);
+	const space = eventSpace(singleEvent(caller.did, input.rkey));
 	const body = { space, members: [{ did, read: true, write: true }] };
 	const failed = `guest not added to ${input.rkey}`;
 	await write(caller, 'com.atproto.memberspace.putMembers', body, failed);
@@ -388,7 +395,7 @@ export async function removeGuest(
 	input: { rkey: string; did: string }
 ): Promise<void> {
 	requireHost(caller);
-	const body = { space: privateEventSpace(caller.did, input.rkey), dids: [input.did] };
+	const body = { space: eventSpace(singleEvent(caller.did, input.rkey)), dids: [input.did] };
 	const failed = `guest not removed from ${input.rkey}`;
 	await write(caller, 'com.atproto.memberspace.removeMembers', body, failed);
 }
@@ -440,7 +447,8 @@ export async function myPrivateEvents(caller: CallerSession): Promise<MyPrivateE
 		spaces.map(async (uri): Promise<MyPrivateEvent | null> => {
 			const parsed = parseSpaceUri(uri);
 			if (!parsed) return null;
-			const event = await readEvent(reader, parsed.authority, parsed.key).catch((e) => {
+			const address = singleEvent(parsed.authority, parsed.key);
+			const event = await readEvent(reader, address).catch((e) => {
 				console.info(`[private-events] ${uri} unread for ${caller.did}:`, e);
 				unread++;
 				return null;
@@ -451,7 +459,7 @@ export async function myPrivateEvents(caller: CallerSession): Promise<MyPrivateE
 				event,
 				hosting: parsed.authority === caller.did,
 				hostHandle,
-				href: privateEventPath(hostHandle ?? parsed.authority, parsed.key)
+				href: eventPath(hostHandle ?? parsed.authority, address)
 			};
 		})
 	);

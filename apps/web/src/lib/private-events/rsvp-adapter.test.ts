@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { RSVP_COLLECTION } from './ids';
+import { RSVP_COLLECTION, singleEvent } from './ids';
 
 const { invalidateAll, rsvpToPrivateEvent } = vi.hoisted(() => ({
 	invalidateAll: vi.fn(async () => {}),
@@ -22,7 +22,7 @@ const answer = (cid: string) => ({
 	rkey: '3lzzzzzzzzzzz',
 	record: { status: `${RSVP_COLLECTION}#going`, subject: { uri: 'at://x', cid } }
 });
-const adapter = () => createPrivateRsvpAdapter(HOST, '3lzzzzzzzzzzz', viewer as never);
+const adapter = () => createPrivateRsvpAdapter(singleEvent(HOST, '3lzzzzzzzzzzz'), viewer as never);
 
 beforeEach(() => {
 	invalidateAll.mockClear();
