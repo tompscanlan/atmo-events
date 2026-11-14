@@ -348,6 +348,20 @@ describe('readPrivateEventPage', () => {
 		const page = await readPrivateEventPage(host, EVENT);
 		expect(page?.answersUnread).toBe(false);
 		expect(page?.guests).toMatchObject([{ did: GUEST, answer: null, answerUnread: false }]);
+		expect(page?.guestsCapped).toBe(false);
+	});
+
+	it('shows the host the guests it listed, and that there may be more, past the page limit', async () => {
+		theSpaceHolds({});
+		reader.writers.mockResolvedValue([]);
+		let listed = 0;
+		const host = caller(HOST, HOST_SCOPE, {
+			'com.atproto.memberspace.listMembers': () =>
+				Response.json({ members: [{ did: `did:plc:guest${listed++}` }], cursor: 'more' })
+		});
+		const page = await readPrivateEventPage(host, EVENT);
+		expect(page?.guestsCapped).toBe(true);
+		expect(page?.guests).toHaveLength(10);
 	});
 
 	it('shows no image, which would hand a public CDN the host’s DID', async () => {

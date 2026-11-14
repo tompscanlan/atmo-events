@@ -44,7 +44,7 @@
 				</p>
 			{/if}
 			{#if data.guests}
-				<GuestList rkey={data.rkey} guests={data.guests} />
+				<GuestList rkey={data.rkey} guests={data.guests} capped={data.guestsCapped} />
 			{:else}
 				<p class="text-base-600 dark:text-base-400 text-sm" data-testid="private-note">
 					Private event. Only people the host added can see it.

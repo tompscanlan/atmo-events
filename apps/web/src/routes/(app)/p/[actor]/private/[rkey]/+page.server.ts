@@ -60,6 +60,7 @@ export async function load({ params, locals, cookies, setHeaders }) {
 		viewerRsvpStatus: found.viewerStatus,
 		viewerRsvpRkey: found.viewerStatus ? params.rkey : null,
 		loggedIn: true,
-		guests: found.guests
+		guests: found.guests,
+		guestsCapped: found.guestsCapped
 	};
 }

@@ -260,6 +260,8 @@ export interface PrivateEventPage {
 	answersUnread: boolean;
 	/** The host's own view of who was added; null for anyone else. */
 	guests: Guest[] | null;
+	/** The host's list stopped at the page limit, so there may be more guests than these. */
+	guestsCapped: boolean;
 }
 
 const LIST_LIMIT = 100;
@@ -285,12 +287,6 @@ export async function memberPages(
 		if (!cursor || members.length === 0) return { dids, capped: false };
 	}
 	return { dids, capped: true };
-}
-
-async function listMembers(caller: CallerSession, space: string): Promise<string[]> {
-	const { dids, capped } = await memberPages(caller, space);
-	if (capped) throw new Error(`com.atproto.memberspace.listMembers went past ${MAX_PAGES} pages`);
-	return dids;
 }
 
 /** Null when the caller may not see it. An answer counts only from someone the PDS tracks as a
@@ -342,10 +338,12 @@ export async function readPrivateEventPage(
 	);
 
 	let guests: Guest[] | null = null;
+	let guestsCapped = false;
 	if (caller.did === host) {
-		const members = await listMembers(caller, space);
+		const members = await memberPages(caller, space);
+		guestsCapped = members.capped;
 		guests = await Promise.all(
-			members.map(async (did) => ({
+			members.dids.map(async (did) => ({
 				did,
 				handle: await verifiedHandle(did),
 				answer: answers.get(did) ?? null,
@@ -365,7 +363,8 @@ export async function readPrivateEventPage(
 		},
 		viewerStatus,
 		answersUnread: writers === null || unread.size > 0,
-		guests
+		guests,
+		guestsCapped
 	};
 }
 

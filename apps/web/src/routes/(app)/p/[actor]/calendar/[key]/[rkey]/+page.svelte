@@ -64,6 +64,7 @@
 			{#if data.guests}
 				<CalendarEventGuests
 					guests={data.guests}
+					capped={data.guestsCapped}
 					{actor}
 					calendarKey={data.calendar.key}
 					{calendarName}

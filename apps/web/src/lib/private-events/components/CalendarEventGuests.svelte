@@ -13,8 +13,15 @@
 		guests,
 		actor,
 		calendarKey,
-		calendarName
-	}: { guests: Guest[]; actor: string; calendarKey: string; calendarName: string } = $props();
+		calendarName,
+		capped = false
+	}: {
+		guests: Guest[];
+		actor: string;
+		calendarKey: string;
+		calendarName: string;
+		capped?: boolean;
+	} = $props();
 
 	function answerWords(guest: Guest): string {
 		if (guest.answer) return ANSWER_WORDS[guest.answer];
@@ -46,5 +53,10 @@
 				</li>
 			{/each}
 		</ul>
+	{/if}
+	{#if capped}
+		<p class="text-base-600 dark:text-base-400 mt-2 text-sm" role="status">
+			There may be more people on it than these.
+		</p>
 	{/if}
 </section>
