@@ -1,19 +1,29 @@
 // What a person's own sign-in needs for private events, asked for when they first host or open one
 // and never at sign-in, since most servers can't grant it yet. Values and pure checks only, so the
 // OAuth config can import them.
-import { EVENT_COLLECTION, PRIVATE_CALENDAR_TYPE, RSVP_COLLECTION } from './ids';
+import {
+	CALENDAR_COLLECTION,
+	EVENT_COLLECTION,
+	PRIVATE_CALENDAR_TYPE,
+	RSVP_COLLECTION
+} from './ids';
 
 const RECORD_ACTIONS = 'action=read&action=create&action=update&action=delete';
 
 /** Their own events and their own answers to them, and managing each event's space. */
 export const HOST_SCOPE = `space:${PRIVATE_CALENDAR_TYPE}?authority=self&collection=${EVENT_COLLECTION}&collection=${RSVP_COLLECTION}&${RECORD_ACTIONS}&manage=create&manage=update&manage=delete`;
 
+/** The names of their own shared calendars. Its own scope, beside the host's, so the host's stays as
+ *  it was: a person's sign-in asks again for every scope it asked for before, and refuses one that
+ *  atmo no longer declares. */
+export const CALENDAR_SCOPE = `space:${PRIVATE_CALENDAR_TYPE}?authority=self&collection=${CALENDAR_COLLECTION}&${RECORD_ACTIONS}`;
+
 /** Reading any private event that lets them in, and their own answer to it. No manage rights: a
  *  guest is never asked to let atmo run spaces on their behalf. */
 export const GUEST_SCOPE = `space:${PRIVATE_CALENDAR_TYPE}?authority=*&collection=${RSVP_COLLECTION}&${RECORD_ACTIONS}`;
 
 /** A host may also be someone else's guest, and a new grant must not cost them the other. */
-export const HOST_SCOPES: readonly string[] = [HOST_SCOPE, GUEST_SCOPE];
+export const HOST_SCOPES: readonly string[] = [HOST_SCOPE, CALENDAR_SCOPE, GUEST_SCOPE];
 export const GUEST_SCOPES: readonly string[] = [GUEST_SCOPE];
 export const PRIVATE_EVENT_SCOPES: readonly string[] = HOST_SCOPES;
 
@@ -48,6 +58,20 @@ export function holdsHostGrant(scope: string, did: string): boolean {
 			allowsRecords(grant, RSVP_COLLECTION)
 		);
 	});
+}
+
+/** Hosting, and naming their own shared calendars. Asked for only when they make or rename one, so
+ *  someone who hosted events before calendars came is not asked again just to host. */
+export function holdsCalendarGrant(scope: string, did: string): boolean {
+	return (
+		holdsHostGrant(scope, did) &&
+		calendarGrants(scope).some((grant) => {
+			const authority = grant.get('authority') ?? 'self';
+			return (
+				(authority === 'self' || authority === did) && allowsRecords(grant, CALENDAR_COLLECTION)
+			);
+		})
+	);
 }
 
 export function holdsGuestGrant(scope: string): boolean {
