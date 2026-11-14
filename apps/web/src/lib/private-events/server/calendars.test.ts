@@ -699,12 +699,14 @@ describe('/private with single events and calendars', () => {
 		expect(incomplete).toBe(true);
 	});
 
-	it('says the list is incomplete when a calendar had more events than it lists', async () => {
+	it('says a calendar had more events than it lists, without calling any unread', async () => {
 		theCalendarHolds({ name: { name: 'Supper club' }, events: {}, capped: true });
 		const member = caller(MEMBER, GUEST_SCOPE, {
 			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SPACE }] })
 		});
-		expect((await myPrivateEventsAndCalendars(member)).incomplete).toBe(true);
+		const listed = await myPrivateEventsAndCalendars(member);
+		expect(listed.capped).toBe(true);
+		expect(listed.incomplete).toBe(false);
 	});
 });
 

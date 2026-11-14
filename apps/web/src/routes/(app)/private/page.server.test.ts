@@ -141,7 +141,7 @@ describe('/private and the beta', () => {
 describe('/private with shared calendars', () => {
 	const CALENDAR = privateEventSpace(HOST, 'cal-3lcalcalcalcal');
 
-	async function rendered(scope: string, did = GUEST) {
+	async function rendered(scope: string, did = GUEST, capped = false) {
 		reader.get.mockImplementation(
 			async ({ space, collection }: { space: string; collection: string }) => {
 				if (space === CALENDAR && collection === CALENDAR_COLLECTION) {
@@ -175,7 +175,7 @@ describe('/private with shared calendars', () => {
 							}
 						]
 					: [],
-			capped: false
+			capped: space === CALENDAR && capped
 		}));
 		const session = {
 			did,
@@ -199,6 +199,13 @@ describe('/private with shared calendars', () => {
 		expect(body).toMatch(
 			/Private to\s*<a href="\/p\/[^"]+\/calendar\/cal-3lcalcalcalcal"[^>]*>Supper club</
 		);
+	});
+
+	it('says when a calendar has more events than it lists, without asking to try again', async () => {
+		const body = await rendered(GUEST_SCOPE, GUEST, true);
+		expect(body).toContain('data-testid="private-events-capped"');
+		expect(body).not.toContain('data-testid="private-events-incomplete"');
+		expect(body).toContain('Supper');
 	});
 
 	it('has no calendar section with the beta off, though the events are listed', async () => {

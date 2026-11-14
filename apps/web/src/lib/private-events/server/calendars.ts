@@ -333,7 +333,10 @@ export async function ownCalendars(caller: CallerSession): Promise<MyCalendar[]>
 export interface MyPrivateEventsAndCalendars {
 	events: MyPrivateEvent[];
 	calendars: MyCalendar[];
+	/** Something couldn't be read just now, so there may be more than these. */
 	incomplete: boolean;
+	/** A calendar has more events than one listing returns, so there may be more than these. */
+	capped: boolean;
 }
 
 /** /private: single events and events on calendars together, soonest first, and the calendars. A
@@ -344,6 +347,7 @@ export async function myPrivateEventsAndCalendars(
 	const single = await myPrivateEvents(caller);
 	const reader = credentialSpaceReader(caller);
 	let incomplete = single.incomplete;
+	let capped = false;
 	const read = await Promise.all(
 		single.calendars.map(async ({ host, key }) => {
 			const calendar = await readCalendar(reader, host, key).catch((e) => {
@@ -352,7 +356,7 @@ export async function myPrivateEventsAndCalendars(
 				return null;
 			});
 			if (!calendar) return null;
-			if (calendar.capped) incomplete = true;
+			if (calendar.capped) capped = true;
 			const ownerHandle = await verifiedHandle(host);
 			const href = calendarPath(ownerHandle ?? host, key);
 			const name = calendar.name;
@@ -380,6 +384,7 @@ export async function myPrivateEventsAndCalendars(
 			(a, b) => Date.parse(a.event.startsAt) - Date.parse(b.event.startsAt)
 		),
 		calendars: found.map((calendar) => calendar.summary),
-		incomplete
+		incomplete,
+		capped
 	};
 }
