@@ -727,4 +727,14 @@ describe('the owner’s own calendars, to put an event on', () => {
 		]);
 		expect(host.sent[0].query.get('spaceDid')).toBe(OWNER);
 	});
+
+	it('keeps one whose name could not be read, untitled, so a page that names it finds it', async () => {
+		reader.get.mockRejectedValue(new Error('timed out'));
+		const host = owner({
+			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SPACE }] })
+		});
+		expect(await ownCalendars(host)).toEqual([
+			expect.objectContaining({ key: KEY, name: null, owning: true })
+		]);
+	});
 });

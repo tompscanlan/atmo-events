@@ -298,7 +298,8 @@ export interface MyCalendar {
 	href: string;
 }
 
-/** The caller's own calendars, for choosing one to put an event on. Any not read are left out. */
+/** The caller's own calendars, for choosing one to put an event on. One whose name can't be read
+ *  is still listed, untitled, so a page that names it finds it. */
 export async function ownCalendars(caller: CallerSession): Promise<MyCalendar[]> {
 	requireHost(caller);
 	const { spaces } = await listedSpaces(caller, true);
@@ -308,16 +309,15 @@ export async function ownCalendars(caller: CallerSession): Promise<MyCalendar[]>
 		.map((parsed) => parsed!.key);
 	const reader = credentialSpaceReader(caller);
 	const ownerHandle = await verifiedHandle(caller.did);
-	const calendars = await Promise.all(
+	return Promise.all(
 		keys.map(async (key) => {
 			const space = privateEventSpace(caller.did, key);
 			const named = await reader
 				.get({ space, repo: caller.did, collection: CALENDAR_COLLECTION, rkey: CALENDAR_RKEY })
 				.catch((e) => {
 					console.info(`[private-events] the name of ${space} unread:`, e);
-					return undefined;
+					return null;
 				});
-			if (named === undefined) return null;
 			return {
 				key,
 				host: caller.did,
@@ -328,7 +328,6 @@ export async function ownCalendars(caller: CallerSession): Promise<MyCalendar[]>
 			};
 		})
 	);
-	return calendars.filter((calendar) => calendar !== null);
 }
 
 export interface MyPrivateEventsAndCalendars {
