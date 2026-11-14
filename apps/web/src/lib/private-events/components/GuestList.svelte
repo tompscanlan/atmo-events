@@ -12,7 +12,11 @@
 		notgoing: 'Not going'
 	};
 
-	let { rkey, guests }: { rkey: string; guests: Guest[] } = $props();
+	let {
+		rkey,
+		guests,
+		capped = false
+	}: { rkey: string; guests: Guest[]; capped?: boolean } = $props();
 
 	let handle = $state('');
 	let busy = $state(false);
@@ -102,5 +106,10 @@
 				</li>
 			{/each}
 		</ul>
+	{/if}
+	{#if capped}
+		<p class="text-base-600 dark:text-base-400 mt-2 text-sm" role="status">
+			There may be more guests than these.
+		</p>
 	{/if}
 </section>

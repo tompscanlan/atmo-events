@@ -38,7 +38,7 @@ vi.mock('#lib/atproto/auth.svelte.js', () => ({
 }));
 
 /** The event's page as its load returns it: for a guest, or with the host's view of the people. */
-function eventView(guests: unknown = null) {
+function eventView(guests: unknown = null, guestsCapped = false) {
 	return {
 		pageTitle: 'Dinner',
 		view: 'event',
@@ -61,7 +61,8 @@ function eventView(guests: unknown = null) {
 		viewerRsvpStatus: null,
 		viewerRsvpRkey: null,
 		loggedIn: true,
-		guests
+		guests,
+		guestsCapped
 	};
 }
 
@@ -109,6 +110,15 @@ describe('an event on a shared calendar', () => {
 		await expect.poll(() => shownText('calendar-guests')).toContain('guest.example.com Going');
 		expect(page.getByRole('textbox').elements()).toHaveLength(0);
 		expect(page.getByRole('button', { name: 'Remove' }).elements()).toHaveLength(0);
+	});
+
+	it('tells the host when there may be more people on the calendar than it lists', async () => {
+		mocks.user.did = HOST;
+		const guests = [{ did: GUEST, handle: 'guest.example.com', answer: null, answerUnread: false }];
+		render(EventPage, { data: eventView(guests, true) } as never);
+		await expect
+			.poll(() => shownText('calendar-guests'))
+			.toContain('There may be more people on it than these.');
 	});
 
 	it('sends its host to this event’s own editor on the calendar', async () => {
