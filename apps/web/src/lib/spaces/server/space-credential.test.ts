@@ -104,6 +104,10 @@ function network(options: {
 	exchange?: () => Response | null;
 	/** `listWriters` pages, by the cursor asked with ('' for the first). */
 	writers?: Record<string, unknown>;
+	/** `listRecords` pages, by the cursor asked with ('' for the first). */
+	records?: Record<string, unknown>;
+	/** Keys `getRecord` answers RecordNotFound for. */
+	missing?: string[];
 }) {
 	const delegations: string[] = [];
 	const exchanges: { headers: Headers; body: ExchangeBody }[] = [];
@@ -133,12 +137,20 @@ function network(options: {
 		if (url.pathname === '/xrpc/com.atproto.space.getRecord') {
 			reads.push({ url, headers });
 			const q = url.searchParams;
+			if (options.missing?.includes(q.get('rkey')!)) {
+				return json(400, { error: 'RecordNotFound' });
+			}
 			const overridden = await options.answer?.(headers);
 			if (overridden) return overridden;
 			return recordResponse(kem, headers, {
 				uri: spaceRecordUri(q.get('space')!, q.get('repo')!, q.get('collection')!, q.get('rkey')!),
 				value: { n: 1 }
 			});
+		}
+		if (url.pathname === '/xrpc/com.atproto.space.listRecords') {
+			listed.push(url);
+			const page = options.records?.[url.searchParams.get('cursor') ?? ''];
+			return page === undefined ? json(500, { error: 'InternalServerError' }) : json(200, page);
 		}
 		if (url.pathname === '/xrpc/com.atproto.space.listWriters') {
 			listed.push(url);
@@ -364,6 +376,93 @@ describe('the writers of a space', () => {
 			'3mwcj3b6uak2a',
 			'3mwcj3b6uak2d'
 		]);
+	});
+});
+
+describe('the records a repo holds in a space', () => {
+	const LIST = { space: MEMBERS, repo: GROUP_DID, collection: 'x.y.z' };
+	const path = (rkey: string, value?: unknown) => ({
+		collection: 'x.y.z',
+		rkey,
+		cid: 'bafylisted',
+		...(value === undefined ? {} : { value })
+	});
+
+	it('lists only their keys, then reads each one with its MAC and CID checked', async () => {
+		const net = network({ records: { '': { records: [path('a'), path('b')] } } });
+		const { records, capped } = await credentialSpaceReader(net.holder, hosts).list(LIST);
+		expect(records.map((r) => r.rkey)).toEqual(['a', 'b']);
+		expect(records[0]).toMatchObject({ uri: `${MEMBERS}/${GROUP_DID}/x.y.z/a`, value: { n: 1 } });
+		expect(capped).toBe(false);
+		const [listing] = net.listed;
+		expect(listing.origin).toBe(GROUP_HOST);
+		expect(listing.searchParams.get('excludeValues')).toBe('true');
+		expect(listing.searchParams.get('collection')).toBe('x.y.z');
+		expect(listing.searchParams.get('repo')).toBe(GROUP_DID);
+		expect(net.reads.map((r) => r.url.searchParams.get('rkey'))).toEqual(['a', 'b']);
+		expect(net.reads.every((r) => r.headers.has('accept-signature'))).toBe(true);
+		expect(net.exchanges).toHaveLength(1);
+	});
+
+	it('never takes a value a listing carries, which has no MAC', async () => {
+		const net = network({ records: { '': { records: [path('a', { n: 'forged' })] } } });
+		const { records } = await credentialSpaceReader(net.holder, hosts).list(LIST);
+		expect(records[0].value).toEqual({ n: 1 });
+	});
+
+	it('never returns a listed record whose MAC does not verify', async () => {
+		const other = await fakeKemHost();
+		const net = network({
+			records: { '': { records: [path('a')] } },
+			answer: (headers) =>
+				recordResponse(other, headers, { uri: `${MEMBERS}/${GROUP_DID}/x.y.z/a`, value: { n: 1 } })
+		});
+		await expect(credentialSpaceReader(net.holder, hosts).list(LIST)).rejects.toThrow();
+	});
+
+	it('leaves out a record gone between the listing and the read', async () => {
+		const net = network({ records: { '': { records: [path('a'), path('b')] } }, missing: ['a'] });
+		const { records } = await credentialSpaceReader(net.holder, hosts).list(LIST);
+		expect(records.map((r) => r.rkey)).toEqual(['b']);
+	});
+
+	it('leaves out what another collection holds', async () => {
+		const net = network({
+			records: { '': { records: [path('a'), { ...path('b'), collection: 'x.y.other' }] } }
+		});
+		const { records } = await credentialSpaceReader(net.holder, hosts).list(LIST);
+		expect(records.map((r) => r.rkey)).toEqual(['a']);
+	});
+
+	it('reads every page', async () => {
+		const net = network({
+			records: {
+				'': { records: [path('a')], cursor: 'c1' },
+				c1: { records: [path('b')], cursor: 'c2' },
+				c2: { records: [] }
+			}
+		});
+		const { records, capped } = await credentialSpaceReader(net.holder, hosts).list(LIST);
+		expect(records.map((r) => r.rkey)).toEqual(['a', 'b']);
+		expect(capped).toBe(false);
+		expect(net.listed.map((url) => url.searchParams.get('cursor'))).toEqual([null, 'c1', 'c2']);
+	});
+
+	it('stops at its page limit and says there may be more', async () => {
+		const pages: Record<string, unknown> = {};
+		for (let i = 0; i < 12; i++) {
+			pages[i === 0 ? '' : `c${i}`] = { records: [path(`k${i}`)], cursor: `c${i + 1}` };
+		}
+		const net = network({ records: pages });
+		const { records, capped } = await credentialSpaceReader(net.holder, hosts).list(LIST);
+		expect(net.listed).toHaveLength(10);
+		expect(records).toHaveLength(10);
+		expect(capped).toBe(true);
+	});
+
+	it('throws when a listing fails, rather than read none', async () => {
+		const net = network({ records: {} });
+		await expect(credentialSpaceReader(net.holder, hosts).list(LIST)).rejects.toThrow();
 	});
 });
 
