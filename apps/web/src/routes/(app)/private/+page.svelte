@@ -67,6 +67,15 @@
 				again shortly.
 			</p>
 		{/if}
+		{#if data.capped}
+			<p
+				class="text-base-600 dark:text-base-400 mt-4 text-sm"
+				role="status"
+				data-testid="private-events-capped"
+			>
+				A shared calendar has more events than this page lists, so there may be more than these.
+			</p>
+		{/if}
 		{#if data.events.length > 0}
 			<ul class="mt-6 space-y-3" data-testid="private-events">
 				{#each data.events as item (item.href)}
