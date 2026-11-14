@@ -1,12 +1,27 @@
 <script lang="ts">
+	import { Icon } from '@atmo-dev/kit';
 	import { EventCard } from '@atmo-dev/kit/events';
+	import { LockKeyhole } from '@sketchyicons/svelte';
 	import { resolve } from '$app/paths';
 	import { BETA_WARNING } from '#lib/private-events/beta.js';
+	import NewCalendarForm from '#lib/private-events/components/NewCalendarForm.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
-	import { GUEST_SCOPES } from '#lib/private-events/scopes.js';
+	import { UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
+	import { GUEST_SCOPES, HOST_SCOPES } from '#lib/private-events/scopes.js';
 
 	let { data } = $props();
 </script>
+
+{#snippet privateTo(name: string | null, actor: string, key: string)}
+	<span class="inline-flex items-center gap-1" data-testid="private-to">
+		<Icon img={LockKeyhole} size={12} />
+		Private to
+		<a
+			href={resolve('/(app)/p/[actor]/calendar/[key]', { actor, key })}
+			class="text-accent-600 dark:text-accent-400 hover:underline">{name ?? UNTITLED_CALENDAR}</a
+		>
+	</span>
+{/snippet}
 
 {#snippet linkIsTheInvitation()}
 	<p class="text-base-600 dark:text-base-400 mt-4 text-sm" data-testid="link-is-invitation">
@@ -59,11 +74,59 @@
 						<EventCard event={item.event} href={item.href} />
 						<p class="text-base-600 dark:text-base-400 mt-1 text-xs">
 							{item.hosting ? 'You are hosting' : `Hosted by ${item.hostHandle ?? item.event.did}`}
+							{#if item.calendar}
+								<span aria-hidden="true">·</span>
+								{@render privateTo(
+									item.calendar.name,
+									item.hostHandle ?? item.event.did,
+									item.calendar.key
+								)}
+							{/if}
 						</p>
 					</li>
 				{/each}
 			</ul>
 		{/if}
 		{@render linkIsTheInvitation()}
+	{/if}
+	{#if data.beta}
+		<section class="mt-10" data-testid="shared-calendars">
+			<h2 class="text-base-900 dark:text-base-50 text-lg font-semibold">Shared calendars</h2>
+			<p class="text-base-600 dark:text-base-400 mt-1 text-sm">
+				A shared calendar keeps a list of people. Everyone on it sees every event you put on it,
+				past and future.
+			</p>
+			{#if data.calendars.length > 0}
+				<ul class="mt-3 space-y-2" data-testid="calendar-list">
+					{#each data.calendars as calendar (calendar.href)}
+						{@const actor = calendar.ownerHandle ?? calendar.host}
+						<li class="text-sm" data-calendar={calendar.key}>
+							<a
+								href={resolve('/(app)/p/[actor]/calendar/[key]', { actor, key: calendar.key })}
+								class="text-base-900 dark:text-base-50 font-medium hover:underline"
+								>{calendar.name ?? UNTITLED_CALENDAR}</a
+							>
+							<span class="text-base-600 dark:text-base-400 block text-xs">
+								{calendar.owning ? 'Your calendar' : `Owned by ${actor}`}
+								<span aria-hidden="true">·</span>
+								{@render privateTo(calendar.name, actor, calendar.key)}
+							</span>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if data.calendarAccess === 'ready'}
+				<NewCalendarForm />
+			{:else if data.calendarAccess}
+				<PrivateEventAccessNotice
+					access={data.calendarAccess}
+					did={data.did}
+					scopes={HOST_SCOPES}
+					purpose="A shared calendar is kept on your own server. atmo needs your permission to make it there, keep its name and its list of people, and put your events on it."
+					label="Allow atmo to make shared calendars"
+					spacesServer={data.spacesServer}
+				/>
+			{/if}
+		</section>
 	{/if}
 </div>
