@@ -86,6 +86,27 @@ describe('choosing a shared calendar on /create', () => {
 			.element(page.getByRole('combobox', { name: 'Calendar' }))
 			.toHaveValue('cal-3lbrunch');
 	});
+
+	it('picks nothing when the calendar named is not one of theirs, and says so', async () => {
+		at('?audience=calendar&calendar=cal-3lgone');
+		render(CreatePage, { data: data() } as never);
+		await expect.element(page.getByTestId('calendar-missing')).toBeVisible();
+		const picker = page.getByRole('combobox', { name: 'Calendar' });
+		await expect.element(picker).toHaveValue('');
+		expect(page.getByRole('button', { name: /^publish/i }).elements()).toHaveLength(0);
+		await picker.selectOptions('cal-3lbrunch');
+		await expect.element(picker).toHaveValue('cal-3lbrunch');
+		await expect.element(page.getByRole('button', { name: /^publish/i })).toBeVisible();
+		expect(page.getByTestId('calendar-missing').elements()).toHaveLength(0);
+	});
+
+	it('offers no editor when a calendar is named and none of theirs could be read', async () => {
+		at('?audience=calendar&calendar=cal-3lsupper');
+		render(CreatePage, { data: data([]) } as never);
+		await expect.element(page.getByTestId('calendar-missing')).toBeVisible();
+		expect(page.getByRole('combobox').elements()).toHaveLength(0);
+		expect(page.getByRole('button', { name: /^publish/i }).elements()).toHaveLength(0);
+	});
 });
 
 describe('coming back from the permission step', () => {

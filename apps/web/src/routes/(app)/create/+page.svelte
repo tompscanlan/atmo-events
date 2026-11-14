@@ -23,12 +23,16 @@
 	const askedPrivate = asked === INVITED || asked === CALENDAR;
 	let audience = $state<Audience | null>(askedPrivate ? asked : null);
 	let picked = $state(page.url.searchParams.get('calendar') ?? '');
-	// The one picked, or else the first, so the picker never shows one it isn't using.
+	// The first when none is named, so the picker never shows one it isn't using. One named but not
+	// among the host's picks nothing: an event goes only to the people the host chose.
 	let calendar = $derived(
-		data.calendars.find((c) => c.key === picked)?.key ?? data.calendars[0]?.key ?? null
+		picked === ''
+			? (data.calendars[0]?.key ?? null)
+			: (data.calendars.find((c) => c.key === picked)?.key ?? null)
 	);
 	let invited = $derived(data.privateEvents && audience === INVITED);
 	let onCalendar = $derived(data.privateEvents && audience === CALENDAR && calendar !== null);
+	let calendarMissing = $derived(data.privateEvents && audience === CALENDAR && calendar === null);
 	// With private events off, the editor is the public one, so a link that asked for a private
 	// audience gets no editor at all: what someone meant to keep private must never be posted publicly.
 	let chosen = $derived(
@@ -112,15 +116,25 @@
 					>
 				{/if}
 			</ToggleGroup>
-			{#if onCalendar}
+			{#if calendarMissing}
+				<p class="text-base-700 dark:text-base-300 mt-3 text-sm" data-testid="calendar-missing">
+					That calendar isn't among yours just now, so no calendar is picked.
+					{#if data.calendars.length > 0}Pick one below, or reload to try again.{:else}Reload to try
+						again.{/if}
+				</p>
+			{/if}
+			{#if audience === CALENDAR && data.calendars.length > 0}
 				<label class="text-base-700 dark:text-base-300 mt-3 flex items-center gap-2 text-sm">
 					Calendar
 					<select
 						name="calendar"
-						value={calendar}
+						value={calendar ?? ''}
 						onchange={(event) => (picked = event.currentTarget.value)}
 						class="border-base-300 dark:border-base-700 bg-base-50 dark:bg-base-900 rounded-lg border px-2 py-1.5 text-sm"
 					>
+						{#if calendar === null}
+							<option value="" disabled>Pick a calendar</option>
+						{/if}
 						{#each data.calendars as option (option.key)}
 							<option value={option.key}>{option.name ?? UNTITLED_CALENDAR}</option>
 						{/each}
