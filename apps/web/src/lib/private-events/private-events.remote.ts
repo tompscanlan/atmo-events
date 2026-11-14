@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { command, getRequestEvent, query } from '$app/server';
 import * as v from 'valibot';
-import { RSVP_STATUSES } from './ids';
+import { RSVP_STATUSES, singleEvent } from './ids';
 import { asCaller } from './server/command';
 import { privateEventsBetaOn } from './beta';
 import { BetaNotSaved, canSaveBeta, readBetaRecord, saveBeta } from './server/beta';
@@ -34,12 +34,13 @@ export const rsvpToPrivateEvent = command(
 		status: v.picklist(RSVP_STATUSES),
 		cid: v.nullable(v.string())
 	}),
-	({ host, ...input }) => asCaller((caller) => putPrivateRsvp(caller, host, input))
+	({ host, rkey, ...input }) =>
+		asCaller((caller) => putPrivateRsvp(caller, singleEvent(host, rkey), input))
 );
 
 export const cancelPrivateRsvp = command(
 	v.object({ host: didSchema, rkey: rkeySchema }),
-	({ host, rkey }) => asCaller((caller) => deletePrivateRsvp(caller, host, rkey))
+	({ host, rkey }) => asCaller((caller) => deletePrivateRsvp(caller, singleEvent(host, rkey)))
 );
 
 export const addGuest = command(

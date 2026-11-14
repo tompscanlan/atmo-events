@@ -6,7 +6,13 @@ import {
 	type EditorViewer
 } from '#lib/components/editor/adapter.js';
 import { spaceRecordUri } from '#lib/spaces/uri.js';
-import { privateEventSpace, RSVP_COLLECTION, RSVP_STATUSES, type RsvpStatus } from './ids';
+import {
+	eventSpace,
+	RSVP_COLLECTION,
+	RSVP_STATUSES,
+	type EventAddress,
+	type RsvpStatus
+} from './ids';
 import { cancelPrivateRsvp, rsvpToPrivateEvent } from './private-events.remote';
 
 const isRefusal = (e: unknown) => (e as { status?: unknown } | null)?.status === 409;
@@ -21,10 +27,10 @@ function nothingElse(): never {
  *  version this page holds until the page has the new one. The page's own key for it is ignored,
  *  since the event's is the RSVP's. */
 export function createPrivateRsvpAdapter(
-	host: string,
-	rkey: string,
+	address: EventAddress,
 	viewer: EditorViewer
 ): EditorAdapter {
+	const { host, rkey } = address;
 	return {
 		...createInAppAdapter({ viewer }),
 		// The kit sends Edit to the public event's editor unless told otherwise. That editor can't
@@ -46,7 +52,7 @@ export function createPrivateRsvpAdapter(
 				throw e;
 			});
 			return {
-				uri: spaceRecordUri(privateEventSpace(host, rkey), viewer.did ?? '', collection, rkey)
+				uri: spaceRecordUri(eventSpace(address), viewer.did ?? '', collection, rkey)
 			};
 		},
 		async deleteRecord({ collection }) {

@@ -16,7 +16,8 @@ export async function load({ params, locals, setHeaders }) {
 	if (!host || caller?.did !== host || !holdsHostGrant(caller.scope, caller.did)) {
 		error(404, EVENT_NOT_AVAILABLE);
 	}
-	const eventData = await readPrivateEventForEdit(caller, params.rkey).catch((e) => {
+	const keys = { spaceKey: params.rkey, rkey: params.rkey };
+	const eventData = await readPrivateEventForEdit(caller, keys).catch((e) => {
 		console.error(`[private-events] ${host}: event ${params.rkey} unread for its edit page:`, e);
 		error(503, 'This event could not be read right now. Try again shortly.');
 	});
