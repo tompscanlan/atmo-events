@@ -36,15 +36,22 @@ vi.mock('#lib/atproto/auth.svelte.js', () => ({
 	authorizeMeetings: vi.fn()
 }));
 
-/** The page's data, as its load returns it for a host with private events on, or off. */
-function data(privateEvents = true) {
+const CALENDARS = [
+	{ key: 'cal-3lsupper', name: 'Supper club' },
+	{ key: 'cal-3lbrunch', name: 'Brunch club' }
+];
+const CHOICE = 'Only the people on one of your shared calendars';
+
+/** The page's data, as its load returns it for a host with the beta on, or with it off. */
+function data(calendars = CALENDARS, privateEvents = true) {
 	return {
 		pageTitle: 'Create Event',
 		actorDid: mocks.user.did,
 		rkey: '3knewevent',
 		privateEvents,
 		hostAccess: null,
-		spacesServer: null
+		spacesServer: null,
+		calendars: privateEvents ? calendars : []
 	};
 }
 
@@ -53,6 +60,33 @@ function at(search: string) {
 }
 
 afterEach(() => at(''));
+
+describe('choosing a shared calendar on /create', () => {
+	it('is a third choice, private to the people on a calendar, for a host who has one', async () => {
+		render(CreatePage, { data: data() } as never);
+		await expect.element(page.getByRole('radio', { name: CHOICE })).toBeVisible();
+		expect(page.getByRole('combobox').elements()).toHaveLength(0);
+		await page.getByRole('radio', { name: CHOICE }).click();
+		const picker = page.getByRole('combobox', { name: 'Calendar' });
+		await expect.element(picker).toHaveValue('cal-3lsupper');
+		await expect.element(page.getByRole('button', { name: /^publish/i })).toBeVisible();
+	});
+
+	it('is not offered to a host with no calendar', async () => {
+		render(CreatePage, { data: data([]) } as never);
+		await expect.element(page.getByRole('radio', { name: 'Everyone' })).toBeVisible();
+		expect(page.getByRole('radio', { name: CHOICE }).elements()).toHaveLength(0);
+	});
+
+	it('comes from a calendar’s page with that calendar picked', async () => {
+		at('?audience=calendar&calendar=cal-3lbrunch');
+		render(CreatePage, { data: data() } as never);
+		await expect.element(page.getByRole('radio', { name: CHOICE })).toBeChecked();
+		await expect
+			.element(page.getByRole('combobox', { name: 'Calendar' }))
+			.toHaveValue('cal-3lbrunch');
+	});
+});
 
 describe('coming back from the permission step', () => {
 	it('has invited people picked, with the editor ready', async () => {
@@ -66,19 +100,22 @@ describe('coming back from the permission step', () => {
 // Private events read as off when someone turned the beta off, or when the setting couldn't be read
 // in time. The editor is then the public one, and a public post can't be taken back.
 describe('a link that asks for a private audience, while private events are off', () => {
-	it('shows no editor, only how to turn them on', async () => {
-		at('?audience=invited');
-		render(CreatePage, { data: data(false) } as never);
-		await expect.element(page.getByTestId('private-off')).toBeVisible();
-		await expect
-			.element(page.getByTestId('private-off').getByRole('link', { name: 'Settings' }))
-			.toHaveAttribute('href', '/settings');
-		expect(page.getByRole('button', { name: /^publish/i }).elements()).toHaveLength(0);
-		expect(page.getByRole('radio').elements()).toHaveLength(0);
-	});
+	it.each([['invited people', '?audience=invited']])(
+		'for %s shows no editor, only how to turn them on',
+		async (_, search) => {
+			at(search);
+			render(CreatePage, { data: data(CALENDARS, false) } as never);
+			await expect.element(page.getByTestId('private-off')).toBeVisible();
+			await expect
+				.element(page.getByTestId('private-off').getByRole('link', { name: 'Settings' }))
+				.toHaveAttribute('href', '/settings');
+			expect(page.getByRole('button', { name: /^publish/i }).elements()).toHaveLength(0);
+			expect(page.getByRole('radio').elements()).toHaveLength(0);
+		}
+	);
 
 	it('leaves a plain /create as it was: the public editor, with no choice to make', async () => {
-		render(CreatePage, { data: data(false) } as never);
+		render(CreatePage, { data: data(CALENDARS, false) } as never);
 		await expect.element(page.getByRole('button', { name: /^publish/i })).toBeVisible();
 		expect(page.getByTestId('private-off').elements()).toHaveLength(0);
 	});

@@ -110,7 +110,7 @@
 						label: 'Private events',
 						icon: LockKeyhole,
 						href: '/private',
-						active: path === '/private' || /\/p\/[^/]+\/private\//.test(path)
+						active: path === '/private' || /\/p\/[^/]+\/(private|calendar)\//.test(path)
 					}
 				]
 			: []),

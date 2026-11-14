@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import '../../../app.css';
 import PrivatePage from './+page.svelte';
+
+// Making a calendar goes through a SvelteKit remote function, which a browser test has no server for.
+vi.mock('#lib/private-events/private-events.remote', () => ({ createCalendar: vi.fn() }));
 
 const base = { pageTitle: 'Private events', did: 'did:plc:person', spacesServer: null };
 

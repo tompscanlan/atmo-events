@@ -500,7 +500,7 @@ export interface MyPrivateEvent {
 	hostHandle: string | null;
 	href: string;
 	/** The shared calendar it is on, with its name, null when it has none; absent for a single event. */
-	calendar?: { name: string | null; href: string };
+	calendar?: { name: string | null; key: string };
 }
 
 export interface MyPrivateEvents {
