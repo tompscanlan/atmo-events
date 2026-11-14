@@ -100,19 +100,19 @@ describe('coming back from the permission step', () => {
 // Private events read as off when someone turned the beta off, or when the setting couldn't be read
 // in time. The editor is then the public one, and a public post can't be taken back.
 describe('a link that asks for a private audience, while private events are off', () => {
-	it.each([['invited people', '?audience=invited']])(
-		'for %s shows no editor, only how to turn them on',
-		async (_, search) => {
-			at(search);
-			render(CreatePage, { data: data(CALENDARS, false) } as never);
-			await expect.element(page.getByTestId('private-off')).toBeVisible();
-			await expect
-				.element(page.getByTestId('private-off').getByRole('link', { name: 'Settings' }))
-				.toHaveAttribute('href', '/settings');
-			expect(page.getByRole('button', { name: /^publish/i }).elements()).toHaveLength(0);
-			expect(page.getByRole('radio').elements()).toHaveLength(0);
-		}
-	);
+	it.each([
+		['a shared calendar', '?audience=calendar&calendar=cal-3lsupper'],
+		['invited people', '?audience=invited']
+	])('for %s shows no editor, only how to turn them on', async (_, search) => {
+		at(search);
+		render(CreatePage, { data: data(CALENDARS, false) } as never);
+		await expect.element(page.getByTestId('private-off')).toBeVisible();
+		await expect
+			.element(page.getByTestId('private-off').getByRole('link', { name: 'Settings' }))
+			.toHaveAttribute('href', '/settings');
+		expect(page.getByRole('button', { name: /^publish/i }).elements()).toHaveLength(0);
+		expect(page.getByRole('radio').elements()).toHaveLength(0);
+	});
 
 	it('leaves a plain /create as it was: the public editor, with no choice to make', async () => {
 		render(CreatePage, { data: data(CALENDARS, false) } as never);
