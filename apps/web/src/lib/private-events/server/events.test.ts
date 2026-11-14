@@ -474,6 +474,15 @@ describe('addGuest', () => {
 		).rejects.toMatchObject({ reason: 'no-grant' });
 		expect(guest.sent).toHaveLength(0);
 	});
+
+	it('refuses a calendar’s key, whose people change only on the calendar, and calls nothing', async () => {
+		actorToDid.mockResolvedValue(GUEST);
+		const host = caller(HOST, HOST_SCOPE);
+		await expect(
+			addGuest(host, { rkey: 'cal-3lsupper', handleOrDid: 'guest.example.com' })
+		).rejects.toMatchObject({ reason: 'no-event' });
+		expect(host.sent).toHaveLength(0);
+	});
 });
 
 describe('removeGuest', () => {
@@ -484,6 +493,14 @@ describe('removeGuest', () => {
 			pathname: '/xrpc/com.atproto.memberspace.removeMembers',
 			body: { space: SPACE, dids: [GUEST] }
 		});
+	});
+
+	it('refuses a calendar’s key, whose people change only on the calendar, and calls nothing', async () => {
+		const host = caller(HOST, HOST_SCOPE);
+		await expect(removeGuest(host, { rkey: 'cal-3lsupper', did: GUEST })).rejects.toMatchObject({
+			reason: 'no-event'
+		});
+		expect(host.sent).toHaveLength(0);
 	});
 });
 

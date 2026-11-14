@@ -444,6 +444,8 @@ export async function addGuest(
 	input: { rkey: string; handleOrDid: string }
 ): Promise<Guest> {
 	requireHost(caller);
+	// A calendar's people are changed on the calendar, never through one of its keys as an event's.
+	if (isCalendarKey(input.rkey)) throw new PrivateEventRefused('no-event');
 	const actor = input.handleOrDid.trim().replace(/^@/, '');
 	const did = await actorToDid(actor, timeLimitedNetwork()).catch(() => null);
 	if (!did) throw new PrivateEventRefused('no-such-person');
@@ -460,6 +462,7 @@ export async function removeGuest(
 	input: { rkey: string; did: string }
 ): Promise<void> {
 	requireHost(caller);
+	if (isCalendarKey(input.rkey)) throw new PrivateEventRefused('no-event');
 	const body = { space: eventSpace(singleEvent(caller.did, input.rkey)), dids: [input.did] };
 	const failed = `guest not removed from ${input.rkey}`;
 	await write(caller, 'com.atproto.memberspace.removeMembers', body, failed);
