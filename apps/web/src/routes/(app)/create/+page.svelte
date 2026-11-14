@@ -5,6 +5,7 @@
 	import { user } from '#lib/atproto/auth.svelte.js';
 	import { createInAppAdapter } from '#lib/components/editor/adapter.js';
 	import { readPendingImportPrefill } from '#lib/components/CreateEventModal.svelte';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { createPrivateEventAdapter } from '#lib/private-events/editor-adapter.js';
@@ -15,11 +16,14 @@
 	// No default where there's a choice: a public post can't be taken back. Coming back from the
 	// permission step, the choice is already made.
 	const INVITED = 'invited';
-	let audience = $state<'everyone' | typeof INVITED | null>(
-		page.url.searchParams.get('audience') === INVITED ? INVITED : null
-	);
+	const askedPrivate = page.url.searchParams.get('audience') === INVITED;
+	let audience = $state<'everyone' | typeof INVITED | null>(askedPrivate ? INVITED : null);
 	let invited = $derived(data.privateEvents && audience === INVITED);
-	let chosen = $derived(!data.privateEvents || audience === 'everyone' || invited);
+	// With private events off, the editor is the public one, so a link that asked for a private
+	// audience gets no editor at all: what someone meant to keep private must never be posted publicly.
+	let chosen = $derived(
+		(!data.privateEvents && !askedPrivate) || audience === 'everyone' || invited
+	);
 
 	let viewer = $derived({
 		isLoggedIn: user.isLoggedIn,
@@ -113,6 +117,17 @@
 				/>
 			{/if}
 		</div>
+	</div>
+{:else if askedPrivate}
+	<div class="px-6 pt-12" data-testid="private-off">
+		<p class="text-base-700 dark:text-base-300 mx-auto max-w-3xl text-sm">
+			Private events are off for you right now, so this page can't make a private event. Turn on
+			private events in
+			<a
+				href={resolve('/(app)/settings')}
+				class="text-accent-600 dark:text-accent-400 hover:underline">Settings</a
+			>, or reload to try again.
+		</p>
 	</div>
 {/if}
 
