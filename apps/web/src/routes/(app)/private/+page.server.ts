@@ -29,14 +29,25 @@ export async function load({ locals, cookies, setHeaders }) {
 			events: null,
 			calendars: [],
 			incomplete: false,
+			capped: false,
 			access: privateEventAccess(cookies, caller.did),
 			spacesServer: spacesServer()
 		};
 	}
 	forgetAsked(cookies);
-	const { events, calendars, incomplete } = await myPrivateEventsAndCalendars(caller).catch((e) => {
-		console.error(`[private-events] ${caller.did}: private events unread:`, e);
-		error(503, 'Your private events could not be read right now. Try again shortly.');
-	});
-	return { ...base, events, calendars, incomplete, access: null, spacesServer: spacesServer() };
+	const { events, calendars, incomplete, capped } = await myPrivateEventsAndCalendars(caller).catch(
+		(e) => {
+			console.error(`[private-events] ${caller.did}: private events unread:`, e);
+			error(503, 'Your private events could not be read right now. Try again shortly.');
+		}
+	);
+	return {
+		...base,
+		events,
+		calendars,
+		incomplete,
+		capped,
+		access: null,
+		spacesServer: spacesServer()
+	};
 }
