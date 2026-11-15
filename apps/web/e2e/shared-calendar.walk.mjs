@@ -1,5 +1,6 @@
 // A shared calendar through atmo's real pages, with real OAuth at real spaces PDSes: one list of people
-// and several private events. One browser context per person. After each step the state is read from
+// and several private events. Then a single private event whose host names its guests, which makes
+// them a shared calendar where they are. One browser context per person. After each step the state is read from
 // the PDSes with password sessions, not trusted from the page. Prints statuses, never a password.
 // It can run on a network an earlier walk used: every name is new each run.
 //
@@ -215,10 +216,17 @@ const EVENT_1 = `Soup night ${RUN}`;
 const EVENT_2 = `Pie night ${RUN}`;
 const CRAFTED = `Crafted by someone on it ${RUN}`;
 const PUBLIC_NAME = `Public control ${RUN}`;
+const SINGLE_NAME = `Book club ${RUN}`;
+const NAMED_AT_ONCE = `Board games ${RUN}`;
+const EVENT_3 = `Book night ${RUN}`;
+const EVENT_4 = `Second book night ${RUN}`;
+const EVENT_5 = `Game night ${RUN}`;
 const CALENDAR_NOT_AVAILABLE = "This calendar isn't available";
 const EVENT_NOT_AVAILABLE = "This event isn't available";
 
 let KEY, SPACE, CAL_PATH, RKEY_1, RKEY_2, EVENT_1_PATH, EVENT_2_PATH;
+// The single event whose guests become a calendar: its key is its space's.
+let RKEY_3, SPACE_3, EVENT_3_PATH, RKEY_4, EVENT_4_PATH, RKEY_5, SPACE_5;
 let REMOTE = null;
 
 const peopleOnIt = async () => {
@@ -226,11 +234,11 @@ const peopleOnIt = async () => {
 	if (r.status !== 200) throw new Error(`listMembers: ${r.status}`);
 	return r.data.members.map((m) => m.did);
 };
-/** What a repo holds of one collection in the calendar's space. */
-const inSpace = async (name, collection) => {
+/** What a repo holds of one collection in the calendar's space, or another. */
+const inSpace = async (name, collection, space = SPACE) => {
 	const c = C[name];
 	const r = await c.call('com.atproto.space.listRecords', {
-		space: SPACE,
+		space,
 		repo: c.did,
 		collection
 	});
@@ -249,10 +257,10 @@ const betaOn = async (name) => {
 };
 /** The people alice's server shows everyone on the calendar, as records in her repo there. */
 const publishedOnIt = async () => (await inSpace('alice', MEMBER)).map((r) => r.rkey);
-const ownRsvp = async (name, rkey) => {
+const ownRsvp = async (name, rkey, space = SPACE) => {
 	const c = C[name];
 	const r = await c.call('com.atproto.space.getRecord', {
-		space: SPACE,
+		space,
 		repo: c.did,
 		collection: RSVP,
 		rkey
@@ -351,7 +359,7 @@ const addPerson = async (page, who) => {
 };
 const peopleAlert = (page) => text(page, '[data-testid=calendar-people] [role=alert]');
 /** Fills in the editor the way a person does, then publishes, and returns the event's address. */
-const publishEvent = async (page, name) => {
+const publishEvent = async (page, name, lands = new RegExp(`/calendar/${KEY}/[^/]+$`)) => {
 	await page.locator('main [contenteditable=true]').first().waitFor({ timeout: 30000 });
 	await page.locator('main [contenteditable=true]').first().click();
 	await page.keyboard.type(name);
@@ -359,17 +367,18 @@ const publishEvent = async (page, name) => {
 	await page.keyboard.press('ArrowRight');
 	await page.keyboard.press('Enter');
 	await page.getByRole('button', { name: /^publish/i }).click();
-	await page.waitForURL((u) => new RegExp(`/calendar/${KEY}/[^/]+$`).test(u.pathname), {
-		timeout: 45000
-	});
+	await page.waitForURL((u) => lands.test(u.pathname), { timeout: 45000 });
 	await settle(page);
 	await page.getByRole('heading', { name }).first().waitFor({ timeout: 20000 });
 	const at = new URL(page.url()).pathname;
 	return { path: at, rkey: at.split('/').at(-1) };
 };
 const privateNote = (page) => text(page, '[data-testid=private-note]');
-const SAYS_PRIVATE_EVENT = () =>
-	new RegExp(`Private event\\. Only the people on ${NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
+const SAYS_PRIVATE_EVENT = (name = NAME) =>
+	new RegExp(`Private event\\. Only the people on ${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
+const guestRow = (page, name) => page.locator(`[data-guest="${C[name].did}"]`);
+const policyOf = async (space) =>
+	(await C.alice.call('com.atproto.space.getSpace', { space })).data?.policy ?? null;
 
 await step('1. alice signs in and turns on the private events beta', async () => {
 	const p = (pages.alice = await pageFor('alice'));
@@ -947,7 +956,260 @@ await step('14. alice renames the calendar, and deletes event 2', async () => {
 });
 
 await step(
-	'15. nothing of it reached the public network or atmo, and a public event did',
+	'15. alice makes a single private event for bob and mallory, and bob answers',
+	async () => {
+		const a = pages.alice;
+		await open(a, '/create');
+		await a.getByRole('radio', { name: /invited people only/i }).click();
+		const field = a.getByRole('textbox', { name: /name this list to reuse it for later events/i });
+		await field.waitFor({ timeout: 20000 });
+		check(
+			'she is offered a name for its guests, saying what naming it shows',
+			/Everyone on it sees its name and who else is on it\./.test(
+				await text(a, '[data-testid=naming-tells]')
+			)
+		);
+		await shot(a, '11-create-single');
+		({ path: EVENT_3_PATH, rkey: RKEY_3 } = await publishEvent(a, EVENT_3, /\/private\/[^/]+$/));
+		SPACE_3 = `at://${C.alice.did}/space/${TYPE}/${RKEY_3}`;
+		check('it has a space of its own', (await policyOf(SPACE_3))?.$type !== undefined);
+		check(
+			'with no name, so its guests are not shown to each other',
+			(await inSpace('alice', CALENDAR, SPACE_3)).length === 0 &&
+				(await policyOf(SPACE_3))?.publishMembers !== true
+		);
+		const before = await open(a, `/p/${P.alice.handle}/calendar/${RKEY_3}`);
+		check('it has no calendar page yet', before === 404, `${before}`);
+		await open(a, EVENT_3_PATH);
+		await a.locator('input[name=guest-handle]').fill(P.bob.handle);
+		await a.waitForTimeout(150);
+		await a.locator('[data-testid=guest-list] form button[type=submit]').click();
+		await guestRow(a, 'bob').waitFor({ timeout: 20000 });
+		await a.locator('input[name=guest-handle]').fill(P.mallory.handle);
+		await a.waitForTimeout(150);
+		await a.locator('[data-testid=guest-list] form button[type=submit]').click();
+		await guestRow(a, 'mallory').waitFor({ timeout: 20000 });
+		check(
+			'she is offered to save these people as a shared calendar',
+			(await a.getByRole('button', { name: /save these people as a shared calendar/i }).count()) ===
+				1
+		);
+		check(
+			'and no event on it before it has a name',
+			(await a.getByRole('link', { name: /new event on this calendar/i }).count()) === 0
+		);
+		check(
+			'nothing published for its guests',
+			(await inSpace('alice', MEMBER, SPACE_3)).length === 0
+		);
+
+		const b = pages.bob;
+		await open(b, EVENT_3_PATH);
+		await b.getByRole('heading', { name: EVENT_3 }).first().waitFor({ timeout: 20000 });
+		check(
+			'bob is told only the people the host added can see it',
+			/Only people the host added can see it/.test(await privateNote(b))
+		);
+		check('and is shown no one else on it', !(await text(b, 'main')).includes(P.mallory.handle));
+		await b
+			.getByRole('button', { name: /^going$/i })
+			.first()
+			.click({ timeout: 20000 });
+		let answer = null;
+		for (let i = 0; i < 40 && !answer; i++) {
+			answer = await ownRsvp('bob', RKEY_3, SPACE_3);
+			if (!answer) await sleep(250);
+		}
+		check('his answer is in his own repo in its space', answer?.status === `${RSVP}#going`);
+	}
+);
+
+await step('16. alice saves its guests as a shared calendar, and nothing moves', async () => {
+	const a = pages.alice;
+	const eventBefore = (await inSpace('alice', EVENT, SPACE_3)).map((r) => [r.rkey, r.cid]);
+	const answerBefore = await ownRsvp('bob', RKEY_3, SPACE_3);
+	await open(a, EVENT_3_PATH);
+	await a.getByRole('button', { name: /save these people as a shared calendar/i }).click();
+	const form = a.locator('[data-testid=save-as-calendar]');
+	check(
+		'she is told what naming it shows',
+		/Everyone on it sees its name and who else is on it\./.test(
+			await text(a, '[data-testid=save-as-calendar] [data-testid=naming-tells]')
+		)
+	);
+	await form.locator('input[name=calendar-name]').fill(SINGLE_NAME);
+	await a.waitForTimeout(150);
+	await form.getByRole('button', { name: /^save$/i }).click();
+	await a.locator('[data-testid=private-to]').waitFor({ timeout: 20000 });
+	await shot(a, '12-single-named-host');
+	check('she stays at the event’s own address', new URL(a.url()).pathname === EVENT_3_PATH);
+	check(
+		'the event now says only the people on the calendar can see it',
+		SAYS_PRIVATE_EVENT(SINGLE_NAME).test(await privateNote(a)),
+		await privateNote(a)
+	);
+	check(
+		'with a link to the calendar’s page',
+		(await a.locator(`[data-testid=private-to] a[href$="/calendar/${RKEY_3}"]`).count()) === 1
+	);
+	const named = await inSpace('alice', CALENDAR, SPACE_3);
+	check(
+		'one name record in her repo in the event’s own space',
+		named.length === 1 && named[0].rkey === 'self' && named[0].value?.name === SINGLE_NAME,
+		JSON.stringify(named.map((r) => [r.rkey, r.value?.name]))
+	);
+	check(
+		'the event record is where it was, unchanged',
+		JSON.stringify((await inSpace('alice', EVENT, SPACE_3)).map((r) => [r.rkey, r.cid])) ===
+			JSON.stringify(eventBefore)
+	);
+	check(
+		'bob’s answer is where it was',
+		JSON.stringify(await ownRsvp('bob', RKEY_3, SPACE_3)) === JSON.stringify(answerBefore)
+	);
+	check(
+		'its people are shown to everyone on it now',
+		(await policyOf(SPACE_3))?.publishMembers === true
+	);
+	const published = (await inSpace('alice', MEMBER, SPACE_3)).map((r) => r.rkey);
+	check(
+		'her server shows bob and mallory there',
+		published.includes(C.bob.did) && published.includes(C.mallory.did),
+		`${published.length}`
+	);
+	check('nothing of it in her public repo', (await publicCount('alice', CALENDAR)) === 0);
+});
+
+await step('17. bob sees its name and who else is on it, at the link he had', async () => {
+	const b = pages.bob;
+	const status = await open(b, EVENT_3_PATH);
+	check('the old link still opens', status === 200, `${status}`);
+	await b.getByRole('heading', { name: EVENT_3 }).first().waitFor({ timeout: 20000 });
+	await shot(b, '13-single-named-bob');
+	check('he sees the calendar’s name', SAYS_PRIVATE_EVENT(SINGLE_NAME).test(await privateNote(b)));
+	const guests = await text(b, '[data-testid=calendar-guests]');
+	check('and mallory on it', guests.includes(P.mallory.handle), guests.slice(0, 200));
+	check(
+		'his own answer stands',
+		/\bGoing\b/.test(await text(b, `[data-testid=calendar-guests] [data-guest="${C.bob.did}"]`))
+	);
+	const cal = await open(b, `/p/${P.alice.handle}/calendar/${RKEY_3}`);
+	check('its calendar page opens for him', cal === 200, `${cal}`);
+	check('with the name and the event', (await text(b, 'main')).includes(EVENT_3));
+	check(
+		'the event there links to the address it always had',
+		(await b.locator(`main a[href$="/private/${RKEY_3}"]`).count()) === 1
+	);
+	await open(b, '/private');
+	const cals = await text(b, '[data-testid=calendar-list]');
+	check(
+		'his Calendars page lists it among calendars',
+		cals.includes(SINGLE_NAME),
+		cals.slice(0, 200)
+	);
+	const singles = await text(b, 'main');
+	check(
+		'and not as an event apart from any calendar',
+		(await b.locator(`[data-testid=private-events] a[href$="/private/${RKEY_3}"]`).count()) === 0,
+		singles.slice(0, 120)
+	);
+});
+
+await step(
+	'18. alice adds a second event on it, which bob finds with no new link; cancelling it leaves the calendar',
+	async () => {
+		const a = pages.alice;
+		const calPath = `/p/${P.alice.handle}/calendar/${RKEY_3}`;
+		await open(a, calPath);
+		await a.getByRole('link', { name: /new event on this calendar/i }).click({ timeout: 20000 });
+		await a.waitForURL((u) => u.pathname === '/create', { timeout: 30000 });
+		await settle(a);
+		check(
+			'the calendar is picked',
+			(await a.locator('select[name=calendar]').inputValue()) === RKEY_3
+		);
+		({ path: EVENT_4_PATH, rkey: RKEY_4 } = await publishEvent(
+			a,
+			EVENT_4,
+			new RegExp(`/calendar/${RKEY_3}/[^/]+$`)
+		));
+		check('it is in the same space', (await inSpace('alice', EVENT, SPACE_3)).length === 2);
+		const b = pages.bob;
+		await open(b, calPath);
+		check('bob finds it on the calendar he has', (await text(b, 'main')).includes(EVENT_4));
+		await open(b, EVENT_4_PATH);
+		await b.getByRole('heading', { name: EVENT_4 }).first().waitFor({ timeout: 20000 });
+		check('and opens it', SAYS_PRIVATE_EVENT(SINGLE_NAME).test(await privateNote(b)));
+
+		await open(a, `${EVENT_4_PATH}/edit`);
+		await a
+			.getByRole('button', { name: /^delete/i })
+			.first()
+			.click({ timeout: 20000 });
+		await a
+			.getByRole('button', { name: /^delete/i })
+			.last()
+			.click({ timeout: 10000 })
+			.catch(() => {});
+		await a.waitForURL((u) => u.pathname === calPath, { timeout: 30000 });
+		await settle(a);
+		const left = (await inSpace('alice', EVENT, SPACE_3)).map((r) => r.rkey);
+		check('only the second event is gone', left.length === 1 && left[0] === RKEY_3, left.join(','));
+		check('the calendar stays', (await policyOf(SPACE_3)) !== null);
+		const still = await open(b, EVENT_3_PATH);
+		check('the first event’s link still opens for bob', still === 200, `${still}`);
+	}
+);
+
+await step(
+	'19. a single event named as it is made is a calendar at once; cancelling it leaves the calendar',
+	async () => {
+		const a = pages.alice;
+		await open(a, '/create');
+		await a.getByRole('radio', { name: /invited people only/i }).click();
+		await a
+			.getByRole('textbox', { name: /name this list to reuse it for later events/i })
+			.fill(NAMED_AT_ONCE);
+		await a.waitForTimeout(150);
+		({ rkey: RKEY_5 } = await publishEvent(a, EVENT_5, /\/private\/[^/]+$/));
+		SPACE_5 = `at://${C.alice.did}/space/${TYPE}/${RKEY_5}`;
+		check(
+			'it opens as an event on its calendar',
+			SAYS_PRIVATE_EVENT(NAMED_AT_ONCE).test(await privateNote(a)),
+			await privateNote(a)
+		);
+		const named = await inSpace('alice', CALENDAR, SPACE_5);
+		check('its space has the name', named.length === 1 && named[0].value?.name === NAMED_AT_ONCE);
+		check(
+			'and shows its people to everyone on it',
+			(await policyOf(SPACE_5))?.publishMembers === true
+		);
+		await open(a, `/p/${P.alice.handle}/private/${RKEY_5}/edit`);
+		await a
+			.getByRole('button', { name: /^delete/i })
+			.first()
+			.click({ timeout: 20000 });
+		await a
+			.getByRole('button', { name: /^delete/i })
+			.last()
+			.click({ timeout: 10000 })
+			.catch(() => {});
+		await a.waitForURL((u) => u.pathname === '/private', { timeout: 30000 });
+		check('the event is gone', (await inSpace('alice', EVENT, SPACE_5)).length === 0);
+		check(
+			'the calendar stays, with its name',
+			(await inSpace('alice', CALENDAR, SPACE_5)).length === 1
+		);
+		await settle(a);
+		check(
+			'and is still on her Calendars page',
+			(await text(a, '[data-testid=calendar-list]')).includes(NAMED_AT_ONCE)
+		);
+	}
+);
+
+await step(
+	'20. nothing of it reached the public network or atmo, and a public event did',
 	async () => {
 		const control = await C.mallory.write(EVENT, {
 			name: PUBLIC_NAME,
@@ -958,7 +1220,10 @@ await step(
 		});
 		const controlKey = control.uri.split('/').at(-1);
 		// Not the space type's name: its lexicon is a public record on purpose.
-		const needles = [NAME, RENAMED, EVENT_1, EVENT_2, CRAFTED, KEY, SPACE, RKEY_1, RKEY_2];
+		const needles = [
+			...[NAME, RENAMED, EVENT_1, EVENT_2, CRAFTED, KEY, SPACE, RKEY_1, RKEY_2],
+			...[SINGLE_NAME, NAMED_AT_ONCE, EVENT_3, EVENT_4, EVENT_5, SPACE_3, RKEY_3, RKEY_4, RKEY_5]
+		];
 
 		const seen = await new Promise((resolve, reject) => {
 			const ws = new WebSocket(`${JETSTREAM.replace(/^http/, 'ws')}/subscribe?cursor=0`);
@@ -1026,7 +1291,10 @@ await step(
 		check('atmo indexed the public event, so ingest works', indexed?.value?.name === PUBLIC_NAME);
 		for (const [n, rkey] of [
 			[1, RKEY_1],
-			[2, RKEY_2]
+			[2, RKEY_2],
+			[3, RKEY_3],
+			[4, RKEY_4],
+			[5, RKEY_5]
 		]) {
 			const hidden = await fetch(`${ATMO}/p/${C.alice.handle}/e/${rkey}/data.json`);
 			check(`atmo has no public copy of event ${n}`, hidden.status === 404, `${hidden.status}`);
@@ -1045,7 +1313,7 @@ await step(
 	}
 );
 
-await step('16. alice deletes the calendar, and bob’s link reads as not available', async () => {
+await step('21. alice deletes the calendar, and bob’s link reads as not available', async () => {
 	const a = pages.alice;
 	await open(a, CAL_PATH);
 	await a.getByRole('button', { name: /^delete calendar$/i }).click({ timeout: 20000 });
