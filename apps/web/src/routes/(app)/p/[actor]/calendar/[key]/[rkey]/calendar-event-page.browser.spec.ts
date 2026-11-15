@@ -168,6 +168,19 @@ describe('an event on a shared calendar', () => {
 		expect(shownText('private-note')).not.toContain('Answer to let the host know');
 	});
 
+	it('shows a guest their own answer in the list as soon as they give it', async () => {
+		const guests = [
+			{ did: GUEST, handle: 'guest.example.com', answer: null, answerUnread: false },
+			{ did: HOST + 'x', handle: 'friend.example.com', answer: 'going', answerUnread: false }
+		];
+		render(EventPage, { data: eventView(guests) } as never);
+		await expect
+			.poll(() => shownText('calendar-guests'))
+			.toContain("guest.example.com Hasn't answered");
+		await page.getByRole('button', { name: 'Interested', exact: true }).click();
+		await expect.poll(() => shownText('calendar-guests')).toContain('guest.example.com Interested');
+	});
+
 	it('never offers it to the host', async () => {
 		mocks.user.did = HOST;
 		const guests = [{ did: GUEST, handle: 'guest.example.com', answer: null, answerUnread: false }];

@@ -15,7 +15,8 @@
 		calendarKey,
 		calendarName,
 		capped = false,
-		owner = false
+		owner = false,
+		you = null
 	}: {
 		guests: Guest[];
 		actor: string;
@@ -24,9 +25,15 @@
 		capped?: boolean;
 		/** The calendar's owner, who changes the list on the calendar's page. */
 		owner?: boolean;
+		/** The viewer and their answer as this page knows it, which is newer than the list's once they
+		 *  answer here. */
+		you?: { did: string; answer: RsvpStatus | null } | null;
 	} = $props();
 
 	function answerWords(guest: Guest): string {
+		if (you && guest.did === you.did) {
+			return you.answer ? ANSWER_WORDS[you.answer] : "Hasn't answered";
+		}
 		if (guest.answer) return ANSWER_WORDS[guest.answer];
 		return guest.answerUnread ? "Their answer couldn't be read" : "Hasn't answered";
 	}

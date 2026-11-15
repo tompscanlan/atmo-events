@@ -603,6 +603,10 @@ await step('6. bob says going, in his own repo in the calendar’s space', async
 		'and is no longer asked to answer',
 		!/Answer to let the host know/.test(await privateNote(p))
 	);
+	check(
+		'his own row in the list says going at once',
+		/\bGoing\b/.test(await text(p, `[data-testid=calendar-guests] [data-guest="${C.bob.did}"]`))
+	);
 	await shot(p, '07-bob-going');
 	const a = pages.alice;
 	await open(a, EVENT_1_PATH);

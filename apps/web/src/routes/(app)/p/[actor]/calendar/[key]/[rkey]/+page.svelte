@@ -72,6 +72,7 @@
 					guests={data.guests}
 					capped={data.guestsCapped}
 					owner={data.isHost}
+					you={user.did ? { did: user.did, answer: answered } : null}
 					{actor}
 					calendarKey={data.calendar.key}
 					{calendarName}
