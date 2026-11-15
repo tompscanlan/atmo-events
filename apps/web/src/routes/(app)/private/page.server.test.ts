@@ -1,17 +1,22 @@
 import { render } from 'svelte/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { EVENT_COLLECTION, privateEventSpace } from '#lib/private-events/ids.js';
-import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
+import {
+	CALENDAR_COLLECTION,
+	EVENT_COLLECTION,
+	privateEventSpace
+} from '#lib/private-events/ids.js';
+import { CALENDAR_SCOPE, GUEST_SCOPE, HOST_SCOPE } from '#lib/private-events/scopes.js';
 
 const setHeaders = vi.fn();
 const beta = vi.hoisted(() => vi.fn());
 vi.mock('#lib/private-events/server/beta.js', () => ({ privateEventsBeta: beta }));
-const reader = { get: vi.fn(), writers: vi.fn() };
+const reader = { get: vi.fn(), list: vi.fn(), writers: vi.fn() };
 vi.mock('#lib/spaces/server/space-read.js', () => ({ credentialSpaceReader: () => reader }));
 vi.mock('#lib/actor.js', () => ({ actorToDid: vi.fn() }));
 vi.mock('#lib/private-events/server/people.js', () => ({
 	verifiedHandle: async (did: string) => `${did.split(':').at(-1)}.example.com`
 }));
+vi.mock('#lib/private-events/private-events.remote', () => ({ createCalendar: vi.fn() }));
 vi.mock('#lib/private-events/server/enabled.js', () => ({
 	privateEventsEnabled: () => true,
 	spacesServer: () => null
@@ -130,5 +135,98 @@ describe('/private and the beta', () => {
 		beta.mockResolvedValue(true);
 		reader.get.mockResolvedValue(null);
 		expect(await renderedPrivatePage()).not.toContain('turn on private events in');
+	});
+});
+
+describe('/private with shared calendars', () => {
+	const CALENDAR = privateEventSpace(HOST, 'cal-3lcalcalcalcal');
+
+	async function rendered(scope: string, did = GUEST, capped = false) {
+		reader.get.mockImplementation(
+			async ({ space, collection }: { space: string; collection: string }) => {
+				if (space === CALENDAR && collection === CALENDAR_COLLECTION) {
+					return {
+						uri: `${space}/${HOST}/${collection}/self`,
+						cid: 'c',
+						rkey: 'self',
+						value: { name: 'Supper club' }
+					};
+				}
+				if (space === SOUND) {
+					return {
+						uri: `${space}/${HOST}/${EVENT_COLLECTION}/3laaaaaaaaaaa`,
+						cid: 'c',
+						rkey: '3laaaaaaaaaaa',
+						value: RECORD
+					};
+				}
+				return null;
+			}
+		);
+		reader.list.mockImplementation(async ({ space }: { space: string }) => ({
+			records:
+				space === CALENDAR
+					? [
+							{
+								uri: `${space}/${HOST}/${EVENT_COLLECTION}/3lonthecal`,
+								cid: 'c',
+								rkey: '3lonthecal',
+								value: { ...RECORD, name: 'Supper' }
+							}
+						]
+					: [],
+			capped: space === CALENDAR && capped
+		}));
+		const session = {
+			did,
+			getTokenInfo: async () => ({ scope }),
+			handle: async () => Response.json({ spaces: [{ space: SOUND }, { space: CALENDAR }] })
+		};
+		const data = await load({
+			locals: { session },
+			cookies: { get: () => undefined, delete: () => {} },
+			setHeaders
+		} as never);
+		return render(PrivatePage, { props: { data } as never }).body;
+	}
+
+	it('lists events on a calendar beside single ones, each marked private to its calendar', async () => {
+		const body = await rendered(GUEST_SCOPE);
+		expect(body).toContain('Dinner');
+		expect(body).toContain('Supper');
+		expect(body).toContain('data-testid="private-to"');
+		expect(body).toContain('/calendar/cal-3lcalcalcalcal/3lonthecal');
+		expect(body.replace(/<!--.*?-->/g, '').replace(/\s+/g, ' ')).toMatch(
+			/Private event\. Only the people on <a href="\/p\/[^"]+\/calendar\/cal-3lcalcalcalcal"[^>]*>Supper club<\/a> can see it\./
+		);
+	});
+
+	it('says when a calendar has more events than it lists, without asking to try again', async () => {
+		const body = await rendered(GUEST_SCOPE, GUEST, true);
+		expect(body).toContain('data-testid="private-events-capped"');
+		expect(body).not.toContain('data-testid="private-events-incomplete"');
+		expect(body).toContain('Supper');
+	});
+
+	it('has no calendar section with the beta off, though the events are listed', async () => {
+		const body = await rendered(GUEST_SCOPE);
+		expect(body).not.toContain('data-testid="shared-calendars"');
+		expect(body).not.toContain('data-testid="new-calendar"');
+	});
+
+	it('lists the calendars with the beta on, and asks before the first one', async () => {
+		beta.mockResolvedValue(true);
+		const body = await rendered(`${HOST_SCOPE} ${GUEST_SCOPE}`, HOST);
+		expect(body).toContain('data-testid="shared-calendars"');
+		expect(body).toContain('data-calendar="cal-3lcalcalcalcal"');
+		expect(body).not.toContain('data-testid="new-calendar"');
+		expect(body).toContain('Allow atmo to make shared calendars');
+	});
+
+	it('offers a new shared calendar once the calendar grant is held', async () => {
+		beta.mockResolvedValue(true);
+		const body = await rendered(`${HOST_SCOPE} ${CALENDAR_SCOPE} ${GUEST_SCOPE}`, HOST);
+		expect(body).toContain('data-testid="new-calendar"');
+		expect(body).not.toContain('Allow atmo to make shared calendars');
 	});
 });

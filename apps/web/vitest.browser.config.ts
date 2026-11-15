@@ -27,7 +27,10 @@ export default defineConfig({
 			'@atcute/bluesky/types/app/actor/profile',
 			'@sketchyicons/svelte/icons/calendar',
 			'@sketchyicons/svelte/icons/message-circle',
-			'@sketchyicons/svelte/icons/handshake'
+			'@sketchyicons/svelte/icons/handshake',
+			// A page's commands import it. Browser tests mock them, but a slow run can still ask Vite
+			// for the real module, and a dependency found that late reloads the whole run.
+			'valibot'
 		]
 	},
 	server: {

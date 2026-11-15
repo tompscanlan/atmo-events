@@ -7,6 +7,7 @@
 	import { BETA_WARNING } from '#lib/private-events/beta.js';
 	import GuestList from '#lib/private-events/components/GuestList.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
+	import { singleEvent } from '#lib/private-events/ids.js';
 	import { createPrivateRsvpAdapter } from '#lib/private-events/rsvp-adapter.js';
 	import { GUEST_SCOPES, HOST_SCOPES } from '#lib/private-events/scopes.js';
 
@@ -25,7 +26,7 @@
 <svelte:head><meta name="robots" content="noindex" /></svelte:head>
 
 {#if data.view === 'event'}
-	{@const adapter = createPrivateRsvpAdapter(data.actorDid, data.rkey, viewer)}
+	{@const adapter = createPrivateRsvpAdapter(singleEvent(data.actorDid, data.rkey), viewer)}
 	<!-- A private event has no public page to share, so the page offers no Bluesky post. -->
 	<EventView {data} {adapter} {viewer} pageUrl={new URL(page.url.href)} share={false}>
 		{#snippet extraActions()}
@@ -43,7 +44,7 @@
 				</p>
 			{/if}
 			{#if data.guests}
-				<GuestList rkey={data.rkey} guests={data.guests} />
+				<GuestList rkey={data.rkey} guests={data.guests} capped={data.guestsCapped} />
 			{:else}
 				<p class="text-base-600 dark:text-base-400 text-sm" data-testid="private-note">
 					Private event. Only people the host added can see it.

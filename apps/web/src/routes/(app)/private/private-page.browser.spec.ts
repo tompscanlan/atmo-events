@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import '../../../app.css';
 import PrivatePage from './+page.svelte';
+
+// Making a calendar goes through a SvelteKit remote function, which a browser test has no server for.
+vi.mock('#lib/private-events/private-events.remote', () => ({ createCalendar: vi.fn() }));
 
 const base = { pageTitle: 'Private events', did: 'did:plc:person', spacesServer: null };
 
@@ -32,5 +35,25 @@ describe('/private', () => {
 		} as never);
 		await expect.element(page.getByTestId('private-events')).toBeVisible();
 		await expect.element(page.getByTestId('link-is-invitation')).toBeVisible();
+	});
+
+	it('says what a shared calendar is for where you make one', async () => {
+		render(PrivatePage, {
+			data: {
+				...base,
+				events: [],
+				access: null,
+				beta: true,
+				calendars: [],
+				calendarAccess: 'ready'
+			}
+		} as never);
+		const what = page.getByTestId('new-calendar-what');
+		await expect
+			.element(what)
+			.toHaveTextContent(
+				'For a few people you invite to your own events. Only you add events or people.'
+			);
+		expect(what.element().textContent ?? '').not.toMatch(/group/i);
 	});
 });

@@ -9,20 +9,34 @@
 	import { page } from '$app/state';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { createPrivateEventAdapter } from '#lib/private-events/editor-adapter.js';
+	import { UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
 	import { HOST_SCOPES } from '#lib/private-events/scopes.js';
 
 	let { data } = $props();
 
 	// No default where there's a choice: a public post can't be taken back. Coming back from the
-	// permission step, the choice is already made.
+	// permission step, the choice is already made, and a calendar's page can name the calendar.
 	const INVITED = 'invited';
-	const askedPrivate = page.url.searchParams.get('audience') === INVITED;
-	let audience = $state<'everyone' | typeof INVITED | null>(askedPrivate ? INVITED : null);
+	const CALENDAR = 'calendar';
+	type Audience = 'everyone' | typeof INVITED | typeof CALENDAR;
+	const asked = page.url.searchParams.get('audience');
+	const askedPrivate = asked === INVITED || asked === CALENDAR;
+	let audience = $state<Audience | null>(askedPrivate ? asked : null);
+	let picked = $state(page.url.searchParams.get('calendar') ?? '');
+	// The first when none is named, so the picker never shows one it isn't using. One named but not
+	// among the host's picks nothing: an event goes only to the people the host chose.
+	let calendar = $derived(
+		picked === ''
+			? (data.calendars[0]?.key ?? null)
+			: (data.calendars.find((c) => c.key === picked)?.key ?? null)
+	);
 	let invited = $derived(data.privateEvents && audience === INVITED);
+	let onCalendar = $derived(data.privateEvents && audience === CALENDAR && calendar !== null);
+	let calendarMissing = $derived(data.privateEvents && audience === CALENDAR && calendar === null);
 	// With private events off, the editor is the public one, so a link that asked for a private
 	// audience gets no editor at all: what someone meant to keep private must never be posted publicly.
 	let chosen = $derived(
-		(!data.privateEvents && !askedPrivate) || audience === 'everyone' || invited
+		(!data.privateEvents && !askedPrivate) || audience === 'everyone' || invited || onCalendar
 	);
 
 	let viewer = $derived({
@@ -34,9 +48,11 @@
 		avatar: user.profile?.avatar
 	});
 	let adapter = $derived(
-		invited
-			? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false })
-			: createInAppAdapter({ viewer })
+		onCalendar
+			? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false }, calendar ?? undefined)
+			: invited
+				? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false })
+				: createInAppAdapter({ viewer })
 	);
 
 	// Pulled out of sessionStorage on mount so the editor sees it on its first
@@ -88,13 +104,43 @@
 				bind:value={
 					() => audience ?? '',
 					(value) => {
-						if (value === 'everyone' || value === INVITED) audience = value;
+						if (value === 'everyone' || value === INVITED || value === CALENDAR) audience = value;
 					}
 				}
 			>
 				<ToggleGroupItem value="everyone">Everyone</ToggleGroupItem>
 				<ToggleGroupItem value={INVITED}>Invited people only</ToggleGroupItem>
+				{#if data.calendars.length > 0}
+					<ToggleGroupItem value={CALENDAR}
+						>Only the people on one of your shared calendars</ToggleGroupItem
+					>
+				{/if}
 			</ToggleGroup>
+			{#if calendarMissing}
+				<p class="text-base-700 dark:text-base-300 mt-3 text-sm" data-testid="calendar-missing">
+					That calendar isn't among yours just now, so no calendar is picked.
+					{#if data.calendars.length > 0}Pick one below, or reload to try again.{:else}Reload to try
+						again.{/if}
+				</p>
+			{/if}
+			{#if audience === CALENDAR && data.calendars.length > 0}
+				<label class="text-base-700 dark:text-base-300 mt-3 flex items-center gap-2 text-sm">
+					Calendar
+					<select
+						name="calendar"
+						value={calendar ?? ''}
+						onchange={(event) => (picked = event.currentTarget.value)}
+						class="border-base-300 dark:border-base-700 bg-base-50 dark:bg-base-900 rounded-lg border px-2 py-1.5 text-sm"
+					>
+						{#if calendar === null}
+							<option value="" disabled>Pick a calendar</option>
+						{/if}
+						{#each data.calendars as option (option.key)}
+							<option value={option.key}>{option.name ?? UNTITLED_CALENDAR}</option>
+						{/each}
+					</select>
+				</label>
+			{/if}
 			<ul class="text-base-600 dark:text-base-400 mt-3 space-y-1 text-sm">
 				<li>
 					<span class="text-base-900 dark:text-base-50 font-medium">Everyone:</span> anyone can see it,
@@ -104,6 +150,13 @@
 					<span class="text-base-900 dark:text-base-50 font-medium">Invited people only:</span> only people
 					you add can see it, and it can't be made public later. It has no image or repeats for now.
 				</li>
+				{#if data.calendars.length > 0}
+					<li>
+						<span class="text-base-900 dark:text-base-50 font-medium">A shared calendar:</span> only the
+						people on the calendar you pick can see it, now and later, and it can't be made public later.
+						It has no image or repeats for now.
+					</li>
+				{/if}
 			</ul>
 			{#if invited && data.hostAccess}
 				<PrivateEventAccessNotice
@@ -132,7 +185,7 @@
 {/if}
 
 {#if ready && chosen && !(invited && data.hostAccess)}
-	{#key invited}
+	{#key `${audience}:${onCalendar ? calendar : ''}`}
 		<EventEditor
 			eventData={null}
 			actorDid={data.actorDid}

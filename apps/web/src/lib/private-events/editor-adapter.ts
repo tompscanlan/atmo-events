@@ -9,33 +9,47 @@ import {
 import { cancelPrivateEvent, savePrivateEvent } from './private-events.remote';
 
 /** The in-app adapter, with every write sent to the event's space. It takes no image, since atmo
- *  can't show a private one yet, and nothing about it reaches the index. */
-export function createPrivateEventAdapter(viewer: EditorViewer): EditorAdapter {
+ *  can't show a private one yet, and nothing about it reaches the index. With `calendar`, the event
+ *  goes on that shared calendar of the host's. */
+export function createPrivateEventAdapter(viewer: EditorViewer, calendar?: string): EditorAdapter {
+	const on = calendar ? { calendar } : {};
 	return {
 		...createInAppAdapter({ viewer }),
 		// Those look up public records, which a private event doesn't link to for now.
 		linkedRecords: undefined,
 		features: { delete: true, recurring: false, images: false, visibility: false },
 		async putRecord({ rkey, record }) {
-			return savePrivateEvent({ rkey, record });
+			return savePrivateEvent({ rkey, record, ...on });
 		},
 		async createRecord({ rkey, record }) {
 			if (!rkey) throw new Error('a private event needs its key');
-			return savePrivateEvent({ rkey, record });
+			return savePrivateEvent({ rkey, record, ...on });
 		},
 		async deleteRecord({ rkey }) {
-			await cancelPrivateEvent({ rkey });
+			await cancelPrivateEvent({ rkey, ...on });
 		},
 		async uploadBlob() {
 			throw new Error('a private event takes no image');
 		},
 		onSaved({ rkey }) {
-			goto(resolve('/(app)/p/[actor]/private/[rkey]', { actor: handleOrDid(viewer), rkey }), {
-				refreshAll: true
-			});
+			const actor = handleOrDid(viewer);
+			goto(
+				calendar
+					? resolve('/(app)/p/[actor]/calendar/[key]/[rkey]', { actor, key: calendar, rkey })
+					: resolve('/(app)/p/[actor]/private/[rkey]', { actor, rkey }),
+				{ refreshAll: true }
+			);
 		},
 		onDeleted() {
-			goto(resolve('/(app)/private'), { refreshAll: true });
+			goto(
+				calendar
+					? resolve('/(app)/p/[actor]/calendar/[key]', {
+							actor: handleOrDid(viewer),
+							key: calendar
+						})
+					: resolve('/(app)/private'),
+				{ refreshAll: true }
+			);
 		},
 		async notifyUpdate() {}
 	};
