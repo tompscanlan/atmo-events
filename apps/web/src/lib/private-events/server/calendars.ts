@@ -138,17 +138,17 @@ export async function deleteCalendar(caller: CallerSession, key: string): Promis
 	await write(caller, 'com.atproto.space.deleteSpace', { space }, `calendar ${key} not deleted`);
 }
 
-export interface CalendarMember {
+export interface CalendarPerson {
 	did: string;
 	handle: string | null;
 }
 
 /** On the list, able to read every event and answer each one. As with a single event's guests, a
  *  PDS answers the same for someone whose own server can't take part. */
-export async function addCalendarMember(
+export async function addPersonToCalendar(
 	caller: CallerSession,
 	input: { key: string; handleOrDid: string }
-): Promise<CalendarMember> {
+): Promise<CalendarPerson> {
 	requireHost(caller);
 	requireCalendarKey(input.key);
 	const actor = input.handleOrDid.trim().replace(/^@/, '');
@@ -161,7 +161,7 @@ export async function addCalendarMember(
 	return { did, handle: await verifiedHandle(did) };
 }
 
-export async function removeCalendarMember(
+export async function removePersonFromCalendar(
 	caller: CallerSession,
 	input: { key: string; did: string }
 ): Promise<void> {
@@ -222,8 +222,8 @@ export interface CalendarPage {
 	/** There were too many to list, so there may be more events than these. */
 	eventsCapped: boolean;
 	/** The owner's own view of who is on it; null for anyone else. */
-	members: CalendarMember[] | null;
-	membersCapped: boolean;
+	people: CalendarPerson[] | null;
+	peopleCapped: boolean;
 }
 
 /** What the calendar's page shows. It reads no one's answers: those are on each event's page. */
@@ -236,12 +236,12 @@ export async function readCalendarPage(
 	if (!isCalendarKey(key)) return null;
 	const calendar = await readCalendar(credentialSpaceReader(caller), host, key);
 	if (!calendar) return null;
-	let members: CalendarMember[] | null = null;
-	let membersCapped = false;
+	let people: CalendarPerson[] | null = null;
+	let peopleCapped = false;
 	if (caller.did === host) {
 		const listed = await memberPages(caller, privateEventSpace(host, key));
-		membersCapped = listed.capped;
-		members = await Promise.all(
+		peopleCapped = listed.capped;
+		people = await Promise.all(
 			listed.dids.map(async (did) => ({ did, handle: await verifiedHandle(did) }))
 		);
 	}
@@ -254,8 +254,8 @@ export async function readCalendarPage(
 		upcoming: calendar.events.filter((event) => !isPast(event, now)).sort(byStart),
 		past: past.sort((a, b) => byStart(b, a)),
 		eventsCapped: calendar.capped,
-		members,
-		membersCapped
+		people,
+		peopleCapped
 	};
 }
 
