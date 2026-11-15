@@ -346,7 +346,7 @@ await step('1b. alice turns on the private events beta in Settings', async () =>
 	);
 });
 
-await step('2. alice picks invited people only on /create and allows it', async () => {
+await step('2. alice picks Private on /create and allows it', async () => {
 	const p = pages.alice;
 	await open(p, '/create');
 	await p.getByText('Who can see this event?').waitFor({ timeout: 30000 });
@@ -357,8 +357,18 @@ await step('2. alice picks invited people only on /create and allows it', async 
 			.isVisible()
 			.catch(() => false))
 	);
-	await p.getByRole('radio', { name: /invited people only/i }).click();
+	await p.getByRole('radio', { name: /^private$/i }).click();
 	await p.locator('[data-testid=grant-notice]').waitFor({ timeout: 10000 });
+	const what = await text(p, '[data-testid=audience-what]');
+	const fine = await text(p, '[data-testid=audience-fine-print]');
+	check(
+		'Private says who sees it, and that it stays private',
+		/^Only people you invite can see it\. You add them after publishing\.$/.test(what) &&
+			/^A private event can't be made public later\. Private events can't have an image or repeat yet\.$/.test(
+				fine
+			),
+		`${what} | ${fine}`
+	);
 	await shot(p, '01-create-ask');
 	await allow(p, /allow atmo to host/i, P.alice);
 	await settle(p);
@@ -372,12 +382,14 @@ await step('2. alice picks invited people only on /create and allows it', async 
 await step('3. alice fills in the editor and publishes', async () => {
 	const p = pages.alice;
 	await p.locator('main [contenteditable=true]').first().waitFor({ timeout: 30000 });
-	const body = await text(p, 'main');
-	check(
-		'no Public / Unlisted switch',
-		!/Unlisted/.test(await p.locator('main').innerText()),
-		body.slice(0, 80)
-	);
+	// The page's own Public / Unlisted / Private choice sits above the editor; the editor's switch would
+	// be inside its form.
+	const form = p
+		.locator('main form')
+		.filter({ has: p.locator('[contenteditable=true]') })
+		.first();
+	const editor = clean(await form.innerText({ timeout: 15000 }), Infinity);
+	check('no Public / Unlisted switch in the editor', !/Unlisted/.test(editor), editor.slice(0, 80));
 	await p.locator('main [contenteditable=true]').first().click();
 	await p.keyboard.type(NAME);
 	await p.getByRole('button', { name: /^start date/i }).click();
