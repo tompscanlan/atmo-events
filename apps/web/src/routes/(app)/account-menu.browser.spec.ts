@@ -120,9 +120,9 @@ describe('sidebar account menu', () => {
 	});
 });
 
-describe('private events tab', () => {
+describe('the Calendars tab', () => {
 	const privateEventsOn = { ...data, privateEventsEnabled: true };
-	const tab = () => page.getByRole('link', { name: 'Private events', exact: true });
+	const tab = () => page.getByRole('link', { name: 'Calendars', exact: true });
 
 	it('shows to people who turned private events on in Settings', async () => {
 		beta.getPrivateEventsBeta.mockReturnValue({ current: { canSave: true, on: true } });

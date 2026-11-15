@@ -624,67 +624,72 @@ await step('8. alice puts event 2 on it', async () => {
 	);
 });
 
-await step('9. bob’s /private lists event 2, with no new link', async () => {
-	const p = pages.bob;
-	const status = await open(p, '/private');
-	check('/private loaded', status === 200, `${status}`);
-	await p.locator('[data-testid=private-events]').waitFor({ timeout: 20000 });
-	const list = await text(p, '[data-testid=private-events]');
-	check('event 1 is there', list.includes(EVENT_1));
-	check('event 2 is there', list.includes(EVENT_2));
-	check(
-		'event 2 opens on the calendar',
-		(await p
-			.locator(`[data-testid=private-events] a[href$="/calendar/${KEY}/${RKEY_2}"]`)
-			.count()) > 0
-	);
-	check('marked private to the calendar', SAYS_PRIVATE_EVENT().test(list), list.slice(0, 200));
-	check(
-		'no calendar section for him, with the beta off',
-		(await p.locator('[data-testid=shared-calendars]').count()) === 0
-	);
-	await shot(p, '08-bob-private');
-	await open(p, EVENT_2_PATH);
-	await p.getByRole('heading', { name: EVENT_2 }).first().waitFor({ timeout: 20000 });
-	check('he opens event 2', (await text(p, 'main')).includes(EVENT_2));
-
-	// Your events on the home page and the tab: his way back, though he never turned the beta on.
-	await open(p, '/');
-	await p.locator('[data-testid=your-private-event]').first().waitFor({ timeout: 20000 });
-	const hisHome = await text(p, 'main');
-	check(
-		'his home page lists both, with the beta off',
-		[EVENT_1, EVENT_2].every((n) => hisHome.includes(n))
-	);
-	check(
-		'the tab is there for him, with the beta off',
-		(await p.locator('nav[aria-label="Event navigation"] a[href="/private"]').count()) > 0
-	);
-	const a = pages.alice;
-	await open(a, '/');
-	const hers = a.locator('[data-testid=your-private-event]');
-	await hers.first().waitFor({ timeout: 20000 });
-	const herHome = await text(a, 'main');
-	check(
-		'her home page lists event 1 and event 2 among her events',
-		herHome.includes(EVENT_1) && herHome.includes(EVENT_2)
-	);
-	for (const [n, rkey] of [
-		[1, RKEY_1],
-		[2, RKEY_2]
-	]) {
+await step(
+	'9. bob’s Calendars page lists the calendar, whose page has event 2, with no new link',
+	async () => {
+		const p = pages.bob;
+		const status = await open(p, '/private');
+		check('/private loaded', status === 200, `${status}`);
+		await p.locator('[data-testid=calendar-list]').waitFor({ timeout: 20000 });
+		const cals = await text(p, '[data-testid=calendar-list]');
+		check('the calendar he is on is listed', cals.includes(NAME), cals.slice(0, 200));
+		check('owned by alice', cals.includes(`Owned by ${P.alice.handle}`), cals.slice(0, 200));
 		check(
-			`event ${n} there opens on the calendar`,
-			(await hers.locator(`a[href$="/calendar/${KEY}/${rkey}"]`).count()) === 1
+			'nothing for him to make one with, with the beta off',
+			(await p.locator('[data-testid=new-calendar]').count()) === 0
 		);
+		check(
+			'its events are on its own page, not here',
+			![EVENT_1, EVENT_2].some((n) => cals.includes(n)) &&
+				(await p.locator('[data-testid=private-events]').count()) === 0
+		);
+		await shot(p, '08-bob-private');
+		await p.locator(`[data-testid=calendar-list] a[href$="/calendar/${KEY}"]`).first().click();
+		await p.waitForURL((u) => u.pathname === CAL_PATH, { timeout: 30000 });
+		await settle(p);
+		check('the calendar’s page lists event 2', (await text(p, 'main')).includes(EVENT_2));
+		await open(p, EVENT_2_PATH);
+		await p.getByRole('heading', { name: EVENT_2 }).first().waitFor({ timeout: 20000 });
+		check('he opens event 2', (await text(p, 'main')).includes(EVENT_2));
+
+		// Your events on the home page and the tab: his way back, though he never turned the beta on.
+		await open(p, '/');
+		await p.locator('[data-testid=your-private-event]').first().waitFor({ timeout: 20000 });
+		const hisHome = await text(p, 'main');
+		check(
+			'his home page lists both, with the beta off',
+			[EVENT_1, EVENT_2].every((n) => hisHome.includes(n))
+		);
+		check(
+			'the tab is there for him, with the beta off',
+			(await p.locator('nav[aria-label="Event navigation"] a[href="/private"]').count()) > 0
+		);
+		const a = pages.alice;
+		await open(a, '/');
+		const hers = a.locator('[data-testid=your-private-event]');
+		await hers.first().waitFor({ timeout: 20000 });
+		const herHome = await text(a, 'main');
+		check(
+			'her home page lists event 1 and event 2 among her events',
+			herHome.includes(EVENT_1) && herHome.includes(EVENT_2)
+		);
+		for (const [n, rkey] of [
+			[1, RKEY_1],
+			[2, RKEY_2]
+		]) {
+			check(
+				`event ${n} there opens on the calendar`,
+				(await hers.locator(`a[href$="/calendar/${KEY}/${rkey}"]`).count()) === 1
+			);
+		}
+		check(
+			'each marked private to the calendar',
+			(herHome.match(new RegExp(SAYS_PRIVATE_EVENT(), 'g')) ?? []).length >= 2,
+			herHome.slice(0, 200)
+		);
+		await shot(a, '08b-alice-home');
 	}
-	check(
-		'each marked private to the calendar',
-		(herHome.match(new RegExp(SAYS_PRIVATE_EVENT(), 'g')) ?? []).length >= 2,
-		herHome.slice(0, 200)
-	);
-	await shot(a, '08b-alice-home');
-});
+);
 
 await step('10. mallory, not on it, gets what a made-up address gets', async () => {
 	const p = (pages.mallory = await pageFor('mallory'));
@@ -850,8 +855,9 @@ await step('13. bob cannot add an event or change who is on it', async () => {
 	check('nor for alice', !(await text(pages.alice, 'main')).includes(CRAFTED));
 	const at = await open(p, `${CAL_PATH}/3kcraftedcraft`);
 	check('nor at its own address', at === 404, `${at}`);
-	await open(p, '/private');
-	check('nor on his /private', !(await text(p, 'main')).includes(CRAFTED));
+	await open(p, '/');
+	await p.locator('[data-testid=your-private-event]').first().waitFor({ timeout: 20000 });
+	check('nor in his Your events', !(await text(p, 'main')).includes(CRAFTED));
 });
 
 await step('14. alice renames the calendar, and deletes event 2', async () => {

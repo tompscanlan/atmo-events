@@ -13,7 +13,7 @@ export async function load({ locals, cookies, setHeaders }) {
 	if (!caller) redirect(303, '/login');
 	const beta = await privateEventsBeta(locals);
 	const base = {
-		pageTitle: 'Private events',
+		pageTitle: 'Calendars',
 		did: caller.did,
 		beta,
 		// Shared calendars are offered with the beta on. Making one asks for one more permission.

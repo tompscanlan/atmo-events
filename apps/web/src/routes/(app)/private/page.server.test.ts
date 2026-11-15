@@ -190,28 +190,40 @@ describe('/private with shared calendars', () => {
 		return render(PrivatePage, { props: { data } as never }).body;
 	}
 
-	it('lists events on a calendar beside single ones, each marked private to its calendar', async () => {
+	it('is called Calendars', async () => {
 		const body = await rendered(GUEST_SCOPE);
-		expect(body).toContain('Dinner');
-		expect(body).toContain('Supper');
-		expect(body).toContain('data-testid="private-to"');
-		expect(body).toContain('/calendar/cal-3lcalcalcalcal/3lonthecal');
-		expect(body.replace(/<!--.*?-->/g, '').replace(/\s+/g, ' ')).toMatch(
-			/Private event\. Only the people on <a href="\/p\/[^"]+\/calendar\/cal-3lcalcalcalcal"[^>]*>Supper club<\/a> can see it\./
-		);
+		expect(body).toMatch(/<h1[^>]*>Calendars<\/h1>/);
 	});
 
-	it('says when a calendar has more events than it lists, without asking to try again', async () => {
+	it('lists the calendars someone is on first, then the events with their own guest list', async () => {
+		const body = await rendered(GUEST_SCOPE);
+		const calendars = body.indexOf('data-testid="shared-calendars"');
+		const single = body.indexOf('data-testid="private-events"');
+		expect(calendars).toBeGreaterThan(-1);
+		expect(single).toBeGreaterThan(calendars);
+		expect(body).toContain('data-calendar="cal-3lcalcalcalcal"');
+		expect(body).toContain('Supper club');
+		expect(body.slice(single)).toContain('Dinner');
+	});
+
+	it('leaves a calendar’s events to the calendar’s own page', async () => {
+		const body = await rendered(GUEST_SCOPE);
+		expect(body).not.toContain('/calendar/cal-3lcalcalcalcal/3lonthecal');
+		expect(body).not.toContain('>Supper<');
+	});
+
+	it('says nothing about how many events a calendar has, since it lists none of them', async () => {
 		const body = await rendered(GUEST_SCOPE, GUEST, true);
-		expect(body).toContain('data-testid="private-events-capped"');
+		expect(body).not.toContain('data-testid="private-events-capped"');
 		expect(body).not.toContain('data-testid="private-events-incomplete"');
-		expect(body).toContain('Supper');
 	});
 
-	it('has no calendar section with the beta off, though the events are listed', async () => {
+	it('lists the calendars someone is on with the beta off, with nothing to make one', async () => {
 		const body = await rendered(GUEST_SCOPE);
-		expect(body).not.toContain('data-testid="shared-calendars"');
+		expect(body).toContain('data-testid="shared-calendars"');
+		expect(body).toContain('Owned by');
 		expect(body).not.toContain('data-testid="new-calendar"');
+		expect(body).not.toContain('Allow atmo to make shared calendars');
 	});
 
 	it('lists the calendars with the beta on, and asks before the first one', async () => {

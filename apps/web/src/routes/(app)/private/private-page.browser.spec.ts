@@ -7,7 +7,8 @@ import PrivatePage from './+page.svelte';
 // Making a calendar goes through a SvelteKit remote function, which a browser test has no server for.
 vi.mock('#lib/private-events/private-events.remote', () => ({ createCalendar: vi.fn() }));
 
-const base = { pageTitle: 'Private events', did: 'did:plc:person', spacesServer: null };
+// As the load returns it: the calendars list is always there, empty or not.
+const base = { pageTitle: 'Calendars', did: 'did:plc:person', spacesServer: null, calendars: [] };
 
 describe('/private', () => {
 	it('says the link is the invitation when there is nothing to list', async () => {
