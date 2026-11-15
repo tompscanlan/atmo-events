@@ -20,6 +20,9 @@
 	const INVITED = 'invited';
 	const CALENDAR = 'calendar';
 	const UNLISTED = 'unlisted';
+	// The picker's own value while a calendar was asked for and isn't among the host's, so that
+	// choosing "Just this event" is a change the browser reports.
+	const NOT_PICKED = 'not-picked';
 	type Audience = 'everyone' | typeof UNLISTED | typeof INVITED | typeof CALENDAR;
 	const asked = page.url.searchParams.get('audience');
 	const askedPrivate = asked === INVITED || asked === CALENDAR;
@@ -163,7 +166,7 @@
 					Who's invited?
 					<select
 						name="calendar"
-						value={audience === CALENDAR ? (calendar ?? '') : ''}
+						value={calendarMissing ? NOT_PICKED : audience === CALENDAR ? (calendar ?? '') : ''}
 						onchange={(event) => {
 							const key = event.currentTarget.value;
 							if (key === '') audience = INVITED;
@@ -174,6 +177,9 @@
 						}}
 						class="border-base-300 dark:border-base-700 bg-base-50 dark:bg-base-900 rounded-lg border px-2 py-1.5 text-sm"
 					>
+						{#if calendarMissing}
+							<option value={NOT_PICKED} disabled>Pick who's invited</option>
+						{/if}
 						<option value="">Just this event</option>
 						{#each data.calendars as option (option.key)}
 							<option value={option.key}>Everyone on {option.name ?? UNTITLED_CALENDAR}</option>
@@ -186,10 +192,12 @@
 					</p>
 				{/if}
 			{/if}
-			<p class="text-base-600 dark:text-base-400 mt-3 text-xs" data-testid="audience-fine-print">
-				{#if audience === INVITED || audience === CALENDAR}A private event can't be made public
-					later.{PRIVATE_LIMITS}{:else}A public or unlisted event can't be made private later.{/if}
-			</p>
+			{#if audience !== null}
+				<p class="text-base-600 dark:text-base-400 mt-3 text-xs" data-testid="audience-fine-print">
+					{#if audience === INVITED || audience === CALENDAR}A private event can't be made public
+						later.{PRIVATE_LIMITS}{:else}A public or unlisted event can't be made private later.{/if}
+				</p>
+			{/if}
 			{#if invited && data.hostAccess}
 				<PrivateEventAccessNotice
 					access={data.hostAccess}
