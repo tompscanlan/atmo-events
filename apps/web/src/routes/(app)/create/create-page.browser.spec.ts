@@ -250,8 +250,13 @@ describe('choosing who’s invited to a private event on /create', () => {
 		render(CreatePage, { data: data() } as never);
 		await expect.element(page.getByTestId('calendar-missing')).toBeVisible();
 		const picker = page.getByRole('combobox', { name: PICKER });
-		await expect.element(picker).toHaveValue('');
+		// Its own placeholder, so choosing "Just this event" is a change the browser reports.
+		await expect.element(picker).toHaveValue('not-picked');
 		expect(publish().elements()).toHaveLength(0);
+		await picker.selectOptions('');
+		await expect.element(publish()).toBeVisible();
+		expect(page.getByTestId('calendar-missing').elements()).toHaveLength(0);
+		at('?audience=calendar&calendar=cal-3lgone');
 		await picker.selectOptions('cal-3lbrunch');
 		await expect.element(picker).toHaveValue('cal-3lbrunch');
 		await expect.element(publish()).toBeVisible();
