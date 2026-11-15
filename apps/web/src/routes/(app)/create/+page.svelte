@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ToggleGroup, ToggleGroupItem } from '@atmo-dev/kit';
+	import { setLinkEmbeds, ToggleGroup, ToggleGroupItem } from '@atmo-dev/kit';
 	import { EventEditor, type EventEditorPrefill } from '@atmo-dev/kit/events';
 	import { onMount } from 'svelte';
 	import { user } from '#lib/atproto/auth.svelte.js';
@@ -9,6 +9,7 @@
 	import { page } from '$app/state';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { createPrivateEventAdapter } from '#lib/private-events/editor-adapter.js';
+	import { PRIVATE_LINK_EMBEDS } from '#lib/private-events/embeds.js';
 	import { UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
 	import { HOST_SCOPES } from '#lib/private-events/scopes.js';
 
@@ -35,6 +36,8 @@
 	let calendarMissing = $derived(data.privateEvents && audience === CALENDAR && calendar === null);
 	// With private events off, the editor is the public one, so a link that asked for a private
 	// audience gets no editor at all: what someone meant to keep private must never be posted publicly.
+	// A private event's description loads nothing by itself, here as on its page; a public one is as before.
+	setLinkEmbeds(() => (invited || onCalendar ? PRIVATE_LINK_EMBEDS : {}));
 	let chosen = $derived(
 		(!data.privateEvents && !askedPrivate) || audience === 'everyone' || invited || onCalendar
 	);

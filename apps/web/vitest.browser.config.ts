@@ -17,8 +17,10 @@ const envFixture = fileURLToPath(new URL('./src/lib/atproto/test-env.ts', import
 export default defineConfig({
 	plugins: [svelte(), tailwindcss()],
 	optimizeDeps: {
-		// Keep shared network settings in one module; Vite also handles MapLibre's worker ?url.
-		exclude: ['@atmo-dev/kit/events', '@atmo-dev/kit/events-data'],
+		// Keep shared network settings in one module; Vite also handles MapLibre's worker ?url. The kit's
+		// root is left out too, so a page's setLinkEmbeds reaches the EventView it renders: pre-bundled,
+		// the root would carry its own copy of the embed settings.
+		exclude: ['@atmo-dev/kit', '@atmo-dev/kit/events', '@atmo-dev/kit/events-data'],
 		include: [
 			'mode-watcher',
 			'@svelte-atproto/oauth/helper',
