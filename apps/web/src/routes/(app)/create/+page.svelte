@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Input, setLinkEmbeds, ToggleGroup, ToggleGroupItem } from '@atmo-dev/kit';
+	import { setLinkEmbeds, ToggleGroup, ToggleGroupItem } from '@atmo-dev/kit';
 	import { EventEditor, type EventEditorPrefill } from '@atmo-dev/kit/events';
 	import { onMount } from 'svelte';
 	import { user } from '#lib/atproto/auth.svelte.js';
@@ -7,11 +7,10 @@
 	import { readPendingImportPrefill } from '#lib/components/CreateEventModal.svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import CalendarsNeedAllowing from '#lib/private-events/components/CalendarsNeedAllowing.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { createPrivateEventAdapter } from '#lib/private-events/editor-adapter.js';
 	import { PRIVATE_LINK_EMBEDS } from '#lib/private-events/embeds.js';
-	import { CALENDAR_NAME_MAX, NAMING_TELLS, UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
+	import { UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
 	import { HOST_SCOPES } from '#lib/private-events/scopes.js';
 
 	let { data } = $props();
@@ -46,6 +45,7 @@
 	// A name for the guests of a new private event, which makes them a shared calendar; read when it
 	// is saved, so typing it never starts the editor over.
 	let listName = $state('');
+	const PRIVATE_LIMITS = " Private events can't have an image or repeat yet.";
 
 	let viewer = $derived({
 		isLoggedIn: user.isLoggedIn,
@@ -112,86 +112,64 @@
 				aria-labelledby="audience-heading"
 				class="mt-3 w-fit"
 				bind:value={
-					() => audience ?? '',
+					() => (audience === null ? '' : audience === 'everyone' ? 'everyone' : 'private'),
 					(value) => {
-						if (value === 'everyone' || value === INVITED || value === CALENDAR) audience = value;
+						if (value === 'everyone') audience = 'everyone';
+						else if (value === 'private' && (audience === null || audience === 'everyone'))
+							audience = INVITED;
 					}
 				}
 			>
-				<ToggleGroupItem value="everyone">Everyone</ToggleGroupItem>
-				<ToggleGroupItem value={INVITED}>Invited people only</ToggleGroupItem>
-				{#if data.calendars.length > 0}
-					<ToggleGroupItem value={CALENDAR}
-						>Only the people on one of your shared calendars</ToggleGroupItem
-					>
-				{/if}
+				<ToggleGroupItem value="everyone">Public</ToggleGroupItem>
+				<ToggleGroupItem value="private">Private</ToggleGroupItem>
 			</ToggleGroup>
+			{#if audience !== null}
+				<p class="text-base-700 dark:text-base-300 mt-3 text-sm" data-testid="audience-what">
+					{audience === 'everyone'
+						? 'Anyone can see it.'
+						: audience === INVITED
+							? 'Only people you invite can see it. You add them after publishing.'
+							: 'Only people you invite can see it.'}
+				</p>
+			{/if}
 			{#if calendarMissing}
 				<p class="text-base-700 dark:text-base-300 mt-3 text-sm" data-testid="calendar-missing">
-					That calendar isn't among yours just now, so no calendar is picked.
-					{#if data.calendars.length > 0}Pick one below, or reload to try again.{:else}Reload to try
+					That one isn't among yours just now, so nothing is picked.
+					{#if data.calendars.length > 0}Pick below, or reload to try again.{:else}Reload to try
 						again.{/if}
 				</p>
 			{/if}
-			{#if audience === CALENDAR && data.calendars.length > 0}
-				<label class="text-base-700 dark:text-base-300 mt-3 flex items-center gap-2 text-sm">
-					Calendar
+			{#if (audience === INVITED || audience === CALENDAR) && data.calendars.length > 0}
+				<label class="text-base-700 dark:text-base-300 mt-4 flex items-center gap-2 text-sm">
+					Who's invited?
 					<select
 						name="calendar"
-						value={calendar ?? ''}
-						onchange={(event) => (picked = event.currentTarget.value)}
+						value={audience === CALENDAR ? (calendar ?? '') : ''}
+						onchange={(event) => {
+							const key = event.currentTarget.value;
+							if (key === '') audience = INVITED;
+							else {
+								picked = key;
+								audience = CALENDAR;
+							}
+						}}
 						class="border-base-300 dark:border-base-700 bg-base-50 dark:bg-base-900 rounded-lg border px-2 py-1.5 text-sm"
 					>
-						{#if calendar === null}
-							<option value="" disabled>Pick a calendar</option>
-						{/if}
+						<option value="">Just this event</option>
 						{#each data.calendars as option (option.key)}
-							<option value={option.key}>{option.name ?? UNTITLED_CALENDAR}</option>
+							<option value={option.key}>Everyone on {option.name ?? UNTITLED_CALENDAR}</option>
 						{/each}
 					</select>
 				</label>
 				{#if data.calendarsCapped}
 					<p class="text-base-600 dark:text-base-400 mt-2 text-sm" role="status">
-						There may be more calendars than these. To put an event on another, start from its own
-						page.
+						There may be more than these. To use another, start from its own page.
 					</p>
 				{/if}
 			{/if}
-			<ul class="text-base-600 dark:text-base-400 mt-3 space-y-1 text-sm">
-				<li>
-					<span class="text-base-900 dark:text-base-50 font-medium">Everyone:</span> anyone can see it,
-					and it can't be made private later.
-				</li>
-				<li>
-					<span class="text-base-900 dark:text-base-50 font-medium">Invited people only:</span> only people
-					you add can see it, and it can't be made public later. It has no image or repeats for now.
-				</li>
-				{#if data.calendars.length > 0}
-					<li>
-						<span class="text-base-900 dark:text-base-50 font-medium">A shared calendar:</span> only the
-						people on the calendar you pick can see it, now and later, and it can't be made public later.
-						It has no image or repeats for now.
-					</li>
-				{/if}
-			</ul>
-			{#if invited && !data.hostAccess && data.canName}
-				<label class="text-base-700 dark:text-base-300 mt-3 block max-w-md text-sm">
-					Name this list to reuse it for later events (optional)
-					<Input
-						class="mt-1"
-						name="list-name"
-						placeholder="Supper club"
-						maxlength={CALENDAR_NAME_MAX}
-						autocomplete="off"
-						bind:value={listName}
-					/>
-				</label>
-				<p class="text-base-600 dark:text-base-400 mt-1 text-sm" data-testid="naming-tells">
-					{NAMING_TELLS}
-				</p>
-			{:else if invited && !data.hostAccess}
-				<CalendarsNeedAllowing />
-			{/if}
+			<p class="text-base-600 dark:text-base-400 mt-3 text-xs" data-testid="audience-fine-print">
+				You can't change this after publishing.{#if audience === INVITED || audience === CALENDAR}{PRIVATE_LIMITS}{/if}
+			</p>
 			{#if invited && data.hostAccess}
 				<PrivateEventAccessNotice
 					access={data.hostAccess}
