@@ -41,26 +41,36 @@ const ACTIVITY_RECENT_EVENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const PRIVATE_EVENTS_WAIT_MS = 4000;
 
 /** Their own private events, hosted or answered, for Your events: only with private events and their
- *  beta on, and a grant to read them. Null when there are none to add, or they couldn't be read in
- *  time, so the page never waits long or fails for them. */
-async function ownPrivateEvents(locals: App.Locals): Promise<MyPrivateEvent[] | null> {
+ *  beta on, and a grant to read them. Null when there are none to add. `incomplete` when some may be
+ *  missing: a read failed or ran out of time, or a calendar had more than were listed. The page never
+ *  waits long or fails for them. */
+async function ownPrivateEvents(
+	locals: App.Locals
+): Promise<{ events: MyPrivateEvent[]; incomplete: boolean } | null> {
 	if (!locals.did || !privateEventsEnabled()) return null;
+	// The session and its grant are known here; only the beta setting is on their server, so it is
+	// asked last, and someone without a grant costs this page nothing.
+	let betaOn = false;
 	const read = async () => {
-		if (!(await privateEventsBeta(locals))) return null;
 		const caller = await callerSession(locals.session ?? null);
 		if (!caller) return null;
 		if (!holdsGuestGrant(caller.scope) && !holdsHostGrant(caller.scope, caller.did)) return null;
-		return (await myPrivateEventsAndCalendars(caller)).events;
+		if (!(await privateEventsBeta(locals))) return null;
+		betaOn = true;
+		const { events, incomplete, capped } = await myPrivateEventsAndCalendars(caller);
+		return { events, incomplete: incomplete || capped };
 	};
 	let timer: ReturnType<typeof setTimeout> | undefined;
-	const late = new Promise<null>((resolve) => {
-		timer = setTimeout(() => resolve(null), PRIVATE_EVENTS_WAIT_MS);
+	const late = new Promise<'late'>((resolve) => {
+		timer = setTimeout(() => resolve('late'), PRIVATE_EVENTS_WAIT_MS);
 	});
 	try {
-		return await Promise.race([read(), late]);
+		const found = await Promise.race([read(), late]);
+		if (found !== 'late') return found;
+		return betaOn ? { events: [], incomplete: true } : null;
 	} catch (e) {
 		console.error(`[private-events] ${locals.did}: private events unread for the home page:`, e);
-		return null;
+		return betaOn ? { events: [], incomplete: true } : null;
 	} finally {
 		clearTimeout(timer);
 	}
@@ -324,15 +334,19 @@ export const load: PageServerLoad = async ({ locals, setHeaders }) => {
 	// Their own private events join their public ones, seen only by them, so this page is kept nowhere.
 	let myEvents: { upcoming: typeof publicOnes.upcoming; past: typeof publicOnes.past } = publicOnes;
 	let privateLinks: Record<string, PrivateLink> = {};
-	if (ownPrivate && ownPrivate.length > 0) {
+	if (ownPrivate && ownPrivate.events.length > 0) {
 		const now = Date.now();
 		({ privateLinks, ...myEvents } = withPrivateEvents(
 			publicOnes,
-			ownPrivate,
+			ownPrivate.events,
 			now,
 			now - SEVEN_DAYS_MS
 		));
-		if (Object.keys(privateLinks).length > 0) setHeaders({ 'cache-control': 'private, no-store' });
+	}
+	// Saying some are missing tells as much as listing them does.
+	const privateEventsIncomplete = ownPrivate?.incomplete ?? false;
+	if (Object.keys(privateLinks).length > 0 || privateEventsIncomplete) {
+		setHeaders({ 'cache-control': 'private, no-store' });
 	}
 
 	if (!response) {
@@ -342,6 +356,7 @@ export const load: PageServerLoad = async ({ locals, setHeaders }) => {
 			myUpcoming: myEvents.upcoming,
 			myPast: myEvents.past,
 			privateLinks,
+			privateEventsIncomplete,
 			recentActivity,
 			recentActivityIsPersonalized
 		};
@@ -358,6 +373,7 @@ export const load: PageServerLoad = async ({ locals, setHeaders }) => {
 		myUpcoming: myEvents.upcoming,
 		myPast: myEvents.past,
 		privateLinks,
+		privateEventsIncomplete,
 		recentActivity,
 		recentActivityIsPersonalized
 	};

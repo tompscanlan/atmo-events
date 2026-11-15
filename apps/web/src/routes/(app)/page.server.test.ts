@@ -49,6 +49,7 @@ type LoadResult = {
 	myUpcoming: { name: string }[];
 	myPast: unknown[];
 	privateLinks: Record<string, { href: string; calendar: string | null }>;
+	privateEventsIncomplete: boolean;
 };
 
 const event = {
@@ -172,12 +173,46 @@ describe('your own private events in Your events', () => {
 		expect(myPrivateEventsAndCalendars).not.toHaveBeenCalled();
 	});
 
-	it('reads none without a grant to read them', async () => {
+	it('reads none without a grant to read them, and asks their server nothing', async () => {
 		turnOn();
 		vi.mocked(callerSession).mockResolvedValue({ did: ME, scope: 'atproto' } as never);
 		const { event } = signedIn();
-		await load(event);
+		const data = (await load(event)) as unknown as LoadResult;
+		expect(privateEventsBeta).not.toHaveBeenCalled();
 		expect(myPrivateEventsAndCalendars).not.toHaveBeenCalled();
+		expect(data.privateEventsIncomplete).toBe(false);
+	});
+
+	it('asks their server nothing when the session can’t be read', async () => {
+		turnOn();
+		vi.mocked(callerSession).mockResolvedValue(null);
+		const { event } = signedIn();
+		await load(event);
+		expect(privateEventsBeta).not.toHaveBeenCalled();
+	});
+
+	it('says nothing is missing with the beta off', async () => {
+		turnOn();
+		vi.mocked(privateEventsBeta).mockResolvedValue(false);
+		const { event } = signedIn();
+		const data = (await load(event)) as unknown as LoadResult;
+		expect(data.privateEventsIncomplete).toBe(false);
+	});
+
+	it.each([
+		['some could not be read', { incomplete: true, capped: false }],
+		['a calendar had more than were listed', { incomplete: false, capped: true }]
+	])('says some may be missing when %s', async (_why, flags) => {
+		turnOn();
+		vi.mocked(myPrivateEventsAndCalendars).mockResolvedValue({
+			events: [],
+			calendars: [],
+			...flags
+		} as never);
+		const { event, setHeaders } = signedIn();
+		const data = (await load(event)) as unknown as LoadResult;
+		expect(data.privateEventsIncomplete).toBe(true);
+		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'private, no-store' });
 	});
 
 	it('shows the public ones alone when theirs could not be read', async () => {
@@ -188,7 +223,8 @@ describe('your own private events in Your events', () => {
 		const data = (await load(event)) as unknown as LoadResult;
 		expect(data.myUpcoming).toEqual([]);
 		expect(data.privateLinks).toEqual({});
-		expect(setHeaders).not.toHaveBeenCalled();
+		expect(data.privateEventsIncomplete).toBe(true);
+		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'private, no-store' });
 	});
 
 	it('does not wait more than a few seconds for their server', async () => {
@@ -202,6 +238,7 @@ describe('your own private events in Your events', () => {
 			const data = (await loading) as unknown as LoadResult;
 			expect(data.myUpcoming).toEqual([]);
 			expect(data.privateLinks).toEqual({});
+			expect(data.privateEventsIncomplete).toBe(true);
 		} finally {
 			vi.useRealTimers();
 		}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { EventCard } from '@atmo-dev/kit/events';
 	import { LockKeyhole } from '@sketchyicons/svelte';
 	import RecentActivity from '#lib/components/RecentActivity.svelte';
@@ -8,20 +9,26 @@
 	import { user } from '#lib/atproto/auth.svelte.js';
 	import { atProtoLoginModalState } from '#lib/components/LoginModal.svelte';
 	import { createEventModalState } from '#lib/components/CreateEventModal.svelte';
+	import { describeLinkBy, privateNoteId } from '#lib/private-events/describe-link.js';
 
 	let { data } = $props();
 
 	let hasMyEvents = $derived(
-		user.isLoggedIn && (data.myUpcoming.length > 0 || data.myPast.length > 0)
+		user.isLoggedIn &&
+			(data.myUpcoming.length > 0 || data.myPast.length > 0 || data.privateEventsIncomplete)
 	);
 </script>
 
 {#snippet yourEvent(event: (typeof data.myUpcoming)[number])}
 	{@const link = data.privateLinks?.[event.uri]}
 	{#if link}
-		<div data-testid="your-private-event">
+		{@const noteId = privateNoteId(event.uri)}
+		<div data-testid="your-private-event" {@attach describeLinkBy(noteId)}>
 			<EventCard {event} href={link.href} />
-			<p class="text-base-600 dark:text-base-400 mt-1 inline-flex items-center gap-1 text-xs">
+			<p
+				id={noteId}
+				class="text-base-600 dark:text-base-400 mt-1 inline-flex items-center gap-1 text-xs"
+			>
 				<Icon img={LockKeyhole} size={12} />
 				{link.calendar ? `Private to ${link.calendar}` : 'Private event'}
 			</p>
@@ -99,6 +106,19 @@
 						</div>
 					{/if}
 				</div>
+				{#if data.privateEventsIncomplete}
+					<p
+						class="text-base-600 dark:text-base-400 mt-6 text-sm"
+						role="status"
+						data-testid="your-private-events-incomplete"
+					>
+						Some of your private events couldn't be loaded. See them all on
+						<a
+							href={resolve('/(app)/private')}
+							class="text-accent-600 dark:text-accent-400 hover:underline">Private events</a
+						>.
+					</p>
+				{/if}
 			</section>
 		{/if}
 
