@@ -4,7 +4,8 @@
 export const BETA_COLLECTION = 'rsvp.atmo.actor.privateEventsBeta';
 export const BETA_RKEY = 'self';
 
-/** Declared when a deployment offers private events; asked for only from Settings. */
+/** Declared when a deployment offers private events; asked for from Settings, and from the offer a
+ *  guest sees on a private event once they answer. */
 export const BETA_SCOPE = `repo:${BETA_COLLECTION}?action=create&action=update`;
 
 export const BETA_REQUIREMENTS = [

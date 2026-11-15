@@ -23,7 +23,10 @@ vi.mock('#lib/private-events/private-events.remote', () => ({
 	rsvpToPrivateEvent: mocks.rsvp,
 	cancelPrivateRsvp: vi.fn(),
 	addGuest: vi.fn(),
-	removeGuest: vi.fn()
+	removeGuest: vi.fn(),
+	// The beta switch, off, for the offer a guest sees once they answer.
+	getPrivateEventsBeta: () => ({ ready: true, current: { canSave: true, on: false } }),
+	setPrivateEventsBeta: vi.fn()
 }));
 vi.mock('#lib/atproto/repo.remote.js', () => ({
 	putRecord: vi.fn(),
@@ -112,6 +115,19 @@ describe('a private event’s page', () => {
 			);
 		await expect.element(page.getByText("You're Going", { exact: true })).toBeVisible();
 		expect(page.getByText("You're going!", { exact: true }).elements()).toHaveLength(0);
+	});
+
+	it('offers a guest who answers, with the beta off, a way to find it again', async () => {
+		watchRequests();
+		render(EventPage, { data: guestView() } as never);
+		expect(page.getByTestId('find-again').elements()).toHaveLength(0);
+		await page.getByRole('button', { name: 'Going', exact: true }).click();
+		const shown = (id: string) =>
+			(page.getByTestId(id).elements()[0]?.textContent ?? '').replace(/\s+/g, ' ');
+		await expect
+			.poll(() => shown('find-again'))
+			.toContain('Turn on private events to find this again under Calendars.');
+		expect(shown('private-note')).not.toContain('Answer to let the host know');
 	});
 
 	it('sends its host to the private event’s own editor, not the public one', async () => {

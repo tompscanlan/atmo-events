@@ -14,7 +14,7 @@
 		Settings,
 		Wrench,
 		Menu,
-		LockKeyhole
+		CalendarHeart
 	} from '@sketchyicons/svelte';
 	import { page } from '$app/state';
 	import { browser } from '$app/env';
@@ -29,7 +29,8 @@
 	let { children, data } = $props();
 	let navigationOpen = $state(false);
 
-	// The tab is for people who turned private events on in Settings. Read in the browser only, as
+	// The Calendars tab, where shared calendars and private events are listed, is for people who
+	// turned private events on in Settings. Read in the browser only, as
 	// Settings does: on a Worker a query started during the server render outlives the request.
 	// Settings saves through this same query, so the tab follows the switch without a reload.
 	let privateEventsBeta = $derived(
@@ -101,10 +102,10 @@
 		...(privateEventsBeta?.current?.on
 			? [
 					{
-						label: 'Private events',
-						icon: LockKeyhole,
+						label: 'Calendars',
+						icon: CalendarHeart,
 						href: '/private',
-						active: path === '/private' || /\/p\/[^/]+\/private\//.test(path)
+						active: path === '/private' || /\/p\/[^/]+\/(private|calendar)\//.test(path)
 					}
 				]
 			: []),
