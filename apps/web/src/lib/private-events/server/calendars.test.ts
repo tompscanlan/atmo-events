@@ -30,15 +30,22 @@ const {
 	ownCalendars,
 	readCalendarEventPage,
 	readCalendarPage,
+	readSpaceEventPage,
+	NAMED_SPACES_READ,
 	removePersonFromCalendar,
-	renameCalendar
+	renameCalendar,
+	saveNamedEvent
 } = await import('./calendars');
 const { cancelPrivateEvent, putPrivateRsvp, savePrivateEvent } = await import('./events');
 
 const OWNER = 'did:plc:ownerownerownerownerowner';
 const PERSON = 'did:plc:personpersonpersonperson';
 const OTHER = 'did:plc:otherotherotherotherothe';
-const KEY = 'cal-3lcalcalcalcal';
+/** A shared calendar's key: a plain TID, as any space's. */
+const KEY = '3lcalcalcalcal';
+/** A single event's space, under the event's own key. */
+const SINGLE_KEY = '3lsingleevent';
+const SINGLE_SPACE = privateEventSpace(OWNER, SINGLE_KEY);
 const MEMBER_COLLECTION = 'com.atproto.memberspace.member';
 const SPACE = privateEventSpace(OWNER, KEY);
 const OWNER_SCOPE = `${HOST_SCOPE} ${CALENDAR_SCOPE} ${GUEST_SCOPE}`;
@@ -153,11 +160,11 @@ beforeEach(() => {
 });
 
 describe('making a shared calendar', () => {
-	it('makes a private space under a calendar key that shows its people to everyone on it, then names it in the owner’s own repo there', async () => {
+	it('makes a private space under a TID of its own that shows its people to everyone on it, then names it in the owner’s own repo there', async () => {
 		const host = owner();
 		const { key, actor } = await createCalendar(host, { name: '  Supper club ' });
 
-		expect(key).toMatch(/^cal-[a-z2-7]{13}$/);
+		expect(key).toMatch(/^[a-z2-7]{13}$/);
 		expect(actor).toBe('ownerownerownerownerowner.example.com');
 		expect(host.nsids()).toEqual([
 			'com.atproto.space.createSpace',
@@ -247,7 +254,10 @@ describe('renaming a shared calendar', () => {
 		theCalendarHolds({ name: { name: 'Old', createdAt: '2026-01-01T00:00:00.000Z' } });
 		const host = owner();
 		await renameCalendar(host, { key: KEY, name: 'Supper club' });
-		expect(host.nsids()).toEqual(['com.atproto.space.getSpace', 'com.atproto.space.putRecord']);
+		expect(host.nsids().slice(0, 2)).toEqual([
+			'com.atproto.space.getSpace',
+			'com.atproto.space.putRecord'
+		]);
 		expect(host.sent[1].body).toMatchObject({
 			space: SPACE,
 			repo: OWNER,
@@ -265,11 +275,55 @@ describe('renaming a shared calendar', () => {
 		expect(host.nsids()).not.toContain('com.atproto.space.putRecord');
 	});
 
-	it('refuses a key that is not a calendar’s, and calls nothing', async () => {
+	it('names a single event’s space, then has its server show its people to everyone on it', async () => {
+		theCalendarHolds({ space: SINGLE_SPACE });
 		const host = owner();
+		await renameCalendar(host, { key: SINGLE_KEY, name: ' Supper club ' });
+		expect(host.nsids()).toEqual([
+			'com.atproto.space.getSpace',
+			'com.atproto.space.putRecord',
+			'com.atproto.space.getSpace',
+			'com.atproto.space.updateSpace'
+		]);
+		expect(host.sent[1].body).toMatchObject({
+			space: SINGLE_SPACE,
+			repo: OWNER,
+			collection: CALENDAR_COLLECTION,
+			rkey: 'self',
+			record: { name: 'Supper club', createdAt: expect.any(String) }
+		});
+		expect(host.sent[3].body).toMatchObject({
+			space: SINGLE_SPACE,
+			policy: { $type: 'com.atproto.memberspace.policy', publishPolicy: true, publishMembers: true }
+		});
+		// Nothing moves: no event is written, and no space is made or deleted.
+		expect(host.sent.map((sent) => sent.body?.collection)).not.toContain(EVENT_COLLECTION);
+	});
+
+	it('names only the caller’s own space, whatever key a page sends', async () => {
+		reader.get.mockResolvedValue(null);
+		const someone = caller(PERSON, OWNER_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
+		await renameCalendar(someone, { key: SINGLE_KEY, name: 'Supper club' });
+		expect(someone.sent[0].query.get('space')).toBe(privateEventSpace(PERSON, SINGLE_KEY));
+		expect(someone.sent[1].body).toMatchObject({ repo: PERSON });
+	});
+
+	it('names nothing in a space anyone can read, and shows no one its people', async () => {
+		const host = owner({
+			'com.atproto.space.getSpace': () =>
+				Response.json({ policy: { $type: 'com.atproto.memberspace.policy', publicRead: true } })
+		});
 		await expect(
-			renameCalendar(host, { key: '3lsingleevent', name: 'Supper club' })
-		).rejects.toMatchObject({ reason: 'no-calendar' });
+			renameCalendar(host, { key: SINGLE_KEY, name: 'Supper club' })
+		).rejects.toMatchObject({ reason: 'not-private' });
+		expect(host.nsids()).toEqual(['com.atproto.space.getSpace']);
+	});
+
+	it('asks for the calendar grant to name a single event’s space, and calls nothing', async () => {
+		const host = caller(OWNER, `${HOST_SCOPE} ${GUEST_SCOPE}`);
+		await expect(
+			renameCalendar(host, { key: SINGLE_KEY, name: 'Supper club' })
+		).rejects.toMatchObject({ reason: 'no-grant' });
 		expect(host.sent).toHaveLength(0);
 	});
 
@@ -287,16 +341,41 @@ describe('deleting a shared calendar', () => {
 		const host = owner();
 		await deleteCalendar(host, KEY);
 		expect(host.sent).toMatchObject([
+			{ pathname: '/xrpc/com.atproto.space.getSpace' },
 			{ pathname: '/xrpc/com.atproto.space.deleteSpace', body: { space: SPACE } }
 		]);
 	});
 
-	it('refuses a key that is not a calendar’s, so it never deletes a single event', async () => {
+	it('deletes a calendar that was a single event’s space the same way', async () => {
 		const host = owner();
-		await expect(deleteCalendar(host, '3lsingleevent')).rejects.toMatchObject({
-			reason: 'no-calendar'
-		});
-		expect(host.sent).toHaveLength(0);
+		await deleteCalendar(host, SINGLE_KEY);
+		expect(host.sent).toMatchObject([
+			{ pathname: '/xrpc/com.atproto.space.getSpace' },
+			{ pathname: '/xrpc/com.atproto.space.deleteSpace', body: { space: SINGLE_SPACE } }
+		]);
+	});
+
+	it.each([
+		['was never made', refuse(400, 'SpaceNotFound'), 'no-calendar'],
+		[
+			'anyone can read',
+			() =>
+				Response.json({ policy: { $type: 'com.atproto.memberspace.policy', publicRead: true } }),
+			'not-private'
+		]
+	])('refuses a space that %s, before any write', async (_, getSpace, reason) => {
+		actorToDid.mockResolvedValue(PERSON);
+		const runs = [
+			(host: CallerSession) => deleteCalendar(host, SINGLE_KEY),
+			(host: CallerSession) =>
+				addPersonToCalendar(host, { key: SINGLE_KEY, handleOrDid: 'person.example.com' }),
+			(host: CallerSession) => removePersonFromCalendar(host, { key: SINGLE_KEY, did: PERSON })
+		];
+		for (const run of runs) {
+			const host = owner({ 'com.atproto.space.getSpace': getSpace });
+			await expect(run(host)).rejects.toMatchObject({ reason });
+			expect(host.nsids()).toEqual(['com.atproto.space.getSpace']);
+		}
 	});
 
 	it('refuses a guest', async () => {
@@ -317,6 +396,7 @@ describe('the people on a calendar', () => {
 		expect(actorToDid).toHaveBeenCalledWith('person.example.com');
 		expect(added).toEqual({ did: PERSON, handle: 'personpersonpersonperson.example.com' });
 		expect(host.sent).toMatchObject([
+			{ pathname: '/xrpc/com.atproto.space.getSpace' },
 			{
 				pathname: '/xrpc/com.atproto.memberspace.putMembers',
 				body: { space: SPACE, members: [{ did: PERSON, read: true, write: true }] }
@@ -342,9 +422,10 @@ describe('the people on a calendar', () => {
 
 	it('acts only on the caller’s own calendar, whatever a page sends', async () => {
 		actorToDid.mockResolvedValue(OTHER);
-		const someone = caller(PERSON, HOST_SCOPE);
+		const someone = caller(PERSON, HOST_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
 		await addPersonToCalendar(someone, { key: KEY, handleOrDid: 'other.example.com' });
-		expect(someone.sent[0].body?.space).toBe(privateEventSpace(PERSON, KEY));
+		expect(someone.sent[0].query.get('space')).toBe(privateEventSpace(PERSON, KEY));
+		expect(someone.sent[1].body?.space).toBe(privateEventSpace(PERSON, KEY));
 	});
 
 	it('refuses someone on it who tries to change the list', async () => {
@@ -362,6 +443,7 @@ describe('the people on a calendar', () => {
 		const host = owner();
 		await removePersonFromCalendar(host, { key: KEY, did: PERSON });
 		expect(host.sent).toMatchObject([
+			{ pathname: '/xrpc/com.atproto.space.getSpace' },
 			{
 				pathname: '/xrpc/com.atproto.memberspace.removeMembers',
 				body: { space: SPACE, dids: [PERSON] }
@@ -369,12 +451,15 @@ describe('the people on a calendar', () => {
 		]);
 	});
 
-	it('refuses a key that is not a calendar’s', async () => {
+	it('changes the people on a calendar that was a single event’s space the same way', async () => {
+		actorToDid.mockResolvedValue(PERSON);
 		const host = owner();
-		await expect(
-			addPersonToCalendar(host, { key: '3lsingleevent', handleOrDid: 'person.example.com' })
-		).rejects.toMatchObject({ reason: 'no-calendar' });
-		expect(host.sent).toHaveLength(0);
+		await addPersonToCalendar(host, { key: SINGLE_KEY, handleOrDid: 'person.example.com' });
+		await removePersonFromCalendar(host, { key: SINGLE_KEY, did: PERSON });
+		expect(host.sent.filter((sent) => sent.body).map((sent) => sent.body?.space)).toEqual([
+			SINGLE_SPACE,
+			SINGLE_SPACE
+		]);
 	});
 });
 
@@ -539,7 +624,6 @@ describe('a calendar’s page', () => {
 	});
 
 	it.each([
-		['no name', undefined],
 		['a name that is not text', { name: 7 }],
 		['a name past 64 characters', { name: 'x'.repeat(65) }]
 	])('reads a calendar with %s as untitled', async (_, name) => {
@@ -558,11 +642,56 @@ describe('a calendar’s page', () => {
 		expect(await readCalendarPage(caller(OTHER, GUEST_SCOPE), OWNER, KEY, NOW)).toBeNull();
 	});
 
-	it('reads a key that is not a calendar’s as nothing there, without asking', async () => {
-		expect(
-			await readCalendarPage(caller(PERSON, GUEST_SCOPE), OWNER, '3lsingleevent', NOW)
-		).toBeNull();
-		expect(credentialSpaceReader).not.toHaveBeenCalled();
+	it.each([KEY, 'cal-3lmadebefore'])(
+		'reads a space with no name record as no calendar, whatever its key: %s',
+		async (key) => {
+			theCalendarHolds({
+				space: privateEventSpace(OWNER, key),
+				events: { '3lone': event('Dinner', '2026-11-20T18:00:00.000Z') }
+			});
+			expect(await readCalendarPage(caller(PERSON, GUEST_SCOPE), OWNER, key, NOW)).toBeNull();
+		}
+	);
+
+	it('still reads a calendar made under the old cal- key, by its name', async () => {
+		const key = 'cal-3lmadebefore';
+		theCalendarHolds({ space: privateEventSpace(OWNER, key), name: { name: 'Old club' } });
+		const page = await readCalendarPage(caller(PERSON, GUEST_SCOPE), OWNER, key, NOW);
+		expect(page).toMatchObject({ key, name: 'Old club' });
+	});
+
+	it('reads a single event’s space with no name as nothing there', async () => {
+		theCalendarHolds({
+			space: SINGLE_SPACE,
+			events: { [SINGLE_KEY]: event('Dinner', '2026-11-20T18:00:00.000Z') }
+		});
+		expect(await readCalendarPage(caller(PERSON, GUEST_SCOPE), OWNER, SINGLE_KEY, NOW)).toBeNull();
+	});
+
+	it('reads a single event’s space with no name as nothing there for its owner too, and changes nothing', async () => {
+		theCalendarHolds({
+			space: SINGLE_SPACE,
+			events: { [SINGLE_KEY]: event('Dinner', '2026-11-20T18:00:00.000Z') }
+		});
+		const host = owner({
+			'com.atproto.memberspace.listMembers': () => Response.json({ members: [{ did: PERSON }] })
+		});
+		expect(await readCalendarPage(host, OWNER, SINGLE_KEY, NOW)).toBeNull();
+		expect(host.nsids()).not.toContain('com.atproto.space.updateSpace');
+		expect(host.nsids()).not.toContain('com.atproto.space.getSpace');
+	});
+
+	it('reads a single event’s space with a name as a calendar, its event first among them', async () => {
+		theCalendarHolds({
+			space: SINGLE_SPACE,
+			name: { name: 'Supper club' },
+			events: { [SINGLE_KEY]: event('Dinner', '2026-11-20T18:00:00.000Z') },
+			people: [PERSON, OTHER]
+		});
+		const page = await readCalendarPage(caller(PERSON, GUEST_SCOPE), OWNER, SINGLE_KEY, NOW);
+		expect(page).toMatchObject({ key: SINGLE_KEY, name: 'Supper club' });
+		expect(page?.upcoming.map((e) => e.rkey)).toEqual([SINGLE_KEY]);
+		expect(page?.people?.map((p) => p.did)).toEqual([PERSON, OTHER]);
 	});
 
 	it('does not pass an outage off as nothing there', async () => {
@@ -695,10 +824,14 @@ describe('an event on a calendar', () => {
 		expect(person.sent).toHaveLength(0);
 	});
 
-	it('reads a key that is not a calendar’s as nothing there', async () => {
-		const address = { host: OWNER, spaceKey: '3lother', rkey: RKEY };
+	it('reads an event in a space with no name, under a key not made for a calendar, as no calendar’s', async () => {
+		const address = { host: OWNER, spaceKey: SINGLE_KEY, rkey: SINGLE_KEY };
+		theCalendarHolds({
+			space: SINGLE_SPACE,
+			events: { [SINGLE_KEY]: event('Dinner', '2026-11-20T18:00:00.000Z') }
+		});
+		reader.writers.mockResolvedValue([]);
 		expect(await readCalendarEventPage(caller(PERSON, GUEST_SCOPE), address)).toBeNull();
-		expect(credentialSpaceReader).not.toHaveBeenCalled();
 	});
 });
 
@@ -706,6 +839,7 @@ describe('putting an event on a calendar', () => {
 	const RECORD = event('Dinner', '2026-11-20T18:00:00.000Z');
 
 	it('writes it into the calendar’s space under its own key, and makes no new space', async () => {
+		theCalendarHolds({ name: { name: 'Supper club' } });
 		const host = owner();
 		const saved = await savePrivateEvent(host, { rkey: '3levent', record: RECORD, calendar: KEY });
 		expect(saved.uri).toBe(eventUri(calendarEvent(OWNER, KEY, '3levent')));
@@ -727,6 +861,13 @@ describe('putting an event on a calendar', () => {
 	});
 
 	it('puts it on the caller’s own calendar, whatever key a page sends', async () => {
+		reader.get.mockImplementation(async (q: { space: string; repo: string; collection: string }) =>
+			q.space === privateEventSpace(PERSON, KEY) &&
+			q.repo === PERSON &&
+			q.collection === CALENDAR_COLLECTION
+				? { uri: 'at://x', cid: 'c', rkey: 'self', value: { name: 'Mine' } }
+				: null
+		);
 		const someone = caller(PERSON, HOST_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
 		await savePrivateEvent(someone, { rkey: '3levent', record: RECORD, calendar: KEY });
 		expect(someone.sent[0].query.get('space')).toBe(privateEventSpace(PERSON, KEY));
@@ -740,23 +881,37 @@ describe('putting an event on a calendar', () => {
 		expect(person.sent).toHaveLength(0);
 	});
 
-	it('refuses a single event whose key would read as a calendar’s', async () => {
+	it('puts it in a single event’s space once that space has a name', async () => {
+		theCalendarHolds({ space: SINGLE_SPACE, name: { name: 'Supper club' } });
 		const host = owner();
-		await expect(savePrivateEvent(host, { rkey: KEY, record: RECORD })).rejects.toMatchObject({
-			reason: 'not-an-event'
+		const saved = await savePrivateEvent(host, {
+			rkey: '3lsecond',
+			record: RECORD,
+			calendar: SINGLE_KEY
 		});
-		expect(host.sent).toHaveLength(0);
+		expect(saved.uri).toBe(eventUri(calendarEvent(OWNER, SINGLE_KEY, '3lsecond')));
+		expect(host.nsids()).toEqual(['com.atproto.space.getSpace', 'com.atproto.space.putRecord']);
+		expect(host.sent[1].body).toMatchObject({ space: SINGLE_SPACE, rkey: '3lsecond' });
 	});
 
-	it('never deletes a calendar as if it were an event', async () => {
+	it('refuses a single event’s space with no name, which holds only its own event', async () => {
+		theCalendarHolds({ space: SINGLE_SPACE });
 		const host = owner();
-		await expect(cancelPrivateEvent(host, { spaceKey: KEY, rkey: KEY })).rejects.toMatchObject({
-			reason: 'no-event'
-		});
-		expect(host.sent).toHaveLength(0);
+		await expect(
+			savePrivateEvent(host, { rkey: '3lsecond', record: RECORD, calendar: SINGLE_KEY })
+		).rejects.toMatchObject({ reason: 'no-calendar' });
+		expect(host.nsids()).not.toContain('com.atproto.space.putRecord');
+	});
+
+	it('never deletes a calendar as if it were an event, whatever keys a page sends', async () => {
+		theCalendarHolds({ name: { name: 'Supper club' } });
+		const host = owner();
+		await cancelPrivateEvent(host, { spaceKey: KEY, rkey: KEY });
+		expect(host.nsids()).toEqual(['com.atproto.space.deleteRecord']);
 	});
 
 	it('takes only the event off the calendar when it is deleted, never the calendar', async () => {
+		theCalendarHolds({ name: { name: 'Supper club' } });
 		const host = owner();
 		await cancelPrivateEvent(host, { spaceKey: KEY, rkey: '3levent' });
 		expect(host.sent).toMatchObject([
@@ -777,7 +932,7 @@ describe('/private with single events and calendars', () => {
 	it('mixes single and calendar events, soonest first, each calendar event marked with its calendar', async () => {
 		reader.get.mockImplementation(async (q: { space: string; collection: string }) => {
 			if (q.space === KEPT_OUT) throw new SpaceAccessDenied(q.space, '400 SpaceNotFound');
-			if (q.space === SINGLE) {
+			if (q.space === SINGLE && q.collection === EVENT_COLLECTION) {
 				return {
 					uri: `${SINGLE}/${OTHER}/${EVENT_COLLECTION}/3lsingle`,
 					cid: 'c',
@@ -786,6 +941,7 @@ describe('/private with single events and calendars', () => {
 				};
 			}
 			if (q.collection === CALENDAR_COLLECTION) {
+				if (q.space === SINGLE) return null;
 				const name = q.space === SPACE ? 'Supper club' : 'Mine';
 				return { uri: `${q.space}/x`, cid: 'c', rkey: 'self', value: { name } };
 			}
@@ -834,8 +990,52 @@ describe('/private with single events and calendars', () => {
 		expect(incomplete).toBe(false);
 	});
 
+	it('lists a single event’s space with a name as a calendar, its event at the address it always had', async () => {
+		theCalendarHolds({
+			space: SINGLE_SPACE,
+			name: { name: 'Supper club' },
+			events: { [SINGLE_KEY]: event('Dinner', '2026-11-20T18:00:00.000Z') }
+		});
+		const person = caller(PERSON, GUEST_SCOPE, {
+			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SINGLE_SPACE }] })
+		});
+		const { events, calendars } = await myPrivateEventsAndCalendars(person);
+		expect(calendars).toEqual([
+			expect.objectContaining({ key: SINGLE_KEY, name: 'Supper club', owning: false })
+		]);
+		expect(events).toEqual([
+			expect.objectContaining({
+				href: `/p/ownerownerownerownerowner.example.com/private/${SINGLE_KEY}`,
+				calendar: { name: 'Supper club', key: SINGLE_KEY }
+			})
+		]);
+	});
+
+	it('reads a named single event’s name once, for both the Calendars page and Your events', async () => {
+		theCalendarHolds({
+			space: SINGLE_SPACE,
+			name: { name: 'Supper club' },
+			events: { [SINGLE_KEY]: event('Dinner', '2026-11-20T18:00:00.000Z') }
+		});
+		const person = caller(PERSON, GUEST_SCOPE, {
+			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SINGLE_SPACE }] })
+		});
+		for (const calendarEvents of [true, false]) {
+			reader.get.mockClear();
+			await myPrivateEventsAndCalendars(person, { calendarEvents });
+			const nameReads = reader.get.mock.calls.filter(
+				([q]) => (q as { collection: string }).collection === CALENDAR_COLLECTION
+			);
+			expect(nameReads).toHaveLength(1);
+		}
+	});
+
 	it('says the list is incomplete when a calendar could not be read', async () => {
-		reader.get.mockResolvedValue(null);
+		reader.get.mockImplementation(async (q: { collection: string }) =>
+			q.collection === CALENDAR_COLLECTION
+				? { uri: 'at://x', cid: 'c', rkey: 'self', value: { name: 'Supper club' } }
+				: null
+		);
 		reader.list.mockRejectedValue(new Error('503'));
 		const person = caller(PERSON, GUEST_SCOPE, {
 			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SPACE }] })
@@ -908,20 +1108,204 @@ describe('the owner’s own calendars, to put an event on', () => {
 					]
 				})
 		});
-		const calendars = await ownCalendars(host);
+		const { calendars } = await ownCalendars(host);
 		expect(calendars).toEqual([
 			expect.objectContaining({ key: KEY, name: 'Supper club', owning: true })
 		]);
 		expect(host.sent[0].query.get('spaceDid')).toBe(OWNER);
 	});
 
-	it('keeps one whose name could not be read, untitled, so a page that names it finds it', async () => {
+	it('leaves out one whose name could not be read, since only a name makes it a calendar', async () => {
 		reader.get.mockRejectedValue(new Error('timed out'));
 		const host = owner({
 			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SPACE }] })
 		});
-		expect(await ownCalendars(host)).toEqual([
-			expect.objectContaining({ key: KEY, name: null, owning: true })
+		expect((await ownCalendars(host)).calendars).toEqual([]);
+	});
+});
+
+describe('a new single event named at once', () => {
+	const RECORD = event('Dinner', '2026-11-20T18:00:00.000Z');
+	const NEW_KEY = '3lnewevent';
+	const NEW_SPACE = privateEventSpace(OWNER, NEW_KEY);
+
+	it('makes its space, writes the event, then the name, then shows its people to everyone on it', async () => {
+		const host = owner();
+		const saved = await saveNamedEvent(host, { rkey: NEW_KEY, record: RECORD, name: 'Supper' });
+		expect(saved.uri).toBe(eventUri(calendarEvent(OWNER, NEW_KEY, NEW_KEY)));
+		expect(host.nsids()).toEqual([
+			'com.atproto.space.createSpace',
+			'com.atproto.space.getSpace',
+			'com.atproto.space.putRecord',
+			'com.atproto.space.putRecord',
+			'com.atproto.space.getSpace',
+			'com.atproto.space.updateSpace'
 		]);
+		// Its people are shown only once it has a name.
+		expect(host.sent[0].body?.policy).not.toHaveProperty('publishMembers');
+		expect(host.sent[2].body).toMatchObject({ space: NEW_SPACE, collection: EVENT_COLLECTION });
+		expect(host.sent[3].body).toMatchObject({
+			space: NEW_SPACE,
+			repo: OWNER,
+			collection: CALENDAR_COLLECTION,
+			rkey: 'self',
+			record: { name: 'Supper' }
+		});
+		expect(host.sent[5].body).toMatchObject({ space: NEW_SPACE, policy: { publishMembers: true } });
+	});
+
+	it('keeps the event when the name could not be written, and says the name was not saved', async () => {
+		const host = owner({
+			'com.atproto.space.putRecord': (sent) =>
+				sent.body?.collection === CALENDAR_COLLECTION
+					? Response.json({ error: 'Nope' }, { status: 500 })
+					: Response.json({ cid: 'c' })
+		});
+		await expect(
+			saveNamedEvent(host, { rkey: NEW_KEY, record: RECORD, name: 'Supper' })
+		).rejects.toMatchObject({ reason: 'name-not-saved' });
+		expect(host.nsids()).not.toContain('com.atproto.space.deleteSpace');
+		expect(host.nsids()).not.toContain('com.atproto.space.updateSpace');
+	});
+
+	it('asks for the calendar grant, and calls nothing', async () => {
+		const host = caller(OWNER, `${HOST_SCOPE} ${GUEST_SCOPE}`);
+		await expect(
+			saveNamedEvent(host, { rkey: NEW_KEY, record: RECORD, name: 'Supper' })
+		).rejects.toMatchObject({ reason: 'no-grant' });
+		expect(host.sent).toHaveLength(0);
+	});
+
+	it('refuses a bad name before writing anything', async () => {
+		const host = owner();
+		await expect(
+			saveNamedEvent(host, { rkey: NEW_KEY, record: RECORD, name: '   ' })
+		).rejects.toMatchObject({ reason: 'bad-name' });
+		expect(host.sent).toHaveLength(0);
+	});
+
+	it('names no event that is going on a calendar already', async () => {
+		const host = owner();
+		await expect(
+			saveNamedEvent(host, { rkey: NEW_KEY, record: RECORD, name: 'Supper', calendar: KEY })
+		).rejects.toMatchObject({ reason: 'named-on-calendar' });
+		expect(host.sent).toHaveLength(0);
+	});
+});
+
+describe('a single event’s page, by whether its space has a name', () => {
+	const ADDRESS = calendarEvent(OWNER, SINGLE_KEY, SINGLE_KEY);
+	const dinner = { [SINGLE_KEY]: event('Dinner', '2026-11-20T18:00:00.000Z') };
+
+	it('shows a guest a single event with no calendar and no list of people while it has no name', async () => {
+		theCalendarHolds({ space: SINGLE_SPACE, events: dinner, people: [PERSON, OTHER] });
+		reader.writers.mockResolvedValue([]);
+		const page = await readSpaceEventPage(caller(PERSON, GUEST_SCOPE), ADDRESS);
+		expect(page?.calendar).toBeNull();
+		expect(page?.guests).toBeNull();
+		expect(reader.list).not.toHaveBeenCalled();
+	});
+
+	it('shows a guest the calendar and the people on it once it has one, at the same address', async () => {
+		theCalendarHolds({
+			space: SINGLE_SPACE,
+			name: { name: 'Supper club' },
+			events: dinner,
+			people: [PERSON, OTHER]
+		});
+		reader.writers.mockResolvedValue([]);
+		const page = await readSpaceEventPage(caller(PERSON, GUEST_SCOPE), ADDRESS);
+		expect(page?.calendar).toEqual({ key: SINGLE_KEY, name: 'Supper club' });
+		expect(page?.guests?.map((guest) => guest.did)).toEqual([PERSON, OTHER]);
+		expect(page?.event.rkey).toBe(SINGLE_KEY);
+	});
+
+	it('fails rather than show a single event when its name could not be read: named, its people are shown to everyone on it, which a single event’s page would not say', async () => {
+		theCalendarHolds({ space: SINGLE_SPACE, events: dinner });
+		const get = reader.get.getMockImplementation()!;
+		reader.get.mockImplementation(async (q: { collection: string }) => {
+			if (q.collection === CALENDAR_COLLECTION) throw new Error('503');
+			return get(q);
+		});
+		reader.writers.mockResolvedValue([]);
+		await expect(readSpaceEventPage(caller(PERSON, GUEST_SCOPE), ADDRESS)).rejects.toThrow();
+	});
+
+	it('is nothing there for someone kept out, as before', async () => {
+		reader.get.mockRejectedValue(new SpaceAccessDenied(SINGLE_SPACE, '400 SpaceNotFound'));
+		expect(await readSpaceEventPage(caller(OTHER, GUEST_SCOPE), ADDRESS)).toBeNull();
+	});
+});
+
+describe('the owner’s own calendars, with single events among their spaces', () => {
+	it('lists a single event’s space once it has a name, and no other', async () => {
+		reader.get.mockImplementation(async (q: { space: string; collection: string }) =>
+			q.collection === CALENDAR_COLLECTION && q.space === SINGLE_SPACE
+				? { uri: `${q.space}/x`, cid: 'c', rkey: 'self', value: { name: 'Supper' } }
+				: null
+		);
+		const host = owner({
+			'com.atproto.space.listSpaces': () =>
+				Response.json({
+					spaces: [{ space: SINGLE_SPACE }, { space: privateEventSpace(OWNER, '3lunnamed') }]
+				})
+		});
+		expect((await ownCalendars(host)).calendars).toEqual([
+			expect.objectContaining({ key: SINGLE_KEY, name: 'Supper', owning: true })
+		]);
+	});
+
+	it('reads the names of only the newest few spaces, and says there may be more', async () => {
+		reader.get.mockResolvedValue(null);
+		// TIDs sort by time: 3l00 is the oldest.
+		const keys = Array.from({ length: 30 }, (_, i) => `3l${String(i).padStart(2, '0')}`);
+		const host = owner({
+			'com.atproto.space.listSpaces': () =>
+				Response.json({
+					spaces: [
+						...keys.map((key) => ({ space: privateEventSpace(OWNER, key) })),
+						{ space: SPACE }
+					]
+				})
+		});
+		const { capped } = await ownCalendars(host);
+		const asked = reader.get.mock.calls.map(([q]) => (q as { space: string }).space);
+		// Every space alike: the calendar's key sorts as newest here, as a TID made later would.
+		expect(asked).toHaveLength(NAMED_SPACES_READ);
+		expect(asked).toContain(SPACE);
+		expect(asked).toContain(privateEventSpace(OWNER, '3l29'));
+		expect(asked).not.toContain(privateEventSpace(OWNER, '3l00'));
+		expect(capped).toBe(true);
+	});
+
+	it('also reads the one a page asks for, though it is older', async () => {
+		reader.get.mockImplementation(async (q: { space: string }) =>
+			q.space === privateEventSpace(OWNER, '3l00')
+				? { uri: `${q.space}/x`, cid: 'c', rkey: 'self', value: { name: 'Old club' } }
+				: null
+		);
+		const keys = Array.from({ length: 30 }, (_, i) => `3l${String(i).padStart(2, '0')}`);
+		const host = owner({
+			'com.atproto.space.listSpaces': () =>
+				Response.json({ spaces: keys.map((key) => ({ space: privateEventSpace(OWNER, key) })) })
+		});
+		const { calendars } = await ownCalendars(host, { wanted: '3l00' });
+		expect(calendars).toEqual([expect.objectContaining({ key: '3l00', name: 'Old club' })]);
+	});
+
+	it('says nothing of more when it read them all', async () => {
+		reader.get.mockResolvedValue(null);
+		const host = owner({
+			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SINGLE_SPACE }] })
+		});
+		expect((await ownCalendars(host)).capped).toBe(false);
+	});
+
+	it('leaves out a single event’s space whose name could not be read', async () => {
+		reader.get.mockRejectedValue(new Error('timed out'));
+		const host = owner({
+			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SINGLE_SPACE }] })
+		});
+		expect((await ownCalendars(host)).calendars).toEqual([]);
 	});
 });

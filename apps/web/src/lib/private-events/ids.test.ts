@@ -4,6 +4,7 @@ import {
 	eventPath,
 	eventSpace,
 	eventUri,
+	isSpaceKey,
 	privateEventPath,
 	privateEventUri,
 	singleEvent
@@ -40,4 +41,16 @@ describe('where a private event is', () => {
 			'/p/host.example.com/calendar/shared/3lzzzzzzzzzzz'
 		);
 	});
+});
+
+describe('a private space’s key, as a page may send it', () => {
+	it.each(['3lzzzzzzzzzzz', 'cal-3lzzzzzzzzzzz', 'shared-space', 'a.b_c:d~e'])(
+		'takes %s, whatever kind of space it is',
+		(key) => expect(isSpaceKey(key)).toBe(true)
+	);
+
+	it.each(['', 'has space', 'slash/in/it', 'at://did:plc:x', 'x'.repeat(513), 'ümlaut'])(
+		'refuses %j',
+		(key) => expect(isSpaceKey(key)).toBe(false)
+	);
 });
