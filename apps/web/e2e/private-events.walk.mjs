@@ -505,6 +505,11 @@ await step('7. bob says going, and the host sees his answer', async () => {
 		(await p.getByText("You're going!", { exact: true }).count()) === 0
 	);
 	check('0 RSVPs in his public repo', (await publicCount('bob', RSVP)) === 0);
+	await p.locator('[data-testid=find-again]').waitFor({ timeout: 20000 });
+	check(
+		'with the beta off, he is offered it, to find this again under Calendars',
+		/find this again under Calendars/.test(await text(p, '[data-testid=find-again]'))
+	);
 	const a = pages.alice;
 	await a.reload({ waitUntil: 'load' });
 	await settle(a);
