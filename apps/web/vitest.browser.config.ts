@@ -19,8 +19,15 @@ export default defineConfig({
 	optimizeDeps: {
 		// Keep shared network settings in one module; Vite also handles MapLibre's worker ?url. The kit's
 		// root is left out too, so a page's setLinkEmbeds reaches the EventView it renders: pre-bundled,
-		// the root would carry its own copy of the embed settings.
-		exclude: ['@atmo-dev/kit', '@atmo-dev/kit/events', '@atmo-dev/kit/events-data'],
+		// the root would carry its own copy of the embed settings. cloudflare:workers exists only on the
+		// Worker, and a component's remote functions lead to server code that imports it: unresolved, it
+		// stops Vite's dependency scan, so every dependency is found mid-run and reloads the whole run.
+		exclude: [
+			'@atmo-dev/kit',
+			'@atmo-dev/kit/events',
+			'@atmo-dev/kit/events-data',
+			'cloudflare:workers'
+		],
 		include: [
 			'mode-watcher',
 			'@svelte-atproto/oauth/helper',
