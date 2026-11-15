@@ -41,7 +41,7 @@
 
 <section data-testid="calendar-guests">
 	<h2 class="text-base-600 dark:text-base-400 mb-3 text-xs font-semibold tracking-wider uppercase">
-		Invited{#if guests.length > 0}{' '}({guests.length}){/if}
+		{#if guests.length > 0}Invited ({guests.length}){:else}Invited{/if}
 	</h2>
 	{#if guests.length === 0}
 		<p class="text-base-600 dark:text-base-400 text-sm">No one else yet.</p>

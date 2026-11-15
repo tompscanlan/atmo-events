@@ -44,9 +44,6 @@
 		(!data.privateEvents && !askedPrivate) || isPublic || invited || onCalendar
 	);
 
-	// A name for the guests of a new private event, which makes them a shared calendar; read when it
-	// is saved, so typing it never starts the editor over.
-	let listName = $state('');
 	const PRIVATE_LIMITS = " Private events can't have an image or repeat yet.";
 
 	// Public or Unlisted is asked once, at the top, so the editor's own switch is off and the answer
@@ -79,9 +76,7 @@
 		onCalendar
 			? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false }, calendar ?? undefined)
 			: invited
-				? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false }, undefined, {
-						name: () => (data.canName ? listName : '')
-					})
+				? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false })
 				: data.privateEvents
 					? listedAs(createInAppAdapter({ viewer }), audience !== UNLISTED)
 					: createInAppAdapter({ viewer })
@@ -137,8 +132,7 @@
 					() => (audience === null ? '' : isPublic ? (audience as string) : 'private'),
 					(value) => {
 						if (value === 'everyone' || value === UNLISTED) audience = value;
-						else if (value === 'private' && (audience === null || isPublic))
-							audience = INVITED;
+						else if (value === 'private' && (audience === null || isPublic)) audience = INVITED;
 					}
 				}
 			>
@@ -153,8 +147,8 @@
 						: audience === UNLISTED
 							? "Anyone with the link can see it. It doesn't show in search or listings."
 							: audience === INVITED
-							? 'Only people you invite can see it. You add them after publishing.'
-							: 'Only people you invite can see it.'}
+								? 'Only people you invite can see it. You add them after publishing.'
+								: 'Only people you invite can see it.'}
 				</p>
 			{/if}
 			{#if calendarMissing}

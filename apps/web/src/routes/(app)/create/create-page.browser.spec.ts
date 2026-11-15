@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, type Locator } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import { page as appPage } from '$app/state';
 import '../../../app.css';
@@ -8,6 +8,7 @@ import CreatePage from './+page.svelte';
 const { mocks } = vi.hoisted(() => ({
 	mocks: {
 		savePrivateEvent: vi.fn(async () => ({ uri: 'at://x', cid: 'cid' })),
+		putRecord: vi.fn(async () => ({ uri: 'at://x', cid: 'cid' })),
 		user: {
 			isLoggedIn: true,
 			did: 'did:plc:hosthosthosthosthosthost',
@@ -22,7 +23,7 @@ vi.mock('#lib/private-events/private-events.remote', () => ({
 	cancelPrivateEvent: vi.fn()
 }));
 vi.mock('#lib/atproto/repo.remote.js', () => ({
-	putRecord: vi.fn(),
+	putRecord: mocks.putRecord,
 	createRecord: vi.fn(),
 	deleteRecord: vi.fn(),
 	uploadBlob: vi.fn()
@@ -40,7 +41,16 @@ const CALENDARS = [
 	{ key: 'cal-3lsupper', name: 'Supper club' },
 	{ key: 'cal-3lbrunch', name: 'Brunch club' }
 ];
-const CHOICE = 'Only the people on one of your shared calendars';
+const PICKER = "Who's invited?";
+
+// What the page says under the choice, and in the fine print, for each answer.
+const PUBLIC_WHAT = 'Anyone can see it, and it shows in search and listings.';
+const UNLISTED_WHAT = "Anyone with the link can see it. It doesn't show in search or listings.";
+const INVITED_WHAT = 'Only people you invite can see it. You add them after publishing.';
+const ON_CALENDAR_WHAT = 'Only people you invite can see it.';
+const PUBLIC_FINE_PRINT = "A public or unlisted event can't be made private later.";
+const PRIVATE_FINE_PRINT =
+	"A private event can't be made public later. Private events can't have an image or repeat yet.";
 
 /** The page's data, as its load returns it for a host with the beta on, or with it off. */
 function data(calendars = CALENDARS, privateEvents = true) {
@@ -60,44 +70,191 @@ function at(search: string) {
 	appPage.url = new URL(`https://atmo.rsvp/create${search}`);
 }
 
-afterEach(() => at(''));
+/** An event already filled in, the way an import leaves one for the page, so a test can publish
+ *  it without typing into the editor. */
+function filledIn() {
+	sessionStorage.setItem(
+		'atmo:event-import-prefill',
+		JSON.stringify({
+			name: 'Dinner',
+			startsAt: '2099-01-01T18:00:00.000Z',
+			endsAt: '2099-01-01T20:00:00.000Z',
+			timezone: 'UTC'
+		})
+	);
+}
 
-describe('choosing a shared calendar on /create', () => {
-	it('is a third choice, private to the people on a calendar, for a host who has one', async () => {
+/** The text a person reads, with the template's line breaks and indents collapsed. */
+function shownText(testId: string): string {
+	const found = page.getByTestId(testId).elements()[0];
+	return (found?.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function choice(name: string) {
+	return page.getByRole('radio', { name, exact: true });
+}
+
+function optionsOf(picker: Locator): string[] {
+	return [...picker.element().querySelectorAll('option')].map((option) => option.text);
+}
+
+const publish = () => page.getByRole('button', { name: /^publish/i });
+
+afterEach(() => {
+	at('');
+	sessionStorage.clear();
+	mocks.savePrivateEvent.mockClear();
+	mocks.putRecord.mockClear();
+});
+
+describe('choosing who can see it on /create', () => {
+	it('asks Public, Unlisted or Private, with nothing picked and no editor until one is', async () => {
 		render(CreatePage, { data: data() } as never);
-		await expect.element(page.getByRole('radio', { name: CHOICE })).toBeVisible();
+		for (const name of ['Public', 'Unlisted', 'Private']) {
+			await expect.element(choice(name)).toBeVisible();
+			await expect.element(choice(name)).not.toBeChecked();
+		}
+		expect(page.getByTestId('audience-what').elements()).toHaveLength(0);
 		expect(page.getByRole('combobox').elements()).toHaveLength(0);
-		await page.getByRole('radio', { name: CHOICE }).click();
-		const picker = page.getByRole('combobox', { name: 'Calendar' });
-		await expect.element(picker).toHaveValue('cal-3lsupper');
-		await expect.element(page.getByRole('button', { name: /^publish/i })).toBeVisible();
+		expect(publish().elements()).toHaveLength(0);
 	});
 
-	it('is not offered to a host with no calendar', async () => {
+	it.each([
+		['Public', PUBLIC_WHAT, PUBLIC_FINE_PRINT],
+		['Unlisted', UNLISTED_WHAT, PUBLIC_FINE_PRINT],
+		['Private', INVITED_WHAT, PRIVATE_FINE_PRINT]
+	])(
+		'says in one line what %s means, and in the fine print what it rules out',
+		async (name, what, finePrint) => {
+			render(CreatePage, { data: data() } as never);
+			await choice(name).click();
+			await expect.element(choice(name)).toBeChecked();
+			await expect.poll(() => shownText('audience-what')).toBe(what);
+			expect(shownText('audience-fine-print')).toBe(finePrint);
+			await expect.element(publish()).toBeVisible();
+		}
+	);
+
+	it('asks Public or Unlisted only once, with no switch for it in the editor', async () => {
+		render(CreatePage, { data: data() } as never);
+		await choice('Unlisted').click();
+		await expect.element(publish()).toBeVisible();
+		expect(page.getByRole('radio', { name: 'Unlisted' }).elements()).toHaveLength(1);
+		expect(page.getByRole('radio', { name: 'Public' }).elements()).toHaveLength(1);
+	});
+
+	it.each([
+		['Public', true],
+		['Unlisted', false]
+	])('publishes an event picked as %s with that answer in its record', async (name, listed) => {
+		filledIn();
+		render(CreatePage, { data: data() } as never);
+		await choice(name).click();
+		await publish().click();
+		await expect
+			.poll(() => mocks.putRecord)
+			.toHaveBeenCalledWith(
+				expect.objectContaining({
+					record: expect.objectContaining({ preferences: { showInDiscovery: listed } })
+				})
+			);
+		expect(mocks.savePrivateEvent).not.toHaveBeenCalled();
+	});
+
+	it('publishes the last of Public and Unlisted picked, when the host changes their mind', async () => {
+		filledIn();
+		render(CreatePage, { data: data() } as never);
+		await choice('Public').click();
+		await expect.element(publish()).toBeVisible();
+		await choice('Unlisted').click();
+		await publish().click();
+		await expect
+			.poll(() => mocks.putRecord)
+			.toHaveBeenCalledWith(
+				expect.objectContaining({
+					record: expect.objectContaining({ preferences: { showInDiscovery: false } })
+				})
+			);
+	});
+});
+
+describe('choosing who’s invited to a private event on /create', () => {
+	it('asks who’s invited: just this event, or everyone on one of their calendars', async () => {
+		render(CreatePage, { data: data() } as never);
+		expect(page.getByRole('combobox').elements()).toHaveLength(0);
+		await choice('Private').click();
+		const picker = page.getByRole('combobox', { name: PICKER });
+		await expect.element(picker).toHaveValue('');
+		expect(optionsOf(picker)).toEqual([
+			'Just this event',
+			'Everyone on Supper club',
+			'Everyone on Brunch club'
+		]);
+		await expect.poll(() => shownText('audience-what')).toBe(INVITED_WHAT);
+		await expect.element(publish()).toBeVisible();
+
+		await picker.selectOptions('cal-3lbrunch');
+		await expect.element(picker).toHaveValue('cal-3lbrunch');
+		await expect.poll(() => shownText('audience-what')).toBe(ON_CALENDAR_WHAT);
+		expect(shownText('audience-fine-print')).toBe(PRIVATE_FINE_PRINT);
+		await expect.element(choice('Private')).toBeChecked();
+		await expect.element(publish()).toBeVisible();
+
+		await picker.selectOptions('Just this event');
+		await expect.element(picker).toHaveValue('');
+		await expect.poll(() => shownText('audience-what')).toBe(INVITED_WHAT);
+	});
+
+	it('puts the event on the calendar picked, and on none for just this event', async () => {
+		filledIn();
+		render(CreatePage, { data: data() } as never);
+		await choice('Private').click();
+		const picker = page.getByRole('combobox', { name: PICKER });
+		await picker.selectOptions('cal-3lbrunch');
+		await publish().click();
+		await expect
+			.poll(() => mocks.savePrivateEvent)
+			.toHaveBeenCalledWith(expect.objectContaining({ calendar: 'cal-3lbrunch' }));
+
+		mocks.savePrivateEvent.mockClear();
+		await picker.selectOptions('Just this event');
+		await expect.element(picker).toHaveValue('');
+		await publish().click();
+		await expect
+			.poll(() => mocks.savePrivateEvent)
+			.toHaveBeenCalledWith(expect.objectContaining({ rkey: '3knewevent' }));
+		expect(mocks.savePrivateEvent).not.toHaveBeenCalledWith(
+			expect.objectContaining({ calendar: expect.anything() })
+		);
+		expect(mocks.putRecord).not.toHaveBeenCalled();
+	});
+
+	it('asks nothing more of a host with no calendar', async () => {
 		render(CreatePage, { data: data([]) } as never);
-		await expect.element(page.getByRole('radio', { name: 'Everyone' })).toBeVisible();
-		expect(page.getByRole('radio', { name: CHOICE }).elements()).toHaveLength(0);
+		await choice('Private').click();
+		await expect.poll(() => shownText('audience-what')).toBe(INVITED_WHAT);
+		expect(page.getByRole('combobox').elements()).toHaveLength(0);
+		await expect.element(publish()).toBeVisible();
 	});
 
 	it('comes from a calendar’s page with that calendar picked', async () => {
 		at('?audience=calendar&calendar=cal-3lbrunch');
 		render(CreatePage, { data: data() } as never);
-		await expect.element(page.getByRole('radio', { name: CHOICE })).toBeChecked();
-		await expect
-			.element(page.getByRole('combobox', { name: 'Calendar' }))
-			.toHaveValue('cal-3lbrunch');
+		await expect.element(choice('Private')).toBeChecked();
+		await expect.element(page.getByRole('combobox', { name: PICKER })).toHaveValue('cal-3lbrunch');
+		await expect.poll(() => shownText('audience-what')).toBe(ON_CALENDAR_WHAT);
 	});
 
 	it('picks nothing when the calendar named is not one of theirs, and says so', async () => {
 		at('?audience=calendar&calendar=cal-3lgone');
 		render(CreatePage, { data: data() } as never);
 		await expect.element(page.getByTestId('calendar-missing')).toBeVisible();
-		const picker = page.getByRole('combobox', { name: 'Calendar' });
+		const picker = page.getByRole('combobox', { name: PICKER });
 		await expect.element(picker).toHaveValue('');
-		expect(page.getByRole('button', { name: /^publish/i }).elements()).toHaveLength(0);
+		expect(publish().elements()).toHaveLength(0);
 		await picker.selectOptions('cal-3lbrunch');
 		await expect.element(picker).toHaveValue('cal-3lbrunch');
-		await expect.element(page.getByRole('button', { name: /^publish/i })).toBeVisible();
+		await expect.element(publish()).toBeVisible();
 		expect(page.getByTestId('calendar-missing').elements()).toHaveLength(0);
 	});
 
@@ -106,16 +263,25 @@ describe('choosing a shared calendar on /create', () => {
 		render(CreatePage, { data: data([]) } as never);
 		await expect.element(page.getByTestId('calendar-missing')).toBeVisible();
 		expect(page.getByRole('combobox').elements()).toHaveLength(0);
-		expect(page.getByRole('button', { name: /^publish/i }).elements()).toHaveLength(0);
+		expect(publish().elements()).toHaveLength(0);
+	});
+
+	it('says there may be more calendars when it read only the newest', async () => {
+		at('?audience=calendar');
+		render(CreatePage, { data: { ...data(), calendarsCapped: true } } as never);
+		await expect
+			.element(page.getByText('There may be more than these.', { exact: false }))
+			.toBeVisible();
 	});
 });
 
 describe('coming back from the permission step', () => {
-	it('has invited people picked, with the editor ready', async () => {
+	it('has Private picked for just this event, with the editor ready', async () => {
 		at('?audience=invited');
 		render(CreatePage, { data: data() } as never);
-		await expect.element(page.getByRole('radio', { name: 'Invited people only' })).toBeChecked();
-		await expect.element(page.getByRole('button', { name: /^publish/i })).toBeVisible();
+		await expect.element(choice('Private')).toBeChecked();
+		await expect.element(page.getByRole('combobox', { name: PICKER })).toHaveValue('');
+		await expect.element(publish()).toBeVisible();
 	});
 });
 
@@ -132,48 +298,15 @@ describe('a link that asks for a private audience, while private events are off'
 		await expect
 			.element(page.getByTestId('private-off').getByRole('link', { name: 'Settings' }))
 			.toHaveAttribute('href', '/settings');
-		expect(page.getByRole('button', { name: /^publish/i }).elements()).toHaveLength(0);
+		expect(publish().elements()).toHaveLength(0);
 		expect(page.getByRole('radio').elements()).toHaveLength(0);
 	});
 
-	it('leaves a plain /create as it was: the public editor, with no choice to make', async () => {
+	it('leaves a plain /create as it was: the public editor, with its own Public / Unlisted switch', async () => {
 		render(CreatePage, { data: data(CALENDARS, false) } as never);
-		await expect.element(page.getByRole('button', { name: /^publish/i })).toBeVisible();
+		await expect.element(publish()).toBeVisible();
 		expect(page.getByTestId('private-off').elements()).toHaveLength(0);
-	});
-});
-
-describe('naming a new private event’s guests on /create', () => {
-	it('offers an optional name for invited people only, and says what it shows', async () => {
-		render(CreatePage, { data: data() } as never);
-		const field = page.getByRole('textbox', {
-			name: 'Name this list to reuse it for later events (optional)'
-		});
-		expect(field.elements()).toHaveLength(0);
-		await page.getByRole('radio', { name: 'Invited people only' }).click();
-		await expect.element(field).toBeVisible();
-		await expect
-			.element(page.getByTestId('naming-tells'))
-			.toHaveTextContent('Everyone on it sees its name and who else is on it.');
-		await page.getByRole('radio', { name: CHOICE }).click();
-		expect(field.elements()).toHaveLength(0);
-	});
-
-	it('is not offered without the permission to name one', async () => {
-		at('?audience=invited');
-		render(CreatePage, { data: { ...data(), canName: false } } as never);
-		await expect.element(page.getByRole('button', { name: /^publish/i })).toBeVisible();
-		expect(page.getByTestId('naming-tells').elements()).toHaveLength(0);
-		await expect
-			.element(page.getByTestId('calendars-need-allowing').getByRole('link', { name: 'Calendars' }))
-			.toHaveAttribute('href', '/private');
-	});
-
-	it('says there may be more calendars when it read only the newest', async () => {
-		at('?audience=calendar');
-		render(CreatePage, { data: { ...data(), calendarsCapped: true } } as never);
-		await expect
-			.element(page.getByText('There may be more calendars than these.', { exact: false }))
-			.toBeVisible();
+		expect(page.getByTestId('audience').elements()).toHaveLength(0);
+		await expect.element(page.getByRole('radio', { name: 'Unlisted', exact: true })).toBeVisible();
 	});
 });

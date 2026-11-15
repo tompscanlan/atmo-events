@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
+import { BETA_WARNING_SHORT } from '#lib/private-events/beta.js';
 import { calendarEvent, eventUri } from '#lib/private-events/ids.js';
 import '../../../../../../../app.css';
 import EventPage from './+page.svelte';
@@ -103,15 +104,30 @@ afterEach(() => {
 	mocks.rsvp.mockClear();
 });
 
+/** Whether `later` comes after `earlier` on the page. */
+function follows(earlier: Element, later: Element): boolean {
+	return (earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
+
 describe('an event on a shared calendar', () => {
-	it('tells a guest that only the people on the calendar can see it', async () => {
+	it('tells a guest in one line that it is private to the calendar, with a link to it', async () => {
 		render(EventPage, { data: eventView() } as never);
+		await expect.poll(() => shownText('private-to')).toBe('Private · Supper club');
 		await expect
-			.poll(() => shownText('private-note'))
-			.toContain('Private event. Only the people on Supper club can see it.');
-		await expect
-			.element(page.getByRole('link', { name: 'Supper club' }).first())
+			.element(page.getByTestId('private-to').getByRole('link', { name: 'Supper club' }))
 			.toHaveAttribute('href', `/p/host.example.com/calendar/${KEY}`);
+	});
+
+	it('ends with the short beta note', async () => {
+		mocks.user.did = HOST;
+		const guests = [{ did: GUEST, handle: 'guest.example.com', answer: null, answerUnread: false }];
+		render(EventPage, { data: eventView(guests, false, true) } as never);
+		await expect.poll(() => shownText('beta-notice')).toBe(BETA_WARNING_SHORT);
+		const [note] = page.getByTestId('private-note').elements();
+		const [list] = page.getByTestId('calendar-guests').elements();
+		const [beta] = page.getByTestId('beta-notice').elements();
+		expect(follows(note, list)).toBe(true);
+		expect(follows(list, beta)).toBe(true);
 	});
 
 	it('sends a guest’s answer for this event on this calendar', async () => {
@@ -124,34 +140,42 @@ describe('an event on a shared calendar', () => {
 			);
 	});
 
-	it('shows the host the calendar’s people and their answers, and where to change the list', async () => {
+	it('shows the host who is invited and their answers, and a link to add or remove people', async () => {
 		mocks.user.did = HOST;
 		const guests = [
 			{ did: GUEST, handle: 'guest.example.com', answer: 'going', answerUnread: false }
 		];
 		render(EventPage, { data: eventView(guests, false, true) } as never);
+		await expect.poll(() => shownText('private-note')).toBe('Private · Supper club');
+		await expect.poll(() => shownText('calendar-guests')).toContain('Invited (1)');
+		expect(shownText('calendar-guests')).toContain('guest.example.com Going');
 		await expect
-			.poll(() => shownText('private-note'))
-			.toContain('Private event. Only the people on Supper club can see it.');
-		await expect.poll(() => shownText('calendar-guests')).toContain('guest.example.com Going');
-		await expect
-			.poll(() => shownText('calendar-guests'))
-			.toContain('To add or remove people, go to the calendar.');
+			.element(page.getByRole('link', { name: 'Add or remove people on Supper club' }))
+			.toHaveAttribute('href', `/p/host.example.com/calendar/${KEY}`);
 		expect(page.getByRole('textbox').elements()).toHaveLength(0);
 		expect(page.getByRole('button', { name: 'Remove' }).elements()).toHaveLength(0);
 	});
 
-	it('shows someone on it the calendar’s people and their answers, and asks them to answer', async () => {
+	it('tells the host when no one else is invited yet, and still links to add people', async () => {
+		mocks.user.did = HOST;
+		render(EventPage, { data: eventView([], false, true) } as never);
+		await expect.poll(() => shownText('calendar-guests')).toContain('No one else yet.');
+		expect(shownText('calendar-guests')).not.toContain('(0)');
+		await expect
+			.element(page.getByRole('link', { name: 'Add or remove people on Supper club' }))
+			.toBeVisible();
+	});
+
+	it('shows someone on it who is invited and their answers, and asks them to answer', async () => {
 		const guests = [
 			{ did: GUEST, handle: 'guest.example.com', answer: null, answerUnread: false },
 			{ did: HOST + 'x', handle: 'friend.example.com', answer: 'going', answerUnread: false }
 		];
 		render(EventPage, { data: eventView(guests) } as never);
-		await expect.poll(() => shownText('calendar-guests')).toContain('friend.example.com Going');
-		await expect
-			.poll(() => shownText('calendar-guests'))
-			.toContain("guest.example.com Hasn't answered");
-		expect(shownText('calendar-guests')).not.toContain('To add or remove people');
+		await expect.poll(() => shownText('calendar-guests')).toContain('Invited (2)');
+		expect(shownText('calendar-guests')).toContain('friend.example.com Going');
+		expect(shownText('calendar-guests')).toContain('guest.example.com No answer yet');
+		expect(page.getByRole('link', { name: 'Add or remove people' }).elements()).toHaveLength(0);
 		await expect
 			.poll(() => shownText('private-note'))
 			.toContain('Answer to let the host know you saw it.');
@@ -176,7 +200,7 @@ describe('an event on a shared calendar', () => {
 		render(EventPage, { data: eventView(guests) } as never);
 		await expect
 			.poll(() => shownText('calendar-guests'))
-			.toContain("guest.example.com Hasn't answered");
+			.toContain('guest.example.com No answer yet');
 		await page.getByRole('button', { name: 'Interested', exact: true }).click();
 		await expect.poll(() => shownText('calendar-guests')).toContain('guest.example.com Interested');
 	});
