@@ -4,7 +4,7 @@
 	import { page } from '$app/state';
 	import { user } from '#lib/atproto/auth.svelte.js';
 	import { atProtoLoginModalState } from '#lib/components/LoginModal.svelte';
-	import { BETA_WARNING } from '#lib/private-events/beta.js';
+	import { BETA_WARNING, BETA_WARNING_SHORT } from '#lib/private-events/beta.js';
 	import CalendarEventDetails from '#lib/private-events/components/CalendarEventDetails.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { calendarEvent } from '#lib/private-events/ids.js';
@@ -41,9 +41,6 @@
 	<!-- A private event has no public page to share, so the page offers no Bluesky post. -->
 	<EventView {data} {adapter} {viewer} pageUrl={new URL(page.url.href)} share={false}>
 		{#snippet extraActions()}
-			<p class="text-base-600 dark:text-base-400 text-sm" data-testid="beta-notice">
-				{BETA_WARNING}
-			</p>
 			{#if data.answersUnread}
 				<p
 					class="text-base-600 dark:text-base-400 text-sm"
@@ -64,6 +61,7 @@
 				guestsCapped={data.guestsCapped}
 				viewerDid={user.did ?? null}
 			/>
+			<p class="text-base-500 text-xs" data-testid="beta-notice">{BETA_WARNING_SHORT}</p>
 		{/snippet}
 	</EventView>
 {:else}
