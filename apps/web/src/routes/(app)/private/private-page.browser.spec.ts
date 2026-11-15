@@ -36,4 +36,24 @@ describe('/private', () => {
 		await expect.element(page.getByTestId('private-events')).toBeVisible();
 		await expect.element(page.getByTestId('link-is-invitation')).toBeVisible();
 	});
+
+	it('says what a shared calendar is for where you make one', async () => {
+		render(PrivatePage, {
+			data: {
+				...base,
+				events: [],
+				access: null,
+				beta: true,
+				calendars: [],
+				calendarAccess: 'ready'
+			}
+		} as never);
+		const what = page.getByTestId('new-calendar-what');
+		await expect
+			.element(what)
+			.toHaveTextContent(
+				'For a few people you invite to your own events. Only you add events or people.'
+			);
+		expect(what.element().textContent ?? '').not.toMatch(/group/i);
+	});
 });

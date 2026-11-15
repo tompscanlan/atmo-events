@@ -401,6 +401,13 @@ await step('2. alice allows shared calendars on /private and makes one', async (
 	check('comes back to /private', new URL(p.url()).pathname === '/private', p.url());
 	const form = p.locator('[data-testid=new-calendar]');
 	await form.waitFor({ timeout: 20000 });
+	check(
+		'it says what a shared calendar is for, where she makes one',
+		/^For a few people you invite to your own events\. Only you add events or people\./.test(
+			await text(p, '[data-testid=new-calendar-what]')
+		)
+	);
+	await shot(p, '01b-new-calendar');
 	await form.locator('input[name=calendar-name]').fill(NAME);
 	await p.waitForTimeout(150);
 	await form.getByRole('button', { name: /new shared calendar/i }).click();
