@@ -12,6 +12,13 @@ import {
 import { getServerClient } from '#lib/contrail/index.js';
 import { cachedRead } from '#lib/server/edge-cache.js';
 import { dedupeByUri } from '#lib/dedupe-by-uri.js';
+import { holdsGuestGrant, holdsHostGrant } from '#lib/private-events/scopes.js';
+import { privateEventsBeta } from '#lib/private-events/server/beta.js';
+import { myPrivateEventsAndCalendars } from '#lib/private-events/server/calendars.js';
+import { callerSession } from '#lib/private-events/server/caller.js';
+import { privateEventsEnabled } from '#lib/private-events/server/enabled.js';
+import type { MyPrivateEvent } from '#lib/private-events/server/events.js';
+import { withPrivateEvents, type PrivateLink } from '#lib/private-events/your-events.js';
 import type { PageServerLoad } from './$types';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -29,8 +36,37 @@ const GLOBAL_CACHE_TTL_S = 60;
  *  recently-finished events linger briefly (their RSVPs are still meaningful
  *  social signal). */
 const ACTIVITY_RECENT_EVENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** How long Your events waits on the person's own server for their private events before it shows
+ *  their public ones alone. */
+const PRIVATE_EVENTS_WAIT_MS = 4000;
 
-export const load: PageServerLoad = async ({ locals }) => {
+/** Their own private events, hosted or answered, for Your events: only with private events and their
+ *  beta on, and a grant to read them. Null when there are none to add, or they couldn't be read in
+ *  time, so the page never waits long or fails for them. */
+async function ownPrivateEvents(locals: App.Locals): Promise<MyPrivateEvent[] | null> {
+	if (!locals.did || !privateEventsEnabled()) return null;
+	const read = async () => {
+		if (!(await privateEventsBeta(locals))) return null;
+		const caller = await callerSession(locals.session ?? null);
+		if (!caller) return null;
+		if (!holdsGuestGrant(caller.scope) && !holdsHostGrant(caller.scope, caller.did)) return null;
+		return (await myPrivateEventsAndCalendars(caller)).events;
+	};
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<null>((resolve) => {
+		timer = setTimeout(() => resolve(null), PRIVATE_EVENTS_WAIT_MS);
+	});
+	try {
+		return await Promise.race([read(), late]);
+	} catch (e) {
+		console.error(`[private-events] ${locals.did}: private events unread for the home page:`, e);
+		return null;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+export const load: PageServerLoad = async ({ locals, setHeaders }) => {
 	const publicClient = getServerClient(env.DB);
 	const nowIso = new Date().toISOString();
 
@@ -277,13 +313,27 @@ export const load: PageServerLoad = async ({ locals }) => {
 		return { activity: await fetchGlobalActivity(), isPersonalized: false };
 	})();
 
-	const [myEvents, response, recentActivityResult] = await Promise.all([
+	const [publicOnes, response, recentActivityResult, ownPrivate] = await Promise.all([
 		myEventsPromise,
 		globalPromise,
-		recentActivityPromise
+		recentActivityPromise,
+		ownPrivateEvents(locals)
 	]);
 	const { activity: recentActivity, isPersonalized: recentActivityIsPersonalized } =
 		recentActivityResult;
+	// Their own private events join their public ones, seen only by them, so this page is kept nowhere.
+	let myEvents: { upcoming: typeof publicOnes.upcoming; past: typeof publicOnes.past } = publicOnes;
+	let privateLinks: Record<string, PrivateLink> = {};
+	if (ownPrivate && ownPrivate.length > 0) {
+		const now = Date.now();
+		({ privateLinks, ...myEvents } = withPrivateEvents(
+			publicOnes,
+			ownPrivate,
+			now,
+			now - SEVEN_DAYS_MS
+		));
+		if (Object.keys(privateLinks).length > 0) setHeaders({ 'cache-control': 'private, no-store' });
+	}
 
 	if (!response) {
 		return {
@@ -291,6 +341,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 			handles: {} as Record<string, string>,
 			myUpcoming: myEvents.upcoming,
 			myPast: myEvents.past,
+			privateLinks,
 			recentActivity,
 			recentActivityIsPersonalized
 		};
@@ -306,6 +357,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		handles,
 		myUpcoming: myEvents.upcoming,
 		myPast: myEvents.past,
+		privateLinks,
 		recentActivity,
 		recentActivityIsPersonalized
 	};
