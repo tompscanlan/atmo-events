@@ -56,4 +56,25 @@ describe('/private', () => {
 			);
 		expect(what.element().textContent ?? '').not.toMatch(/group/i);
 	});
+
+	it('points to groups for a club others can find and join, when groups are on', async () => {
+		render(PrivatePage, {
+			data: {
+				...base,
+				events: [],
+				access: null,
+				beta: true,
+				calendars: [],
+				calendarAccess: 'ready',
+				groupsEnabled: true
+			}
+		} as never);
+		const what = page.getByTestId('new-calendar-what');
+		await expect
+			.element(what)
+			.toHaveTextContent(
+				'For a few people you invite to your own events. Only you add events or people. For a club others can find and join, start a group.'
+			);
+		await expect.element(what.getByRole('link')).toHaveAttribute('href', '/groups');
+	});
 });

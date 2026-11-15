@@ -6,6 +6,9 @@
 	import { createCalendar } from '../private-events.remote';
 	import { refusalWords } from './refusal';
 
+	// Groups are the other way to post for a set of people: say so where a calendar is made, if they're on.
+	let { groups = false }: { groups?: boolean } = $props();
+
 	let name = $state('');
 	let busy = $state(false);
 	let failure: string | null = $state(null);
@@ -38,6 +41,10 @@
 </form>
 <p class="text-base-600 dark:text-base-400 mt-2 text-sm" data-testid="new-calendar-what">
 	For a few people you invite to your own events. Only you add events or people.
+	{#if groups}For a club others can find and join,
+		<a href={resolve('/(app)/groups')} class="text-accent-600 dark:text-accent-400 hover:underline"
+			>start a group</a
+		>.{/if}
 </p>
 {#if failure}<p role="alert" class="text-base-950 dark:text-base-50 mt-2 text-sm">
 		{failure}
