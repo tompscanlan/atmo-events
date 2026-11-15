@@ -141,3 +141,24 @@ describe('a link that asks for a private audience, while private events are off'
 		expect(page.getByTestId('private-off').elements()).toHaveLength(0);
 	});
 });
+
+describe('the pointer to groups on /create', () => {
+	it('sends someone posting for a group they help run to its page under Groups, when groups are on', async () => {
+		render(CreatePage, { data: { ...data(), groupsEnabled: true } } as never);
+		const pointer = page.getByTestId('group-pointer');
+		await expect
+			.element(pointer)
+			.toHaveTextContent(
+				"Posting for a group you help run? Start from the group's page under Groups."
+			);
+		await expect
+			.element(pointer.getByRole('link', { name: 'Groups' }))
+			.toHaveAttribute('href', '/groups');
+	});
+
+	it('is not there when groups are off', async () => {
+		render(CreatePage, { data: data() } as never);
+		await expect.element(page.getByText('Who can see this event?')).toBeVisible();
+		expect(page.getByTestId('group-pointer').elements()).toHaveLength(0);
+	});
+});

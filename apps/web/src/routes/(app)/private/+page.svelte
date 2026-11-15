@@ -117,7 +117,7 @@
 				</ul>
 			{/if}
 			{#if data.calendarAccess === 'ready'}
-				<NewCalendarForm />
+				<NewCalendarForm groups={data.groupsEnabled ?? false} />
 			{:else if data.calendarAccess}
 				<PrivateEventAccessNotice
 					access={data.calendarAccess}

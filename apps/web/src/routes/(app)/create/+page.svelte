@@ -158,6 +158,15 @@
 					</li>
 				{/if}
 			</ul>
+			{#if data.groupsEnabled}
+				<p class="text-base-600 dark:text-base-400 mt-3 text-sm" data-testid="group-pointer">
+					Posting for a group you help run? Start from the group's page under
+					<a
+						href={resolve('/(app)/groups')}
+						class="text-accent-600 dark:text-accent-400 hover:underline">Groups</a
+					>.
+				</p>
+			{/if}
 			{#if invited && data.hostAccess}
 				<PrivateEventAccessNotice
 					access={data.hostAccess}

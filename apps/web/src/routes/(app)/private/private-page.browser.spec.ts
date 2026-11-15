@@ -56,4 +56,27 @@ describe('/private', () => {
 			);
 		expect(what.element().textContent ?? '').not.toMatch(/group/i);
 	});
+
+	it('points a club with its own account to Groups, when groups are on', async () => {
+		render(PrivatePage, {
+			data: {
+				...base,
+				events: [],
+				access: null,
+				beta: true,
+				calendars: [],
+				calendarAccess: 'ready',
+				groupsEnabled: true
+			}
+		} as never);
+		const what = page.getByTestId('new-calendar-what');
+		await expect
+			.element(what)
+			.toHaveTextContent(
+				'For a few people you invite to your own events. Only you add events or people. For a club with its own account, use Groups.'
+			);
+		await expect
+			.element(what.getByRole('link', { name: 'Groups' }))
+			.toHaveAttribute('href', '/groups');
+	});
 });
