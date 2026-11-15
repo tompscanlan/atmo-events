@@ -373,9 +373,28 @@ const publishEvent = async (page, name, lands = new RegExp(`/calendar/${KEY}/[^/
 	const at = new URL(page.url()).pathname;
 	return { path: at, rkey: at.split('/').at(-1) };
 };
+/** On /create with Private chosen, for a host with a calendar: the guests of this event alone. */
+const justThisEvent = async (page) => {
+	const who = page.locator('select[name=calendar]');
+	await who.waitFor({ timeout: 20000 });
+	await who.selectOption({ label: 'Just this event' });
+	await page.waitForTimeout(150);
+	return {
+		value: await who.inputValue(),
+		picked: await who.evaluate((s) => s.selectedOptions[0]?.textContent?.trim() ?? '')
+	};
+};
 const privateNote = (page) => text(page, '[data-testid=private-note]');
+const escaped = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** How the home page's Your events marks an event on a calendar. */
 const SAYS_PRIVATE_EVENT = (name = NAME) =>
-	new RegExp(`Private event\\. Only the people on ${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
+	new RegExp(`Private event\\. Only the people on ${escaped(name)}`);
+/** The privacy line on an event on a calendar, at either of its addresses. */
+const privateTo = (page) => text(page, '[data-testid=private-to]');
+const SAYS_PRIVATE_TO = (name = NAME) => new RegExp(`^Private\\s*·\\s*${escaped(name)}$`);
+/** The calendar page's header line, uppercase on screen, so read without case. */
+const SAYS_CALENDAR_PRIVATE = (whose) => new RegExp(`^Private\\s*·\\s*${escaped(whose)}$`, 'i');
+const newEventLink = (page) => page.locator('main').getByRole('link', { name: /^new event$/i });
 const guestRow = (page, name) => page.locator(`[data-guest="${C[name].did}"]`);
 const policyOf = async (space) =>
 	(await C.alice.call('com.atproto.space.getSpace', { space })).data?.policy ?? null;
@@ -441,9 +460,14 @@ await step('2. alice allows shared calendars on /private and makes one', async (
 	await p.getByRole('heading', { name: NAME }).waitFor({ timeout: 20000 });
 	await shot(p, '02-calendar-owner');
 	check(
+		'the page says it is private, and hers',
+		SAYS_CALENDAR_PRIVATE('yours').test(await text(p, '[data-testid=calendar-private-note]')),
+		await text(p, '[data-testid=calendar-private-note]')
+	);
+	check(
 		'the page says only the people on it can see its events',
-		/Private\. Only the people on this calendar can see its events\./.test(
-			await text(p, '[data-testid=calendar-private-note]')
+		/People here see every event, past and future, and each other\. Nobody else can\./.test(
+			await text(p, '[data-testid=calendar-people]')
 		)
 	);
 	const policy = await C.alice.call('com.atproto.space.getSpace', { space: SPACE });
@@ -497,15 +521,21 @@ await step('3. alice adds bob and dana by handle', async () => {
 
 await step('4. alice puts event 1 on it from the calendar’s page', async () => {
 	const p = pages.alice;
-	await p.getByRole('link', { name: /new event on this calendar/i }).click({ timeout: 20000 });
+	await p
+		.locator('[data-testid=calendar-owner-actions]')
+		.getByRole('link', { name: /^new event$/i })
+		.click({ timeout: 20000 });
 	await p.waitForURL((u) => u.pathname === '/create', { timeout: 30000 });
 	await settle(p);
-	const choice = p.getByRole('radio', { name: /only the people on one of your shared calendars/i });
+	const choice = p.getByRole('radio', { name: /^private$/i });
 	await choice.waitFor({ timeout: 20000 });
-	check('the shared calendar choice is picked', await choice.isChecked());
+	check('Private is picked', await choice.isChecked());
+	const picker = p.locator('select[name=calendar]');
+	const pickedAs = await picker.evaluate((s) => s.selectedOptions[0]?.textContent?.trim() ?? '');
 	check(
-		'with this calendar in the picker',
-		(await p.locator('select[name=calendar]').inputValue()) === KEY
+		'with this calendar in the picker, as everyone on it',
+		(await picker.inputValue()) === KEY && pickedAs === `Everyone on ${NAME}`,
+		pickedAs
 	);
 	await shot(p, '04-create-on-calendar');
 	({ path: EVENT_1_PATH, rkey: RKEY_1 } = await publishEvent(p, EVENT_1));
@@ -513,8 +543,8 @@ await step('4. alice puts event 1 on it from the calendar’s page', async () =>
 	check('it lands on the event on the calendar', EVENT_1_PATH === `${CAL_PATH}/${RKEY_1}`);
 	check(
 		'the page says only the people on the calendar can see it',
-		SAYS_PRIVATE_EVENT().test(await privateNote(p)),
-		await privateNote(p)
+		SAYS_PRIVATE_TO().test(await privateTo(p)),
+		await privateTo(p)
 	);
 	const events = await inSpace('alice', EVENT);
 	check(
@@ -533,6 +563,14 @@ await step('4. alice puts event 1 on it from the calendar’s page', async () =>
 	check(
 		'and changes no one there',
 		(await p.locator('[data-testid=calendar-guests] input').count()) === 0
+	);
+	check(
+		'but points her to the calendar for that',
+		(await p
+			.locator(`[data-testid=calendar-guests] a[href$="/calendar/${KEY}"]`, {
+				hasText: /^add or remove people$/i
+			})
+			.count()) === 1
 	);
 });
 
@@ -554,12 +592,20 @@ await step('5. bob opens the calendar’s link, signs in, allows it, and sees ev
 	await shot(p, '06-calendar-person-on-it');
 	check('he sees event 1 on it', (await text(p, 'main')).includes(EVENT_1));
 	check(
-		'he is told only the people on it can see its events',
-		/Private\. Only the people on this calendar can see its events\./.test(
+		'he is told it is private, and whose',
+		SAYS_CALENDAR_PRIVATE(P.alice.handle).test(
 			await text(p, '[data-testid=calendar-private-note]')
-		)
+		),
+		await text(p, '[data-testid=calendar-private-note]')
 	);
 	const shown = await text(p, '[data-testid=calendar-people-shown]');
+	check(
+		'he is told only the people on it can see its events',
+		/Everyone here sees every event and each other\. Only the owner changes who's here\./.test(
+			shown
+		),
+		shown.slice(-120)
+	);
 	check(
 		'he sees who is on it: himself and dana',
 		shown.includes(P.bob.handle) && shown.includes(P.dana.handle),
@@ -574,14 +620,22 @@ await step('5. bob opens the calendar’s link, signs in, allows it, and sees ev
 	await p.waitForURL((u) => u.pathname === EVENT_1_PATH, { timeout: 30000 });
 	await settle(p);
 	await p.getByRole('heading', { name: EVENT_1 }).first().waitFor({ timeout: 20000 });
-	check('the event says who can see it', SAYS_PRIVATE_EVENT().test(await privateNote(p)));
+	check(
+		'the event says who can see it',
+		SAYS_PRIVATE_TO().test(await privateTo(p)),
+		await privateTo(p)
+	);
 	const guests = await text(p, '[data-testid=calendar-guests]');
 	check(
 		'the event shows him who is on the calendar',
 		guests.includes(P.dana.handle),
 		guests.slice(0, 200)
 	);
-	check('with nothing telling him to change it', !/to add or remove people/i.test(guests));
+	check(
+		'with nothing telling him to change it',
+		!/add or remove people/i.test(guests) &&
+			(await p.locator(`[data-testid=calendar-guests] a[href$="/calendar/${KEY}"]`).count()) === 0
+	);
 	check('no edit for him', (await p.getByRole('link', { name: /edit/i }).count()) === 0);
 });
 
@@ -818,10 +872,7 @@ await step('13. bob cannot add an event or change who is on it', async () => {
 	const p = pages.bob;
 	await open(p, CAL_PATH);
 	await p.getByRole('heading', { name: NAME }).waitFor({ timeout: 20000 });
-	check(
-		'no control to add an event',
-		(await p.getByRole('link', { name: /new event on this calendar/i }).count()) === 0
-	);
+	check('no control to add an event', (await newEventLink(p).count()) === 0);
 	check(
 		'no rename or delete',
 		(await p.locator('[data-testid=calendar-owner-actions]').count()) === 0
@@ -960,14 +1011,14 @@ await step(
 	async () => {
 		const a = pages.alice;
 		await open(a, '/create');
-		await a.getByRole('radio', { name: /invited people only/i }).click();
-		const field = a.getByRole('textbox', { name: /name this list to reuse it for later events/i });
-		await field.waitFor({ timeout: 20000 });
+		await a.getByRole('radio', { name: /^private$/i }).click();
+		const who = await justThisEvent(a);
 		check(
-			'she is offered a name for its guests, saying what naming it shows',
-			/Everyone on it sees its name and who else is on it\./.test(
-				await text(a, '[data-testid=naming-tells]')
-			)
+			'she makes it for just this event, and adds its guests after publishing',
+			who.value === '' &&
+				who.picked === 'Just this event' &&
+				/You add them after publishing\./.test(await text(a, '[data-testid=audience-what]')),
+			who.picked
 		);
 		await shot(a, '11-create-single');
 		({ path: EVENT_3_PATH, rkey: RKEY_3 } = await publishEvent(a, EVENT_3, /\/private\/[^/]+$/));
@@ -994,10 +1045,7 @@ await step(
 			(await a.getByRole('button', { name: /save these people as a shared calendar/i }).count()) ===
 				1
 		);
-		check(
-			'and no event on it before it has a name',
-			(await a.getByRole('link', { name: /new event on this calendar/i }).count()) === 0
-		);
+		check('and no event on it before it has a name', (await newEventLink(a).count()) === 0);
 		check(
 			'nothing published for its guests',
 			(await inSpace('alice', MEMBER, SPACE_3)).length === 0
@@ -1045,8 +1093,8 @@ await step('16. alice saves its guests as a shared calendar, and nothing moves',
 	check('she stays at the event’s own address', new URL(a.url()).pathname === EVENT_3_PATH);
 	check(
 		'the event now says only the people on the calendar can see it',
-		SAYS_PRIVATE_EVENT(SINGLE_NAME).test(await privateNote(a)),
-		await privateNote(a)
+		SAYS_PRIVATE_TO(SINGLE_NAME).test(await privateTo(a)),
+		await privateTo(a)
 	);
 	check(
 		'with a link to the calendar’s page',
@@ -1086,7 +1134,11 @@ await step('17. bob sees its name and who else is on it, at the link he had', as
 	check('the old link still opens', status === 200, `${status}`);
 	await b.getByRole('heading', { name: EVENT_3 }).first().waitFor({ timeout: 20000 });
 	await shot(b, '13-single-named-bob');
-	check('he sees the calendar’s name', SAYS_PRIVATE_EVENT(SINGLE_NAME).test(await privateNote(b)));
+	check(
+		'he sees the calendar’s name',
+		SAYS_PRIVATE_TO(SINGLE_NAME).test(await privateTo(b)),
+		await privateTo(b)
+	);
 	const guests = await text(b, '[data-testid=calendar-guests]');
 	check('and mallory on it', guests.includes(P.mallory.handle), guests.slice(0, 200));
 	check(
@@ -1119,7 +1171,10 @@ await step(
 		const a = pages.alice;
 		const calPath = `/p/${P.alice.handle}/calendar/${RKEY_3}`;
 		await open(a, calPath);
-		await a.getByRole('link', { name: /new event on this calendar/i }).click({ timeout: 20000 });
+		await a
+			.locator('[data-testid=calendar-owner-actions]')
+			.getByRole('link', { name: /^new event$/i })
+			.click({ timeout: 20000 });
 		await a.waitForURL((u) => u.pathname === '/create', { timeout: 30000 });
 		await settle(a);
 		check(
@@ -1137,7 +1192,11 @@ await step(
 		check('bob finds it on the calendar he has', (await text(b, 'main')).includes(EVENT_4));
 		await open(b, EVENT_4_PATH);
 		await b.getByRole('heading', { name: EVENT_4 }).first().waitFor({ timeout: 20000 });
-		check('and opens it', SAYS_PRIVATE_EVENT(SINGLE_NAME).test(await privateNote(b)));
+		check(
+			'and opens it',
+			SAYS_PRIVATE_TO(SINGLE_NAME).test(await privateTo(b)),
+			await privateTo(b)
+		);
 
 		await open(a, `${EVENT_4_PATH}/edit`);
 		await a
@@ -1160,21 +1219,27 @@ await step(
 );
 
 await step(
-	'19. a single event named as it is made is a calendar at once; cancelling it leaves the calendar',
+	'19. a single event named on its own page as soon as it is published is a calendar at once; cancelling it leaves the calendar',
 	async () => {
 		const a = pages.alice;
 		await open(a, '/create');
-		await a.getByRole('radio', { name: /invited people only/i }).click();
-		await a
-			.getByRole('textbox', { name: /name this list to reuse it for later events/i })
-			.fill(NAMED_AT_ONCE);
-		await a.waitForTimeout(150);
-		({ rkey: RKEY_5 } = await publishEvent(a, EVENT_5, /\/private\/[^/]+$/));
+		await a.getByRole('radio', { name: /^private$/i }).click();
+		await justThisEvent(a);
+		let at;
+		({ path: at, rkey: RKEY_5 } = await publishEvent(a, EVENT_5, /\/private\/[^/]+$/));
 		SPACE_5 = `at://${C.alice.did}/space/${TYPE}/${RKEY_5}`;
+		// /create no longer names a list, so she names it on the event's own page, before anyone is on it.
+		await a.getByRole('button', { name: /save these people as a shared calendar/i }).click();
+		const form = a.locator('[data-testid=save-as-calendar]');
+		await form.locator('input[name=calendar-name]').fill(NAMED_AT_ONCE);
+		await a.waitForTimeout(150);
+		await form.getByRole('button', { name: /^save$/i }).click();
+		await a.locator('[data-testid=private-to]').waitFor({ timeout: 20000 });
+		check('she stays at the event’s own address', new URL(a.url()).pathname === at);
 		check(
 			'it opens as an event on its calendar',
-			SAYS_PRIVATE_EVENT(NAMED_AT_ONCE).test(await privateNote(a)),
-			await privateNote(a)
+			SAYS_PRIVATE_TO(NAMED_AT_ONCE).test(await privateTo(a)),
+			await privateTo(a)
 		);
 		const named = await inSpace('alice', CALENDAR, SPACE_5);
 		check('its space has the name', named.length === 1 && named[0].value?.name === NAMED_AT_ONCE);
@@ -1314,7 +1379,10 @@ await step(
 await step('21. alice deletes the calendar, and bob’s link reads as not available', async () => {
 	const a = pages.alice;
 	await open(a, CAL_PATH);
-	await a.getByRole('button', { name: /^delete calendar$/i }).click({ timeout: 20000 });
+	await a
+		.locator('[data-testid=calendar-owner-actions]')
+		.getByRole('button', { name: /^delete$/i })
+		.click({ timeout: 20000 });
 	await a.locator('[data-testid=confirm-delete]').waitFor({ timeout: 10000 });
 	await a.getByRole('button', { name: /delete it for everyone/i }).click();
 	await a.waitForURL((u) => u.pathname === '/private', { timeout: 30000 });
