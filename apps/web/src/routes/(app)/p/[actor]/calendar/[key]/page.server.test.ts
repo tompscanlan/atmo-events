@@ -10,7 +10,7 @@ import {
 import { GUEST_SCOPE, HOST_SCOPE } from '#lib/private-events/scopes.js';
 
 const OWNER = 'did:plc:ownerownerownerownerowner';
-const MEMBER = 'did:plc:membermembermembermember';
+const PERSON = 'did:plc:personpersonpersonperson';
 const KEY = 'cal-3lcalcalcalcal';
 const SPACE = privateEventSpace(OWNER, KEY);
 const NAME = 'Supper club';
@@ -28,14 +28,14 @@ vi.mock('#lib/private-events/server/enabled.js', () => ({
 	spacesServer: () => null
 }));
 vi.mock('#lib/private-events/private-events.remote.js', () => ({
-	addCalendarMember: vi.fn(),
-	removeCalendarMember: vi.fn(),
+	addPersonToCalendar: vi.fn(),
+	removePersonFromCalendar: vi.fn(),
 	renameCalendar: vi.fn(),
 	deleteCalendar: vi.fn()
 }));
 vi.mock('#lib/private-events/private-events.remote', () => ({
-	addCalendarMember: vi.fn(),
-	removeCalendarMember: vi.fn(),
+	addPersonToCalendar: vi.fn(),
+	removePersonFromCalendar: vi.fn(),
 	renameCalendar: vi.fn(),
 	deleteCalendar: vi.fn()
 }));
@@ -110,8 +110,8 @@ beforeEach(() => {
 });
 
 describe('a shared calendar’s page', () => {
-	it('shows a member its name and events, and says who can see them', async () => {
-		const data = await load(request(MEMBER, GUEST_SCOPE));
+	it('shows someone on it its name and events, and says who can see them', async () => {
+		const data = await load(request(PERSON, GUEST_SCOPE));
 		expect(data.view).toBe('calendar');
 		const body = page(data);
 		expect(body).toContain(NAME);
@@ -122,16 +122,16 @@ describe('a shared calendar’s page', () => {
 	});
 
 	it('shows the owner the people on it, and what only the owner can do', async () => {
-		const data = await load(request(OWNER, HOST_SCOPE, KEY, { members: [{ did: MEMBER }] }));
+		const data = await load(request(OWNER, HOST_SCOPE, KEY, { members: [{ did: PERSON }] }));
 		const body = page(data);
 		expect(body).toContain('data-testid="calendar-people"');
-		expect(body).toContain(`data-member="${MEMBER}"`);
+		expect(body).toContain(`data-person="${PERSON}"`);
 		expect(body).toContain('data-testid="calendar-owner-actions"');
 		expect(body).toContain(`/create?audience=calendar&amp;calendar=${KEY}`);
 	});
 
 	it('keeps no copy, and asks not to be indexed', async () => {
-		const data = await load(request(MEMBER, GUEST_SCOPE));
+		const data = await load(request(PERSON, GUEST_SCOPE));
 		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'no-store' });
 		expect(data.robots).toBe('noindex');
 	});
@@ -143,16 +143,16 @@ describe('a shared calendar’s page', () => {
 	});
 
 	it('asks for the guest grant first, and reads nothing', async () => {
-		const data = await load(request(MEMBER, 'atproto'));
+		const data = await load(request(PERSON, 'atproto'));
 		expect(data.view).toBe('grant');
 		expect(reader.get).not.toHaveBeenCalled();
 	});
 
 	it('tells someone kept out what it tells anyone at a made-up key, in the same words', async () => {
 		keptOut();
-		const real = await load(request(MEMBER, GUEST_SCOPE)).catch((e) => e);
-		const madeUp = await load(request(MEMBER, GUEST_SCOPE, 'cal-3lmadeupmadeup')).catch((e) => e);
-		const notACalendar = await load(request(MEMBER, GUEST_SCOPE, '3lsingleevent')).catch((e) => e);
+		const real = await load(request(PERSON, GUEST_SCOPE)).catch((e) => e);
+		const madeUp = await load(request(PERSON, GUEST_SCOPE, 'cal-3lmadeupmadeup')).catch((e) => e);
+		const notACalendar = await load(request(PERSON, GUEST_SCOPE, '3lsingleevent')).catch((e) => e);
 		expect(real).toMatchObject({ status: 404 });
 		expect(madeUp).toEqual(real);
 		expect(notACalendar).toEqual(real);
@@ -160,7 +160,7 @@ describe('a shared calendar’s page', () => {
 
 	it('does not pass an outage off as not there', async () => {
 		reader.list.mockRejectedValue(new Error('503'));
-		await expect(load(request(MEMBER, GUEST_SCOPE))).rejects.toMatchObject({ status: 503 });
+		await expect(load(request(PERSON, GUEST_SCOPE))).rejects.toMatchObject({ status: 503 });
 	});
 
 	it('has no action a form could post to', () => {

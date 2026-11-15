@@ -7,10 +7,10 @@ import { privateEventsBetaOn } from './beta';
 import { BetaNotSaved, canSaveBeta, readBetaRecord, saveBeta } from './server/beta';
 import { privateEventsEnabled } from './server/enabled';
 import {
-	addCalendarMember as addMember,
+	addPersonToCalendar as addPerson,
 	createCalendar as makeCalendar,
 	deleteCalendar as removeCalendar,
-	removeCalendarMember as removeMember,
+	removePersonFromCalendar as removePerson,
 	renameCalendar as nameCalendar
 } from './server/calendars';
 import {
@@ -78,17 +78,17 @@ export const deleteCalendar = command(v.object({ key: calendarSchema }), ({ key 
 	asCaller((caller) => removeCalendar(caller, key))
 );
 
-export const addCalendarMember = command(
+export const addPersonToCalendar = command(
 	v.object({
 		key: calendarSchema,
 		handleOrDid: v.pipe(v.string(), v.minLength(3), v.maxLength(2048))
 	}),
-	(input) => asCaller((caller) => addMember(caller, input))
+	(input) => asCaller((caller) => addPerson(caller, input))
 );
 
-export const removeCalendarMember = command(
+export const removePersonFromCalendar = command(
 	v.object({ key: calendarSchema, did: didSchema }),
-	(input) => asCaller((caller) => removeMember(caller, input))
+	(input) => asCaller((caller) => removePerson(caller, input))
 );
 
 export const addGuest = command(

@@ -11,7 +11,7 @@ import {
 import { GUEST_SCOPE, HOST_SCOPE } from '#lib/private-events/scopes.js';
 
 const OWNER = 'did:plc:ownerownerownerownerowner';
-const MEMBER = 'did:plc:membermembermembermember';
+const PERSON = 'did:plc:personpersonpersonperson';
 const KEY = 'cal-3lcalcalcalcal';
 const RKEY = '3levent';
 const SPACE = privateEventSpace(OWNER, KEY);
@@ -33,7 +33,7 @@ vi.mock('#lib/private-events/private-events.remote', () => ({
 	rsvpToPrivateEvent: vi.fn(),
 	cancelPrivateRsvp: vi.fn()
 }));
-vi.mock('#lib/atproto/auth.svelte.js', () => ({ user: { isLoggedIn: true, did: MEMBER } }));
+vi.mock('#lib/atproto/auth.svelte.js', () => ({ user: { isLoggedIn: true, did: PERSON } }));
 vi.mock('#lib/components/LoginModal.svelte', () => ({ atProtoLoginModalState: { show: vi.fn() } }));
 vi.mock('$app/state', () => ({ page: { url: new URL(`https://atmo.example.com${PATH}`) } }));
 
@@ -92,8 +92,8 @@ beforeEach(() => {
 });
 
 describe('an event on a shared calendar', () => {
-	it('shows a member the event, and that only the people on the calendar can see it', async () => {
-		const data = await load(request(MEMBER, GUEST_SCOPE));
+	it('shows someone on the calendar the event, and that only the people on it can see it', async () => {
+		const data = await load(request(PERSON, GUEST_SCOPE));
 		expect(data.view).toBe('event');
 		const body = page(data);
 		expect(body).toContain(NAME);
@@ -103,24 +103,24 @@ describe('an event on a shared calendar', () => {
 	});
 
 	it('gives the owner the calendar’s people instead of a guest list to change', async () => {
-		const data = await load(request(OWNER, HOST_SCOPE, RKEY, { members: [{ did: MEMBER }] }));
+		const data = await load(request(OWNER, HOST_SCOPE, RKEY, { members: [{ did: PERSON }] }));
 		const body = page(data);
 		expect(body).toContain('data-testid="calendar-guests"');
-		expect(body).toContain(`data-guest="${MEMBER}"`);
+		expect(body).toContain(`data-guest="${PERSON}"`);
 		expect(body).not.toContain('data-testid="guest-list"');
 		expect(body).not.toContain('name="guest-handle"');
 	});
 
 	it('tells someone kept out what it tells anyone at a made-up key', async () => {
 		reader.get.mockRejectedValue(new SpaceAccessDenied(SPACE, '400 SpaceNotFound'));
-		const real = await load(request(MEMBER, GUEST_SCOPE)).catch((e) => e);
-		const madeUp = await load(request(MEMBER, GUEST_SCOPE, '3lmadeup')).catch((e) => e);
+		const real = await load(request(PERSON, GUEST_SCOPE)).catch((e) => e);
+		const madeUp = await load(request(PERSON, GUEST_SCOPE, '3lmadeup')).catch((e) => e);
 		expect(real).toMatchObject({ status: 404 });
 		expect(madeUp).toEqual(real);
 	});
 
-	it('reads the owner’s event only, never a record a member wrote under its key', async () => {
-		await load(request(MEMBER, GUEST_SCOPE));
+	it('reads the owner’s event only, never a record someone else on it wrote under its key', async () => {
+		await load(request(PERSON, GUEST_SCOPE));
 		const eventReads = reader.get.mock.calls
 			.map(([q]) => q)
 			.filter((q) => q.collection === EVENT_COLLECTION);
