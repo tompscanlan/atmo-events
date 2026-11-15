@@ -44,6 +44,9 @@ function markup(
 	}).body;
 }
 
+/** The markup as text reads: no hydration markers, and runs of white space as one space. */
+const shown = (html: string) => html.replace(/<!--.*?-->/g, '').replace(/\s+/g, ' ');
+
 describe('Your events on the home page', () => {
 	it('marks a private event with a lock line and links it to its own page', () => {
 		const body = markup({
@@ -54,7 +57,7 @@ describe('Your events on the home page', () => {
 		});
 		expect(body.match(/data-testid="your-private-event"/g)).toHaveLength(1);
 		expect(body).toContain('href="/p/host.example.com/calendar/cal-3lsupper/3ldinner"');
-		expect(body).toContain('Private to Supper club');
+		expect(shown(body)).toContain('Private event. Only the people on Supper club can see it.');
 		expect(body).toContain('Picnic');
 	});
 

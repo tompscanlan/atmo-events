@@ -9,6 +9,7 @@
 	import { user } from '#lib/atproto/auth.svelte.js';
 	import { atProtoLoginModalState } from '#lib/components/LoginModal.svelte';
 	import { createEventModalState } from '#lib/components/CreateEventModal.svelte';
+	import CalendarPrivateNote from '#lib/private-events/components/CalendarPrivateNote.svelte';
 	import { describeLinkBy, privateNoteId } from '#lib/private-events/describe-link.js';
 
 	let { data } = $props();
@@ -25,12 +26,12 @@
 		{@const noteId = privateNoteId(event.uri)}
 		<div data-testid="your-private-event" {@attach describeLinkBy(noteId)}>
 			<EventCard {event} href={link.href} />
-			<p
-				id={noteId}
-				class="text-base-600 dark:text-base-400 mt-1 inline-flex items-center gap-1 text-xs"
-			>
-				<Icon img={LockKeyhole} size={12} />
-				{link.calendar ? `Private to ${link.calendar}` : 'Private event'}
+			<p id={noteId} class="text-base-600 dark:text-base-400 mt-1 text-xs">
+				{#if link.calendar}<CalendarPrivateNote name={link.calendar} />{:else}<Icon
+						img={LockKeyhole}
+						size={12}
+						class="mr-1 inline align-[-2px]"
+					/>Private event{/if}
 			</p>
 		</div>
 	{:else}

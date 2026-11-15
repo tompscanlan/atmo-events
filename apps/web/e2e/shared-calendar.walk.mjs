@@ -616,7 +616,7 @@ await step('9. bob’s /private lists event 2, with no new link', async () => {
 			.locator(`[data-testid=private-events] a[href$="/calendar/${KEY}/${RKEY_2}"]`)
 			.count()) > 0
 	);
-	check('marked private to the calendar', list.includes(`Private to ${NAME}`), list.slice(0, 200));
+	check('marked private to the calendar', SAYS_PRIVATE_EVENT().test(list), list.slice(0, 200));
 	check(
 		'no calendar section for him, with the beta off',
 		(await p.locator('[data-testid=shared-calendars]').count()) === 0
@@ -653,7 +653,7 @@ await step('9. bob’s /private lists event 2, with no new link', async () => {
 	}
 	check(
 		'each marked private to the calendar',
-		herHome.split(`Private to ${NAME}`).length - 1 >= 2,
+		(herHome.match(new RegExp(SAYS_PRIVATE_EVENT(), 'g')) ?? []).length >= 2,
 		herHome.slice(0, 200)
 	);
 	await shot(a, '08b-alice-home');
