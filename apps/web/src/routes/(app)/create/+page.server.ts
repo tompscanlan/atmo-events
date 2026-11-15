@@ -1,7 +1,7 @@
 import { redirect, type Cookies } from '@sveltejs/kit';
 import { now as tidNow } from '@atcute/tid';
 import { forgetAsked, privateEventAccess } from '#lib/private-events/permissions-asked.js';
-import { holdsHostGrant } from '#lib/private-events/scopes.js';
+import { holdsCalendarGrant, holdsHostGrant } from '#lib/private-events/scopes.js';
 import { ownCalendars } from '#lib/private-events/server/calendars.js';
 import { callerSession, type CallerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsBeta } from '#lib/private-events/server/beta.js';
@@ -15,18 +15,22 @@ function hostAccess(caller: CallerSession | null, cookies: Cookies) {
 	return null;
 }
 
-/** The host's own shared calendars, to put the event on; none when they can't be read. */
-async function calendarsOf(caller: CallerSession | null) {
-	if (!caller || !holdsHostGrant(caller.scope, caller.did)) return [];
-	return (
-		await ownCalendars(caller).catch((e) => {
-			console.error(`[private-events] ${caller.did}: calendars unread for /create:`, e);
-			return { calendars: [] };
-		})
-	).calendars.map(({ key, name }) => ({ key, name }));
+/** The host's own shared calendars, to put the event on, with the one the address names when it is
+ *  theirs; none when they can't be read. `capped` when there may be more. */
+async function calendarsOf(caller: CallerSession | null, wanted: string | null) {
+	const none = { calendars: [], capped: false };
+	if (!caller || !holdsHostGrant(caller.scope, caller.did)) return none;
+	const found = await ownCalendars(caller, wanted ? { wanted } : {}).catch((e) => {
+		console.error(`[private-events] ${caller.did}: calendars unread for /create:`, e);
+		return none;
+	});
+	return {
+		calendars: found.calendars.map(({ key, name }) => ({ key, name })),
+		capped: found.capped
+	};
 }
 
-export async function load({ locals, cookies }) {
+export async function load({ locals, cookies, url }) {
 	if (!locals.did) {
 		redirect(303, '/login');
 	}
@@ -34,6 +38,7 @@ export async function load({ locals, cookies }) {
 	// Offered to those who turned the beta on in Settings.
 	const enabled = privateEventsEnabled() && (await privateEventsBeta(locals));
 	const caller = enabled ? await callerSession(locals.session ?? null) : null;
+	const own = enabled ? await calendarsOf(caller, url.searchParams.get('calendar')) : null;
 	return {
 		pageTitle: 'Create Event',
 		actorDid: locals.did,
@@ -41,6 +46,9 @@ export async function load({ locals, cookies }) {
 		privateEvents: enabled,
 		hostAccess: enabled ? hostAccess(caller, cookies) : null,
 		spacesServer: enabled ? spacesServer() : null,
-		calendars: enabled ? await calendarsOf(caller) : []
+		calendars: own?.calendars ?? [],
+		calendarsCapped: own?.capped ?? false,
+		// Naming a new event's guests makes them a shared calendar, which asks for one more permission.
+		canName: enabled && !!caller && holdsCalendarGrant(caller.scope, caller.did)
 	};
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { setLinkEmbeds, ToggleGroup, ToggleGroupItem } from '@atmo-dev/kit';
+	import { Input, setLinkEmbeds, ToggleGroup, ToggleGroupItem } from '@atmo-dev/kit';
 	import { EventEditor, type EventEditorPrefill } from '@atmo-dev/kit/events';
 	import { onMount } from 'svelte';
 	import { user } from '#lib/atproto/auth.svelte.js';
@@ -7,10 +7,11 @@
 	import { readPendingImportPrefill } from '#lib/components/CreateEventModal.svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import CalendarsNeedAllowing from '#lib/private-events/components/CalendarsNeedAllowing.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { createPrivateEventAdapter } from '#lib/private-events/editor-adapter.js';
 	import { PRIVATE_LINK_EMBEDS } from '#lib/private-events/embeds.js';
-	import { UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
+	import { CALENDAR_NAME_MAX, NAMING_TELLS, UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
 	import { HOST_SCOPES } from '#lib/private-events/scopes.js';
 
 	let { data } = $props();
@@ -42,6 +43,10 @@
 		(!data.privateEvents && !askedPrivate) || audience === 'everyone' || invited || onCalendar
 	);
 
+	// A name for the guests of a new private event, which makes them a shared calendar; read when it
+	// is saved, so typing it never starts the editor over.
+	let listName = $state('');
+
 	let viewer = $derived({
 		isLoggedIn: user.isLoggedIn,
 		canPostToBluesky: user.canPostToBluesky,
@@ -54,7 +59,9 @@
 		onCalendar
 			? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false }, calendar ?? undefined)
 			: invited
-				? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false })
+				? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false }, undefined, {
+						name: () => (data.canName ? listName : '')
+					})
 				: createInAppAdapter({ viewer })
 	);
 
@@ -143,6 +150,12 @@
 						{/each}
 					</select>
 				</label>
+				{#if data.calendarsCapped}
+					<p class="text-base-600 dark:text-base-400 mt-2 text-sm" role="status">
+						There may be more calendars than these. To put an event on another, start from its own
+						page.
+					</p>
+				{/if}
 			{/if}
 			<ul class="text-base-600 dark:text-base-400 mt-3 space-y-1 text-sm">
 				<li>
@@ -161,6 +174,24 @@
 					</li>
 				{/if}
 			</ul>
+			{#if invited && !data.hostAccess && data.canName}
+				<label class="text-base-700 dark:text-base-300 mt-3 block max-w-md text-sm">
+					Name this list to reuse it for later events (optional)
+					<Input
+						class="mt-1"
+						name="list-name"
+						placeholder="Supper club"
+						maxlength={CALENDAR_NAME_MAX}
+						autocomplete="off"
+						bind:value={listName}
+					/>
+				</label>
+				<p class="text-base-600 dark:text-base-400 mt-1 text-sm" data-testid="naming-tells">
+					{NAMING_TELLS}
+				</p>
+			{:else if invited && !data.hostAccess}
+				<CalendarsNeedAllowing />
+			{/if}
 			{#if invited && data.hostAccess}
 				<PrivateEventAccessNotice
 					access={data.hostAccess}

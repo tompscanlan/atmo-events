@@ -13,6 +13,7 @@ const { HOST, GUEST, mocks } = vi.hoisted(() => {
 		GUEST,
 		mocks: {
 			rsvp: vi.fn(async () => ({})),
+			renameCalendar: vi.fn(async () => {}),
 			// Signed in as the guest unless a test signs in as the host.
 			user: { isLoggedIn: true, did: GUEST, profile: { handle: 'guest.example.com' } }
 		}
@@ -24,6 +25,7 @@ vi.mock('#lib/private-events/private-events.remote', () => ({
 	cancelPrivateRsvp: vi.fn(),
 	addGuest: vi.fn(),
 	removeGuest: vi.fn(),
+	renameCalendar: mocks.renameCalendar,
 	// The beta switch, off, for the offer a guest sees once they answer.
 	getPrivateEventsBeta: () => ({ ready: true, current: { canSave: true, on: false } }),
 	setPrivateEventsBeta: vi.fn()
@@ -114,7 +116,20 @@ function gifHostRequests(seen: string[]): string[] {
 afterEach(() => {
 	vi.unstubAllGlobals();
 	mocks.user.did = GUEST;
+	mocks.renameCalendar.mockClear();
 });
+
+/** The host's view of their single event, with one guest. */
+function hostView(canName = true) {
+	return {
+		...guestView(),
+		isHost: true,
+		calendar: null,
+		canName,
+		guests: [{ did: GUEST, handle: 'guest.example.com', answer: 'going', answerUnread: false }],
+		guestsCapped: false
+	};
+}
 
 describe('a private event’s page', () => {
 	it('shows a guest the address and looks up its place, as for any event', async () => {
@@ -174,5 +189,56 @@ describe('a private event’s page', () => {
 		await expect.element(page.getByText('Bring snacks', { exact: false })).toBeVisible();
 		await expect.element(page.getByRole('button', { name: /^Load / })).toBeVisible();
 		expect(gifHostRequests(requests())).toEqual([]);
+	});
+});
+
+describe('saving a single event’s guests as a shared calendar', () => {
+	it('asks its host for a name, says what naming it shows, and names the event’s own space', async () => {
+		watchRequests();
+		mocks.user.did = HOST;
+		render(EventPage, { data: hostView() } as never);
+		await page.getByRole('button', { name: 'Save these people as a shared calendar' }).click();
+		await expect
+			.poll(() => page.getByTestId('naming-tells').elements()[0]?.textContent ?? '')
+			.toContain('Everyone on it sees its name and who else is on it.');
+		const name = page.getByRole('textbox', { name: 'Name of the shared calendar' });
+		await expect.element(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+		await name.fill('Supper club');
+		await page.getByRole('button', { name: 'Save', exact: true }).click();
+		await expect.poll(() => mocks.renameCalendar.mock.calls.length).toBe(1);
+		expect(mocks.renameCalendar).toHaveBeenCalledWith({ key: '3kabc', name: 'Supper club' });
+	});
+
+	it('is not offered without the permission to name one', async () => {
+		watchRequests();
+		mocks.user.did = HOST;
+		render(EventPage, { data: hostView(false) } as never);
+		await expect.element(page.getByTestId('guest-list')).toBeVisible();
+		expect(page.getByTestId('save-as-calendar').elements()).toHaveLength(0);
+		await expect
+			.element(page.getByTestId('calendars-need-allowing').getByRole('link', { name: 'Calendars' }))
+			.toHaveAttribute('href', '/private');
+	});
+
+	it('once named, shows the event on its calendar, with a link to the calendar’s page', async () => {
+		watchRequests();
+		render(EventPage, {
+			data: {
+				...guestView(),
+				isHost: false,
+				calendar: { key: '3kabc', name: 'Supper club' },
+				canName: false,
+				guests: [
+					{ did: GUEST, handle: 'guest.example.com', answer: null, answerUnread: false },
+					{ did: 'did:plc:other', handle: 'other.example.com', answer: null, answerUnread: false }
+				],
+				guestsCapped: false
+			}
+		} as never);
+		await expect
+			.element(page.getByTestId('private-to').getByRole('link', { name: 'Supper club' }))
+			.toHaveAttribute('href', '/p/host.example.com/calendar/3kabc');
+		await expect.element(page.getByText('other.example.com')).toBeVisible();
+		expect(page.getByTestId('save-as-calendar').elements()).toHaveLength(0);
 	});
 });

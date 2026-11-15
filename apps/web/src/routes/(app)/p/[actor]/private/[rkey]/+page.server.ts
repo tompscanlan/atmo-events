@@ -1,11 +1,11 @@
 import { error } from '@sveltejs/kit';
 import { getActor } from '#lib/actor.js';
 import { forgetAsked, privateEventAccess } from '#lib/private-events/permissions-asked.js';
-import { holdsGuestGrant, holdsHostGrant } from '#lib/private-events/scopes.js';
+import { holdsCalendarGrant, holdsGuestGrant, holdsHostGrant } from '#lib/private-events/scopes.js';
+import { readSpaceEventPage } from '#lib/private-events/server/calendars.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
 import { singleEvent } from '#lib/private-events/ids.js';
-import { readPrivateEventPage } from '#lib/private-events/server/events.js';
 import { parseEventDescription } from '#lib/server/event-description.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 
@@ -39,8 +39,9 @@ export async function load({ params, locals, cookies, setHeaders }) {
 	}
 	forgetAsked(cookies);
 	// Reading it asks the host's server, which learns who is asking and when. A guest was once asked
-	// to choose that first; it cost every guest a click on every event, so the read is direct.
-	const found = await readPrivateEventPage(caller, singleEvent(host, params.rkey)).catch((e) => {
+	// to choose that first; it cost every guest a click on every event, so the read is direct. Once
+	// its host names its space, it shows as an event on that calendar, at this same address.
+	const found = await readSpaceEventPage(caller, singleEvent(host, params.rkey)).catch((e) => {
 		console.error(`[private-events] ${host}: event ${params.rkey} unread for ${caller.did}:`, e);
 		error(503, 'This event could not be read right now. Try again shortly.');
 	});
@@ -60,6 +61,10 @@ export async function load({ params, locals, cookies, setHeaders }) {
 		viewerRsvpStatus: found.viewerStatus,
 		viewerRsvpRkey: found.viewerStatus ? params.rkey : null,
 		loggedIn: true,
+		isHost,
+		calendar: found.calendar,
+		// Naming its space makes its guests a shared calendar, which asks for one more permission.
+		canName: isHost && !found.calendar && holdsCalendarGrant(caller.scope, caller.did),
 		guests: found.guests,
 		guestsCapped: found.guestsCapped
 	};
