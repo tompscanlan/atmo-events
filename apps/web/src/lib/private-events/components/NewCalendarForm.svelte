@@ -36,6 +36,9 @@
 	/>
 	<Button type="submit" size="sm" disabled={busy || !name.trim()}>New shared calendar</Button>
 </form>
+<p class="text-base-600 dark:text-base-400 mt-2 text-sm" data-testid="new-calendar-what">
+	For a few people you invite to your own events. Only you add events or people.
+</p>
 {#if failure}<p role="alert" class="text-base-950 dark:text-base-50 mt-2 text-sm">
 		{failure}
 	</p>{/if}
