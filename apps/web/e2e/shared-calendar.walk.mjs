@@ -32,6 +32,7 @@ const TYPE = 'rsvp.atmo.dev.space';
 const EVENT = 'community.lexicon.calendar.event';
 const RSVP = 'community.lexicon.calendar.rsvp';
 const CALENDAR = 'rsvp.atmo.dev.calendar';
+const MEMBER = 'com.atproto.memberspace.member';
 
 const secrets = Object.entries(process.env)
 	.filter(([k]) => /PASSWORD/.test(k))
@@ -236,6 +237,8 @@ const inSpace = async (name, collection) => {
 	if (r.status !== 200) throw new Error(`listRecords ${name}: ${r.status} ${r.data?.error}`);
 	return r.data.records;
 };
+/** The people alice's server shows everyone on the calendar, as records in her repo there. */
+const publishedOnIt = async () => (await inSpace('alice', MEMBER)).map((r) => r.rkey);
 const ownRsvp = async (name, rkey) => {
 	const c = C[name];
 	const r = await c.call('com.atproto.space.getRecord', {
@@ -464,6 +467,12 @@ await step('3. alice adds bob and dana by handle', async () => {
 			m.every((did) => [C.alice.did, C.bob.did, C.dana.did].includes(did)),
 		`${m.length}`
 	);
+	const published = await publishedOnIt();
+	check(
+		'her server shows bob and dana in the calendar, for everyone on it',
+		published.includes(C.bob.did) && published.includes(C.dana.did),
+		`${published.length}`
+	);
 	await shot(p, '03-people');
 });
 
@@ -531,16 +540,29 @@ await step('5. bob opens the calendar’s link, signs in, allows it, and sees ev
 			await text(p, '[data-testid=calendar-private-note]')
 		)
 	);
+	const shown = await text(p, '[data-testid=calendar-people-shown]');
 	check(
-		'no list of people for him',
-		(await p.locator('[data-testid=calendar-people]').count()) === 0
+		'he sees who is on it: himself and dana',
+		shown.includes(P.bob.handle) && shown.includes(P.dana.handle),
+		shown.slice(0, 200)
+	);
+	check(
+		'nothing on the list for him to change',
+		(await p.locator('[data-testid=calendar-people]').count()) === 0 &&
+			(await p.getByRole('button', { name: /remove/i }).count()) === 0
 	);
 	await p.locator(`a[href$="/${RKEY_1}"]`).first().click();
 	await p.waitForURL((u) => u.pathname === EVENT_1_PATH, { timeout: 30000 });
 	await settle(p);
 	await p.getByRole('heading', { name: EVENT_1 }).first().waitFor({ timeout: 20000 });
 	check('the event says who can see it', SAYS_PRIVATE_EVENT().test(await privateNote(p)));
-	check('no guest panel for him', (await p.locator('[data-testid=calendar-guests]').count()) === 0);
+	const guests = await text(p, '[data-testid=calendar-guests]');
+	check(
+		'the event shows him who is on the calendar',
+		guests.includes(P.dana.handle),
+		guests.slice(0, 200)
+	);
+	check('with nothing telling him to change it', !/to add or remove people/i.test(guests));
 	check('no edit for him', (await p.getByRole('link', { name: /edit/i }).count()) === 0);
 });
 
@@ -626,12 +648,17 @@ await step('9. bob’s /private lists event 2, with no new link', async () => {
 	await p.getByRole('heading', { name: EVENT_2 }).first().waitFor({ timeout: 20000 });
 	check('he opens event 2', (await text(p, 'main')).includes(EVENT_2));
 
-	// Your events on the home page: with the beta off, his lists neither; with it on, hers lists both.
+	// Your events on the home page and the tab: his way back, though he never turned the beta on.
 	await open(p, '/');
+	await p.locator('[data-testid=your-private-event]').first().waitFor({ timeout: 20000 });
 	const hisHome = await text(p, 'main');
 	check(
-		'his home page lists neither, with the beta off',
-		![EVENT_1, EVENT_2].some((n) => hisHome.includes(n))
+		'his home page lists both, with the beta off',
+		[EVENT_1, EVENT_2].every((n) => hisHome.includes(n))
+	);
+	check(
+		'the tab is there for him, with the beta off',
+		(await p.locator('nav[aria-label="Event navigation"] a[href="/private"]').count()) > 0
 	);
 	const a = pages.alice;
 	await open(a, '/');
@@ -712,6 +739,19 @@ await step('12. alice removes dana, who loses everything on it at once', async (
 	check(
 		'her answer stays in her own repo',
 		(await ownRsvp('dana', RKEY_1))?.status?.endsWith('interested')
+	);
+	const published = await publishedOnIt();
+	check(
+		'her server no longer shows dana on it, and still shows bob',
+		!published.includes(C.dana.did) && published.includes(C.bob.did),
+		`${published.length}`
+	);
+	const b = pages.bob;
+	await open(b, CAL_PATH);
+	await b.getByRole('heading', { name: NAME }).waitFor({ timeout: 30000 });
+	check(
+		'bob no longer sees dana on it',
+		!(await text(b, '[data-testid=calendar-people-shown]')).includes(P.dana.handle)
 	);
 });
 
