@@ -20,7 +20,10 @@ const { HOST, GUEST, KEY, mocks } = vi.hoisted(() => {
 });
 vi.mock('#lib/private-events/private-events.remote', () => ({
 	rsvpToPrivateEvent: mocks.rsvp,
-	cancelPrivateRsvp: vi.fn()
+	cancelPrivateRsvp: vi.fn(),
+	// The beta switch, off, for the offer a guest sees once they answer.
+	getPrivateEventsBeta: () => ({ ready: true, current: { canSave: true, on: false } }),
+	setPrivateEventsBeta: vi.fn()
 }));
 vi.mock('#lib/atproto/repo.remote.js', () => ({
 	putRecord: vi.fn(),
@@ -152,6 +155,27 @@ describe('an event on a shared calendar', () => {
 		await expect
 			.poll(() => shownText('private-note'))
 			.toContain('Answer to let the host know you saw it.');
+	});
+
+	it('offers a guest who answers, with the beta off, a way to find it again', async () => {
+		render(EventPage, { data: eventView() } as never);
+		await expect.poll(() => shownText('private-note')).toContain('Answer to let the host know');
+		expect(page.getByTestId('find-again').elements()).toHaveLength(0);
+		await page.getByRole('button', { name: 'Going', exact: true }).click();
+		await expect
+			.poll(() => shownText('find-again'))
+			.toContain('Turn on private events to find this again under Calendars.');
+		expect(shownText('private-note')).not.toContain('Answer to let the host know');
+	});
+
+	it('never offers it to the host', async () => {
+		mocks.user.did = HOST;
+		const guests = [{ did: GUEST, handle: 'guest.example.com', answer: null, answerUnread: false }];
+		render(EventPage, {
+			data: { ...eventView(guests, false, true), viewerRsvpStatus: 'going' }
+		} as never);
+		await expect.poll(() => shownText('calendar-guests')).toContain('guest.example.com');
+		expect(page.getByTestId('find-again').elements()).toHaveLength(0);
 	});
 
 	it('tells the host when there may be more people on the calendar than it lists', async () => {

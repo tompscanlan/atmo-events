@@ -237,6 +237,16 @@ const inSpace = async (name, collection) => {
 	if (r.status !== 200) throw new Error(`listRecords ${name}: ${r.status} ${r.data?.error}`);
 	return r.data.records;
 };
+/** Whether someone's private events beta is on, as their own repo holds it. */
+const betaOn = async (name) => {
+	const c = C[name];
+	const r = await c.call('com.atproto.repo.getRecord', {
+		repo: c.did,
+		collection: 'rsvp.atmo.actor.privateEventsBeta',
+		rkey: 'self'
+	});
+	return r.status === 200 && r.data?.value?.privateEvents === true;
+};
 /** The people alice's server shows everyone on the calendar, as records in her repo there. */
 const publishedOnIt = async () => (await inSpace('alice', MEMBER)).map((r) => r.rkey);
 const ownRsvp = async (name, rkey) => {
@@ -584,6 +594,15 @@ await step('6. bob says going, in his own repo in the calendar’s space', async
 		answer?.subject?.uri
 	);
 	check('0 RSVPs in his public repo', (await publicCount('bob', RSVP)) === 0);
+	await p.locator('[data-testid=find-again]').waitFor({ timeout: 20000 });
+	check(
+		'with the beta off, he is offered it, to find this again under Calendars',
+		/find this again under Calendars/.test(await text(p, '[data-testid=find-again]'))
+	);
+	check(
+		'and is no longer asked to answer',
+		!/Answer to let the host know/.test(await privateNote(p))
+	);
 	await shot(p, '07-bob-going');
 	const a = pages.alice;
 	await open(a, EVENT_1_PATH);
@@ -610,6 +629,25 @@ await step('7. dana on another PDS opens the link and answers interested', async
 		if (!answer) await sleep(250);
 	}
 	check('her answer is in her own repo', answer?.status === `${RSVP}#interested`);
+
+	// She takes the offer. Saving the beta needs one more permission, granted at her PDS, and the
+	// click finishes on the way back.
+	const offer = p.locator('[data-testid=find-again]');
+	await offer.getByRole('button', { name: /turn on private events/i }).click({ timeout: 20000 });
+	await p.waitForURL((u) => u.origin !== ATMO, { timeout: 15000 }).catch(() => {});
+	if (new URL(p.url()).origin !== ATMO) await throughPds(p, P.dana);
+	await p
+		.locator('[data-testid=find-again]', { hasText: 'Private events are on' })
+		.waitFor({ timeout: 30000 });
+	check('the beta is on in her own repo', await betaOn('dana'));
+	check(
+		'the tab is there for her now',
+		(await p.locator('nav[aria-label="Event navigation"] a[href="/private"]').count()) > 0
+	);
+	await open(p, '/');
+	await p.locator('[data-testid=your-private-event]').first().waitFor({ timeout: 20000 });
+	check('and her home page lists event 1', (await text(p, 'main')).includes(EVENT_1));
+	await shot(p, '07b-dana-found-again');
 });
 
 await step('8. alice puts event 2 on it', async () => {
@@ -655,15 +693,15 @@ await step(
 
 		// Your events on the home page and the tab: his way back, though he never turned the beta on.
 		await open(p, '/');
-		await p.locator('[data-testid=your-private-event]').first().waitFor({ timeout: 20000 });
 		const hisHome = await text(p, 'main');
 		check(
-			'his home page lists both, with the beta off',
-			[EVENT_1, EVENT_2].every((n) => hisHome.includes(n))
+			'his home page lists neither, with the beta off',
+			![EVENT_1, EVENT_2].some((n) => hisHome.includes(n))
 		);
 		check(
-			'the tab is there for him, with the beta off',
-			(await p.locator('nav[aria-label="Event navigation"] a[href="/private"]').count()) > 0
+			'no tab for him, with the beta off',
+			!(await betaOn('bob')) &&
+				(await p.locator('nav[aria-label="Event navigation"] a[href="/private"]').count()) === 0
 		);
 		const a = pages.alice;
 		await open(a, '/');

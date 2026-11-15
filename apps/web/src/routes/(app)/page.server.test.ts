@@ -22,6 +22,9 @@ vi.mock('#lib/dedupe-by-uri.js', () => ({ dedupeByUri: vi.fn((e: unknown[]) => e
 vi.mock('#lib/private-events/server/enabled.js', () => ({
 	privateEventsEnabled: vi.fn(() => false)
 }));
+vi.mock('#lib/private-events/server/beta.js', () => ({
+	privateEventsBeta: vi.fn(async () => false)
+}));
 vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: vi.fn(async () => null) }));
 vi.mock('#lib/private-events/server/calendars.js', () => ({
 	myPrivateEventsAndCalendars: vi.fn()
@@ -29,6 +32,7 @@ vi.mock('#lib/private-events/server/calendars.js', () => ({
 
 import { load } from './+page.server';
 import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
+import { privateEventsBeta } from '#lib/private-events/server/beta.js';
 import { myPrivateEventsAndCalendars } from '#lib/private-events/server/calendars.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsEnabled } from '#lib/private-events/server/enabled.js';
@@ -117,6 +121,7 @@ describe('your own private events in Your events', () => {
 	};
 	const turnOn = () => {
 		vi.mocked(privateEventsEnabled).mockReturnValue(true);
+		vi.mocked(privateEventsBeta).mockResolvedValue(true);
 		vi.mocked(callerSession).mockResolvedValue({ did: ME, scope: GUEST_SCOPE } as never);
 		vi.mocked(myPrivateEventsAndCalendars).mockResolvedValue({
 			events: [
@@ -148,40 +153,49 @@ describe('your own private events in Your events', () => {
 		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'private, no-store' });
 	});
 
-	it('lists them for a guest who allowed private events, whether or not they turned the beta on', async () => {
-		// The beta is for hosting; a guest who answered from a host's link never needs it, and this is
-		// the one place besides the link that brings them back to the event.
+	it('reads none with the beta off, and changes nothing', async () => {
 		turnOn();
-		const { event } = signedIn();
+		vi.mocked(privateEventsBeta).mockResolvedValue(false);
+		const { event, setHeaders } = signedIn();
 		const data = (await load(event)) as unknown as LoadResult;
-		expect(data.myUpcoming.map((e) => e.name)).toEqual(['Dinner']);
+		expect(myPrivateEventsAndCalendars).not.toHaveBeenCalled();
+		expect(data.myUpcoming).toEqual([]);
+		expect(data.privateLinks).toEqual({});
+		expect(setHeaders).not.toHaveBeenCalled();
 	});
 
-	it('reads none with private events off', async () => {
+	it('reads none with private events off, without even asking about the beta', async () => {
 		turnOn();
 		vi.mocked(privateEventsEnabled).mockReturnValue(false);
 		const { event } = signedIn();
 		await load(event);
-		expect(callerSession).not.toHaveBeenCalled();
+		expect(privateEventsBeta).not.toHaveBeenCalled();
 		expect(myPrivateEventsAndCalendars).not.toHaveBeenCalled();
 	});
 
 	it('reads none without a grant to read them, and asks their server nothing', async () => {
 		turnOn();
 		vi.mocked(callerSession).mockResolvedValue({ did: ME, scope: 'atproto' } as never);
-		const { event, setHeaders } = signedIn();
+		const { event } = signedIn();
 		const data = (await load(event)) as unknown as LoadResult;
+		expect(privateEventsBeta).not.toHaveBeenCalled();
 		expect(myPrivateEventsAndCalendars).not.toHaveBeenCalled();
 		expect(data.privateEventsIncomplete).toBe(false);
-		expect(setHeaders).not.toHaveBeenCalled();
 	});
 
 	it('asks their server nothing when the session can’t be read', async () => {
 		turnOn();
 		vi.mocked(callerSession).mockResolvedValue(null);
 		const { event } = signedIn();
+		await load(event);
+		expect(privateEventsBeta).not.toHaveBeenCalled();
+	});
+
+	it('says nothing is missing with the beta off', async () => {
+		turnOn();
+		vi.mocked(privateEventsBeta).mockResolvedValue(false);
+		const { event } = signedIn();
 		const data = (await load(event)) as unknown as LoadResult;
-		expect(myPrivateEventsAndCalendars).not.toHaveBeenCalled();
 		expect(data.privateEventsIncomplete).toBe(false);
 	});
 

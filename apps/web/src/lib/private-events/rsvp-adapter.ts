@@ -26,10 +26,12 @@ function nothingElse(): never {
  *  person's own repo in the event's space. A refusal throws, so the view never shows an RSVP that
  *  was not saved, and fetches the page again: an event that changed since it loaded refuses the
  *  version this page holds until the page has the new one. The page's own key for it is ignored,
- *  since the event's is the RSVP's. */
+ *  since the event's is the RSVP's. `onAnswer` hears each answer once it is saved, or null once it
+ *  is taken back, so what the page shows about it follows at once. */
 export function createPrivateRsvpAdapter(
 	address: EventAddress,
-	viewer: EditorViewer
+	viewer: EditorViewer,
+	onAnswer?: (status: RsvpStatus | null) => void
 ): EditorAdapter {
 	const { host, rkey } = address;
 	// Named only for an event on a calendar, so a single event's answer is sent as it always was.
@@ -60,6 +62,7 @@ export function createPrivateRsvpAdapter(
 				if (isRefusal(e)) await invalidateAll();
 				throw e;
 			});
+			onAnswer?.(status);
 			return {
 				uri: spaceRecordUri(eventSpace(address), viewer.did ?? '', collection, rkey)
 			};
@@ -67,6 +70,7 @@ export function createPrivateRsvpAdapter(
 		async deleteRecord({ collection }) {
 			if (collection !== RSVP_COLLECTION) nothingElse();
 			await cancelPrivateRsvp({ host, rkey, ...calendar });
+			onAnswer?.(null);
 		},
 		createRecord: nothingElse,
 		uploadBlob: nothingElse,

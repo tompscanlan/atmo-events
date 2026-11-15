@@ -130,24 +130,7 @@ describe('the Calendars tab', () => {
 		await expect.element(tab()).toHaveAttribute('href', '/private');
 	});
 
-	it('shows to someone who allowed private events, with the beta off', async () => {
-		// A guest answers from the host's link without ever turning the beta on; this tab is their
-		// way back to that event.
-		beta.getPrivateEventsBeta.mockReturnValue({ current: { canSave: true, on: false } });
-		await render(Layout, { children, data: { ...privateEventsOn, privateEventsGranted: true } });
-		await expect.element(tab()).toHaveAttribute('href', '/private');
-	});
-
-	it('is hidden for someone signed out, whatever their last session allowed', async () => {
-		mocks.user.isLoggedIn = false;
-		await render(Layout, { children, data: { ...privateEventsOn, privateEventsGranted: true } });
-		await expect
-			.element(page.getByRole('link', { name: 'Events', exact: true }))
-			.toBeInTheDocument();
-		await expect.element(tab()).not.toBeInTheDocument();
-	});
-
-	it('is hidden while the beta switch is off and nothing was allowed', async () => {
+	it('is hidden while the beta switch is off', async () => {
 		beta.getPrivateEventsBeta.mockReturnValue({ current: { canSave: true, on: false } });
 		await render(Layout, { children, data: privateEventsOn });
 		await expect

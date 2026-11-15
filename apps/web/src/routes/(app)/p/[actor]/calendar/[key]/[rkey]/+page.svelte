@@ -7,6 +7,7 @@
 	import { BETA_WARNING } from '#lib/private-events/beta.js';
 	import CalendarEventGuests from '#lib/private-events/components/CalendarEventGuests.svelte';
 	import CalendarPrivateNote from '#lib/private-events/components/CalendarPrivateNote.svelte';
+	import FindAgainOffer from '#lib/private-events/components/FindAgainOffer.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { calendarEvent, UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
 	import { createPrivateRsvpAdapter } from '#lib/private-events/rsvp-adapter.js';
@@ -15,6 +16,10 @@
 
 	let { data } = $props();
 	holdPrivateEmbeds();
+
+	// What the viewer has answered: the page's, until they answer here, so what follows from it
+	// changes at once.
+	let answered = $derived(data.view === 'event' ? (data.viewerRsvpStatus ?? null) : null);
 
 	let viewer = $derived({
 		isLoggedIn: user.isLoggedIn,
@@ -31,7 +36,8 @@
 {#if data.view === 'event'}
 	{@const adapter = createPrivateRsvpAdapter(
 		calendarEvent(data.actorDid, data.calendar.key, data.rkey),
-		viewer
+		viewer,
+		(status) => (answered = status)
 	)}
 	{@const calendarName = data.calendar.name ?? UNTITLED_CALENDAR}
 	{@const actor = data.hostProfile.handle ?? data.actorDid}
@@ -57,9 +63,10 @@
 					link={{ actor, key: data.calendar.key }}
 					size={14}
 				/>
-				{#if !data.isHost && !data.viewerRsvpStatus && !data.answersUnread}Answer to let the host
-					know you saw it.{/if}
+				{#if !data.isHost && !answered && !data.answersUnread}Answer to let the host know you saw
+					it.{/if}
 			</p>
+			{#if !data.isHost && answered}<FindAgainOffer />{/if}
 			{#if data.guests}
 				<CalendarEventGuests
 					guests={data.guests}

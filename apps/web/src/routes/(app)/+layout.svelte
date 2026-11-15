@@ -30,18 +30,11 @@
 	let navigationOpen = $state(false);
 
 	// The Calendars tab, where shared calendars and private events are listed, is for people who
-	// turned private events on in Settings, and for anyone whose session
-	// already lets atmo open them: a guest who answered from a host's link never needs the beta, and
-	// this is their way back. The switch is read in the browser only, as Settings does: on a Worker a
-	// query started during the server render outlives the request. Settings saves through this same
-	// query, so the tab follows the switch without a reload.
+	// turned private events on in Settings. Read in the browser only, as
+	// Settings does: on a Worker a query started during the server render outlives the request.
+	// Settings saves through this same query, so the tab follows the switch without a reload.
 	let privateEventsBeta = $derived(
 		browser && data.privateEventsEnabled && user.isLoggedIn ? getPrivateEventsBeta() : null
-	);
-	let privateEventsTab = $derived(
-		!!data.privateEventsEnabled &&
-			user.isLoggedIn &&
-			(!!data.privateEventsGranted || !!privateEventsBeta?.current?.on)
 	);
 
 	afterNavigate(({ shallow, type }) => {
@@ -106,7 +99,7 @@
 			active: path === '/search'
 		},
 
-		...(privateEventsTab
+		...(privateEventsBeta?.current?.on
 			? [
 					{
 						label: 'Calendars',
