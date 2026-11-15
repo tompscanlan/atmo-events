@@ -37,18 +37,22 @@ const RECORD = {
 	startsAt: '2026-11-07T00:00:00.000Z'
 };
 
-/** A guest of both events, signed in, whose PDS lists both spaces. */
-async function renderedPrivatePage() {
+/** What the page loads for a guest of both events, signed in, whose PDS lists both spaces. */
+async function loadedPrivatePage() {
 	const session = {
 		did: GUEST,
 		getTokenInfo: async () => ({ scope: GUEST_SCOPE }),
 		handle: async () => Response.json({ spaces: [{ space: SOUND }, { space: BROKEN }] })
 	};
-	const data = await load({
+	return load({
 		locals: { session },
 		cookies: { get: () => undefined, delete: () => {} },
 		setHeaders
 	} as never);
+}
+
+async function renderedPrivatePage() {
+	const data = await loadedPrivatePage();
 	return render(PrivatePage, { props: { data } as never }).body;
 }
 
@@ -75,7 +79,7 @@ describe('/private when a host’s server is down', () => {
 		expect(body).toContain('data-testid="private-events-incomplete"');
 	});
 
-	it('shows what it could read, and says there may be more', async () => {
+	it('says there may be more calendars than it lists', async () => {
 		reader.get.mockImplementation(async ({ space, collection, rkey }: Read) => {
 			if (space === BROKEN) throw new Error('503');
 			if (collection === CALENDAR_COLLECTION) return null;
@@ -87,7 +91,7 @@ describe('/private when a host’s server is down', () => {
 			};
 		});
 		const body = await renderedPrivatePage();
-		expect(body).toContain('Dinner');
+		expect(body).not.toContain('Dinner');
 		expect(body).toContain('data-testid="private-events-incomplete"');
 	});
 
@@ -104,6 +108,27 @@ describe('/private when a host’s server is down', () => {
 		);
 		const body = await renderedPrivatePage();
 		expect(body).not.toContain('data-testid="private-events-incomplete"');
+	});
+});
+
+describe('/private and private events apart from any calendar', () => {
+	it('lists none of them and sends none to the browser: Your events lists them', async () => {
+		reader.get.mockImplementation(async ({ space, collection, rkey }: Read) =>
+			collection === CALENDAR_COLLECTION
+				? null
+				: {
+						uri: `${space}/${HOST}/${EVENT_COLLECTION}/${rkey}`,
+						cid: `cid-of-${rkey}`,
+						rkey,
+						value: RECORD
+					}
+		);
+		const data = await loadedPrivatePage();
+		expect(JSON.stringify(data)).not.toContain('Dinner');
+		const body = render(PrivatePage, { props: { data } as never }).body;
+		expect(body).not.toContain('Dinner');
+		expect(body).not.toMatch(/\/private\/3l[a-z]+/);
+		expect(body).toContain('data-testid="single-events-pointer"');
 	});
 });
 
@@ -126,9 +151,9 @@ describe('/private with a record a host wrote badly', () => {
 
 		const body = await renderedPrivatePage();
 
-		expect(body).toContain('Dinner');
+		expect(body).toMatch(/<h1[^>]*>Calendars<\/h1>/);
 		expect(body).not.toContain('Broken');
-		expect(body.match(/\/private\/3l[a-z]+/g)).toEqual(['/private/3laaaaaaaaaaa']);
+		expect(body).not.toContain('data-testid="private-events-incomplete"');
 	});
 });
 
@@ -205,15 +230,12 @@ describe('/private with shared calendars', () => {
 		expect(body).toMatch(/<h1[^>]*>Calendars<\/h1>/);
 	});
 
-	it('lists the calendars someone is on first, then the events with their own guest list', async () => {
+	it('lists the calendars someone is on, and no event apart from them', async () => {
 		const body = await rendered(GUEST_SCOPE);
-		const calendars = body.indexOf('data-testid="shared-calendars"');
-		const single = body.indexOf('data-testid="private-events"');
-		expect(calendars).toBeGreaterThan(-1);
-		expect(single).toBeGreaterThan(calendars);
+		expect(body).toContain('data-testid="shared-calendars"');
 		expect(body).toContain('data-calendar="cal-3lcalcalcalcal"');
 		expect(body).toContain('Supper club');
-		expect(body.slice(single)).toContain('Dinner');
+		expect(body).not.toContain('Dinner');
 	});
 
 	it('leaves a calendar’s events to the calendar’s own page, and never reads them here', async () => {

@@ -33,7 +33,7 @@
 	<CalendarPrivateNote name={calendar.name} link={{ actor, key: calendar.key }} size={14} />
 	{#if !isHost && !answered && !answersUnread}Answer to let the host know you saw it.{/if}
 </p>
-{#if !isHost && answered}<FindAgainOffer />{/if}
+{#if !isHost && answered}<FindAgainOffer onCalendar />{/if}
 {#if guests}
 	<CalendarEventGuests
 		{guests}
