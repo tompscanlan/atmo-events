@@ -3,7 +3,7 @@
 	import { EventEditor, type EventEditorPrefill } from '@atmo-dev/kit/events';
 	import { onMount } from 'svelte';
 	import { user } from '#lib/atproto/auth.svelte.js';
-	import { createInAppAdapter } from '#lib/components/editor/adapter.js';
+	import { createInAppAdapter, type EditorAdapter } from '#lib/components/editor/adapter.js';
 	import { readPendingImportPrefill } from '#lib/components/CreateEventModal.svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -19,7 +19,8 @@
 	// permission step, the choice is already made, and a calendar's page can name the calendar.
 	const INVITED = 'invited';
 	const CALENDAR = 'calendar';
-	type Audience = 'everyone' | typeof INVITED | typeof CALENDAR;
+	const UNLISTED = 'unlisted';
+	type Audience = 'everyone' | typeof UNLISTED | typeof INVITED | typeof CALENDAR;
 	const asked = page.url.searchParams.get('audience');
 	const askedPrivate = asked === INVITED || asked === CALENDAR;
 	let audience = $state<Audience | null>(askedPrivate ? asked : null);
@@ -31,6 +32,7 @@
 			? (data.calendars[0]?.key ?? null)
 			: (data.calendars.find((c) => c.key === picked)?.key ?? null)
 	);
+	let isPublic = $derived(audience === 'everyone' || audience === UNLISTED);
 	let invited = $derived(data.privateEvents && audience === INVITED);
 	let onCalendar = $derived(data.privateEvents && audience === CALENDAR && calendar !== null);
 	let calendarMissing = $derived(data.privateEvents && audience === CALENDAR && calendar === null);
@@ -39,13 +41,31 @@
 	// A private event's description loads nothing by itself, here as on its page; a public one is as before.
 	setLinkEmbeds(() => (invited || onCalendar ? PRIVATE_LINK_EMBEDS : {}));
 	let chosen = $derived(
-		(!data.privateEvents && !askedPrivate) || audience === 'everyone' || invited || onCalendar
+		(!data.privateEvents && !askedPrivate) || isPublic || invited || onCalendar
 	);
 
 	// A name for the guests of a new private event, which makes them a shared calendar; read when it
 	// is saved, so typing it never starts the editor over.
 	let listName = $state('');
 	const PRIVATE_LIMITS = " Private events can't have an image or repeat yet.";
+
+	// Public or Unlisted is asked once, at the top, so the editor's own switch is off and the answer
+	// is written into the record here, the way the editor would have.
+	function listedAs(base: EditorAdapter, listed: boolean): EditorAdapter {
+		const mark = <T extends { record: Record<string, unknown> }>(opts: T): T => ({
+			...opts,
+			record: {
+				...opts.record,
+				preferences: { ...(opts.record.preferences as object | undefined), showInDiscovery: listed }
+			}
+		});
+		return {
+			...base,
+			features: { ...base.features, visibility: false },
+			putRecord: (opts) => base.putRecord(mark(opts)),
+			createRecord: (opts) => base.createRecord(mark(opts))
+		};
+	}
 
 	let viewer = $derived({
 		isLoggedIn: user.isLoggedIn,
@@ -62,7 +82,9 @@
 				? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false }, undefined, {
 						name: () => (data.canName ? listName : '')
 					})
-				: createInAppAdapter({ viewer })
+				: data.privateEvents
+					? listedAs(createInAppAdapter({ viewer }), audience !== UNLISTED)
+					: createInAppAdapter({ viewer })
 	);
 
 	// Pulled out of sessionStorage on mount so the editor sees it on its first
@@ -112,22 +134,25 @@
 				aria-labelledby="audience-heading"
 				class="mt-3 w-fit"
 				bind:value={
-					() => (audience === null ? '' : audience === 'everyone' ? 'everyone' : 'private'),
+					() => (audience === null ? '' : isPublic ? (audience as string) : 'private'),
 					(value) => {
-						if (value === 'everyone') audience = 'everyone';
-						else if (value === 'private' && (audience === null || audience === 'everyone'))
+						if (value === 'everyone' || value === UNLISTED) audience = value;
+						else if (value === 'private' && (audience === null || isPublic))
 							audience = INVITED;
 					}
 				}
 			>
 				<ToggleGroupItem value="everyone">Public</ToggleGroupItem>
+				<ToggleGroupItem value={UNLISTED}>Unlisted</ToggleGroupItem>
 				<ToggleGroupItem value="private">Private</ToggleGroupItem>
 			</ToggleGroup>
 			{#if audience !== null}
 				<p class="text-base-700 dark:text-base-300 mt-3 text-sm" data-testid="audience-what">
 					{audience === 'everyone'
-						? 'Anyone can see it.'
-						: audience === INVITED
+						? 'Anyone can see it, and it shows in search and listings.'
+						: audience === UNLISTED
+							? "Anyone with the link can see it. It doesn't show in search or listings."
+							: audience === INVITED
 							? 'Only people you invite can see it. You add them after publishing.'
 							: 'Only people you invite can see it.'}
 				</p>
@@ -168,7 +193,8 @@
 				{/if}
 			{/if}
 			<p class="text-base-600 dark:text-base-400 mt-3 text-xs" data-testid="audience-fine-print">
-				You can't change this after publishing.{#if audience === INVITED || audience === CALENDAR}{PRIVATE_LIMITS}{/if}
+				{#if audience === INVITED || audience === CALENDAR}A private event can't be made public
+					later.{PRIVATE_LIMITS}{:else}A public or unlisted event can't be made private later.{/if}
 			</p>
 			{#if invited && data.hostAccess}
 				<PrivateEventAccessNotice
@@ -197,7 +223,7 @@
 {/if}
 
 {#if ready && chosen && !(invited && data.hostAccess)}
-	{#key `${audience}:${onCalendar ? calendar : ''}`}
+	{#key `${isPublic ? 'public' : audience}:${onCalendar ? calendar : ''}`}
 		<EventEditor
 			eventData={null}
 			actorDid={data.actorDid}
