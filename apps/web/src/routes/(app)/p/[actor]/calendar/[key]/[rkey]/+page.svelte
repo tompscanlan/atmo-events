@@ -12,8 +12,10 @@
 	import { calendarEvent, UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
 	import { createPrivateRsvpAdapter } from '#lib/private-events/rsvp-adapter.js';
 	import { GUEST_SCOPES, HOST_SCOPES } from '#lib/private-events/scopes.js';
+	import { holdPrivateEmbeds } from '#lib/private-events/embeds.js';
 
 	let { data } = $props();
+	holdPrivateEmbeds();
 
 	// What the viewer has answered: the page's, until they answer here, so what follows from it
 	// changes at once.

@@ -70,6 +70,28 @@ function eventView(guests: unknown = null, guestsCapped = false, isHost = false)
 	};
 }
 
+/** A description with a Klipy GIF alone on its line, as the page's load parses it (parseRichText's
+ *  output); a link alone on its line is the kind that shows as an embed. */
+const GIF = 'https://static.klipy.com/ii/abc123/def456.gif';
+const WITH_GIF = {
+	version: 1,
+	markdown: true,
+	children: [
+		{ type: 'paragraph', children: [{ type: 'text', value: 'Bring snacks' }] },
+		{
+			type: 'paragraph',
+			children: [{ type: 'link', url: GIF, children: [{ type: 'text', value: GIF }] }]
+		}
+	]
+};
+
+/** Anything the page asked the GIF host for: a fetch, or a media element pointing there. */
+function gifHostRequests(seen: string[]): string[] {
+	const media = [...document.querySelectorAll('[src]')].map((e) => e.getAttribute('src') ?? '');
+	const loaded = performance.getEntriesByType('resource').map((e) => e.name);
+	return [...seen, ...media, ...loaded].filter((url) => /klipy\.com|k\.gifs\.bsky\.app/.test(url));
+}
+
 /** The text a person reads, with the template's line breaks and indents collapsed. */
 function shownText(testId: string): string {
 	const found = page.getByTestId(testId).elements()[0];
@@ -184,5 +206,28 @@ describe('an event on a shared calendar', () => {
 		await expect
 			.element(page.getByRole('link', { name: 'Edit Event' }))
 			.toHaveAttribute('href', `/p/host.example.com/calendar/${KEY}/3kabc/edit`);
+	});
+
+	it('asks nothing of a GIF host when it opens, and offers to load the GIF', async () => {
+		const seen: string[] = [];
+		vi.stubGlobal('fetch', async (input: unknown) => {
+			seen.push(String(input));
+			return Response.json([]);
+		});
+		try {
+			const view = eventView();
+			render(EventPage, {
+				data: {
+					...view,
+					eventData: { ...view.eventData, description: `Bring snacks\n\n${GIF}` },
+					description: WITH_GIF
+				}
+			} as never);
+			await expect.element(page.getByText('Bring snacks', { exact: false })).toBeVisible();
+			await expect.element(page.getByRole('button', { name: /^Load / })).toBeVisible();
+			expect(gifHostRequests(seen)).toEqual([]);
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 });
