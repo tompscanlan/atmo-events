@@ -196,8 +196,8 @@ describe('/private with shared calendars', () => {
 		expect(body).toContain('Supper');
 		expect(body).toContain('data-testid="private-to"');
 		expect(body).toContain('/calendar/cal-3lcalcalcalcal/3lonthecal');
-		expect(body).toMatch(
-			/Private to\s*<a href="\/p\/[^"]+\/calendar\/cal-3lcalcalcalcal"[^>]*>Supper club</
+		expect(body.replace(/<!--.*?-->/g, '').replace(/\s+/g, ' ')).toMatch(
+			/Private event\. Only the people on <a href="\/p\/[^"]+\/calendar\/cal-3lcalcalcalcal"[^>]*>Supper club<\/a> can see it\./
 		);
 	});
 

@@ -4,6 +4,7 @@
 	import { LockKeyhole } from '@sketchyicons/svelte';
 	import { resolve } from '$app/paths';
 	import { BETA_WARNING } from '#lib/private-events/beta.js';
+	import CalendarPrivateNote from '#lib/private-events/components/CalendarPrivateNote.svelte';
 	import NewCalendarForm from '#lib/private-events/components/NewCalendarForm.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
@@ -11,17 +12,6 @@
 
 	let { data } = $props();
 </script>
-
-{#snippet privateTo(name: string | null, actor: string, key: string)}
-	<span class="inline-flex items-center gap-1" data-testid="private-to">
-		<Icon img={LockKeyhole} size={12} />
-		Private to
-		<a
-			href={resolve('/(app)/p/[actor]/calendar/[key]', { actor, key })}
-			class="text-accent-600 dark:text-accent-400 hover:underline">{name ?? UNTITLED_CALENDAR}</a
-		>
-	</span>
-{/snippet}
 
 {#snippet linkIsTheInvitation()}
 	<p class="text-base-600 dark:text-base-400 mt-4 text-sm" data-testid="link-is-invitation">
@@ -85,11 +75,10 @@
 							{item.hosting ? 'You are hosting' : `Hosted by ${item.hostHandle ?? item.event.did}`}
 							{#if item.calendar}
 								<span aria-hidden="true">·</span>
-								{@render privateTo(
-									item.calendar.name,
-									item.hostHandle ?? item.event.did,
-									item.calendar.key
-								)}
+								<CalendarPrivateNote
+									name={item.calendar.name}
+									link={{ actor: item.hostHandle ?? item.event.did, key: item.calendar.key }}
+								/>
 							{/if}
 						</p>
 					</li>
@@ -118,7 +107,10 @@
 							<span class="text-base-600 dark:text-base-400 block text-xs">
 								{calendar.owning ? 'Your calendar' : `Owned by ${actor}`}
 								<span aria-hidden="true">·</span>
-								{@render privateTo(calendar.name, actor, calendar.key)}
+								<span data-testid="calendar-private"
+									><Icon img={LockKeyhole} size={12} class="mr-1 inline align-[-2px]" />Private.
+									Only the people on it can see its events.</span
+								>
 							</span>
 						</li>
 					{/each}
