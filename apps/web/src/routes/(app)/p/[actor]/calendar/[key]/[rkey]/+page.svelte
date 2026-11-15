@@ -1,13 +1,12 @@
 <script lang="ts">
-	import { Button, Icon } from '@atmo-dev/kit';
+	import { Button } from '@atmo-dev/kit';
 	import { EventView } from '@atmo-dev/kit/events';
-	import { LockKeyhole } from '@sketchyicons/svelte';
 	import { page } from '$app/state';
-	import { resolve } from '$app/paths';
 	import { user } from '#lib/atproto/auth.svelte.js';
 	import { atProtoLoginModalState } from '#lib/components/LoginModal.svelte';
 	import { BETA_WARNING } from '#lib/private-events/beta.js';
 	import CalendarEventGuests from '#lib/private-events/components/CalendarEventGuests.svelte';
+	import CalendarPrivateNote from '#lib/private-events/components/CalendarPrivateNote.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { calendarEvent, UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
 	import { createPrivateRsvpAdapter } from '#lib/private-events/rsvp-adapter.js';
@@ -51,13 +50,11 @@
 				</p>
 			{/if}
 			<p class="text-base-600 dark:text-base-400 text-sm" data-testid="private-note">
-				<Icon img={LockKeyhole} size={14} class="inline align-[-2px]" />
-				Private event. Only the people on
-				<a
-					href={resolve('/(app)/p/[actor]/calendar/[key]', { actor, key: data.calendar.key })}
-					class="text-accent-600 dark:text-accent-400 hover:underline">{calendarName}</a
-				>
-				can see it.
+				<CalendarPrivateNote
+					name={data.calendar.name}
+					link={{ actor, key: data.calendar.key }}
+					size={14}
+				/>
 				{#if !data.guests && !data.viewerRsvpStatus && !data.answersUnread}Answer to let the host
 					know you saw it.{/if}
 			</p>
