@@ -684,7 +684,7 @@ await step(
 		await p.locator('[data-testid=calendar-list]').waitFor({ timeout: 20000 });
 		const cals = await text(p, '[data-testid=calendar-list]');
 		check('the calendar he is on is listed', cals.includes(NAME), cals.slice(0, 200));
-		check('owned by alice', cals.includes(`Owned by ${P.alice.handle}`), cals.slice(0, 200));
+		check('owned by alice', cals.includes(P.alice.handle), cals.slice(0, 200));
 		check(
 			'nothing for him to make one with, with the beta off',
 			(await p.locator('[data-testid=new-calendar]').count()) === 0

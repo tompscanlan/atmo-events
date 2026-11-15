@@ -602,8 +602,8 @@ await step('11. Your events lists it for the host; Calendars lists only calendar
 	);
 	check(
 		'alice: Calendars points at Your events for it',
-		/aren't on a shared calendar are listed in Your events, on the home page\./.test(
-			await text(a, '[data-testid=single-events-pointer]')
+		/Private events not on a calendar are in Your events\.$/.test(
+			await text(a, '[data-testid=calendars-footnote]')
 		)
 	);
 	check(
@@ -619,14 +619,16 @@ await step('11. Your events lists it for the host; Calendars lists only calendar
 	);
 	check(
 		'bob: told his private events show in Your events once private events are on',
-		/listed in Your events, on the home page, once private events are on/.test(
-			await text(b, '[data-testid=single-events-pointer]')
+		/are in Your events once private events are on\.$/.test(
+			await text(b, '[data-testid=calendars-footnote]')
 		)
 	);
 	check('bob: no event listed here', (await b.locator('main a[href*="/private/"]').count()) === 0);
 	check(
-		'the page says the link is the invitation',
-		/link is the invitation/i.test(await text(b, '[data-testid=link-is-invitation]'))
+		'the page says a calendar he is on shows once he answers one of its events',
+		/A calendar you're on shows here once you answer one of its events\./.test(
+			await text(b, '[data-testid=calendars-footnote]')
+		)
 	);
 	await listLoads(pages.mallory, 'mallory');
 	check('mallory: not listed', !(await text(pages.mallory, 'main')).includes(NAME));

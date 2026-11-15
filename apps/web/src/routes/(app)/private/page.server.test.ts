@@ -128,7 +128,7 @@ describe('/private and private events apart from any calendar', () => {
 		const body = render(PrivatePage, { props: { data } as never }).body;
 		expect(body).not.toContain('Dinner');
 		expect(body).not.toMatch(/\/private\/3l[a-z]+/);
-		expect(body).toContain('data-testid="single-events-pointer"');
+		expect(body).toContain('data-testid="calendars-footnote"');
 	});
 });
 
@@ -254,7 +254,7 @@ describe('/private with shared calendars', () => {
 	it('lists the calendars someone is on with the beta off, with nothing to make one', async () => {
 		const body = await rendered(GUEST_SCOPE);
 		expect(body).toContain('data-testid="shared-calendars"');
-		expect(body).toContain('Owned by');
+		expect(body).toContain('hosthosthosthosthosthost.example.com');
 		expect(body).not.toContain('data-testid="new-calendar"');
 		expect(body).not.toContain('Allow atmo to make shared calendars');
 	});
