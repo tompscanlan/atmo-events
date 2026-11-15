@@ -29,9 +29,9 @@
 	let { children, data } = $props();
 	let navigationOpen = $state(false);
 
-	// The Calendars tab, where shared calendars and private events are listed, is for people who
-	// turned private events on in Settings. Read in the browser only, as
-	// Settings does: on a Worker a query started during the server render outlives the request.
+	// The Calendars tab, where shared calendars are listed, is for people who turned private events
+	// on in Settings. Read in the browser only, as Settings does: on a Worker a query started during
+	// the server render outlives the request.
 	// Settings saves through this same query, so the tab follows the switch without a reload.
 	let privateEventsBeta = $derived(
 		browser && data.privateEventsEnabled && user.isLoggedIn ? getPrivateEventsBeta() : null

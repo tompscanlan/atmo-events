@@ -7,9 +7,11 @@
 	import { getPrivateEventsBeta, setPrivateEventsBeta } from '../private-events.remote';
 
 	// For a guest who answered without the beta: the one place that offers it, so they can find the
-	// event again under Calendars. The tab and Your events stay for people who turned it on. Read in
-	// the browser only, as Settings does: on a Worker a query started while the page renders on the
-	// server outlives the request.
+	// event again. The tab and Your events stay for people who turned it on. An event on a shared
+	// calendar is found under Calendars, through its calendar; one apart from any calendar, in Your
+	// events on the home page. Read in the browser only, as Settings does: on a Worker a query started
+	// while the page renders on the server outlives the request.
+	let { onCalendar }: { onCalendar: boolean } = $props();
 	const beta = browser ? getPrivateEventsBeta() : null;
 
 	// Saving it can first need one more permission, which leaves the page. This keeps the click
@@ -76,16 +78,22 @@
 
 {#if turnedOn}
 	<p class="text-base-600 dark:text-base-400 text-sm" role="status" data-testid="find-again">
-		Private events are on. Find this again under
-		<a href={resolve('/(app)/private')} class="text-accent-600 dark:text-accent-400 hover:underline"
-			>Calendars</a
-		>.
+		{#if onCalendar}Private events are on. Find this again under
+			<a
+				href={resolve('/(app)/private')}
+				class="text-accent-600 dark:text-accent-400 hover:underline">Calendars</a
+			>.{:else}Private events are on. Find this again in
+			<a href={resolve('/(app)')} class="text-accent-600 dark:text-accent-400 hover:underline"
+				>Your events</a
+			>, on the home page.{/if}
 	</p>
 {:else if beta?.ready && !beta.current.on}
 	<div class="text-base-600 dark:text-base-400 text-sm" data-testid="find-again">
 		<p>
-			Turn on private events to find this again under Calendars. The choice is saved in your
-			account, where anyone can see it.
+			Turn on private events to find this again {onCalendar
+				? 'under Calendars'
+				: 'in Your events, on the home page'}. The choice is saved in your account, where anyone can
+			see it.
 		</p>
 		<Button class="mt-2" size="sm" variant="secondary" disabled={saving} onclick={turnOn}>
 			{saving ? 'Turning on…' : 'Turn on private events'}

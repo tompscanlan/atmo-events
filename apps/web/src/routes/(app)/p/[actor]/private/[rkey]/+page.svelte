@@ -78,7 +78,7 @@
 					Private event. Only people the host added can see it.
 					{#if !answered && !data.answersUnread}Answer to let the host know you saw it.{/if}
 				</p>
-				{#if answered}<FindAgainOffer />{/if}
+				{#if answered}<FindAgainOffer onCalendar={false} />{/if}
 			{/if}
 		{/snippet}
 	</EventView>

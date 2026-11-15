@@ -58,7 +58,7 @@ export function createPrivateEventAdapter(
 							actor: handleOrDid(viewer),
 							key: calendar
 						})
-					: resolve('/(app)/private'),
+					: resolve('/(app)'),
 				{ refreshAll: true }
 			);
 		},

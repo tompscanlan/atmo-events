@@ -113,8 +113,8 @@
 						role="status"
 						data-testid="your-private-events-incomplete"
 					>
-						Some of your private events couldn't be loaded just now. Try again shortly, or find them
-						under
+						Some of your private events couldn't be loaded just now. Try again shortly. Those on a
+						shared calendar are also on its page, under
 						<a
 							href={resolve('/(app)/private')}
 							class="text-accent-600 dark:text-accent-400 hover:underline">Calendars</a

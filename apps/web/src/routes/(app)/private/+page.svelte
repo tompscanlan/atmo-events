@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { Icon } from '@atmo-dev/kit';
-	import { EventCard } from '@atmo-dev/kit/events';
 	import { LockKeyhole } from '@sketchyicons/svelte';
 	import { resolve } from '$app/paths';
 	import { BETA_WARNING } from '#lib/private-events/beta.js';
@@ -9,18 +8,10 @@
 	import { UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
 	import { GUEST_SCOPES, HOST_SCOPES } from '#lib/private-events/scopes.js';
 
+	// Only shared calendars are listed here. Their events are on each calendar's own page. With
+	// private events on, every private event, on a calendar or not, is in Your events on the home page.
 	let { data } = $props();
-
-	// A calendar's events are on the calendar's own page, and in Your events on the home page.
-	let singleEvents = $derived((data.events ?? []).filter((item) => !item.calendar));
 </script>
-
-{#snippet linkIsTheInvitation()}
-	<p class="text-base-600 dark:text-base-400 mt-4 text-sm" data-testid="link-is-invitation">
-		The link is the invitation. atmo doesn't tell you when a host adds you, so a calendar or event
-		you're on shows here only after you open the host's link and answer an event.
-	</p>
-{/snippet}
 
 <svelte:head><meta name="robots" content="noindex" /></svelte:head>
 
@@ -34,12 +25,12 @@
 				class="text-accent-600 dark:text-accent-400 hover:underline">Settings</a
 			>.{/if}
 	</p>
-	{#if data.events === null}
+	{#if !data.canList}
 		<PrivateEventAccessNotice
 			access={data.access ?? 'ask'}
 			did={data.did}
 			scopes={GUEST_SCOPES}
-			purpose="Private events are kept on each host’s server. atmo needs your permission to open them for you and save your answer in your own account."
+			purpose="Shared calendars and private events are kept on each host’s server. atmo needs your permission to open them for you and save your answers in your own account."
 			label="Allow atmo to open private events"
 			spacesServer={data.spacesServer}
 		/>
@@ -50,8 +41,8 @@
 			role="status"
 			data-testid="private-events-incomplete"
 		>
-			Some of your calendars or private events couldn't be read just now, so there may be more than
-			these. Try again shortly.
+			Some of your calendars couldn't be read just now, so there may be more than these. Try again
+			shortly.
 		</p>
 	{/if}
 	{#if data.beta || data.calendars.length > 0}
@@ -97,31 +88,16 @@
 			{/if}
 		</section>
 	{/if}
-	{#if data.events !== null}
-		<section class="mt-10">
-			<h2 class="text-base-900 dark:text-base-50 text-lg font-semibold">Private events</h2>
-			<p class="text-base-600 dark:text-base-400 mt-1 text-sm">
-				Each with its own guest list, apart from any calendar.
-			</p>
-			{#if singleEvents.length === 0 && !data.incomplete}
-				<p class="text-base-600 dark:text-base-400 mt-3 text-sm">
-					None yet. Events you host show here, and ones you've answered.
-				</p>
-			{:else if singleEvents.length > 0}
-				<ul class="mt-4 space-y-3" data-testid="private-events">
-					{#each singleEvents as item (item.href)}
-						<li>
-							<EventCard event={item.event} href={item.href} />
-							<p class="text-base-600 dark:text-base-400 mt-1 text-xs">
-								{item.hosting
-									? 'You are hosting'
-									: `Hosted by ${item.hostHandle ?? item.event.did}`}
-							</p>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-			{@render linkIsTheInvitation()}
-		</section>
+	<p class="text-base-600 dark:text-base-400 mt-8 text-sm" data-testid="single-events-pointer">
+		Private events that aren't on a shared calendar are listed in
+		<a href={resolve('/(app)')} class="text-accent-600 dark:text-accent-400 hover:underline"
+			>Your events</a
+		>, on the home page{#if !data.beta}, once private events are on{/if}.
+	</p>
+	{#if data.canList}
+		<p class="text-base-600 dark:text-base-400 mt-4 text-sm" data-testid="link-is-invitation">
+			The link is the invitation. atmo doesn't tell you when someone adds you, so a calendar you're
+			on shows here only after you open its owner's link and answer one of its events.
+		</p>
 	{/if}
 </div>

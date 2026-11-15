@@ -1107,11 +1107,9 @@ await step('17. bob sees its name and who else is on it, at the link he had', as
 		cals.includes(SINGLE_NAME),
 		cals.slice(0, 200)
 	);
-	const singles = await text(b, 'main');
 	check(
-		'and not as an event apart from any calendar',
-		(await b.locator(`[data-testid=private-events] a[href$="/private/${RKEY_3}"]`).count()) === 0,
-		singles.slice(0, 120)
+		'and lists no event of its own, only calendars',
+		(await b.locator('main a[href*="/private/"]').count()) === 0
 	);
 });
 
@@ -1194,13 +1192,13 @@ await step(
 			.last()
 			.click({ timeout: 10000 })
 			.catch(() => {});
-		await a.waitForURL((u) => u.pathname === '/private', { timeout: 30000 });
+		await a.waitForURL((u) => u.pathname === '/', { timeout: 30000 });
 		check('the event is gone', (await inSpace('alice', EVENT, SPACE_5)).length === 0);
 		check(
 			'the calendar stays, with its name',
 			(await inSpace('alice', CALENDAR, SPACE_5)).length === 1
 		);
-		await settle(a);
+		await open(a, '/private');
 		check(
 			'and is still on her Calendars page',
 			(await text(a, '[data-testid=calendar-list]')).includes(NAMED_AT_ONCE)

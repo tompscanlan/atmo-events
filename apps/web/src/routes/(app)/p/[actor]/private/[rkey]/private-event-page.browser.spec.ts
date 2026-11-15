@@ -163,7 +163,7 @@ describe('a private event’s page', () => {
 			(page.getByTestId(id).elements()[0]?.textContent ?? '').replace(/\s+/g, ' ');
 		await expect
 			.poll(() => shown('find-again'))
-			.toContain('Turn on private events to find this again under Calendars.');
+			.toContain('Turn on private events to find this again in Your events, on the home page.');
 		expect(shown('private-note')).not.toContain('Answer to let the host know');
 	});
 

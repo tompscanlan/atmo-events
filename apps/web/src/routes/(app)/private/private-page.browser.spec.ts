@@ -11,38 +11,36 @@ vi.mock('#lib/private-events/private-events.remote', () => ({ createCalendar: vi
 const base = { pageTitle: 'Calendars', did: 'did:plc:person', spacesServer: null, calendars: [] };
 
 describe('/private', () => {
-	it('says the link is the invitation when there is nothing to list', async () => {
-		render(PrivatePage, { data: { ...base, events: [], access: null } } as never);
+	it('says the link is the invitation, since an unanswered invitation is never on the list', async () => {
+		render(PrivatePage, { data: { ...base, canList: true, access: null } } as never);
 		await expect.element(page.getByTestId('link-is-invitation')).toBeVisible();
 	});
 
-	it('says it under a list too, since an unanswered invitation is never on the list', async () => {
-		const event = {
-			name: 'A party',
-			startsAt: '2030-01-01T18:00:00Z',
-			did: 'did:plc:host',
-			rkey: '3kabc',
-			uri: 'at://did:plc:host/community.lexicon.calendar.event/3kabc',
-			createdAt: '2029-01-01T00:00:00Z',
-			rsvpsCount: 0,
-			rsvpsGoingCount: 0
-		};
-		render(PrivatePage, {
-			data: {
-				...base,
-				access: null,
-				events: [{ event, href: '/p/x/private/3kabc', hosting: true, hostHandle: null }]
-			}
-		} as never);
-		await expect.element(page.getByTestId('private-events')).toBeVisible();
-		await expect.element(page.getByTestId('link-is-invitation')).toBeVisible();
+	it('points at Your events for private events apart from any calendar', async () => {
+		render(PrivatePage, { data: { ...base, canList: true, access: null, beta: true } } as never);
+		const pointer = page.getByTestId('single-events-pointer');
+		await expect
+			.element(pointer)
+			.toHaveTextContent(
+				"Private events that aren't on a shared calendar are listed in Your events, on the home page."
+			);
+		await expect
+			.element(pointer.getByRole('link', { name: 'Your events' }))
+			.toHaveAttribute('href', '/');
+	});
+
+	it('says they show there once private events are on, to someone who has them off', async () => {
+		render(PrivatePage, { data: { ...base, canList: true, access: null, beta: false } } as never);
+		await expect
+			.element(page.getByTestId('single-events-pointer'))
+			.toMatchTextContent(/on the home page, once private events are on\.$/);
 	});
 
 	it('says what a shared calendar is for where you make one', async () => {
 		render(PrivatePage, {
 			data: {
 				...base,
-				events: [],
+				canList: true,
 				access: null,
 				beta: true,
 				calendars: [],

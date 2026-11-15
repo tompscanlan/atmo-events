@@ -507,8 +507,10 @@ await step('7. bob says going, and the host sees his answer', async () => {
 	check('0 RSVPs in his public repo', (await publicCount('bob', RSVP)) === 0);
 	await p.locator('[data-testid=find-again]').waitFor({ timeout: 20000 });
 	check(
-		'with the beta off, he is offered it, to find this again under Calendars',
-		/find this again under Calendars/.test(await text(p, '[data-testid=find-again]'))
+		'with the beta off, he is offered it, to find this again in Your events',
+		/find this again in Your events, on the home page/.test(
+			await text(p, '[data-testid=find-again]')
+		)
 	);
 	const a = pages.alice;
 	await a.reload({ waitUntil: 'load' });
@@ -582,37 +584,49 @@ await step(
 	}
 );
 
-await step('11. /private lists it for host and guest', async () => {
-	await open(pages.alice, '/private');
-	await pages.alice.locator('[data-testid=private-events]').waitFor({ timeout: 20000 });
+await step('11. Your events lists it for the host; Calendars lists only calendars', async () => {
+	const a = pages.alice;
+	await open(a, '/');
+	const mine = a.locator(`[data-testid=your-private-event] a[href$="/private/${KEY}"]`);
+	await mine.first().waitFor({ timeout: 20000 });
+	check('alice: in her Your events, on the home page', (await mine.count()) > 0);
 	check(
-		'alice: hosting',
-		/You are hosting/.test(await text(pages.alice, '[data-testid=private-events]'))
+		'alice: marked as a private event there',
+		/Private event/.test(await text(a, '[data-testid=your-private-event]'))
 	);
+	await shot(a, '09-your-events-host');
+	await open(a, '/private');
 	check(
 		'alice: no pointer to Settings, her beta is on',
-		!/turn on private events in/i.test(await text(pages.alice, '[data-testid=beta-notice]'))
+		!/turn on private events in/i.test(await text(a, '[data-testid=beta-notice]'))
 	);
-	await shot(pages.alice, '09-private-host');
-	await open(pages.bob, '/private');
-	await pages.bob.locator('[data-testid=private-events]').waitFor({ timeout: 20000 });
 	check(
-		'bob: warned, and pointed at Settings to make his own',
-		/will be lost[\s\S]*turn on private events in/i.test(
-			await text(pages.bob, '[data-testid=beta-notice]')
+		'alice: Calendars points at Your events for it',
+		/aren't on a shared calendar are listed in Your events, on the home page\./.test(
+			await text(a, '[data-testid=single-events-pointer]')
 		)
 	);
 	check(
-		'bob: hosted by alice',
-		(await text(pages.bob, '[data-testid=private-events]')).includes(P.alice.handle)
+		'alice: and lists no event of its own',
+		(await a.locator('main a[href*="/private/"]').count()) === 0
+	);
+	await shot(a, '09-private-host');
+	const b = pages.bob;
+	await open(b, '/private');
+	check(
+		'bob: warned, and pointed at Settings to make his own',
+		/will be lost[\s\S]*turn on private events in/i.test(await text(b, '[data-testid=beta-notice]'))
 	);
 	check(
-		'the card opens the private page',
-		(await pages.bob.locator(`[data-testid=private-events] a[href$="/private/${KEY}"]`).count()) > 0
+		'bob: told his private events show in Your events once private events are on',
+		/listed in Your events, on the home page, once private events are on/.test(
+			await text(b, '[data-testid=single-events-pointer]')
+		)
 	);
+	check('bob: no event listed here', (await b.locator('main a[href*="/private/"]').count()) === 0);
 	check(
 		'the page says the link is the invitation',
-		/link is the invitation/i.test(await text(pages.bob, '[data-testid=link-is-invitation]'))
+		/link is the invitation/i.test(await text(b, '[data-testid=link-is-invitation]'))
 	);
 	await listLoads(pages.mallory, 'mallory');
 	check('mallory: not listed', !(await text(pages.mallory, 'main')).includes(NAME));
@@ -819,9 +833,11 @@ await step('15. alice cancels, and a guest gets the same page as anyone', async 
 		.click({ timeout: 20000 });
 	const confirm = a.getByRole('button', { name: /^delete/i }).last();
 	await confirm.click({ timeout: 10000 }).catch(() => {});
-	await a.waitForURL((u) => u.pathname === '/private', { timeout: 30000 });
+	await a.waitForURL((u) => u.pathname === '/', { timeout: 30000 });
+	await settle(a);
+	check('back on her home page, and off her Your events', !(await text(a, 'main')).includes(NAME));
 	await listLoads(a, 'alice');
-	check('off her list', !(await text(a, 'main')).includes(NAME));
+	check('and not on her Calendars page', !(await text(a, 'main')).includes(NAME));
 	const status = await open(pages.bob);
 	check('bob gets a 404, not a 500', status === 404, `${status}`);
 	check('in the same words', (await text(pages.bob, 'main')).includes(NOT_AVAILABLE));

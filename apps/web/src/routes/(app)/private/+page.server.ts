@@ -26,7 +26,7 @@ export async function load({ locals, cookies, setHeaders }) {
 	if (!holdsGuestGrant(caller.scope) && !holdsHostGrant(caller.scope, caller.did)) {
 		return {
 			...base,
-			events: null,
+			canList: false,
 			calendars: [],
 			incomplete: false,
 			capped: false,
@@ -35,15 +35,17 @@ export async function load({ locals, cookies, setHeaders }) {
 		};
 	}
 	forgetAsked(cookies);
-	const { events, calendars, incomplete, capped } = await myPrivateEventsAndCalendars(caller, {
+	// Events apart from any calendar are read only to tell them from calendars, and never sent: they
+	// are listed in Your events on the home page.
+	const { calendars, incomplete, capped } = await myPrivateEventsAndCalendars(caller, {
 		calendarEvents: false
 	}).catch((e) => {
 		console.error(`[private-events] ${caller.did}: private events unread:`, e);
-		error(503, 'Your private events could not be read right now. Try again shortly.');
+		error(503, 'Your calendars could not be read right now. Try again shortly.');
 	});
 	return {
 		...base,
-		events,
+		canList: true,
 		calendars,
 		incomplete,
 		capped,
