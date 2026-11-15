@@ -638,10 +638,11 @@ await step(
 			'nothing for him to make one with, with the beta off',
 			(await p.locator('[data-testid=new-calendar]').count()) === 0
 		);
+		const whole = await text(p, 'main');
 		check(
 			'its events are on its own page, not here',
-			![EVENT_1, EVENT_2].some((n) => cals.includes(n)) &&
-				(await p.locator('[data-testid=private-events]').count()) === 0
+			![EVENT_1, EVENT_2].some((n) => whole.includes(n)),
+			whole.slice(0, 200)
 		);
 		await shot(p, '08-bob-private');
 		await p.locator(`[data-testid=calendar-list] a[href$="/calendar/${KEY}"]`).first().click();
@@ -754,9 +755,11 @@ await step('12. alice removes dana, who loses everything on it at once', async (
 	const b = pages.bob;
 	await open(b, CAL_PATH);
 	await b.getByRole('heading', { name: NAME }).waitFor({ timeout: 30000 });
+	const still = await text(b, '[data-testid=calendar-people-shown]');
 	check(
-		'bob no longer sees dana on it',
-		!(await text(b, '[data-testid=calendar-people-shown]')).includes(P.dana.handle)
+		'bob no longer sees dana on it, by handle or DID',
+		!still.includes(P.dana.handle) && !still.includes(C.dana.did) && still.includes(P.bob.handle),
+		still.slice(0, 200)
 	);
 });
 

@@ -206,6 +206,29 @@ async function readCalendar(
 	}
 }
 
+/** Only the calendar's name, for a page that lists calendars and not their events. Null for a
+ *  calendar the caller is kept out of, as `readCalendar`. */
+async function readCalendarName(
+	reader: SpaceReader,
+	host: string,
+	key: string
+): Promise<{ name: string | null; events: FlatEventRecord[]; capped: boolean } | null> {
+	if (!isCalendarKey(key)) return null;
+	const space = privateEventSpace(host, key);
+	try {
+		const named = await reader.get({
+			space,
+			repo: host,
+			collection: CALENDAR_COLLECTION,
+			rkey: CALENDAR_RKEY
+		});
+		return { name: named ? calendarName(named.value) : null, events: [], capped: false };
+	} catch (e) {
+		if (isSpaceAccessDenied(e)) return null;
+		throw e;
+	}
+}
+
 /** Over once it has ended, or started when it has no end. */
 function isPast(event: FlatEventRecord, now: number): boolean {
 	const end = Date.parse(event.endsAt ?? event.startsAt);
@@ -246,7 +269,9 @@ async function showPeopleOnIt(caller: CallerSession, space: string): Promise<voi
 	try {
 		const found = await xrpc(caller.handle, 'com.atproto.space.getSpace', { query: { space } });
 		const policy = found.policy as Record<string, unknown> | undefined;
-		if (policy?.$type !== MEMBER_POLICY || policy.publishMembers === true) return;
+		// A space anyone can read isn't a private calendar, and must not publish its people to anyone.
+		if (policy?.$type !== MEMBER_POLICY || policy.publicRead === true) return;
+		if (policy.publishMembers === true) return;
 		await xrpc(caller.handle, 'com.atproto.space.updateSpace', {
 			body: { space, policy: { ...policy, publishMembers: true } }
 		});
@@ -401,18 +426,22 @@ export interface MyPrivateEventsAndCalendars {
 	capped: boolean;
 }
 
-/** /private: single events and events on calendars together, soonest first, and the calendars. A
- *  calendar shows here once they own it or have written in it, which is all their PDS lists. */
+/** Single events and events on calendars together, soonest first, and the calendars, for Your
+ *  events. A calendar shows once they own it or have written in it, which is all their PDS lists.
+ *  `calendarEvents: false` reads only each calendar's name, for the Calendars page, which lists a
+ *  calendar's events on the calendar's own page. */
 export async function myPrivateEventsAndCalendars(
-	caller: CallerSession
+	caller: CallerSession,
+	options: { calendarEvents?: boolean } = {}
 ): Promise<MyPrivateEventsAndCalendars> {
+	const readOne = options.calendarEvents === false ? readCalendarName : readCalendar;
 	const single = await myPrivateEvents(caller);
 	const reader = credentialSpaceReader(caller);
 	let incomplete = single.incomplete;
 	let capped = false;
 	const read = await Promise.all(
 		single.calendars.map(async ({ host, key }) => {
-			const calendar = await readCalendar(reader, host, key).catch((e) => {
+			const calendar = await readOne(reader, host, key).catch((e) => {
 				console.info(`[private-events] calendar ${key} of ${host} unread for ${caller.did}:`, e);
 				incomplete = true;
 				return null;

@@ -206,8 +206,9 @@ describe('/private with shared calendars', () => {
 		expect(body.slice(single)).toContain('Dinner');
 	});
 
-	it('leaves a calendar’s events to the calendar’s own page', async () => {
+	it('leaves a calendar’s events to the calendar’s own page, and never reads them here', async () => {
 		const body = await rendered(GUEST_SCOPE);
+		expect(reader.list.mock.calls.map(([q]) => q.space)).not.toContain(CALENDAR);
 		expect(body).not.toContain('/calendar/cal-3lcalcalcalcal/3lonthecal');
 		expect(body).not.toContain('>Supper<');
 	});

@@ -462,6 +462,19 @@ describe('a calendar’s page', () => {
 		});
 	});
 
+	it('never switches a calendar anyone can read, so its people stay unpublished', async () => {
+		theCalendarHolds({ name: { name: 'Supper club' }, events: {} });
+		const host = owner({
+			'com.atproto.space.getSpace': () =>
+				Response.json({
+					policy: { $type: 'com.atproto.memberspace.policy', publishPolicy: true, publicRead: true }
+				}),
+			'com.atproto.memberspace.listMembers': listMembers([PERSON])
+		});
+		await readCalendarPage(host, OWNER, KEY, NOW);
+		expect(host.nsids()).not.toContain('com.atproto.space.updateSpace');
+	});
+
 	it('leaves a calendar that already shows its people as it is', async () => {
 		theCalendarHolds({ name: { name: 'Supper club' }, events: {} });
 		const host = owner({
@@ -830,6 +843,45 @@ describe('/private with single events and calendars', () => {
 		const { calendars, incomplete } = await myPrivateEventsAndCalendars(person);
 		expect(calendars).toEqual([]);
 		expect(incomplete).toBe(true);
+	});
+
+	it('for the Calendars page, reads each calendar’s name only, never its events', async () => {
+		theCalendarHolds({
+			name: { name: 'Supper club' },
+			events: { '3lfirst': event('First', '2026-11-12T18:00:00.000Z') }
+		});
+		const person = caller(PERSON, GUEST_SCOPE, {
+			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SPACE }] })
+		});
+		const listed = await myPrivateEventsAndCalendars(person, { calendarEvents: false });
+		expect(listed.calendars).toEqual([
+			expect.objectContaining({ key: KEY, name: 'Supper club', owning: false })
+		]);
+		expect(listed.events).toEqual([]);
+		expect(reader.list).not.toHaveBeenCalled();
+		expect(listed.incomplete).toBe(false);
+	});
+
+	it('for the Calendars page, still leaves out a calendar the person was taken off', async () => {
+		reader.get.mockImplementation(async (q: { space: string }) => {
+			throw new SpaceAccessDenied(q.space, '400 SpaceNotFound');
+		});
+		const person = caller(PERSON, GUEST_SCOPE, {
+			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SPACE }] })
+		});
+		const listed = await myPrivateEventsAndCalendars(person, { calendarEvents: false });
+		expect(listed.calendars).toEqual([]);
+		expect(listed.incomplete).toBe(false);
+	});
+
+	it('for the Calendars page, says the list is incomplete when a calendar could not be read', async () => {
+		reader.get.mockRejectedValue(new Error('503'));
+		const person = caller(PERSON, GUEST_SCOPE, {
+			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SPACE }] })
+		});
+		const listed = await myPrivateEventsAndCalendars(person, { calendarEvents: false });
+		expect(listed.calendars).toEqual([]);
+		expect(listed.incomplete).toBe(true);
 	});
 
 	it('says a calendar had more events than it lists, without calling any unread', async () => {

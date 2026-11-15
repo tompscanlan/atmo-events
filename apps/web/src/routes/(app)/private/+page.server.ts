@@ -35,12 +35,12 @@ export async function load({ locals, cookies, setHeaders }) {
 		};
 	}
 	forgetAsked(cookies);
-	const { events, calendars, incomplete, capped } = await myPrivateEventsAndCalendars(caller).catch(
-		(e) => {
-			console.error(`[private-events] ${caller.did}: private events unread:`, e);
-			error(503, 'Your private events could not be read right now. Try again shortly.');
-		}
-	);
+	const { events, calendars, incomplete, capped } = await myPrivateEventsAndCalendars(caller, {
+		calendarEvents: false
+	}).catch((e) => {
+		console.error(`[private-events] ${caller.did}: private events unread:`, e);
+		error(503, 'Your private events could not be read right now. Try again shortly.');
+	});
 	return {
 		...base,
 		events,

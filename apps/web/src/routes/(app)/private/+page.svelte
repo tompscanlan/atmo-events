@@ -17,8 +17,8 @@
 
 {#snippet linkIsTheInvitation()}
 	<p class="text-base-600 dark:text-base-400 mt-4 text-sm" data-testid="link-is-invitation">
-		The link is the invitation. atmo doesn't tell you when a host adds you, so an event you're
-		invited to shows here only after you open the host's link and answer.
+		The link is the invitation. atmo doesn't tell you when a host adds you, so a calendar or event
+		you're on shows here only after you open the host's link and answer an event.
 	</p>
 {/snippet}
 
