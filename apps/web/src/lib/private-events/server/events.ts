@@ -111,14 +111,23 @@ export async function checkPrivateSpace(
 	return space;
 }
 
-/** Makes a space of the caller's own if need be, then checks it. */
-export async function ensurePrivateSpace(caller: CallerSession, spaceKey: string): Promise<string> {
+/** Makes a space of the caller's own if need be, then checks it. `publishMembers` has their server
+ *  show the list of people to everyone on it, as a shared calendar's does. */
+export async function ensurePrivateSpace(
+	caller: CallerSession,
+	spaceKey: string,
+	options: { publishMembers?: boolean } = {}
+): Promise<string> {
 	try {
 		await xrpc(caller.handle, 'com.atproto.space.createSpace', {
 			body: {
 				spaceType: PRIVATE_CALENDAR_TYPE,
 				skey: spaceKey,
-				policy: { $type: 'com.atproto.memberspace.policy', publishPolicy: true }
+				policy: {
+					$type: 'com.atproto.memberspace.policy',
+					publishPolicy: true,
+					...(options.publishMembers ? { publishMembers: true } : {})
+				}
 			}
 		});
 	} catch (e) {
@@ -258,7 +267,8 @@ export interface PrivateEventPage {
 	viewerStatus: RsvpStatus | null;
 	/** A server didn't answer, so the answers above may not be all of them. */
 	answersUnread: boolean;
-	/** The host's own view of who was added; null for anyone else. */
+	/** Who was added: the host's own list, or for someone else the list a calendar shows everyone on
+	 *  it; null where they can't see one. */
 	guests: Guest[] | null;
 	/** The host's list stopped at the page limit, so there may be more guests than these. */
 	guestsCapped: boolean;
@@ -291,11 +301,13 @@ export async function memberPages(
 
 /** Null when the caller may not see it. An answer counts only from someone the PDS tracks as a
  *  writer: a person taken off the list is no longer tracked, and someone let back in isn't until
- *  they answer again, so they see no answer of theirs until they do. */
+ *  they answer again, so they see no answer of theirs until they do. `published` gives someone
+ *  other than the host the list of people, where the space shows them one; null for none. */
 export async function readPrivateEventPage(
 	caller: CallerSession,
 	address: EventAddress,
-	reader: SpaceReader = credentialSpaceReader(caller)
+	reader: SpaceReader = credentialSpaceReader(caller),
+	published?: () => Promise<{ dids: string[]; capped: boolean } | null>
 ): Promise<PrivateEventPage | null> {
 	const { host, rkey } = address;
 	const event = await readEvent(reader, address);
@@ -339,8 +351,9 @@ export async function readPrivateEventPage(
 
 	let guests: Guest[] | null = null;
 	let guestsCapped = false;
-	if (caller.did === host) {
-		const members = await memberPages(caller, space);
+	const members =
+		caller.did === host ? await memberPages(caller, space) : ((await published?.()) ?? null);
+	if (members) {
 		guestsCapped = members.capped;
 		guests = await Promise.all(
 			members.dids.map(async (did) => ({

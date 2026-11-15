@@ -39,6 +39,7 @@ const OWNER = 'did:plc:ownerownerownerownerowner';
 const PERSON = 'did:plc:personpersonpersonperson';
 const OTHER = 'did:plc:otherotherotherotherothe';
 const KEY = 'cal-3lcalcalcalcal';
+const MEMBER_COLLECTION = 'com.atproto.memberspace.member';
 const SPACE = privateEventSpace(OWNER, KEY);
 const OWNER_SCOPE = `${HOST_SCOPE} ${CALENDAR_SCOPE} ${GUEST_SCOPE}`;
 const NOW = Date.parse('2026-11-10T00:00:00.000Z');
@@ -92,6 +93,8 @@ function theCalendarHolds(holds: {
 	answers?: Record<string, Record<string, unknown>>;
 	capped?: boolean;
 	space?: string;
+	/** The people the owner's server publishes in the space, as `did` or `[did, access]`. */
+	people?: (string | [string, { read: boolean; write: boolean }])[];
 }) {
 	const space = holds.space ?? SPACE;
 	const record = (repo: string, collection: string, rkey: string, value: unknown) => ({
@@ -117,8 +120,19 @@ function theCalendarHolds(holds: {
 			return null;
 		}
 	);
-	reader.list.mockImplementation(async (q: { space: string; repo: string }) => {
+	reader.list.mockImplementation(async (q: { space: string; repo: string; collection: string }) => {
 		if (q.space !== space || q.repo !== OWNER) return { records: [], capped: false };
+		if (q.collection === MEMBER_COLLECTION) {
+			return {
+				records: (holds.people ?? []).map((entry) => {
+					const [did, access] = typeof entry === 'string' ? [entry, null] : entry;
+					const value = { $type: MEMBER_COLLECTION, ...(access ?? { read: true, write: true }) };
+					return record(OWNER, MEMBER_COLLECTION, did, value);
+				}),
+				capped: false
+			};
+		}
+		if (q.collection !== EVENT_COLLECTION) return { records: [], capped: false };
 		return {
 			records: Object.entries(holds.events ?? {}).map(([rkey, value]) =>
 				record(OWNER, EVENT_COLLECTION, rkey, value)
@@ -139,7 +153,7 @@ beforeEach(() => {
 });
 
 describe('making a shared calendar', () => {
-	it('makes a private space under a calendar key, then names it in the owner’s own repo there', async () => {
+	it('makes a private space under a calendar key that shows its people to everyone on it, then names it in the owner’s own repo there', async () => {
 		const host = owner();
 		const { key, actor } = await createCalendar(host, { name: '  Supper club ' });
 
@@ -153,7 +167,11 @@ describe('making a shared calendar', () => {
 		expect(host.sent[0].body).toMatchObject({
 			spaceType: 'rsvp.atmo.dev.space',
 			skey: key,
-			policy: { $type: 'com.atproto.memberspace.policy', publishPolicy: true }
+			policy: {
+				$type: 'com.atproto.memberspace.policy',
+				publishPolicy: true,
+				publishMembers: true
+			}
 		});
 		expect(host.sent[0].body?.policy).not.toHaveProperty('publicRead');
 		expect(host.sent[2].body).toMatchObject({
@@ -383,17 +401,102 @@ describe('a calendar’s page', () => {
 		expect(person.sent).toHaveLength(0);
 	});
 
-	it('lists events from the owner’s repo only, and reads no one’s answers', async () => {
+	it('lists events and people from the owner’s repo only, and reads no one’s answers', async () => {
 		theCalendarHolds({ name: { name: 'Supper club' }, events: EVENTS });
 		await readCalendarPage(caller(PERSON, GUEST_SCOPE), OWNER, KEY, NOW);
 		expect(reader.list.mock.calls.map(([q]) => q)).toEqual([
-			{ space: SPACE, repo: OWNER, collection: EVENT_COLLECTION }
+			{ space: SPACE, repo: OWNER, collection: EVENT_COLLECTION },
+			{ space: SPACE, repo: OWNER, collection: MEMBER_COLLECTION }
 		]);
 		expect(reader.get.mock.calls.map(([q]) => q.collection)).toEqual([CALENDAR_COLLECTION]);
 		expect(reader.writers).not.toHaveBeenCalled();
 	});
 
-	it('shows the owner the people on it, and only the owner', async () => {
+	it('shows someone on it the people its owner’s server publishes there, themself included, and asks that server nothing', async () => {
+		theCalendarHolds({ name: { name: 'Supper club' }, events: {}, people: [PERSON, OTHER] });
+		const person = caller(PERSON, GUEST_SCOPE);
+		const page = await readCalendarPage(person, OWNER, KEY, NOW);
+		expect(page?.people).toEqual([
+			{ did: PERSON, handle: 'personpersonpersonperson.example.com' },
+			{ did: OTHER, handle: 'otherotherotherotherothe.example.com' }
+		]);
+		expect(person.sent).toHaveLength(0);
+	});
+
+	it('leaves out a published entry that cannot read the calendar', async () => {
+		theCalendarHolds({
+			name: { name: 'Supper club' },
+			events: {},
+			people: [PERSON, [OTHER, { read: false, write: false }]]
+		});
+		const page = await readCalendarPage(caller(PERSON, GUEST_SCOPE), OWNER, KEY, NOW);
+		expect(page?.people?.map((p) => p.did)).toEqual([PERSON]);
+	});
+
+	it('shows someone on it no people where the calendar publishes none yet', async () => {
+		theCalendarHolds({ name: { name: 'Supper club' }, events: {} });
+		const page = await readCalendarPage(caller(PERSON, GUEST_SCOPE), OWNER, KEY, NOW);
+		expect(page?.people).toBeNull();
+	});
+
+	it('still shows the calendar when its people could not be read', async () => {
+		theCalendarHolds({ name: { name: 'Supper club' }, events: EVENTS });
+		const listed = reader.list.getMockImplementation()!;
+		reader.list.mockImplementation(async (q: { collection: string }) => {
+			if (q.collection === MEMBER_COLLECTION) throw new Error('503');
+			return listed(q);
+		});
+		const page = await readCalendarPage(caller(PERSON, GUEST_SCOPE), OWNER, KEY, NOW);
+		expect(page?.upcoming).toHaveLength(3);
+		expect(page?.people).toBeNull();
+	});
+
+	it('switches an older calendar of the owner’s over to showing its people, keeping the rest of its policy', async () => {
+		theCalendarHolds({ name: { name: 'Supper club' }, events: {} });
+		const host = owner({ 'com.atproto.memberspace.listMembers': listMembers([PERSON]) });
+		await readCalendarPage(host, OWNER, KEY, NOW);
+		const update = host.sent.find((s) => s.pathname.endsWith('updateSpace'));
+		expect(update?.body).toEqual({
+			space: SPACE,
+			policy: { $type: 'com.atproto.memberspace.policy', publishPolicy: true, publishMembers: true }
+		});
+	});
+
+	it('leaves a calendar that already shows its people as it is', async () => {
+		theCalendarHolds({ name: { name: 'Supper club' }, events: {} });
+		const host = owner({
+			'com.atproto.space.getSpace': () =>
+				Response.json({
+					policy: {
+						$type: 'com.atproto.memberspace.policy',
+						publishPolicy: true,
+						publishMembers: true
+					}
+				}),
+			'com.atproto.memberspace.listMembers': listMembers([PERSON])
+		});
+		await readCalendarPage(host, OWNER, KEY, NOW);
+		expect(host.nsids()).not.toContain('com.atproto.space.updateSpace');
+	});
+
+	it('still shows the owner their calendar when the switch fails', async () => {
+		theCalendarHolds({ name: { name: 'Supper club' }, events: {} });
+		const host = owner({
+			'com.atproto.space.updateSpace': refuse(500, 'InternalServerError'),
+			'com.atproto.memberspace.listMembers': listMembers([PERSON])
+		});
+		const page = await readCalendarPage(host, OWNER, KEY, NOW);
+		expect(page?.people?.map((p) => p.did)).toEqual([PERSON]);
+	});
+
+	it('never switches a calendar for someone on it, only for its owner', async () => {
+		theCalendarHolds({ name: { name: 'Supper club' }, events: {} });
+		const person = caller(PERSON, GUEST_SCOPE);
+		await readCalendarPage(person, OWNER, KEY, NOW);
+		expect(person.nsids()).toEqual([]);
+	});
+
+	it('shows the owner the people on it from their own server’s list', async () => {
 		theCalendarHolds({ name: { name: 'Supper club' }, events: {} });
 		const page = await readCalendarPage(
 			owner({ 'com.atproto.memberspace.listMembers': listMembers([PERSON, OTHER]) }),
@@ -492,6 +595,33 @@ describe('an event on a calendar', () => {
 			{ did: OTHER, answer: null }
 		]);
 		expect(host.sent[0].query.get('space')).toBe(SPACE);
+	});
+
+	it('gives someone on it the calendar’s people too, each with their answer, from the list the owner’s server publishes', async () => {
+		theCalendarHolds({
+			name: { name: 'Supper club' },
+			events: { [RKEY]: event('Dinner', '2026-11-20T18:00:00.000Z') },
+			answers: { [PERSON]: going() },
+			people: [PERSON, OTHER]
+		});
+		reader.writers.mockResolvedValue([PERSON]);
+		const person = caller(PERSON, GUEST_SCOPE);
+		const page = await readCalendarEventPage(person, ADDRESS);
+		expect(page?.guests).toMatchObject([
+			{ did: PERSON, answer: 'going' },
+			{ did: OTHER, answer: null }
+		]);
+		expect(person.sent).toHaveLength(0);
+	});
+
+	it('gives someone on it no guest list where the calendar publishes none yet', async () => {
+		theCalendarHolds({
+			name: { name: 'Supper club' },
+			events: { [RKEY]: event('Dinner', '2026-11-20T18:00:00.000Z') }
+		});
+		reader.writers.mockResolvedValue([]);
+		const page = await readCalendarEventPage(caller(PERSON, GUEST_SCOPE), ADDRESS);
+		expect(page?.guests).toBeNull();
 	});
 
 	it('is read from the owner’s repo only, so an event record someone else wrote in the space is ignored', async () => {

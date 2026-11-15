@@ -133,6 +133,9 @@ describe('savePrivateEvent', () => {
 			skey: RKEY,
 			policy: { $type: 'com.atproto.memberspace.policy' }
 		});
+		// Only a shared calendar shows its people to everyone on it; a single event's guests see who
+		// answered, and only the host sees the whole list.
+		expect(host.sent[0].body?.policy).not.toHaveProperty('publishMembers');
 		expect(host.sent[2].body).toMatchObject({
 			space: SPACE,
 			repo: HOST,

@@ -57,13 +57,14 @@
 					link={{ actor, key: data.calendar.key }}
 					size={14}
 				/>
-				{#if !data.guests && !data.viewerRsvpStatus && !data.answersUnread}Answer to let the host
+				{#if !data.isHost && !data.viewerRsvpStatus && !data.answersUnread}Answer to let the host
 					know you saw it.{/if}
 			</p>
 			{#if data.guests}
 				<CalendarEventGuests
 					guests={data.guests}
 					capped={data.guestsCapped}
+					owner={data.isHost}
 					{actor}
 					calendarKey={data.calendar.key}
 					{calendarName}

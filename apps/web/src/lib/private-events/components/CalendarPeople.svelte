@@ -52,9 +52,9 @@
 		People on this calendar
 	</h2>
 	<p class="text-base-600 dark:text-base-400 text-sm">
-		Everyone you add can see every event on this calendar, past and future, and nobody else can.
-		atmo doesn't tell them they were added. The link is the invitation, so send it to them yourself.
-		Once they have answered an event, new ones show in their private events.
+		Everyone you add can see every event on this calendar, past and future, and who else is on it.
+		Nobody else can. atmo doesn't tell them they were added. The link is the invitation, so send it
+		to them yourself. Once they have answered an event, new ones show in their private events.
 	</p>
 	<Button class="mt-2" size="sm" variant="secondary" onclick={copyLink}>
 		{copied ? 'Link copied' : 'Copy the link'}

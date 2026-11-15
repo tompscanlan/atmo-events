@@ -40,6 +40,12 @@ import {
 } from './events';
 import { verifiedHandle } from './people';
 
+/** Where a space's server shows its list of people to everyone on it, one record per person in the
+ *  owner's repo there, keyed by their DID. Written only by that server, and only where the space's
+ *  policy asks for it, as a calendar's does. */
+const MEMBER_COLLECTION = 'com.atproto.memberspace.member';
+const MEMBER_POLICY = 'com.atproto.memberspace.policy';
+
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 const bytes = new TextEncoder();
 /** The lexicon's limit in bytes, beside its limit in characters. */
@@ -92,7 +98,7 @@ export async function createCalendar(
 	const key = calendarKey(tidNow());
 	let space: string;
 	try {
-		space = await ensurePrivateSpace(caller, key);
+		space = await ensurePrivateSpace(caller, key, { publishMembers: true });
 	} catch (e) {
 		if (e instanceof PrivateEventRefused) throw e;
 		console.error(`[private-events] ${caller.did}: calendar ${key} not made:`, e);
@@ -209,6 +215,46 @@ function isPast(event: FlatEventRecord, now: number): boolean {
 const byStart = (a: FlatEventRecord, b: FlatEventRecord) =>
 	Date.parse(a.startsAt) - Date.parse(b.startsAt);
 
+/** A record key's DID: a server writes a localhost did:web's port with a plain colon, since `%` can't
+ *  be in a key. Only local test networks have one. */
+function recordKeyToDid(rkey: string): string {
+	return rkey.replace(/^(did:web:[^:]+):(\d+)$/, '$1%3A$2');
+}
+
+/** The people the owner's server shows everyone on the calendar, read with the caller's own access
+ *  from the owner's repo only. Null where it shows none: a calendar made before calendars did, until
+ *  its owner next opens it. */
+async function publishedPeople(
+	reader: SpaceReader,
+	host: string,
+	key: string
+): Promise<{ dids: string[]; capped: boolean } | null> {
+	const listed = await reader.list({
+		space: privateEventSpace(host, key),
+		repo: host,
+		collection: MEMBER_COLLECTION
+	});
+	const dids = listed.records
+		.filter((record) => record.value.read === true)
+		.map((record) => recordKeyToDid(record.rkey));
+	return dids.length > 0 ? { dids, capped: listed.capped } : null;
+}
+
+/** Has the owner's server show the calendar's people to everyone on it, for a calendar made before
+ *  calendars did. Keeps the rest of its policy. Never fails the page: it is tried again next time. */
+async function showPeopleOnIt(caller: CallerSession, space: string): Promise<void> {
+	try {
+		const found = await xrpc(caller.handle, 'com.atproto.space.getSpace', { query: { space } });
+		const policy = found.policy as Record<string, unknown> | undefined;
+		if (policy?.$type !== MEMBER_POLICY || policy.publishMembers === true) return;
+		await xrpc(caller.handle, 'com.atproto.space.updateSpace', {
+			body: { space, policy: { ...policy, publishMembers: true } }
+		});
+	} catch (e) {
+		console.error(`[private-events] ${caller.did}: ${space} not switched to show its people:`, e);
+	}
+}
+
 export interface CalendarPage {
 	key: string;
 	host: string;
@@ -221,7 +267,8 @@ export interface CalendarPage {
 	past: FlatEventRecord[];
 	/** There were too many to list, so there may be more events than these. */
 	eventsCapped: boolean;
-	/** The owner's own view of who is on it; null for anyone else. */
+	/** Who is on it: the owner's own list, or the one their server shows everyone on it; null where
+	 *  there is none to show or it couldn't be read. */
 	people: CalendarPerson[] | null;
 	peopleCapped: boolean;
 }
@@ -234,17 +281,26 @@ export async function readCalendarPage(
 	now = Date.now()
 ): Promise<CalendarPage | null> {
 	if (!isCalendarKey(key)) return null;
-	const calendar = await readCalendar(credentialSpaceReader(caller), host, key);
+	const reader = credentialSpaceReader(caller);
+	const calendar = await readCalendar(reader, host, key);
 	if (!calendar) return null;
-	let people: CalendarPerson[] | null = null;
-	let peopleCapped = false;
+	let listed: { dids: string[]; capped: boolean } | null;
 	if (caller.did === host) {
-		const listed = await memberPages(caller, privateEventSpace(host, key));
-		peopleCapped = listed.capped;
-		people = await Promise.all(
-			listed.dids.map(async (did) => ({ did, handle: await verifiedHandle(did) }))
-		);
+		const space = privateEventSpace(host, key);
+		await showPeopleOnIt(caller, space);
+		listed = await memberPages(caller, space);
+	} else {
+		listed = await publishedPeople(reader, host, key).catch((e) => {
+			console.info(`[private-events] the people on ${key} unread for ${caller.did}:`, e);
+			return null;
+		});
 	}
+	const people = listed
+		? await Promise.all(
+				listed.dids.map(async (did) => ({ did, handle: await verifiedHandle(did) }))
+			)
+		: null;
+	const peopleCapped = listed?.capped ?? false;
 	const past = calendar.events.filter((event) => isPast(event, now));
 	return {
 		key,
@@ -263,8 +319,9 @@ export interface CalendarEventPage extends PrivateEventPage {
 	calendar: { key: string; name: string | null };
 }
 
-/** An event on a calendar, as a single event's page shows it. For the owner, the guests are the
- *  calendar's people, each with their answer to this event. */
+/** An event on a calendar, as a single event's page shows it. The guests are the calendar's people,
+ *  each with their answer to this event: the owner's own list, or for someone on it the list the
+ *  owner's server shows them. */
 export async function readCalendarEventPage(
 	caller: CallerSession,
 	address: EventAddress
@@ -272,8 +329,13 @@ export async function readCalendarEventPage(
 	if (!isCalendarKey(address.spaceKey)) return null;
 	const reader = credentialSpaceReader(caller);
 	const space = privateEventSpace(address.host, address.spaceKey);
+	const published = () =>
+		publishedPeople(reader, address.host, address.spaceKey).catch((e) => {
+			console.info(`[private-events] the people on ${space} unread for ${caller.did}:`, e);
+			return null;
+		});
 	const [page, named] = await Promise.all([
-		readPrivateEventPage(caller, address, reader),
+		readPrivateEventPage(caller, address, reader, published),
 		reader
 			.get({ space, repo: address.host, collection: CALENDAR_COLLECTION, rkey: CALENDAR_RKEY })
 			.catch((e) => {

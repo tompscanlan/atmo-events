@@ -37,8 +37,8 @@ vi.mock('#lib/atproto/auth.svelte.js', () => ({
 	authorizeMeetings: vi.fn()
 }));
 
-/** The event's page as its load returns it: for a guest, or with the host's view of the people. */
-function eventView(guests: unknown = null, guestsCapped = false) {
+/** The event's page as its load returns it: for a guest, or with the calendar's people. */
+function eventView(guests: unknown = null, guestsCapped = false, isHost = false) {
 	return {
 		pageTitle: 'Dinner',
 		view: 'event',
@@ -61,6 +61,7 @@ function eventView(guests: unknown = null, guestsCapped = false) {
 		viewerRsvpStatus: null,
 		viewerRsvpRkey: null,
 		loggedIn: true,
+		isHost,
 		guests,
 		guestsCapped
 	};
@@ -125,19 +126,38 @@ describe('an event on a shared calendar', () => {
 		const guests = [
 			{ did: GUEST, handle: 'guest.example.com', answer: 'going', answerUnread: false }
 		];
-		render(EventPage, { data: eventView(guests) } as never);
+		render(EventPage, { data: eventView(guests, false, true) } as never);
 		await expect
 			.poll(() => shownText('private-note'))
 			.toContain('Private event. Only the people on Supper club can see it.');
 		await expect.poll(() => shownText('calendar-guests')).toContain('guest.example.com Going');
+		await expect
+			.poll(() => shownText('calendar-guests'))
+			.toContain('To add or remove people, go to the calendar.');
 		expect(page.getByRole('textbox').elements()).toHaveLength(0);
 		expect(page.getByRole('button', { name: 'Remove' }).elements()).toHaveLength(0);
+	});
+
+	it('shows someone on it the calendar’s people and their answers, and asks them to answer', async () => {
+		const guests = [
+			{ did: GUEST, handle: 'guest.example.com', answer: null, answerUnread: false },
+			{ did: HOST + 'x', handle: 'friend.example.com', answer: 'going', answerUnread: false }
+		];
+		render(EventPage, { data: eventView(guests) } as never);
+		await expect.poll(() => shownText('calendar-guests')).toContain('friend.example.com Going');
+		await expect
+			.poll(() => shownText('calendar-guests'))
+			.toContain("guest.example.com Hasn't answered");
+		expect(shownText('calendar-guests')).not.toContain('To add or remove people');
+		await expect
+			.poll(() => shownText('private-note'))
+			.toContain('Answer to let the host know you saw it.');
 	});
 
 	it('tells the host when there may be more people on the calendar than it lists', async () => {
 		mocks.user.did = HOST;
 		const guests = [{ did: GUEST, handle: 'guest.example.com', answer: null, answerUnread: false }];
-		render(EventPage, { data: eventView(guests, true) } as never);
+		render(EventPage, { data: eventView(guests, true, true) } as never);
 		await expect
 			.poll(() => shownText('calendar-guests'))
 			.toContain('There may be more people on it than these.');

@@ -193,6 +193,30 @@
 					capped={calendar.peopleCapped}
 				/>
 			</div>
+		{:else if calendar.people}
+			<section class="mt-10" data-testid="calendar-people-shown">
+				<h2
+					class="text-base-600 dark:text-base-400 mb-3 text-xs font-semibold tracking-wider uppercase"
+				>
+					People on this calendar
+				</h2>
+				<p class="text-base-600 dark:text-base-400 text-sm">
+					Everyone here sees every event on it, and who else is on it. Only its owner changes the
+					list.
+				</p>
+				<ul class="mt-3 max-w-md space-y-2">
+					{#each calendar.people as person (person.did)}
+						<li class="text-base-900 dark:text-base-50 truncate text-sm font-medium">
+							{person.handle ?? person.did}
+						</li>
+					{/each}
+				</ul>
+				{#if calendar.peopleCapped}
+					<p class="text-base-600 dark:text-base-400 mt-2 text-sm" role="status">
+						There may be more people on it than these.
+					</p>
+				{/if}
+			</section>
 		{/if}
 	{:else}
 		<h1 class="text-base-900 dark:text-base-50 text-2xl font-bold">Shared calendar</h1>

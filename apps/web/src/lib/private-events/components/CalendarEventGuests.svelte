@@ -14,13 +14,16 @@
 		actor,
 		calendarKey,
 		calendarName,
-		capped = false
+		capped = false,
+		owner = false
 	}: {
 		guests: Guest[];
 		actor: string;
 		calendarKey: string;
 		calendarName: string;
 		capped?: boolean;
+		/** The calendar's owner, who changes the list on the calendar's page. */
+		owner?: boolean;
 	} = $props();
 
 	function answerWords(guest: Guest): string {
@@ -38,7 +41,9 @@
 		<a
 			href={resolve('/(app)/p/[actor]/calendar/[key]', { actor, key: calendarKey })}
 			class="text-accent-600 dark:text-accent-400 hover:underline">{calendarName}</a
-		> is invited. To add or remove people, go to the calendar.
+		>
+		is invited.{#if owner}
+			To add or remove people, go to the calendar.{/if}
 	</p>
 	{#if guests.length === 0}
 		<p class="text-base-600 dark:text-base-400 mt-3 text-sm">No one else is on it yet.</p>

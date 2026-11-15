@@ -30,7 +30,12 @@ const EVENT = {
 };
 
 /** The page's data, as its load returns it, for the owner or someone on it. */
-function view(isOwner: boolean) {
+function view(
+	isOwner: boolean,
+	people: { did: string; handle: string | null }[] | null = isOwner
+		? [{ did: PERSON, handle: 'person.example.com' }]
+		: null
+) {
 	return {
 		pageTitle: 'Supper club',
 		robots: 'noindex',
@@ -45,10 +50,16 @@ function view(isOwner: boolean) {
 			upcoming: [EVENT],
 			past: [],
 			eventsCapped: false,
-			people: isOwner ? [{ did: PERSON, handle: 'person.example.com' }] : null,
+			people,
 			peopleCapped: false
 		}
 	};
+}
+
+/** The text a person reads, with the template's line breaks and indents collapsed. */
+function shownText(testId: string): string {
+	const found = page.getByTestId(testId).elements()[0];
+	return (found?.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
 afterEach(() => {
@@ -74,6 +85,26 @@ describe('a shared calendar’s page', () => {
 		expect(page.getByRole('link', { name: 'New event on this calendar' }).elements()).toHaveLength(
 			0
 		);
+	});
+
+	it('shows someone on it who else is on it, with nothing to change', async () => {
+		const people = [
+			{ did: PERSON, handle: 'person.example.com' },
+			{ did: 'did:plc:otherotherotherotherothe', handle: null }
+		];
+		render(CalendarPage, { data: view(false, people) } as never);
+		await expect.poll(() => shownText('calendar-people-shown')).toContain('person.example.com');
+		expect(shownText('calendar-people-shown')).toContain('did:plc:otherotherotherotherothe');
+		expect(page.getByTestId('calendar-people').elements()).toHaveLength(0);
+		expect(page.getByRole('button', { name: 'Remove' }).elements()).toHaveLength(0);
+		expect(page.getByRole('textbox').elements()).toHaveLength(0);
+	});
+
+	it('tells the owner that the people they add see each other', async () => {
+		render(CalendarPage, { data: view(true) } as never);
+		await expect
+			.poll(() => shownText('calendar-people'))
+			.toContain('past and future, and who else is on it. Nobody else can.');
 	});
 
 	it('tells the owner the same, and lets them add someone by handle', async () => {

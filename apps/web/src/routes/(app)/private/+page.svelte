@@ -92,7 +92,7 @@
 			<h2 class="text-base-900 dark:text-base-50 text-lg font-semibold">Shared calendars</h2>
 			<p class="text-base-600 dark:text-base-400 mt-1 text-sm">
 				A shared calendar keeps a list of people. Everyone on it sees every event you put on it,
-				past and future.
+				past and future, and who else is on it.
 			</p>
 			{#if data.calendars.length > 0}
 				<ul class="mt-3 space-y-2" data-testid="calendar-list">
