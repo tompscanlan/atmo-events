@@ -2,8 +2,10 @@
 	import { EventEditor } from '@atmo-dev/kit/events';
 	import { user } from '#lib/atproto/auth.svelte.js';
 	import { createPrivateEventAdapter } from '#lib/private-events/editor-adapter.js';
+	import { holdPrivateEmbeds } from '#lib/private-events/embeds.js';
 
 	let { data } = $props();
+	holdPrivateEmbeds();
 
 	let viewer = $derived({
 		isLoggedIn: user.isLoggedIn,

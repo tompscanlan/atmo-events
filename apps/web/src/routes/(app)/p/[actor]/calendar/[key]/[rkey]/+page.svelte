@@ -11,8 +11,10 @@
 	import { calendarEvent, UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
 	import { createPrivateRsvpAdapter } from '#lib/private-events/rsvp-adapter.js';
 	import { GUEST_SCOPES, HOST_SCOPES } from '#lib/private-events/scopes.js';
+	import { holdPrivateEmbeds } from '#lib/private-events/embeds.js';
 
 	let { data } = $props();
+	holdPrivateEmbeds();
 
 	let viewer = $derived({
 		isLoggedIn: user.isLoggedIn,
