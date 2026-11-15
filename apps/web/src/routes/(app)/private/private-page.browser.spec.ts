@@ -11,29 +11,51 @@ vi.mock('#lib/private-events/private-events.remote', () => ({ createCalendar: vi
 const base = { pageTitle: 'Calendars', did: 'did:plc:person', spacesServer: null, calendars: [] };
 
 describe('/private', () => {
-	it('says the link is the invitation, since an unanswered invitation is never on the list', async () => {
-		render(PrivatePage, { data: { ...base, canList: true, access: null } } as never);
-		await expect.element(page.getByTestId('link-is-invitation')).toBeVisible();
-	});
-
-	it('points at Your events for private events apart from any calendar', async () => {
+	it('says in one line when a calendar shows, and that events apart from one are in Your events', async () => {
 		render(PrivatePage, { data: { ...base, canList: true, access: null, beta: true } } as never);
-		const pointer = page.getByTestId('single-events-pointer');
+		const footnote = page.getByTestId('calendars-footnote');
 		await expect
-			.element(pointer)
+			.element(footnote)
 			.toHaveTextContent(
-				"Private events that aren't on a shared calendar are listed in Your events, on the home page."
+				"A calendar you're on shows here once you answer one of its events. Private events not on a calendar are in Your events."
 			);
 		await expect
-			.element(pointer.getByRole('link', { name: 'Your events' }))
+			.element(footnote.getByRole('link', { name: 'Your events' }))
 			.toHaveAttribute('href', '/');
 	});
 
 	it('says they show there once private events are on, to someone who has them off', async () => {
 		render(PrivatePage, { data: { ...base, canList: true, access: null, beta: false } } as never);
 		await expect
-			.element(page.getByTestId('single-events-pointer'))
-			.toMatchTextContent(/on the home page, once private events are on\.$/);
+			.element(page.getByTestId('calendars-footnote'))
+			.toMatchTextContent(/are in Your events once private events are on\.$/);
+	});
+
+	it('lists each calendar with whose it is, marked private for a screen reader', async () => {
+		render(PrivatePage, {
+			data: {
+				...base,
+				canList: true,
+				access: null,
+				beta: false,
+				calendars: [
+					{ href: 'a', key: 'k1', name: 'Supper club', owning: true, host: 'did:plc:person' },
+					{
+						href: 'b',
+						key: 'k2',
+						name: 'Book club',
+						owning: false,
+						host: 'did:plc:ivo',
+						ownerHandle: 'ivo.example.com'
+					}
+				]
+			}
+		} as never);
+		const list = page.getByTestId('calendar-list');
+		await expect
+			.element(list)
+			.toHaveTextContent('Private: Supper club yours Private: Book club ivo.example.com');
+		expect(list.element().textContent ?? '').not.toMatch(/Only the people on it/);
 	});
 
 	it('says what a shared calendar is for where you make one', async () => {
