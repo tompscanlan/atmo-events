@@ -5,7 +5,7 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { atProtoLoginModalState } from '#lib/components/LoginModal.svelte';
-	import { BETA_WARNING } from '#lib/private-events/beta.js';
+	import { BETA_WARNING, BETA_WARNING_SHORT } from '#lib/private-events/beta.js';
 	import CalendarPeople from '#lib/private-events/components/CalendarPeople.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { refusalWords } from '#lib/private-events/components/refusal.js';
@@ -67,38 +67,31 @@
 	{#if data.view === 'calendar'}
 		{@const calendar = data.calendar}
 		{@const name = calendar.name ?? UNTITLED_CALENDAR}
-		<p class="text-base-600 dark:text-base-400 text-xs font-semibold tracking-wider uppercase">
-			Shared calendar
-		</p>
-		<h1 class="text-base-900 dark:text-base-50 mt-1 text-2xl font-bold">{name}</h1>
 		<p
-			class="text-base-700 dark:text-base-300 mt-2 flex items-center gap-1.5 text-sm"
+			class="text-base-600 dark:text-base-400 flex items-center gap-1.5 text-xs font-semibold tracking-wider uppercase"
 			data-testid="calendar-private-note"
 		>
-			<Icon img={LockKeyhole} size={14} />
-			Private. Only the people on this calendar can see its events.
+			<Icon img={LockKeyhole} size={12} />
+			Private ·
+			<span data-testid="calendar-owner" class="normal-case">
+				{#if data.isOwner}
+					yours
+				{:else}
+					<a
+						href={resolve('/(app)/p/[actor]', { actor: data.actor })}
+						class="text-accent-600 dark:text-accent-400 hover:underline">{data.actor}</a
+					>
+				{/if}
+			</span>
 		</p>
-		<p class="text-base-600 dark:text-base-400 mt-1 text-sm" data-testid="calendar-owner">
-			{#if data.isOwner}
-				Your calendar.
-			{:else}
-				Owned by
-				<a
-					href={resolve('/(app)/p/[actor]', { actor: data.actor })}
-					class="text-accent-600 dark:text-accent-400 hover:underline">{data.actor}</a
-				>.
-			{/if}
-		</p>
-		<p class="text-base-600 dark:text-base-400 mt-2 text-sm" data-testid="beta-notice">
-			{BETA_WARNING}
-		</p>
+		<h1 class="text-base-900 dark:text-base-50 mt-1 text-2xl font-bold">{name}</h1>
 
 		{#if data.isOwner}
 			<div class="mt-4 flex flex-wrap items-center gap-2" data-testid="calendar-owner-actions">
 				<Button
 					size="sm"
 					href={`${resolve('/(app)/create')}?audience=calendar&calendar=${encodeURIComponent(calendar.key)}`}
-					>New event on this calendar</Button
+					>New event</Button
 				>
 				<Button
 					size="sm"
@@ -107,7 +100,7 @@
 					onclick={() => startRename(calendar.name ?? '')}>Rename</Button
 				>
 				<Button size="sm" variant="ghost" disabled={busy} onclick={() => (confirmingDelete = true)}
-					>Delete calendar</Button
+					>Delete</Button
 				>
 			</div>
 			{#if renaming}
@@ -194,13 +187,9 @@
 				<h2
 					class="text-base-600 dark:text-base-400 mb-3 text-xs font-semibold tracking-wider uppercase"
 				>
-					People on this calendar
+					People ({calendar.people.length})
 				</h2>
-				<p class="text-base-600 dark:text-base-400 text-sm">
-					Everyone here sees every event on it, and who else is on it. Only its owner changes the
-					list.
-				</p>
-				<ul class="mt-3 max-w-md space-y-2">
+				<ul class="max-w-md space-y-2">
 					{#each calendar.people as person (person.did)}
 						<li class="text-base-900 dark:text-base-50 truncate text-sm font-medium">
 							{person.handle ?? person.did}
@@ -212,8 +201,12 @@
 						There may be more people on it than these.
 					</p>
 				{/if}
+				<p class="text-base-600 dark:text-base-400 mt-3 text-xs">
+					Everyone here sees every event and each other. Only the owner changes who's here.
+				</p>
 			</section>
 		{/if}
+		<p class="text-base-500 mt-10 text-xs" data-testid="beta-notice">{BETA_WARNING_SHORT}</p>
 	{:else}
 		<h1 class="text-base-900 dark:text-base-50 text-2xl font-bold">Shared calendar</h1>
 		<p class="text-base-600 dark:text-base-400 mt-2 text-sm" data-testid="beta-notice">
