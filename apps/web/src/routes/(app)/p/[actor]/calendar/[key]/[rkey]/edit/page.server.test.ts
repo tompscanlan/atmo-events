@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const OWNER = 'did:plc:ownerownerownerownerowner';
-const MEMBER = 'did:plc:membermembermembermember';
+const PERSON = 'did:plc:personpersonpersonperson';
 const KEY = 'cal-3lcalcalcalcal';
 const RKEY = '3levent';
 
@@ -46,8 +46,8 @@ describe('editing an event on a shared calendar', () => {
 		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'no-store' });
 	});
 
-	it('is not there for a member', async () => {
-		callerSession.mockResolvedValue({ did: MEMBER, scope: '' });
+	it('is not there for someone on the calendar', async () => {
+		callerSession.mockResolvedValue({ did: PERSON, scope: '' });
 		await expect(load(request())).rejects.toMatchObject({ status: 404 });
 		expect(readPrivateEventForEdit).not.toHaveBeenCalled();
 	});

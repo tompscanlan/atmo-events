@@ -185,12 +185,12 @@
 			</p>
 		{/if}
 
-		{#if data.isOwner && calendar.members}
+		{#if data.isOwner && calendar.people}
 			<div class="mt-10">
 				<CalendarPeople
 					calendarKey={calendar.key}
-					members={calendar.members}
-					capped={calendar.membersCapped}
+					people={calendar.people}
+					capped={calendar.peopleCapped}
 				/>
 			</div>
 		{/if}

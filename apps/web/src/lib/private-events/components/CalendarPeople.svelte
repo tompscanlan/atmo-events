@@ -2,15 +2,15 @@
 	import { Button, Input } from '@atmo-dev/kit';
 	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
-	import { addCalendarMember, removeCalendarMember } from '../private-events.remote';
-	import type { CalendarMember } from '../server/calendars';
+	import { addPersonToCalendar, removePersonFromCalendar } from '../private-events.remote';
+	import type { CalendarPerson } from '../server/calendars';
 	import { refusalWords } from './refusal';
 
 	let {
 		calendarKey,
-		members,
+		people,
 		capped
-	}: { calendarKey: string; members: CalendarMember[]; capped: boolean } = $props();
+	}: { calendarKey: string; people: CalendarPerson[]; capped: boolean } = $props();
 
 	let handle = $state('');
 	let busy = $state(false);
@@ -34,12 +34,12 @@
 	function add(event: SubmitEvent) {
 		event.preventDefault();
 		return change(async () => {
-			await addCalendarMember({ key: calendarKey, handleOrDid: handle });
+			await addPersonToCalendar({ key: calendarKey, handleOrDid: handle });
 			handle = '';
 		});
 	}
 
-	const remove = (did: string) => change(() => removeCalendarMember({ key: calendarKey, did }));
+	const remove = (did: string) => change(() => removePersonFromCalendar({ key: calendarKey, did }));
 
 	async function copyLink() {
 		await navigator.clipboard.writeText(page.url.origin + page.url.pathname);
@@ -61,7 +61,7 @@
 	</Button>
 	<form class="mt-3 flex max-w-md gap-2" onsubmit={add}>
 		<Input
-			name="member-handle"
+			name="person-handle"
 			aria-label="Handle of the person to add"
 			placeholder="alice.bsky.social"
 			autocomplete="off"
@@ -72,16 +72,16 @@
 	{#if failure}<p role="alert" class="text-base-950 dark:text-base-50 mt-2 text-sm">
 			{failure}
 		</p>{/if}
-	{#if members.length === 0}
+	{#if people.length === 0}
 		<p class="text-base-600 dark:text-base-400 mt-3 text-sm">No one else is on it yet.</p>
 	{:else}
 		<ul class="mt-3 max-w-md space-y-2">
-			{#each members as member (member.did)}
-				<li class="flex items-center justify-between gap-2 text-sm" data-member={member.did}>
+			{#each people as person (person.did)}
+				<li class="flex items-center justify-between gap-2 text-sm" data-person={person.did}>
 					<span class="text-base-900 dark:text-base-50 min-w-0 truncate font-medium"
-						>{member.handle ?? member.did}</span
+						>{person.handle ?? person.did}</span
 					>
-					<Button size="sm" variant="ghost" disabled={busy} onclick={() => remove(member.did)}
+					<Button size="sm" variant="ghost" disabled={busy} onclick={() => remove(person.did)}
 						>Remove</Button
 					>
 				</li>

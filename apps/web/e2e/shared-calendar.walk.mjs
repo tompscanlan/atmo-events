@@ -212,7 +212,7 @@ const NAME = `Supper club ${RUN}`;
 const RENAMED = `${NAME} on Fridays`;
 const EVENT_1 = `Soup night ${RUN}`;
 const EVENT_2 = `Pie night ${RUN}`;
-const CRAFTED = `Crafted by a member ${RUN}`;
+const CRAFTED = `Crafted by someone on it ${RUN}`;
 const PUBLIC_NAME = `Public control ${RUN}`;
 const CALENDAR_NOT_AVAILABLE = "This calendar isn't available";
 const EVENT_NOT_AVAILABLE = "This event isn't available";
@@ -220,7 +220,7 @@ const EVENT_NOT_AVAILABLE = "This event isn't available";
 let KEY, SPACE, CAL_PATH, RKEY_1, RKEY_2, EVENT_1_PATH, EVENT_2_PATH;
 let REMOTE = null;
 
-const members = async () => {
+const peopleOnIt = async () => {
 	const r = await C.alice.call('com.atproto.memberspace.listMembers', { space: SPACE });
 	if (r.status !== 200) throw new Error(`listMembers: ${r.status}`);
 	return r.data.members.map((m) => m.did);
@@ -330,9 +330,9 @@ const keptOutOfAll = async (page, who, needles) => {
 		);
 	}
 };
-const memberRow = (page, name) => page.locator(`[data-member="${C[name].did}"]`);
-const addMember = async (page, who) => {
-	await page.locator('input[name=member-handle]').fill(who);
+const personRow = (page, name) => page.locator(`[data-person="${C[name].did}"]`);
+const addPerson = async (page, who) => {
+	await page.locator('input[name=person-handle]').fill(who);
 	await page.waitForTimeout(150);
 	await page.locator('[data-testid=calendar-people] form button[type=submit]').click();
 };
@@ -419,7 +419,7 @@ await step('2. alice allows shared calendars on /private and makes one', async (
 	);
 	const policy = await C.alice.call('com.atproto.space.getSpace', { space: SPACE });
 	check(
-		'a member-only space on her PDS',
+		'a private space on her PDS',
 		policy.status === 200 && policy.data?.policy?.$type === 'com.atproto.memberspace.policy',
 		JSON.stringify(policy.data?.policy ?? policy.status)
 	);
@@ -433,23 +433,23 @@ await step('2. alice allows shared calendars on /private and makes one', async (
 	check('nothing of it in her public repo', (await publicCount('alice', CALENDAR)) === 0);
 	check(
 		'no one else on it yet',
-		(await members()).every((did) => did === C.alice.did)
+		(await peopleOnIt()).every((did) => did === C.alice.did)
 	);
 });
 
 await step('3. alice adds bob and dana by handle', async () => {
 	const p = pages.alice;
-	await addMember(p, P.bob.handle);
-	await memberRow(p, 'bob').waitFor({ timeout: 20000 });
-	await addMember(p, P.dana.handle);
-	await memberRow(p, 'dana').waitFor({ timeout: 20000 });
-	await addMember(p, 'nobody-here.example.com');
+	await addPerson(p, P.bob.handle);
+	await personRow(p, 'bob').waitFor({ timeout: 20000 });
+	await addPerson(p, P.dana.handle);
+	await personRow(p, 'dana').waitFor({ timeout: 20000 });
+	await addPerson(p, 'nobody-here.example.com');
 	await p.locator('[data-testid=calendar-people] [role=alert]').waitFor({ timeout: 20000 });
 	check('an unknown handle is refused in words', /wasn|weren/.test(await peopleAlert(p)));
-	await addMember(p, P.alice.handle);
+	await addPerson(p, P.alice.handle);
 	await sleep(1500);
 	check('she cannot add herself', /your calendar/i.test(await peopleAlert(p)));
-	const m = await members();
+	const m = await peopleOnIt();
 	check(
 		'her PDS has bob and dana on it, and no one else',
 		m.includes(C.bob.did) &&
@@ -516,7 +516,7 @@ await step('5. bob opens the calendar’s link, signs in, allows it, and sees ev
 	check('back on the calendar', new URL(p.url()).pathname === CAL_PATH, new URL(p.url()).pathname);
 	await allowIfAsked(p, /allow atmo to open/i, P.bob);
 	await p.getByRole('heading', { name: NAME }).waitFor({ timeout: 30000 });
-	await shot(p, '06-calendar-member');
+	await shot(p, '06-calendar-person-on-it');
 	check('he sees event 1 on it', (await text(p, 'main')).includes(EVENT_1));
 	check(
 		'he is told only the people on it can see its events',
@@ -669,8 +669,8 @@ await step('10. mallory, not on it, gets what a made-up address gets', async () 
 await step('11. alice adds mallory, who then sees both events', async () => {
 	const a = pages.alice;
 	await open(a, CAL_PATH);
-	await addMember(a, P.mallory.handle);
-	await memberRow(a, 'mallory').waitFor({ timeout: 20000 });
+	await addPerson(a, P.mallory.handle);
+	await personRow(a, 'mallory').waitFor({ timeout: 20000 });
 	const p = pages.mallory;
 	const status = await open(p, CAL_PATH);
 	check('the calendar opens for her now', status === 200, `${status}`);
@@ -684,11 +684,11 @@ await step('11. alice adds mallory, who then sees both events', async () => {
 await step('12. alice removes dana, who loses everything on it at once', async () => {
 	const a = pages.alice;
 	await open(a, CAL_PATH);
-	await memberRow(a, 'dana')
+	await personRow(a, 'dana')
 		.getByRole('button', { name: /remove/i })
 		.click();
-	await memberRow(a, 'dana').waitFor({ state: 'detached', timeout: 20000 });
-	check('off the list on her PDS', !(await members()).includes(C.dana.did));
+	await personRow(a, 'dana').waitFor({ state: 'detached', timeout: 20000 });
+	check('off the list on her PDS', !(await peopleOnIt()).includes(C.dana.did));
 	const d = pages.dana;
 	const cal = await open(d, CAL_PATH);
 	const one = await open(d, EVENT_1_PATH);
@@ -772,8 +772,8 @@ await step('13. bob cannot add an event or change who is on it', async () => {
 			remote: REMOTE,
 			calls: {
 				savePrivateEvent: { rkey: '3kcraftedcraft', record, calendar: KEY },
-				addCalendarMember: { key: KEY, handleOrDid: P.bob.handle },
-				removeCalendarMember: { key: KEY, did: C.mallory.did },
+				addPersonToCalendar: { key: KEY, handleOrDid: P.bob.handle },
+				removePersonFromCalendar: { key: KEY, did: C.mallory.did },
 				deleteCalendar: { key: KEY }
 			}
 		}
@@ -785,10 +785,10 @@ await step('13. bob cannot add an event or change who is on it', async () => {
 		JSON.stringify(crafted)
 	);
 	check('alice’s calendar still has its 2 events', (await inSpace('alice', EVENT)).length === 2);
-	const m = await members();
+	const m = await peopleOnIt();
 	check('and the same people', m.includes(C.mallory.did) && m.includes(C.bob.did), `${m.length}`);
 
-	// At the PDS itself, a member can write a record of his own in the space. It counts for nothing.
+	// At the PDS itself, someone on it can write a record of his own in the space. It counts for nothing.
 	const own = await C.bob.post('com.atproto.space.putRecord', {
 		space: SPACE,
 		repo: C.bob.did,

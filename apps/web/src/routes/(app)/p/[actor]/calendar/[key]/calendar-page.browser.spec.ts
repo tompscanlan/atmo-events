@@ -4,13 +4,13 @@ import { render } from 'vitest-browser-svelte';
 import '../../../../../../app.css';
 import CalendarPage from './+page.svelte';
 
-const { OWNER, MEMBER, KEY, mocks } = vi.hoisted(() => ({
+const { OWNER, PERSON, KEY, mocks } = vi.hoisted(() => ({
 	OWNER: 'did:plc:ownerownerownerownerowner',
-	MEMBER: 'did:plc:membermembermembermember',
+	PERSON: 'did:plc:personpersonpersonperson',
 	KEY: 'cal-3lcalcalcalcal',
 	mocks: {
-		addCalendarMember: vi.fn(async () => ({})),
-		removeCalendarMember: vi.fn(async () => {}),
+		addPersonToCalendar: vi.fn(async () => ({})),
+		removePersonFromCalendar: vi.fn(async () => {}),
 		renameCalendar: vi.fn(async () => {}),
 		deleteCalendar: vi.fn(async () => {})
 	}
@@ -29,7 +29,7 @@ const EVENT = {
 	cid: 'cid'
 };
 
-/** The page's data, as its load returns it, for the owner or a member. */
+/** The page's data, as its load returns it, for the owner or someone on it. */
 function view(isOwner: boolean) {
 	return {
 		pageTitle: 'Supper club',
@@ -45,8 +45,8 @@ function view(isOwner: boolean) {
 			upcoming: [EVENT],
 			past: [],
 			eventsCapped: false,
-			members: isOwner ? [{ did: MEMBER, handle: 'member.example.com' }] : null,
-			membersCapped: false
+			people: isOwner ? [{ did: PERSON, handle: 'person.example.com' }] : null,
+			peopleCapped: false
 		}
 	};
 }
@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 describe('a shared calendar’s page', () => {
-	it('tells a member that only the people on it can see its events', async () => {
+	it('tells someone on it that only the people on it can see its events', async () => {
 		render(CalendarPage, { data: view(false) } as never);
 		await expect.element(page.getByRole('heading', { name: 'Supper club' })).toBeVisible();
 		await expect
@@ -65,7 +65,7 @@ describe('a shared calendar’s page', () => {
 		await expect.element(page.getByText('Dinner at eight').first()).toBeVisible();
 	});
 
-	it('gives a member nothing to change', async () => {
+	it('gives someone on it nothing to change', async () => {
 		render(CalendarPage, { data: view(false) } as never);
 		await expect.element(page.getByTestId('calendar-private-note')).toBeVisible();
 		expect(page.getByTestId('calendar-people').elements()).toHaveLength(0);
@@ -81,13 +81,13 @@ describe('a shared calendar’s page', () => {
 		await expect
 			.element(page.getByTestId('calendar-private-note'))
 			.toHaveTextContent('Private. Only the people on this calendar can see its events.');
-		await expect.element(page.getByText('member.example.com')).toBeVisible();
+		await expect.element(page.getByText('person.example.com')).toBeVisible();
 		await page
 			.getByRole('textbox', { name: 'Handle of the person to add' })
 			.fill('dana.example.com');
 		await page.getByRole('button', { name: 'Add', exact: true }).click();
 		await expect
-			.poll(() => mocks.addCalendarMember)
+			.poll(() => mocks.addPersonToCalendar)
 			.toHaveBeenCalledWith({ key: KEY, handleOrDid: 'dana.example.com' });
 	});
 
