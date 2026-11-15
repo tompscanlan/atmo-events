@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { command, getRequestEvent, query } from '$app/server';
 import * as v from 'valibot';
-import { calendarEvent, RSVP_STATUSES, singleEvent } from './ids';
+import { calendarEvent, RSVP_STATUSES, singleEvent, SPACE_KEY_PATTERN } from './ids';
 import { asCaller } from './server/command';
 import { privateEventsBetaOn } from './beta';
 import { BetaNotSaved, canSaveBeta, readBetaRecord, saveBeta } from './server/beta';
@@ -11,7 +11,8 @@ import {
 	createCalendar as makeCalendar,
 	deleteCalendar as removeCalendar,
 	removePersonFromCalendar as removePerson,
-	renameCalendar as nameCalendar
+	renameCalendar as nameCalendar,
+	saveNamedEvent
 } from './server/calendars';
 import {
 	addGuest as addGuestToEvent,
@@ -24,21 +25,27 @@ import {
 
 const didSchema = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,2048}$/));
 const rkeySchema = v.pipe(v.string(), v.regex(/^[a-zA-Z0-9._:~-]{1,512}$/));
-/** A shared calendar's key, which also says which space an event on it is in. */
-const calendarSchema = v.pipe(v.string(), v.regex(/^cal-[a-zA-Z0-9._:~-]{1,508}$/));
+/** A private space's key, which also says which space an event on it is in. Whether the space is a
+ *  calendar is read from it, since any space with a name is one. */
+const calendarSchema = v.pipe(v.string(), v.regex(SPACE_KEY_PATTERN));
 const nameSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(640));
 
 const addressOf = (host: string, rkey: string, calendar: string | undefined) =>
 	calendar ? calendarEvent(host, calendar, rkey) : singleEvent(host, rkey);
 
-/** Always into the caller's own space: a calendar named here is one of their own. */
+/** Always into the caller's own space: a calendar named here is one of their own. With `name`, a new
+ *  event's space gets that name, so its people become a shared calendar. */
 export const savePrivateEvent = command(
 	v.object({
 		rkey: rkeySchema,
 		record: v.record(v.string(), v.unknown()),
-		calendar: v.optional(calendarSchema)
+		calendar: v.optional(calendarSchema),
+		name: v.optional(nameSchema)
 	}),
-	(input) => asCaller((caller) => saveEvent(caller, input))
+	({ name, ...input }) =>
+		asCaller((caller) =>
+			name === undefined ? saveEvent(caller, input) : saveNamedEvent(caller, { ...input, name })
+		)
 );
 
 export const cancelPrivateEvent = command(

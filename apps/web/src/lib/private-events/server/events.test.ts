@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { HOST_SCOPE, GUEST_SCOPE } from '../scopes';
 import {
+	CALENDAR_COLLECTION,
 	EVENT_COLLECTION,
 	eventSpace,
 	eventUri,
@@ -202,13 +203,52 @@ describe('savePrivateEvent', () => {
 });
 
 describe('cancelPrivateEvent', () => {
-	it('deletes the space of the caller’s own event', async () => {
+	const named = () =>
+		reader.get.mockImplementation(async ({ collection }: { collection: string }) =>
+			collection === CALENDAR_COLLECTION ? spaceRecord(HOST, collection, { name: 'Supper' }) : null
+		);
+
+	it('deletes the space of the caller’s own event, once it has read that the space has no name', async () => {
+		reader.get.mockResolvedValue(null);
 		const host = caller(HOST, HOST_SCOPE);
 		await cancelPrivateEvent(host, { spaceKey: RKEY, rkey: RKEY });
-		expect(host.sent[0]).toMatchObject({
-			pathname: '/xrpc/com.atproto.space.deleteSpace',
-			body: { space: SPACE }
+		expect(reader.get).toHaveBeenCalledWith(
+			expect.objectContaining({ space: SPACE, repo: HOST, collection: CALENDAR_COLLECTION })
+		);
+		expect(host.sent).toMatchObject([
+			{ pathname: '/xrpc/com.atproto.space.deleteSpace', body: { space: SPACE } }
+		]);
+	});
+
+	it('takes only the event out of a space with a name, even the one the space was made for', async () => {
+		named();
+		const host = caller(HOST, HOST_SCOPE);
+		await cancelPrivateEvent(host, { spaceKey: RKEY, rkey: RKEY });
+		expect(host.sent).toMatchObject([
+			{
+				pathname: '/xrpc/com.atproto.space.deleteRecord',
+				body: { space: SPACE, repo: HOST, collection: EVENT_COLLECTION, rkey: RKEY }
+			}
+		]);
+		expect(host.nsids()).not.toContain('com.atproto.space.deleteSpace');
+	});
+
+	it('deletes nothing when it could not read whether the space has a name', async () => {
+		reader.get.mockRejectedValue(new Error('503'));
+		const host = caller(HOST, HOST_SCOPE);
+		await expect(cancelPrivateEvent(host, { spaceKey: RKEY, rkey: RKEY })).rejects.toMatchObject({
+			reason: 'unchecked'
 		});
+		expect(host.sent).toHaveLength(0);
+	});
+
+	it('refuses another event in a space with no name, which atmo never puts there', async () => {
+		reader.get.mockResolvedValue(null);
+		const host = caller(HOST, HOST_SCOPE);
+		await expect(
+			cancelPrivateEvent(host, { spaceKey: RKEY, rkey: '3lother' })
+		).rejects.toMatchObject({ reason: 'no-event' });
+		expect(host.sent).toHaveLength(0);
 	});
 });
 
@@ -509,11 +549,13 @@ describe('removeGuest', () => {
 
 describe('myPrivateEvents', () => {
 	const KEPT_OUT = privateEventSpace(OTHER, '3laaaaaaaaaaa');
+	type Read = { space: string; collection: string; rkey: string };
 
 	it('lists only what the person can still read, soonest first', async () => {
 		const later = privateEventSpace(HOST, '3lbbbbbbbbbbb');
-		reader.get.mockImplementation(async ({ space, rkey }: { space: string; rkey: string }) => {
+		reader.get.mockImplementation(async ({ space, collection, rkey }: Read) => {
 			if (space === KEPT_OUT) throw new SpaceAccessDenied(space, '400 SpaceNotFound');
+			if (collection === CALENDAR_COLLECTION) return null;
 			const startsAt = space === later ? '2026-12-01T00:00:00.000Z' : RECORD.startsAt;
 			return { ...spaceRecord(HOST, EVENT_COLLECTION, { ...RECORD, startsAt }), rkey };
 		});
@@ -539,8 +581,9 @@ describe('myPrivateEvents', () => {
 
 	it('says the list is incomplete when an event could not be read', async () => {
 		const down = privateEventSpace(OTHER, '3laaaaaaaaaaa');
-		reader.get.mockImplementation(async ({ space }: { space: string }) => {
+		reader.get.mockImplementation(async ({ space, collection }: Read) => {
 			if (space === down) throw new Error('503');
+			if (collection === CALENDAR_COLLECTION) return null;
 			return spaceRecord(HOST, EVENT_COLLECTION, RECORD);
 		});
 		const guest = caller(GUEST, GUEST_SCOPE, {
@@ -549,6 +592,60 @@ describe('myPrivateEvents', () => {
 		});
 		const { events, incomplete } = await myPrivateEvents(guest);
 		expect(events).toHaveLength(1);
+		expect(incomplete).toBe(true);
+	});
+
+	it('passes on a single event’s space with a name as a calendar, and lists it nowhere else', async () => {
+		const named = privateEventSpace(OTHER, '3lnamednamed');
+		reader.get.mockImplementation(async ({ space, collection, rkey }: Read) => {
+			if (collection === CALENDAR_COLLECTION) {
+				return space === named
+					? { ...spaceRecord(OTHER, collection, { name: 'Supper' }), rkey }
+					: null;
+			}
+			return { ...spaceRecord(OTHER, EVENT_COLLECTION, RECORD), rkey };
+		});
+		const guest = caller(GUEST, GUEST_SCOPE, {
+			'com.atproto.space.listSpaces': () =>
+				Response.json({ spaces: [{ space: named }, { space: SPACE }] })
+		});
+		const { events, calendars, incomplete } = await myPrivateEvents(guest);
+		expect(events.map((e) => e.event.rkey)).toEqual([RKEY]);
+		expect(calendars).toEqual([
+			{
+				host: OTHER,
+				key: '3lnamednamed',
+				named: expect.objectContaining({ value: { name: 'Supper' } })
+			}
+		]);
+		expect(incomplete).toBe(false);
+	});
+
+	it('keeps a named space a calendar once the event it was made for is cancelled', async () => {
+		reader.get.mockImplementation(async ({ collection }: Read) =>
+			collection === CALENDAR_COLLECTION ? spaceRecord(HOST, collection, { name: 'Supper' }) : null
+		);
+		const guest = caller(GUEST, GUEST_SCOPE, {
+			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SPACE }] })
+		});
+		const { events, calendars } = await myPrivateEvents(guest);
+		expect(events).toEqual([]);
+		expect(calendars).toEqual([
+			{ host: HOST, key: RKEY, named: expect.objectContaining({ value: { name: 'Supper' } }) }
+		]);
+	});
+
+	it('says the list is incomplete when a space’s name could not be read, and lists it as nothing', async () => {
+		reader.get.mockImplementation(async ({ collection }: Read) => {
+			if (collection === CALENDAR_COLLECTION) throw new Error('503');
+			return spaceRecord(HOST, EVENT_COLLECTION, RECORD);
+		});
+		const guest = caller(GUEST, GUEST_SCOPE, {
+			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SPACE }] })
+		});
+		const { events, calendars, incomplete } = await myPrivateEvents(guest);
+		expect(events).toEqual([]);
+		expect(calendars).toEqual([]);
 		expect(incomplete).toBe(true);
 	});
 

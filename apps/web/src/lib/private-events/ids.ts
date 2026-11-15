@@ -14,9 +14,19 @@ export const CALENDAR_COLLECTION = 'rsvp.atmo.dev.calendar';
 export const CALENDAR_RKEY = 'self';
 export const CALENDAR_NAME_MAX = 64;
 export const UNTITLED_CALENDAR = 'Untitled calendar';
+/** Shown wherever a host names one, since a name shows the people on it to each other. */
+export const NAMING_TELLS = 'Everyone on it sees its name and who else is on it.';
 
-/** A shared calendar's space key starts with this, so a key says which it is without a read. */
+/** A calendar made from Calendars has a space key that starts with this. Any private space with a
+ *  name record is a shared calendar too, so a key alone says a space is one, never that it isn't. */
 const CALENDAR_KEY_PREFIX = 'cal-';
+
+/** Any private space's key, as a record key: a single event's is the event's own. */
+export const SPACE_KEY_PATTERN = /^[a-zA-Z0-9._:~-]{1,512}$/;
+
+export function isSpaceKey(key: string): boolean {
+	return SPACE_KEY_PATTERN.test(key);
+}
 
 /** The lexicon's `status` token suffixes. */
 export const RSVP_STATUSES = ['going', 'interested', 'notgoing'] as const;
@@ -41,6 +51,8 @@ export function isSingleEvent(keys: EventKeys): boolean {
 	return keys.spaceKey === keys.rkey;
 }
 
+/** A key made for a calendar, which is a calendar's whether or not it has a name. A single event's
+ *  key must never be one. */
 export function isCalendarKey(key: string): boolean {
 	return key.startsWith(CALENDAR_KEY_PREFIX) && key.length > CALENDAR_KEY_PREFIX.length;
 }

@@ -29,7 +29,7 @@ beforeEach(() => {
 	mocks.beta.mockResolvedValue(true);
 	mocks.caller.mockResolvedValue(null);
 	mocks.calendars.mockReset();
-	mocks.calendars.mockResolvedValue([]);
+	mocks.calendars.mockResolvedValue({ calendars: [], capped: false });
 });
 
 describe('the private choice on /create', () => {
@@ -54,7 +54,7 @@ describe('putting the event on a shared calendar from /create', () => {
 
 	it('offers the host’s own calendars', async () => {
 		mocks.caller.mockResolvedValue(host);
-		mocks.calendars.mockResolvedValue([supper]);
+		mocks.calendars.mockResolvedValue({ calendars: [supper], capped: false });
 		expect((await run()).calendars).toEqual([{ key: supper.key, name: 'Supper club' }]);
 	});
 
@@ -67,7 +67,7 @@ describe('putting the event on a shared calendar from /create', () => {
 	it('offers none with the beta off', async () => {
 		mocks.beta.mockResolvedValue(false);
 		mocks.caller.mockResolvedValue(host);
-		mocks.calendars.mockResolvedValue([supper]);
+		mocks.calendars.mockResolvedValue({ calendars: [supper], capped: false });
 		expect((await run()).calendars).toEqual([]);
 	});
 

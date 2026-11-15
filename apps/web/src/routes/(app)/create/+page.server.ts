@@ -21,9 +21,9 @@ async function calendarsOf(caller: CallerSession | null) {
 	return (
 		await ownCalendars(caller).catch((e) => {
 			console.error(`[private-events] ${caller.did}: calendars unread for /create:`, e);
-			return [];
+			return { calendars: [] };
 		})
-	).map(({ key, name }) => ({ key, name }));
+	).calendars.map(({ key, name }) => ({ key, name }));
 }
 
 export async function load({ locals, cookies }) {

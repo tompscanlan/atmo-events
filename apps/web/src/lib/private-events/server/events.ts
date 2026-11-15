@@ -1,7 +1,8 @@
 // A person's private event: written to a space on their own PDS, and read directly from the PDS
 // with each person's own access, so the PDS alone decides who sees it. It never reaches the index
 // or a public URL. A single event has a space of its own, under the event's key, so each one has
-// its own guest list.
+// its own guest list. Once its host names that space, it is a shared calendar like any other, and
+// the event stays where it is.
 import * as v from '@atcute/lexicons/validations';
 import type { AttendeeInfo, FlatEventRecord } from '#lib/contrail.js';
 import { actorToDid } from '#lib/actor.js';
@@ -17,7 +18,9 @@ import { parseSpaceUri } from '#lib/spaces/uri.js';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
 import {
 	calendarEvent,
+	CALENDAR_COLLECTION,
 	CALENDAR_NAME_MAX,
+	CALENDAR_RKEY,
 	EVENT_COLLECTION,
 	eventPath,
 	isCalendarKey,
@@ -49,7 +52,11 @@ const REFUSALS = {
 	'own-event': "You're the host, so you're already on your own event.",
 	'no-calendar': "That calendar isn't there anymore, so nothing changed.",
 	'own-calendar': "It's your calendar, so you're already on it.",
-	'bad-name': `A calendar's name needs 1 to ${CALENDAR_NAME_MAX} characters, so nothing was saved.`
+	'bad-name': `A calendar's name needs 1 to ${CALENDAR_NAME_MAX} characters, so nothing was saved.`,
+	'named-on-calendar':
+		"An event on a shared calendar goes by the calendar's name, so nothing was saved.",
+	'name-not-saved':
+		"The event was saved, but its name wasn't, so its guests aren't a shared calendar yet. Save again to try once more."
 } as const;
 
 /** In words a page can show; a PDS's own message is never kept. */
@@ -136,9 +143,32 @@ export async function ensurePrivateSpace(
 	return checkPrivateSpace(caller, spaceKey, 'refused');
 }
 
+/** A space's name record, in its owner's repo there; null when it has none. A space with one is a
+ *  shared calendar. A failure to read it throws, so "could not read" never passes for "no name". */
+export async function readSpaceName(
+	reader: SpaceReader,
+	host: string,
+	spaceKey: string
+): Promise<SpaceRecord | null> {
+	const found = await reader.get({
+		space: privateEventSpace(host, spaceKey),
+		repo: host,
+		collection: CALENDAR_COLLECTION,
+		rkey: CALENDAR_RKEY
+	});
+	return found ?? null;
+}
+
+/** A shared calendar of the caller's own: made as one, or named since. Throws when the name can't
+ *  be read. */
+export async function isOwnCalendar(caller: CallerSession, spaceKey: string): Promise<boolean> {
+	if (isCalendarKey(spaceKey)) return true;
+	return (await readSpaceName(credentialSpaceReader(caller), caller.did, spaceKey)) !== null;
+}
+
 /** The event, without any image, since atmo can't show a private one yet. With `calendar`, it goes
- *  on that shared calendar of the caller's own, which must be there already; without, it gets a
- *  space of its own. */
+ *  on that shared calendar of the caller's own, which must be there already and have a name, unless
+ *  it was made as a calendar; without, it gets a space of its own. */
 export async function savePrivateEvent(
 	caller: CallerSession,
 	input: { rkey: string; record: Record<string, unknown>; calendar?: string }
@@ -150,9 +180,6 @@ export async function savePrivateEvent(
 	if (!v.safeParse(eventSchema, record).ok) throw new PrivateEventRefused('not-an-event');
 	// A single event's key is its space's, and must never read as a calendar's.
 	if (isCalendarKey(input.rkey)) throw new PrivateEventRefused('not-an-event');
-	if (input.calendar !== undefined && !isCalendarKey(input.calendar)) {
-		throw new PrivateEventRefused('no-calendar');
-	}
 	const address = input.calendar
 		? calendarEvent(caller.did, input.calendar, input.rkey)
 		: singleEvent(caller.did, input.rkey);
@@ -160,6 +187,10 @@ export async function savePrivateEvent(
 		const space = input.calendar
 			? await checkPrivateSpace(caller, address.spaceKey)
 			: await ensurePrivateSpace(caller, address.spaceKey);
+		// A single event's space holds only its own event until its host names it.
+		if (input.calendar && !(await isOwnCalendar(caller, address.spaceKey))) {
+			throw new PrivateEventRefused('no-calendar');
+		}
 		const saved = await xrpc(caller.handle, 'com.atproto.space.putRecord', {
 			body: {
 				space,
@@ -178,7 +209,8 @@ export async function savePrivateEvent(
 }
 
 /** For a single event, deleting its space ends every guest's access. Their answers stay in their
- *  own repos, unreadable. An event on a shared calendar is only taken off it, and the calendar stays. */
+ *  own repos, unreadable. An event on a shared calendar is only taken off it, and the calendar stays,
+ *  even when the event is the one its space was made for: the space has a name by then. */
 export async function cancelPrivateEvent(caller: CallerSession, keys: EventKeys): Promise<void> {
 	requireHost(caller);
 	// A calendar's own key is never an event's, so this never deletes a calendar.
@@ -186,11 +218,16 @@ export async function cancelPrivateEvent(caller: CallerSession, keys: EventKeys)
 	const address = { ...keys, host: caller.did };
 	const space = eventSpace(address);
 	const failed = `event ${keys.rkey} not cancelled`;
-	if (isSingleEvent(keys)) {
+	// Without the name, the space can't be told apart from a calendar, and must not be deleted.
+	const onCalendar = await isOwnCalendar(caller, keys.spaceKey).catch((e) => {
+		console.error(`[private-events] ${caller.did}: name of ${keys.spaceKey} unread:`, e);
+		throw new PrivateEventRefused('unchecked');
+	});
+	if (!onCalendar) {
+		if (!isSingleEvent(keys)) throw new PrivateEventRefused('no-event');
 		await write(caller, 'com.atproto.space.deleteSpace', { space }, failed);
 		return;
 	}
-	if (!isCalendarKey(keys.spaceKey)) throw new PrivateEventRefused('no-event');
 	try {
 		await xrpc(caller.handle, 'com.atproto.space.deleteRecord', {
 			body: { space, repo: caller.did, collection: EVENT_COLLECTION, rkey: keys.rkey }
@@ -522,20 +559,22 @@ export interface MyPrivateEvents {
 	events: MyPrivateEvent[];
 	/** A server didn't answer, or there were too many to list, so there may be more than these. */
 	incomplete: boolean;
-	/** Shared calendars among their spaces, not yet read. */
-	calendars: { host: string; key: string }[];
+	/** Shared calendars among their spaces, to be read as calendars, each with its name record when
+	 *  that was read here already (null for none), so it isn't read twice. */
+	calendars: { host: string; key: string; named?: SpaceRecord | null }[];
 }
 
 /** Events they host or have answered, by their own PDS. It keeps spaces they were taken off or never
- *  let into, and misses ones they haven't written in, so each is read before it is listed. A shared
- *  calendar's space is passed on unread, for the caller to read as a calendar. */
+ *  let into, and misses ones they haven't written in, so each is read before it is listed. A space
+ *  made as a calendar is passed on unread, and one with a name is passed on once its name is read,
+ *  for the caller to read as a calendar. */
 export async function myPrivateEvents(caller: CallerSession): Promise<MyPrivateEvents> {
 	// Without a guest's grant, the PDS answers only for their own spaces.
 	const { spaces, cutOff } = await listedSpaces(caller, !holdsGuestGrant(caller.scope));
 
 	const reader = credentialSpaceReader(caller);
 	let unread = 0;
-	const calendars: { host: string; key: string }[] = [];
+	const calendars: MyPrivateEvents['calendars'] = [];
 	const events = await Promise.all(
 		spaces.map(async (uri): Promise<MyPrivateEvent | null> => {
 			const parsed = parseSpaceUri(uri);
@@ -545,11 +584,24 @@ export async function myPrivateEvents(caller: CallerSession): Promise<MyPrivateE
 				return null;
 			}
 			const address = singleEvent(parsed.authority, parsed.key);
-			const event = await readEvent(reader, address).catch((e) => {
+			const read = await Promise.all([
+				readEvent(reader, address),
+				readSpaceName(reader, parsed.authority, parsed.key).catch((e) => {
+					if (isSpaceAccessDenied(e)) return null;
+					throw e;
+				})
+			]).catch((e) => {
 				console.info(`[private-events] ${uri} unread for ${caller.did}:`, e);
 				unread++;
 				return null;
 			});
+			if (!read) return null;
+			const [event, named] = read;
+			// Still a calendar once the event it was made for is cancelled.
+			if (named) {
+				calendars.push({ host: parsed.authority, key: parsed.key, named });
+				return null;
+			}
 			if (!event) return null;
 			const hostHandle = await verifiedHandle(parsed.authority);
 			return {

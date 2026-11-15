@@ -29,6 +29,7 @@ const GUEST = 'did:plc:guestguestguestguestgues';
 const HOST = 'did:plc:hosthosthosthosthosthost';
 const SOUND = privateEventSpace(HOST, '3laaaaaaaaaaa');
 const BROKEN = privateEventSpace(HOST, '3lbbbbbbbbbbb');
+type Read = { space: string; collection: string; rkey: string };
 const RECORD = {
 	$type: EVENT_COLLECTION,
 	name: 'Dinner',
@@ -75,8 +76,9 @@ describe('/private when a host’s server is down', () => {
 	});
 
 	it('shows what it could read, and says there may be more', async () => {
-		reader.get.mockImplementation(async ({ space, rkey }: { space: string; rkey: string }) => {
+		reader.get.mockImplementation(async ({ space, collection, rkey }: Read) => {
 			if (space === BROKEN) throw new Error('503');
+			if (collection === CALENDAR_COLLECTION) return null;
 			return {
 				uri: `${space}/${HOST}/${EVENT_COLLECTION}/${rkey}`,
 				cid: `cid-of-${rkey}`,
@@ -90,12 +92,16 @@ describe('/private when a host’s server is down', () => {
 	});
 
 	it('says nothing of the kind when all is read', async () => {
-		reader.get.mockImplementation(async ({ space, rkey }: { space: string; rkey: string }) => ({
-			uri: `${space}/${HOST}/${EVENT_COLLECTION}/${rkey}`,
-			cid: `cid-of-${rkey}`,
-			rkey,
-			value: RECORD
-		}));
+		reader.get.mockImplementation(async ({ space, collection, rkey }: Read) =>
+			collection === CALENDAR_COLLECTION
+				? null
+				: {
+						uri: `${space}/${HOST}/${EVENT_COLLECTION}/${rkey}`,
+						cid: `cid-of-${rkey}`,
+						rkey,
+						value: RECORD
+					}
+		);
 		const body = await renderedPrivatePage();
 		expect(body).not.toContain('data-testid="private-events-incomplete"');
 	});
@@ -107,12 +113,16 @@ describe('/private with a record a host wrote badly', () => {
 		['a name that is not a string', { name: 7 }],
 		['a start that is not a date', { startsAt: 'soon' }]
 	])('still renders for their guest, without it: %s', async (_, broken) => {
-		reader.get.mockImplementation(async ({ space, rkey }: { space: string; rkey: string }) => ({
-			uri: `${space}/${HOST}/${EVENT_COLLECTION}/${rkey}`,
-			cid: `cid-of-${rkey}`,
-			rkey,
-			value: space === BROKEN ? { ...RECORD, name: 'Broken', ...broken } : RECORD
-		}));
+		reader.get.mockImplementation(async ({ space, collection, rkey }: Read) =>
+			collection === CALENDAR_COLLECTION
+				? null
+				: {
+						uri: `${space}/${HOST}/${EVENT_COLLECTION}/${rkey}`,
+						cid: `cid-of-${rkey}`,
+						rkey,
+						value: space === BROKEN ? { ...RECORD, name: 'Broken', ...broken } : RECORD
+					}
+		);
 
 		const body = await renderedPrivatePage();
 
@@ -152,7 +162,7 @@ describe('/private with shared calendars', () => {
 						value: { name: 'Supper club' }
 					};
 				}
-				if (space === SOUND) {
+				if (space === SOUND && collection === EVENT_COLLECTION) {
 					return {
 						uri: `${space}/${HOST}/${EVENT_COLLECTION}/3laaaaaaaaaaa`,
 						cid: 'c',
