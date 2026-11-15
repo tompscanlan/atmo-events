@@ -896,9 +896,11 @@ await step('13. bob cannot add an event or change who is on it', async () => {
 	check('nor for alice', !(await text(pages.alice, 'main')).includes(CRAFTED));
 	const at = await open(p, `${CAL_PATH}/3kcraftedcraft`);
 	check('nor at its own address', at === 404, `${at}`);
-	await open(p, '/');
-	await p.locator('[data-testid=your-private-event]').first().waitFor({ timeout: 20000 });
-	check('nor in his Your events', !(await text(p, 'main')).includes(CRAFTED));
+	// His beta is off, so his Your events lists no private events; alice's lists the calendar's.
+	const a = pages.alice;
+	await open(a, '/');
+	await a.locator('[data-testid=your-private-event]').first().waitFor({ timeout: 20000 });
+	check('nor in alice’s Your events', !(await text(a, 'main')).includes(CRAFTED));
 });
 
 await step('14. alice renames the calendar, and deletes event 2', async () => {
