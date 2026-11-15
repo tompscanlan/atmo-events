@@ -13,7 +13,6 @@ import { getServerClient } from '#lib/contrail/index.js';
 import { cachedRead } from '#lib/server/edge-cache.js';
 import { dedupeByUri } from '#lib/dedupe-by-uri.js';
 import { holdsGuestGrant, holdsHostGrant } from '#lib/private-events/scopes.js';
-import { privateEventsBeta } from '#lib/private-events/server/beta.js';
 import { myPrivateEventsAndCalendars } from '#lib/private-events/server/calendars.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsEnabled } from '#lib/private-events/server/enabled.js';
@@ -40,23 +39,22 @@ const ACTIVITY_RECENT_EVENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
  *  their public ones alone. */
 const PRIVATE_EVENTS_WAIT_MS = 4000;
 
-/** Their own private events, hosted or answered, for Your events: only with private events and their
- *  beta on, and a grant to read them. Null when there are none to add. `incomplete` when some may be
- *  missing: a read failed or ran out of time, or a calendar had more than were listed. The page never
- *  waits long or fails for them. */
+/** Their own private events, hosted or answered, for Your events: for anyone with private events on
+ *  and a grant to read them, beta or not, since a guest never needs the beta and this is the one way
+ *  back to an event besides the host's link. Null when there are none to add. `incomplete` when some
+ *  may be missing: a read failed or ran out of time, or a calendar had more than were listed. The page
+ *  never waits long or fails for them. */
 async function ownPrivateEvents(
 	locals: App.Locals
 ): Promise<{ events: MyPrivateEvent[]; incomplete: boolean } | null> {
 	if (!locals.did || !privateEventsEnabled()) return null;
-	// The session and its grant are known here; only the beta setting is on their server, so it is
-	// asked last, and someone without a grant costs this page nothing.
-	let betaOn = false;
+	// The session and its grant are known here, so someone without a grant costs this page nothing.
+	let granted = false;
 	const read = async () => {
 		const caller = await callerSession(locals.session ?? null);
 		if (!caller) return null;
 		if (!holdsGuestGrant(caller.scope) && !holdsHostGrant(caller.scope, caller.did)) return null;
-		if (!(await privateEventsBeta(locals))) return null;
-		betaOn = true;
+		granted = true;
 		const { events, incomplete, capped } = await myPrivateEventsAndCalendars(caller);
 		return { events, incomplete: incomplete || capped };
 	};
@@ -67,10 +65,10 @@ async function ownPrivateEvents(
 	try {
 		const found = await Promise.race([read(), late]);
 		if (found !== 'late') return found;
-		return betaOn ? { events: [], incomplete: true } : null;
+		return granted ? { events: [], incomplete: true } : null;
 	} catch (e) {
 		console.error(`[private-events] ${locals.did}: private events unread for the home page:`, e);
-		return betaOn ? { events: [], incomplete: true } : null;
+		return granted ? { events: [], incomplete: true } : null;
 	} finally {
 		clearTimeout(timer);
 	}
