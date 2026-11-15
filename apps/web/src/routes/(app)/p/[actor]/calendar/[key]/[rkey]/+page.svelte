@@ -5,11 +5,9 @@
 	import { user } from '#lib/atproto/auth.svelte.js';
 	import { atProtoLoginModalState } from '#lib/components/LoginModal.svelte';
 	import { BETA_WARNING } from '#lib/private-events/beta.js';
-	import CalendarEventGuests from '#lib/private-events/components/CalendarEventGuests.svelte';
-	import CalendarPrivateNote from '#lib/private-events/components/CalendarPrivateNote.svelte';
-	import FindAgainOffer from '#lib/private-events/components/FindAgainOffer.svelte';
+	import CalendarEventDetails from '#lib/private-events/components/CalendarEventDetails.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
-	import { calendarEvent, UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
+	import { calendarEvent } from '#lib/private-events/ids.js';
 	import { createPrivateRsvpAdapter } from '#lib/private-events/rsvp-adapter.js';
 	import { GUEST_SCOPES, HOST_SCOPES } from '#lib/private-events/scopes.js';
 	import { holdPrivateEmbeds } from '#lib/private-events/embeds.js';
@@ -39,7 +37,6 @@
 		viewer,
 		(status) => (answered = status)
 	)}
-	{@const calendarName = data.calendar.name ?? UNTITLED_CALENDAR}
 	{@const actor = data.hostProfile.handle ?? data.actorDid}
 	<!-- A private event has no public page to share, so the page offers no Bluesky post. -->
 	<EventView {data} {adapter} {viewer} pageUrl={new URL(page.url.href)} share={false}>
@@ -57,27 +54,16 @@
 					shortly.
 				</p>
 			{/if}
-			<p class="text-base-600 dark:text-base-400 text-sm" data-testid="private-note">
-				<CalendarPrivateNote
-					name={data.calendar.name}
-					link={{ actor, key: data.calendar.key }}
-					size={14}
-				/>
-				{#if !data.isHost && !answered && !data.answersUnread}Answer to let the host know you saw
-					it.{/if}
-			</p>
-			{#if !data.isHost && answered}<FindAgainOffer />{/if}
-			{#if data.guests}
-				<CalendarEventGuests
-					guests={data.guests}
-					capped={data.guestsCapped}
-					owner={data.isHost}
-					you={user.did ? { did: user.did, answer: answered } : null}
-					{actor}
-					calendarKey={data.calendar.key}
-					{calendarName}
-				/>
-			{/if}
+			<CalendarEventDetails
+				calendar={data.calendar}
+				{actor}
+				isHost={data.isHost}
+				{answered}
+				answersUnread={data.answersUnread}
+				guests={data.guests}
+				guestsCapped={data.guestsCapped}
+				viewerDid={user.did ?? null}
+			/>
 		{/snippet}
 	</EventView>
 {:else}

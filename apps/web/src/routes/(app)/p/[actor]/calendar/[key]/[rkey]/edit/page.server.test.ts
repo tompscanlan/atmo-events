@@ -8,6 +8,7 @@ const RKEY = '3levent';
 const setHeaders = vi.fn();
 const callerSession = vi.fn();
 const readPrivateEventForEdit = vi.fn();
+const isOwnCalendar = vi.fn();
 vi.mock('#lib/actor.js', () => ({ getActor: async (actor: string) => actor }));
 vi.mock('#lib/private-events/scopes.js', () => ({ holdsHostGrant: () => true }));
 vi.mock('#lib/private-events/server/caller.js', () => ({
@@ -15,7 +16,8 @@ vi.mock('#lib/private-events/server/caller.js', () => ({
 }));
 vi.mock('#lib/private-events/server/enabled.js', () => ({ privateEventsEnabled: () => true }));
 vi.mock('#lib/private-events/server/events.js', () => ({
-	readPrivateEventForEdit: (...args: unknown[]) => readPrivateEventForEdit(...args)
+	readPrivateEventForEdit: (...args: unknown[]) => readPrivateEventForEdit(...args),
+	isOwnCalendar: (...args: unknown[]) => isOwnCalendar(...args)
 }));
 vi.mock('#lib/spaces/server/other-servers.js', () => ({ timeLimitedNetwork: () => ({}) }));
 
@@ -34,6 +36,8 @@ describe('editing an event on a shared calendar', () => {
 		callerSession.mockReset();
 		readPrivateEventForEdit.mockReset();
 		readPrivateEventForEdit.mockResolvedValue({ name: 'Dinner' });
+		isOwnCalendar.mockReset();
+		isOwnCalendar.mockResolvedValue(true);
 	});
 
 	it('reads the owner’s own event from the calendar, and keeps no copy', async () => {
@@ -52,9 +56,36 @@ describe('editing an event on a shared calendar', () => {
 		expect(readPrivateEventForEdit).not.toHaveBeenCalled();
 	});
 
-	it('is not there at a key that is not a calendar’s', async () => {
+	it('reads an event on a calendar that was a single event’s space the same way', async () => {
 		callerSession.mockResolvedValue({ did: OWNER, scope: '' });
+		await expect(load(request('3lsingle'))).resolves.toMatchObject({ calendarKey: '3lsingle' });
+		expect(readPrivateEventForEdit).toHaveBeenCalledWith(expect.anything(), {
+			spaceKey: '3lsingle',
+			rkey: RKEY
+		});
+	});
+
+	it('is not there for a single event’s space with no name, as at a made-up address', async () => {
+		callerSession.mockResolvedValue({ did: OWNER, scope: '' });
+		isOwnCalendar.mockResolvedValue(false);
+		const unnamed = await load(request('3lsingle')).catch((e) => e);
+		readPrivateEventForEdit.mockResolvedValue(null);
+		const madeUp = await load(request('3lmadeup')).catch((e) => e);
+		expect(unnamed).toMatchObject({ status: 404 });
+		expect(unnamed).toEqual(madeUp);
+	});
+
+	it('is not there where the space isn’t, rather than failing', async () => {
+		callerSession.mockResolvedValue({ did: OWNER, scope: '' });
+		const { SpaceAccessDenied } = await import('#lib/spaces/server/space-credential.js');
+		isOwnCalendar.mockRejectedValue(new SpaceAccessDenied('at://x', '400 SpaceNotFound'));
+		readPrivateEventForEdit.mockResolvedValue(null);
+		await expect(load(request('3lgone'))).rejects.toMatchObject({ status: 404 });
+	});
+
+	it('is not there where the space holds no such event', async () => {
+		callerSession.mockResolvedValue({ did: OWNER, scope: '' });
+		readPrivateEventForEdit.mockResolvedValue(null);
 		await expect(load(request('3lsingle'))).rejects.toMatchObject({ status: 404 });
-		expect(readPrivateEventForEdit).not.toHaveBeenCalled();
 	});
 });

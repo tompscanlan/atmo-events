@@ -5,9 +5,12 @@
 	import { user } from '#lib/atproto/auth.svelte.js';
 	import { atProtoLoginModalState } from '#lib/components/LoginModal.svelte';
 	import { BETA_WARNING } from '#lib/private-events/beta.js';
+	import CalendarEventDetails from '#lib/private-events/components/CalendarEventDetails.svelte';
+	import CalendarsNeedAllowing from '#lib/private-events/components/CalendarsNeedAllowing.svelte';
 	import GuestList from '#lib/private-events/components/GuestList.svelte';
 	import FindAgainOffer from '#lib/private-events/components/FindAgainOffer.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
+	import SaveAsCalendar from '#lib/private-events/components/SaveAsCalendar.svelte';
 	import { singleEvent } from '#lib/private-events/ids.js';
 	import { createPrivateRsvpAdapter } from '#lib/private-events/rsvp-adapter.js';
 	import { GUEST_SCOPES, HOST_SCOPES } from '#lib/private-events/scopes.js';
@@ -54,8 +57,22 @@
 					shortly.
 				</p>
 			{/if}
-			{#if data.guests}
+			{#if data.calendar}
+				<!-- Its host named its space, so it is on that calendar, at the address it always had. -->
+				<CalendarEventDetails
+					calendar={data.calendar}
+					actor={data.hostProfile.handle ?? data.actorDid}
+					isHost={data.isHost}
+					{answered}
+					answersUnread={data.answersUnread}
+					guests={data.guests}
+					guestsCapped={data.guestsCapped}
+					viewerDid={user.did ?? null}
+				/>
+			{:else if data.guests}
 				<GuestList rkey={data.rkey} guests={data.guests} capped={data.guestsCapped} />
+				{#if data.canName}<SaveAsCalendar spaceKey={data.rkey} />{:else}<CalendarsNeedAllowing
+					/>{/if}
 			{:else}
 				<p class="text-base-600 dark:text-base-400 text-sm" data-testid="private-note">
 					Private event. Only people the host added can see it.

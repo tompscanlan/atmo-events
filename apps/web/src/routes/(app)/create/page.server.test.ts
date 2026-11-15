@@ -18,10 +18,15 @@ const { load } = await import('./+page.server');
 
 const locals = { did: 'did:plc:alice', session: null, client: {} };
 const cookies = { get: () => undefined, delete: () => {} };
-const run = () =>
-	load({ locals, cookies } as never) as Promise<{
+const run = (search = '') =>
+	load({
+		locals,
+		cookies,
+		url: new URL(`https://atmo.example.com/create${search}`)
+	} as never) as Promise<{
 		privateEvents: boolean;
 		calendars: { key: string; name: string | null }[];
+		calendarsCapped: boolean;
 	}>;
 
 beforeEach(() => {
@@ -56,6 +61,14 @@ describe('putting the event on a shared calendar from /create', () => {
 		mocks.caller.mockResolvedValue(host);
 		mocks.calendars.mockResolvedValue({ calendars: [supper], capped: false });
 		expect((await run()).calendars).toEqual([{ key: supper.key, name: 'Supper club' }]);
+	});
+
+	it('asks for the calendar the address names, and says when there may be more', async () => {
+		mocks.caller.mockResolvedValue(host);
+		mocks.calendars.mockResolvedValue({ calendars: [supper], capped: true });
+		const data = await run('?audience=calendar&calendar=3lold');
+		expect(mocks.calendars).toHaveBeenCalledWith(host, { wanted: '3lold' });
+		expect(data.calendarsCapped).toBe(true);
 	});
 
 	it('offers none, and reads none, to someone who can’t host', async () => {

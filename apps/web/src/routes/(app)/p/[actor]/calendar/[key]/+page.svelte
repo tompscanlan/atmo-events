@@ -9,7 +9,7 @@
 	import CalendarPeople from '#lib/private-events/components/CalendarPeople.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { refusalWords } from '#lib/private-events/components/refusal.js';
-	import { UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
+	import { NAMING_TELLS, UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
 	import { deleteCalendar, renameCalendar } from '#lib/private-events/private-events.remote.js';
 	import { GUEST_SCOPES, HOST_SCOPES } from '#lib/private-events/scopes.js';
 
@@ -45,6 +45,13 @@
 			renaming = false;
 			await invalidateAll();
 		});
+	}
+
+	/** The event its space was made for keeps the address it had before the space had a name. */
+	function eventHref(actor: string, key: string, rkey: string) {
+		return rkey === key
+			? resolve('/(app)/p/[actor]/private/[rkey]', { actor, rkey })
+			: resolve('/(app)/p/[actor]/calendar/[key]/[rkey]', { actor, key, rkey });
 	}
 
 	const remove = (key: string) =>
@@ -115,6 +122,9 @@
 					<Button type="submit" size="sm" disabled={busy || !newName.trim()}>Save</Button>
 					<Button size="sm" variant="ghost" onclick={() => (renaming = false)}>Cancel</Button>
 				</form>
+				<p class="text-base-600 dark:text-base-400 mt-2 text-sm" data-testid="naming-tells">
+					{NAMING_TELLS}
+				</p>
 			{/if}
 			{#if confirmingDelete}
 				<div
@@ -147,14 +157,7 @@
 				<ul class="mt-3 space-y-3">
 					{#each calendar.upcoming as event (event.rkey)}
 						<li>
-							<EventCard
-								{event}
-								href={resolve('/(app)/p/[actor]/calendar/[key]/[rkey]', {
-									actor: data.actor,
-									key: calendar.key,
-									rkey: event.rkey
-								})}
-							/>
+							<EventCard {event} href={eventHref(data.actor, calendar.key, event.rkey)} />
 						</li>
 					{/each}
 				</ul>
@@ -166,14 +169,7 @@
 				<ul class="mt-3 space-y-3">
 					{#each calendar.past as event (event.rkey)}
 						<li>
-							<EventCard
-								{event}
-								href={resolve('/(app)/p/[actor]/calendar/[key]/[rkey]', {
-									actor: data.actor,
-									key: calendar.key,
-									rkey: event.rkey
-								})}
-							/>
+							<EventCard {event} href={eventHref(data.actor, calendar.key, event.rkey)} />
 						</li>
 					{/each}
 				</ul>

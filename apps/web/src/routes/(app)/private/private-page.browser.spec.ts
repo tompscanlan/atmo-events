@@ -53,7 +53,7 @@ describe('/private', () => {
 		await expect
 			.element(what)
 			.toHaveTextContent(
-				'For a few people you invite to your own events. Only you add events or people.'
+				'For a few people you invite to your own events. Only you add events or people. Everyone on it sees its name and who else is on it.'
 			);
 		expect(what.element().textContent ?? '').not.toMatch(/group/i);
 	});

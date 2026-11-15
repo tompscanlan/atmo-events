@@ -51,7 +51,8 @@ function data(calendars = CALENDARS, privateEvents = true) {
 		privateEvents,
 		hostAccess: null,
 		spacesServer: null,
-		calendars: privateEvents ? calendars : []
+		calendars: privateEvents ? calendars : [],
+		canName: privateEvents
 	};
 }
 
@@ -139,5 +140,40 @@ describe('a link that asks for a private audience, while private events are off'
 		render(CreatePage, { data: data(CALENDARS, false) } as never);
 		await expect.element(page.getByRole('button', { name: /^publish/i })).toBeVisible();
 		expect(page.getByTestId('private-off').elements()).toHaveLength(0);
+	});
+});
+
+describe('naming a new private event’s guests on /create', () => {
+	it('offers an optional name for invited people only, and says what it shows', async () => {
+		render(CreatePage, { data: data() } as never);
+		const field = page.getByRole('textbox', {
+			name: 'Name this list to reuse it for later events (optional)'
+		});
+		expect(field.elements()).toHaveLength(0);
+		await page.getByRole('radio', { name: 'Invited people only' }).click();
+		await expect.element(field).toBeVisible();
+		await expect
+			.element(page.getByTestId('naming-tells'))
+			.toHaveTextContent('Everyone on it sees its name and who else is on it.');
+		await page.getByRole('radio', { name: CHOICE }).click();
+		expect(field.elements()).toHaveLength(0);
+	});
+
+	it('is not offered without the permission to name one', async () => {
+		at('?audience=invited');
+		render(CreatePage, { data: { ...data(), canName: false } } as never);
+		await expect.element(page.getByRole('button', { name: /^publish/i })).toBeVisible();
+		expect(page.getByTestId('naming-tells').elements()).toHaveLength(0);
+		await expect
+			.element(page.getByTestId('calendars-need-allowing').getByRole('link', { name: 'Calendars' }))
+			.toHaveAttribute('href', '/private');
+	});
+
+	it('says there may be more calendars when it read only the newest', async () => {
+		at('?audience=calendar');
+		render(CreatePage, { data: { ...data(), calendarsCapped: true } } as never);
+		await expect
+			.element(page.getByText('There may be more calendars than these.', { exact: false }))
+			.toBeVisible();
 	});
 });

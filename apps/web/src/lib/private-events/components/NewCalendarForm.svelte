@@ -2,7 +2,7 @@
 	import { Button, Input } from '@atmo-dev/kit';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { CALENDAR_NAME_MAX } from '../ids';
+	import { CALENDAR_NAME_MAX, NAMING_TELLS } from '../ids';
 	import { createCalendar } from '../private-events.remote';
 	import { refusalWords } from './refusal';
 
@@ -37,7 +37,7 @@
 	<Button type="submit" size="sm" disabled={busy || !name.trim()}>New shared calendar</Button>
 </form>
 <p class="text-base-600 dark:text-base-400 mt-2 text-sm" data-testid="new-calendar-what">
-	For a few people you invite to your own events. Only you add events or people.
+	For a few people you invite to your own events. Only you add events or people. {NAMING_TELLS}
 </p>
 {#if failure}<p role="alert" class="text-base-950 dark:text-base-50 mt-2 text-sm">
 		{failure}
