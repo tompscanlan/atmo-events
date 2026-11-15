@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { EventCard } from '@atmo-dev/kit/events';
+	import { LockKeyhole } from '@sketchyicons/svelte';
 	import RecentActivity from '#lib/components/RecentActivity.svelte';
 	import HeroGlobe from '#lib/components/HeroGlobe.svelte';
 	import AtmosphereFeatures from '#lib/components/AtmosphereFeatures.svelte';
-	import { Button } from '@atmo-dev/kit';
+	import { Button, Icon } from '@atmo-dev/kit';
 	import { user } from '#lib/atproto/auth.svelte.js';
 	import { atProtoLoginModalState } from '#lib/components/LoginModal.svelte';
 	import { createEventModalState } from '#lib/components/CreateEventModal.svelte';
@@ -14,6 +15,21 @@
 		user.isLoggedIn && (data.myUpcoming.length > 0 || data.myPast.length > 0)
 	);
 </script>
+
+{#snippet yourEvent(event: (typeof data.myUpcoming)[number])}
+	{@const link = data.privateLinks?.[event.uri]}
+	{#if link}
+		<div data-testid="your-private-event">
+			<EventCard {event} href={link.href} />
+			<p class="text-base-600 dark:text-base-400 mt-1 inline-flex items-center gap-1 text-xs">
+				<Icon img={LockKeyhole} size={12} />
+				{link.calendar ? `Private to ${link.calendar}` : 'Private event'}
+			</p>
+		</div>
+	{:else}
+		<EventCard {event} />
+	{/if}
+{/snippet}
 
 <div class="py-8 sm:py-12">
 	<section class="home-hero mx-auto mb-16 max-w-3xl px-6" aria-labelledby="home-heading">
@@ -64,7 +80,7 @@
 							</h3>
 							<div class="grid gap-x-6 gap-y-4 sm:grid-cols-2">
 								{#each data.myUpcoming.slice(0, 6) as event (event.uri)}
-									<EventCard {event} />
+									{@render yourEvent(event)}
 								{/each}
 							</div>
 						</div>
@@ -77,7 +93,7 @@
 							</h3>
 							<div class="grid gap-x-6 gap-y-4 sm:grid-cols-2">
 								{#each data.myPast.slice(0, 4) as event (event.uri)}
-									<EventCard {event} />
+									{@render yourEvent(event)}
 								{/each}
 							</div>
 						</div>
