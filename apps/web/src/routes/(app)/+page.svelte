@@ -1,19 +1,43 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { EventCard } from '@atmo-dev/kit/events';
+	import { LockKeyhole } from '@sketchyicons/svelte';
 	import RecentActivity from '#lib/components/RecentActivity.svelte';
 	import HeroGlobe from '#lib/components/HeroGlobe.svelte';
 	import AtmosphereFeatures from '#lib/components/AtmosphereFeatures.svelte';
-	import { Button } from '@atmo-dev/kit';
+	import { Button, Icon } from '@atmo-dev/kit';
 	import { user } from '#lib/atproto/auth.svelte.js';
 	import { atProtoLoginModalState } from '#lib/components/LoginModal.svelte';
 	import { createEventModalState } from '#lib/components/CreateEventModal.svelte';
+	import CalendarPrivateNote from '#lib/private-events/components/CalendarPrivateNote.svelte';
+	import { describeLinkBy, privateNoteId } from '#lib/private-events/describe-link.js';
 
 	let { data } = $props();
 
 	let hasMyEvents = $derived(
-		user.isLoggedIn && (data.myUpcoming.length > 0 || data.myPast.length > 0)
+		user.isLoggedIn &&
+			(data.myUpcoming.length > 0 || data.myPast.length > 0 || data.privateEventsIncomplete)
 	);
 </script>
+
+{#snippet yourEvent(event: (typeof data.myUpcoming)[number])}
+	{@const link = data.privateLinks?.[event.uri]}
+	{#if link}
+		{@const noteId = privateNoteId(event.uri)}
+		<div data-testid="your-private-event" {@attach describeLinkBy(noteId)}>
+			<EventCard {event} href={link.href} />
+			<p id={noteId} class="text-base-600 dark:text-base-400 mt-1 text-xs">
+				{#if link.calendar}<CalendarPrivateNote name={link.calendar} />{:else}<Icon
+						img={LockKeyhole}
+						size={12}
+						class="mr-1 inline align-[-2px]"
+					/>Private event{/if}
+			</p>
+		</div>
+	{:else}
+		<EventCard {event} />
+	{/if}
+{/snippet}
 
 <div class="py-8 sm:py-12">
 	<section class="home-hero mx-auto mb-16 max-w-3xl px-6" aria-labelledby="home-heading">
@@ -64,7 +88,7 @@
 							</h3>
 							<div class="grid gap-x-6 gap-y-4 sm:grid-cols-2">
 								{#each data.myUpcoming.slice(0, 6) as event (event.uri)}
-									<EventCard {event} />
+									{@render yourEvent(event)}
 								{/each}
 							</div>
 						</div>
@@ -77,12 +101,25 @@
 							</h3>
 							<div class="grid gap-x-6 gap-y-4 sm:grid-cols-2">
 								{#each data.myPast.slice(0, 4) as event (event.uri)}
-									<EventCard {event} />
+									{@render yourEvent(event)}
 								{/each}
 							</div>
 						</div>
 					{/if}
 				</div>
+				{#if data.privateEventsIncomplete}
+					<p
+						class="text-base-600 dark:text-base-400 mt-6 text-sm"
+						role="status"
+						data-testid="your-private-events-incomplete"
+					>
+						Some of your private events couldn't be loaded. See them all on
+						<a
+							href={resolve('/(app)/private')}
+							class="text-accent-600 dark:text-accent-400 hover:underline">Private events</a
+						>.
+					</p>
+				{/if}
 			</section>
 		{/if}
 
