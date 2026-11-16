@@ -4,7 +4,8 @@ const mocks = vi.hoisted(() => ({
 	enabled: vi.fn(),
 	beta: vi.fn(),
 	caller: vi.fn(),
-	calendars: vi.fn()
+	calendars: vi.fn(),
+	setHeaders: vi.fn()
 }));
 vi.mock('#lib/private-events/server/enabled.js', () => ({
 	privateEventsEnabled: mocks.enabled,
@@ -22,7 +23,8 @@ const run = (search = '') =>
 	load({
 		locals,
 		cookies,
-		url: new URL(`https://atmo.example.com/create${search}`)
+		url: new URL(`https://atmo.example.com/create${search}`),
+		setHeaders: mocks.setHeaders
 	} as never) as Promise<{
 		privateEvents: boolean;
 		calendars: { key: string; name: string | null }[];
@@ -35,6 +37,7 @@ beforeEach(() => {
 	mocks.caller.mockResolvedValue(null);
 	mocks.calendars.mockReset();
 	mocks.calendars.mockResolvedValue({ calendars: [], capped: false });
+	mocks.setHeaders.mockReset();
 });
 
 describe('the private choice on /create', () => {
@@ -61,6 +64,13 @@ describe('putting the event on a shared calendar from /create', () => {
 		mocks.caller.mockResolvedValue(host);
 		mocks.calendars.mockResolvedValue({ calendars: [supper], capped: false });
 		expect((await run()).calendars).toEqual([{ key: supper.key, name: 'Supper club' }]);
+	});
+
+	it('keeps the page out of shared caches when it lists the host’s calendars', async () => {
+		mocks.caller.mockResolvedValue(host);
+		mocks.calendars.mockResolvedValue({ calendars: [supper], capped: false });
+		await run();
+		expect(mocks.setHeaders).toHaveBeenCalledWith({ 'cache-control': 'private, no-store' });
 	});
 
 	it('asks for the calendar the address names, and says when there may be more', async () => {

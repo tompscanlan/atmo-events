@@ -30,7 +30,7 @@ async function calendarsOf(caller: CallerSession | null, wanted: string | null) 
 	};
 }
 
-export async function load({ locals, cookies, url }) {
+export async function load({ locals, cookies, url, setHeaders }) {
 	if (!locals.did) {
 		redirect(303, '/login');
 	}
@@ -39,6 +39,10 @@ export async function load({ locals, cookies, url }) {
 	const enabled = privateEventsEnabled() && (await privateEventsBeta(locals));
 	const caller = enabled ? await callerSession(locals.session ?? null) : null;
 	const own = enabled ? await calendarsOf(caller, url.searchParams.get('calendar')) : null;
+	// The host's calendar names are seen only by them, so this page is then kept nowhere.
+	if (own && own.calendars.length > 0) {
+		setHeaders({ 'cache-control': 'private, no-store' });
+	}
 	return {
 		pageTitle: 'Create Event',
 		actorDid: locals.did,
