@@ -92,7 +92,7 @@ describe('the page of a private event', () => {
 	])('asks %s for a step first, and reads nothing', async (_, did, scope, step) => {
 		theSpaceHolds();
 		const data = await view(request(did, scope, params));
-		expect(data).toMatchObject({ view: step, robots: 'noindex' });
+		expect(data).toMatchObject({ view: step });
 		expect(reader.get).not.toHaveBeenCalled();
 		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'no-store' });
 	});
@@ -103,7 +103,7 @@ describe('the page of a private event', () => {
 	])('shows %s the event, and keeps no copy', async (_, did, scope) => {
 		theSpaceHolds();
 		const data = await view(request(did, scope, params));
-		expect(data).toMatchObject({ view: 'event', pageTitle: 'Dinner', robots: 'noindex' });
+		expect(data).toMatchObject({ view: 'event', pageTitle: 'Dinner' });
 		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'no-store' });
 	});
 

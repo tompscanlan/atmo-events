@@ -128,3 +128,16 @@ describe('a host whose guests’ answers could not be read', () => {
 		expect(body).not.toContain("hasn't answered");
 	});
 });
+
+describe('a private event’s page, to search engines', () => {
+	it.each([
+		['event', () => request(HOST, HOST_SCOPE, browser(), undefined, { members: [] })],
+		['signed-out', () => request(null, '', browser())],
+		['grant', () => request(GUEST, 'atproto', browser())]
+	])('asks not to be indexed in its %s view', async (view, asked) => {
+		const data = await load(asked());
+		expect(data).toMatchObject({ view });
+		const { head } = render(EventPage, { props: { data } as never });
+		expect(head).toMatch(/<meta name="robots" content="noindex"/);
+	});
+});

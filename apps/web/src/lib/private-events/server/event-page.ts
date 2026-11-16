@@ -33,7 +33,7 @@ export async function loadEventPage(
 	if (!host) error(404, notAvailable);
 
 	const caller = await callerSession(locals.session ?? null);
-	const base = { pageTitle: 'Private event', robots: 'noindex' };
+	const base = { pageTitle: 'Private event' };
 	if (!caller) return { ...base, view: 'signed-out' as const };
 
 	const isHost = caller.did === host;
