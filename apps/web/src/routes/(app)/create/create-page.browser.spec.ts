@@ -315,6 +315,23 @@ describe('a link that asks for a private audience, while private events are off'
 		await expect.element(page.getByTestId('private-off')).toBeVisible();
 	});
 
+	it('publishes a draft chosen as Unlisted unlisted when private events turn off mid-edit', async () => {
+		filledIn();
+		const view = await render(CreatePage, { data: data() } as never);
+		await choice('Unlisted').click();
+		await expect.element(publish()).toBeVisible();
+		await view.rerender({ data: data(CALENDARS, false) } as never);
+		await expect.poll(() => page.getByTestId('audience').elements()).toHaveLength(0);
+		await publish().click();
+		await expect
+			.poll(() => mocks.putRecord)
+			.toHaveBeenCalledWith(
+				expect.objectContaining({
+					record: expect.objectContaining({ preferences: { showInDiscovery: false } })
+				})
+			);
+	});
+
 	it('leaves a plain /create as it was: the public editor, with its own Public / Unlisted switch', async () => {
 		render(CreatePage, { data: data(CALENDARS, false) } as never);
 		await expect.element(publish()).toBeVisible();

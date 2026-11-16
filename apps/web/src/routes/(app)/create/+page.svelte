@@ -78,12 +78,13 @@
 		displayName: user.profile?.displayName,
 		avatar: user.profile?.avatar
 	});
+	// An answer given at the top stays the answer when private events turn off mid-edit.
 	let adapter = $derived(
 		onCalendar
 			? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false }, calendar ?? undefined)
 			: invited
 				? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false })
-				: data.privateEvents
+				: isPublic
 					? listedAs(createInAppAdapter({ viewer }), audience !== UNLISTED)
 					: createInAppAdapter({ viewer })
 	);
