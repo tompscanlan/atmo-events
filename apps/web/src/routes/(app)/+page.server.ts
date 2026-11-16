@@ -14,9 +14,10 @@ import { cachedRead } from '#lib/server/edge-cache.js';
 import { dedupeByUri } from '#lib/dedupe-by-uri.js';
 import { holdsGuestGrant, holdsHostGrant } from '#lib/private-events/scopes.js';
 import { privateEventsBeta } from '#lib/private-events/server/beta.js';
+import { myPrivateEventsAndCalendars } from '#lib/private-events/server/calendars.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsEnabled } from '#lib/private-events/server/enabled.js';
-import { myPrivateEvents, type MyPrivateEvent } from '#lib/private-events/server/events.js';
+import type { MyPrivateEvent } from '#lib/private-events/server/events.js';
 import { withPrivateEvents, type PrivateLink } from '#lib/private-events/your-events.js';
 import { errorKind } from '#lib/spaces/server/xrpc.js';
 import type { PageServerLoad } from './$types';
@@ -42,7 +43,7 @@ const PRIVATE_EVENTS_WAIT_MS = 4000;
 
 /** Their own private events, hosted or answered, for Your events: only with private events and their
  *  beta on, and a grant to read them. Null when there are none to add. `incomplete` when some may be
- *  missing: a read failed or ran out of time, or there were more than were listed. The page never
+ *  missing: a read failed or ran out of time, or a calendar had more than were listed. The page never
  *  waits long or fails for them. */
 async function ownPrivateEvents(
 	locals: App.Locals
@@ -57,8 +58,8 @@ async function ownPrivateEvents(
 		if (!holdsGuestGrant(caller.scope) && !holdsHostGrant(caller.scope, caller.did)) return null;
 		if (!(await privateEventsBeta(locals))) return null;
 		betaOn = true;
-		const { events, incomplete } = await myPrivateEvents(caller);
-		return { events, incomplete };
+		const { events, incomplete, capped } = await myPrivateEventsAndCalendars(caller);
+		return { events, incomplete: incomplete || capped };
 	};
 	// Kept going past the wait: a Worker cuts off what a response leaves running, which could leave
 	// their session's lock held and stall their next request.

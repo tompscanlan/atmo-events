@@ -1,21 +1,32 @@
 <script lang="ts">
 	import { Button } from '@atmo-dev/kit';
 	import { EventView } from '@atmo-dev/kit/events';
+	import type { Snippet } from 'svelte';
 	import { page } from '$app/state';
 	import { user } from '#lib/atproto/auth.svelte.js';
 	import { atProtoLoginModalState } from '#lib/components/LoginModal.svelte';
 	import { BETA_WARNING, BETA_WARNING_SHORT } from '../beta';
-	import { singleEvent } from '../ids';
+	import { calendarEvent, type RsvpStatus } from '../ids';
 	import { createPrivateRsvpAdapter } from '../rsvp-adapter';
 	import { GUEST_SCOPES, HOST_SCOPES } from '../scopes';
+	import type { SpaceEventPage } from '../server/calendars';
 	import type { loadEventPage } from '../server/event-page';
 	import { holdPrivateEmbeds } from '../embeds';
-	import FindAgainOffer from './FindAgainOffer.svelte';
-	import GuestList from './GuestList.svelte';
+	import CalendarEventDetails from './CalendarEventDetails.svelte';
 	import PrivateEventAccessNotice from './PrivateEventAccessNotice.svelte';
 
-	// A private event's page: the event, and its guest list for its host.
-	let { data }: { data: Awaited<ReturnType<typeof loadEventPage>> } = $props();
+	// A private event's page at either of its addresses. On a calendar it shows the calendar; apart
+	// from one, `apart` shows what its own address has instead.
+	let {
+		data,
+		hostPurpose,
+		apart
+	}: {
+		data: Awaited<ReturnType<typeof loadEventPage<SpaceEventPage>>>;
+		/** Why its host is asked to allow atmo again. */
+		hostPurpose: string;
+		apart?: Snippet<[RsvpStatus | null]>;
+	} = $props();
 	holdPrivateEmbeds();
 
 	// What the viewer has answered: the page's, until they answer here, so what follows from it
@@ -35,9 +46,9 @@
 <svelte:head><meta name="robots" content="noindex" /></svelte:head>
 
 {#if data.view === 'event'}
-	<!-- An event's space is its own, under the event's key. -->
+	<!-- An event's space is its calendar's, or its own, under the event's key. -->
 	{@const adapter = createPrivateRsvpAdapter(
-		singleEvent(data.actorDid, data.rkey),
+		calendarEvent(data.actorDid, data.calendar?.key ?? data.rkey, data.rkey),
 		viewer,
 		(status) => (answered = status)
 	)}
@@ -54,14 +65,19 @@
 					shortly.
 				</p>
 			{/if}
-			{#if data.guests}
-				<GuestList rkey={data.rkey} guests={data.guests} capped={data.guestsCapped} />
+			{#if data.calendar}
+				<CalendarEventDetails
+					calendar={data.calendar}
+					actor={data.hostProfile.handle ?? data.actorDid}
+					isHost={data.isHost}
+					{answered}
+					answersUnread={data.answersUnread}
+					guests={data.guests}
+					guestsCapped={data.guestsCapped}
+					viewerDid={user.did ?? null}
+				/>
 			{:else}
-				<p class="text-base-600 dark:text-base-400 text-sm" data-testid="private-note">
-					Private event. Only people the host added can see it.
-					{#if !answered && !data.answersUnread}Answer to let the host know you saw it.{/if}
-				</p>
-				{#if answered}<FindAgainOffer />{/if}
+				{@render apart?.(answered)}
 			{/if}
 			<p class="text-base-500 text-xs" data-testid="beta-notice">{BETA_WARNING_SHORT}</p>
 		{/snippet}
@@ -81,7 +97,7 @@
 				did={data.did}
 				scopes={data.isHost ? HOST_SCOPES : GUEST_SCOPES}
 				purpose={data.isHost
-					? 'Your sign-in no longer lets atmo open your private events. Allow it again to see this one and its guest list.'
+					? hostPurpose
 					: 'Private events are kept on the host’s server. atmo needs your permission to open them for you and save your answer in your own account.'}
 				label={data.isHost ? 'Allow atmo again' : 'Allow atmo to open private events'}
 				spacesServer={data.spacesServer}

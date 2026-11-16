@@ -8,6 +8,7 @@ import {
 import { spaceRecordUri } from '#lib/spaces/uri.js';
 import {
 	eventSpace,
+	isSingleEvent,
 	RSVP_COLLECTION,
 	RSVP_STATUSES,
 	type EventAddress,
@@ -33,13 +34,21 @@ export function createPrivateRsvpAdapter(
 	onAnswer?: (status: RsvpStatus | null) => void
 ): EditorAdapter {
 	const { host, rkey } = address;
+	// Named only for an event on a calendar, so a single event's answer is sent as it always was.
+	const calendar = isSingleEvent(address) ? {} : { calendar: address.spaceKey };
 	return {
 		...createInAppAdapter({ viewer }),
 		// The kit sends Edit to the public event's editor unless told otherwise. That editor can't
 		// read a private event, so it would open empty and publish what the host types in public.
 		urls: {
 			event: (actor, eventRkey) =>
-				resolve('/(app)/p/[actor]/private/[rkey]', { actor, rkey: eventRkey })
+				isSingleEvent(address)
+					? resolve('/(app)/p/[actor]/private/[rkey]', { actor, rkey: eventRkey })
+					: resolve('/(app)/p/[actor]/calendar/[key]/[rkey]', {
+							actor,
+							key: address.spaceKey,
+							rkey: eventRkey
+						})
 		},
 		linkedRecords: undefined,
 		features: { delete: false, recurring: false, images: false, visibility: false },
@@ -49,7 +58,7 @@ export function createPrivateRsvpAdapter(
 			if (!RSVP_STATUSES.includes(status)) throw new Error(`unknown RSVP ${record.status}`);
 			const subject = record.subject as { cid?: unknown } | undefined;
 			const cid = typeof subject?.cid === 'string' ? subject.cid : null;
-			await rsvpToPrivateEvent({ host, rkey, status, cid }).catch(async (e) => {
+			await rsvpToPrivateEvent({ host, rkey, ...calendar, status, cid }).catch(async (e) => {
 				if (isRefusal(e)) await invalidateAll();
 				throw e;
 			});
@@ -60,7 +69,7 @@ export function createPrivateRsvpAdapter(
 		},
 		async deleteRecord({ collection }) {
 			if (collection !== RSVP_COLLECTION) nothingElse();
-			await cancelPrivateRsvp({ host, rkey });
+			await cancelPrivateRsvp({ host, rkey, ...calendar });
 			onAnswer?.(null);
 		},
 		createRecord: nothingElse,

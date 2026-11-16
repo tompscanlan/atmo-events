@@ -1,11 +1,14 @@
 // A person's own private events in the home page's Your events, beside their public ones. Pure, so the
 // page's load decides when to ask for them and this only puts them in order.
 import type { FlatEventRecord } from '#lib/contrail.js';
+import { UNTITLED_CALENDAR } from './ids';
 import type { MyPrivateEvent } from './server/events';
 
-/** Where a private event in Your events lives. */
+/** Where a private event in Your events lives, and whose it is to see. */
 export interface PrivateLink {
 	href: string;
+	/** The shared calendar it is on, null for an event of its own. */
+	calendar: string | null;
 }
 
 export interface YourEvents {
@@ -32,7 +35,10 @@ export function withPrivateEvents(
 	for (const item of privateEvents) {
 		const { event } = item;
 		if (endOf(event) < cutoff || privateLinks[event.uri]) continue;
-		privateLinks[event.uri] = { href: item.href };
+		privateLinks[event.uri] = {
+			href: item.href,
+			calendar: item.calendar ? (item.calendar.name ?? UNTITLED_CALENDAR) : null
+		};
 		(endOf(event) >= now ? upcoming : past).push(event);
 	}
 	upcoming.sort((a, b) => startOf(a) - startOf(b));
