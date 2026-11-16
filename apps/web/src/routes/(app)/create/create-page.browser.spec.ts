@@ -2,6 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import { page as appPage } from '$app/state';
+import {
+	DESCRIPTION_WITH_GIF,
+	embedSettled,
+	gifHostRequests,
+	loadButton
+} from '#lib/private-events/held-embeds.fixture.js';
 import '../../../app.css';
 import CreatePage from './+page.svelte';
 
@@ -63,14 +69,15 @@ function at(search: string) {
 
 /** An event already filled in, the way an import leaves one for the page, so a test can publish
  *  it without typing into the editor. */
-function filledIn() {
+function filledIn(more: { description?: string } = {}) {
 	sessionStorage.setItem(
 		'atmo:event-import-prefill',
 		JSON.stringify({
 			name: 'Dinner',
 			startsAt: '2099-01-01T18:00:00.000Z',
 			endsAt: '2099-01-01T20:00:00.000Z',
-			timezone: 'UTC'
+			timezone: 'UTC',
+			...more
 		})
 	);
 }
@@ -175,6 +182,19 @@ describe('publishing a private event on /create', () => {
 			.poll(() => mocks.savePrivateEvent)
 			.toHaveBeenCalledWith(expect.objectContaining({ rkey: '3knewevent' }));
 		expect(mocks.putRecord).not.toHaveBeenCalled();
+	});
+});
+
+describe('a link in a private event’s description on /create', () => {
+	it('asks nothing of a GIF host until the host loads the GIF', async () => {
+		filledIn({ description: DESCRIPTION_WITH_GIF });
+		render(CreatePage, { data: data() } as never);
+		await choice('Private').click();
+		await expect.element(page.getByText('Bring snacks', { exact: false })).toBeVisible();
+		await embedSettled();
+		expect(gifHostRequests()).toEqual([]);
+		await loadButton().click();
+		await expect.poll(() => gifHostRequests()).not.toEqual([]);
 	});
 });
 
