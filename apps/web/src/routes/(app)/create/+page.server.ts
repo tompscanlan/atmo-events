@@ -6,7 +6,7 @@ import { callerSession, type CallerSession } from '#lib/private-events/server/ca
 import { privateEventsBeta } from '#lib/private-events/server/beta.js';
 import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
 
-/** Why "invited people only" needs a step first; null when it doesn't. */
+/** Why "Private" needs a step first; null when it doesn't. */
 function hostAccess(caller: CallerSession | null, cookies: Cookies) {
 	if (!caller) return null;
 	if (!holdsHostGrant(caller.scope, caller.did)) return privateEventAccess(cookies, caller.did);

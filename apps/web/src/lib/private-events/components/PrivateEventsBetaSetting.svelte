@@ -91,8 +91,8 @@
 					>Try private events</span
 				>
 				<span class="text-base-600 dark:text-base-400 mt-1 block text-xs leading-relaxed">
-					Adds “Invited people only” when you create an event, and your private events to Your
-					events on the home page.
+					Adds “Private” to who can see an event you create, and your private events to Your events
+					on the home page.
 				</span>
 			</span>
 		</label>
