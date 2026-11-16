@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
-import { privateEventUri } from '#lib/private-events/ids.js';
+import { eventUri, singleEvent } from '#lib/private-events/ids.js';
 import '../../../../../../app.css';
 import EventPage from './+page.svelte';
 
@@ -62,7 +62,7 @@ function guestView() {
 			createdAt: '2029-01-01T00:00:00Z',
 			did: HOST,
 			rkey: '3kabc',
-			uri: privateEventUri(HOST, '3kabc'),
+			uri: eventUri(singleEvent(HOST, '3kabc')),
 			cid: 'cid',
 			locations: [ADDRESS]
 		},

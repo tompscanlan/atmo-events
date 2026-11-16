@@ -126,8 +126,6 @@ describe('your own private events in Your events', () => {
 			events: [
 				{
 					event: dinner,
-					hosting: false,
-					hostHandle: 'host.example.com',
 					href: '/p/host.example.com/private/3ldinner'
 				}
 			],

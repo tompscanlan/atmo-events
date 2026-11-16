@@ -9,7 +9,7 @@ const GUEST = 'did:plc:guestguestguestguestgues';
 const RKEY = '3levent';
 
 const setHeaders = vi.fn();
-const reader = { get: vi.fn(), list: vi.fn(), writers: vi.fn() };
+const reader = { get: vi.fn(), writers: vi.fn() };
 vi.mock('#lib/spaces/server/space-read.js', () => ({ credentialSpaceReader: () => reader }));
 vi.mock('#lib/actor.js', () => ({
 	getActor: async (actor: string) => (actor === 'no-one.example.com' ? null : actor),
@@ -77,8 +77,6 @@ async function madeUp(load: Load, params: object) {
 
 beforeEach(() => {
 	reader.get.mockReset();
-	reader.list.mockReset();
-	reader.list.mockResolvedValue({ records: [], capped: false });
 	reader.writers.mockReset();
 	reader.writers.mockResolvedValue([]);
 	setHeaders.mockClear();

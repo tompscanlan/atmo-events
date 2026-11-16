@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-	EVENT_COLLECTION,
-	eventSpace,
-	eventUri,
-	privateEventPath,
-	privateEventUri,
-	singleEvent
-} from './ids';
+import { EVENT_COLLECTION, eventSpace, eventUri, privateEventPath, singleEvent } from './ids';
 
 const HOST = 'did:plc:hosthosthosthosthosthost';
 
@@ -19,7 +12,6 @@ describe('where a private event is', () => {
 		expect(eventUri(event)).toBe(
 			`at://${HOST}/space/community.lexicon.calendar.collection/3lzzzzzzzzzzz/${HOST}/${EVENT_COLLECTION}/3lzzzzzzzzzzz`
 		);
-		expect(privateEventUri(HOST, '3lzzzzzzzzzzz')).toBe(eventUri(event));
 	});
 
 	it('gives a single event the page it always had', () => {

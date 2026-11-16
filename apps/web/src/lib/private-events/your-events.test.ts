@@ -19,8 +19,6 @@ const event = (name: string, days: number): FlatEventRecord =>
 
 const privateOne = (name: string, days: number): MyPrivateEvent => ({
 	event: event(name, days),
-	hosting: false,
-	hostHandle: 'host.example.com',
 	href: `/p/host.example.com/private/${name}`
 });
 

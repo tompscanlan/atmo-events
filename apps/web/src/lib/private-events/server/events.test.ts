@@ -5,8 +5,8 @@ import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { HOST_SCOPE, GUEST_SCOPE } from '../scopes';
 import {
 	EVENT_COLLECTION,
+	eventUri,
 	privateEventSpace,
-	privateEventUri,
 	RSVP_COLLECTION,
 	singleEvent
 } from '../ids';
@@ -43,7 +43,7 @@ const OTHER = 'did:plc:otherotherotherotherothe';
 const RKEY = '3lzzzzzzzzzzz';
 const EVENT = singleEvent(HOST, RKEY);
 const SPACE = privateEventSpace(HOST, RKEY);
-const EVENT_URI = privateEventUri(HOST, RKEY);
+const EVENT_URI = eventUri(EVENT);
 const RECORD = {
 	$type: EVENT_COLLECTION,
 	name: 'Dinner',
@@ -543,7 +543,7 @@ describe('myPrivateEvents', () => {
 		const { events, incomplete } = await myPrivateEvents(guest);
 		expect(events.map((e) => e.event.rkey)).toEqual([RKEY, '3lbbbbbbbbbbb']);
 		expect(incomplete).toBe(false);
-		expect(events[0]).toMatchObject({ hosting: false, href: expect.stringContaining('/private/') });
+		expect(events[0]).toMatchObject({ href: expect.stringContaining('/private/') });
 		expect(guest.sent[0].query.get('spaceType')).toBe('community.lexicon.calendar.collection');
 		expect(guest.sent[0].query.has('spaceDid')).toBe(false);
 	});

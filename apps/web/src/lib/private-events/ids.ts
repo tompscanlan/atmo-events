@@ -45,10 +45,6 @@ export function eventUri(address: EventAddress): string {
 	return spaceRecordUri(eventSpace(address), address.host, EVENT_COLLECTION, address.rkey);
 }
 
-export function privateEventUri(host: string, rkey: string): string {
-	return eventUri(singleEvent(host, rkey));
-}
-
 /** An event's own page, by handle when there is one. */
 export function privateEventPath(hostHandleOrDid: string, rkey: string): string {
 	return `/p/${encodeURIComponent(hostHandleOrDid)}/private/${encodeURIComponent(rkey)}`;

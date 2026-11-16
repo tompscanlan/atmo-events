@@ -500,8 +500,6 @@ async function listedSpaces(
 
 export interface MyPrivateEvent {
 	event: FlatEventRecord;
-	hosting: boolean;
-	hostHandle: string | null;
 	href: string;
 }
 
@@ -531,12 +529,7 @@ export async function myPrivateEvents(caller: CallerSession): Promise<MyPrivateE
 			});
 			if (!event) return null;
 			const hostHandle = await verifiedHandle(parsed.authority);
-			return {
-				event,
-				hosting: parsed.authority === caller.did,
-				hostHandle,
-				href: privateEventPath(hostHandle ?? parsed.authority, parsed.key)
-			};
+			return { event, href: privateEventPath(hostHandle ?? parsed.authority, parsed.key) };
 		})
 	);
 	return {
