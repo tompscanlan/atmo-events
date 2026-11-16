@@ -180,7 +180,7 @@ describe('publishing a private event on /create', () => {
 
 describe('coming back from the permission step', () => {
 	it('has Private picked, with the editor ready', async () => {
-		at('?audience=invited');
+		at('?audience=private');
 		render(CreatePage, { data: data() } as never);
 		await expect.element(choice('Private')).toBeChecked();
 		await expect.element(publish()).toBeVisible();
@@ -191,7 +191,7 @@ describe('coming back from the permission step', () => {
 // in time. The editor is then the public one, and a public post can't be taken back.
 describe('a link that asks for a private audience, while private events are off', () => {
 	it('for invited people shows no editor, only how to turn them on', async () => {
-		at('?audience=invited');
+		at('?audience=private');
 		render(CreatePage, { data: data(false) } as never);
 		await expect.element(page.getByTestId('private-off')).toBeVisible();
 		await expect

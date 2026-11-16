@@ -16,16 +16,16 @@
 
 	// No default where there's a choice: a public post can't be taken back. Coming back from the
 	// permission step, the choice is already made.
-	const INVITED = 'invited';
 	const UNLISTED = 'unlisted';
-	type Audience = 'everyone' | typeof UNLISTED | typeof INVITED;
+	const PRIVATE = 'private';
+	type Audience = 'everyone' | typeof UNLISTED | typeof PRIVATE;
 	let audience = $state<Audience | null>(
-		page.url.searchParams.get('audience') === INVITED ? INVITED : null
+		page.url.searchParams.get('audience') === PRIVATE ? PRIVATE : null
 	);
 	let isPublic = $derived(audience === 'everyone' || audience === UNLISTED);
 	// The host's last choice, not only the link's: private events can turn off mid-edit.
-	let wantsPrivate = $derived(audience === INVITED);
-	let invited = $derived(data.privateEvents && audience === INVITED);
+	let wantsPrivate = $derived(audience === PRIVATE);
+	let invited = $derived(data.privateEvents && audience === PRIVATE);
 	// With private events off, the editor is the public one, so a private audience, asked for by a
 	// link or chosen here, gets no editor at all: what someone meant to keep private must never be
 	// posted publicly.
@@ -117,16 +117,15 @@
 				aria-labelledby="audience-heading"
 				class="mt-3 w-fit"
 				bind:value={
-					() => (audience === null ? '' : isPublic ? (audience as string) : 'private'),
+					() => audience ?? '',
 					(value) => {
-						if (value === 'everyone' || value === UNLISTED) audience = value;
-						else if (value === 'private' && (audience === null || isPublic)) audience = INVITED;
+						if (value === 'everyone' || value === UNLISTED || value === PRIVATE) audience = value;
 					}
 				}
 			>
 				<ToggleGroupItem value="everyone">Public</ToggleGroupItem>
 				<ToggleGroupItem value={UNLISTED}>Unlisted</ToggleGroupItem>
-				<ToggleGroupItem value="private">Private</ToggleGroupItem>
+				<ToggleGroupItem value={PRIVATE}>Private</ToggleGroupItem>
 			</ToggleGroup>
 			{#if audience !== null}
 				<p class="text-base-700 dark:text-base-300 mt-3 text-sm" data-testid="audience-what">
@@ -139,7 +138,7 @@
 			{/if}
 			{#if audience !== null}
 				<p class="text-base-600 dark:text-base-400 mt-3 text-xs" data-testid="audience-fine-print">
-					{#if audience === INVITED}A private event can't be made public later.{PRIVATE_LIMITS}{:else}A
+					{#if audience === PRIVATE}A private event can't be made public later.{PRIVATE_LIMITS}{:else}A
 						public or unlisted event can't be made private later.{/if}
 				</p>
 			{/if}
@@ -150,7 +149,7 @@
 					scopes={HOST_SCOPES}
 					purpose="A private event is kept on your own server. atmo needs your permission to create it there and manage its guest list."
 					label="Allow atmo to host private events"
-					returnTo="/create?audience={INVITED}"
+					returnTo="/create?audience={PRIVATE}"
 					spacesServer={data.spacesServer}
 				/>
 			{/if}

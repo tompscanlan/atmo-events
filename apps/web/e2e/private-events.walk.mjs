@@ -374,7 +374,7 @@ await step('2. alice picks Private on /create and allows it', async () => {
 	await settle(p);
 	check(
 		'comes back to the choice she made',
-		new URL(p.url()).searchParams.get('audience') === 'invited',
+		new URL(p.url()).searchParams.get('audience') === 'private',
 		p.url()
 	);
 });
