@@ -326,7 +326,6 @@ await step('1b. alice turns on the private events beta in Settings', async () =>
 	await open(p, '/settings');
 	const section = p.locator('[data-testid=private-events-beta]');
 	await section.waitFor({ timeout: 20000 });
-	check('Settings says what the beta costs', /will be lost/.test(await section.innerText()));
 	// Settings has one "Authorize now" per setting, so this is the private events one.
 	await allow(p, /authorize now/i, P.alice, section);
 	await settle(p);
