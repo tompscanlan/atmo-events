@@ -3,9 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
 	enabled: vi.fn(),
 	beta: vi.fn(),
-	caller: vi.fn(),
-	calendars: vi.fn(),
-	setHeaders: vi.fn()
+	caller: vi.fn()
 }));
 vi.mock('#lib/private-events/server/enabled.js', () => ({
 	privateEventsEnabled: mocks.enabled,
@@ -13,31 +11,16 @@ vi.mock('#lib/private-events/server/enabled.js', () => ({
 }));
 vi.mock('#lib/private-events/server/beta.js', () => ({ privateEventsBeta: mocks.beta }));
 vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.caller }));
-vi.mock('#lib/private-events/server/calendars.js', () => ({ ownCalendars: mocks.calendars }));
-const { HOST_SCOPE } = await import('#lib/private-events/scopes.js');
 const { load } = await import('./+page.server');
 
 const locals = { did: 'did:plc:alice', session: null, client: {} };
 const cookies = { get: () => undefined, delete: () => {} };
-const run = (search = '') =>
-	load({
-		locals,
-		cookies,
-		url: new URL(`https://atmo.example.com/create${search}`),
-		setHeaders: mocks.setHeaders
-	} as never) as Promise<{
-		privateEvents: boolean;
-		calendars: { key: string; name: string | null }[];
-		calendarsCapped: boolean;
-	}>;
+const run = () => load({ locals, cookies } as never) as Promise<{ privateEvents: boolean }>;
 
 beforeEach(() => {
 	mocks.enabled.mockReturnValue(true);
 	mocks.beta.mockResolvedValue(true);
 	mocks.caller.mockResolvedValue(null);
-	mocks.calendars.mockReset();
-	mocks.calendars.mockResolvedValue({ calendars: [], capped: false });
-	mocks.setHeaders.mockReset();
 });
 
 describe('the private choice on /create', () => {
@@ -53,54 +36,5 @@ describe('the private choice on /create', () => {
 		mocks.enabled.mockReturnValue(false);
 		expect((await run()).privateEvents).toBe(false);
 		expect(mocks.beta).not.toHaveBeenCalled();
-	});
-});
-
-describe('putting the event on a shared calendar from /create', () => {
-	const host = { did: 'did:plc:alice', scope: HOST_SCOPE, handle: async () => Response.json({}) };
-	const supper = { key: 'cal-3lcalcalcalcal', name: 'Supper club', host: host.did };
-
-	it('offers the host’s own calendars', async () => {
-		mocks.caller.mockResolvedValue(host);
-		mocks.calendars.mockResolvedValue({ calendars: [supper], capped: false });
-		expect((await run()).calendars).toEqual([{ key: supper.key, name: 'Supper club' }]);
-	});
-
-	it('keeps the page out of shared caches when it lists the host’s calendars', async () => {
-		mocks.caller.mockResolvedValue(host);
-		mocks.calendars.mockResolvedValue({ calendars: [supper], capped: false });
-		await run();
-		expect(mocks.setHeaders).toHaveBeenCalledWith({ 'cache-control': 'private, no-store' });
-	});
-
-	it('asks for the calendar the address names, and says when there may be more', async () => {
-		mocks.caller.mockResolvedValue(host);
-		mocks.calendars.mockResolvedValue({ calendars: [supper], capped: true });
-		const data = await run('?audience=calendar&calendar=3lold');
-		expect(mocks.calendars).toHaveBeenCalledWith(host, { wanted: '3lold' });
-		expect(data.calendarsCapped).toBe(true);
-	});
-
-	it('offers none, and reads none, to someone who can’t host', async () => {
-		mocks.caller.mockResolvedValue({ ...host, scope: 'atproto' });
-		expect((await run()).calendars).toEqual([]);
-		expect(mocks.calendars).not.toHaveBeenCalled();
-	});
-
-	it('offers none with the beta off', async () => {
-		mocks.beta.mockResolvedValue(false);
-		mocks.caller.mockResolvedValue(host);
-		mocks.calendars.mockResolvedValue({ calendars: [supper], capped: false });
-		expect((await run()).calendars).toEqual([]);
-	});
-
-	it('still opens when the calendars can’t be read, and logs not whose', async () => {
-		vi.spyOn(console, 'error').mockImplementation(() => {});
-		mocks.caller.mockResolvedValue(host);
-		mocks.calendars.mockRejectedValue(new Error(`503 for ${host.did}`));
-		const data = await run();
-		expect(data.privateEvents).toBe(true);
-		expect(data.calendars).toEqual([]);
-		expect(String(vi.mocked(console.error).mock.calls)).not.toContain(host.did);
 	});
 });

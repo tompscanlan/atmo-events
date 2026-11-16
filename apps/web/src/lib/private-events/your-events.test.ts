@@ -17,16 +17,11 @@ const event = (name: string, days: number): FlatEventRecord =>
 		createdAt: at(-30)
 	}) as FlatEventRecord;
 
-const privateOne = (
-	name: string,
-	days: number,
-	calendar?: { name: string | null; key: string }
-): MyPrivateEvent => ({
+const privateOne = (name: string, days: number): MyPrivateEvent => ({
 	event: event(name, days),
 	hosting: false,
 	hostHandle: 'host.example.com',
-	href: `/p/host.example.com/private/${name}`,
-	...(calendar ? { calendar } : {})
+	href: `/p/host.example.com/private/${name}`
 });
 
 describe('your private events in Your events', () => {
@@ -50,27 +45,8 @@ describe('your private events in Your events', () => {
 			CUTOFF
 		);
 		expect(merged.privateLinks).toEqual({
-			'at://did:plc:someone/priv-1': {
-				href: '/p/host.example.com/private/priv-1',
-				calendar: null
-			}
+			'at://did:plc:someone/priv-1': { href: '/p/host.example.com/private/priv-1' }
 		});
-	});
-
-	it('names the shared calendar an event is on, or calls it untitled', () => {
-		const merged = withPrivateEvents(
-			{ upcoming: [], past: [] },
-			[
-				privateOne('on-supper', 1, { name: 'Supper club', key: 'cal-3l1' }),
-				privateOne('on-unnamed', 2, { name: null, key: 'cal-3l2' })
-			],
-			NOW,
-			CUTOFF
-		);
-		expect(merged.privateLinks['at://did:plc:someone/on-supper'].calendar).toBe('Supper club');
-		expect(merged.privateLinks['at://did:plc:someone/on-unnamed'].calendar).toBe(
-			'Untitled calendar'
-		);
 	});
 
 	it('leaves out one that ended before the cutoff, as the public list does', () => {

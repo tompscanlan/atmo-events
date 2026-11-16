@@ -1,18 +1,11 @@
 import { error } from '@sveltejs/kit';
 import { command, getRequestEvent, query } from '$app/server';
 import * as v from 'valibot';
-import { calendarEvent, RSVP_STATUSES, singleEvent, SPACE_KEY_PATTERN } from './ids';
+import { RSVP_STATUSES, singleEvent } from './ids';
 import { asCaller } from './server/command';
 import { privateEventsBetaOn } from './beta';
 import { BetaNotSaved, canSaveBeta, readBetaRecord, saveBeta } from './server/beta';
 import { privateEventsEnabled } from './server/enabled';
-import {
-	addPersonToCalendar as addPerson,
-	createCalendar as makeCalendar,
-	deleteCalendar as removeCalendar,
-	removePersonFromCalendar as removePerson,
-	renameCalendar as nameCalendar
-} from './server/calendars';
 import {
 	addGuest as addGuestToEvent,
 	cancelPrivateEvent as cancelEvent,
@@ -24,72 +17,31 @@ import {
 
 const didSchema = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,2048}$/));
 const rkeySchema = v.pipe(v.string(), v.regex(/^[a-zA-Z0-9._:~-]{1,512}$/));
-/** A private space's key, which also says which space an event on it is in. Whether the space is a
- *  calendar is read from it, since any space with a name is one. */
-const calendarSchema = v.pipe(v.string(), v.regex(SPACE_KEY_PATTERN));
-const nameSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(640));
 
-const addressOf = (host: string, rkey: string, calendar: string | undefined) =>
-	calendar ? calendarEvent(host, calendar, rkey) : singleEvent(host, rkey);
-
-/** Always into the caller's own space: a calendar named here is one of their own. */
+/** Always into the caller's own space. */
 export const savePrivateEvent = command(
-	v.object({
-		rkey: rkeySchema,
-		record: v.record(v.string(), v.unknown()),
-		calendar: v.optional(calendarSchema)
-	}),
+	v.object({ rkey: rkeySchema, record: v.record(v.string(), v.unknown()) }),
 	(input) => asCaller((caller) => saveEvent(caller, input))
 );
 
-export const cancelPrivateEvent = command(
-	v.object({ rkey: rkeySchema, calendar: v.optional(calendarSchema) }),
-	({ rkey, calendar }) =>
-		asCaller((caller) => cancelEvent(caller, { spaceKey: calendar ?? rkey, rkey }))
+export const cancelPrivateEvent = command(v.object({ rkey: rkeySchema }), ({ rkey }) =>
+	asCaller((caller) => cancelEvent(caller, rkey))
 );
 
 export const rsvpToPrivateEvent = command(
 	v.object({
 		host: didSchema,
 		rkey: rkeySchema,
-		calendar: v.optional(calendarSchema),
 		status: v.picklist(RSVP_STATUSES),
 		cid: v.nullable(v.string())
 	}),
-	({ host, rkey, calendar, ...input }) =>
-		asCaller((caller) => putPrivateRsvp(caller, addressOf(host, rkey, calendar), input))
+	({ host, rkey, ...input }) =>
+		asCaller((caller) => putPrivateRsvp(caller, singleEvent(host, rkey), input))
 );
 
 export const cancelPrivateRsvp = command(
-	v.object({ host: didSchema, rkey: rkeySchema, calendar: v.optional(calendarSchema) }),
-	({ host, rkey, calendar }) =>
-		asCaller((caller) => deletePrivateRsvp(caller, addressOf(host, rkey, calendar)))
-);
-
-export const createCalendar = command(v.object({ name: nameSchema }), (input) =>
-	asCaller((caller) => makeCalendar(caller, input))
-);
-
-export const renameCalendar = command(
-	v.object({ key: calendarSchema, name: nameSchema }),
-	(input) => asCaller((caller) => nameCalendar(caller, input))
-);
-
-export const deleteCalendar = command(v.object({ key: calendarSchema }), ({ key }) =>
-	asCaller((caller) => removeCalendar(caller, key))
-);
-
-export const addPersonToCalendar = command(
-	v.object({
-		key: calendarSchema,
-		handleOrDid: v.pipe(v.string(), v.minLength(3), v.maxLength(2048))
-	}),
-	(input) => asCaller((caller) => addPerson(caller, input))
-);
-
-export const removePersonFromCalendar = command(
-	v.object({ key: calendarSchema, did: didSchema }),
-	(input) => asCaller((caller) => removePerson(caller, input))
+	v.object({ host: didSchema, rkey: rkeySchema }),
+	({ host, rkey }) => asCaller((caller) => deletePrivateRsvp(caller, singleEvent(host, rkey)))
 );
 
 export const addGuest = command(

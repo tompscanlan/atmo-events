@@ -5,11 +5,11 @@
 	import { createPrivateEventAdapter } from '../editor-adapter';
 	import { holdPrivateEmbeds } from '../embeds';
 
-	// A host's own event, on the calendar `calendarKey` or apart from any.
+	// A host's own event.
 	let {
 		data
 	}: {
-		data: { eventData: FlatEventRecord; actorDid: string; rkey: string; calendarKey?: string };
+		data: { eventData: FlatEventRecord; actorDid: string; rkey: string };
 	} = $props();
 	holdPrivateEmbeds();
 
@@ -21,7 +21,7 @@
 		displayName: user.profile?.displayName,
 		avatar: user.profile?.avatar
 	});
-	let adapter = $derived(createPrivateEventAdapter(viewer, data.calendarKey));
+	let adapter = $derived(createPrivateEventAdapter(viewer));
 </script>
 
 <EventEditor

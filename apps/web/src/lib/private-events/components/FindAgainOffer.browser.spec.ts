@@ -37,43 +37,28 @@ afterEach(() => vi.clearAllMocks());
 
 describe('the offer to find a private event again', () => {
 	it('offers a guest without the beta to turn it on, and says the choice can be seen', async () => {
-		render(FindAgainOffer, { onCalendar: true });
+		render(FindAgainOffer);
 		await expect
 			.poll(shownText)
-			.toContain('Turn on private events to find this again under Calendars.');
+			.toContain('Turn on private events to find this again in Your events, on the home page.');
 		expect(shownText()).toContain('saved in your account, where anyone can see it');
 	});
 
 	it('turns it on in one click, then says where to find the event', async () => {
-		render(FindAgainOffer, { onCalendar: true });
-		await page.getByRole('button', { name: 'Turn on private events' }).click();
-		await expect
-			.poll(shownText)
-			.toContain('Private events are on. Find this again under Calendars.');
-		expect(mocks.set).toHaveBeenCalledWith({ on: true });
-		await expect
-			.element(page.getByRole('link', { name: 'Calendars' }))
-			.toHaveAttribute('href', '/private');
-	});
-
-	it('points at Your events for an event apart from any calendar, since Calendars lists none', async () => {
-		render(FindAgainOffer, { onCalendar: false });
-		await expect
-			.poll(shownText)
-			.toContain('Turn on private events to find this again in Your events, on the home page.');
+		render(FindAgainOffer);
 		await page.getByRole('button', { name: 'Turn on private events' }).click();
 		await expect
 			.poll(shownText)
 			.toContain('Private events are on. Find this again in Your events, on the home page.');
+		expect(mocks.set).toHaveBeenCalledWith({ on: true });
 		await expect
 			.element(page.getByRole('link', { name: 'Your events' }))
 			.toHaveAttribute('href', '/');
-		expect(page.getByRole('link', { name: 'Calendars' }).elements()).toHaveLength(0);
 	});
 
 	it('asks for the permission to save it first, and keeps the click across the trip', async () => {
 		mocks.beta.current = { canSave: false, on: false };
-		render(FindAgainOffer, { onCalendar: false });
+		render(FindAgainOffer);
 		await page.getByRole('button', { name: 'Turn on private events' }).click();
 		await expect.poll(() => mocks.requestPermissions).toHaveBeenCalled();
 		expect(mocks.requestPermissions).toHaveBeenCalledWith(
@@ -86,7 +71,7 @@ describe('the offer to find a private event again', () => {
 
 	it('finishes turning it on when back from granting the permission', async () => {
 		sessionStorage.setItem(PENDING, '1');
-		render(FindAgainOffer, { onCalendar: false });
+		render(FindAgainOffer);
 		await expect.poll(() => mocks.set).toHaveBeenCalledWith({ on: true });
 		await expect.poll(shownText).toContain('Private events are on.');
 		expect(sessionStorage.getItem(PENDING)).toBeNull();
@@ -94,7 +79,7 @@ describe('the offer to find a private event again', () => {
 
 	it('shows nothing to someone who already has it on', async () => {
 		mocks.beta.current = { canSave: true, on: true };
-		render(FindAgainOffer, { onCalendar: false });
+		render(FindAgainOffer);
 		await new Promise((r) => setTimeout(r, 50));
 		expect(page.getByTestId('find-again').elements()).toHaveLength(0);
 		expect(mocks.set).not.toHaveBeenCalled();

@@ -19,13 +19,13 @@ const event = (uri: string, name: string): FlatEventRecord => ({
 	createdAt: '2026-06-01T00:00:00Z'
 });
 const DINNER = event(
-	'at://did:plc:host/space/community.lexicon.calendar.collection/cal-3lsupper/did:plc:host/community.lexicon.calendar.event/3ldinner',
+	'at://did:plc:host/space/community.lexicon.calendar.collection/3ldinner/did:plc:host/community.lexicon.calendar.event/3ldinner',
 	'Dinner'
 );
 const PICNIC = event('at://did:plc:host/community.lexicon.calendar.event/3lpicnic', 'Picnic');
 
 function markup(
-	privateLinks: Record<string, { href: string; calendar: string | null }>,
+	privateLinks: Record<string, { href: string }>,
 	{ incomplete = false, mine = [DINNER, PICNIC] } = {}
 ) {
 	return render(HomePage, {
@@ -49,24 +49,11 @@ const shown = (html: string) => html.replace(/<!--.*?-->/g, '').replace(/\s+/g, 
 
 describe('Your events on the home page', () => {
 	it('marks a private event with a lock line and links it to its own page', () => {
-		const body = markup({
-			[DINNER.uri]: {
-				href: '/p/host.example.com/calendar/cal-3lsupper/3ldinner',
-				calendar: 'Supper club'
-			}
-		});
+		const body = markup({ [DINNER.uri]: { href: '/p/host.example.com/private/3ldinner' } });
 		expect(body.match(/data-testid="your-private-event"/g)).toHaveLength(1);
-		expect(body).toContain('href="/p/host.example.com/calendar/cal-3lsupper/3ldinner"');
-		expect(shown(body)).toContain('Private event. Only the people on Supper club can see it.');
-		expect(body).toContain('Picnic');
-	});
-
-	it('calls one of its own a private event', () => {
-		const body = markup({
-			[DINNER.uri]: { href: '/p/host.example.com/private/3ldinner', calendar: null }
-		});
 		expect(body).toContain('href="/p/host.example.com/private/3ldinner"');
-		expect(body).toContain('Private event');
+		expect(shown(body)).toContain('Private event');
+		expect(body).toContain('Picnic');
 	});
 
 	it('draws public events as before, with no lock', () => {
@@ -77,18 +64,15 @@ describe('Your events on the home page', () => {
 	});
 
 	it('gives each lock line its own id, for the card’s link to point at', () => {
-		const body = markup({
-			[DINNER.uri]: { href: '/p/host.example.com/private/3ldinner', calendar: null }
-		});
+		const body = markup({ [DINNER.uri]: { href: '/p/host.example.com/private/3ldinner' } });
 		expect(body).toContain(`id="${privateNoteId(DINNER.uri)}"`);
 		expect(privateNoteId(DINNER.uri)).toMatch(/^[A-Za-z][\w-]*$/);
 		expect(privateNoteId(PICNIC.uri)).not.toBe(privateNoteId(DINNER.uri));
 	});
 
-	it('says when some of their private events may be missing, and where to see them all', () => {
+	it('says when some of their private events may be missing', () => {
 		const body = markup({}, { incomplete: true });
 		expect(body).toContain('data-testid="your-private-events-incomplete"');
-		expect(body).toMatch(/data-testid="your-private-events-incomplete"[^>]*>[^]*?href="\/private"/);
 	});
 
 	it('says it even when there is nothing else to list', () => {

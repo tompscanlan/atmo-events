@@ -13,29 +13,18 @@
 		LogIn,
 		Settings,
 		Wrench,
-		Menu,
-		CalendarHeart
+		Menu
 	} from '@sketchyicons/svelte';
 	import { page } from '$app/state';
-	import { browser } from '$app/env';
 	import { afterNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { ModeWatcher } from 'mode-watcher';
 	import LoginModal from '#lib/components/LoginModal.svelte';
 	import CreateEventModal, { createEventModalState } from '#lib/components/CreateEventModal.svelte';
 	import AppFooter from '#lib/components/AppFooter.svelte';
-	import { getPrivateEventsBeta } from '#lib/private-events/private-events.remote.js';
 
-	let { children, data } = $props();
+	let { children } = $props();
 	let navigationOpen = $state(false);
-
-	// The Calendars tab, where shared calendars are listed, is for people who turned private events
-	// on in Settings. Read in the browser only, as Settings does: on a Worker a query started during
-	// the server render outlives the request.
-	// Settings saves through this same query, so the tab follows the switch without a reload.
-	let privateEventsBeta = $derived(
-		browser && data.privateEventsEnabled && user.isLoggedIn ? getPrivateEventsBeta() : null
-	);
 
 	afterNavigate(({ shallow, type }) => {
 		if (shallow && type === 'goto') return;
@@ -98,17 +87,6 @@
 			href: '/search',
 			active: path === '/search'
 		},
-
-		...(privateEventsBeta?.current?.on
-			? [
-					{
-						label: 'Calendars',
-						icon: CalendarHeart,
-						href: '/private',
-						active: path === '/private' || /\/p\/[^/]+\/(private|calendar)\//.test(path)
-					}
-				]
-			: []),
 
 		{
 			label: 'Tools',

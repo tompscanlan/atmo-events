@@ -10,45 +10,28 @@
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
 	import { createPrivateEventAdapter } from '#lib/private-events/editor-adapter.js';
 	import { PRIVATE_LINK_EMBEDS } from '#lib/private-events/embeds.js';
-	import { UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
 	import { HOST_SCOPES } from '#lib/private-events/scopes.js';
 
 	let { data } = $props();
 
 	// No default where there's a choice: a public post can't be taken back. Coming back from the
-	// permission step, the choice is already made, and a calendar's page can name the calendar.
+	// permission step, the choice is already made.
 	const INVITED = 'invited';
-	const CALENDAR = 'calendar';
 	const UNLISTED = 'unlisted';
-	// The picker's own value while a calendar was asked for and isn't among the host's, so that
-	// choosing "Just this event" is a change the browser reports.
-	const NOT_PICKED = 'not-picked';
-	type Audience = 'everyone' | typeof UNLISTED | typeof INVITED | typeof CALENDAR;
-	const asked = page.url.searchParams.get('audience');
-	const askedPrivate = asked === INVITED || asked === CALENDAR;
-	let audience = $state<Audience | null>(askedPrivate ? asked : null);
-	let picked = $state(page.url.searchParams.get('calendar') ?? '');
-	// The first when none is named, so the picker never shows one it isn't using. One named but not
-	// among the host's picks nothing: an event goes only to the people the host chose.
-	let calendar = $derived(
-		picked === ''
-			? (data.calendars[0]?.key ?? null)
-			: (data.calendars.find((c) => c.key === picked)?.key ?? null)
+	type Audience = 'everyone' | typeof UNLISTED | typeof INVITED;
+	let audience = $state<Audience | null>(
+		page.url.searchParams.get('audience') === INVITED ? INVITED : null
 	);
 	let isPublic = $derived(audience === 'everyone' || audience === UNLISTED);
 	// The host's last choice, not only the link's: private events can turn off mid-edit.
-	let wantsPrivate = $derived(audience === INVITED || audience === CALENDAR);
+	let wantsPrivate = $derived(audience === INVITED);
 	let invited = $derived(data.privateEvents && audience === INVITED);
-	let onCalendar = $derived(data.privateEvents && audience === CALENDAR && calendar !== null);
-	let calendarMissing = $derived(data.privateEvents && audience === CALENDAR && calendar === null);
 	// With private events off, the editor is the public one, so a private audience, asked for by a
 	// link or chosen here, gets no editor at all: what someone meant to keep private must never be
 	// posted publicly.
 	// A private event's description loads nothing by itself, here as on its page; a public one is as before.
-	setLinkEmbeds(() => (invited || onCalendar ? PRIVATE_LINK_EMBEDS : {}));
-	let chosen = $derived(
-		(!data.privateEvents && !wantsPrivate) || isPublic || invited || onCalendar
-	);
+	setLinkEmbeds(() => (invited ? PRIVATE_LINK_EMBEDS : {}));
+	let chosen = $derived((!data.privateEvents && !wantsPrivate) || isPublic || invited);
 
 	const PRIVATE_LIMITS = " Private events can't have an image or repeat yet.";
 
@@ -80,13 +63,11 @@
 	});
 	// An answer given at the top stays the answer when private events turn off mid-edit.
 	let adapter = $derived(
-		onCalendar
-			? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false }, calendar ?? undefined)
-			: invited
-				? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false })
-				: isPublic
-					? listedAs(createInAppAdapter({ viewer }), audience !== UNLISTED)
-					: createInAppAdapter({ viewer })
+		invited
+			? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false })
+			: isPublic
+				? listedAs(createInAppAdapter({ viewer }), audience !== UNLISTED)
+				: createInAppAdapter({ viewer })
 	);
 
 	// Pulled out of sessionStorage on mount so the editor sees it on its first
@@ -153,53 +134,13 @@
 						? 'Anyone can see it, and it shows in search and listings.'
 						: audience === UNLISTED
 							? "Anyone with the link can see it. It doesn't show in search or listings."
-							: audience === INVITED
-								? 'Only people you invite can see it. You add them after publishing.'
-								: 'Only people you invite can see it.'}
+							: 'Only people you invite can see it. You add them after publishing.'}
 				</p>
-			{/if}
-			{#if calendarMissing}
-				<p class="text-base-700 dark:text-base-300 mt-3 text-sm" data-testid="calendar-missing">
-					That one isn't among yours just now, so nothing is picked.
-					{#if data.calendars.length > 0}Pick below, or reload to try again.{:else}Reload to try
-						again.{/if}
-				</p>
-			{/if}
-			{#if (audience === INVITED || audience === CALENDAR) && data.calendars.length > 0}
-				<label class="text-base-700 dark:text-base-300 mt-4 flex items-center gap-2 text-sm">
-					Who's invited?
-					<select
-						name="calendar"
-						value={calendarMissing ? NOT_PICKED : audience === CALENDAR ? (calendar ?? '') : ''}
-						onchange={(event) => {
-							const key = event.currentTarget.value;
-							if (key === '') audience = INVITED;
-							else {
-								picked = key;
-								audience = CALENDAR;
-							}
-						}}
-						class="border-base-300 dark:border-base-700 bg-base-50 dark:bg-base-900 rounded-lg border px-2 py-1.5 text-sm"
-					>
-						{#if calendarMissing}
-							<option value={NOT_PICKED} disabled>Pick who's invited</option>
-						{/if}
-						<option value="">Just this event</option>
-						{#each data.calendars as option (option.key)}
-							<option value={option.key}>Everyone on {option.name ?? UNTITLED_CALENDAR}</option>
-						{/each}
-					</select>
-				</label>
-				{#if data.calendarsCapped}
-					<p class="text-base-600 dark:text-base-400 mt-2 text-sm" role="status">
-						There may be more than these. To use another, start from its own page.
-					</p>
-				{/if}
 			{/if}
 			{#if audience !== null}
 				<p class="text-base-600 dark:text-base-400 mt-3 text-xs" data-testid="audience-fine-print">
-					{#if audience === INVITED || audience === CALENDAR}A private event can't be made public
-						later.{PRIVATE_LIMITS}{:else}A public or unlisted event can't be made private later.{/if}
+					{#if audience === INVITED}A private event can't be made public later.{PRIVATE_LIMITS}{:else}A
+						public or unlisted event can't be made private later.{/if}
 				</p>
 			{/if}
 			{#if invited && data.hostAccess}
@@ -229,7 +170,7 @@
 {/if}
 
 {#if ready && chosen && !(invited && data.hostAccess)}
-	{#key `${isPublic ? 'public' : audience}:${onCalendar ? calendar : ''}`}
+	{#key isPublic ? 'public' : audience}
 		<EventEditor
 			eventData={null}
 			actorDid={data.actorDid}
