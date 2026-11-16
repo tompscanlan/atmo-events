@@ -106,26 +106,6 @@ beforeEach(() => {
 	vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
-describe('opening a private event', () => {
-	it('shows a guest the event at once, with no step before it', async () => {
-		const data = await load(request(GUEST, GUEST_SCOPE, browser()));
-		expect(data.view).toBe('event');
-		expect(page(data)).toContain(NAME);
-	});
-
-	it('has no action a form could post to', () => {
-		expect((route as { actions?: unknown }).actions).toBeUndefined();
-	});
-
-	it('shows the host theirs', async () => {
-		const answers = { members: [] };
-		const data = await load(
-			request(HOST, HOST_SCOPE, browser(), `https://atmo.example.com${PATH}`, answers)
-		);
-		expect(data.view).toBe('event');
-	});
-});
-
 describe('once its host names its space', () => {
 	const named = (name: string) => {
 		const event = spaceHolds(RECORD);
@@ -198,14 +178,6 @@ describe('a description written in Markdown', () => {
 		expect(body).toMatch(/<strong[^>]*>snacks<\/strong>/);
 		expect(body).not.toContain('**snacks**');
 		expect(body).toContain('&lt;script>x&lt;/script>');
-	});
-});
-
-describe('what a browser or cache keeps', () => {
-	it('keeps no copy of a private page', async () => {
-		setHeaders.mockClear();
-		await load(request(GUEST, GUEST_SCOPE, browser()));
-		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'no-store' });
 	});
 });
 

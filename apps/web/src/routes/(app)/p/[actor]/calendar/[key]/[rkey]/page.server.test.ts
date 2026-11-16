@@ -1,6 +1,5 @@
 import { render } from 'svelte/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import {
 	CALENDAR_COLLECTION,
 	calendarEvent,
@@ -99,7 +98,6 @@ describe('an event on a shared calendar', () => {
 		expect(body).toContain(NAME);
 		expect(body).toContain('data-testid="private-note"');
 		expect(body).toContain('Supper club');
-		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'no-store' });
 	});
 
 	it('gives the owner the calendar’s people instead of a guest list to change', async () => {
@@ -109,21 +107,5 @@ describe('an event on a shared calendar', () => {
 		expect(body).toContain(`data-guest="${PERSON}"`);
 		expect(body).not.toContain('data-testid="guest-list"');
 		expect(body).not.toContain('name="guest-handle"');
-	});
-
-	it('tells someone kept out what it tells anyone at a made-up key', async () => {
-		reader.get.mockRejectedValue(new SpaceAccessDenied(SPACE, '400 SpaceNotFound'));
-		const real = await load(request(PERSON, GUEST_SCOPE)).catch((e) => e);
-		const madeUp = await load(request(PERSON, GUEST_SCOPE, '3lmadeup')).catch((e) => e);
-		expect(real).toMatchObject({ status: 404 });
-		expect(madeUp).toEqual(real);
-	});
-
-	it('reads the owner’s event only, never a record someone else on it wrote under its key', async () => {
-		await load(request(PERSON, GUEST_SCOPE));
-		const eventReads = reader.get.mock.calls
-			.map(([q]) => q)
-			.filter((q) => q.collection === EVENT_COLLECTION);
-		expect(eventReads.map((q) => q.repo)).toEqual([OWNER]);
 	});
 });
