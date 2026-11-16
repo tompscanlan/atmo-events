@@ -5,6 +5,7 @@
 // A space is a calendar when it has a name, and only then; its key says nothing. A single event's
 // space becomes one when its host names it: nothing moves, so every link to the event still works.
 import { now as tidNow } from '@atcute/tid';
+import { graphemeLength } from '@atmo-dev/kit';
 import type { FlatEventRecord } from '#lib/contrail.js';
 import { actorToDid } from '#lib/actor.js';
 import { hasEnded } from '#lib/past-events.js';
@@ -52,7 +53,6 @@ import { verifiedHandle } from './people';
 const MEMBER_COLLECTION = 'com.atproto.memberspace.member';
 const MEMBER_POLICY = 'com.atproto.memberspace.policy';
 
-const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 const bytes = new TextEncoder();
 /** The lexicon's limit in bytes, beside its limit in characters. */
 const CALENDAR_NAME_BYTES = 640;
@@ -62,8 +62,8 @@ const CALENDAR_NAME_BYTES = 640;
 export function calendarName(value: unknown): string | null {
 	const name = (value as { name?: unknown } | null)?.name;
 	if (typeof name !== 'string') return null;
-	const length = [...graphemes.segment(name)].length;
-	const fits = length <= CALENDAR_NAME_MAX && bytes.encode(name).length <= CALENDAR_NAME_BYTES;
+	const fits =
+		graphemeLength(name) <= CALENDAR_NAME_MAX && bytes.encode(name).length <= CALENDAR_NAME_BYTES;
 	return name.trim() && fits ? name : null;
 }
 
