@@ -48,7 +48,10 @@ describe('private event grants', () => {
 	});
 
 	it('does not take a grant for another space type', () => {
-		const other = GUEST_AS_GRANTED.replace('community.lexicon.calendar.collection', 'com.example.forum');
+		const other = GUEST_AS_GRANTED.replace(
+			'community.lexicon.calendar.collection',
+			'com.example.forum'
+		);
 		expect(holdsGuestGrant(`atproto ${other}`)).toBe(false);
 	});
 
