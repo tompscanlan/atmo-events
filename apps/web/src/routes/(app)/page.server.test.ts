@@ -215,9 +215,9 @@ describe('your own private events in Your events', () => {
 		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'private, no-store' });
 	});
 
-	it('shows the public ones alone when theirs could not be read', async () => {
+	it('shows the public ones alone when theirs could not be read, and logs not whose', async () => {
 		turnOn();
-		vi.mocked(myPrivateEventsAndCalendars).mockRejectedValue(new Error('503'));
+		vi.mocked(myPrivateEventsAndCalendars).mockRejectedValue(new Error(`503 for ${ME}`));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const { event, setHeaders } = signedIn();
 		const data = (await load(event)) as unknown as LoadResult;
@@ -225,6 +225,7 @@ describe('your own private events in Your events', () => {
 		expect(data.privateLinks).toEqual({});
 		expect(data.privateEventsIncomplete).toBe(true);
 		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'private, no-store' });
+		expect(String(vi.mocked(console.error).mock.calls)).not.toContain(ME);
 	});
 
 	it('does not wait more than a few seconds for their server', async () => {

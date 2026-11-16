@@ -158,9 +158,11 @@ describe('a shared calendar’s page', () => {
 		expect(notACalendar).toEqual(real);
 	});
 
-	it('does not pass an outage off as not there', async () => {
-		reader.list.mockRejectedValue(new Error('503'));
+	it('does not pass an outage off as not there, and logs not whose or which', async () => {
+		reader.list.mockRejectedValue(new Error(`503 at ${SPACE}`));
 		await expect(load(request(PERSON, GUEST_SCOPE))).rejects.toMatchObject({ status: 503 });
+		const logs = String(vi.mocked(console.error).mock.calls);
+		for (const secret of [PERSON, OWNER, KEY]) expect(logs).not.toContain(secret);
 	});
 
 	it('has no action a form could post to', () => {

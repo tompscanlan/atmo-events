@@ -8,6 +8,7 @@ import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
 import { parseEventDescription } from '#lib/server/event-description.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
+import { errorKind } from '#lib/spaces/server/xrpc.js';
 
 /** Byte for byte, so someone kept out can't tell an event that exists from one that doesn't, or from
  *  one that was cancelled. */
@@ -40,7 +41,7 @@ export async function load({ params, locals, cookies, setHeaders }) {
 	forgetAsked(cookies);
 	const address = calendarEvent(host, params.key, params.rkey);
 	const found = await readCalendarEventPage(caller, address).catch((e) => {
-		console.error(`[private-events] ${host}: event ${params.rkey} unread for ${caller.did}:`, e);
+		console.error(`[private-events] event unread for its page: ${errorKind(e)}`);
 		error(503, 'This event could not be read right now. Try again shortly.');
 	});
 	if (!found) error(404, EVENT_NOT_AVAILABLE);

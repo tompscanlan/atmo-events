@@ -5,6 +5,7 @@ import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsEnabled } from '#lib/private-events/server/enabled.js';
 import { readPrivateEventForEdit } from '#lib/private-events/server/events.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
+import { errorKind } from '#lib/spaces/server/xrpc.js';
 
 const EVENT_NOT_AVAILABLE = "This event isn't available.";
 
@@ -18,7 +19,7 @@ export async function load({ params, locals, setHeaders }) {
 	}
 	const keys = { spaceKey: params.rkey, rkey: params.rkey };
 	const eventData = await readPrivateEventForEdit(caller, keys).catch((e) => {
-		console.error(`[private-events] ${host}: event ${params.rkey} unread for its edit page:`, e);
+		console.error(`[private-events] event unread for its edit page: ${errorKind(e)}`);
 		error(503, 'This event could not be read right now. Try again shortly.');
 	});
 	if (!eventData) error(404, EVENT_NOT_AVAILABLE);

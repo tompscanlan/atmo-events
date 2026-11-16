@@ -6,6 +6,7 @@ import { ownCalendars } from '#lib/private-events/server/calendars.js';
 import { callerSession, type CallerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsBeta } from '#lib/private-events/server/beta.js';
 import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
+import { errorKind } from '#lib/spaces/server/xrpc.js';
 
 /** Why "invited people only" needs a step first; null when it doesn't. */
 function hostAccess(caller: CallerSession | null, cookies: Cookies) {
@@ -21,7 +22,7 @@ async function calendarsOf(caller: CallerSession | null, wanted: string | null) 
 	const none = { calendars: [], capped: false };
 	if (!caller || !holdsHostGrant(caller.scope, caller.did)) return none;
 	const found = await ownCalendars(caller, wanted ? { wanted } : {}).catch((e) => {
-		console.error(`[private-events] ${caller.did}: calendars unread for /create:`, e);
+		console.error(`[private-events] calendars unread for /create: ${errorKind(e)}`);
 		return none;
 	});
 	return {

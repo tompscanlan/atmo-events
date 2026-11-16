@@ -95,6 +95,18 @@ describe('/private when a host’s server is down', () => {
 		expect(body).toContain('data-testid="private-events-incomplete"');
 	});
 
+	it('is unavailable when their own server can’t list them, and logs not whose', async () => {
+		const session = {
+			did: GUEST,
+			getTokenInfo: async () => ({ scope: GUEST_SCOPE }),
+			handle: async () => Response.json({ error: 'InternalServerError' }, { status: 502 })
+		};
+		const cookies = { get: () => undefined, delete: () => {} };
+		const loading = load({ locals: { session }, cookies, setHeaders } as never);
+		await expect(loading).rejects.toMatchObject({ status: 503 });
+		expect(String(vi.mocked(console.error).mock.calls)).not.toContain(GUEST);
+	});
+
 	it('says nothing of the kind when all is read', async () => {
 		reader.get.mockImplementation(async ({ space, collection, rkey }: Read) =>
 			collection === CALENDAR_COLLECTION

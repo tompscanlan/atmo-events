@@ -6,6 +6,7 @@ import { readCalendarPage } from '#lib/private-events/server/calendars.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
+import { errorKind } from '#lib/spaces/server/xrpc.js';
 
 /** Byte for byte, so someone kept out can't tell a calendar that exists from one that doesn't, or
  *  from one that was deleted. */
@@ -39,7 +40,7 @@ export async function load({ params, locals, cookies, setHeaders }) {
 	}
 	forgetAsked(cookies);
 	const found = await readCalendarPage(caller, host, params.key).catch((e) => {
-		console.error(`[private-events] ${host}: calendar ${params.key} unread for ${caller.did}:`, e);
+		console.error(`[private-events] calendar unread for its page: ${errorKind(e)}`);
 		error(503, 'This calendar could not be read right now. Try again shortly.');
 	});
 	if (!found) error(404, CALENDAR_NOT_AVAILABLE);

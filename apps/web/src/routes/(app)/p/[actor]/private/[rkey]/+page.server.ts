@@ -8,6 +8,7 @@ import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/e
 import { singleEvent } from '#lib/private-events/ids.js';
 import { parseEventDescription } from '#lib/server/event-description.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
+import { errorKind } from '#lib/spaces/server/xrpc.js';
 
 /** Byte for byte, so someone kept out can't tell an event that exists from one that doesn't, or from
  *  one that was cancelled. */
@@ -42,7 +43,7 @@ export async function load({ params, locals, cookies, setHeaders }) {
 	// to choose that first; it cost every guest a click on every event, so the read is direct. Once
 	// its host names its space, it shows as an event on that calendar, at this same address.
 	const found = await readSpaceEventPage(caller, singleEvent(host, params.rkey)).catch((e) => {
-		console.error(`[private-events] ${host}: event ${params.rkey} unread for ${caller.did}:`, e);
+		console.error(`[private-events] event unread for its page: ${errorKind(e)}`);
 		error(503, 'This event could not be read right now. Try again shortly.');
 	});
 	if (!found) error(404, EVENT_NOT_AVAILABLE);

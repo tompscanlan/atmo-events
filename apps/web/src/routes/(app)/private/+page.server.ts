@@ -5,6 +5,7 @@ import { myPrivateEventsAndCalendars } from '#lib/private-events/server/calendar
 import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsBeta } from '#lib/private-events/server/beta.js';
 import { privateEventsEnabled, spacesServer } from '#lib/private-events/server/enabled.js';
+import { errorKind } from '#lib/spaces/server/xrpc.js';
 
 export async function load({ locals, cookies, setHeaders }) {
 	if (!privateEventsEnabled()) error(404, 'Not found');
@@ -40,7 +41,7 @@ export async function load({ locals, cookies, setHeaders }) {
 	const { calendars, incomplete, capped } = await myPrivateEventsAndCalendars(caller, {
 		calendarEvents: false
 	}).catch((e) => {
-		console.error(`[private-events] ${caller.did}: private events unread:`, e);
+		console.error(`[private-events] calendars unread for their list: ${errorKind(e)}`);
 		error(503, 'Your calendars could not be read right now. Try again shortly.');
 	});
 	return {

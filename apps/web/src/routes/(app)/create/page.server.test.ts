@@ -94,12 +94,13 @@ describe('putting the event on a shared calendar from /create', () => {
 		expect((await run()).calendars).toEqual([]);
 	});
 
-	it('still opens when the calendars can’t be read', async () => {
+	it('still opens when the calendars can’t be read, and logs not whose', async () => {
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		mocks.caller.mockResolvedValue(host);
-		mocks.calendars.mockRejectedValue(new Error('503'));
+		mocks.calendars.mockRejectedValue(new Error(`503 for ${host.did}`));
 		const data = await run();
 		expect(data.privateEvents).toBe(true);
 		expect(data.calendars).toEqual([]);
+		expect(String(vi.mocked(console.error).mock.calls)).not.toContain(host.did);
 	});
 });

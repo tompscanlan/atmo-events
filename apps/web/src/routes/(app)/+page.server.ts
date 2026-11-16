@@ -19,6 +19,7 @@ import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsEnabled } from '#lib/private-events/server/enabled.js';
 import type { MyPrivateEvent } from '#lib/private-events/server/events.js';
 import { withPrivateEvents, type PrivateLink } from '#lib/private-events/your-events.js';
+import { errorKind } from '#lib/spaces/server/xrpc.js';
 import type { PageServerLoad } from './$types';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -69,7 +70,7 @@ async function ownPrivateEvents(
 		if (found !== 'late') return found;
 		return betaOn ? { events: [], incomplete: true } : null;
 	} catch (e) {
-		console.error(`[private-events] ${locals.did}: private events unread for the home page:`, e);
+		console.error(`[private-events] private events unread for the home page: ${errorKind(e)}`);
 		return betaOn ? { events: [], incomplete: true } : null;
 	} finally {
 		clearTimeout(timer);
