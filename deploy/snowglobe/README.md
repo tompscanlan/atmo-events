@@ -36,10 +36,11 @@ build fast-forwards it.
   event page, and an older atmo breaks on an 11/12 PDS. When the alpha moves, the PDS and atmo move
   in one lab-infra commit. The PDS migrates its databases (on start, and per account on first open),
   so it cannot go back by image alone: back up its `/data` first.
-- **The space type `rsvp.atmo.dev.space`** (apps/web/lexicons/spaces/rsvp/atmo/dev/space.json),
-  published where the globe's PDSes look for lexicons, before anyone's first private-event
+- **The space type `community.lexicon.calendar.collection`** (Lexicon Community's shared calendar
+  type), published where the globe's PDSes look for lexicons, before anyone's first private-event
   permission: a failed lookup sticks for about 5 minutes. Its `title` is what the 11/12 consent
-  screen shows; without it the screen shows the type's name.
+  screen shows; without it the screen shows the type's name. Private events made under the earlier
+  testing type `rsvp.atmo.dev.space` no longer show.
 
 ## Settings
 
