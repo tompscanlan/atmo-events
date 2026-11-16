@@ -7,6 +7,7 @@
 import { now as tidNow } from '@atcute/tid';
 import type { FlatEventRecord } from '#lib/contrail.js';
 import { actorToDid } from '#lib/actor.js';
+import { hasEnded } from '#lib/past-events.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 import { isSpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import {
@@ -230,12 +231,6 @@ async function readCalendarName(
 	}
 }
 
-/** Over once it has ended, or started when it has no end. */
-function isPast(event: FlatEventRecord, now: number): boolean {
-	const end = Date.parse(event.endsAt ?? event.startsAt);
-	return Number.isFinite(end) && end < now;
-}
-
 const byStart = (a: FlatEventRecord, b: FlatEventRecord) =>
 	Date.parse(a.startsAt) - Date.parse(b.startsAt);
 
@@ -326,13 +321,15 @@ export async function readCalendarPage(
 			)
 		: null;
 	const peopleCapped = listed?.capped ?? false;
-	const past = calendar.events.filter((event) => isPast(event, now));
+	// Over once it has ended, or started when it has no end.
+	const asOf = new Date(now).toISOString();
+	const past = calendar.events.filter((event) => hasEnded(event, asOf));
 	return {
 		key,
 		host,
 		name: calendar.name,
 		ownerHandle: await verifiedHandle(host),
-		upcoming: calendar.events.filter((event) => !isPast(event, now)).sort(byStart),
+		upcoming: calendar.events.filter((event) => !hasEnded(event, asOf)).sort(byStart),
 		past: past.sort((a, b) => byStart(b, a)),
 		eventsCapped: calendar.capped,
 		people,
