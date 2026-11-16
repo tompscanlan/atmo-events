@@ -11,8 +11,7 @@ import {
 	createCalendar as makeCalendar,
 	deleteCalendar as removeCalendar,
 	removePersonFromCalendar as removePerson,
-	renameCalendar as nameCalendar,
-	saveNamedEvent
+	renameCalendar as nameCalendar
 } from './server/calendars';
 import {
 	addGuest as addGuestToEvent,
@@ -33,19 +32,14 @@ const nameSchema = v.pipe(v.string(), v.minLength(1), v.maxLength(640));
 const addressOf = (host: string, rkey: string, calendar: string | undefined) =>
 	calendar ? calendarEvent(host, calendar, rkey) : singleEvent(host, rkey);
 
-/** Always into the caller's own space: a calendar named here is one of their own. With `name`, a new
- *  event's space gets that name, so its people become a shared calendar. */
+/** Always into the caller's own space: a calendar named here is one of their own. */
 export const savePrivateEvent = command(
 	v.object({
 		rkey: rkeySchema,
 		record: v.record(v.string(), v.unknown()),
-		calendar: v.optional(calendarSchema),
-		name: v.optional(nameSchema)
+		calendar: v.optional(calendarSchema)
 	}),
-	({ name, ...input }) =>
-		asCaller((caller) =>
-			name === undefined ? saveEvent(caller, input) : saveNamedEvent(caller, { ...input, name })
-		)
+	(input) => asCaller((caller) => saveEvent(caller, input))
 );
 
 export const cancelPrivateEvent = command(

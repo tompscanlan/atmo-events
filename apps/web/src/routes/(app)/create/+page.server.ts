@@ -1,7 +1,7 @@
 import { redirect, type Cookies } from '@sveltejs/kit';
 import { now as tidNow } from '@atcute/tid';
 import { forgetAsked, privateEventAccess } from '#lib/private-events/permissions-asked.js';
-import { holdsCalendarGrant, holdsHostGrant } from '#lib/private-events/scopes.js';
+import { holdsHostGrant } from '#lib/private-events/scopes.js';
 import { ownCalendars } from '#lib/private-events/server/calendars.js';
 import { callerSession, type CallerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsBeta } from '#lib/private-events/server/beta.js';
@@ -51,8 +51,6 @@ export async function load({ locals, cookies, url, setHeaders }) {
 		hostAccess: enabled ? hostAccess(caller, cookies) : null,
 		spacesServer: enabled ? spacesServer() : null,
 		calendars: own?.calendars ?? [],
-		calendarsCapped: own?.capped ?? false,
-		// Naming a new event's guests makes them a shared calendar, which asks for one more permission.
-		canName: enabled && !!caller && holdsCalendarGrant(caller.scope, caller.did)
+		calendarsCapped: own?.capped ?? false
 	};
 }

@@ -39,7 +39,6 @@ import {
 	readPrivateEventPage,
 	readSpaceName,
 	requireHost,
-	savePrivateEvent,
 	write,
 	type MyPrivateEvent,
 	type PrivateEventPage
@@ -147,28 +146,6 @@ export async function renameCalendar(
 	await putName(caller, space, nameRecord(name, kept));
 	// Only once it has a name, so a single event's guests are never shown to each other unnamed.
 	await showPeopleOnIt(caller, space);
-}
-
-/** A new single event whose space is named at once, so its guests are a shared calendar from the
- *  start. The name is written after the event: when it fails, the event is still there, unnamed, and
- *  saving again names it. */
-export async function saveNamedEvent(
-	caller: CallerSession,
-	input: { rkey: string; record: Record<string, unknown>; calendar?: string; name: string }
-): Promise<{ uri: string; cid: string }> {
-	requireCalendarHost(caller);
-	// An event already on a calendar goes by that calendar's name.
-	if (input.calendar !== undefined) throw new PrivateEventRefused('named-on-calendar');
-	const name = validName(input.name);
-	const saved = await savePrivateEvent(caller, { rkey: input.rkey, record: input.record });
-	const space = privateEventSpace(caller.did, input.rkey);
-	try {
-		await putName(caller, space, nameRecord(name, new Date().toISOString()));
-	} catch {
-		throw new PrivateEventRefused('name-not-saved');
-	}
-	await showPeopleOnIt(caller, space);
-	return saved;
 }
 
 /** Deleting the space ends everyone's access to every event on it at once. */

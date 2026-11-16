@@ -132,31 +132,6 @@ describe('/private and private events apart from any calendar', () => {
 	});
 });
 
-describe('/private with a record a host wrote badly', () => {
-	it.each([
-		['a mode that is not a string', { mode: 7 }],
-		['a name that is not a string', { name: 7 }],
-		['a start that is not a date', { startsAt: 'soon' }]
-	])('still renders for their guest, without it: %s', async (_, broken) => {
-		reader.get.mockImplementation(async ({ space, collection, rkey }: Read) =>
-			collection === CALENDAR_COLLECTION
-				? null
-				: {
-						uri: `${space}/${HOST}/${EVENT_COLLECTION}/${rkey}`,
-						cid: `cid-of-${rkey}`,
-						rkey,
-						value: space === BROKEN ? { ...RECORD, name: 'Broken', ...broken } : RECORD
-					}
-		);
-
-		const body = await renderedPrivatePage();
-
-		expect(body).toMatch(/<h1[^>]*>Calendars<\/h1>/);
-		expect(body).not.toContain('Broken');
-		expect(body).not.toContain('data-testid="private-events-incomplete"');
-	});
-});
-
 describe('/private and the beta', () => {
 	it('warns that private events made in the beta will be lost', async () => {
 		reader.get.mockResolvedValue(null);

@@ -61,8 +61,7 @@ function data(calendars = CALENDARS, privateEvents = true) {
 		privateEvents,
 		hostAccess: null,
 		spacesServer: null,
-		calendars: privateEvents ? calendars : [],
-		canName: privateEvents
+		calendars: privateEvents ? calendars : []
 	};
 }
 

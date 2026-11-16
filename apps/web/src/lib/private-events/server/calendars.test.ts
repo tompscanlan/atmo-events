@@ -33,8 +33,7 @@ const {
 	readSpaceEventPage,
 	NAMED_SPACES_READ,
 	removePersonFromCalendar,
-	renameCalendar,
-	saveNamedEvent
+	renameCalendar
 } = await import('./calendars');
 const { cancelPrivateEvent, putPrivateRsvp, savePrivateEvent } = await import('./events');
 
@@ -1121,75 +1120,6 @@ describe('the owner’s own calendars, to put an event on', () => {
 			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SPACE }] })
 		});
 		expect((await ownCalendars(host)).calendars).toEqual([]);
-	});
-});
-
-describe('a new single event named at once', () => {
-	const RECORD = event('Dinner', '2026-11-20T18:00:00.000Z');
-	const NEW_KEY = '3lnewevent';
-	const NEW_SPACE = privateEventSpace(OWNER, NEW_KEY);
-
-	it('makes its space, writes the event, then the name, then shows its people to everyone on it', async () => {
-		const host = owner();
-		const saved = await saveNamedEvent(host, { rkey: NEW_KEY, record: RECORD, name: 'Supper' });
-		expect(saved.uri).toBe(eventUri(calendarEvent(OWNER, NEW_KEY, NEW_KEY)));
-		expect(host.nsids()).toEqual([
-			'com.atproto.space.createSpace',
-			'com.atproto.space.getSpace',
-			'com.atproto.space.putRecord',
-			'com.atproto.space.putRecord',
-			'com.atproto.space.getSpace',
-			'com.atproto.space.updateSpace'
-		]);
-		// Its people are shown only once it has a name.
-		expect(host.sent[0].body?.policy).not.toHaveProperty('publishMembers');
-		expect(host.sent[2].body).toMatchObject({ space: NEW_SPACE, collection: EVENT_COLLECTION });
-		expect(host.sent[3].body).toMatchObject({
-			space: NEW_SPACE,
-			repo: OWNER,
-			collection: CALENDAR_COLLECTION,
-			rkey: 'self',
-			record: { name: 'Supper' }
-		});
-		expect(host.sent[5].body).toMatchObject({ space: NEW_SPACE, policy: { publishMembers: true } });
-	});
-
-	it('keeps the event when the name could not be written, and says the name was not saved', async () => {
-		const host = owner({
-			'com.atproto.space.putRecord': (sent) =>
-				sent.body?.collection === CALENDAR_COLLECTION
-					? Response.json({ error: 'Nope' }, { status: 500 })
-					: Response.json({ cid: 'c' })
-		});
-		await expect(
-			saveNamedEvent(host, { rkey: NEW_KEY, record: RECORD, name: 'Supper' })
-		).rejects.toMatchObject({ reason: 'name-not-saved' });
-		expect(host.nsids()).not.toContain('com.atproto.space.deleteSpace');
-		expect(host.nsids()).not.toContain('com.atproto.space.updateSpace');
-	});
-
-	it('asks for the calendar grant, and calls nothing', async () => {
-		const host = caller(OWNER, `${HOST_SCOPE} ${GUEST_SCOPE}`);
-		await expect(
-			saveNamedEvent(host, { rkey: NEW_KEY, record: RECORD, name: 'Supper' })
-		).rejects.toMatchObject({ reason: 'no-grant' });
-		expect(host.sent).toHaveLength(0);
-	});
-
-	it('refuses a bad name before writing anything', async () => {
-		const host = owner();
-		await expect(
-			saveNamedEvent(host, { rkey: NEW_KEY, record: RECORD, name: '   ' })
-		).rejects.toMatchObject({ reason: 'bad-name' });
-		expect(host.sent).toHaveLength(0);
-	});
-
-	it('names no event that is going on a calendar already', async () => {
-		const host = owner();
-		await expect(
-			saveNamedEvent(host, { rkey: NEW_KEY, record: RECORD, name: 'Supper', calendar: KEY })
-		).rejects.toMatchObject({ reason: 'named-on-calendar' });
-		expect(host.sent).toHaveLength(0);
 	});
 });
 

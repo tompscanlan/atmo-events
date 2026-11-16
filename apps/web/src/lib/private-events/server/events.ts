@@ -51,11 +51,7 @@ const REFUSALS = {
 	'own-event': "You're the host, so you're already on your own event.",
 	'no-calendar': "That calendar isn't there anymore, so nothing changed.",
 	'own-calendar': "It's your calendar, so you're already on it.",
-	'bad-name': `A calendar's name needs 1 to ${CALENDAR_NAME_MAX} characters, so nothing was saved.`,
-	'named-on-calendar':
-		"An event on a shared calendar goes by the calendar's name, so nothing was saved.",
-	'name-not-saved':
-		"The event was saved, but its name wasn't, so its guests aren't a shared calendar yet. Save again to try once more."
+	'bad-name': `A calendar's name needs 1 to ${CALENDAR_NAME_MAX} characters, so nothing was saved.`
 } as const;
 
 /** In words a page can show; a PDS's own message is never kept. */
