@@ -36,6 +36,7 @@ const REFUSALS = {
 	'no-grant': "atmo doesn't have your permission for this yet, so nothing changed.",
 	'not-an-event': 'That is not a valid event, so nothing was saved.',
 	'not-private': 'That space can be read by more than its guests, so nothing was saved.',
+	'not-single': "That space isn't a single event's own, so nothing changed.",
 	'no-event': "This event isn't there for you anymore, so nothing was saved.",
 	changed: 'This event changed since you opened it. Reload to see the latest, then answer again.',
 	unchecked: "That couldn't be saved just now. Try again shortly.",
@@ -84,7 +85,9 @@ function isGone(e: unknown): boolean {
 export type Refusal = keyof typeof REFUSALS;
 
 /** Checks a space of the caller's own: a write into a space that was never made succeeds anyway,
- *  and one that lets everyone read would publish what is written there. */
+ *  and one that lets everyone read would publish what is written there. atmo never has a server
+ *  show a space's people to everyone on it, so a space that does was made by something else under
+ *  the same type, and is not a single event's. */
 async function checkPrivateSpace(
 	caller: CallerSession,
 	spaceKey: string,
@@ -97,10 +100,12 @@ async function checkPrivateSpace(
 		if (isGone(e)) throw new PrivateEventRefused(whenGone);
 		throw e;
 	});
-	const policy = found.policy as { $type?: unknown; publicRead?: unknown } | undefined;
+	const policy = found.policy as
+		{ $type?: unknown; publicRead?: unknown; publishMembers?: unknown } | undefined;
 	if (policy?.$type !== 'com.atproto.memberspace.policy' || policy.publicRead === true) {
 		throw new PrivateEventRefused('not-private');
 	}
+	if (policy.publishMembers === true) throw new PrivateEventRefused('not-single');
 	return space;
 }
 
@@ -176,10 +181,11 @@ export async function savePrivateEvent(
 	}
 }
 
-/** Deleting its space ends every guest's access. Their answers stay in their own repos, unreadable. */
+/** Deleting its space ends every guest's access. Their answers stay in their own repos, unreadable.
+ *  The space is checked first, as before any change, so only a single event's own is deleted. */
 export async function cancelPrivateEvent(caller: CallerSession, rkey: string): Promise<void> {
 	requireHost(caller);
-	const space = privateEventSpace(caller.did, rkey);
+	const space = await ownPrivateSpace(caller, rkey, 'no-event');
 	await write(caller, 'com.atproto.space.deleteSpace', { space }, 'event not cancelled');
 }
 
@@ -430,7 +436,7 @@ export async function deletePrivateRsvp(
 }
 
 /** A private space of the caller's own, checked before anything is written to it: one that was never
- *  made (`whenGone`), or that anyone can read, is refused. */
+ *  made (`whenGone`), that anyone can read, or that isn't a single event's, is refused. */
 async function ownPrivateSpace(
 	caller: CallerSession,
 	spaceKey: string,

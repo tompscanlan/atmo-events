@@ -225,12 +225,12 @@ describe('an edit of a private event', () => {
 });
 
 describe('cancelPrivateEvent', () => {
-	it('deletes the space of the caller’s own event', async () => {
-		const host = caller(HOST, HOST_SCOPE);
+	it('deletes the space of the caller’s own event, once it has checked it', async () => {
+		const host = caller(HOST, HOST_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
 		await cancelPrivateEvent(host, RKEY);
-		expect(host.sent).toMatchObject([
-			{ pathname: '/xrpc/com.atproto.space.deleteSpace', body: { space: SPACE } }
-		]);
+		expect(host.nsids()).toEqual(['com.atproto.space.getSpace', 'com.atproto.space.deleteSpace']);
+		expect(host.sent[0].query.get('space')).toBe(SPACE);
+		expect(host.sent[1].body).toEqual({ space: SPACE });
 	});
 });
 
@@ -631,7 +631,7 @@ describe('every write', () => {
 			['createSpace', 'getSpace'],
 			'refused'
 		],
-		['an event cancelled', (c) => cancelPrivateEvent(c, RKEY), null, null],
+		['an event cancelled', (c) => cancelPrivateEvent(c, RKEY), ['getSpace'], 'no-event'],
 		[
 			'a guest added',
 			(c) => addGuest(c, { rkey: RKEY, handleOrDid: 'other.example.com' }),
@@ -693,6 +693,19 @@ describe('every write', () => {
 					'another policy governs',
 					() => Response.json({ policy: { $type: 'com.atproto.managedspace.policy' } }),
 					'not-private'
+				],
+				// atmo never makes one, so it is another app's, or an older build's shared one.
+				[
+					'shows its people to everyone on it',
+					() =>
+						Response.json({
+							policy: {
+								$type: 'com.atproto.memberspace.policy',
+								publishPolicy: true,
+								publishMembers: true
+							}
+						}),
+					'not-single'
 				]
 			]
 				// An answer's check is its read of the event, which a space never made turns away.
