@@ -29,12 +29,12 @@ import {
 import { holdsCalendarGrant } from '../scopes';
 import type { CallerSession } from './caller';
 import {
-	checkPrivateSpace,
 	ensurePrivateSpace,
 	flatEvent,
 	listedSpaces,
 	memberPages,
 	myPrivateEvents,
+	ownPrivateSpace,
 	PrivateEventRefused,
 	readPrivateEventPage,
 	readSpaceName,
@@ -116,16 +116,6 @@ export async function createCalendar(
 		throw e;
 	}
 	return { key, actor: (await verifiedHandle(caller.did)) ?? caller.did };
-}
-
-/** One of the caller's own private spaces, checked before anything is written to it: one that was
- *  never made, or that anyone can read, is refused. */
-async function ownPrivateSpace(caller: CallerSession, key: string): Promise<string> {
-	return checkPrivateSpace(caller, key).catch((e) => {
-		if (e instanceof PrivateEventRefused) throw e;
-		console.error(`[private-events] calendar space unchecked: ${errorKind(e)}`);
-		throw new PrivateEventRefused('unchecked');
-	});
 }
 
 /** Names one of the caller's own spaces, or renames it. A single event's space named this way is a

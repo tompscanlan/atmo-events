@@ -95,7 +95,7 @@ export type Refusal = keyof typeof REFUSALS;
 
 /** Checks a space of the caller's own: a write into a space that was never made succeeds anyway,
  *  and one that lets everyone read would publish what is written there. */
-export async function checkPrivateSpace(
+async function checkPrivateSpace(
 	caller: CallerSession,
 	spaceKey: string,
 	whenGone: Refusal = 'no-calendar'
@@ -505,11 +505,16 @@ export async function deletePrivateRsvp(
 	}
 }
 
-/** The caller's own single event's space, checked before its list changes, as a calendar's is. */
-async function ownEventSpace(caller: CallerSession, rkey: string): Promise<string> {
-	return checkPrivateSpace(caller, rkey, 'no-event').catch((e) => {
+/** One of the caller's own private spaces, a single event's or a calendar's, checked before anything
+ *  is written to it: one that was never made (`whenGone`), or that anyone can read, is refused. */
+export async function ownPrivateSpace(
+	caller: CallerSession,
+	spaceKey: string,
+	whenGone: Refusal = 'no-calendar'
+): Promise<string> {
+	return checkPrivateSpace(caller, spaceKey, whenGone).catch((e) => {
 		if (e instanceof PrivateEventRefused) throw e;
-		console.error(`[private-events] event space unchecked: ${errorKind(e)}`);
+		console.error(`[private-events] space unchecked before a change: ${errorKind(e)}`);
 		throw new PrivateEventRefused('unchecked');
 	});
 }
@@ -526,7 +531,7 @@ export async function addGuest(
 	const did = await actorToDid(actor, timeLimitedNetwork()).catch(() => null);
 	if (!did) throw new PrivateEventRefused('no-such-person');
 	if (did === caller.did) throw new PrivateEventRefused('own-event');
-	const space = await ownEventSpace(caller, input.rkey);
+	const space = await ownPrivateSpace(caller, input.rkey, 'no-event');
 	const body = { space, members: [{ did, read: true, write: true }] };
 	await write(caller, 'com.atproto.memberspace.putMembers', body, 'guest not added');
 	return { did, handle: await verifiedHandle(did), answer: null, answerUnread: false };
@@ -537,7 +542,7 @@ export async function removeGuest(
 	input: { rkey: string; did: string }
 ): Promise<void> {
 	requireHost(caller);
-	const body = { space: await ownEventSpace(caller, input.rkey), dids: [input.did] };
+	const body = { space: await ownPrivateSpace(caller, input.rkey, 'no-event'), dids: [input.did] };
 	await write(caller, 'com.atproto.memberspace.removeMembers', body, 'guest not removed');
 }
 
