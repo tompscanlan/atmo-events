@@ -36,15 +36,18 @@
 			: (data.calendars.find((c) => c.key === picked)?.key ?? null)
 	);
 	let isPublic = $derived(audience === 'everyone' || audience === UNLISTED);
+	// The host's last choice, not only the link's: private events can turn off mid-edit.
+	let wantsPrivate = $derived(audience === INVITED || audience === CALENDAR);
 	let invited = $derived(data.privateEvents && audience === INVITED);
 	let onCalendar = $derived(data.privateEvents && audience === CALENDAR && calendar !== null);
 	let calendarMissing = $derived(data.privateEvents && audience === CALENDAR && calendar === null);
-	// With private events off, the editor is the public one, so a link that asked for a private
-	// audience gets no editor at all: what someone meant to keep private must never be posted publicly.
+	// With private events off, the editor is the public one, so a private audience, asked for by a
+	// link or chosen here, gets no editor at all: what someone meant to keep private must never be
+	// posted publicly.
 	// A private event's description loads nothing by itself, here as on its page; a public one is as before.
 	setLinkEmbeds(() => (invited || onCalendar ? PRIVATE_LINK_EMBEDS : {}));
 	let chosen = $derived(
-		(!data.privateEvents && !askedPrivate) || isPublic || invited || onCalendar
+		(!data.privateEvents && !wantsPrivate) || isPublic || invited || onCalendar
 	);
 
 	const PRIVATE_LIMITS = " Private events can't have an image or repeat yet.";
@@ -211,7 +214,7 @@
 			{/if}
 		</div>
 	</div>
-{:else if askedPrivate}
+{:else if wantsPrivate}
 	<div class="px-6 pt-12" data-testid="private-off">
 		<p class="text-base-700 dark:text-base-300 mx-auto max-w-3xl text-sm">
 			Private events are off for you right now, so this page can't make a private event. Turn on

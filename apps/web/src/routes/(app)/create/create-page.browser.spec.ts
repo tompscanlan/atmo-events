@@ -307,6 +307,15 @@ describe('a link that asks for a private audience, while private events are off'
 		expect(page.getByRole('radio').elements()).toHaveLength(0);
 	});
 
+	it('gives a draft chosen as Private no editor when private events turn off mid-edit', async () => {
+		const view = await render(CreatePage, { data: data() } as never);
+		await choice('Private').click();
+		await expect.element(publish()).toBeVisible();
+		await view.rerender({ data: data(CALENDARS, false) } as never);
+		await expect.poll(() => publish().elements()).toHaveLength(0);
+		await expect.element(page.getByTestId('private-off')).toBeVisible();
+	});
+
 	it('leaves a plain /create as it was: the public editor, with its own Public / Unlisted switch', async () => {
 		render(CreatePage, { data: data(CALENDARS, false) } as never);
 		await expect.element(publish()).toBeVisible();
