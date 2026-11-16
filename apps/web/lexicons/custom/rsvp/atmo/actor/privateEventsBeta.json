@@ -5,7 +5,7 @@
 		"main": {
 			"type": "record",
 			"key": "literal:self",
-			"description": "Whether an actor has turned on atmo.rsvp's private events beta. Private events made during the beta use the testing space type rsvp.atmo.dev.space and can be lost while it changes. Other preferences belong in separate records.",
+			"description": "Whether an actor has turned on atmo.rsvp's private events beta. Private events made during the beta can be lost while they change. Other preferences belong in separate records.",
 			"record": {
 				"type": "object",
 				"required": ["privateEvents", "updatedAt"],

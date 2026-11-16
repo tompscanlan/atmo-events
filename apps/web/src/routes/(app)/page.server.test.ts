@@ -107,7 +107,7 @@ describe('home page load', () => {
 describe('your own private events in Your events', () => {
 	const ME = 'did:plc:mememememememememememememe';
 	const dinner = {
-		uri: 'at://did:plc:host/space/rsvp.atmo.dev.space/3ldinner/did:plc:host/community.lexicon.calendar.event/3ldinner',
+		uri: 'at://did:plc:host/space/community.lexicon.calendar.collection/3ldinner/did:plc:host/community.lexicon.calendar.event/3ldinner',
 		did: 'did:plc:host',
 		rkey: '3ldinner',
 		name: 'Dinner',

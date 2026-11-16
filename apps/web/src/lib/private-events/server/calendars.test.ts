@@ -172,7 +172,7 @@ describe('making a shared calendar', () => {
 			'com.atproto.space.putRecord'
 		]);
 		expect(host.sent[0].body).toMatchObject({
-			spaceType: 'rsvp.atmo.dev.space',
+			spaceType: 'community.lexicon.calendar.collection',
 			skey: key,
 			policy: {
 				$type: 'com.atproto.memberspace.policy',

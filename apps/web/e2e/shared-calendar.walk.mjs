@@ -29,7 +29,7 @@ const P = {
 	mallory: person('mallory', 'ALPHA'),
 	dana: person('dana', 'BETA')
 };
-const TYPE = 'rsvp.atmo.dev.space';
+const TYPE = 'community.lexicon.calendar.collection';
 const EVENT = 'community.lexicon.calendar.event';
 const RSVP = 'community.lexicon.calendar.rsvp';
 const CALENDAR = 'rsvp.atmo.dev.calendar';
