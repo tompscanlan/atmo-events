@@ -282,8 +282,8 @@ const sameAsMadeUp = async (who, page, label) => {
 	log(`  [${who}] ms real ${a.ms} made-up ${b.ms}`);
 };
 const listLoads = async (page, label) => {
-	const status = await open(page, '/');
-	check(`${label}: the home page loaded`, status === 200, `${status}`);
+	const status = await open(page, '/private');
+	check(`${label}: /private loaded`, status === 200, `${status}`);
 };
 // The attendee list, not the host's guest list, which names everyone added. The page shows only
 // avatars there, so this opens the list of names.
@@ -596,7 +596,7 @@ await step(
 	}
 );
 
-await step('11. Your events lists it for the host', async () => {
+await step('11. Your events lists it for the host; Calendars lists only calendars', async () => {
 	const a = pages.alice;
 	await open(a, '/');
 	const mine = a.locator(`[data-testid=your-private-event] a[href$="/private/${KEY}"]`);
@@ -607,6 +607,41 @@ await step('11. Your events lists it for the host', async () => {
 		/Private event/.test(await text(a, '[data-testid=your-private-event]'))
 	);
 	await shot(a, '09-your-events-host');
+	await open(a, '/private');
+	check(
+		'alice: no pointer to Settings, her beta is on',
+		!/turn on private events in/i.test(await text(a, '[data-testid=beta-notice]'))
+	);
+	check(
+		'alice: Calendars points at Your events for it',
+		/Private events not on a calendar are in Your events\.$/.test(
+			await text(a, '[data-testid=calendars-footnote]')
+		)
+	);
+	check(
+		'alice: and lists no event of its own',
+		(await a.locator('main a[href*="/private/"]').count()) === 0
+	);
+	await shot(a, '09-private-host');
+	const b = pages.bob;
+	await open(b, '/private');
+	check(
+		'bob: warned, and pointed at Settings to make his own',
+		/will be lost[\s\S]*turn on private events in/i.test(await text(b, '[data-testid=beta-notice]'))
+	);
+	check(
+		'bob: told his private events show in Your events once private events are on',
+		/are in Your events once private events are on\.$/.test(
+			await text(b, '[data-testid=calendars-footnote]')
+		)
+	);
+	check('bob: no event listed here', (await b.locator('main a[href*="/private/"]').count()) === 0);
+	check(
+		'the page says a calendar he is on shows once he answers one of its events',
+		/A calendar you're on shows here once you answer one of its events\./.test(
+			await text(b, '[data-testid=calendars-footnote]')
+		)
+	);
 	await listLoads(pages.mallory, 'mallory');
 	check('mallory: not listed', !(await text(pages.mallory, 'main')).includes(NAME));
 });
@@ -815,6 +850,8 @@ await step('15. alice cancels, and a guest gets the same page as anyone', async 
 	await a.waitForURL((u) => u.pathname === '/', { timeout: 30000 });
 	await settle(a);
 	check('back on her home page, and off her Your events', !(await text(a, 'main')).includes(NAME));
+	await listLoads(a, 'alice');
+	check('and not on her Calendars page', !(await text(a, 'main')).includes(NAME));
 	const status = await open(pages.bob);
 	check('bob gets a 404, not a 500', status === 404, `${status}`);
 	check('in the same words', (await text(pages.bob, 'main')).includes(NOT_AVAILABLE));
