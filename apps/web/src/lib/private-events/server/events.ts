@@ -234,12 +234,17 @@ export async function cancelPrivateEvent(caller: CallerSession, keys: EventKeys)
 }
 
 /** As the event components take it: the record whole, its address beside it, and no image, since a
- *  page would build a public CDN URL from it. Null for what isn't an event, since a PDS doesn't
+ *  page would build a public CDN URL from it, or load a poster or an "Event Image" link from
+ *  wherever it points without a click. Null for what isn't an event, since a PDS doesn't
  *  validate a space record and any host could write one that breaks their guests' pages, and with
  *  no start, which every page needs. */
 export function flatEvent(host: string, record: SpaceRecord): FlatEventRecord | null {
 	const value = { ...record.value };
 	delete value.media;
+	delete value.poster;
+	if (Array.isArray(value.uris)) {
+		value.uris = value.uris.filter((link) => link?.name !== 'Event Image');
+	}
 	if (typeof value.startsAt !== 'string' || !v.safeParse(eventSchema, value).ok) return null;
 	return {
 		...(value as unknown as FlatEventRecord),

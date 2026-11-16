@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { getEventExternalImage } from '@atmo-dev/kit/events-data';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { HOST_SCOPE, GUEST_SCOPE } from '../scopes';
 import {
@@ -412,6 +413,17 @@ describe('readPrivateEventPage', () => {
 		reader.writers.mockResolvedValue([]);
 		const page = await readPrivateEventPage(caller(GUEST, GUEST_SCOPE), EVENT);
 		expect(page?.event).not.toHaveProperty('media');
+	});
+
+	it('gives the kit no outside image to load by itself, and keeps the other links', async () => {
+		const menu = { name: 'Menu', uri: 'https://example.com/menu' };
+		const flyer = { name: 'Event Image', uri: 'https://images.example.com/flyer.jpg' };
+		const poster = { url: 'https://images.example.com/poster.jpg' };
+		theSpaceHolds({}, { ...RECORD, poster, uris: [flyer, menu] } as typeof RECORD);
+		reader.writers.mockResolvedValue([]);
+		const page = await readPrivateEventPage(caller(GUEST, GUEST_SCOPE), EVENT);
+		expect(getEventExternalImage(page!.event)).toBeNull();
+		expect(page?.event.uris).toEqual([menu]);
 	});
 
 	it('splits answers, keeps "not going" off both lists, and finds the viewer’s own', async () => {
