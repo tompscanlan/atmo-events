@@ -30,6 +30,7 @@ vi.mock('#lib/private-events/server/calendars.js', () => ({
 	myPrivateEventsAndCalendars: vi.fn()
 }));
 
+import { waitUntil } from 'cloudflare:workers';
 import { load } from './+page.server';
 import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 import { privateEventsBeta } from '#lib/private-events/server/beta.js';
@@ -226,6 +227,23 @@ describe('your own private events in Your events', () => {
 		expect(data.privateEventsIncomplete).toBe(true);
 		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'private, no-store' });
 		expect(String(vi.mocked(console.error).mock.calls)).not.toContain(ME);
+	});
+
+	it('keeps reading after it stops waiting, until the read is done', async () => {
+		turnOn();
+		let finish = () => {};
+		vi.mocked(myPrivateEventsAndCalendars).mockReturnValue(
+			new Promise((resolve) => (finish = () => resolve({ events: [] } as never)))
+		);
+		const loading = load(signedIn().event);
+		expect(waitUntil).toHaveBeenCalledOnce();
+		let done = false;
+		void vi.mocked(waitUntil).mock.calls[0][0].then(() => (done = true));
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(done).toBe(false);
+		finish();
+		await loading;
+		expect(done).toBe(true);
 	});
 
 	it('does not wait more than a few seconds for their server', async () => {

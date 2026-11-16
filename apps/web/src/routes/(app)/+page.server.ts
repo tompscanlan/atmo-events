@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env, waitUntil } from 'cloudflare:workers';
 import {
 	buildAttendee,
 	flattenEventRecord,
@@ -61,12 +61,16 @@ async function ownPrivateEvents(
 		const { events, incomplete, capped } = await myPrivateEventsAndCalendars(caller);
 		return { events, incomplete: incomplete || capped };
 	};
+	// Kept going past the wait: a Worker cuts off what a response leaves running, which could leave
+	// their session's lock held and stall their next request.
+	const reading = read();
+	waitUntil(reading.catch(() => {}));
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const late = new Promise<'late'>((resolve) => {
 		timer = setTimeout(() => resolve('late'), PRIVATE_EVENTS_WAIT_MS);
 	});
 	try {
-		const found = await Promise.race([read(), late]);
+		const found = await Promise.race([reading, late]);
 		if (found !== 'late') return found;
 		return betaOn ? { events: [], incomplete: true } : null;
 	} catch (e) {
