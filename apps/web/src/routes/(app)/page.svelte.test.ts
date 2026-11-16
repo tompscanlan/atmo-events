@@ -19,7 +19,7 @@ const event = (uri: string, name: string): FlatEventRecord => ({
 	createdAt: '2026-06-01T00:00:00Z'
 });
 const DINNER = event(
-	'at://did:plc:host/space/rsvp.atmo.dev.space/cal-3lsupper/did:plc:host/community.lexicon.calendar.event/3ldinner',
+	'at://did:plc:host/space/community.lexicon.calendar.collection/cal-3lsupper/did:plc:host/community.lexicon.calendar.event/3ldinner',
 	'Dinner'
 );
 const PICNIC = event('at://did:plc:host/community.lexicon.calendar.event/3lpicnic', 'Picnic');

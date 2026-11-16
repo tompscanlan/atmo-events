@@ -27,7 +27,7 @@ const EVENT = {
 	createdAt: '2029-01-01T00:00:00Z',
 	did: OWNER,
 	rkey: '3kabc',
-	uri: `at://${OWNER}/space/rsvp.atmo.dev.space/${KEY}/${OWNER}/community.lexicon.calendar.event/3kabc`,
+	uri: `at://${OWNER}/space/community.lexicon.calendar.collection/${KEY}/${OWNER}/community.lexicon.calendar.event/3kabc`,
 	cid: 'cid'
 };
 

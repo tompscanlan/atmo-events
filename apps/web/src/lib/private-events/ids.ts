@@ -3,9 +3,9 @@
 import { spaceRecordUri, spaceUri } from '#lib/spaces/uri.js';
 
 /** It is in every URI in the space, so a rename strands what was written under the old name, and
- *  it must resolve wherever a scope names it. For now this is atmo.rsvp's published type for
- *  development and testing, until a lasting name is published. */
-export const PRIVATE_CALENDAR_TYPE = 'rsvp.atmo.dev.space';
+ *  it must resolve wherever a scope names it. Lexicon Community's shared calendar type, so other
+ *  calendar apps can read the same spaces and their guests can answer from them. */
+export const PRIVATE_CALENDAR_TYPE = 'community.lexicon.calendar.collection';
 export const EVENT_COLLECTION = 'community.lexicon.calendar.event';
 export const RSVP_COLLECTION = 'community.lexicon.calendar.rsvp';
 

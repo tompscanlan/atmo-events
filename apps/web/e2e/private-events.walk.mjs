@@ -26,7 +26,7 @@ const P = {
 	dana: person('dana', 'BETA'),
 	carol: person('carol', 'REGULAR')
 };
-const TYPE = 'rsvp.atmo.dev.space';
+const TYPE = 'community.lexicon.calendar.collection';
 const EVENT = 'community.lexicon.calendar.event';
 const RSVP = 'community.lexicon.calendar.rsvp';
 
