@@ -3,7 +3,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import { CALENDAR_NAME_MAX, NAMING_TELLS } from '../ids';
 	import { renameCalendar } from '../private-events.remote';
-	import { refusalWords } from './changes.svelte';
+	import { Changes } from './changes.svelte';
 
 	// For the host of a single event: naming its space makes its guests a shared calendar, to put
 	// later events on. Nothing moves: the event, its guests and their answers stay where they are.
@@ -11,21 +11,14 @@
 
 	let open = $state(false);
 	let name = $state('');
-	let busy = $state(false);
-	let failure: string | null = $state(null);
+	const changes = new Changes();
 
-	async function save(event: SubmitEvent) {
+	function save(event: SubmitEvent) {
 		event.preventDefault();
-		busy = true;
-		failure = null;
-		try {
+		return changes.run(async () => {
 			await renameCalendar({ key: spaceKey, name });
 			await invalidateAll();
-		} catch (e) {
-			failure = refusalWords(e);
-		} finally {
-			busy = false;
-		}
+		});
 	}
 </script>
 
@@ -44,14 +37,14 @@
 				autocomplete="off"
 				bind:value={name}
 			/>
-			<Button type="submit" size="sm" disabled={busy || !name.trim()}>Save</Button>
+			<Button type="submit" size="sm" disabled={changes.busy || !name.trim()}>Save</Button>
 			<Button size="sm" variant="ghost" onclick={() => (open = false)}>Cancel</Button>
 		</form>
 		<p class="text-base-600 dark:text-base-400 mt-2 text-sm" data-testid="naming-tells">
 			Put later events on it for the same people. {NAMING_TELLS}
 		</p>
 	{/if}
-	{#if failure}<p role="alert" class="text-base-950 dark:text-base-50 mt-2 text-sm">
-			{failure}
+	{#if changes.failure}<p role="alert" class="text-base-950 dark:text-base-50 mt-2 text-sm">
+			{changes.failure}
 		</p>{/if}
 </section>

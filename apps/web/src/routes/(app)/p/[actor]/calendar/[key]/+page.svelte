@@ -8,7 +8,7 @@
 	import { BETA_WARNING, BETA_WARNING_SHORT } from '#lib/private-events/beta.js';
 	import CalendarPeople from '#lib/private-events/components/CalendarPeople.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
-	import { refusalWords } from '#lib/private-events/components/changes.svelte.js';
+	import { Changes } from '#lib/private-events/components/changes.svelte.js';
 	import { NAMING_TELLS, UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
 	import { deleteCalendar, renameCalendar } from '#lib/private-events/private-events.remote.js';
 	import { GUEST_SCOPES, HOST_SCOPES } from '#lib/private-events/scopes.js';
@@ -18,20 +18,7 @@
 	let renaming = $state(false);
 	let newName = $state('');
 	let confirmingDelete = $state(false);
-	let busy = $state(false);
-	let failure: string | null = $state(null);
-
-	async function act(run: () => Promise<unknown>) {
-		busy = true;
-		failure = null;
-		try {
-			await run();
-		} catch (e) {
-			failure = refusalWords(e);
-		} finally {
-			busy = false;
-		}
-	}
+	const changes = new Changes();
 
 	function startRename(current: string) {
 		newName = current;
@@ -40,7 +27,7 @@
 
 	function rename(event: SubmitEvent, key: string) {
 		event.preventDefault();
-		return act(async () => {
+		return changes.run(async () => {
 			await renameCalendar({ key, name: newName });
 			renaming = false;
 			await invalidateAll();
@@ -55,7 +42,7 @@
 	}
 
 	const remove = (key: string) =>
-		act(async () => {
+		changes.run(async () => {
 			await deleteCalendar({ key });
 			await goto(resolve('/(app)/private'), { invalidateAll: true });
 		});
@@ -96,11 +83,14 @@
 				<Button
 					size="sm"
 					variant="secondary"
-					disabled={busy}
+					disabled={changes.busy}
 					onclick={() => startRename(calendar.name ?? '')}>Rename</Button
 				>
-				<Button size="sm" variant="ghost" disabled={busy} onclick={() => (confirmingDelete = true)}
-					>Delete</Button
+				<Button
+					size="sm"
+					variant="ghost"
+					disabled={changes.busy}
+					onclick={() => (confirmingDelete = true)}>Delete</Button
 				>
 			</div>
 			{#if renaming}
@@ -112,7 +102,7 @@
 						autocomplete="off"
 						bind:value={newName}
 					/>
-					<Button type="submit" size="sm" disabled={busy || !newName.trim()}>Save</Button>
+					<Button type="submit" size="sm" disabled={changes.busy || !newName.trim()}>Save</Button>
 					<Button size="sm" variant="ghost" onclick={() => (renaming = false)}>Cancel</Button>
 				</form>
 				<p class="text-base-600 dark:text-base-400 mt-2 text-sm" data-testid="naming-tells">
@@ -128,7 +118,7 @@
 						Delete {name} and every event on it? Everyone on it loses them at once. This can't be undone.
 					</p>
 					<div class="mt-3 flex gap-2">
-						<Button size="sm" disabled={busy} onclick={() => remove(calendar.key)}
+						<Button size="sm" disabled={changes.busy} onclick={() => remove(calendar.key)}
 							>Delete it for everyone</Button
 						>
 						<Button size="sm" variant="ghost" onclick={() => (confirmingDelete = false)}
@@ -138,8 +128,8 @@
 				</div>
 			{/if}
 		{/if}
-		{#if failure}<p role="alert" class="text-base-950 dark:text-base-50 mt-2 text-sm">
-				{failure}
+		{#if changes.failure}<p role="alert" class="text-base-950 dark:text-base-50 mt-2 text-sm">
+				{changes.failure}
 			</p>{/if}
 
 		<section class="mt-8" data-testid="upcoming-events">
