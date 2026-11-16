@@ -4,7 +4,9 @@ import { buildEventRecord } from '@atmo-dev/kit/events/editor';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { HOST_SCOPE, GUEST_SCOPE } from '../scopes';
 import {
+	CALENDAR_COLLECTION,
 	EVENT_COLLECTION,
+	eventSpace,
 	eventUri,
 	privateEventSpace,
 	RSVP_COLLECTION,
@@ -135,7 +137,8 @@ describe('savePrivateEvent', () => {
 			skey: RKEY,
 			policy: { $type: 'com.atproto.memberspace.policy' }
 		});
-		// A single event's guests see who answered, and only the host sees the whole list.
+		// Only a shared calendar shows its people to everyone on it; a single event's guests see who
+		// answered, and only the host sees the whole list.
 		expect(host.sent[0].body?.policy).not.toHaveProperty('publishMembers');
 		expect(host.sent[2].body).toMatchObject({
 			space: SPACE,
@@ -190,12 +193,17 @@ describe('an edit of a private event', () => {
 	const poster = { url: 'https://images.example.com/poster.jpg' };
 	const media = [{ role: 'thumbnail', content: { $type: 'blob', ref: { $link: 'bafkrei' } } }];
 
-	it('keeps the image and links the edit page left out', async () => {
+	it.each([
+		['a single event', RKEY, undefined],
+		['an event on a calendar', 'cal-3lsupper', 'cal-3lsupper']
+	])('keeps the image and links the edit page left out, for %s', async (_, spaceKey, calendar) => {
 		reader.get.mockImplementation(async ({ collection }: { collection: string }) =>
-			spaceRecord(HOST, collection, { ...RECORD, media, poster, uris: [flyer, menu] })
+			collection === CALENDAR_COLLECTION
+				? spaceRecord(HOST, collection, { name: 'Supper' })
+				: spaceRecord(HOST, collection, { ...RECORD, media, poster, uris: [flyer, menu] })
 		);
 		const host = caller(HOST, HOST_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
-		const eventData = await readPrivateEventForEdit(host, RKEY);
+		const eventData = await readPrivateEventForEdit(host, { spaceKey, rkey: RKEY });
 		// As the kit's editor saves the edit page's copy with only the name changed and no image offered.
 		const record = await buildEventRecord({
 			eventData,
@@ -214,7 +222,7 @@ describe('an edit of a private event', () => {
 			media: undefined,
 			resolveHandle: async () => HOST
 		});
-		await savePrivateEvent(host, { rkey: RKEY, record });
+		await savePrivateEvent(host, { rkey: RKEY, record, ...(calendar ? { calendar } : {}) });
 		const saved = host.sent.find((s) => s.pathname.endsWith('.putRecord'))?.body?.record as {
 			uris?: unknown[];
 		};
@@ -225,12 +233,53 @@ describe('an edit of a private event', () => {
 });
 
 describe('cancelPrivateEvent', () => {
-	it('deletes the space of the caller’s own event, once it has checked it', async () => {
-		const host = caller(HOST, HOST_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
-		await cancelPrivateEvent(host, RKEY);
+	const named = () =>
+		reader.get.mockImplementation(async ({ collection }: { collection: string }) =>
+			collection === CALENDAR_COLLECTION ? spaceRecord(HOST, collection, { name: 'Supper' }) : null
+		);
+	const checked = () => caller(HOST, HOST_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
+
+	it('deletes the space of the caller’s own event, once it has checked it and read that it has no name', async () => {
+		reader.get.mockResolvedValue(null);
+		const host = checked();
+		await cancelPrivateEvent(host, { spaceKey: RKEY, rkey: RKEY });
+		expect(reader.get).toHaveBeenCalledWith(
+			expect.objectContaining({ space: SPACE, repo: HOST, collection: CALENDAR_COLLECTION })
+		);
 		expect(host.nsids()).toEqual(['com.atproto.space.getSpace', 'com.atproto.space.deleteSpace']);
 		expect(host.sent[0].query.get('space')).toBe(SPACE);
 		expect(host.sent[1].body).toEqual({ space: SPACE });
+	});
+
+	it('takes only the event out of a space with a name, even the one the space was made for', async () => {
+		named();
+		const host = checked();
+		await cancelPrivateEvent(host, { spaceKey: RKEY, rkey: RKEY });
+		expect(host.nsids()).toEqual(['com.atproto.space.getSpace', 'com.atproto.space.deleteRecord']);
+		expect(host.sent[1].body).toEqual({
+			space: SPACE,
+			repo: HOST,
+			collection: EVENT_COLLECTION,
+			rkey: RKEY
+		});
+	});
+
+	it('deletes nothing when it could not read whether the space has a name', async () => {
+		reader.get.mockRejectedValue(new Error('503'));
+		const host = checked();
+		await expect(cancelPrivateEvent(host, { spaceKey: RKEY, rkey: RKEY })).rejects.toMatchObject({
+			reason: 'unchecked'
+		});
+		expect(host.nsids()).toEqual(['com.atproto.space.getSpace']);
+	});
+
+	it('refuses another event in a space with no name, which atmo never puts there', async () => {
+		reader.get.mockResolvedValue(null);
+		const host = checked();
+		await expect(
+			cancelPrivateEvent(host, { spaceKey: RKEY, rkey: '3lother' })
+		).rejects.toMatchObject({ reason: 'no-event' });
+		expect(host.nsids()).toEqual(['com.atproto.space.getSpace']);
 	});
 });
 
@@ -531,8 +580,9 @@ describe('myPrivateEvents', () => {
 
 	it('lists only what the person can still read, soonest first', async () => {
 		const later = privateEventSpace(HOST, '3lbbbbbbbbbbb');
-		reader.get.mockImplementation(async ({ space, rkey }: Read) => {
+		reader.get.mockImplementation(async ({ space, collection, rkey }: Read) => {
 			if (space === KEPT_OUT) throw new SpaceAccessDenied(space, '400 SpaceNotFound');
+			if (collection === CALENDAR_COLLECTION) return null;
 			const startsAt = space === later ? '2026-12-01T00:00:00.000Z' : RECORD.startsAt;
 			return { ...spaceRecord(HOST, EVENT_COLLECTION, { ...RECORD, startsAt }), rkey };
 		});
@@ -558,8 +608,9 @@ describe('myPrivateEvents', () => {
 
 	it('says the list is incomplete when an event could not be read', async () => {
 		const down = privateEventSpace(OTHER, '3laaaaaaaaaaa');
-		reader.get.mockImplementation(async ({ space }: Read) => {
+		reader.get.mockImplementation(async ({ space, collection }: Read) => {
 			if (space === down) throw new Error('503');
+			if (collection === CALENDAR_COLLECTION) return null;
 			return spaceRecord(HOST, EVENT_COLLECTION, RECORD);
 		});
 		const guest = caller(GUEST, GUEST_SCOPE, {
@@ -568,6 +619,60 @@ describe('myPrivateEvents', () => {
 		});
 		const { events, incomplete } = await myPrivateEvents(guest);
 		expect(events).toHaveLength(1);
+		expect(incomplete).toBe(true);
+	});
+
+	it('passes on a single event’s space with a name as a calendar, and lists it nowhere else', async () => {
+		const named = privateEventSpace(OTHER, '3lnamednamed');
+		reader.get.mockImplementation(async ({ space, collection, rkey }: Read) => {
+			if (collection === CALENDAR_COLLECTION) {
+				return space === named
+					? { ...spaceRecord(OTHER, collection, { name: 'Supper' }), rkey }
+					: null;
+			}
+			return { ...spaceRecord(OTHER, EVENT_COLLECTION, RECORD), rkey };
+		});
+		const guest = caller(GUEST, GUEST_SCOPE, {
+			'com.atproto.space.listSpaces': () =>
+				Response.json({ spaces: [{ space: named }, { space: SPACE }] })
+		});
+		const { events, calendars, incomplete } = await myPrivateEvents(guest);
+		expect(events.map((e) => e.event.rkey)).toEqual([RKEY]);
+		expect(calendars).toEqual([
+			{
+				host: OTHER,
+				key: '3lnamednamed',
+				named: expect.objectContaining({ value: { name: 'Supper' } })
+			}
+		]);
+		expect(incomplete).toBe(false);
+	});
+
+	it('keeps a named space a calendar once the event it was made for is cancelled', async () => {
+		reader.get.mockImplementation(async ({ collection }: Read) =>
+			collection === CALENDAR_COLLECTION ? spaceRecord(HOST, collection, { name: 'Supper' }) : null
+		);
+		const guest = caller(GUEST, GUEST_SCOPE, {
+			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SPACE }] })
+		});
+		const { events, calendars } = await myPrivateEvents(guest);
+		expect(events).toEqual([]);
+		expect(calendars).toEqual([
+			{ host: HOST, key: RKEY, named: expect.objectContaining({ value: { name: 'Supper' } }) }
+		]);
+	});
+
+	it('says the list is incomplete when a space’s name could not be read, and lists it as nothing', async () => {
+		reader.get.mockImplementation(async ({ collection }: Read) => {
+			if (collection === CALENDAR_COLLECTION) throw new Error('503');
+			return spaceRecord(HOST, EVENT_COLLECTION, RECORD);
+		});
+		const guest = caller(GUEST, GUEST_SCOPE, {
+			'com.atproto.space.listSpaces': () => Response.json({ spaces: [{ space: SPACE }] })
+		});
+		const { events, calendars, incomplete } = await myPrivateEvents(guest);
+		expect(events).toEqual([]);
+		expect(calendars).toEqual([]);
 		expect(incomplete).toBe(true);
 	});
 
@@ -583,6 +688,78 @@ describe('myPrivateEvents', () => {
 	});
 });
 
+describe('an event kept in a space under another key', () => {
+	const SHARED = { host: HOST, spaceKey: 'shared-space', rkey: RKEY };
+	const SHARED_SPACE = privateEventSpace(HOST, 'shared-space');
+
+	function sharedSpaceHolds(answers: Record<string, Record<string, unknown>>) {
+		reader.get.mockImplementation(
+			async ({ space, repo, collection }: { space: string; repo: string; collection: string }) => {
+				if (space !== SHARED_SPACE) return null;
+				const value = collection === EVENT_COLLECTION ? RECORD : answers[repo];
+				if (!value || (collection === EVENT_COLLECTION && repo !== HOST)) return null;
+				return {
+					uri: `${SHARED_SPACE}/${repo}/${collection}/${RKEY}`,
+					cid: `cid-of-${repo}`,
+					rkey: RKEY,
+					value
+				};
+			}
+		);
+	}
+
+	it('is addressed in that space, under its own key', () => {
+		expect(eventSpace(SHARED)).toBe(SHARED_SPACE);
+		expect(eventUri(SHARED)).toBe(`${SHARED_SPACE}/${HOST}/${EVENT_COLLECTION}/${RKEY}`);
+	});
+
+	it('is read from that space, under its own key, from the host’s repo', async () => {
+		sharedSpaceHolds({});
+		reader.writers.mockResolvedValue([]);
+		const page = await readPrivateEventPage(caller(GUEST, GUEST_SCOPE), SHARED);
+		expect(page?.event.name).toBe(RECORD.name);
+		expect(reader.get).toHaveBeenCalledWith({
+			space: SHARED_SPACE,
+			repo: HOST,
+			collection: EVENT_COLLECTION,
+			rkey: RKEY
+		});
+		expect(reader.writers).toHaveBeenCalledWith(SHARED_SPACE);
+	});
+
+	it('counts an answer only when it names this event in that space', async () => {
+		sharedSpaceHolds({
+			[GUEST]: rsvp('going', eventUri(SHARED)),
+			[OTHER]: rsvp('going', eventUri(EVENT))
+		});
+		reader.writers.mockResolvedValue([GUEST, OTHER]);
+		const page = await readPrivateEventPage(caller(GUEST, GUEST_SCOPE), SHARED);
+		expect(page?.attendees.going.map((a) => a.did)).toEqual([GUEST]);
+	});
+
+	it('takes an answer into the guest’s own repo in that space, naming the event there', async () => {
+		sharedSpaceHolds({});
+		const guest = caller(GUEST, GUEST_SCOPE);
+		await putPrivateRsvp(guest, SHARED, { status: 'going', cid: `cid-of-${HOST}` });
+		expect(guest.sent[0].body).toMatchObject({
+			space: SHARED_SPACE,
+			repo: GUEST,
+			collection: RSVP_COLLECTION,
+			rkey: RKEY,
+			record: { subject: { uri: eventUri(SHARED), cid: `cid-of-${HOST}` } }
+		});
+	});
+
+	it('takes an answer back out of that space', async () => {
+		const guest = caller(GUEST, GUEST_SCOPE);
+		await deletePrivateRsvp(guest, SHARED);
+		expect(guest.sent[0]).toMatchObject({
+			pathname: '/xrpc/com.atproto.space.deleteRecord',
+			body: { space: SHARED_SPACE, repo: GUEST, collection: RSVP_COLLECTION, rkey: RKEY }
+		});
+	});
+});
+
 describe('a write the person’s own PDS refuses', () => {
 	const refusing = { error: 'Nope', message: 'secret detail' };
 	const refuses = (did: string, scope: string, nsid: string) =>
@@ -593,7 +770,8 @@ describe('a write the person’s own PDS refuses', () => {
 	const host = (nsid: string) => refuses(HOST, HOST_SCOPE, nsid);
 	const answer = { status: 'going' as const, cid: `cid-of-${HOST}` };
 	const writes: Record<string, (nsid: string) => Promise<unknown>> = {
-		'com.atproto.space.deleteSpace': (nsid) => cancelPrivateEvent(host(nsid), RKEY),
+		'com.atproto.space.deleteSpace': (nsid) =>
+			cancelPrivateEvent(host(nsid), { spaceKey: RKEY, rkey: RKEY }),
 		'com.atproto.space.putRecord': (nsid) =>
 			putPrivateRsvp(refuses(GUEST, GUEST_SCOPE, nsid), EVENT, answer),
 		'com.atproto.memberspace.putMembers': (nsid) =>
@@ -631,7 +809,12 @@ describe('every write', () => {
 			['createSpace', 'getSpace'],
 			'refused'
 		],
-		['an event cancelled', (c) => cancelPrivateEvent(c, RKEY), ['getSpace'], 'no-event'],
+		[
+			'an event cancelled',
+			(c) => cancelPrivateEvent(c, { spaceKey: RKEY, rkey: RKEY }),
+			['getSpace'],
+			'no-event'
+		],
 		[
 			'a guest added',
 			(c) => addGuest(c, { rkey: RKEY, handleOrDid: 'other.example.com' }),
@@ -694,7 +877,7 @@ describe('every write', () => {
 					() => Response.json({ policy: { $type: 'com.atproto.managedspace.policy' } }),
 					'not-private'
 				],
-				// atmo never makes one, so it is another app's, or an older build's shared one.
+				// With no calendar name of atmo's, it is another app's.
 				[
 					'shows its people to everyone on it',
 					() =>

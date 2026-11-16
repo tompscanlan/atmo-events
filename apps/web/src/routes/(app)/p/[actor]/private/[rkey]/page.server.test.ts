@@ -1,7 +1,12 @@
 import { render } from 'svelte/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { EVENT_COLLECTION, privateEventPath, privateEventSpace } from '#lib/private-events/ids.js';
-import { HOST_SCOPE } from '#lib/private-events/scopes.js';
+import {
+	CALENDAR_COLLECTION,
+	EVENT_COLLECTION,
+	privateEventPath,
+	privateEventSpace
+} from '#lib/private-events/ids.js';
+import { CALENDAR_SCOPE, GUEST_SCOPE, HOST_SCOPE } from '#lib/private-events/scopes.js';
 
 const HOST = 'did:plc:hosthosthosthosthosthost';
 const GUEST = 'did:plc:guestguestguestguestgues';
@@ -16,7 +21,7 @@ const RECORD = {
 };
 
 const setHeaders = vi.fn();
-const reader = { get: vi.fn(), writers: vi.fn() };
+const reader = { get: vi.fn(), list: vi.fn(), writers: vi.fn() };
 const credentialSpaceReader = vi.fn(() => reader);
 vi.mock('#lib/spaces/server/space-read.js', () => ({
 	credentialSpaceReader: () => credentialSpaceReader()
@@ -32,6 +37,7 @@ vi.mock('#lib/private-events/server/enabled.js', () => ({
 vi.mock('#lib/private-events/private-events.remote', () => ({
 	addGuest: vi.fn(),
 	removeGuest: vi.fn(),
+	renameCalendar: vi.fn(),
 	rsvpToPrivateEvent: vi.fn(),
 	cancelPrivateRsvp: vi.fn()
 }));
@@ -98,6 +104,66 @@ beforeEach(() => {
 	reader.writers.mockResolvedValue([]);
 	reader.get.mockImplementation(spaceHolds(RECORD));
 	vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+describe('once its host names its space', () => {
+	const named = (name: string) => {
+		const event = spaceHolds(RECORD);
+		reader.get.mockImplementation(async (q: { collection: string }) =>
+			q.collection === CALENDAR_COLLECTION
+				? { uri: 'at://x', cid: 'c', rkey: 'self', value: { name } }
+				: event(q)
+		);
+		reader.list.mockResolvedValue({
+			records: [GUEST, 'did:plc:otherotherotherotherothe'].map((did) => ({
+				uri: 'at://x',
+				cid: 'c',
+				rkey: did,
+				value: { read: true, write: true }
+			})),
+			capped: false
+		});
+	};
+
+	it('offers its host to save its guests as a shared calendar while it has no name', async () => {
+		const data = await load(
+			request(HOST, `${HOST_SCOPE} ${CALENDAR_SCOPE}`, browser(), undefined, { members: [] })
+		);
+		expect(data).toMatchObject({ calendar: null, canName: true });
+		expect(page(data)).toContain('Save these people as a shared calendar');
+	});
+
+	it('does not offer it without the permission to name a calendar', async () => {
+		const data = await load(request(HOST, HOST_SCOPE, browser(), undefined, { members: [] }));
+		expect(data.canName).toBe(false);
+		const body = page(data);
+		expect(body).not.toContain('Save these people as a shared calendar');
+		expect(body).toContain('data-testid="calendars-need-allowing"');
+		expect(body).toMatch(/allow shared calendars first, under\s*<a href="\/private"/);
+	});
+
+	it('shows a guest the calendar it is on, and who else is on it, at the same address', async () => {
+		named('Supper club');
+		const data = await load(request(GUEST, GUEST_SCOPE, browser()));
+		expect(data).toMatchObject({ view: 'event', calendar: { key: RKEY, name: 'Supper club' } });
+		const body = page(data).replace(/<!--.*?-->/g, '');
+		expect(body).toContain(NAME);
+		expect(body).toContain('data-testid="private-to"');
+		expect(body).toMatch(/href="\/p\/[^"]+\/calendar\/3lzzzzzzzzzzz"[^>]*>Supper club<\/a>/);
+		expect(body).toContain('otherotherotherotherothe');
+		expect(body).not.toContain('Only people the host added can see it');
+	});
+
+	it('shows its host the calendar, and no longer offers to name it', async () => {
+		named('Supper club');
+		const data = await load(
+			request(HOST, `${HOST_SCOPE} ${CALENDAR_SCOPE}`, browser(), undefined, {
+				members: [{ did: GUEST }]
+			})
+		);
+		expect(data).toMatchObject({ calendar: { name: 'Supper club' }, canName: false });
+		expect(page(data)).not.toContain('Save these people as a shared calendar');
+	});
 });
 
 describe('a description written in Markdown', () => {

@@ -26,15 +26,17 @@ vi.mock('#lib/private-events/server/beta.js', () => ({
 	privateEventsBeta: vi.fn(async () => false)
 }));
 vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: vi.fn(async () => null) }));
-vi.mock('#lib/private-events/server/events.js', () => ({ myPrivateEvents: vi.fn() }));
+vi.mock('#lib/private-events/server/calendars.js', () => ({
+	myPrivateEventsAndCalendars: vi.fn()
+}));
 
 import { waitUntil } from 'cloudflare:workers';
 import { load } from './+page.server';
 import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 import { privateEventsBeta } from '#lib/private-events/server/beta.js';
+import { myPrivateEventsAndCalendars } from '#lib/private-events/server/calendars.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
 import { privateEventsEnabled } from '#lib/private-events/server/enabled.js';
-import { myPrivateEvents } from '#lib/private-events/server/events.js';
 import { listDiscoverableEventsFromContrail } from '#lib/contrail.js';
 import { ongoingQuery } from '#lib/contrail/ongoing.js';
 import { cachedRead } from '#lib/server/edge-cache.js';
@@ -47,7 +49,7 @@ type LoadResult = {
 	recentActivity: unknown[];
 	myUpcoming: { name: string }[];
 	myPast: unknown[];
-	privateLinks: Record<string, { href: string }>;
+	privateLinks: Record<string, { href: string; calendar: string | null }>;
 	privateEventsIncomplete: boolean;
 };
 
@@ -122,14 +124,17 @@ describe('your own private events in Your events', () => {
 		vi.mocked(privateEventsEnabled).mockReturnValue(true);
 		vi.mocked(privateEventsBeta).mockResolvedValue(true);
 		vi.mocked(callerSession).mockResolvedValue({ did: ME, scope: GUEST_SCOPE } as never);
-		vi.mocked(myPrivateEvents).mockResolvedValue({
+		vi.mocked(myPrivateEventsAndCalendars).mockResolvedValue({
 			events: [
 				{
 					event: dinner,
-					href: '/p/host.example.com/private/3ldinner'
+					href: '/p/host.example.com/calendar/cal-3lsupper/3ldinner',
+					calendar: { name: 'Supper club', key: 'cal-3lsupper' }
 				}
 			],
-			incomplete: false
+			calendars: [],
+			incomplete: false,
+			capped: false
 		} as never);
 	};
 
@@ -139,7 +144,10 @@ describe('your own private events in Your events', () => {
 		const data = (await load(event)) as unknown as LoadResult;
 		expect(data.myUpcoming.map((e) => e.name)).toEqual(['Dinner']);
 		expect(data.privateLinks).toEqual({
-			[dinner.uri]: { href: '/p/host.example.com/private/3ldinner' }
+			[dinner.uri]: {
+				href: '/p/host.example.com/calendar/cal-3lsupper/3ldinner',
+				calendar: 'Supper club'
+			}
 		});
 		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'private, no-store' });
 	});
@@ -149,7 +157,7 @@ describe('your own private events in Your events', () => {
 		vi.mocked(privateEventsBeta).mockResolvedValue(false);
 		const { event, setHeaders } = signedIn();
 		const data = (await load(event)) as unknown as LoadResult;
-		expect(myPrivateEvents).not.toHaveBeenCalled();
+		expect(myPrivateEventsAndCalendars).not.toHaveBeenCalled();
 		expect(data.myUpcoming).toEqual([]);
 		expect(data.privateLinks).toEqual({});
 		expect(setHeaders).not.toHaveBeenCalled();
@@ -161,7 +169,7 @@ describe('your own private events in Your events', () => {
 		const { event } = signedIn();
 		await load(event);
 		expect(privateEventsBeta).not.toHaveBeenCalled();
-		expect(myPrivateEvents).not.toHaveBeenCalled();
+		expect(myPrivateEventsAndCalendars).not.toHaveBeenCalled();
 	});
 
 	it('reads none without a grant to read them, and asks their server nothing', async () => {
@@ -170,7 +178,7 @@ describe('your own private events in Your events', () => {
 		const { event } = signedIn();
 		const data = (await load(event)) as unknown as LoadResult;
 		expect(privateEventsBeta).not.toHaveBeenCalled();
-		expect(myPrivateEvents).not.toHaveBeenCalled();
+		expect(myPrivateEventsAndCalendars).not.toHaveBeenCalled();
 		expect(data.privateEventsIncomplete).toBe(false);
 	});
 
@@ -190,9 +198,16 @@ describe('your own private events in Your events', () => {
 		expect(data.privateEventsIncomplete).toBe(false);
 	});
 
-	it('says some may be missing when some could not be read', async () => {
+	it.each([
+		['some could not be read', { incomplete: true, capped: false }],
+		['a calendar had more than were listed', { incomplete: false, capped: true }]
+	])('says some may be missing when %s', async (_why, flags) => {
 		turnOn();
-		vi.mocked(myPrivateEvents).mockResolvedValue({ events: [], incomplete: true } as never);
+		vi.mocked(myPrivateEventsAndCalendars).mockResolvedValue({
+			events: [],
+			calendars: [],
+			...flags
+		} as never);
 		const { event, setHeaders } = signedIn();
 		const data = (await load(event)) as unknown as LoadResult;
 		expect(data.privateEventsIncomplete).toBe(true);
@@ -201,7 +216,7 @@ describe('your own private events in Your events', () => {
 
 	it('shows the public ones alone when theirs could not be read, and logs not whose', async () => {
 		turnOn();
-		vi.mocked(myPrivateEvents).mockRejectedValue(new Error(`503 for ${ME}`));
+		vi.mocked(myPrivateEventsAndCalendars).mockRejectedValue(new Error(`503 for ${ME}`));
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		const { event, setHeaders } = signedIn();
 		const data = (await load(event)) as unknown as LoadResult;
@@ -215,7 +230,7 @@ describe('your own private events in Your events', () => {
 	it('keeps reading after it stops waiting, until the read is done', async () => {
 		turnOn();
 		let finish = () => {};
-		vi.mocked(myPrivateEvents).mockReturnValue(
+		vi.mocked(myPrivateEventsAndCalendars).mockReturnValue(
 			new Promise((resolve) => (finish = () => resolve({ events: [] } as never)))
 		);
 		const loading = load(signedIn().event);
@@ -233,7 +248,7 @@ describe('your own private events in Your events', () => {
 		vi.useFakeTimers();
 		try {
 			turnOn();
-			vi.mocked(myPrivateEvents).mockReturnValue(new Promise(() => {}));
+			vi.mocked(myPrivateEventsAndCalendars).mockReturnValue(new Promise(() => {}));
 			const { event } = signedIn();
 			const loading = load(event);
 			await vi.advanceTimersByTimeAsync(4000);

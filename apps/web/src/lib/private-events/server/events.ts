@@ -1,7 +1,8 @@
 // A person's private event: written to a space on their own PDS, and read directly from the PDS
 // with each person's own access, so the PDS alone decides who sees it. It never reaches the index
 // or a public URL. A single event has a space of its own, under the event's key, so each one has
-// its own guest list.
+// its own guest list. Once its host names that space, it is a shared calendar like any other, and
+// the event stays where it is.
 import * as v from '@atcute/lexicons/validations';
 import type { AttendeeInfo, FlatEventRecord } from '#lib/contrail.js';
 import { actorToDid } from '#lib/actor.js';
@@ -16,16 +17,22 @@ import { errorKind, isRecordNotFound, xrpc, XrpcError } from '#lib/spaces/server
 import { parseSpaceUri } from '#lib/spaces/uri.js';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
 import {
+	calendarEvent,
+	CALENDAR_COLLECTION,
+	CALENDAR_NAME_MAX,
+	CALENDAR_RKEY,
 	EVENT_COLLECTION,
+	eventPath,
+	isSingleEvent,
 	eventSpace,
 	eventUri,
 	PRIVATE_CALENDAR_TYPE,
-	privateEventPath,
 	privateEventSpace,
 	RSVP_COLLECTION,
 	RSVP_STATUSES,
 	singleEvent,
 	type EventAddress,
+	type EventKeys,
 	type RsvpStatus
 } from '../ids';
 import { holdsGuestGrant, holdsHostGrant } from '../scopes';
@@ -42,7 +49,10 @@ const REFUSALS = {
 	unchecked: "That couldn't be saved just now. Try again shortly.",
 	refused: "Your server didn't take the change, so nothing changed.",
 	'no-such-person': "No one with that handle was found, so they weren't added.",
-	'own-event': "You're the host, so you're already on your own event."
+	'own-event': "You're the host, so you're already on your own event.",
+	'no-calendar': "That calendar isn't there anymore, so nothing changed.",
+	'own-calendar': "It's your calendar, so you're already on it.",
+	'bad-name': `A calendar's name needs 1 to ${CALENDAR_NAME_MAX} characters, so nothing was saved.`
 } as const;
 
 /** In words a page can show; a PDS's own message is never kept. */
@@ -53,14 +63,14 @@ export class PrivateEventRefused extends Error {
 	}
 }
 
-function requireHost(caller: CallerSession): void {
+export function requireHost(caller: CallerSession): void {
 	if (!holdsHostGrant(caller.scope, caller.did)) throw new PrivateEventRefused('no-grant');
 }
 
 /** Writes to the person's own PDS. If that fails, the page is told in our words, and the log gets
  *  only `failed` and the failure's kind. Every log here names an operation and never a person, a
  *  space or an event, so none can tell who is invited to what. */
-async function write(
+export async function write(
 	caller: CallerSession,
 	nsid: string,
 	body: Record<string, unknown>,
@@ -85,13 +95,15 @@ function isGone(e: unknown): boolean {
 export type Refusal = keyof typeof REFUSALS;
 
 /** Checks a space of the caller's own: a write into a space that was never made succeeds anyway,
- *  and one that lets everyone read would publish what is written there. atmo never has a server
- *  show a space's people to everyone on it, so a space that does was made by something else under
- *  the same type, and is not a single event's. */
+ *  and one that lets everyone read would publish what is written there. atmo has a server show a
+ *  space's people to everyone on it only for a shared calendar: one with atmo's name for it, or one
+ *  being made a calendar in this call (`calendar`). A space that shows them otherwise was made by
+ *  something else under the same type. */
 async function checkPrivateSpace(
 	caller: CallerSession,
 	spaceKey: string,
-	whenGone: Refusal
+	whenGone: Refusal = 'no-calendar',
+	calendar = false
 ): Promise<string> {
 	const space = privateEventSpace(caller.did, spaceKey);
 	const found = await xrpc(caller.handle, 'com.atproto.space.getSpace', {
@@ -105,24 +117,57 @@ async function checkPrivateSpace(
 	if (policy?.$type !== 'com.atproto.memberspace.policy' || policy.publicRead === true) {
 		throw new PrivateEventRefused('not-private');
 	}
-	if (policy.publishMembers === true) throw new PrivateEventRefused('not-single');
+	if (policy.publishMembers === true && !calendar && !(await isOwnCalendar(caller, spaceKey))) {
+		throw new PrivateEventRefused('not-single');
+	}
 	return space;
 }
 
-/** Makes a space of the caller's own if need be, then checks it. */
-async function ensurePrivateSpace(caller: CallerSession, spaceKey: string): Promise<string> {
+/** Makes a space of the caller's own if need be, then checks it. `publishMembers` has their server
+ *  show the list of people to everyone on it, as a shared calendar's does. */
+export async function ensurePrivateSpace(
+	caller: CallerSession,
+	spaceKey: string,
+	options: { publishMembers?: boolean } = {}
+): Promise<string> {
 	try {
 		await xrpc(caller.handle, 'com.atproto.space.createSpace', {
 			body: {
 				spaceType: PRIVATE_CALENDAR_TYPE,
 				skey: spaceKey,
-				policy: { $type: 'com.atproto.memberspace.policy', publishPolicy: true }
+				policy: {
+					$type: 'com.atproto.memberspace.policy',
+					publishPolicy: true,
+					...(options.publishMembers ? { publishMembers: true } : {})
+				}
 			}
 		});
 	} catch (e) {
 		if (!isAlreadyThere(e)) throw e;
 	}
-	return checkPrivateSpace(caller, spaceKey, 'refused');
+	return checkPrivateSpace(caller, spaceKey, 'refused', options.publishMembers === true);
+}
+
+/** A space's name record, in its owner's repo there; null when it has none. A space with one is a
+ *  shared calendar. A failure to read it throws, so "could not read" never passes for "no name". */
+export async function readSpaceName(
+	reader: SpaceReader,
+	host: string,
+	spaceKey: string
+): Promise<SpaceRecord | null> {
+	const found = await reader.get({
+		space: privateEventSpace(host, spaceKey),
+		repo: host,
+		collection: CALENDAR_COLLECTION,
+		rkey: CALENDAR_RKEY
+	});
+	return found ?? null;
+}
+
+/** A shared calendar of the caller's own: a space of theirs with a name. Throws when the name can't
+ *  be read. */
+export async function isOwnCalendar(caller: CallerSession, spaceKey: string): Promise<boolean> {
+	return (await readSpaceName(credentialSpaceReader(caller), caller.did, spaceKey)) !== null;
 }
 
 /** A link the kit would load as the event's picture by itself. */
@@ -143,20 +188,29 @@ function keepUnshown(record: Record<string, unknown>, stored: Record<string, unk
 }
 
 /** The event, with no image from the page, since atmo can't show a private one yet; an edit keeps
- *  the one stored. It gets a space of its own. */
+ *  the one stored. With `calendar`, it goes on that shared calendar of the caller's own, which must
+ *  be there already and have a name; without, it gets a space of its own. */
 export async function savePrivateEvent(
 	caller: CallerSession,
-	input: { rkey: string; record: Record<string, unknown> }
+	input: { rkey: string; record: Record<string, unknown>; calendar?: string }
 ): Promise<{ uri: string; cid: string }> {
 	requireHost(caller);
 	const record: Record<string, unknown> = { ...input.record, $type: EVENT_COLLECTION };
 	delete record.media;
 	// A PDS doesn't validate a space record at all.
 	if (!v.safeParse(eventSchema, record).ok) throw new PrivateEventRefused('not-an-event');
-	const address = singleEvent(caller.did, input.rkey);
+	const address = input.calendar
+		? calendarEvent(caller.did, input.calendar, input.rkey)
+		: singleEvent(caller.did, input.rkey);
 	const reader = credentialSpaceReader(caller);
 	try {
-		const space = await ensurePrivateSpace(caller, address.spaceKey);
+		const space = input.calendar
+			? await checkPrivateSpace(caller, address.spaceKey)
+			: await ensurePrivateSpace(caller, address.spaceKey);
+		// A single event's space holds only its own event until its host names it.
+		if (input.calendar && !(await readSpaceName(reader, caller.did, address.spaceKey))) {
+			throw new PrivateEventRefused('no-calendar');
+		}
 		const stored = await reader.get({
 			space,
 			repo: caller.did,
@@ -181,12 +235,33 @@ export async function savePrivateEvent(
 	}
 }
 
-/** Deleting its space ends every guest's access. Their answers stay in their own repos, unreadable.
- *  The space is checked first, as before any change, so only a single event's own is deleted. */
-export async function cancelPrivateEvent(caller: CallerSession, rkey: string): Promise<void> {
+/** For a single event, deleting its space ends every guest's access. Their answers stay in their
+ *  own repos, unreadable. An event on a shared calendar is only taken off it, and the calendar stays,
+ *  even when the event is the one its space was made for: the space has a name by then. The space is
+ *  checked first, as before any change. */
+export async function cancelPrivateEvent(caller: CallerSession, keys: EventKeys): Promise<void> {
 	requireHost(caller);
-	const space = await ownPrivateSpace(caller, rkey, 'no-event');
-	await write(caller, 'com.atproto.space.deleteSpace', { space }, 'event not cancelled');
+	const space = await ownPrivateSpace(caller, keys.spaceKey, 'no-event');
+	const failed = 'event not cancelled';
+	// Without the name, the space can't be told apart from a calendar, and must not be deleted.
+	const onCalendar = await isOwnCalendar(caller, keys.spaceKey).catch((e) => {
+		console.error(`[private-events] space name unread for a cancel: ${errorKind(e)}`);
+		throw new PrivateEventRefused('unchecked');
+	});
+	if (!onCalendar) {
+		if (!isSingleEvent(keys)) throw new PrivateEventRefused('no-event');
+		await write(caller, 'com.atproto.space.deleteSpace', { space }, failed);
+		return;
+	}
+	try {
+		await xrpc(caller.handle, 'com.atproto.space.deleteRecord', {
+			body: { space, repo: caller.did, collection: EVENT_COLLECTION, rkey: keys.rkey }
+		});
+	} catch (e) {
+		if (isRecordNotFound(e)) return;
+		console.error(`[private-events] ${failed}: ${errorKind(e)}`);
+		throw new PrivateEventRefused('refused');
+	}
 }
 
 /** As the event components take it: the record whole, its address beside it, and no image, since a
@@ -194,7 +269,7 @@ export async function cancelPrivateEvent(caller: CallerSession, rkey: string): P
  *  wherever it points without a click. Null for what isn't an event, since a PDS doesn't
  *  validate a space record and any host could write one that breaks their guests' pages, and with
  *  no start, which every page needs. */
-function flatEvent(host: string, record: SpaceRecord): FlatEventRecord | null {
+export function flatEvent(host: string, record: SpaceRecord): FlatEventRecord | null {
 	const value = { ...record.value };
 	delete value.media;
 	delete value.poster;
@@ -259,7 +334,8 @@ export interface PrivateEventPage {
 	viewerStatus: RsvpStatus | null;
 	/** A server didn't answer, so the answers above may not be all of them. */
 	answersUnread: boolean;
-	/** Who was added, for the host alone; null for anyone else. */
+	/** Who was added: the host's own list, or for someone else the list a calendar shows everyone on
+	 *  it; null where they can't see one. */
 	guests: Guest[] | null;
 	/** The host's list stopped at the page limit, so there may be more guests than these. */
 	guestsCapped: boolean;
@@ -269,7 +345,7 @@ const LIST_LIMIT = 100;
 const MAX_PAGES = 10;
 
 /** The people on a space of the caller's own, up to a limit of pages; `capped` when it stopped there. */
-async function memberPages(
+export async function memberPages(
 	caller: CallerSession,
 	space: string
 ): Promise<{ dids: string[]; capped: boolean }> {
@@ -292,13 +368,15 @@ async function memberPages(
 
 /** Null when the caller may not see it. An answer counts only from someone the PDS tracks as a
  *  writer: a person taken off the list is no longer tracked, and someone let back in isn't until
- *  they answer again, so they see no answer of theirs until they do. */
+ *  they answer again, so they see no answer of theirs until they do. `published` gives someone
+ *  other than the host the list of people, where the space shows them one; null for none. */
 export async function readPrivateEventPage(
 	caller: CallerSession,
-	address: EventAddress
+	address: EventAddress,
+	reader: SpaceReader = credentialSpaceReader(caller),
+	published?: () => Promise<{ dids: string[]; capped: boolean } | null>
 ): Promise<PrivateEventPage | null> {
 	const { host, rkey } = address;
-	const reader = credentialSpaceReader(caller);
 	const event = await readEvent(reader, address);
 	if (!event) return null;
 
@@ -340,7 +418,8 @@ export async function readPrivateEventPage(
 
 	let guests: Guest[] | null = null;
 	let guestsCapped = false;
-	const members = caller.did === host ? await memberPages(caller, space) : null;
+	const members =
+		caller.did === host ? await memberPages(caller, space) : ((await published?.()) ?? null);
 	if (members) {
 		guestsCapped = members.capped;
 		guests = await Promise.all(
@@ -372,10 +451,10 @@ export async function readPrivateEventPage(
 /** The caller's own event as stored, for its edit page; null when absent. */
 export async function readPrivateEventForEdit(
 	caller: CallerSession,
-	rkey: string
+	keys: EventKeys
 ): Promise<FlatEventRecord | null> {
 	requireHost(caller);
-	return readEvent(credentialSpaceReader(caller), singleEvent(caller.did, rkey));
+	return readEvent(credentialSpaceReader(caller), { ...keys, host: caller.did });
 }
 
 function requireAccess(caller: CallerSession, host: string): void {
@@ -435,12 +514,13 @@ export async function deletePrivateRsvp(
 	}
 }
 
-/** A private space of the caller's own, checked before anything is written to it: one that was never
- *  made (`whenGone`), that anyone can read, or that isn't a single event's, is refused. */
-async function ownPrivateSpace(
+/** One of the caller's own private spaces, a single event's or a calendar's, checked before anything
+ *  is written to it: one that was never made (`whenGone`), that anyone can read, or that shows its
+ *  people to everyone on it without being one of atmo's calendars, is refused. */
+export async function ownPrivateSpace(
 	caller: CallerSession,
 	spaceKey: string,
-	whenGone: Refusal
+	whenGone: Refusal = 'no-calendar'
 ): Promise<string> {
 	return checkPrivateSpace(caller, spaceKey, whenGone).catch((e) => {
 		if (e instanceof PrivateEventRefused) throw e;
@@ -478,7 +558,7 @@ export async function removeGuest(
 
 /** The spaces the caller's own PDS lists for them: all they own or have written in, or with `own`,
  *  only those they own. Up to a limit of pages; `cutOff` when it stopped there. */
-async function listedSpaces(
+export async function listedSpaces(
 	caller: CallerSession,
 	own: boolean
 ): Promise<{ spaces: string[]; cutOff: boolean }> {
@@ -507,41 +587,62 @@ async function listedSpaces(
 export interface MyPrivateEvent {
 	event: FlatEventRecord;
 	href: string;
+	/** The shared calendar it is on, with its name, null when it has none; absent for a single event. */
+	calendar?: { name: string | null; key: string };
 }
 
 export interface MyPrivateEvents {
 	events: MyPrivateEvent[];
 	/** A server didn't answer, or there were too many to list, so there may be more than these. */
 	incomplete: boolean;
+	/** Shared calendars among their spaces, to be read as calendars, each with its name record when
+	 *  that was read here already (null for none), so it isn't read twice. */
+	calendars: { host: string; key: string; named?: SpaceRecord | null }[];
 }
 
 /** Events they host or have answered, by their own PDS. It keeps spaces they were taken off or never
- *  let into, and misses ones they haven't written in, so each is read before it is listed. */
+ *  let into, and misses ones they haven't written in, so each is read before it is listed. A space
+ *  with a name is passed on with it, for the caller to read as a calendar. */
 export async function myPrivateEvents(caller: CallerSession): Promise<MyPrivateEvents> {
 	// Without a guest's grant, the PDS answers only for their own spaces.
 	const { spaces, cutOff } = await listedSpaces(caller, !holdsGuestGrant(caller.scope));
 
 	const reader = credentialSpaceReader(caller);
 	let unread = 0;
+	const calendars: MyPrivateEvents['calendars'] = [];
 	const events = await Promise.all(
 		spaces.map(async (uri): Promise<MyPrivateEvent | null> => {
 			const parsed = parseSpaceUri(uri);
 			if (!parsed) return null;
 			const address = singleEvent(parsed.authority, parsed.key);
-			const event = await readEvent(reader, address).catch((e) => {
+			const read = await Promise.all([
+				readEvent(reader, address),
+				readSpaceName(reader, parsed.authority, parsed.key).catch((e) => {
+					if (isSpaceAccessDenied(e)) return null;
+					throw e;
+				})
+			]).catch((e) => {
 				console.info(`[private-events] a space unread for the list: ${errorKind(e)}`);
 				unread++;
 				return null;
 			});
+			if (!read) return null;
+			const [event, named] = read;
+			// Still a calendar once the event it was made for is cancelled.
+			if (named) {
+				calendars.push({ host: parsed.authority, key: parsed.key, named });
+				return null;
+			}
 			if (!event) return null;
 			const hostHandle = await verifiedHandle(parsed.authority);
-			return { event, href: privateEventPath(hostHandle ?? parsed.authority, parsed.key) };
+			return { event, href: eventPath(hostHandle ?? parsed.authority, address) };
 		})
 	);
 	return {
 		events: events
 			.filter((event): event is MyPrivateEvent => event !== null)
 			.sort((a, b) => Date.parse(a.event.startsAt) - Date.parse(b.event.startsAt)),
-		incomplete: cutOff || unread > 0
+		incomplete: cutOff || unread > 0,
+		calendars
 	};
 }

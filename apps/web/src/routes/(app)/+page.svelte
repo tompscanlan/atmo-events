@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { EventCard } from '@atmo-dev/kit/events';
 	import { LockKeyhole } from '@sketchyicons/svelte';
 	import RecentActivity from '#lib/components/RecentActivity.svelte';
@@ -8,6 +9,7 @@
 	import { user } from '#lib/atproto/auth.svelte.js';
 	import { atProtoLoginModalState } from '#lib/components/LoginModal.svelte';
 	import { createEventModalState } from '#lib/components/CreateEventModal.svelte';
+	import CalendarPrivateNote from '#lib/private-events/components/CalendarPrivateNote.svelte';
 	import { describeLinkBy, privateNoteId } from '#lib/private-events/describe-link.js';
 
 	let { data } = $props();
@@ -25,7 +27,11 @@
 		<div data-testid="your-private-event" {@attach describeLinkBy(noteId)}>
 			<EventCard {event} href={link.href} />
 			<p id={noteId} class="text-base-600 dark:text-base-400 mt-1 text-xs">
-				<Icon img={LockKeyhole} size={12} class="mr-1 inline align-[-2px]" />Private event
+				{#if link.calendar}<CalendarPrivateNote name={link.calendar} />{:else}<Icon
+						img={LockKeyhole}
+						size={12}
+						class="mr-1 inline align-[-2px]"
+					/>Private event{/if}
 			</p>
 		</div>
 	{:else}
@@ -107,7 +113,12 @@
 						role="status"
 						data-testid="your-private-events-incomplete"
 					>
-						Some of your private events couldn't be loaded just now. Try again shortly.
+						Some of your private events couldn't be loaded just now. Try again shortly. Those on a
+						shared calendar are also on its page, under
+						<a
+							href={resolve('/(app)/private')}
+							class="text-accent-600 dark:text-accent-400 hover:underline">Calendars</a
+						>.
 					</p>
 				{/if}
 			</section>
