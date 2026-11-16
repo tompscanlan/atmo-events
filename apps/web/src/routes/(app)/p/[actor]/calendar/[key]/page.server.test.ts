@@ -93,11 +93,19 @@ function theCalendarHolds() {
 	});
 }
 
-/** What happens when the reader is turned away, as for someone not on the calendar. */
-function keptOut() {
-	const denied = new SpaceAccessDenied(SPACE, '400 SpaceNotFound');
-	reader.get.mockRejectedValue(denied);
-	reader.list.mockRejectedValue(denied);
+/** The calendar turns the reader away; a made-up key's space isn't there; a single event's space
+ *  lets them read, and holds its event but no name. */
+function keptOutOfAllButASingleEvent() {
+	const single = privateEventSpace(OWNER, '3lsingleevent');
+	const read = async (q: { space: string }) => {
+		if (q.space === single) return null;
+		throw new SpaceAccessDenied(q.space, q.space === SPACE ? '403 NotMember' : '400 SpaceNotFound');
+	};
+	const events = reader.list.getMockImplementation()!;
+	reader.get.mockImplementation(read);
+	reader.list.mockImplementation(async (q: { space: string }) =>
+		q.space === single ? events(q) : read(q)
+	);
 }
 
 beforeEach(() => {
@@ -148,8 +156,8 @@ describe('a shared calendar’s page', () => {
 		expect(reader.get).not.toHaveBeenCalled();
 	});
 
-	it('tells someone kept out what it tells anyone at a made-up key, in the same words', async () => {
-		keptOut();
+	it('tells someone kept out what it tells anyone at a made-up key or a space with no name', async () => {
+		keptOutOfAllButASingleEvent();
 		const real = await load(request(PERSON, GUEST_SCOPE)).catch((e) => e);
 		const madeUp = await load(request(PERSON, GUEST_SCOPE, 'cal-3lmadeupmadeup')).catch((e) => e);
 		const notACalendar = await load(request(PERSON, GUEST_SCOPE, '3lsingleevent')).catch((e) => e);
