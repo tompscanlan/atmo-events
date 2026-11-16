@@ -1,11 +1,57 @@
 <script lang="ts">
+	import { setLinkEmbeds, ToggleGroup, ToggleGroupItem } from '@atmo-dev/kit';
 	import { EventEditor, type EventEditorPrefill } from '@atmo-dev/kit/events';
 	import { onMount } from 'svelte';
 	import { user } from '#lib/atproto/auth.svelte.js';
-	import { createInAppAdapter } from '#lib/components/editor/adapter.js';
+	import { createInAppAdapter, type EditorAdapter } from '#lib/components/editor/adapter.js';
 	import { readPendingImportPrefill } from '#lib/components/CreateEventModal.svelte';
+	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
+	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
+	import { createPrivateEventAdapter } from '#lib/private-events/editor-adapter.js';
+	import { PRIVATE_LINK_EMBEDS } from '#lib/private-events/embeds.js';
+	import { HOST_SCOPES } from '#lib/private-events/scopes.js';
 
 	let { data } = $props();
+
+	// No default where there's a choice: a public post can't be taken back. Coming back from the
+	// permission step, the choice is already made.
+	const UNLISTED = 'unlisted';
+	const PRIVATE = 'private';
+	type Audience = 'everyone' | typeof UNLISTED | typeof PRIVATE;
+	let audience = $state<Audience | null>(
+		page.url.searchParams.get('audience') === PRIVATE ? PRIVATE : null
+	);
+	let isPublic = $derived(audience === 'everyone' || audience === UNLISTED);
+	// The host's last choice, not only the link's: private events can turn off mid-edit.
+	let wantsPrivate = $derived(audience === PRIVATE);
+	let invited = $derived(data.privateEvents && audience === PRIVATE);
+	// With private events off, the editor is the public one, so a private audience, asked for by a
+	// link or chosen here, gets no editor at all: what someone meant to keep private must never be
+	// posted publicly.
+	// A private event's description loads nothing by itself, here as on its page; a public one is as before.
+	setLinkEmbeds(() => (invited ? PRIVATE_LINK_EMBEDS : {}));
+	let chosen = $derived((!data.privateEvents && !wantsPrivate) || isPublic || invited);
+
+	const PRIVATE_LIMITS = " Private events can't have an image or repeat yet.";
+
+	// Public or Unlisted is asked once, at the top, so the editor's own switch is off and the answer
+	// is written into the record here, the way the editor would have.
+	function listedAs(base: EditorAdapter, listed: boolean): EditorAdapter {
+		const mark = <T extends { record: Record<string, unknown> }>(opts: T): T => ({
+			...opts,
+			record: {
+				...opts.record,
+				preferences: { ...(opts.record.preferences as object | undefined), showInDiscovery: listed }
+			}
+		});
+		return {
+			...base,
+			features: { ...base.features, visibility: false },
+			putRecord: (opts) => base.putRecord(mark(opts)),
+			createRecord: (opts) => base.createRecord(mark(opts))
+		};
+	}
 
 	let viewer = $derived({
 		isLoggedIn: user.isLoggedIn,
@@ -15,7 +61,14 @@
 		displayName: user.profile?.displayName,
 		avatar: user.profile?.avatar
 	});
-	let adapter = $derived(createInAppAdapter({ viewer }));
+	// An answer given at the top stays the answer when private events turn off mid-edit.
+	let adapter = $derived(
+		invited
+			? createPrivateEventAdapter({ ...viewer, canPostToBluesky: false })
+			: isPublic
+				? listedAs(createInAppAdapter({ viewer }), audience !== UNLISTED)
+				: createInAppAdapter({ viewer })
+	);
 
 	// Pulled out of sessionStorage on mount so the editor sees it on its first
 	// pass. EventEditor only reads `prefill` in its own onMount, so we gate
@@ -54,13 +107,76 @@
 	});
 </script>
 
-{#if ready}
-	<EventEditor
-		eventData={null}
-		actorDid={data.actorDid}
-		rkey={data.rkey}
-		{adapter}
-		{viewer}
-		{prefill}
-	/>
+{#if data.privateEvents}
+	<div class="px-6 pt-12" data-testid="audience">
+		<div class="mx-auto max-w-3xl">
+			<h2 id="audience-heading" class="text-base-900 dark:text-base-50 text-lg font-semibold">
+				Who can see this event?
+			</h2>
+			<ToggleGroup
+				aria-labelledby="audience-heading"
+				class="mt-3 w-fit"
+				bind:value={
+					() => audience ?? '',
+					(value) => {
+						if (value === 'everyone' || value === UNLISTED || value === PRIVATE) audience = value;
+					}
+				}
+			>
+				<ToggleGroupItem value="everyone">Public</ToggleGroupItem>
+				<ToggleGroupItem value={UNLISTED}>Unlisted</ToggleGroupItem>
+				<ToggleGroupItem value={PRIVATE}>Private</ToggleGroupItem>
+			</ToggleGroup>
+			{#if audience !== null}
+				<p class="text-base-700 dark:text-base-300 mt-3 text-sm" data-testid="audience-what">
+					{audience === 'everyone'
+						? 'Anyone can see it, and it shows in search and listings.'
+						: audience === UNLISTED
+							? "Anyone with the link can see it. It doesn't show in search or listings."
+							: 'Only people you invite can see it. You add them after publishing.'}
+				</p>
+			{/if}
+			{#if audience !== null}
+				<p class="text-base-600 dark:text-base-400 mt-3 text-xs" data-testid="audience-fine-print">
+					{#if audience === PRIVATE}A private event can't be made public later.{PRIVATE_LIMITS}{:else}A
+						public or unlisted event can't be made private later.{/if}
+				</p>
+			{/if}
+			{#if invited && data.hostAccess}
+				<PrivateEventAccessNotice
+					access={data.hostAccess}
+					did={data.actorDid}
+					scopes={HOST_SCOPES}
+					purpose="A private event is kept on your own server. atmo needs your permission to create it there and manage its guest list."
+					label="Allow atmo to host private events"
+					returnTo="/create?audience={PRIVATE}"
+					spacesServer={data.spacesServer}
+				/>
+			{/if}
+		</div>
+	</div>
+{:else if wantsPrivate}
+	<div class="px-6 pt-12" data-testid="private-off">
+		<p class="text-base-700 dark:text-base-300 mx-auto max-w-3xl text-sm">
+			Private events are off for you right now, so this page can't make a private event. Turn on
+			private events in
+			<a
+				href={resolve('/(app)/settings')}
+				class="text-accent-600 dark:text-accent-400 hover:underline">Settings</a
+			>, or reload to try again.
+		</p>
+	</div>
+{/if}
+
+{#if ready && chosen && !(invited && data.hostAccess)}
+	{#key isPublic ? 'public' : audience}
+		<EventEditor
+			eventData={null}
+			actorDid={data.actorDid}
+			rkey={data.rkey}
+			{adapter}
+			{viewer}
+			{prefill}
+		/>
+	{/key}
 {/if}
