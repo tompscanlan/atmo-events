@@ -30,6 +30,12 @@ export function isSpaceKey(key: string): boolean {
 export const RSVP_STATUSES = ['going', 'interested', 'notgoing'] as const;
 export type RsvpStatus = (typeof RSVP_STATUSES)[number];
 
+export const ANSWER_WORDS: Record<RsvpStatus, string> = {
+	going: 'Going',
+	interested: 'Interested',
+	notgoing: 'Not going'
+};
+
 /** Where an event is: its host, the key of the space it is kept in, and its own key. */
 export interface EventAddress {
 	host: string;

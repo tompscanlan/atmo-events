@@ -8,7 +8,7 @@
 	import { BETA_WARNING, BETA_WARNING_SHORT } from '#lib/private-events/beta.js';
 	import CalendarPeople from '#lib/private-events/components/CalendarPeople.svelte';
 	import PrivateEventAccessNotice from '#lib/private-events/components/PrivateEventAccessNotice.svelte';
-	import { refusalWords } from '#lib/private-events/components/refusal.js';
+	import { refusalWords } from '#lib/private-events/components/changes.svelte.js';
 	import { NAMING_TELLS, UNTITLED_CALENDAR } from '#lib/private-events/ids.js';
 	import { deleteCalendar, renameCalendar } from '#lib/private-events/private-events.remote.js';
 	import { GUEST_SCOPES, HOST_SCOPES } from '#lib/private-events/scopes.js';

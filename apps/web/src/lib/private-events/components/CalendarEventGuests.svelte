@@ -1,13 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import type { RsvpStatus } from '../ids';
+	import { ANSWER_WORDS, type RsvpStatus } from '../ids';
 	import type { Guest } from '../server/events';
-
-	const ANSWER_WORDS: Record<RsvpStatus, string> = {
-		going: 'Going',
-		interested: 'Interested',
-		notgoing: 'Not going'
-	};
 
 	let {
 		guests,

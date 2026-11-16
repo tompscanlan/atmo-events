@@ -4,7 +4,7 @@
 	import { resolve } from '$app/paths';
 	import { CALENDAR_NAME_MAX, NAMING_TELLS } from '../ids';
 	import { createCalendar } from '../private-events.remote';
-	import { refusalWords } from './refusal';
+	import { refusalWords } from './changes.svelte';
 
 	let name = $state('');
 	let busy = $state(false);

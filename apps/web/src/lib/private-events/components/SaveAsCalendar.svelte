@@ -3,7 +3,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import { CALENDAR_NAME_MAX, NAMING_TELLS } from '../ids';
 	import { renameCalendar } from '../private-events.remote';
-	import { refusalWords } from './refusal';
+	import { refusalWords } from './changes.svelte';
 
 	// For the host of a single event: naming its space makes its guests a shared calendar, to put
 	// later events on. Nothing moves: the event, its guests and their answers stay where they are.
