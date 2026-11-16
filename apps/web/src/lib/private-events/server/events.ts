@@ -160,9 +160,26 @@ export async function isOwnCalendar(caller: CallerSession, spaceKey: string): Pr
 	return (await readSpaceName(credentialSpaceReader(caller), caller.did, spaceKey)) !== null;
 }
 
-/** The event, without any image, since atmo can't show a private one yet. With `calendar`, it goes
- *  on that shared calendar of the caller's own, which must be there already and have a name; without,
- *  it gets a space of its own. */
+/** A link the kit would load as the event's picture by itself. */
+function isEventImage(link: unknown): boolean {
+	return (link as { name?: unknown } | null)?.name === 'Event Image';
+}
+
+/** What `flatEvent` leaves out of every page's copy, put back from the stored record, so an edit
+ *  made from that copy keeps it. */
+function keepUnshown(record: Record<string, unknown>, stored: Record<string, unknown> | undefined) {
+	if (!stored) return;
+	if (stored.media !== undefined) record.media = stored.media;
+	if (stored.poster !== undefined) record.poster = stored.poster;
+	const images = Array.isArray(stored.uris) ? stored.uris.filter(isEventImage) : [];
+	if (images.length > 0) {
+		record.uris = [...(Array.isArray(record.uris) ? record.uris : []), ...images];
+	}
+}
+
+/** The event, with no image from the page, since atmo can't show a private one yet; an edit keeps
+ *  the one stored. With `calendar`, it goes on that shared calendar of the caller's own, which must
+ *  be there already and have a name; without, it gets a space of its own. */
 export async function savePrivateEvent(
 	caller: CallerSession,
 	input: { rkey: string; record: Record<string, unknown>; calendar?: string }
@@ -175,14 +192,22 @@ export async function savePrivateEvent(
 	const address = input.calendar
 		? calendarEvent(caller.did, input.calendar, input.rkey)
 		: singleEvent(caller.did, input.rkey);
+	const reader = credentialSpaceReader(caller);
 	try {
 		const space = input.calendar
 			? await checkPrivateSpace(caller, address.spaceKey)
 			: await ensurePrivateSpace(caller, address.spaceKey);
 		// A single event's space holds only its own event until its host names it.
-		if (input.calendar && !(await isOwnCalendar(caller, address.spaceKey))) {
+		if (input.calendar && !(await readSpaceName(reader, caller.did, address.spaceKey))) {
 			throw new PrivateEventRefused('no-calendar');
 		}
+		const stored = await reader.get({
+			space,
+			repo: caller.did,
+			collection: EVENT_COLLECTION,
+			rkey: address.rkey
+		});
+		keepUnshown(record, stored?.value);
 		const saved = await xrpc(caller.handle, 'com.atproto.space.putRecord', {
 			body: {
 				space,
@@ -239,7 +264,7 @@ export function flatEvent(host: string, record: SpaceRecord): FlatEventRecord | 
 	delete value.media;
 	delete value.poster;
 	if (Array.isArray(value.uris)) {
-		value.uris = value.uris.filter((link) => link?.name !== 'Event Image');
+		value.uris = value.uris.filter((link) => !isEventImage(link));
 	}
 	if (typeof value.startsAt !== 'string' || !v.safeParse(eventSchema, value).ok) return null;
 	return {

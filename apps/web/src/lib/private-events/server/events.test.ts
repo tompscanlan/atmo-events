@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getEventExternalImage } from '@atmo-dev/kit/events-data';
+import { buildEventRecord } from '@atmo-dev/kit/events/editor';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { HOST_SCOPE, GUEST_SCOPE } from '../scopes';
 import {
@@ -32,6 +33,7 @@ const {
 	myPrivateEvents,
 	PrivateEventRefused,
 	putPrivateRsvp,
+	readPrivateEventForEdit,
 	readPrivateEventPage,
 	removeGuest,
 	savePrivateEvent
@@ -200,6 +202,51 @@ describe('savePrivateEvent', () => {
 		const refused = await savePrivateEvent(host, input).catch((e) => e);
 		expect(refused).toBeInstanceOf(PrivateEventRefused);
 		expect(refused.message).not.toContain('secret detail');
+	});
+});
+
+describe('an edit of a private event', () => {
+	const menu = { name: 'Menu', uri: 'https://example.com/menu' };
+	const flyer = { name: 'Event Image', uri: 'https://images.example.com/flyer.jpg' };
+	const poster = { url: 'https://images.example.com/poster.jpg' };
+	const media = [{ role: 'thumbnail', content: { $type: 'blob', ref: { $link: 'bafkrei' } } }];
+
+	it.each([
+		['a single event', RKEY, undefined],
+		['an event on a calendar', 'cal-3lsupper', 'cal-3lsupper']
+	])('keeps the image and links the edit page left out, for %s', async (_, spaceKey, calendar) => {
+		reader.get.mockImplementation(async ({ collection }: { collection: string }) =>
+			collection === CALENDAR_COLLECTION
+				? spaceRecord(HOST, collection, { name: 'Supper' })
+				: spaceRecord(HOST, collection, { ...RECORD, media, poster, uris: [flyer, menu] })
+		);
+		const host = caller(HOST, HOST_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
+		const eventData = await readPrivateEventForEdit(host, { spaceKey, rkey: RKEY });
+		// As the kit's editor saves the edit page's copy with only the name changed and no image offered.
+		const record = await buildEventRecord({
+			eventData,
+			isNew: false,
+			name: 'Supper',
+			description: '',
+			startsAt: '2026-11-07T00:00',
+			endsAt: '',
+			timezone: 'UTC',
+			mode: 'inperson',
+			visibility: null,
+			theme: { name: 'minimal', accentColor: 'purple', baseColor: 'mist' },
+			links: (eventData?.uris ?? []).map((l) => ({ uri: l.uri, name: l.name ?? '' })),
+			location: null,
+			locationChanged: false,
+			media: undefined,
+			resolveHandle: async () => HOST
+		});
+		await savePrivateEvent(host, { rkey: RKEY, record, ...(calendar ? { calendar } : {}) });
+		const saved = host.sent.find((s) => s.pathname.endsWith('.putRecord'))?.body?.record as {
+			uris?: unknown[];
+		};
+		expect(saved).toMatchObject({ name: 'Supper', media, poster });
+		expect(saved.uris).toHaveLength(2);
+		expect(saved.uris).toEqual(expect.arrayContaining([flyer, menu]));
 	});
 });
 
