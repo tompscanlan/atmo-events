@@ -1,6 +1,7 @@
 import type { Client } from '@atcute/client';
 import type { Did } from '@atcute/lexicons';
 import { getAuth } from '#lib/atproto/server/oauth.js';
+import { errorKind } from '#lib/spaces/server/xrpc.js';
 import { BETA_COLLECTION, BETA_RKEY, privateEventsBetaOn } from '../beta';
 
 /** The person's beta record, read directly from their PDS; null when they have none. */
@@ -26,7 +27,7 @@ export async function privateEventsBeta(locals: {
 		const found = await readBetaRecord(locals.client, locals.did, AbortSignal.timeout(5_000));
 		return privateEventsBetaOn(found?.record);
 	} catch (e) {
-		console.warn('[private-events] the beta setting could not be read:', e);
+		console.warn(`[private-events] the beta setting could not be read: ${errorKind(e)}`);
 		return false;
 	}
 }

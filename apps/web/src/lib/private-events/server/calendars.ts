@@ -14,7 +14,7 @@ import {
 	type SpaceReader,
 	type SpaceRecord
 } from '#lib/spaces/server/space-read.js';
-import { xrpc } from '#lib/spaces/server/xrpc.js';
+import { errorKind, xrpc } from '#lib/spaces/server/xrpc.js';
 import { parseSpaceUri } from '#lib/spaces/uri.js';
 import {
 	CALENDAR_COLLECTION,
@@ -85,7 +85,7 @@ async function putName(caller: CallerSession, space: string, record: Record<stri
 		caller,
 		'com.atproto.space.putRecord',
 		{ space, repo: caller.did, collection: CALENDAR_COLLECTION, rkey: CALENDAR_RKEY, record },
-		`name of ${space} not saved`
+		'calendar name not saved'
 	);
 }
 
@@ -103,7 +103,7 @@ export async function createCalendar(
 		space = await ensurePrivateSpace(caller, key, { publishMembers: true });
 	} catch (e) {
 		if (e instanceof PrivateEventRefused) throw e;
-		console.error(`[private-events] ${caller.did}: calendar ${key} not made:`, e);
+		console.error(`[private-events] calendar not made: ${errorKind(e)}`);
 		throw new PrivateEventRefused('refused');
 	}
 	try {
@@ -111,7 +111,7 @@ export async function createCalendar(
 	} catch (e) {
 		// Without its name it is no calendar, and would be left over, empty, where no page shows it.
 		await xrpc(caller.handle, 'com.atproto.space.deleteSpace', { body: { space } }).catch(
-			(cleanup) => console.error(`[private-events] ${caller.did}: ${space} left over:`, cleanup)
+			(cleanup) => console.error(`[private-events] unnamed space left over: ${errorKind(cleanup)}`)
 		);
 		throw e;
 	}
@@ -123,7 +123,7 @@ export async function createCalendar(
 async function ownPrivateSpace(caller: CallerSession, key: string): Promise<string> {
 	return checkPrivateSpace(caller, key).catch((e) => {
 		if (e instanceof PrivateEventRefused) throw e;
-		console.error(`[private-events] ${caller.did}: ${key} unchecked:`, e);
+		console.error(`[private-events] calendar space unchecked: ${errorKind(e)}`);
 		throw new PrivateEventRefused('unchecked');
 	});
 }
@@ -152,7 +152,7 @@ export async function renameCalendar(
 export async function deleteCalendar(caller: CallerSession, key: string): Promise<void> {
 	requireHost(caller);
 	const space = await ownPrivateSpace(caller, key);
-	await write(caller, 'com.atproto.space.deleteSpace', { space }, `calendar ${key} not deleted`);
+	await write(caller, 'com.atproto.space.deleteSpace', { space }, 'calendar not deleted');
 }
 
 export interface CalendarPerson {
@@ -173,7 +173,7 @@ export async function addPersonToCalendar(
 	if (did === caller.did) throw new PrivateEventRefused('own-calendar');
 	const space = await ownPrivateSpace(caller, input.key);
 	const body = { space, members: [{ did, read: true, write: true }] };
-	await write(caller, 'com.atproto.memberspace.putMembers', body, `not added to ${input.key}`);
+	await write(caller, 'com.atproto.memberspace.putMembers', body, 'person not added to a calendar');
 	return { did, handle: await verifiedHandle(did) };
 }
 
@@ -187,7 +187,7 @@ export async function removePersonFromCalendar(
 		caller,
 		'com.atproto.memberspace.removeMembers',
 		body,
-		`not removed from ${input.key}`
+		'person not removed from a calendar'
 	);
 }
 
@@ -287,7 +287,7 @@ async function showPeopleOnIt(caller: CallerSession, space: string): Promise<voi
 			body: { space, policy: { ...policy, publishMembers: true } }
 		});
 	} catch (e) {
-		console.error(`[private-events] ${caller.did}: ${space} not switched to show its people:`, e);
+		console.error(`[private-events] calendar not switched to show its people: ${errorKind(e)}`);
 	}
 }
 
@@ -326,7 +326,7 @@ export async function readCalendarPage(
 		listed = await memberPages(caller, space);
 	} else {
 		listed = await publishedPeople(reader, host, key).catch((e) => {
-			console.info(`[private-events] the people on ${key} unread for ${caller.did}:`, e);
+			console.info(`[private-events] the people on a calendar unread: ${errorKind(e)}`);
 			return null;
 		});
 	}
@@ -368,7 +368,6 @@ export async function readSpaceEventPage(
 	address: EventAddress
 ): Promise<SpaceEventPage | null> {
 	const reader = credentialSpaceReader(caller);
-	const space = privateEventSpace(address.host, address.spaceKey);
 	const named = readSpaceName(reader, address.host, address.spaceKey).catch((e) => {
 		if (isSpaceAccessDenied(e)) return null;
 		// A space can't be told from a single event's without its name. If it has one, its people are
@@ -378,7 +377,7 @@ export async function readSpaceEventPage(
 	const published = async () => {
 		if (!isCalendar(await named)) return null;
 		return publishedPeople(reader, address.host, address.spaceKey).catch((e) => {
-			console.info(`[private-events] the people on ${space} unread for ${caller.did}:`, e);
+			console.info(`[private-events] the people on a calendar unread: ${errorKind(e)}`);
 			return null;
 		});
 	};
@@ -440,7 +439,7 @@ export async function ownCalendars(
 	const found = await Promise.all(
 		[...read].map(async (key): Promise<MyCalendar | null> => {
 			const named = await readSpaceName(reader, caller.did, key).catch((e) => {
-				console.info(`[private-events] the name of ${key} unread:`, e);
+				console.info(`[private-events] a calendar name unread: ${errorKind(e)}`);
 				return null;
 			});
 			if (!isCalendar(named)) return null;
@@ -485,7 +484,7 @@ export async function myPrivateEventsAndCalendars(
 	const read = await Promise.all(
 		single.calendars.map(async ({ host, key, named }) => {
 			const calendar = await readOne(reader, host, key, named).catch((e) => {
-				console.info(`[private-events] calendar ${key} of ${host} unread for ${caller.did}:`, e);
+				console.info(`[private-events] a calendar unread for the list: ${errorKind(e)}`);
 				incomplete = true;
 				return null;
 			});

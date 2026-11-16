@@ -17,6 +17,17 @@ export class XrpcError extends Error {
 	}
 }
 
+const WORD = /^\w{1,64}$/;
+
+/** A failure as a log gives it: its kind, and for a call its name, status and the protocol's error
+ *  name. Never a message, which can hold a DID, a space, a key or what someone typed. */
+export function errorKind(e: unknown): string {
+	if (e instanceof XrpcError) {
+		return `${e.nsid} ${e.status}${e.error && WORD.test(e.error) ? ` ${e.error}` : ''}`;
+	}
+	return e instanceof Error && WORD.test(e.name) ? e.name : 'unknown';
+}
+
 export type XrpcAnswer =
 	| { ok: true; status: number; data: Record<string, unknown> }
 	| { ok: false; status: number; error: string | null };

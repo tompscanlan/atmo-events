@@ -430,6 +430,24 @@ describe('readPrivateEventPage', () => {
 		]);
 	});
 
+	it('logs an answer it could not read without whose it is or which event', async () => {
+		theSpaceHolds({});
+		const fromSpace = reader.get.getMockImplementation()!;
+		reader.get.mockImplementation(async (query: { repo: string; collection: string }) => {
+			if (query.collection !== RSVP_COLLECTION) return fromSpace(query);
+			const uri = `${SPACE}/${query.repo}/${RSVP_COLLECTION}/${RKEY}`;
+			throw new Error(`com.atproto.space.getRecord: the MAC of ${uri} does not verify`);
+		});
+		reader.writers.mockResolvedValue([GUEST]);
+		await readPrivateEventPage(caller(GUEST, GUEST_SCOPE), EVENT);
+		const logs = [console.info, console.error].flatMap((log) =>
+			vi.mocked(log).mock.calls.flat().map(String)
+		);
+		expect(logs.length).toBeGreaterThan(0);
+		expect(logs.join('\n')).not.toContain(GUEST);
+		expect(logs.join('\n')).not.toContain(RKEY);
+	});
+
 	it('does not call someone who has not answered unread', async () => {
 		theSpaceHolds({});
 		reader.writers.mockResolvedValue([]);

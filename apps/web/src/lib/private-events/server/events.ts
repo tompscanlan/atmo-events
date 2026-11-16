@@ -13,7 +13,7 @@ import {
 	type SpaceReader,
 	type SpaceRecord
 } from '#lib/spaces/server/space-read.js';
-import { isRecordNotFound, xrpc, XrpcError } from '#lib/spaces/server/xrpc.js';
+import { errorKind, isRecordNotFound, xrpc, XrpcError } from '#lib/spaces/server/xrpc.js';
 import { parseSpaceUri } from '#lib/spaces/uri.js';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
 import {
@@ -66,8 +66,9 @@ export function requireHost(caller: CallerSession): void {
 	if (!holdsHostGrant(caller.scope, caller.did)) throw new PrivateEventRefused('no-grant');
 }
 
-/** Writes to the person's own PDS. If that fails, what the PDS said goes only to the log, and the
- *  page is told in our words. */
+/** Writes to the person's own PDS. If that fails, the page is told in our words, and the log gets
+ *  only `failed` and the failure's kind. Every log here names an operation and never a person, a
+ *  space or an event, so none can tell who is invited to what. */
 export async function write(
 	caller: CallerSession,
 	nsid: string,
@@ -77,7 +78,7 @@ export async function write(
 	try {
 		await xrpc(caller.handle, nsid, { body });
 	} catch (e) {
-		console.error(`[private-events] ${caller.did}: ${failed}:`, e);
+		console.error(`[private-events] ${failed}: ${errorKind(e)}`);
 		throw new PrivateEventRefused('refused');
 	}
 }
@@ -220,7 +221,7 @@ export async function savePrivateEvent(
 		return { uri: eventUri(address), cid: String(saved.cid) };
 	} catch (e) {
 		if (e instanceof PrivateEventRefused) throw e;
-		console.error(`[private-events] ${caller.did}: event ${input.rkey} not saved:`, e);
+		console.error(`[private-events] event not saved: ${errorKind(e)}`);
 		throw new PrivateEventRefused('refused');
 	}
 }
@@ -232,10 +233,10 @@ export async function cancelPrivateEvent(caller: CallerSession, keys: EventKeys)
 	requireHost(caller);
 	const address = { ...keys, host: caller.did };
 	const space = eventSpace(address);
-	const failed = `event ${keys.rkey} not cancelled`;
+	const failed = 'event not cancelled';
 	// Without the name, the space can't be told apart from a calendar, and must not be deleted.
 	const onCalendar = await isOwnCalendar(caller, keys.spaceKey).catch((e) => {
-		console.error(`[private-events] ${caller.did}: name of ${keys.spaceKey} unread:`, e);
+		console.error(`[private-events] space name unread for a cancel: ${errorKind(e)}`);
 		throw new PrivateEventRefused('unchecked');
 	});
 	if (!onCalendar) {
@@ -249,7 +250,7 @@ export async function cancelPrivateEvent(caller: CallerSession, keys: EventKeys)
 		});
 	} catch (e) {
 		if (isRecordNotFound(e)) return;
-		console.error(`[private-events] ${caller.did}: ${failed}:`, e);
+		console.error(`[private-events] ${failed}: ${errorKind(e)}`);
 		throw new PrivateEventRefused('refused');
 	}
 }
@@ -372,7 +373,7 @@ export async function readPrivateEventPage(
 
 	const space = eventSpace(address);
 	const writers = await reader.writers(space).catch((e) => {
-		console.error(`[private-events] ${host}: writers of ${rkey} unread for ${caller.did}:`, e);
+		console.error(`[private-events] writers unread: ${errorKind(e)}`);
 		return null;
 	});
 	const unread = new Set<string>();
@@ -385,7 +386,7 @@ export async function readPrivateEventPage(
 			const found = await reader
 				.get({ space, repo: did, collection: RSVP_COLLECTION, rkey })
 				.catch((e) => {
-					console.info(`[private-events] ${did}'s answer to ${rkey} unread:`, e);
+					console.info(`[private-events] an answer unread: ${errorKind(e)}`);
 					unread.add(did);
 					return null;
 				});
@@ -471,10 +472,9 @@ export async function putPrivateRsvp(
 	address: EventAddress,
 	input: { status: RsvpStatus; cid: string | null }
 ): Promise<void> {
-	const { host, rkey } = address;
-	requireAccess(caller, host);
+	requireAccess(caller, address.host);
 	const event = await readEvent(credentialSpaceReader(caller), address).catch((e) => {
-		console.error(`[private-events] ${host}: event ${rkey} unread for ${caller.did}:`, e);
+		console.error(`[private-events] event unread for an answer: ${errorKind(e)}`);
 		throw new PrivateEventRefused('unchecked');
 	});
 	if (!event?.cid) throw new PrivateEventRefused('no-event');
@@ -486,22 +486,21 @@ export async function putPrivateRsvp(
 		createdAt: new Date().toISOString()
 	};
 	const body = { ...ownRsvp(caller, address), record };
-	await write(caller, 'com.atproto.space.putRecord', body, `answer to ${rkey} not saved`);
+	await write(caller, 'com.atproto.space.putRecord', body, 'answer not saved');
 }
 
 export async function deletePrivateRsvp(
 	caller: CallerSession,
 	address: EventAddress
 ): Promise<void> {
-	const { host, rkey } = address;
-	requireAccess(caller, host);
+	requireAccess(caller, address.host);
 	try {
 		await xrpc(caller.handle, 'com.atproto.space.deleteRecord', {
 			body: ownRsvp(caller, address)
 		});
 	} catch (e) {
 		if (isRecordNotFound(e)) return;
-		console.error(`[private-events] ${caller.did}'s answer to ${rkey} not deleted:`, e);
+		console.error(`[private-events] answer not deleted: ${errorKind(e)}`);
 		throw new PrivateEventRefused('refused');
 	}
 }
@@ -510,7 +509,7 @@ export async function deletePrivateRsvp(
 async function ownEventSpace(caller: CallerSession, rkey: string): Promise<string> {
 	return checkPrivateSpace(caller, rkey, 'no-event').catch((e) => {
 		if (e instanceof PrivateEventRefused) throw e;
-		console.error(`[private-events] ${caller.did}: ${rkey} unchecked:`, e);
+		console.error(`[private-events] event space unchecked: ${errorKind(e)}`);
 		throw new PrivateEventRefused('unchecked');
 	});
 }
@@ -529,8 +528,7 @@ export async function addGuest(
 	if (did === caller.did) throw new PrivateEventRefused('own-event');
 	const space = await ownEventSpace(caller, input.rkey);
 	const body = { space, members: [{ did, read: true, write: true }] };
-	const failed = `guest not added to ${input.rkey}`;
-	await write(caller, 'com.atproto.memberspace.putMembers', body, failed);
+	await write(caller, 'com.atproto.memberspace.putMembers', body, 'guest not added');
 	return { did, handle: await verifiedHandle(did), answer: null, answerUnread: false };
 }
 
@@ -540,8 +538,7 @@ export async function removeGuest(
 ): Promise<void> {
 	requireHost(caller);
 	const body = { space: await ownEventSpace(caller, input.rkey), dids: [input.did] };
-	const failed = `guest not removed from ${input.rkey}`;
-	await write(caller, 'com.atproto.memberspace.removeMembers', body, failed);
+	await write(caller, 'com.atproto.memberspace.removeMembers', body, 'guest not removed');
 }
 
 /** The spaces the caller's own PDS lists for them: all they own or have written in, or with `own`,
@@ -612,7 +609,7 @@ export async function myPrivateEvents(caller: CallerSession): Promise<MyPrivateE
 					throw e;
 				})
 			]).catch((e) => {
-				console.info(`[private-events] ${uri} unread for ${caller.did}:`, e);
+				console.info(`[private-events] a space unread for the list: ${errorKind(e)}`);
 				unread++;
 				return null;
 			});
