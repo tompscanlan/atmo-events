@@ -10,6 +10,7 @@ import {
 } from '../ids';
 import { CALENDAR_SCOPE, GUEST_SCOPE, HOST_SCOPE } from '../scopes';
 import type { CallerSession } from './caller';
+import type { Refusal } from './events';
 
 const reader = { get: vi.fn(), list: vi.fn(), writers: vi.fn() };
 const credentialSpaceReader = vi.fn<(...args: unknown[]) => typeof reader>(() => reader);
@@ -35,7 +36,14 @@ const {
 	removePersonFromCalendar,
 	renameCalendar
 } = await import('./calendars');
-const { cancelPrivateEvent, putPrivateRsvp, savePrivateEvent } = await import('./events');
+const {
+	addGuest,
+	cancelPrivateEvent,
+	deletePrivateRsvp,
+	putPrivateRsvp,
+	removeGuest,
+	savePrivateEvent
+} = await import('./events');
 
 const OWNER = 'did:plc:ownerownerownerownerowner';
 const PERSON = 'did:plc:personpersonpersonperson';
@@ -222,17 +230,6 @@ describe('making a shared calendar', () => {
 		expect(host.nsids()).toContain('com.atproto.space.putRecord');
 	});
 
-	it('names nothing in a space anyone can read', async () => {
-		const host = owner({
-			'com.atproto.space.getSpace': () =>
-				Response.json({ policy: { $type: 'com.atproto.memberspace.policy', publicRead: true } })
-		});
-		await expect(createCalendar(host, { name: 'Supper club' })).rejects.toMatchObject({
-			reason: 'not-private'
-		});
-		expect(host.nsids()).not.toContain('com.atproto.space.putRecord');
-	});
-
 	it('takes the space down again when its name could not be written', async () => {
 		const host = owner({
 			'com.atproto.space.putRecord': () => Response.json({ error: 'Nope' }, { status: 500 })
@@ -266,14 +263,6 @@ describe('renaming a shared calendar', () => {
 		});
 	});
 
-	it('refuses a calendar that is not there, and writes nothing', async () => {
-		const host = owner({ 'com.atproto.space.getSpace': refuse(400, 'SpaceNotFound') });
-		await expect(renameCalendar(host, { key: KEY, name: 'Supper club' })).rejects.toMatchObject({
-			reason: 'no-calendar'
-		});
-		expect(host.nsids()).not.toContain('com.atproto.space.putRecord');
-	});
-
 	it('names a single event’s space, then has its server show its people to everyone on it', async () => {
 		theCalendarHolds({ space: SINGLE_SPACE });
 		const host = owner();
@@ -297,25 +286,6 @@ describe('renaming a shared calendar', () => {
 		});
 		// Nothing moves: no event is written, and no space is made or deleted.
 		expect(host.sent.map((sent) => sent.body?.collection)).not.toContain(EVENT_COLLECTION);
-	});
-
-	it('names only the caller’s own space, whatever key a page sends', async () => {
-		reader.get.mockResolvedValue(null);
-		const someone = caller(PERSON, OWNER_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
-		await renameCalendar(someone, { key: SINGLE_KEY, name: 'Supper club' });
-		expect(someone.sent[0].query.get('space')).toBe(privateEventSpace(PERSON, SINGLE_KEY));
-		expect(someone.sent[1].body).toMatchObject({ repo: PERSON });
-	});
-
-	it('names nothing in a space anyone can read, and shows no one its people', async () => {
-		const host = owner({
-			'com.atproto.space.getSpace': () =>
-				Response.json({ policy: { $type: 'com.atproto.memberspace.policy', publicRead: true } })
-		});
-		await expect(
-			renameCalendar(host, { key: SINGLE_KEY, name: 'Supper club' })
-		).rejects.toMatchObject({ reason: 'not-private' });
-		expect(host.nsids()).toEqual(['com.atproto.space.getSpace']);
 	});
 
 	it('asks for the calendar grant to name a single event’s space, and calls nothing', async () => {
@@ -352,29 +322,6 @@ describe('deleting a shared calendar', () => {
 			{ pathname: '/xrpc/com.atproto.space.getSpace' },
 			{ pathname: '/xrpc/com.atproto.space.deleteSpace', body: { space: SINGLE_SPACE } }
 		]);
-	});
-
-	it.each([
-		['was never made', refuse(400, 'SpaceNotFound'), 'no-calendar'],
-		[
-			'anyone can read',
-			() =>
-				Response.json({ policy: { $type: 'com.atproto.memberspace.policy', publicRead: true } }),
-			'not-private'
-		]
-	])('refuses a space that %s, before any write', async (_, getSpace, reason) => {
-		actorToDid.mockResolvedValue(PERSON);
-		const runs = [
-			(host: CallerSession) => deleteCalendar(host, SINGLE_KEY),
-			(host: CallerSession) =>
-				addPersonToCalendar(host, { key: SINGLE_KEY, handleOrDid: 'person.example.com' }),
-			(host: CallerSession) => removePersonFromCalendar(host, { key: SINGLE_KEY, did: PERSON })
-		];
-		for (const run of runs) {
-			const host = owner({ 'com.atproto.space.getSpace': getSpace });
-			await expect(run(host)).rejects.toMatchObject({ reason });
-			expect(host.nsids()).toEqual(['com.atproto.space.getSpace']);
-		}
 	});
 
 	it('refuses a guest', async () => {
@@ -417,14 +364,6 @@ describe('the people on a calendar', () => {
 		await expect(
 			addPersonToCalendar(owner(), { key: KEY, handleOrDid: 'owner.example.com' })
 		).rejects.toMatchObject({ reason: 'own-calendar' });
-	});
-
-	it('acts only on the caller’s own calendar, whatever a page sends', async () => {
-		actorToDid.mockResolvedValue(OTHER);
-		const someone = caller(PERSON, HOST_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
-		await addPersonToCalendar(someone, { key: KEY, handleOrDid: 'other.example.com' });
-		expect(someone.sent[0].query.get('space')).toBe(privateEventSpace(PERSON, KEY));
-		expect(someone.sent[1].body?.space).toBe(privateEventSpace(PERSON, KEY));
 	});
 
 	it('refuses someone on it who tries to change the list', async () => {
@@ -851,27 +790,6 @@ describe('putting an event on a calendar', () => {
 		});
 	});
 
-	it('refuses a calendar that is not there, rather than make it', async () => {
-		const host = owner({ 'com.atproto.space.getSpace': refuse(400, 'SpaceNotFound') });
-		await expect(
-			savePrivateEvent(host, { rkey: '3levent', record: RECORD, calendar: KEY })
-		).rejects.toMatchObject({ reason: 'no-calendar' });
-		expect(host.nsids()).toEqual(['com.atproto.space.getSpace']);
-	});
-
-	it('puts it on the caller’s own calendar, whatever key a page sends', async () => {
-		reader.get.mockImplementation(async (q: { space: string; repo: string; collection: string }) =>
-			q.space === privateEventSpace(PERSON, KEY) &&
-			q.repo === PERSON &&
-			q.collection === CALENDAR_COLLECTION
-				? { uri: 'at://x', cid: 'c', rkey: 'self', value: { name: 'Mine' } }
-				: null
-		);
-		const someone = caller(PERSON, HOST_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
-		await savePrivateEvent(someone, { rkey: '3levent', record: RECORD, calendar: KEY });
-		expect(someone.sent[0].query.get('space')).toBe(privateEventSpace(PERSON, KEY));
-	});
-
 	it('refuses someone on it who tries to add an event, and calls nothing', async () => {
 		const person = caller(PERSON, GUEST_SCOPE);
 		await expect(
@@ -1238,4 +1156,143 @@ describe('the owner’s own calendars, with single events among their spaces', (
 		});
 		expect((await ownCalendars(host)).calendars).toEqual([]);
 	});
+});
+
+describe('every write', () => {
+	const RECORD = event('Dinner', '2026-11-20T18:00:00.000Z');
+	const ANSWER = calendarEvent(OWNER, KEY, '3levent');
+	/** What it writes; the calls it makes to check the caller's own space before writing, or null
+	 *  for one that checks none; and its refusal for a space that was never made. */
+	const writes: [
+		string,
+		(c: CallerSession) => Promise<unknown>,
+		string[] | null,
+		Refusal | null
+	][] = [
+		[
+			'a new single event',
+			(c) => savePrivateEvent(c, { rkey: KEY, record: RECORD }),
+			['createSpace', 'getSpace'],
+			'refused'
+		],
+		[
+			'an event on a calendar',
+			(c) => savePrivateEvent(c, { rkey: '3levent', record: RECORD, calendar: KEY }),
+			['getSpace'],
+			'no-calendar'
+		],
+		[
+			'an event cancelled',
+			(c) => cancelPrivateEvent(c, { spaceKey: KEY, rkey: '3levent' }),
+			null,
+			null
+		],
+		[
+			'a new calendar',
+			(c) => createCalendar(c, { name: 'Supper club' }),
+			['createSpace', 'getSpace'],
+			'refused'
+		],
+		[
+			'a calendar’s name',
+			(c) => renameCalendar(c, { key: KEY, name: 'Supper club' }),
+			['getSpace'],
+			'no-calendar'
+		],
+		['a calendar deleted', (c) => deleteCalendar(c, KEY), ['getSpace'], 'no-calendar'],
+		[
+			'a person added to a calendar',
+			(c) => addPersonToCalendar(c, { key: KEY, handleOrDid: 'other.example.com' }),
+			['getSpace'],
+			'no-calendar'
+		],
+		[
+			'a person taken off a calendar',
+			(c) => removePersonFromCalendar(c, { key: KEY, did: OTHER }),
+			['getSpace'],
+			'no-calendar'
+		],
+		[
+			'a guest added to an event',
+			(c) => addGuest(c, { rkey: KEY, handleOrDid: 'other.example.com' }),
+			['getSpace'],
+			'no-event'
+		],
+		[
+			'a guest taken off an event',
+			(c) => removeGuest(c, { rkey: KEY, did: OTHER }),
+			['getSpace'],
+			'no-event'
+		],
+		// An answer goes into the host's space, in the caller's own repo there, once the caller
+		// has read the event with their own access.
+		[
+			'an answer',
+			(c) => putPrivateRsvp(c, ANSWER, { status: 'going', cid: `cid-of-${OWNER}-3levent` }),
+			[],
+			'no-event'
+		],
+		['an answer taken back', (c) => deletePrivateRsvp(c, ANSWER), null, null]
+	];
+	const isAnswer = (what: string) => what.startsWith('an answer');
+
+	beforeEach(() => actorToDid.mockResolvedValue(OTHER));
+
+	it.each(writes)(
+		'%s goes only to the caller’s own space, or their own repo, whatever a page sends',
+		async (what, write) => {
+			// Any space of anyone's holds a named calendar with the event on it.
+			theCalendarHolds({ name: { name: 'Supper club' }, events: { '3levent': RECORD } });
+			const read = reader.get.getMockImplementation()!;
+			reader.get.mockImplementation(async (q: object) => read({ ...q, space: SPACE, repo: OWNER }));
+			const someone = caller(PERSON, OWNER_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
+			await write(someone);
+			const written = someone.sent.filter((sent) => sent.body);
+			expect(written.length).toBeGreaterThan(0);
+			for (const sent of someone.sent) {
+				if (sent.body?.repo) expect(sent.body.repo).toBe(PERSON);
+				if (isAnswer(what)) continue;
+				for (const space of [sent.body?.space, sent.query.get('space')]) {
+					if (space) expect(space).toMatch(new RegExp(`^at://${PERSON}/`));
+				}
+			}
+		}
+	);
+
+	it.each(
+		writes.flatMap(([what, write, before, gone]) =>
+			[
+				['was never made', refuse(400, 'SpaceNotFound'), gone],
+				[
+					'anyone can read',
+					() =>
+						Response.json({
+							policy: { $type: 'com.atproto.memberspace.policy', publicRead: true }
+						}),
+					'not-private'
+				],
+				[
+					'another policy governs',
+					() => Response.json({ policy: { $type: 'com.atproto.managedspace.policy' } }),
+					'not-private'
+				]
+			]
+				// An answer's check is its read of the event, which a space never made turns away.
+				.filter(([space]) => before && (before.length > 0 || space === 'was never made'))
+				.map(
+					([space, getSpace, reason]) => [what, space, write, getSpace, reason, before!] as const
+				)
+		)
+	)(
+		'%s is refused before anything is written, in a space that %s',
+		async (_, space, write, getSpace, reason, before) => {
+			theCalendarHolds({ name: { name: 'Supper club' }, events: { '3levent': RECORD } });
+			if (space === 'was never made') {
+				reader.get.mockRejectedValue(new SpaceAccessDenied(SPACE, '400 SpaceNotFound'));
+			}
+			const host = owner({ 'com.atproto.space.getSpace': getSpace as () => Response });
+			await expect(write(host)).rejects.toMatchObject({ reason });
+			expect(host.nsids()).toEqual(before.map((nsid) => `com.atproto.space.${nsid}`));
+		}
+	);
 });
