@@ -485,6 +485,15 @@ export async function deletePrivateRsvp(
 	}
 }
 
+/** The caller's own single event's space, checked before its list changes, as a calendar's is. */
+async function ownEventSpace(caller: CallerSession, rkey: string): Promise<string> {
+	return checkPrivateSpace(caller, rkey, 'no-event').catch((e) => {
+		if (e instanceof PrivateEventRefused) throw e;
+		console.error(`[private-events] ${caller.did}: ${rkey} unchecked:`, e);
+		throw new PrivateEventRefused('unchecked');
+	});
+}
+
 /** Puts them on the event's list, which is all it takes to let them read. A PDS answers the same
  *  for someone whose own server has no spaces, who can never get in, and only their own sign-in
  *  can show that, so the host's page says who has answered. */
@@ -497,7 +506,7 @@ export async function addGuest(
 	const did = await actorToDid(actor, timeLimitedNetwork()).catch(() => null);
 	if (!did) throw new PrivateEventRefused('no-such-person');
 	if (did === caller.did) throw new PrivateEventRefused('own-event');
-	const space = eventSpace(singleEvent(caller.did, input.rkey));
+	const space = await ownEventSpace(caller, input.rkey);
 	const body = { space, members: [{ did, read: true, write: true }] };
 	const failed = `guest not added to ${input.rkey}`;
 	await write(caller, 'com.atproto.memberspace.putMembers', body, failed);
@@ -509,7 +518,7 @@ export async function removeGuest(
 	input: { rkey: string; did: string }
 ): Promise<void> {
 	requireHost(caller);
-	const body = { space: eventSpace(singleEvent(caller.did, input.rkey)), dids: [input.did] };
+	const body = { space: await ownEventSpace(caller, input.rkey), dids: [input.did] };
 	const failed = `guest not removed from ${input.rkey}`;
 	await write(caller, 'com.atproto.memberspace.removeMembers', body, failed);
 }

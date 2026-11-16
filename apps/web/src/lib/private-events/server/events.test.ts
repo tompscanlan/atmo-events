@@ -490,10 +490,10 @@ describe('readPrivateEventPage', () => {
 describe('addGuest', () => {
 	it('puts the person the handle names on the list, able to read and answer', async () => {
 		actorToDid.mockResolvedValue(GUEST);
-		const host = caller(HOST, HOST_SCOPE);
+		const host = caller(HOST, HOST_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
 		await addGuest(host, { rkey: RKEY, handleOrDid: '@guest.example.com ' });
 		expect(actorToDid).toHaveBeenCalledWith('guest.example.com');
-		expect(host.sent[0]).toMatchObject({
+		expect(host.sent[1]).toMatchObject({
 			pathname: '/xrpc/com.atproto.memberspace.putMembers',
 			body: { space: SPACE, members: [{ did: GUEST, read: true, write: true }] }
 		});
@@ -517,9 +517,10 @@ describe('addGuest', () => {
 
 	it('acts only on the caller’s own event, whatever a page sends', async () => {
 		actorToDid.mockResolvedValue(GUEST);
-		const someone = caller(OTHER, HOST_SCOPE);
+		const someone = caller(OTHER, HOST_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
 		await addGuest(someone, { rkey: RKEY, handleOrDid: 'guest.example.com' });
-		expect(someone.sent[0].body?.space).toBe(privateEventSpace(OTHER, RKEY));
+		expect(someone.sent[0].query.get('space')).toBe(privateEventSpace(OTHER, RKEY));
+		expect(someone.sent[1].body?.space).toBe(privateEventSpace(OTHER, RKEY));
 	});
 
 	it('refuses a guest’s grant', async () => {
@@ -533,12 +534,35 @@ describe('addGuest', () => {
 
 describe('removeGuest', () => {
 	it('takes them off the caller’s own event', async () => {
-		const host = caller(HOST, HOST_SCOPE);
+		const host = caller(HOST, HOST_SCOPE, { 'com.atproto.space.getSpace': privateSpace });
 		await removeGuest(host, { rkey: RKEY, did: GUEST });
-		expect(host.sent[0]).toMatchObject({
+		expect(host.sent[1]).toMatchObject({
 			pathname: '/xrpc/com.atproto.memberspace.removeMembers',
 			body: { space: SPACE, dids: [GUEST] }
 		});
+	});
+});
+
+describe('the guests of a single event', () => {
+	it.each([
+		['was never made', refuse(400, 'SpaceNotFound'), 'no-event'],
+		[
+			'anyone can read',
+			() =>
+				Response.json({ policy: { $type: 'com.atproto.memberspace.policy', publicRead: true } }),
+			'not-private'
+		]
+	])('refuses a space that %s, before any write', async (_, getSpace, reason) => {
+		actorToDid.mockResolvedValue(GUEST);
+		const runs = [
+			(host: CallerSession) => addGuest(host, { rkey: RKEY, handleOrDid: 'guest.example.com' }),
+			(host: CallerSession) => removeGuest(host, { rkey: RKEY, did: GUEST })
+		];
+		for (const run of runs) {
+			const host = caller(HOST, HOST_SCOPE, { 'com.atproto.space.getSpace': getSpace });
+			await expect(run(host)).rejects.toMatchObject({ reason });
+			expect(host.nsids()).toEqual(['com.atproto.space.getSpace']);
+		}
 	});
 });
 
@@ -731,7 +755,10 @@ describe('an event kept in a space under another key', () => {
 describe('a write the person’s own PDS refuses', () => {
 	const refusing = { error: 'Nope', message: 'secret detail' };
 	const refuses = (did: string, scope: string, nsid: string) =>
-		caller(did, scope, { [nsid]: () => Response.json(refusing, { status: 500 }) });
+		caller(did, scope, {
+			'com.atproto.space.getSpace': privateSpace,
+			[nsid]: () => Response.json(refusing, { status: 500 })
+		});
 	const host = (nsid: string) => refuses(HOST, HOST_SCOPE, nsid);
 	const answer = { status: 'going' as const, cid: `cid-of-${HOST}` };
 	const writes: Record<string, (nsid: string) => Promise<unknown>> = {
