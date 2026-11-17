@@ -90,9 +90,23 @@ test(
 					probe: 'node --version'
 				}
 			});
+			// The registry kit carries a patch, as atmo's may while a kit change awaits release.
 			write(
 				join(root, 'pnpm-workspace.yaml'),
-				"packages:\n  - 'apps/*'\n  - 'packages/*'\nverifyDepsBeforeRun: false\n"
+				"packages:\n  - 'apps/*'\n  - 'packages/*'\nverifyDepsBeforeRun: false\n" +
+					"patchedDependencies:\n  '@atmo-dev/kit@0.0.2': patches/kit.patch\n"
+			);
+			write(
+				join(root, 'patches/kit.patch'),
+				[
+					'diff --git a/dist/index.js b/dist/index.js',
+					'--- a/dist/index.js',
+					'+++ b/dist/index.js',
+					'@@ -1 +1,2 @@',
+					" export const source = 'registry';",
+					'+export const patched = true;',
+					''
+				].join('\n')
 			);
 			write(join(root, '.npmrc'), 'offline=true\n');
 			for (const file of ['kit-dev.mjs', 'kit-local.pnpmfile.cjs']) {
@@ -133,7 +147,9 @@ test(
 				);
 			const registry = () => {
 				for (const path of targets()) {
-					assert.match(readFileSync(join(path, 'dist/index.js'), 'utf8'), /'registry'/);
+					const index = readFileSync(join(path, 'dist/index.js'), 'utf8');
+					assert.match(index, /'registry'/);
+					assert.match(index, /patched = true/);
 				}
 				assert.equal(new Set(targets()).size, 1, 'both consumers share one installed kit');
 				unchanged();
