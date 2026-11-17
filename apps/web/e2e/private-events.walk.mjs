@@ -177,6 +177,7 @@ const runCron = async () => {
 await runCron();
 
 let failures = 0;
+let PICTURE_CID;
 const check = (label, ok, detail = '') => {
 	log(`  ${ok ? 'ok  ' : 'FAIL'} ${label}${detail ? `: ${detail}` : ''}`);
 	if (!ok) failures++;
@@ -357,25 +358,20 @@ await step('2. alice picks Private on /create and allows it', async () => {
 			.catch(() => false))
 	);
 	await p.getByRole('radio', { name: /^private$/i }).click();
-	await p.locator('[data-testid=grant-notice]').waitFor({ timeout: 10000 });
-	const what = await text(p, '[data-testid=audience-what]');
-	const fine = await text(p, '[data-testid=audience-fine-print]');
+	// The Settings switch already asked for hosting, so /create asks nothing more.
+	await p.getByRole('button', { name: /^publish/i }).waitFor({ timeout: 30000 });
 	check(
-		'Private says who sees it, and that it stays private',
-		/^Only people you invite can see it\. You add them after publishing\.$/.test(what) &&
-			/^A private event can't be made public later\. Private events can't have an image or repeat yet\.$/.test(
-				fine
-			),
-		`${what} | ${fine}`
+		'no second permission asked on /create',
+		!(await p
+			.locator('[data-testid=grant-notice]')
+			.isVisible()
+			.catch(() => false))
 	);
-	await shot(p, '01-create-ask');
-	await allow(p, /allow atmo to host/i, P.alice);
-	await settle(p);
 	check(
-		'comes back to the choice she made',
-		new URL(p.url()).searchParams.get('audience') === 'private',
-		p.url()
+		'Private shows its fine print',
+		(await text(p, '[data-testid=audience-fine-print]')).length > 0
 	);
+	await shot(p, '01-create-private');
 });
 
 await step('3. alice fills in the editor and publishes', async () => {
@@ -411,7 +407,10 @@ await step('3. alice fills in the editor and publishes', async () => {
 		rkey: KEY
 	});
 	check('the event is in the space', inSpace.status === 200, inSpace.data?.value?.name);
-	check('it has no image', !inSpace.data?.value?.media?.length);
+	const media = inSpace.data?.value?.media ?? [];
+	const cid = media[0]?.content?.ref?.$link;
+	check('it has a picture (the default cover)', media.length > 0 && typeof cid === 'string', JSON.stringify(media[0]?.content));
+	PICTURE_CID = cid;
 	check(
 		'it has no discovery preference, since nothing lists it',
 		inSpace.data?.value?.preferences === undefined,
@@ -419,12 +418,18 @@ await step('3. alice fills in the editor and publishes', async () => {
 	);
 	const policy = await C.alice.call('com.atproto.space.getSpace', { space: SPACE });
 	check('memberspace policy', policy.data?.policy?.$type === 'com.atproto.memberspace.policy');
-	const blobs = await C.alice.call('com.atproto.sync.listBlobs', { did: C.alice.did });
-	check(
-		'no blob uploaded',
-		blobs.status === 200 && blobs.data.cids.length === 0,
-		`${blobs.status}`
+	const listed = await fetch(`${process.env.ALPHA_URL}/xrpc/com.atproto.sync.listBlobs?did=${C.alice.did}`);
+	const listedCids = listed.ok ? (await listed.json()).cids ?? [] : [];
+	check('the picture is not listed publicly', !listedCids.includes(PICTURE_CID), `${listed.status} ${listedCids.length}`);
+	const anon = await fetch(`${process.env.ALPHA_URL}/xrpc/com.atproto.sync.getBlob?did=${C.alice.did}&cid=${PICTURE_CID}`);
+	check('nobody signed out can fetch it from her server', !anon.ok, `${anon.status}`);
+	await p.waitForFunction(() => [...document.images].some((i) => (i.currentSrc || i.src).includes('/picture/') && i.complete && i.naturalWidth > 0), null, { timeout: 15000 }).catch(() => {});
+	const shown = await p.evaluate(() =>
+		[...document.images].map((i) => ({ src: i.currentSrc || i.src, w: i.naturalWidth }))
 	);
+	const pic = shown.find((i) => i.src.includes('/picture/'));
+	check('the page shows it from atmo, loaded', !!pic && pic.src.startsWith(ATMO) && pic.w > 0, JSON.stringify(shown.slice(0, 4)));
+	check('no image from a public CDN', !shown.some((i) => /cdn\./.test(new URL(i.src, ATMO).host)), JSON.stringify(shown.map((i) => i.src)));
 });
 
 await step('4. someone signed out opens the address', async () => {
@@ -802,6 +807,10 @@ await step('14b. nothing reached the public network or atmo, and a public event 
 	);
 });
 
+if (process.env.WALK_KEEP === '1') {
+	log('WALK_KEEP=1: leaving the event in place to look at');
+	process.exit(failures ? 1 : 0);
+}
 await step('15. alice cancels, and a guest gets the same page as anyone', async () => {
 	const a = pages.alice;
 	await open(a, `${EVENT_PATH}/edit`);
