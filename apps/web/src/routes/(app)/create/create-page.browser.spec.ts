@@ -15,6 +15,7 @@ const { mocks } = vi.hoisted(() => ({
 	mocks: {
 		savePrivateEvent: vi.fn(async () => ({ uri: 'at://x', cid: 'cid' })),
 		putRecord: vi.fn(async () => ({ uri: 'at://x', cid: 'cid' })),
+		uploadBlob: vi.fn(),
 		user: {
 			isLoggedIn: true,
 			did: 'did:plc:hosthosthosthosthosthost',
@@ -32,7 +33,7 @@ vi.mock('#lib/atproto/repo.remote.js', () => ({
 	putRecord: mocks.putRecord,
 	createRecord: vi.fn(),
 	deleteRecord: vi.fn(),
-	uploadBlob: vi.fn()
+	uploadBlob: mocks.uploadBlob
 }));
 vi.mock('#lib/atproto/auth.svelte.js', () => ({
 	user: mocks.user,
@@ -47,9 +48,6 @@ vi.mock('#lib/atproto/auth.svelte.js', () => ({
 const PUBLIC_WHAT = 'Anyone can see it, and it shows in search and listings.';
 const UNLISTED_WHAT = "Anyone with the link can see it. It doesn't show in search or listings.";
 const INVITED_WHAT = 'Only people you invite can see it. You add them after publishing.';
-const PUBLIC_FINE_PRINT = "A public or unlisted event can't be made private later.";
-const PRIVATE_FINE_PRINT =
-	"A private event can't be made public later. Private events can't have an image or repeat yet.";
 
 /** The page's data, as its load returns it for a host with the beta on, or with it off. */
 function data(privateEvents = true) {
@@ -99,6 +97,7 @@ afterEach(() => {
 	sessionStorage.clear();
 	mocks.savePrivateEvent.mockClear();
 	mocks.putRecord.mockClear();
+	mocks.uploadBlob.mockReset();
 });
 
 describe('choosing who can see it on /create', () => {
@@ -114,20 +113,29 @@ describe('choosing who can see it on /create', () => {
 	});
 
 	it.each([
-		['Public', PUBLIC_WHAT, PUBLIC_FINE_PRINT],
-		['Unlisted', UNLISTED_WHAT, PUBLIC_FINE_PRINT],
-		['Private', INVITED_WHAT, PRIVATE_FINE_PRINT]
-	])(
-		'says in one line what %s means, and in the fine print what it rules out',
-		async (name, what, finePrint) => {
-			render(CreatePage, { data: data() } as never);
+		['Public', PUBLIC_WHAT],
+		['Unlisted', UNLISTED_WHAT],
+		['Private', INVITED_WHAT]
+	])('says in one line what %s means, with fine print below', async (name, what) => {
+		render(CreatePage, { data: data() } as never);
+		await choice(name).click();
+		await expect.element(choice(name)).toBeChecked();
+		await expect.poll(() => shownText('audience-what')).toBe(what);
+		expect(shownText('audience-fine-print')).not.toBe('');
+		await expect.element(publish()).toBeVisible();
+	});
+
+	it('gives Private fine print of its own, and Public and Unlisted the same', async () => {
+		render(CreatePage, { data: data() } as never);
+		const finePrint: Record<string, string> = {};
+		for (const name of ['Public', 'Unlisted', 'Private']) {
 			await choice(name).click();
 			await expect.element(choice(name)).toBeChecked();
-			await expect.poll(() => shownText('audience-what')).toBe(what);
-			expect(shownText('audience-fine-print')).toBe(finePrint);
-			await expect.element(publish()).toBeVisible();
+			finePrint[name] = shownText('audience-fine-print');
 		}
-	);
+		expect(finePrint.Unlisted).toBe(finePrint.Public);
+		expect(finePrint.Private).not.toBe(finePrint.Public);
+	});
 
 	it('asks Public or Unlisted only once, with no switch for it in the editor', async () => {
 		render(CreatePage, { data: data() } as never);
@@ -182,6 +190,42 @@ describe('publishing a private event on /create', () => {
 			.poll(() => mocks.savePrivateEvent)
 			.toHaveBeenCalledWith(expect.objectContaining({ rkey: '3knewevent' }));
 		expect(mocks.putRecord).not.toHaveBeenCalled();
+	});
+});
+
+describe('a private event’s picture on /create', () => {
+	const uploaded = {
+		$type: 'blob',
+		ref: { $link: 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku' },
+		mimeType: 'image/webp',
+		size: 1000
+	};
+	const saved = () =>
+		(mocks.savePrivateEvent.mock.calls[0] as unknown as [{ record: Record<string, unknown> }])[0]
+			.record;
+
+	it('is uploaded through the host’s own sign-in and saved with the event', async () => {
+		mocks.uploadBlob.mockResolvedValue(uploaded);
+		filledIn();
+		render(CreatePage, { data: data() } as never);
+		await choice('Private').click();
+		await publish().click();
+		await expect.poll(() => mocks.savePrivateEvent).toHaveBeenCalled();
+		expect(mocks.uploadBlob).toHaveBeenCalledTimes(1);
+		expect(saved().media).toEqual([expect.objectContaining({ content: uploaded })]);
+	});
+
+	it('does not stop the event being created when the cover won’t upload', async () => {
+		mocks.uploadBlob.mockRejectedValue(new Error('upload refused'));
+		const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		filledIn();
+		render(CreatePage, { data: data() } as never);
+		await choice('Private').click();
+		await publish().click();
+		await expect.poll(() => mocks.savePrivateEvent).toHaveBeenCalled();
+		expect(mocks.uploadBlob).toHaveBeenCalledTimes(1);
+		expect(saved()).not.toHaveProperty('media');
+		warned.mockRestore();
 	});
 });
 

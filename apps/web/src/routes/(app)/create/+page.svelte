@@ -33,7 +33,7 @@
 	setLinkEmbeds(() => (invited ? PRIVATE_LINK_EMBEDS : {}));
 	let chosen = $derived((!data.privateEvents && !wantsPrivate) || isPublic || invited);
 
-	const PRIVATE_LIMITS = " Private events can't have an image or repeat yet.";
+	const PRIVATE_LIMITS = " Private events can't repeat yet.";
 
 	// Public or Unlisted is asked once, at the top, so the editor's own switch is off and the answer
 	// is written into the record here, the way the editor would have.
