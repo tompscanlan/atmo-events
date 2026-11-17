@@ -1,7 +1,7 @@
 import { render } from 'svelte/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EVENT_COLLECTION, privateEventPath, privateEventSpace } from '#lib/private-events/ids.js';
-import { HOST_SCOPE } from '#lib/private-events/scopes.js';
+import { GUEST_SCOPE, HOST_SCOPE } from '#lib/private-events/scopes.js';
 
 const HOST = 'did:plc:hosthosthosthosthosthost';
 const GUEST = 'did:plc:guestguestguestguestgues';
@@ -137,6 +137,21 @@ describe('a host whose guests’ answers could not be read', () => {
 		expect(body).toContain('data-testid="answers-unread"');
 		expect(body).not.toContain('hasn&#39;t answered');
 		expect(body).not.toContain("hasn't answered");
+	});
+});
+
+describe('a private event’s picture', () => {
+	it('loads from atmo’s own route, never a public CDN', async () => {
+		const cid = 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku';
+		const content = { $type: 'blob', ref: { $link: cid }, mimeType: 'image/png', size: 10 };
+		reader.get.mockImplementation(
+			spaceHolds({ ...RECORD, media: [{ role: 'thumbnail', content }] })
+		);
+		const data = await load(request(GUEST, GUEST_SCOPE, browser()));
+		const body = page(data);
+		const sources = [...body.matchAll(/<img[^>]*\ssrc="([^"]+)"/g)].map((m) => m[1]);
+		expect(sources).toContain(`/p/${encodeURIComponent(HOST)}/private/${RKEY}/picture/${cid}`);
+		expect(body).not.toContain('cdn.bsky.app');
 	});
 });
 
