@@ -33,3 +33,7 @@ overrides:
   '@atproto/lex-schema@^0.0.0-spaces-alpha-20261112204144': 0.0.0-spaces-alpha-20261112204144
   '@atproto/star@^0.0.0-spaces-alpha-20261112204144': 0.0.0-spaces-alpha-20261112204144
   '@atproto/syntax@^0.0.0-spaces-alpha-20261112204144': 0.0.0-spaces-alpha-20261112204144
+# The kit's change letting a page supply where an event's pictures load from, so a private event's
+# never go to the public CDN, ahead of a kit release that has it. Drop it on the next kit update.
+patchedDependencies:
+  '@atmo-dev/kit@0.15.1': patches/@atmo-dev__kit@0.15.1.patch

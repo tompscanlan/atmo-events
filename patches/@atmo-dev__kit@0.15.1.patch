@@ -1,0 +1,301 @@
+diff --git a/dist/events/EventCard.svelte b/dist/events/EventCard.svelte
+index 0e4269afe56e237614f275df1d2571617580f0a9..8d8ffe1e853bc543d395bba3a2f0da723aafaea4 100644
+--- a/dist/events/EventCard.svelte
++++ b/dist/events/EventCard.svelte
+@@ -1,6 +1,6 @@
+ <script lang="ts">
+ 	import { getCDNImageBlobUrl } from './atproto-helpers.js';
+-	import { getEventThumbnail, getEventExternalImage } from './event-media.js';
++	import { getEventThumbnail, getEventExternalImage, type EventMediaUrl } from './event-media.js';
+ 	import { eventUrl, isEventOngoing, type FlatEventRecord } from './contrail.js';
+ 	import Avatar from 'svelte-boring-avatars';
+ 	import { Badge, Icon } from '../index.js';
+@@ -10,12 +10,15 @@
+ 	let {
+ 		event,
+ 		actor,
+-		href
++		href,
++		mediaUrl = getCDNImageBlobUrl
+ 	}: {
+ 		event: FlatEventRecord;
+ 		actor?: string;
+ 		/** Where the card links, for an event whose page is not its creator's. */
+ 		href?: string;
++		/** Where the card loads the event's own images from; the public CDN by default. */
++		mediaUrl?: EventMediaUrl;
+ 	} = $props();
+ 
+ 	function formatDateTime(dateStr: string): string {
+@@ -68,13 +71,13 @@
+ 	function getThumbnail(event: FlatEventRecord): { url: string; alt: string } | null {
+ 		const media = getEventThumbnail(event.media);
+ 		if (media?.content) {
+-			const url = getCDNImageBlobUrl({ did: event.did, blob: media.content });
++			const url = mediaUrl({ did: event.did, blob: media.content });
+ 			if (url) return { url, alt: media.alt || event.name };
+ 		}
+ 
+ 		const banner = event.media?.find((m) => m.role === 'header');
+ 		if (banner?.content) {
+-			const url = getCDNImageBlobUrl({ did: event.did, blob: banner.content });
++			const url = mediaUrl({ did: event.did, blob: banner.content });
+ 			if (url) return { url, alt: banner.alt || event.name };
+ 		}
+ 
+diff --git a/dist/events/EventCard.svelte.d.ts b/dist/events/EventCard.svelte.d.ts
+index f919451309b4611575e49ea0ea9d55ffbf1ba105..f2344addc67024e10c97627af03d58b2c7659345 100644
+--- a/dist/events/EventCard.svelte.d.ts
++++ b/dist/events/EventCard.svelte.d.ts
+@@ -1,9 +1,12 @@
++import { type EventMediaUrl } from './event-media.js';
+ import { type FlatEventRecord } from './contrail.js';
+ type $$ComponentProps = {
+     event: FlatEventRecord;
+     actor?: string;
+     /** Where the card links, for an event whose page is not its creator's. */
+     href?: string;
++    /** Where the card loads the event's own images from; the public CDN by default. */
++    mediaUrl?: EventMediaUrl;
+ };
+ declare const EventCard: import("svelte").Component<$$ComponentProps, {}, "">;
+ type EventCard = ReturnType<typeof EventCard>;
+diff --git a/dist/events/EventEditor.svelte b/dist/events/EventEditor.svelte
+index def990aa27d013f0127b240b473fc4a42970c6d8..ee77ebbe1b43d63e76b50bdc102ce3fb689b06a9 100644
+--- a/dist/events/EventEditor.svelte
++++ b/dist/events/EventEditor.svelte
+@@ -1,6 +1,6 @@
+ <script lang="ts">
+ 	import { getCDNImageBlobUrl } from './atproto-helpers.js';
+-	import { getEventThumbnail } from './event-media.js';
++	import { getEventThumbnail, type EventMediaUrl } from './event-media.js';
+ 	import { Avatar, Button, ToggleGroup, ToggleGroupItem } from '../index.js';
+ 	import { onMount, untrack } from 'svelte';
+ 	import { InlineEditor, RichTextEditor, type Editor } from '../index.js';
+@@ -39,7 +39,8 @@
+ 		adapter,
+ 		viewer,
+ 		initialTheme,
+-		prefill = null
++		prefill = null,
++		mediaUrl = getCDNImageBlobUrl
+ 	}: {
+ 		eventData: FlatEventRecord | null;
+ 		actorDid: string;
+@@ -50,6 +51,8 @@
+ 		initialTheme?: Partial<EventTheme>;
+ 		/** Autofill payload for new events (e.g. imported from Luma/Meetup). */
+ 		prefill?: EventEditorPrefill | null;
++		/** Where the editor loads the event's current image from; the public CDN by default. */
++		mediaUrl?: EventMediaUrl;
+ 	} = $props();
+ 
+ 	let isNew = $derived(eventData === null);
+@@ -96,6 +99,10 @@
+ 	let selectedPreset: string | null = $state(
+ 		initialThumbnailFile ? null : eventData === null ? DEFAULT_PRESET : null
+ 	);
++	/** The cover drawn from the selected preset, once it is drawn for a save. */
++	let generatedThumbnail: File | null = null;
++	/** The host chose a cover, or took it away, rather than leaving a new event's default. */
++	let coverChosen = false;
+ 	let images = $derived(adapter.features.images !== false);
+ 	const embedOptions = linkEmbedOptions();
+ 	/** As on the event page: the app's embeds, plus cards for links to other events. */
+@@ -159,7 +166,7 @@
+ 		if (eventData.media && eventData.media.length > 0) {
+ 			const media = getEventThumbnail(eventData.media);
+ 			if (media?.content) {
+-				const url = getCDNImageBlobUrl({ did: actorDid, blob: media.content });
++				const url = mediaUrl({ did: actorDid, blob: media.content });
+ 				if (url) {
+ 					thumbnailPreview = url;
+ 					thumbnailChanged = false;
+@@ -245,9 +252,19 @@
+ 				});
+ 				if (rendered) {
+ 					thumbnailFile = rendered;
++					generatedThumbnail = rendered;
+ 					thumbnailChanged = true;
+ 				}
+ 			}
++			// The default cover a new event gets without asking isn't worth losing the event over, so
++			// if it doesn't upload the event is saved without it. A cover the host chose, a preset as
++			// much as an image, fails the save instead, so it is never left out without their knowing.
++			const defaultCover =
++				isNew &&
++				!coverChosen &&
++				selectedPreset === DEFAULT_PRESET &&
++				thumbnailFile !== null &&
++				thumbnailFile === generatedThumbnail;
+ 
+ 			const existingMedia = (eventData?.media ?? []) as Array<Record<string, unknown>>;
+ 			const media = images
+@@ -256,8 +273,15 @@
+ 						thumbnailChanged,
+ 						thumbnailFile,
+ 						existingMedia,
+-						uploadBlob: (blob) =>
+-							adapter.uploadBlob(blob) as unknown as Promise<Record<string, unknown>>
++						uploadBlob: async (blob) => {
++							try {
++								return (await adapter.uploadBlob(blob)) as unknown as Record<string, unknown>;
++							} catch (e) {
++								if (!defaultCover) throw e;
++								console.warn('Generated cover not uploaded; saving the event without it:', e);
++								return null;
++							}
++						}
+ 					})
+ 				: existingMedia.length > 0
+ 					? existingMedia
+@@ -363,7 +387,13 @@
+ 							bind:thumbnailFile
+ 							bind:thumbnailPreview
+ 							bind:thumbnailChanged
+-							bind:selectedPreset
++							bind:selectedPreset={
++								() => selectedPreset,
++								(preset) => {
++									selectedPreset = preset;
++									coverChosen = true;
++								}
++							}
+ 						/>
+ 					{/if}
+ 
+diff --git a/dist/events/EventEditor.svelte.d.ts b/dist/events/EventEditor.svelte.d.ts
+index 7b4c141d555b1db0cf6f35dd91261986a78cc062..f32bf7cb8d073303fae99bbf8dded338a50822b5 100644
+--- a/dist/events/EventEditor.svelte.d.ts
++++ b/dist/events/EventEditor.svelte.d.ts
+@@ -1,3 +1,4 @@
++import { type EventMediaUrl } from './event-media.js';
+ import type { FlatEventRecord } from './contrail.js';
+ import { type EventTheme } from './theme.js';
+ import { type EventEditorPrefill } from './editor/types';
+@@ -12,6 +13,8 @@ type $$ComponentProps = {
+     initialTheme?: Partial<EventTheme>;
+     /** Autofill payload for new events (e.g. imported from Luma/Meetup). */
+     prefill?: EventEditorPrefill | null;
++    /** Where the editor loads the event's current image from; the public CDN by default. */
++    mediaUrl?: EventMediaUrl;
+ };
+ declare const EventEditor: import("svelte").Component<$$ComponentProps, {}, "">;
+ type EventEditor = ReturnType<typeof EventEditor>;
+diff --git a/dist/events/EventView.svelte b/dist/events/EventView.svelte
+index 834c33901846551a0ce39c949c9b8cf7135c8b7b..82b8fb5ad59f899ae03dd47f84919abe2a7197d4 100644
+--- a/dist/events/EventView.svelte
++++ b/dist/events/EventView.svelte
+@@ -2,7 +2,7 @@
+ 	import { isEventOngoing, type AttendeeListLoader, type FlatEventRecord } from './contrail.js';
+ 	import type { EventViewData } from './view-data.js';
+ 	import { getCDNImageBlobUrl } from './atproto-helpers.js';
+-	import { getEventThumbnail, getEventExternalImage } from './event-media.js';
++	import { getEventThumbnail, getEventExternalImage, type EventMediaUrl } from './event-media.js';
+ 	import { Button, ToggleGroup, ToggleGroupItem } from '../index.js';
+ 	import ShareModal from './ShareModal.svelte';
+ 	import EventComments from './EventComments.svelte';
+@@ -48,7 +48,8 @@
+ 		share = true,
+ 		extraActions,
+ 		attendeeActions,
+-		loadAttendees
++		loadAttendees,
++		mediaUrl = getCDNImageBlobUrl
+ 	}: {
+ 		data: EventViewData;
+ 		adapter: EditorAdapter;
+@@ -70,6 +71,8 @@
+ 		/** Fetches the complete attendee lists the first time one is opened, when
+ 		 *  `data.attendees` holds only a sample of the counted RSVPs. */
+ 		loadAttendees?: AttendeeListLoader;
++		/** Where the page loads the event's own images from; the public CDN by default. */
++		mediaUrl?: EventMediaUrl;
+ 	} = $props();
+ 
+ 	let eventData: FlatEventRecord = $derived(data.eventData);
+@@ -198,7 +201,7 @@
+ 		if (!eventData.media || eventData.media.length === 0) return null;
+ 		const media = getEventThumbnail(eventData.media);
+ 		if (!media?.content) return null;
+-		const url = getCDNImageBlobUrl({ did, blob: media.content });
++		const url = mediaUrl({ did, blob: media.content });
+ 		if (!url) return null;
+ 		return { url, alt: media.alt || eventData.name, aspectRatio: media.aspect_ratio };
+ 	});
+@@ -207,7 +210,7 @@
+ 		if (!eventData.media || eventData.media.length === 0) return null;
+ 		const media = eventData.media.find((m) => m.role === 'header');
+ 		if (!media?.content) return null;
+-		const url = getCDNImageBlobUrl({ did, blob: media.content });
++		const url = mediaUrl({ did, blob: media.content });
+ 		if (!url) return null;
+ 		return { url, alt: media.alt || eventData.name, aspectRatio: media.aspect_ratio };
+ 	});
+diff --git a/dist/events/EventView.svelte.d.ts b/dist/events/EventView.svelte.d.ts
+index 49bb77ce6d88516bcbd67d92a60f6fac4e9b3510..521380ffb10ff4bca50c11948c9bf82bd585653c 100644
+--- a/dist/events/EventView.svelte.d.ts
++++ b/dist/events/EventView.svelte.d.ts
+@@ -1,5 +1,6 @@
+ import { type AttendeeListLoader } from './contrail.js';
+ import type { EventViewData } from './view-data.js';
++import { type EventMediaUrl } from './event-media.js';
+ import { type AttendeeCounts } from './EventAttendees.svelte';
+ import { type Snippet } from 'svelte';
+ import type { EditorAdapter, EditorViewer } from './editor/adapter.js';
+@@ -24,6 +25,8 @@ type $$ComponentProps = {
+     /** Fetches the complete attendee lists the first time one is opened, when
+      *  `data.attendees` holds only a sample of the counted RSVPs. */
+     loadAttendees?: AttendeeListLoader;
++    /** Where the page loads the event's own images from; the public CDN by default. */
++    mediaUrl?: EventMediaUrl;
+ };
+ declare const EventView: import("svelte").Component<$$ComponentProps, {}, "">;
+ type EventView = ReturnType<typeof EventView>;
+diff --git a/dist/events/editor/save.d.ts b/dist/events/editor/save.d.ts
+index 2d311e27c8b5a57d26f2e5bdef6cdd07277a09b2..bdb394e6c2f44a28f8d8e26826af5d3a2bdae321 100644
+--- a/dist/events/editor/save.d.ts
++++ b/dist/events/editor/save.d.ts
+@@ -19,7 +19,8 @@ export declare function buildThumbnailMedia(args: {
+     thumbnailChanged: boolean;
+     thumbnailFile: File | null;
+     existingMedia: Array<Record<string, unknown>>;
+-    uploadBlob: (blob: Blob) => Promise<Record<string, unknown>>;
++    /** Null leaves the new image out and keeps the media as it was. */
++    uploadBlob: (blob: Blob) => Promise<Record<string, unknown> | null>;
+ }): Promise<Array<Record<string, unknown>> | undefined>;
+ export declare function buildEventRecord(args: {
+     eventData: FlatEventRecord | null;
+diff --git a/dist/events/event-media.d.ts b/dist/events/event-media.d.ts
+index 4a1be920f9096bf5d854bb674adfbec32322a0b8..361d52b56d6fa5502e3f5798f2f6b2adff986274 100644
+--- a/dist/events/event-media.d.ts
++++ b/dist/events/event-media.d.ts
+@@ -1,3 +1,15 @@
++/** The address of an image in an event's `media`, from the event's DID and the image's blob, or
++ *  null to leave that image out. The components use the public CDN's (`getCDNImageBlobUrl`) unless
++ *  a page supplies its own, as one must for an event whose pictures shouldn't reach a public CDN. */
++export type EventMediaUrl = (image: {
++    did: string;
++    blob: {
++        $type: 'blob';
++        ref: {
++            $link: string;
++        };
++    };
++}) => string | null;
+ /** Select the event's thumbnail, falling back to a flyer before any header image. */
+ export declare function getEventThumbnail<T extends {
+     role?: unknown;
+diff --git a/dist/events-data.d.ts b/dist/events-data.d.ts
+index 6073af1e61c35b8b66e73f676d647f5fa092ba5a..fe1d76d18fa7a8c5a6e668175850d037e71a4cb2 100644
+--- a/dist/events-data.d.ts
++++ b/dist/events-data.d.ts
+@@ -9,7 +9,7 @@ export * from './events/conference.js';
+ export * from './events/linked-records.js';
+ export * from './events/date-format.js';
+ export * from './events/theme.js';
+-export { getEventThumbnail, getEventExternalImage, type ExternalEventImage } from './events/event-media.js';
++export { getEventThumbnail, getEventExternalImage, type EventMediaUrl, type ExternalEventImage } from './events/event-media.js';
+ export { getCDNImageBlobUrl, compressImage, configureAtproto } from './events/atproto-helpers.js';
+ export { getProfileUrl, getLocalProfileUrl } from './events/profile-url.js';
+ export { resolveEventUrls, type EventUrls, type ResolvedEventUrls } from './events/urls.js';

@@ -48,7 +48,13 @@ module.exports = {
 				overrides: {
 					...config.overrides,
 					'@atmo-dev/kit': `link:${localKitPath()}`
-				}
+				},
+				// A patch of the registry kit doesn't apply to a local checkout, which has its own source.
+				patchedDependencies: Object.fromEntries(
+					Object.entries(config.patchedDependencies ?? {}).filter(
+						([name]) => !name.startsWith('@atmo-dev/kit@')
+					)
+				)
 			};
 		}
 	}
