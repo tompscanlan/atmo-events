@@ -1,0 +1,421 @@
+diff --git a/dist/events/EventEditor.svelte b/dist/events/EventEditor.svelte
+index ee77ebbe1b43d63e76b50bdc102ce3fb689b06a9..e237365c80a75841e6f937f5364ef0d3a47d12fe 100644
+--- a/dist/events/EventEditor.svelte
++++ b/dist/events/EventEditor.svelte
+@@ -40,7 +40,10 @@
+ 		viewer,
+ 		initialTheme,
+ 		prefill = null,
+-		mediaUrl = getCDNImageBlobUrl
++		mediaUrl = getCDNImageBlobUrl,
++		visibility = $bindable('public'),
++		visibilityOptions = ['public', 'unlisted'],
++		confirmVisibility
+ 	}: {
+ 		eventData: FlatEventRecord | null;
+ 		actorDid: string;
+@@ -53,6 +56,12 @@
+ 		prefill?: EventEditorPrefill | null;
+ 		/** Where the editor loads the event's current image from; the public CDN by default. */
+ 		mediaUrl?: EventMediaUrl;
++		/** Who can see the event. Bind it to follow the host's choice; an existing event's record sets it. */
++		visibility?: Visibility;
++		/** The choices the switch offers, in order. Public and Unlisted by default. */
++		visibilityOptions?: readonly Visibility[];
++		/** Asked before the choice changes; returning false keeps the current one. */
++		confirmVisibility?: (next: Visibility) => boolean | Promise<boolean>;
+ 	} = $props();
+ 
+ 	let isNew = $derived(eventData === null);
+@@ -79,7 +88,6 @@
+ 	);
+ 	let timezone = $state(initialTimezone);
+ 	let mode: EventMode = $state(initialPrefill?.mode ?? 'inperson');
+-	let visibility: Visibility = $state('public');
+ 	// svelte-ignore state_referenced_locally
+ 	let eventTheme: EventTheme = $state(
+ 		eventData === null
+@@ -124,6 +132,46 @@
+ 		];
+ 	});
+ 	let showVisibility = $derived(adapter.features.visibility !== false);
++	const VISIBILITY_LABELS: Record<Visibility, string> = {
++		public: 'Public',
++		unlisted: 'Unlisted',
++		private: 'Private'
++	};
++	/** Whether an existing event is private, as it was when the editor opened it. */
++	let existingPrivate: boolean | null = $state(null);
++	// An existing event stays on its side of private: a private one offers only Private, and a
++	// public or unlisted one can't become private.
++	let shownVisibilityOptions = $derived.by((): readonly Visibility[] => {
++		if (isNew) return visibilityOptions;
++		if (existingPrivate ?? visibility === 'private') return ['private'];
++		return visibilityOptions.filter((option) => option !== 'private');
++	});
++	/** Why saving with this choice through this adapter could break privacy, or null if it can't. */
++	function privacyRefusal(choice: Visibility, through: EditorAdapter): string | null {
++		// A private event goes only to a save path that keeps it private, never to a public repo.
++		if (choice === 'private' && !through.features.private)
++			return "This page can't save a private event.";
++		// An existing event's record already lives where it was first saved, so neither the choice nor
++		// the adapter may move it.
++		if (
++			existingPrivate !== null &&
++			(existingPrivate !== (choice === 'private') ||
++				existingPrivate !== Boolean(through.features.private))
++		)
++			return "This event can't move to or from Private.";
++		return null;
++	}
++	// Each pick replaces any still waiting for an answer, so an older answer that lands late
++	// doesn't undo a newer pick.
++	let latestVisibilityPick = 0;
++	async function chooseVisibility(next: Visibility) {
++		const pick = ++latestVisibilityPick;
++		if (next === visibility) return;
++		if (confirmVisibility && !(await Promise.resolve(confirmVisibility(next)).catch(() => false)))
++			return;
++		if (pick !== latestVisibilityPick) return;
++		visibility = next;
++	}
+ 	let submitting = $state(false);
+ 	let error: string | null = $state(null);
+ 	let titleEditor = $state<Editor | null>(null);
+@@ -187,8 +235,12 @@
+ 		mode = eventData.mode ? stripModePrefix(eventData.mode) : 'inperson';
+ 		const prefs = (eventData as unknown as { preferences?: { showInDiscovery?: boolean } })
+ 			.preferences;
+-		if (prefs && prefs.showInDiscovery === false) visibility = 'unlisted';
+-		else visibility = 'public';
++		// The record has no private field (its address in a space does, but isn't read here), so the
++		// page or a private adapter says so.
++		if (adapter.features.private) visibility = 'private';
++		else if (visibility !== 'private')
++			visibility = prefs && prefs.showInDiscovery === false ? 'unlisted' : 'public';
++		existingPrivate = visibility === 'private';
+ 		links = eventData.uris ? eventData.uris.map((l) => ({ uri: l.uri, name: l.name || '' })) : [];
+ 		if (eventData.theme) eventTheme = { ...eventData.theme };
+ 		populateLocationFromEventData();
+@@ -237,12 +289,21 @@
+ 		if (parseDateTime(endsAt).compare(parseDateTime(startsAt)) <= 0)
+ 			return void (error = 'End time must be after the start time.');
+ 		if (!viewer.isLoggedIn || !viewer.did) return void (error = 'You must be logged in.');
++		// The save uses the choice and the adapter as they are now, even if they change while it
++		// runs, and drops any pick still waiting for an answer.
++		const saveAdapter = adapter;
++		const saveVisibility = visibility;
++		const saveShowsVisibility = showVisibility;
++		const saveImages = images;
++		latestVisibilityPick++;
++		const refusal = privacyRefusal(saveVisibility, saveAdapter);
++		if (refusal) return void (error = `${refusal} It wasn't saved.`);
+ 
+ 		submitting = true;
+ 
+ 		try {
+ 			// Generate thumbnail from preset if selected and no custom upload
+-			if (images && selectedPreset && !thumbnailFile) {
++			if (saveImages && selectedPreset && !thumbnailFile) {
+ 				const rendered = await renderPresetThumbnail({
+ 					design: selectedPreset,
+ 					seed: hashSeed(rkey),
+@@ -267,7 +328,7 @@
+ 				thumbnailFile === generatedThumbnail;
+ 
+ 			const existingMedia = (eventData?.media ?? []) as Array<Record<string, unknown>>;
+-			const media = images
++			const media = saveImages
+ 				? await buildThumbnailMedia({
+ 						isNew,
+ 						thumbnailChanged,
+@@ -275,7 +336,7 @@
+ 						existingMedia,
+ 						uploadBlob: async (blob) => {
+ 							try {
+-								return (await adapter.uploadBlob(blob)) as unknown as Record<string, unknown>;
++								return (await saveAdapter.uploadBlob(blob)) as unknown as Record<string, unknown>;
+ 							} catch (e) {
+ 								if (!defaultCover) throw e;
+ 								console.warn('Generated cover not uploaded; saving the event without it:', e);
+@@ -296,13 +357,13 @@
+ 				endsAt,
+ 				timezone,
+ 				mode,
+-				visibility: showVisibility ? visibility : null,
++				visibility: saveShowsVisibility ? saveVisibility : null,
+ 				theme: eventTheme,
+ 				links,
+ 				location,
+ 				locationChanged,
+ 				media,
+-				resolveHandle: (handle) => adapter.resolveHandle(handle)
++				resolveHandle: (handle) => saveAdapter.resolveHandle(handle)
+ 			});
+ 
+ 			if (isNew && prefill?.additionalData) {
+@@ -310,14 +371,14 @@
+ 				record.additionalData = { ...existing, ...prefill.additionalData };
+ 			}
+ 
+-			const result = await adapter.putRecord({
++			const result = await saveAdapter.putRecord({
+ 				collection: 'community.lexicon.calendar.event',
+ 				rkey,
+ 				record
+ 			});
+ 
+-			await adapter.notifyUpdate?.(result.uri);
+-			adapter.onSaved({ uri: result.uri, rkey, isNew });
++			await saveAdapter.notifyUpdate?.(result.uri);
++			saveAdapter.onSaved({ uri: result.uri, rkey, isNew });
+ 		} catch (e) {
+ 			console.error(`Failed to ${isNew ? 'create' : 'save'} event:`, e);
+ 			error =
+@@ -437,21 +498,25 @@
+ 									type="single"
+ 									bind:value={
+ 										() => visibility,
+-										(val) => {
+-											if (val) visibility = val as Visibility;
+-										}
++										// Picking the current choice again sends '': still a pick, so it drops any
++										// pick waiting for an answer.
++										(val) => void chooseVisibility((val || visibility) as Visibility)
+ 									}
++									disabled={submitting}
+ 									class="w-fit"
+ 									size="xs"
+ 								>
+-									<ToggleGroupItem value="public">Public</ToggleGroupItem>
+-									<ToggleGroupItem value="unlisted">Unlisted</ToggleGroupItem>
++									{#each shownVisibilityOptions as option (option)}
++										<ToggleGroupItem value={option}>{VISIBILITY_LABELS[option]}</ToggleGroupItem>
++									{/each}
+ 								</ToggleGroup>
+ 								<div class="mt-1.5 text-xs text-base-600 dark:text-base-400">
+ 									{#if visibility === 'public'}
+ 										Anyone can view and it appears in discovery.
+-									{:else}
++									{:else if visibility === 'unlisted'}
+ 										Public to anyone with the link, but hidden from discovery.
++									{:else}
++										Only people you invite can see it.
+ 									{/if}
+ 								</div>
+ 							</div>
+@@ -507,7 +572,7 @@
+ 						</div>
+ 
+ 						{#if error}
+-							<p class="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>
++							<p role="alert" class="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>
+ 						{/if}
+ 
+ 						<Button type="submit" disabled={submitting || !name.trim() || !startsAt || !endsAt}>
+@@ -519,7 +584,7 @@
+ 									? 'Publish Event'
+ 									: 'Save Changes'}
+ 						</Button>
+-						{#if !isNew && adapter.features.recurring}
++						{#if !isNew && adapter.features.recurring && privacyRefusal(visibility, adapter) === null}
+ 							<Button
+ 								type="button"
+ 								variant="secondary"
+@@ -608,5 +673,7 @@
+ 	{selectedPreset}
+ 	{adapter}
+ 	{viewer}
++	{visibility}
++	{privacyRefusal}
+ 	accent={eventTheme.accentColor}
+ />
+diff --git a/dist/events/EventEditor.svelte.d.ts b/dist/events/EventEditor.svelte.d.ts
+index f32bf7cb8d073303fae99bbf8dded338a50822b5..0fbb23145e8bbe928b22e8ae56689b40b12cab47 100644
+--- a/dist/events/EventEditor.svelte.d.ts
++++ b/dist/events/EventEditor.svelte.d.ts
+@@ -1,7 +1,7 @@
+ import { type EventMediaUrl } from './event-media.js';
+ import type { FlatEventRecord } from './contrail.js';
+ import { type EventTheme } from './theme.js';
+-import { type EventEditorPrefill } from './editor/types';
++import { type EventEditorPrefill, type Visibility } from './editor/types';
+ import type { EditorAdapter, EditorViewer } from './editor/adapter';
+ type $$ComponentProps = {
+     eventData: FlatEventRecord | null;
+@@ -15,7 +15,13 @@ type $$ComponentProps = {
+     prefill?: EventEditorPrefill | null;
+     /** Where the editor loads the event's current image from; the public CDN by default. */
+     mediaUrl?: EventMediaUrl;
++    /** Who can see the event. Bind it to follow the host's choice; an existing event's record sets it. */
++    visibility?: Visibility;
++    /** The choices the switch offers, in order. Public and Unlisted by default. */
++    visibilityOptions?: readonly Visibility[];
++    /** Asked before the choice changes; returning false keeps the current one. */
++    confirmVisibility?: (next: Visibility) => boolean | Promise<boolean>;
+ };
+-declare const EventEditor: import("svelte").Component<$$ComponentProps, {}, "">;
++declare const EventEditor: import("svelte").Component<$$ComponentProps, {}, "visibility">;
+ type EventEditor = ReturnType<typeof EventEditor>;
+ export default EventEditor;
+diff --git a/dist/events/editor/RecurringModal.svelte b/dist/events/editor/RecurringModal.svelte
+index 117186d635e7d3e492ca556a5422207e88839352..c5aad8010829abfdbed3016358b206c591828f56 100644
+--- a/dist/events/editor/RecurringModal.svelte
++++ b/dist/events/editor/RecurringModal.svelte
+@@ -3,7 +3,7 @@
+ 	import { parseDateTime } from '@internationalized/date';
+ 	import * as TID from '@atcute/tid';
+ 	import type { FlatEventRecord } from '../contrail.js';
+-	import type { EventLocation, EventMode } from './types';
++	import type { EventLocation, EventMode, Visibility } from './types';
+ 	import { LocationValidationError, normalizeAddressLocation } from './location';
+ 	import { buildThumbnailMedia, renderPresetThumbnail } from './save';
+ 	import { hashSeed } from '../thumbnails/designs.js';
+@@ -28,7 +28,9 @@
+ 		selectedPreset,
+ 		accent,
+ 		adapter,
+-		viewer
++		viewer,
++		visibility,
++		privacyRefusal
+ 	}: {
+ 		open: boolean;
+ 		rkey: string;
+@@ -49,6 +51,9 @@
+ 		accent: string;
+ 		adapter: EditorAdapter;
+ 		viewer: EditorViewer;
++		visibility: Visibility;
++		/** The editor's reason a save with this choice through this adapter could break privacy. */
++		privacyRefusal: (choice: Visibility, through: EditorAdapter) => string | null;
+ 	} = $props();
+ 
+ 	let interval = $state(1);
+@@ -86,6 +91,14 @@
+ 			return;
+ 		const copies = count;
+ 		const period = interval;
++		// The copies go through the adapter as it is now, even if the page changes it while they
++		// are written, and only where the event itself could be saved.
++		const saveAdapter = adapter;
++		const refusal = privacyRefusal(visibility, saveAdapter);
++		if (refusal) {
++			errorMsg = `${refusal} No copies were made.`;
++			return;
++		}
+ 
+ 		creating = true;
+ 		errorMsg = null;
+@@ -134,7 +147,7 @@
+ 				thumbnailFile: fileForUpload,
+ 				existingMedia,
+ 				uploadBlob: (blob) =>
+-					adapter.uploadBlob(blob) as unknown as Promise<Record<string, unknown>>
++					saveAdapter.uploadBlob(blob) as unknown as Promise<Record<string, unknown>>
+ 			});
+ 
+ 			const parentUri = `at://${viewer.did}/community.lexicon.calendar.event/${rkey}`;
+@@ -192,12 +205,12 @@
+ 				}
+ 
+ 				try {
+-					const result = await adapter.putRecord({
++					const result = await saveAdapter.putRecord({
+ 						collection: 'community.lexicon.calendar.event',
+ 						rkey: newRkey,
+ 						record
+ 					});
+-					await adapter.notifyUpdate?.(result.uri);
++					await saveAdapter.notifyUpdate?.(result.uri);
+ 					created = i + 1;
+ 				} catch {
+ 					errorMsg = `Failed to create event ${i + 1}. Stopping.`;
+diff --git a/dist/events/editor/RecurringModal.svelte.d.ts b/dist/events/editor/RecurringModal.svelte.d.ts
+index acd34f4a6d7d82e1cb6005cf09c3c101520b538d..978856b757477eb4ff3f9d3a4e05cfd7416e5f81 100644
+--- a/dist/events/editor/RecurringModal.svelte.d.ts
++++ b/dist/events/editor/RecurringModal.svelte.d.ts
+@@ -1,5 +1,5 @@
+ import type { FlatEventRecord } from '../contrail.js';
+-import type { EventLocation, EventMode } from './types';
++import type { EventLocation, EventMode, Visibility } from './types';
+ import type { EditorAdapter, EditorViewer } from './adapter';
+ type $$ComponentProps = {
+     open: boolean;
+@@ -24,6 +24,9 @@ type $$ComponentProps = {
+     accent: string;
+     adapter: EditorAdapter;
+     viewer: EditorViewer;
++    visibility: Visibility;
++    /** The editor's reason a save with this choice through this adapter could break privacy. */
++    privacyRefusal: (choice: Visibility, through: EditorAdapter) => string | null;
+ };
+ declare const RecurringModal: import("svelte").Component<$$ComponentProps, {}, "open">;
+ type RecurringModal = ReturnType<typeof RecurringModal>;
+diff --git a/dist/events/editor/adapter.d.ts b/dist/events/editor/adapter.d.ts
+index 949f6d3b9068a1dc9e237c8da7b1673d94f996c3..731efc5ccfe1dc56e3b45efa32c0871d5f9632b4 100644
+--- a/dist/events/editor/adapter.d.ts
++++ b/dist/events/editor/adapter.d.ts
+@@ -43,10 +43,15 @@ export type EditorAdapter = {
+          */
+         images?: boolean;
+         /**
+-         * False for an event with no public listing to appear in: no Public / Unlisted switch, and
+-         * the record's discovery preference is left as it is.
++         * False hides the visibility switch and leaves the record's discovery preference as it is.
+          */
+         visibility?: boolean;
++        /**
++         * True when this adapter keeps what it saves private, such as in a permissioned space. The
++         * editor saves an event set to Private only through such an adapter, since turning
++         * discovery off leaves a record in a public repo readable by anyone.
++         */
++        private?: boolean;
+     };
+     putRecord(opts: {
+         collection: string;
+diff --git a/dist/events/editor/save.js b/dist/events/editor/save.js
+index 56c1d02d26fdd3606d02002a09ff0fd74873057e..c0d4fd8c12f755f80854b7ea1ef357831cc60245 100644
+--- a/dist/events/editor/save.js
++++ b/dist/events/editor/save.js
+@@ -158,13 +158,14 @@ export async function buildEventRecord(args) {
+     if (Array.isArray(record.locations)) {
+         record.locations = normalizeEventLocations(record.locations);
+     }
+-    // With no Public / Unlisted choice offered, the record keeps whatever preference it had.
++    // With no visibility choice offered, the record keeps whatever preference it had. Only a public
++    // event appears in discovery.
+     if (visibility !== null) {
+         const existingPrefs = (record.preferences ??
+             {});
+         record.preferences = {
+             ...existingPrefs,
+-            showInDiscovery: visibility !== 'unlisted'
++            showInDiscovery: visibility === 'public'
+         };
+     }
+     return record;
+diff --git a/dist/events/editor/types.d.ts b/dist/events/editor/types.d.ts
+index e85f33f83d87b9a2bab7be40da2d28a6538d769e..00f80c95e8d28ae133b094c70069e80b90a5353d 100644
+--- a/dist/events/editor/types.d.ts
++++ b/dist/events/editor/types.d.ts
+@@ -1,5 +1,5 @@
+ export type EventMode = 'inperson' | 'virtual' | 'hybrid';
+-export type Visibility = 'public' | 'unlisted';
++export type Visibility = 'public' | 'unlisted' | 'private';
+ export interface EventLocation {
+     street?: string;
+     locality?: string;
+diff --git a/dist/events-data.d.ts b/dist/events-data.d.ts
+index fe1d76d18fa7a8c5a6e668175850d037e71a4cb2..5082734ab667c33d2bdd1889325dbe2cd40ad339 100644
+--- a/dist/events-data.d.ts
++++ b/dist/events-data.d.ts
+@@ -1,7 +1,7 @@
+ /** Event types and pure helpers. Safe to import without Svelte, CSS or browser players. */
+ export type { EventViewData } from './events/view-data.js';
+ export type { EditorAdapter, EditorBlobRef, EditorViewer } from './events/editor/adapter.js';
+-export type { EventEditorPrefill } from './events/editor/types.js';
++export type { EventEditorPrefill, Visibility as EventVisibility } from './events/editor/types.js';
+ export type { EventData, EventLexiconMain, EventLocationVariant, EventStatus, EventMode as EventLexiconMode } from './events/event-types.js';
+ export type { FlatEventRecord, HostProfile, AttendeeInfo, AttendeeListLoader } from './events/contrail.js';
+ export { eventUrl, isEventOngoing, RSVP_GOING, RSVP_INTERESTED } from './events/contrail.js';

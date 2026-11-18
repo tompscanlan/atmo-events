@@ -20,3 +20,7 @@ minimumReleaseAgeExclude:
   # Runs the e2e tests' local network. Exempt so a new release can be tested as
   # soon as it is published.
   - '@openmeet/snowglobe'
+# The kit's editor offering Private beside Public and Unlisted (flo-bit/atmo-kit#37), ahead of a kit
+# release that has it. Drop it on the next kit update.
+patchedDependencies:
+  '@atmo-dev/kit@0.16.0': patches/@atmo-dev__kit@0.16.0.patch
