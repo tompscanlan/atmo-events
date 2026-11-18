@@ -52,8 +52,15 @@ const SIZES = [
 ];
 
 async function shot(name: string) {
-	// No leftover hover from the last click.
-	await userEvent.unhover(document.body);
+	// No leftover hover from the last click: rest the pointer on an empty corner.
+	let corner = document.getElementById('ux-corner');
+	if (!corner) {
+		corner = document.createElement('div');
+		corner.id = 'ux-corner';
+		corner.style.cssText = 'position:fixed;right:0;bottom:0;width:4px;height:4px;z-index:2147483647;pointer-events:auto';
+		document.body.append(corner);
+	}
+	await userEvent.hover(corner);
 	await new Promise((r) => setTimeout(r, 400));
 	await page.screenshot({ path: `${OUT}/${name}.png` });
 }
