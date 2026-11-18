@@ -16,7 +16,8 @@ export function createPrivateEventAdapter(viewer: EditorViewer): EditorAdapter {
 		...createInAppAdapter({ viewer }),
 		// Those look up public records, which a private event doesn't link to for now.
 		linkedRecords: undefined,
-		features: { delete: true, recurring: false, visibility: false },
+		// private: the kit's editor saves an event set to Private only through an adapter that says so.
+		features: { delete: true, recurring: false, visibility: false, private: true },
 		async putRecord({ rkey, record }) {
 			return savePrivateEvent({ rkey, record });
 		},
