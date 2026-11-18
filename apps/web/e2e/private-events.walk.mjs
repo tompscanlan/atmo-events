@@ -320,7 +320,7 @@ await step('1b. alice turns on the private events beta in Settings', async () =>
 	check(
 		'no private choice before the beta is on',
 		!(await p
-			.getByText('Who can see this event?')
+			.getByRole('radio', { name: /^private$/i })
 			.isVisible()
 			.catch(() => false))
 	);
@@ -349,17 +349,14 @@ await step('1b. alice turns on the private events beta in Settings', async () =>
 await step('2. alice picks Private on /create and allows it', async () => {
 	const p = pages.alice;
 	await open(p, '/create');
-	await p.getByText('Who can see this event?').waitFor({ timeout: 30000 });
-	check(
-		'no editor before a choice',
-		!(await p
-			.getByRole('button', { name: /^publish/i })
-			.isVisible()
-			.catch(() => false))
-	);
-	await p.getByRole('radio', { name: /^private$/i }).click();
-	// The Settings switch already asked for hosting, so /create asks nothing more.
+	// The whole editor shows at once, with Public picked in its switch under the title.
 	await p.getByRole('button', { name: /^publish/i }).waitFor({ timeout: 30000 });
+	const picked = (name) => p.getByRole('radio', { name, exact: true }).getAttribute('aria-checked');
+	check('Public is picked to start', (await picked('Public')) === 'true');
+	await p.getByRole('radio', { name: 'Private', exact: true }).click();
+	const ask = p.getByRole('dialog', { name: 'Make this event private?' });
+	await ask.waitFor({ timeout: 20000 });
+	// The Settings switch already asked for hosting, so /create asks nothing more.
 	check(
 		'no second permission asked on /create',
 		!(await p
@@ -368,23 +365,24 @@ await step('2. alice picks Private on /create and allows it', async () => {
 			.catch(() => false))
 	);
 	check(
-		'Private shows its fine print',
-		(await text(p, '[data-testid=audience-fine-print]')).length > 0
+		'the dialog says a private event stays private',
+		/can't be made public later/.test(clean(await ask.innerText(), Infinity))
 	);
+	check('the switch waits for the answer', (await picked('Public')) === 'true');
 	await shot(p, '01-create-private');
+	await ask.getByRole('button', { name: 'Make it private' }).click();
+	await ask.waitFor({ state: 'detached', timeout: 10000 });
+	check('Private is picked', (await picked('Private')) === 'true');
 });
 
 await step('3. alice fills in the editor and publishes', async () => {
 	const p = pages.alice;
 	await p.locator('main [contenteditable=true]').first().waitFor({ timeout: 30000 });
-	// The page's own Public / Unlisted / Private choice sits above the editor; the editor's switch would
-	// be inside its form.
-	const form = p
-		.locator('main form')
-		.filter({ has: p.locator('[contenteditable=true]') })
-		.first();
-	const editor = clean(await form.innerText({ timeout: 15000 }), Infinity);
-	check('no Public / Unlisted switch in the editor', !/Unlisted/.test(editor), editor.slice(0, 80));
+	check(
+		'Private is still picked in the editor',
+		(await p.getByRole('radio', { name: 'Private', exact: true }).getAttribute('aria-checked')) ===
+			'true'
+	);
 	await p.locator('main [contenteditable=true]').first().click();
 	await p.keyboard.type(NAME);
 	await p.getByRole('button', { name: /^start date/i }).click();
@@ -412,8 +410,8 @@ await step('3. alice fills in the editor and publishes', async () => {
 	check('it has a picture (the default cover)', media.length > 0 && typeof cid === 'string', JSON.stringify(media[0]?.content));
 	PICTURE_CID = cid;
 	check(
-		'it has no discovery preference, since nothing lists it',
-		inSpace.data?.value?.preferences === undefined,
+		'it is saved as not in discovery, since nothing lists it',
+		inSpace.data?.value?.preferences?.showInDiscovery === false,
 		JSON.stringify(inSpace.data?.value?.preferences)
 	);
 	const policy = await C.alice.call('com.atproto.space.getSpace', { space: SPACE });
