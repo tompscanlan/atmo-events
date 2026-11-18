@@ -1,0 +1,67 @@
+diff --git a/dist/events/EventEditor.svelte b/dist/events/EventEditor.svelte
+index ee77ebbe1b43d63e76b50bdc102ce3fb689b06a9..057c1457b8b13920567db5553402ffbe9b2ca86c 100644
+--- a/dist/events/EventEditor.svelte
++++ b/dist/events/EventEditor.svelte
+@@ -40,7 +40,8 @@
+ 		viewer,
+ 		initialTheme,
+ 		prefill = null,
+-		mediaUrl = getCDNImageBlobUrl
++		mediaUrl = getCDNImageBlobUrl,
++		privateOption = null
+ 	}: {
+ 		eventData: FlatEventRecord | null;
+ 		actorDid: string;
+@@ -53,6 +54,8 @@
+ 		prefill?: EventEditorPrefill | null;
+ 		/** Where the editor loads the event's current image from; the public CDN by default. */
+ 		mediaUrl?: EventMediaUrl;
++		/** PROTOTYPE: a third visibility choice the page handles itself. */
++		privateOption?: { selected: boolean; choose: () => void; leave: () => void } | null;
+ 	} = $props();
+ 
+ 	let isNew = $derived(eventData === null);
+@@ -436,9 +439,15 @@
+ 								<ToggleGroup
+ 									type="single"
+ 									bind:value={
+-										() => visibility,
++										() => (privateOption?.selected ? 'private' : visibility),
+ 										(val) => {
+-											if (val) visibility = val as Visibility;
++											if (!val) return;
++											if (val === 'private') {
++												privateOption?.choose();
++												return;
++											}
++											if (privateOption?.selected) privateOption.leave();
++											visibility = val as Visibility;
+ 										}
+ 									}
+ 									class="w-fit"
+@@ -446,9 +455,12 @@
+ 								>
+ 									<ToggleGroupItem value="public">Public</ToggleGroupItem>
+ 									<ToggleGroupItem value="unlisted">Unlisted</ToggleGroupItem>
++									{#if privateOption}<ToggleGroupItem value="private">Private</ToggleGroupItem>{/if}
+ 								</ToggleGroup>
+ 								<div class="mt-1.5 text-xs text-base-600 dark:text-base-400">
+-									{#if visibility === 'public'}
++									{#if privateOption?.selected}
++										Only people you invite can see it.
++									{:else if visibility === 'public'}
+ 										Anyone can view and it appears in discovery.
+ 									{:else}
+ 										Public to anyone with the link, but hidden from discovery.
+diff --git a/dist/events/EventEditor.svelte.d.ts b/dist/events/EventEditor.svelte.d.ts
+index f32bf7cb8d073303fae99bbf8dded338a50822b5..ae408bad40450605f2867a66a132a9267edc8d3d 100644
+--- a/dist/events/EventEditor.svelte.d.ts
++++ b/dist/events/EventEditor.svelte.d.ts
+@@ -15,6 +15,7 @@ type $$ComponentProps = {
+     prefill?: EventEditorPrefill | null;
+     /** Where the editor loads the event's current image from; the public CDN by default. */
+     mediaUrl?: EventMediaUrl;
++    privateOption?: { selected: boolean; choose: () => void; leave: () => void } | null;
+ };
+ declare const EventEditor: import("svelte").Component<$$ComponentProps, {}, "">;
+ type EventEditor = ReturnType<typeof EventEditor>;
