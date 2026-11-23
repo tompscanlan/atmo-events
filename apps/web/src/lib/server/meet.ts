@@ -7,6 +7,7 @@ import {
 	type Connection
 } from '#lib/meet/connection.js';
 import { serviceUrl } from '#lib/atproto/network.js';
+import { timeLimitedClient } from '#lib/spaces/server/other-servers.js';
 
 /** Read the public source record, not a browser-supplied timestamp or backlink hint. */
 export async function incomingMeetingDate(
@@ -49,8 +50,9 @@ export async function listConnections(client: Client, did: Did): Promise<Connect
 	const records: Connection[] = [];
 	let cursor: string | undefined;
 	const seen = new Set<string>();
+	const limited = timeLimitedClient(client);
 	for (let page = 0; page < 50; page++) {
-		const response = await client.get('com.atproto.repo.listRecords', {
+		const response = await limited.get('com.atproto.repo.listRecords', {
 			params: { repo: did, collection: CONNECTION_COLLECTION, limit: 100, reverse: true, cursor }
 		});
 		if (!response.ok) throw new Error('Could not load meetings');

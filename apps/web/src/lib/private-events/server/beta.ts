@@ -1,6 +1,7 @@
 import type { Client } from '@atcute/client';
 import type { Did } from '@atcute/lexicons';
 import { getAuth } from '#lib/atproto/server/oauth.js';
+import { timeLimitedClient } from '#lib/spaces/server/other-servers.js';
 import { errorKind } from '#lib/spaces/server/xrpc.js';
 import { BETA_COLLECTION, BETA_RKEY, privateEventsBetaOn } from '../beta';
 
@@ -49,14 +50,15 @@ export class BetaNotSaved extends Error {}
 
 /** Saves the choice over the record as it was read, keeping any other fields it has. */
 export async function saveBeta(client: Client, did: Did, privateEvents: boolean, now = new Date()) {
-	const current = await readBetaRecord(client, did);
+	const limited = timeLimitedClient(client);
+	const current = await readBetaRecord(limited, did);
 	const record = {
 		...current?.record,
 		$type: BETA_COLLECTION,
 		privateEvents,
 		updatedAt: now.toISOString()
 	};
-	const response = await client.post('com.atproto.repo.putRecord', {
+	const response = await limited.post('com.atproto.repo.putRecord', {
 		input: {
 			repo: did,
 			collection: BETA_COLLECTION,

@@ -41,6 +41,8 @@ describe('Bluesky write enforcement', () => {
 			action: 'create'
 		});
 		expect(mocks.post).toHaveBeenCalledOnce();
+		// Under the time limit, like every call to the person's own server.
+		expect(mocks.post.mock.calls[0]![1]).toMatchObject({ signal: expect.any(AbortSignal) });
 	});
 	it('checks the appropriate action for update and delete', async () => {
 		mocks.can.mockResolvedValue(false);

@@ -4,6 +4,7 @@ import { ModerationReportError, type ListModerationReportsInput } from '@atmo-de
 import { deleteModerationAction } from '@atmo-dev/contrail/moderation';
 import { getAuth } from '#lib/atproto/server/oauth.js';
 import { ensureInit } from '#lib/contrail/index.js';
+import { timeLimitedClient } from '#lib/spaces/server/other-servers.js';
 import { getReports, isModerator } from './server';
 import { publishReportAction, withActionLinks } from './actions';
 import { enrichInboxReports } from './profiles.server';
@@ -96,7 +97,7 @@ export async function undoForSession(locals: Pick<App.Locals, 'did' | 'client'>,
 		error(403, 'Authorize moderation actions first');
 	}
 	await getReports();
-	await deleteModerationAction({ client: locals.client, did, uri });
+	await deleteModerationAction({ client: timeLimitedClient(locals.client), did, uri });
 	await env.REPORTS_DB.prepare('DELETE FROM report_actions WHERE uri = ?').bind(uri).run();
 	let synced = false;
 	try {

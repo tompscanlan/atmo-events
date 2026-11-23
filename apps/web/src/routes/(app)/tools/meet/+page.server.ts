@@ -3,6 +3,7 @@ import { isDid } from '@atcute/lexicons/syntax';
 import { getAuth } from '#lib/atproto/server/oauth.js';
 import { actorToDid } from '#lib/actor.js';
 import { getBlueskyProfile } from '#lib/server/bluesky-profile.js';
+import { timeLimitedClient } from '#lib/spaces/server/other-servers.js';
 import { incomingMeetingDate, listConnections, listIncomingConnections } from '#lib/server/meet.js';
 import {
 	CONNECTION_COLLECTION,
@@ -96,9 +97,12 @@ export const actions: Actions = {
 				}
 			}
 			const record = connectionRecord(subject, createdAt);
-			const response = await locals.client.post('com.atproto.repo.createRecord', {
-				input: { repo: locals.did, collection: CONNECTION_COLLECTION, record }
-			});
+			const response = await timeLimitedClient(locals.client).post(
+				'com.atproto.repo.createRecord',
+				{
+					input: { repo: locals.did, collection: CONNECTION_COLLECTION, record }
+				}
+			);
 			if (!response.ok) return fail(502, { message: 'Could not save the meeting. Try again.' });
 			return {
 				saved: { uri: response.data.uri, owner: locals.did, subject, createdAt: record.createdAt },

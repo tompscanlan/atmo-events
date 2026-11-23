@@ -153,6 +153,9 @@ describe('session-backed moderation', () => {
 		).toMatchObject({ actionUri: action.uri, actionPending: false, status: 'resolved' });
 		await undoForSession(locals, action.uri);
 		expect(post.mock.calls[1][0]).toBe('com.atproto.repo.deleteRecord');
+		// The publish and the undo are under the time limit, the undo inside the library's own call.
+		expect(post.mock.calls[0][1]).toMatchObject({ signal: expect.any(AbortSignal) });
+		expect(post.mock.calls[1][1]).toMatchObject({ signal: expect.any(AbortSignal) });
 		expect(
 			(await listForSession({ did: moderator }, { status: 'resolved' })).reports[0].actionUri
 		).toBeNull();

@@ -79,8 +79,14 @@ describe('social-client settings', () => {
 				rkey: 'self',
 				record: { $type: PREFERRED_CLIENT_COLLECTION, client: 'mu' },
 				swapRecord: null
-			}
+			},
+			signal: expect.any(AbortSignal)
 		});
+		// Its read of the record first has the limit too.
+		expect(mocks.get).toHaveBeenCalledWith(
+			'com.atproto.repo.getRecord',
+			expect.objectContaining({ signal: expect.any(AbortSignal) })
+		);
 	});
 	it('updates using a CID guard, preserving extension fields and dropping stale custom URLs', async () => {
 		mocks.get.mockResolvedValue({
@@ -95,7 +101,8 @@ describe('social-client settings', () => {
 			input: expect.objectContaining({
 				swapRecord: 'old-cid',
 				record: { $type: PREFERRED_CLIENT_COLLECTION, client: 'mu', extension: true }
-			})
+			}),
+			signal: expect.any(AbortSignal)
 		});
 	});
 	it('normalizes and saves a custom client', async () => {
@@ -107,7 +114,8 @@ describe('social-client settings', () => {
 					client: 'custom',
 					customUrl: 'https://client.example/app'
 				}
-			})
+			}),
+			signal: expect.any(AbortSignal)
 		});
 	});
 	it.each([

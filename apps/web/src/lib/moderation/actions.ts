@@ -3,6 +3,7 @@ import type { Did } from '@atcute/lexicons';
 import * as TID from '@atcute/tid';
 import { error } from '@sveltejs/kit';
 import { MODERATION_ACTION_NSID, ModerationRequestError } from '@atmo-dev/contrail/moderation';
+import { timeLimitedClient } from '#lib/spaces/server/other-servers.js';
 
 type ActionLink = { report_id: number; uri: string; record: string; published: number };
 
@@ -71,8 +72,9 @@ export async function publishReportAction(
 	if (link.published) return link.uri;
 	const saved = JSON.parse(link.record) as typeof record;
 	const rkey = link.uri.split('/').at(-1)!;
+	const limited = timeLimitedClient(client);
 	try {
-		const result = await client.post('com.atproto.repo.createRecord', {
+		const result = await limited.post('com.atproto.repo.createRecord', {
 			input: { repo: did, collection: MODERATION_ACTION_NSID, rkey, record: saved }
 		});
 		if (!result.ok) {
@@ -81,7 +83,7 @@ export async function publishReportAction(
 	} catch (cause) {
 		// PDSes differ in their duplicate-create error codes. Confirm the exact
 		// saved record instead: an earlier attempt may have lost its response.
-		const existing = await client
+		const existing = await limited
 			.get('com.atproto.repo.getRecord', {
 				params: { repo: did, collection: MODERATION_ACTION_NSID, rkey }
 			})

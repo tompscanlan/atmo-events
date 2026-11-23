@@ -78,7 +78,8 @@ describe('meeting writes', () => {
 					subject: bob,
 					createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/)
 				}
-			}
+			},
+			signal: expect.any(AbortSignal)
 		});
 	});
 	it('uses the original record’s exact timestamp when confirming an older meeting', async () => {

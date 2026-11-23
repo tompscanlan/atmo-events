@@ -8,6 +8,7 @@ import {
 } from '@atmo-dev/kit/social';
 import { getAuth } from '#lib/atproto/server/oauth.js';
 import { getPreferredClientRecord } from '#lib/atproto/preferred-client.server.js';
+import { timeLimitedClient } from '#lib/spaces/server/other-servers.js';
 
 async function canSaveClient() {
 	try {
@@ -66,13 +67,14 @@ export const actions: Actions = {
 			});
 
 		try {
-			const current = await getPreferredClientRecord(locals.client, locals.did);
+			const client = timeLimitedClient(locals.client);
+			const current = await getPreferredClientRecord(client, locals.did);
 			const record = {
 				...(current?.record as Record<string, unknown> | undefined),
 				...preferredSocialClientRecord(preference)
 			};
 			if (preference.client !== 'custom') delete record.customUrl;
-			const response = await locals.client.post('com.atproto.repo.putRecord', {
+			const response = await client.post('com.atproto.repo.putRecord', {
 				input: {
 					repo: locals.did,
 					collection: PREFERRED_CLIENT_COLLECTION,

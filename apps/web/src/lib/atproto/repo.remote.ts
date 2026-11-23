@@ -2,6 +2,7 @@ import { error } from '@sveltejs/kit';
 import { command, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
 import { allowedCollections } from './settings';
+import { timeLimitedClient } from '#lib/spaces/server/other-servers.js';
 import { getAuth } from './server/oauth';
 
 async function assertWritePermission(collection: string, action: 'create' | 'update' | 'delete') {
@@ -29,7 +30,7 @@ export const putRecord = command(
 		if (!locals.client || !locals.did) error(401, 'Not authenticated');
 
 		await assertWritePermission(input.collection, 'update');
-		const response = await locals.client.post('com.atproto.repo.putRecord', {
+		const response = await timeLimitedClient(locals.client).post('com.atproto.repo.putRecord', {
 			input: {
 				collection: input.collection,
 				repo: locals.did,
@@ -54,7 +55,7 @@ export const createRecord = command(
 		if (!locals.client || !locals.did) error(401, 'Not authenticated');
 
 		await assertWritePermission(input.collection, 'create');
-		const response = await locals.client.post('com.atproto.repo.createRecord', {
+		const response = await timeLimitedClient(locals.client).post('com.atproto.repo.createRecord', {
 			input: {
 				collection: input.collection,
 				repo: locals.did,
@@ -78,7 +79,7 @@ export const deleteRecord = command(
 		if (!locals.client || !locals.did) error(401, 'Not authenticated');
 
 		await assertWritePermission(input.collection, 'delete');
-		const response = await locals.client.post('com.atproto.repo.deleteRecord', {
+		const response = await timeLimitedClient(locals.client).post('com.atproto.repo.deleteRecord', {
 			input: {
 				collection: input.collection,
 				repo: locals.did,
@@ -102,7 +103,7 @@ export const uploadBlob = command(
 
 		const blob = new Blob([new Uint8Array(input.bytes)], { type: input.mimeType });
 
-		const response = await locals.client.post('com.atproto.repo.uploadBlob', {
+		const response = await timeLimitedClient(locals.client).post('com.atproto.repo.uploadBlob', {
 			params: { repo: locals.did },
 			input: blob
 		});

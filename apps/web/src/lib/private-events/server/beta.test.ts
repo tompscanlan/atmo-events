@@ -78,8 +78,14 @@ describe('saving it', () => {
 					updatedAt: '2026-11-10T12:00:00.000Z'
 				},
 				swapRecord: null
-			}
+			},
+			signal: expect.any(AbortSignal)
 		});
+		// Its read of the record first has the limit too.
+		expect(mocks.get).toHaveBeenCalledWith(
+			'com.atproto.repo.getRecord',
+			expect.objectContaining({ signal: expect.any(AbortSignal) })
+		);
 	});
 	it('keeps fields it doesn’t know, over the record as it was read', async () => {
 		mocks.get.mockResolvedValue(found({ privateEvents: true, note: 'kept' }));
