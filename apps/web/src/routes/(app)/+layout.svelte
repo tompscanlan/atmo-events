@@ -24,7 +24,7 @@
 	import CreateEventModal, { createEventModalState } from '#lib/components/CreateEventModal.svelte';
 	import AppFooter from '#lib/components/AppFooter.svelte';
 
-	let { children, data } = $props();
+	let { children } = $props();
 	let navigationOpen = $state(false);
 
 	afterNavigate(({ shallow, type }) => {
@@ -82,7 +82,7 @@
 			active: path.startsWith('/cities')
 		},
 
-		...(data.groupsEnabled
+		...(page.data.groupsEnabled
 			? [{ label: 'Groups', icon: Users, href: '/groups', active: path.startsWith('/groups') }]
 			: []),
 
