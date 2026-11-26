@@ -234,7 +234,9 @@ export async function groupView(
 		}
 		hasLink = relink || session !== null;
 	}
-	if (session && callerDid) {
+	// A link is read only while the group is at this site's group host, and through it: one to a
+	// group that moved, or made at a host this site no longer uses, can only come off.
+	if (session && callerDid && atHost && (await linkAtGroupHost(session))) {
 		const read = await linkedRead(session, group.did, callerDid);
 		if (read === 'refused') relink = true;
 		else if (read === 'unreachable') unreachable = true;
@@ -299,7 +301,20 @@ export async function groupView(
 	};
 }
 
-/** For a write as the group: the caller's own linked session, or the same 404. */
+/** Whether the session's PDS, as it was when the link was approved, is this site's group host now:
+ *  read from the stored session, with no call to the host. */
+async function linkAtGroupHost(session: OAuthSession): Promise<boolean> {
+	try {
+		return atGroupHost({ pds: (await session.getTokenInfo(false)).aud });
+	} catch {
+		// What the session says of itself is read again by the linked read, which tells a broken
+		// link from an outage.
+		return true;
+	}
+}
+
+/** For a write as the group: the caller's own linked session, or the same 404. Only a link to a
+ *  group at this site's group host, as the session says, which costs no call to the host. */
 export async function requireGroupWriter(
 	groupDid: string,
 	callerDid: string | null
@@ -307,7 +322,7 @@ export async function requireGroupWriter(
 	requireGroupsEnabled();
 	if (!callerDid) error(404, GROUP_NOT_FOUND);
 	const session = await groupSession(groupDid, callerDid).catch(() => null);
-	if (!session) error(404, GROUP_NOT_FOUND);
+	if (!session || !(await linkAtGroupHost(session))) error(404, GROUP_NOT_FOUND);
 	return { did: groupDid, handle: groupHandle(session, callerDid) };
 }
 

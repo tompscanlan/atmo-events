@@ -50,8 +50,26 @@ export function groupHostOrigin(): string | null {
 /** This site changes only groups whose PDS is its own group host. */
 export function atGroupHost(group: Pick<ResolvedGroup, 'pds'>): boolean {
 	const origin = groupHostOrigin();
-	return origin !== null && new URL(group.pds).origin === origin;
+	if (origin === null) return false;
+	try {
+		return new URL(group.pds).origin === origin;
+	} catch {
+		return false;
+	}
 }
+
+/** A group's spaces as this site reads them through a link: their authority is the configured
+ *  group host, whatever the group's DID document says now, so a document changed since the link
+ *  cannot send the link's reads elsewhere. Only the key that checks the host's answers comes from
+ *  the document. */
+export const groupHostSpaces: SpaceHosts = {
+	repoHost: async () => {
+		const origin = groupHostOrigin();
+		if (!origin) throw new Error('no group host is set');
+		return origin;
+	},
+	kemKey: (did, fresh) => didSpaceHosts.kemKey(did, fresh)
+};
 
 /** The index alone answers, so a declaration moderation hid stays hidden. Throws when the
  *  index cannot say, so "could not ask" never reads as "not declared". */
@@ -241,7 +259,7 @@ export interface GroupMeta {
 export async function readGroupMeta(
 	handle: XrpcHandle,
 	groupDid: string,
-	hosts: SpaceHosts = didSpaceHosts
+	hosts: SpaceHosts = groupHostSpaces
 ): Promise<GroupMeta> {
 	const reader = credentialSpaceReader({ handle }, hosts);
 	const space = metaSpaceUri(groupDid);

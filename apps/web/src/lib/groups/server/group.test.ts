@@ -38,6 +38,7 @@ import {
 	atGroupHost,
 	declaredHome,
 	forgetHeldAtGroupHost,
+	groupHostSpaces,
 	heldAtGroupHost,
 	isDeclared,
 	listCrowdedServers,
@@ -105,10 +106,20 @@ describe('resolveGroup', () => {
 	});
 });
 
+describe("a link's reads of the group's spaces", () => {
+	it('go to the configured group host, whatever the DID document names now', async () => {
+		expect(await groupHostSpaces.repoHost(GROUP)).toBe('https://host.example');
+		expect(mocks.resolve).not.toHaveBeenCalled();
+		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
+		await expect(groupHostSpaces.repoHost(GROUP)).rejects.toThrow();
+	});
+});
+
 describe('atGroupHost', () => {
 	it('is true only for a PDS at the configured host', () => {
 		expect(atGroupHost({ pds: 'https://host.example' })).toBe(true);
 		expect(atGroupHost({ pds: 'https://elsewhere.example' })).toBe(false);
+		expect(atGroupHost({ pds: 'not a url' })).toBe(false);
 		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
 		expect(atGroupHost({ pds: 'https://host.example' })).toBe(false);
 	});

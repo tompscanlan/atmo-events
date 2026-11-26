@@ -76,9 +76,9 @@ const ADMIN_SCOPE = [
 const MEMBER_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`;
 /** A member's, from a link approved when the meta read named no key. */
 const KEYLESS_MEMBER_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&action=read`;
-const linkedSession = (scope = ADMIN_SCOPE) => ({
+const linkedSession = (scope = ADMIN_SCOPE, aud = 'https://host.example') => ({
 	did: GROUP,
-	getTokenInfo: vi.fn(async () => ({ scope }))
+	getTokenInfo: vi.fn(async () => ({ scope, aud }))
 });
 const resolved = { did: GROUP, handle: 'knit.example', pds: 'https://host.example' };
 const meta = { profile: { name: 'Knitters', description: 'Yarn' }, public: true };
@@ -401,6 +401,45 @@ describe('groupView for someone who linked the group', () => {
 		mocks.readGroupMeta.mockResolvedValue(meta);
 		mocks.repoHasDeclaration.mockResolvedValue(true);
 		expect(await groupView(GROUP, ALICE)).toMatchObject({ unreachable: false });
+	});
+});
+
+describe('a link to a group no longer at the group host', () => {
+	const atHost = ({ pds }: { pds: string }) => pds === 'https://host.example';
+
+	beforeEach(() => {
+		mocks.atGroupHost.mockImplementation(atHost);
+		mocks.isDeclared.mockResolvedValue(true);
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+	});
+
+	it('is not read when the group moved to another host, and can only come off', async () => {
+		mocks.resolveGroup.mockResolvedValue({ ...resolved, pds: 'https://elsewhere.example' });
+		mocks.groupSession.mockResolvedValue(linkedSession());
+		expect(await groupView(GROUP, ALICE)).toMatchObject({
+			linked: null,
+			relink: false,
+			hasLink: true,
+			atHost: false
+		});
+		expect(mocks.readGroupMeta).not.toHaveBeenCalled();
+	});
+
+	it('is not read, nor written through, when it was approved at another host', async () => {
+		mocks.groupSession.mockResolvedValue(linkedSession(ADMIN_SCOPE, 'https://old-host.example'));
+		expect(await groupView(GROUP, ALICE)).toMatchObject({ linked: null, hasLink: true });
+		expect(mocks.readGroupMeta).not.toHaveBeenCalled();
+		await expect(requireGroupWriter(GROUP, ALICE)).rejects.toMatchObject({
+			status: 404,
+			body: { message: GROUP_NOT_FOUND }
+		});
+	});
+
+	it('is read and written through while both are at the group host', async () => {
+		mocks.groupSession.mockResolvedValue(linkedSession());
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({ meta });
+		expect(await requireGroupWriter(GROUP, ALICE)).toMatchObject({ did: GROUP });
 	});
 });
 
