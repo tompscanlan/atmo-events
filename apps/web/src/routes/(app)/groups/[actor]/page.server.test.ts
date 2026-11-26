@@ -46,11 +46,61 @@ beforeEach(() => {
 });
 
 describe('a group page', () => {
+	const NOTHING = {
+		post: false,
+		list: false,
+		settings: false,
+		admit: false,
+		assign: false,
+		remove: false,
+		turnOnMembersOnly: false,
+		membersOnly: false
+	};
+	const holder = (can: Partial<typeof NOTHING>) => {
+		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: 'atproto', handle: vi.fn() });
+		mocks.groupView.mockResolvedValue({
+			did: GROUP,
+			name: 'Knitters',
+			description: null,
+			linked: { can: { ...NOTHING, ...can } }
+		});
+	};
+
 	it('shows only its own notices, so a made-up ?link= is no notice at all', async () => {
-		expect((await load(request('?link=linked'))).notice).toEqual(expect.any(String));
+		holder({ post: true });
+		expect((await load(request('?link=linked', ALICE))).notice).toEqual(expect.any(String));
 		for (const link of ['toString', 'constructor', '__proto__', 'nope']) {
-			expect((await load(request(`?link=${link}`))).notice).toBeNull();
+			expect((await load(request(`?link=${link}`, ALICE))).notice).toBeNull();
 		}
+	});
+
+	it('says it is linked only to the person who holds a working link', async () => {
+		// Signed out, a person without a link, and one whose link no longer reads the group.
+		expect((await load(request('?link=linked'))).notice).toBeNull();
+		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: 'atproto', handle: vi.fn() });
+		mocks.groupView.mockResolvedValue({
+			did: GROUP,
+			name: 'Knitters',
+			linked: null,
+			hasLink: true
+		});
+		expect((await load(request('?link=linked', ALICE))).notice).toBeNull();
+		expect((await load(request('?link=created', ALICE))).notice).toBeNull();
+	});
+
+	it("words the notice from what the person's link may do", async () => {
+		holder({ post: true, list: true, settings: true, admit: true });
+		expect((await load(request('?link=linked', ALICE))).notice).toBe(
+			'Linked. You can now post its events, list it, change its settings and manage its members here.'
+		);
+		holder({ post: true });
+		expect((await load(request('?link=created', ALICE))).notice).toBe(
+			'Your group is made, and linked. You can now post its events here.'
+		);
+		holder({});
+		expect((await load(request('?link=linked', ALICE))).notice).toBe(
+			'Linked. Your role in this group lets you see it here.'
+		);
 	});
 
 	it("reads the group with the person's own session, and asks for what it lacks", async () => {
