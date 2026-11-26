@@ -59,6 +59,10 @@ export const MEMBERSHIP_RPC_SCOPE = `rpc?lxm=${REQUEST_JOIN_NSID}&lxm=${CANCEL_J
 /** "Your groups", by the host's own method, which the spec does not have. */
 export const YOUR_GROUPS_SCOPE = `rpc:${ACTOR_GROUPS_NSID}?aud=*`;
 
+/** What making a group asks for: making it, and the person's groups at the host, by which a group
+ *  they made whose answer never came is told from someone else's. */
+export const CREATE_SCOPES: readonly string[] = [CREATE_GROUP_SCOPE, YOUR_GROUPS_SCOPE];
+
 /** What a person is asked for at their first group action: joining, or seeing their groups. */
 export const PARTICIPATE_SCOPES: readonly string[] = [
 	PERSON_META_SCOPE,

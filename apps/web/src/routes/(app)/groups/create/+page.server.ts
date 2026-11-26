@@ -4,6 +4,7 @@ import { holdsCreateGroup } from '#lib/groups/scopes.js';
 import {
 	createGroupAtHost,
 	GroupNotCreated,
+	ownGroupNotNoted,
 	parseNewGroup,
 	rememberUnfinished,
 	unfinishedGroups,
@@ -26,6 +27,10 @@ const NOT_CREATED: Record<NotCreatedReason | 'form', string> = {
 		'Your server did not vouch for you to the group host. Allow making groups first.',
 	unavailable: 'The group host could not be reached. Try again shortly.'
 };
+
+/** For a group at that address the person made a moment ago, which this site never noted. */
+const MADE_ALREADY =
+	"You made this group already, but setting it up here didn't finish. Finish setting it up, or try another address.";
 
 export async function load({ locals, url, setHeaders }) {
 	requireGroupsEnabled();
@@ -87,13 +92,25 @@ export const actions = {
 		try {
 			made = await createGroupAtHost(caller, group, host);
 		} catch (e) {
-			if (e instanceof GroupNotCreated) {
-				return refused(
-					e.reason === 'not-allowed' ? 403 : e.reason === 'unavailable' ? 502 : 400,
-					e.reason
-				);
+			if (!(e instanceof GroupNotCreated)) throw e;
+			// A second press of the button, or an answer that never came, can leave a group the person
+			// made that this site has no note of: it is noted now, and offered to finish.
+			const ours =
+				e.reason === 'address-taken' || e.madeMaybe
+					? await ownGroupNotNoted(caller, group, host)
+					: null;
+			if (ours) {
+				await rememberUnfinished(locals.did, {
+					...ours,
+					public: group.public,
+					listed: group.listed
+				});
+				return fail(409, { values, reason: 'made-already', message: MADE_ALREADY, made: ours });
 			}
-			throw e;
+			return refused(
+				e.reason === 'not-allowed' ? 403 : e.reason === 'unavailable' ? 502 : 400,
+				e.reason
+			);
 		}
 		// Noted before the link starts, so a link that does not finish leaves a way back to it.
 		await rememberUnfinished(locals.did, {

@@ -8,7 +8,9 @@ const mocks = vi.hoisted(() => ({
 	networkFetch: vi.fn<typeof fetch>(),
 	unlistGroup: vi.fn(),
 	groupSession: vi.fn(),
-	groupHandle: vi.fn()
+	groupHandle: vi.fn(),
+	hasGroupSession: vi.fn(),
+	actorGroups: vi.fn()
 }));
 vi.mock('#lib/atproto/network.js', () => ({
 	atprotoNetwork: () => ({
@@ -18,13 +20,19 @@ vi.mock('#lib/atproto/network.js', () => ({
 	})
 }));
 vi.mock('./group', () => ({ unlistGroup: mocks.unlistGroup }));
-vi.mock('./sign-in', () => ({ groupSession: mocks.groupSession, groupHandle: mocks.groupHandle }));
+vi.mock('./sign-in', () => ({
+	groupSession: mocks.groupSession,
+	groupHandle: mocks.groupHandle,
+	hasGroupSession: mocks.hasGroupSession
+}));
+vi.mock('./host', () => ({ actorGroups: mocks.actorGroups }));
 
 import {
 	createGroupAtHost,
 	finishCreatedGroup,
 	finishSetup,
 	GroupNotCreated,
+	ownGroupNotNoted,
 	parseNewGroup,
 	rememberUnfinished,
 	unfinishedGroup,
@@ -172,6 +180,66 @@ describe('making a group at the group host', () => {
 			expect((thrown as GroupNotCreated).reason).toBe(reason);
 		}
 		expect(mocks.networkFetch).not.toHaveBeenCalled();
+	});
+});
+
+describe('making a group when nothing answers', () => {
+	it("is the host that couldn't be reached when the person's PDS does not answer", async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const person = caller();
+		person.handle.mockRejectedValue(new TypeError('fetch failed'));
+		const thrown = await createGroupAtHost(person, RIDERS, HOST).catch((e: unknown) => e);
+		expect(thrown).toMatchObject({ reason: 'unavailable', madeMaybe: false });
+		expect(mocks.networkFetch).not.toHaveBeenCalled();
+	});
+
+	it('is the same, though the group may be made, when the host gives no answer in time', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		mocks.networkFetch.mockRejectedValue(
+			new DOMException('The operation timed out.', 'TimeoutError')
+		);
+		const thrown = await createGroupAtHost(caller(), RIDERS, HOST).catch((e: unknown) => e);
+		expect(thrown).toBeInstanceOf(GroupNotCreated);
+		expect(thrown).toMatchObject({ reason: 'unavailable', madeMaybe: true });
+	});
+});
+
+describe('a group the person made that this site never noted', () => {
+	const YOURS = 'atproto rpc:org.atgrp.internal.getActorGroups?aud=*';
+	const person = (scope = YOURS) => ({ ...caller(), scope });
+	const riders = { did: GROUP, handle: 'riders.groups.example', displayName: 'Night Riders' };
+
+	beforeEach(() => {
+		mocks.hasGroupSession.mockResolvedValue(false);
+		mocks.actorGroups.mockResolvedValue([
+			{ did: 'did:plc:other', handle: 'other.groups.example', displayName: 'Other' },
+			riders
+		]);
+	});
+
+	it('is found by its address among the groups the host says they are in, by the name they typed', async () => {
+		const who = person();
+		expect(await ownGroupNotNoted(who, RIDERS, HOST)).toEqual({
+			did: GROUP,
+			handle: 'riders.groups.example'
+		});
+		expect(mocks.actorGroups).toHaveBeenCalledWith(who);
+		expect(mocks.hasGroupSession).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+
+	it('is not one they are outside of, one of another name, or one they linked here', async () => {
+		expect(await ownGroupNotNoted(person(), { ...RIDERS, address: 'walkers' }, HOST)).toBeNull();
+		expect(await ownGroupNotNoted(person(), { ...RIDERS, name: 'Day Riders' }, HOST)).toBeNull();
+		mocks.hasGroupSession.mockResolvedValue(true);
+		expect(await ownGroupNotNoted(person(), RIDERS, HOST)).toBeNull();
+	});
+
+	it("can't be told without their permission for their groups, or when the host does not answer", async () => {
+		expect(await ownGroupNotNoted(person('atproto'), RIDERS, HOST)).toBeNull();
+		expect(mocks.actorGroups).not.toHaveBeenCalled();
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		mocks.actorGroups.mockRejectedValue(new Error('down'));
+		expect(await ownGroupNotNoted(person(), RIDERS, HOST)).toBeNull();
 	});
 });
 

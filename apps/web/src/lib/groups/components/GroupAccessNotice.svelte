@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Button } from '@atmo-dev/kit';
 	import { requestPermissions } from '@svelte-atproto/oauth/client';
-	import { CREATE_GROUP_SCOPE, JOIN_SCOPES } from '../scopes';
+	import { CREATE_SCOPES, JOIN_SCOPES } from '../scopes';
 	import { askedReturnTo, type GroupAccess } from '../permissions-asked';
 
 	// Shaped on private events' notice (PrivateEventAccessNotice.svelte), for what a person's own
@@ -36,7 +36,7 @@
 		failure = null;
 		try {
 			const back = location.pathname + location.search;
-			const scopes = kind === 'create' ? [CREATE_GROUP_SCOPE] : [...JOIN_SCOPES];
+			const scopes = kind === 'create' ? [...CREATE_SCOPES] : [...JOIN_SCOPES];
 			await requestPermissions(scopes, { returnTo: askedReturnTo(back, did) });
 		} catch {
 			failure = 'That did not work. Try again.';
@@ -55,8 +55,8 @@
 		</p>{/if}
 	{#if access === 'ask' && kind === 'create'}
 		<p class="text-base-700 dark:text-base-300 text-sm">
-			To make a group, atmo asks your server to vouch for you to the group host, which makes it.
-			Your server asks you first.
+			To make a group, atmo asks your server to vouch for you to the group host, which makes it, and
+			to see the groups you are in there. Your server asks you first.
 		</p>
 		<Button class="mt-3" disabled={busy} onclick={ask}>Allow making groups</Button>
 	{:else if access === 'ask'}

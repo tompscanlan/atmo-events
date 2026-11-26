@@ -8,13 +8,14 @@ import type { CallerSession } from '#lib/private-events/server/caller.js';
 import { fetchOtherServer } from '#lib/spaces/server/other-servers.js';
 import { groupAddressLabel, groupDescription, groupJoinPolicy, groupName } from '../fields';
 import type { GroupJoinPolicy } from '../ids';
-import { CREATE_GROUP_NSID } from '../scopes';
+import { ACTOR_GROUPS_NSID, CREATE_GROUP_NSID, holdsRpc } from '../scopes';
 import type { GroupWriter } from './context';
 import { unlistGroup } from './group';
+import { actorGroups } from './host';
 import type { GroupHostInfo } from './host-api';
 import { listKeys } from './kv';
-import { groupHandle, groupSession } from './sign-in';
-import { readXrpc } from './xrpc';
+import { groupHandle, groupSession, hasGroupSession } from './sign-in';
+import { errorKind, readXrpc } from './xrpc';
 
 export interface NewGroup {
 	name: string;
@@ -59,7 +60,11 @@ export type NotCreatedReason =
 	| 'unavailable';
 
 export class GroupNotCreated extends Error {
-	constructor(readonly reason: NotCreatedReason) {
+	/** `madeMaybe`: the host may have made it all the same, as when its answer did not come. */
+	constructor(
+		readonly reason: NotCreatedReason,
+		readonly madeMaybe = false
+	) {
 		super(`the group was not made: ${reason}`);
 		this.name = 'GroupNotCreated';
 	}
@@ -86,12 +91,18 @@ export async function createGroupAtHost(
 	group: NewGroup,
 	host: GroupHostInfo
 ): Promise<{ did: string; handle: string }> {
-	const auth = await readXrpc(
-		await caller.handle(
+	// The person's PDS not answering, or the host, is the host that could not be reached, never a
+	// failed page.
+	const auth = await caller
+		.handle(
 			`/xrpc/${GET_SERVICE_AUTH}?${new URLSearchParams({ aud: host.did, lxm: CREATE_GROUP_NSID })}`,
 			{ method: 'GET' }
 		)
-	);
+		.then(readXrpc)
+		.catch((e: unknown) => {
+			console.warn(`[groups] ${caller.did}'s PDS did not answer for service auth: ${errorKind(e)}`);
+			throw new GroupNotCreated('unavailable');
+		});
 	if (!auth.ok || typeof auth.data.token !== 'string') {
 		const refused = !auth.ok && (auth.status === 403 || auth.error === 'ScopeMissingError');
 		console.warn(
@@ -101,18 +112,25 @@ export async function createGroupAtHost(
 	}
 
 	const handle = `${group.address}${host.domain}`;
-	const res = await fetchOtherServer(new URL(`/xrpc/${CREATE_GROUP_NSID}`, host.origin), {
-		method: 'POST',
-		headers: { authorization: `Bearer ${auth.data.token}`, 'content-type': 'application/json' },
-		body: JSON.stringify({
-			handle,
-			displayName: group.name,
-			...(group.description ? { description: group.description } : {}),
-			joinPolicy: group.joinPolicy,
-			metaPublicRead: group.public
-		})
-	});
-	const made = await readXrpc(res);
+	let made: Awaited<ReturnType<typeof readXrpc>>;
+	try {
+		const res = await fetchOtherServer(new URL(`/xrpc/${CREATE_GROUP_NSID}`, host.origin), {
+			method: 'POST',
+			headers: { authorization: `Bearer ${auth.data.token}`, 'content-type': 'application/json' },
+			body: JSON.stringify({
+				handle,
+				displayName: group.name,
+				...(group.description ? { description: group.description } : {}),
+				joinPolicy: group.joinPolicy,
+				metaPublicRead: group.public
+			})
+		});
+		made = await readXrpc(res);
+	} catch (e) {
+		// Given up on, or cut off: the host may still have made it.
+		console.warn(`[groups] ${CREATE_GROUP_NSID} for ${caller.did} had no answer: ${errorKind(e)}`);
+		throw new GroupNotCreated('unavailable', true);
+	}
 	if (!made.ok) {
 		console.warn(`[groups] ${CREATE_GROUP_NSID} for ${caller.did}: ${made.status} ${made.error}`);
 		throw new GroupNotCreated((made.error && REFUSALS[made.error]) || 'unavailable');
@@ -123,6 +141,33 @@ export async function createGroupAtHost(
 	}
 	console.info(`[groups] ${caller.did} made ${did} at ${host.origin}`);
 	return { did, handle };
+}
+
+/** The group at the address the person asked for, when it is one they made a moment ago that this
+ *  site never noted: a second press of the button, or an answer from the host that never came.
+ *  The host's own list of the person's groups says they are in it, they have no link to it here,
+ *  and its name is the one they typed. Null when it is not, or when that can't be told: their
+ *  sign-in can't ask for their groups, or the host did not answer. */
+export async function ownGroupNotNoted(
+	caller: CallerSession,
+	group: NewGroup,
+	host: GroupHostInfo
+): Promise<{ did: string; handle: string } | null> {
+	if (!holdsRpc(caller.scope, ACTOR_GROUPS_NSID)) return null;
+	const handle = `${group.address}${host.domain}`;
+	try {
+		const theirs = (await actorGroups(caller)).find(
+			(found) => found.handle.toLowerCase() === handle
+		);
+		if (!theirs || theirs.displayName !== group.name) return null;
+		if (await hasGroupSession(theirs.did, caller.did)) return null;
+		return { did: theirs.did, handle };
+	} catch (e) {
+		console.warn(
+			`[groups] ${caller.did}'s groups could not be checked for ${handle}: ${errorKind(e)}`
+		);
+		return null;
+	}
 }
 
 // ---- a group made here, until its first link is done ----

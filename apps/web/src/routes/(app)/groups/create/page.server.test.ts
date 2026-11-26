@@ -10,7 +10,8 @@ const mocks = vi.hoisted(() => ({
 	rememberUnfinished: vi.fn(),
 	unfinishedGroups: vi.fn(),
 	forgetHeldAtGroupHost: vi.fn(),
-	startGroupLink: vi.fn()
+	startGroupLink: vi.fn(),
+	ownGroupNotNoted: vi.fn()
 }));
 vi.mock('#lib/groups/server/sign-in.js', () => ({
 	groupSignInAvailable: mocks.available,
@@ -28,7 +29,8 @@ vi.mock('#lib/groups/server/create.js', async (importActual) => ({
 	...(await importActual<typeof import('#lib/groups/server/create.js')>()),
 	createGroupAtHost: mocks.createGroupAtHost,
 	rememberUnfinished: mocks.rememberUnfinished,
-	unfinishedGroups: mocks.unfinishedGroups
+	unfinishedGroups: mocks.unfinishedGroups,
+	ownGroupNotNoted: mocks.ownGroupNotNoted
 }));
 
 import { GroupNotCreated } from '#lib/groups/server/create.js';
@@ -181,6 +183,48 @@ describe('making a group', () => {
 			data: { reason, message: expect.stringContaining(words), values: { name: 'Night Riders' } }
 		});
 		expect(mocks.rememberUnfinished).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['the address is taken', new GroupNotCreated('address-taken')],
+		["the host's answer never came", new GroupNotCreated('unavailable', true)]
+	])('offers to finish a group the person made a moment ago when %s', async (_when, refusal) => {
+		const made = { did: GROUP, handle: 'riders.groups.example' };
+		mocks.createGroupAtHost.mockRejectedValue(refusal);
+		mocks.ownGroupNotNoted.mockResolvedValue(made);
+		const failed = await post({ ...FORM, listed: 'on' });
+		expect(failed).toMatchObject({
+			status: 409,
+			data: { reason: 'made-already', made, values: { name: 'Night Riders' } }
+		});
+		expect((failed as { data: { message: string } }).data.message).toContain(
+			'Finish setting it up'
+		);
+		expect(mocks.ownGroupNotNoted).toHaveBeenCalledWith(
+			expect.objectContaining({ did: ALICE }),
+			expect.objectContaining({ address: 'riders', name: 'Night Riders' }),
+			HOST
+		);
+		// Noted as the form asked, so finishing sets it up so.
+		expect(mocks.rememberUnfinished).toHaveBeenCalledWith(ALICE, {
+			...made,
+			public: true,
+			listed: true
+		});
+	});
+
+	it('says the address is taken, or the host could not be reached, for a group not theirs', async () => {
+		mocks.ownGroupNotNoted.mockResolvedValue(null);
+		mocks.createGroupAtHost.mockRejectedValue(new GroupNotCreated('address-taken'));
+		expect(await post(FORM)).toMatchObject({ status: 400, data: { reason: 'address-taken' } });
+		mocks.createGroupAtHost.mockRejectedValue(new GroupNotCreated('unavailable', true));
+		expect(await post(FORM)).toMatchObject({ status: 502, data: { reason: 'unavailable' } });
+		expect(mocks.rememberUnfinished).not.toHaveBeenCalled();
+		// A refusal that made nothing needs no look.
+		mocks.ownGroupNotNoted.mockClear();
+		mocks.createGroupAtHost.mockRejectedValue(new GroupNotCreated('unavailable'));
+		await post(FORM);
+		expect(mocks.ownGroupNotNoted).not.toHaveBeenCalled();
 	});
 
 	it('leaves a way back when the link cannot start after the group is made', async () => {
