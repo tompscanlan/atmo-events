@@ -5,6 +5,8 @@ import { memoryKV, type MemoryKV } from './__fixtures__/kv';
 
 const mocks = vi.hoisted(() => ({
 	networkFetch: vi.fn<typeof fetch>(),
+	/** What each client built from now on answers a revoke with. */
+	revoke: vi.fn(),
 	built: [] as Array<{
 		options: OAuthClientOptions;
 		client: Record<string, ReturnType<typeof vi.fn>>;
@@ -21,7 +23,7 @@ vi.mock('@atcute/oauth-node-client', async (importActual) => {
 		}));
 		callback = vi.fn();
 		restore = vi.fn();
-		revoke = vi.fn();
+		revoke = vi.fn((did: string) => mocks.revoke(did));
 		constructor(options: OAuthClientOptions) {
 			this.metadata = { ...options.metadata, token_endpoint_auth_method: 'private_key_jwt' };
 			mocks.built.push({ options, client: this as never });
@@ -259,6 +261,53 @@ describe('finishGroupLink', () => {
 		latest().client.callback.mockResolvedValue({ session: { did: GROUP }, state: null });
 		expect(await finishGroupLink(params('s2'), ALICE)).toEqual({ ok: true, groupDid: GROUP });
 		expect(await sessions.get('groups:held-at-host', 'text')).toBeNull();
+	});
+
+	it('revokes the link it replaces, through a client that holds only that one', async () => {
+		const old = { tokenSet: { access_token: 'old' } };
+		await sessions.put(`group:session:${ALICE}/${GROUP}`, JSON.stringify(old));
+		await storedState('s1', { groupDid: GROUP, by: ALICE });
+		await startGroupLink(GROUP, ALICE);
+		const linking = latest();
+		linking.client.callback.mockImplementation(async () => {
+			// The library stores the new session over the old one.
+			await sessions.put(`group:session:${ALICE}/${GROUP}`, JSON.stringify({ new: true }));
+			return { session: { did: GROUP }, state: null };
+		});
+		expect(await finishGroupLink(params('s1'), ALICE)).toEqual({ ok: true, groupDid: GROUP });
+
+		const revoking = latest();
+		expect(revoking).not.toBe(linking);
+		expect(revoking.client.revoke).toHaveBeenCalledWith(GROUP);
+		expect(await revoking.options.stores.sessions.get(GROUP as never)).toEqual(old);
+		expect(linking.client.revoke).not.toHaveBeenCalled();
+		expect(await sessions.get(`group:session:${ALICE}/${GROUP}`, 'json')).toEqual({ new: true });
+	});
+
+	it('keeps the new link when revoking the one it replaced fails', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		await sessions.put(`group:session:${ALICE}/${GROUP}`, '{}');
+		await storedState('s1', { groupDid: GROUP, by: ALICE });
+		await startGroupLink(GROUP, ALICE);
+		latest().client.callback.mockResolvedValue({ session: { did: GROUP }, state: null });
+		mocks.revoke.mockRejectedValueOnce(new Error('offline'));
+		expect(await finishGroupLink(params('s1'), ALICE)).toEqual({ ok: true, groupDid: GROUP });
+		expect(latest().client.revoke).toHaveBeenCalledWith(GROUP);
+		expect(console.warn).toHaveBeenCalled();
+	});
+
+	it('revokes nothing on a first link, nor when the link fails', async () => {
+		await storedState('s1', { groupDid: GROUP, by: ALICE });
+		await startGroupLink(GROUP, ALICE);
+		latest().client.callback.mockResolvedValue({ session: { did: GROUP }, state: null });
+		await finishGroupLink(params('s1'), ALICE);
+		expect(mocks.built).toHaveLength(1);
+
+		await sessions.put(`group:session:${ALICE}/${GROUP}`, '{}');
+		await storedState('s2', { groupDid: GROUP, by: ALICE });
+		latest().client.callback.mockRejectedValue(new Error('access_denied'));
+		await finishGroupLink(params('s2'), ALICE);
+		expect(mocks.built).toHaveLength(1);
 	});
 
 	it('notes what the link was approved for, so a link from before the ask grew can be told', async () => {
