@@ -27,6 +27,7 @@ vi.mock('./group', () => ({
 }));
 
 import {
+	makeMetaPublic,
 	parseGroupSettings,
 	readGroupSettings,
 	saveGroupSettings,
@@ -145,6 +146,27 @@ describe('reading the settings', () => {
 			public: false,
 			listed: false
 		});
+	});
+});
+
+describe('making a group made private public', () => {
+	it('sets the whole policy public, its grants kept, and nothing else', async () => {
+		const { writer, writes } = group({ about: { displayName: 'Riders' } });
+		mocks.repoHasDeclaration.mockResolvedValue(false);
+		await makeMetaPublic(writer, hosts);
+		expect(writes).toEqual([
+			[
+				'com.atproto.space.updateSpace',
+				{ space: META, policy: { $type: 'org.atgrp.policy', grants: GRANTS, publicRead: true } }
+			]
+		]);
+	});
+
+	it('changes nothing for a group public already', async () => {
+		const { writer, writes } = group({ about: { displayName: 'Riders' }, publicRead: true });
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		await makeMetaPublic(writer, hosts);
+		expect(writes).toEqual([]);
 	});
 });
 

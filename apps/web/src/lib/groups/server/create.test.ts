@@ -10,8 +10,10 @@ const mocks = vi.hoisted(() => ({
 	groupSession: vi.fn(),
 	groupHandle: vi.fn(),
 	hasGroupSession: vi.fn(),
-	actorGroups: vi.fn()
+	actorGroups: vi.fn(),
+	makeMetaPublic: vi.fn()
 }));
+vi.mock('./settings', () => ({ makeMetaPublic: mocks.makeMetaPublic }));
 vi.mock('#lib/atproto/network.js', () => ({
 	atprotoNetwork: () => ({
 		fetch: (input: RequestInfo | URL, init?: RequestInit) => mocks.networkFetch(input, init),
@@ -148,6 +150,14 @@ describe('making a group at the group host', () => {
 		});
 	});
 
+	it('makes a group asked to be public but not listed private, so the host never lists it', async () => {
+		hostAnswers(() => Response.json({ did: GROUP }));
+		await createGroupAtHost(caller(), { ...RIDERS, listed: false }, HOST);
+		expect(JSON.parse(String(mocks.networkFetch.mock.calls[0][1]?.body))).toMatchObject({
+			metaPublicRead: false
+		});
+	});
+
 	it('makes a members-only group, and sends no empty description', async () => {
 		hostAnswers(() => Response.json({ did: GROUP }));
 		await createGroupAtHost(caller(), { ...RIDERS, description: null, public: false }, HOST);
@@ -253,11 +263,15 @@ describe('a group made here, until its first link', () => {
 		expect(kv.ttlOf(`group:setup:${ALICE}/${GROUP}`)).toBe(30 * 24 * 60 * 60);
 	});
 
-	it('takes a public group its maker asked not to list off the list, as the group, then forgets it', async () => {
+	it('makes a group its maker asked to be public but not listed public, then takes it off the list, as the group, then forgets it', async () => {
 		await rememberUnfinished(ALICE, made);
 		const writer = { did: GROUP, handle: vi.fn<XrpcHandle>() };
 		expect(await finishSetup(writer, ALICE)).toBe(true);
+		expect(mocks.makeMetaPublic).toHaveBeenCalledWith(writer);
 		expect(mocks.unlistGroup).toHaveBeenCalledWith(writer.handle, GROUP);
+		expect(mocks.makeMetaPublic.mock.invocationCallOrder[0]).toBeLessThan(
+			mocks.unlistGroup.mock.invocationCallOrder[0]
+		);
 		expect(await unfinishedGroup(ALICE, GROUP)).toBeNull();
 		expect(await finishSetup(writer, ALICE)).toBe(false);
 	});
@@ -271,6 +285,16 @@ describe('a group made here, until its first link', () => {
 			await finishSetup({ did: GROUP, handle: vi.fn<XrpcHandle>() }, ALICE);
 		}
 		expect(mocks.unlistGroup).not.toHaveBeenCalled();
+		expect(mocks.makeMetaPublic).not.toHaveBeenCalled();
+	});
+
+	it('leaves the group private, never listed, and keeps the note, when making it public stops', async () => {
+		await rememberUnfinished(ALICE, made);
+		mocks.makeMetaPublic.mockRejectedValueOnce(new Error('host down'));
+		const writer = { did: GROUP, handle: vi.fn<XrpcHandle>() };
+		await expect(finishSetup(writer, ALICE)).rejects.toThrow();
+		expect(mocks.unlistGroup).not.toHaveBeenCalled();
+		expect(await unfinishedGroup(ALICE, GROUP)).toEqual(made);
 	});
 
 	it('keeps the note when finishing stops, so it can be finished from the group page', async () => {

@@ -171,6 +171,21 @@ export async function saveGroupSettings(
 	);
 }
 
+/** Makes the group's meta space public, its policy otherwise as it is, so the host lists it: for a
+ *  group made private so it was never listed, whose maker asked for it public. Nothing when it is
+ *  public already, so running it again changes nothing. */
+export async function makeMetaPublic(
+	writer: GroupWriter,
+	hosts: SpaceHosts = didSpaceHosts
+): Promise<void> {
+	const { policy } = await readMeta(writer, hosts);
+	if (!policy) throw new Error(`${writer.did} publishes no policy for its meta space`);
+	if (policy.publicRead === true) return;
+	await xrpc(writer.handle, 'com.atproto.space.updateSpace', {
+		body: { space: metaSpaceUri(writer.did), policy: { ...policy, publicRead: true } }
+	});
+}
+
 async function putMeta(
 	writer: GroupWriter,
 	collection: string,

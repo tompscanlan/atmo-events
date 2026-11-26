@@ -11,6 +11,7 @@ import type { GroupJoinPolicy } from '../ids';
 import { ACTOR_GROUPS_NSID, CREATE_GROUP_NSID, holdsRpc } from '../scopes';
 import type { GroupWriter } from './context';
 import { unlistGroup } from './group';
+import { makeMetaPublic } from './settings';
 import { actorGroups } from './host';
 import type { GroupHostInfo } from './host-api';
 import { listKeys } from './kv';
@@ -122,7 +123,10 @@ export async function createGroupAtHost(
 				displayName: group.name,
 				...(group.description ? { description: group.description } : {}),
 				joinPolicy: group.joinPolicy,
-				metaPublicRead: group.public
+				// The host lists every group it makes public. One its maker asked to be public but not
+				// listed is made private, so it is never listed, and made public, then taken off the list,
+				// when its first link finishes setting it up.
+				metaPublicRead: group.public && group.listed
 			})
 		});
 		made = await readXrpc(res);
@@ -219,13 +223,17 @@ export async function unfinishedGroup(
 	return unfinished(kept);
 }
 
-/** What a group's first link finishes, as the group: a public group its maker asked not to list
- *  comes off the list, where the host put it when it made the group. False when nothing was left to
- *  do. Throws on a stop, and keeps the note, so running it again finishes it. */
+/** What a group's first link finishes, as the group: a group its maker asked to be public but not
+ *  listed, made private so it was never listed, is made public, which lists it, and taken off the
+ *  list at once. False when nothing was left to do. Throws on a stop, and keeps the note, so running
+ *  it again finishes it. */
 export async function finishSetup(writer: GroupWriter, personDid: string): Promise<boolean> {
 	const group = await unfinishedGroup(personDid, writer.did);
 	if (!group) return false;
-	if (group.public && !group.listed) await unlistGroup(writer.handle, writer.did);
+	if (group.public && !group.listed) {
+		await makeMetaPublic(writer);
+		await unlistGroup(writer.handle, writer.did);
+	}
 	await env.OAUTH_SESSIONS.delete(setupPrefix(personDid) + writer.did);
 	return true;
 }
