@@ -232,8 +232,16 @@ export async function readGroupMeta(
 		read(GROUP_ABOUT_COLLECTION, GROUP_ABOUT_RKEY),
 		read(SPACE_POLICY_COLLECTION, SPACE_POLICY_RKEY)
 	]);
-	const publicRead = (policy?.value.policy as { publicRead?: unknown } | undefined)?.publicRead;
-	return { profile: parseGroupProfile(about?.value ?? null), public: publicRead === true };
+	return groupMetaOf(about?.value ?? null, policy?.value ?? null);
+}
+
+/** From the meta space's about record and its published policy, either missing. */
+export function groupMetaOf(
+	about: Record<string, unknown> | null,
+	policy: Record<string, unknown> | null
+): GroupMeta {
+	const publicRead = (policy?.policy as { publicRead?: unknown } | undefined)?.publicRead;
+	return { profile: parseGroupProfile(about), public: publicRead === true };
 }
 
 /** Whether the group's public repo holds its declaration, which may not be indexed yet. */

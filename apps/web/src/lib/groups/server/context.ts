@@ -1,10 +1,24 @@
 // The one way into a group page, so no route makes a lookup of its own that could reveal
-// a group. A visitor sees a group only through its declaration; someone who linked it
-// sees it as the group does. Every refusal is the same 404.
+// a group. A visitor sees a group only through its declaration; a person the group host lets
+// read its meta space sees it with their own access; someone who linked it sees it as the
+// group does. Every refusal is the same 404.
+import { waitUntil } from 'cloudflare:workers';
 import { error } from '@sveltejs/kit';
 import type { OAuthSession } from '@atcute/oauth-node-client';
-import { isSpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
-import { groupAbilities, type GroupAbilities } from '../scopes';
+import type { CallerSession } from '#lib/private-events/server/caller.js';
+import {
+	isSpaceAccessDenied,
+	type SpaceAccessDenied
+} from '#lib/spaces/server/space-credential.js';
+import {
+	ACTOR_GROUPS_NSID,
+	groupAbilities,
+	holdsConfirmationGrant,
+	holdsMetaRead,
+	holdsParticipate,
+	holdsRpc,
+	type GroupAbilities
+} from '../scopes';
 import {
 	atGroupHost,
 	isDeclared,
@@ -18,6 +32,9 @@ import {
 } from './group';
 import { requireGroupsEnabled } from './enabled';
 import { unfinishedGroup } from './create';
+import { confirmMembership } from './confirmation';
+import { actorGroups } from './host';
+import { isMemberAsPerson, personReader, readMetaAsPerson, type PersonalMeta } from './person';
 import {
 	groupHandle,
 	groupSession,
@@ -29,6 +46,9 @@ import { errorKind, isLinkBroken, isRoleRefused, type XrpcHandle } from './xrpc'
 
 /** Byte for byte, so the causes cannot be told apart. */
 export const GROUP_NOT_FOUND = 'Group not found';
+
+/** When the host could not say whether the person may see a group they are in. */
+export const GROUP_UNCHECKED = 'This group could not be checked right now. Try again shortly.';
 
 /** To someone who linked the group, whose role does not let the link post as it. */
 export const NO_POSTING = "Your role in this group doesn't let you post its events.";
@@ -48,6 +68,13 @@ export interface GroupView {
 	relink: boolean;
 	/** The caller has a link stored here, working or not, so they can unlink it. */
 	hasLink: boolean;
+	/** Present when the group host let the caller read the group with their own access. */
+	personal: PersonalMeta | null;
+	/** Whether the host's records count the caller a member; null when they could not be read. */
+	member: boolean | null;
+	/** Signed in, at a group at this site's host, without the group permissions their own sign-in
+	 *  needs to join it or see it as a member. */
+	askAccess: boolean;
 }
 
 export interface LinkedGroup {
@@ -99,10 +126,65 @@ async function linkedRead(
 	}
 }
 
-export async function groupView(actor: string, callerDid: string | null): Promise<GroupView> {
+/** Whether the person's groups at the host include this one, by the host's own list. */
+async function knowsGroup(caller: CallerSession, groupDid: string): Promise<boolean> {
+	if (!holdsRpc(caller.scope, ACTOR_GROUPS_NSID)) return false;
+	try {
+		return (await actorGroups(caller)).some((group) => group.did === groupDid);
+	} catch (e) {
+		console.warn(`[groups] ${caller.did}'s groups could not be listed: ${errorKind(e)}`);
+		return false;
+	}
+}
+
+/** A PDS answers SpaceNotFound for a refusal, and also when it could not reach the space's
+ *  authority: a reason to hide the space, never to act on it. */
+const isAmbiguousDenial = (e: SpaceAccessDenied) => e.reason.endsWith('SpaceNotFound');
+
+interface PersonalRead {
+	meta: PersonalMeta | null;
+	member: boolean | null;
+	/** The host could not be asked about a group the person is in: never a reason to act, only to
+	 *  say "try again". */
+	unsure: boolean;
+}
+
+/** The group read with the caller's own access, and whether they are a member. A member's visit
+ *  writes their confirmation, only after the host's records say they are one: a write the host
+ *  would not count still lands in the writer's own repo. */
+async function personalRead(caller: CallerSession, groupDid: string): Promise<PersonalRead> {
+	const reader = personReader(caller);
+	let meta: PersonalMeta;
+	try {
+		meta = await readMetaAsPerson(reader, groupDid);
+	} catch (e) {
+		if (isSpaceAccessDenied(e)) {
+			const unsure = isAmbiguousDenial(e) && (await knowsGroup(caller, groupDid));
+			return { meta: null, member: null, unsure };
+		}
+		console.error(`[groups] ${groupDid}: the meta space could not be read for ${caller.did}:`, e);
+		return { meta: null, member: null, unsure: true };
+	}
+	const member = await isMemberAsPerson(reader, groupDid, caller.did).catch((e) => {
+		console.warn(`[groups] ${groupDid}: ${caller.did}'s membership could not be read:`, e);
+		return null;
+	});
+	if (member && holdsConfirmationGrant(caller.scope, 'create', groupDid)) {
+		waitUntil(confirmMembership(caller, groupDid));
+	}
+	return { meta, member, unsure: false };
+}
+
+/** `person` is the caller's own session, for the page that reads the group as they may see it. */
+export async function groupView(
+	actor: string,
+	callerDid: string | null,
+	person: CallerSession | null = null
+): Promise<GroupView> {
 	requireGroupsEnabled();
 	const group = await resolveGroup(actor);
 	if (!group) error(404, GROUP_NOT_FOUND);
+	const atHost = atGroupHost(group);
 
 	let linked: GroupView['linked'] = null;
 	let relink = false;
@@ -131,12 +213,25 @@ export async function groupView(actor: string, callerDid: string | null): Promis
 		}
 	}
 
-	// Without a working link the caller sees what any visitor does, so the declaration decides,
-	// even for someone whose link broke. Except that someone with a link stored here still gets the
-	// page, to unlink it: bare, with only what anyone could learn, its handle and public events,
-	// never a cached name.
+	// Only for a group at this site's host: elsewhere a DID's PDS answers whatever it likes, and
+	// such a group shows only through its declaration.
+	const caller = person && person.did === callerDid ? person : null;
+	let personal: PersonalRead = { meta: null, member: null, unsure: false };
+	if (atHost && caller && holdsMetaRead(caller.scope)) {
+		personal = await personalRead(caller, group.did);
+		if (personal.meta && !linked) {
+			await storeCachedProfile(group, personal.meta).catch((e) => {
+				console.warn(`[groups] ${group.did}: the cached profile could not be stored:`, e);
+			});
+		}
+	}
+
+	// Without a working link or their own access the caller sees what any visitor does, so the
+	// declaration decides, even for someone whose link broke. Except that someone with a link
+	// stored here still gets the page, to unlink it: bare, with only what anyone could learn, its
+	// handle and public events, never a cached name.
 	let bare = false;
-	if (!linked) {
+	if (!linked && !personal.meta) {
 		let declared: boolean;
 		try {
 			declared = await isDeclared(group.did);
@@ -144,22 +239,27 @@ export async function groupView(actor: string, callerDid: string | null): Promis
 			console.error(`[groups] ${group.did}: the declaration could not be read:`, e);
 			error(503, 'Groups are unavailable right now');
 		}
-		if (!declared && !hasLink) error(404, GROUP_NOT_FOUND);
+		if (!declared && !hasLink) {
+			error(personal.unsure ? 503 : 404, personal.unsure ? GROUP_UNCHECKED : GROUP_NOT_FOUND);
+		}
 		bare = !declared;
 	}
 
-	const cached =
-		linked?.meta.profile || bare ? null : (await readCachedProfiles([group.did])).get(group.did);
-	const profile = linked?.meta.profile ?? cached ?? null;
+	const read = linked?.meta.profile ?? personal.meta?.profile;
+	const cached = read || bare ? null : (await readCachedProfiles([group.did])).get(group.did);
+	const profile = read ?? cached ?? null;
 	return {
 		did: group.did,
 		handle: group.handle,
 		name: profile?.name ?? group.handle ?? group.did,
 		description: profile?.description ?? null,
-		atHost: groupSignInAvailable() && atGroupHost(group),
+		atHost: groupSignInAvailable() && atHost,
 		linked,
 		relink,
-		hasLink
+		hasLink,
+		personal: personal.meta,
+		member: personal.member,
+		askAccess: atHost && caller !== null && !holdsParticipate(caller.scope)
 	};
 }
 

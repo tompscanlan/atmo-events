@@ -24,6 +24,7 @@ import {
 } from '../../../routes/(app)/groups/create/+page.server';
 import { load as settingsPage } from '../../../routes/(app)/groups/[actor]/settings/+page.server';
 import { finishGroupSetup, saveGroupSettings } from '../group.remote';
+import { cancelJoin, joinGroup, leave } from '../members.remote';
 import { groupView, requireGroupWriter, requireStoredLink } from './context';
 
 const GROUP = 'did:plc:group';
@@ -70,6 +71,13 @@ describe('with groups off', () => {
 		const expected = unknownAddress();
 		expect(await shown(() => requireGroupWriter(GROUP, ALICE))).toBe(expected);
 		expect(await shown(() => requireStoredLink(GROUP, ALICE))).toBe(expected);
+	});
+
+	it("refuses a person's join, cancel and leave with the same 404", async () => {
+		const expected = unknownAddress();
+		expect(await shown(() => joinGroup({ groupDid: GROUP, message: 'hi' }))).toBe(expected);
+		expect(await shown(() => cancelJoin({ groupDid: GROUP }))).toBe(expected);
+		expect(await shown(() => leave({ groupDid: GROUP }))).toBe(expected);
 	});
 
 	it('shows making a group and the settings as unknown addresses, and saves nothing', async () => {

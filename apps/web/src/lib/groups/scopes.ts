@@ -1,15 +1,17 @@
-// The permissions groups need: the person's own sign-in, to make a group, and a session signed in
-// as a group, read from the scope its group host granted it. The host narrows what this site asks
-// for to what the approving person's roles allow, and gives back a concrete scope (`authority=self`
-// becomes the group's DID), so the granted scope, not the asked one, says which controls a page
-// offers. The host checks the person's roles again at each write, so a role taken away since the
+// The permissions groups need: the person's own sign-in, to make a group and to join one, and a
+// session signed in as a group, read from the scope its group host granted it. The host narrows
+// what this site asks for to what the approving person's roles allow, and gives back a concrete
+// scope (`authority=self` becomes the group's DID), so the granted scope, not the asked one, says
+// which controls a page offers. The host checks the person's roles again at each write, so a role taken away since the
 // approval is still refused then. Values and pure checks only, so the OAuth config, pages and tests
 // can import them.
 import {
 	GROUP_ABOUT_COLLECTION,
 	GROUP_CONFIG_COLLECTION,
+	GROUP_CONFIRMATION_COLLECTION,
 	GROUP_DECLARATION_COLLECTION,
 	GROUP_EVENT_COLLECTION,
+	MEMBERS_SPACE_TYPE,
 	META_SPACE_TYPE
 } from './ids';
 
@@ -23,13 +25,33 @@ export const CREATE_GROUP_NSID = 'org.atgrp.internal.createGroup';
  *  client metadata names no deployment's host. */
 export const CREATE_GROUP_SCOPE = `rpc:${CREATE_GROUP_NSID}?aud=*`;
 
-/** Declared in the person's client metadata while groups are on; asked for only when they set out
- *  to make a group, never at sign-in. */
-export const GROUP_PERSON_SCOPES: readonly string[] = [CREATE_GROUP_SCOPE];
+/** The spec's methods for a person's own membership, each by their service auth for the host. */
+export const REQUEST_JOIN_NSID = 'org.atgrp.requestJoin';
+export const CANCEL_JOIN_REQUEST_NSID = 'org.atgrp.cancelJoinRequest';
+export const LEAVE_GROUP_NSID = 'org.atgrp.leaveGroup';
 
-/** Whether the person's granted scope lets their PDS vouch for them to make a group: an rpc grant
+/** The group host's own method listing the groups a person is in, not the spec's, which has none
+ *  (bluesky-social/group-host's `org.atgrp.internal.getActorGroups`). */
+export const ACTOR_GROUPS_NSID = 'org.atgrp.internal.getActorGroups';
+
+/** The spec's permission set for a person's own sessions: read any group's meta space, write their
+ *  own confirmation in a group's members space, and join, cancel a request and leave. */
+export const PARTICIPATE_SCOPE = 'include:org.atgrp.authParticipate';
+
+/** "Your groups", by the host's own method, which the spec's set does not name. Any audience, as
+ *  for making a group. */
+export const YOUR_GROUPS_SCOPE = `rpc:${ACTOR_GROUPS_NSID}?aud=*`;
+
+/** What a person is asked for at their first group action: joining, or seeing their groups. */
+export const PARTICIPATE_SCOPES: readonly string[] = [PARTICIPATE_SCOPE, YOUR_GROUPS_SCOPE];
+
+/** Declared in the person's client metadata while groups are on; each asked for only when they set
+ *  out to make a group, or first act in one, never at sign-in. */
+export const GROUP_PERSON_SCOPES: readonly string[] = [CREATE_GROUP_SCOPE, ...PARTICIPATE_SCOPES];
+
+/** Whether the person's granted scope lets their PDS vouch for them to call `nsid`: an rpc grant
  *  for the method, written `rpc:<method>` or `rpc?lxm=<method>`, for any audience. */
-export function holdsCreateGroup(scope: string): boolean {
+export function holdsRpc(scope: string, nsid: string): boolean {
 	return scope.split(' ').some((token) => {
 		if (!token.startsWith('rpc:') && !token.startsWith('rpc?')) return false;
 		const at = token.indexOf('?');
@@ -38,8 +60,72 @@ export function holdsCreateGroup(scope: string): boolean {
 		const methods = resource.startsWith(':')
 			? [decodeURIComponent(resource.slice(1))]
 			: params.getAll('lxm');
-		return methods.includes(CREATE_GROUP_NSID) && params.getAll('aud').length > 0;
+		return methods.includes(nsid) && params.getAll('aud').length > 0;
 	});
+}
+
+export function holdsCreateGroup(scope: string): boolean {
+	return holdsRpc(scope, CREATE_GROUP_NSID);
+}
+
+// A PDS hands an `include:` back expanded, and drops each parameter left at its default: no
+// `action` is all four, no `skey` any key, and no `authority` the signer's own, never a group's.
+const DEFAULT_ACTIONS: readonly string[] = ['read', 'create', 'update', 'delete'];
+
+/** A person's grants in a space type: those for any group, or also for `groupDid` when given. */
+function personSpaceGrants(scope: string, spaceType: string, groupDid?: string) {
+	return scope
+		.split(' ')
+		.filter((token) => token.startsWith(`space:${spaceType}?`) || token.startsWith('space:*?'))
+		.map((token) => new URLSearchParams(token.slice(token.indexOf('?') + 1)))
+		.filter((params) => {
+			const authority = params.get('authority');
+			const skey = params.get('skey') ?? '*';
+			return (
+				(authority === '*' || (groupDid !== undefined && authority === groupDid)) &&
+				['self', '*'].includes(skey)
+			);
+		});
+}
+
+function actionsOf(params: URLSearchParams): readonly string[] {
+	const actions = params.getAll('action');
+	return actions.length > 0 ? actions : DEFAULT_ACTIONS;
+}
+
+/** Any group's meta space. A PDS without spaces drops a space grant it does not know, so this also
+ *  says the person's PDS has spaces. */
+export function holdsMetaRead(scope: string): boolean {
+	return personSpaceGrants(scope, META_SPACE_TYPE).some((p) => actionsOf(p).includes('read'));
+}
+
+/** The person's own confirmation in a group's members space, in any group's when `groupDid` is
+ *  left out. */
+export function holdsConfirmationGrant(
+	scope: string,
+	action: 'create' | 'delete',
+	groupDid?: string
+): boolean {
+	return personSpaceGrants(scope, MEMBERS_SPACE_TYPE, groupDid).some((p) => {
+		const collections = p.getAll('collection');
+		return (
+			actionsOf(p).includes(action) &&
+			(collections.includes('*') || collections.includes(GROUP_CONFIRMATION_COLLECTION))
+		);
+	});
+}
+
+/** Whether the person's sign-in holds all a group page asks of it: the participate set, as their
+ *  PDS expanded it, and "your groups". */
+export function holdsParticipate(scope: string): boolean {
+	return (
+		holdsMetaRead(scope) &&
+		holdsConfirmationGrant(scope, 'create') &&
+		holdsConfirmationGrant(scope, 'delete') &&
+		[REQUEST_JOIN_NSID, CANCEL_JOIN_REQUEST_NSID, LEAVE_GROUP_NSID, ACTOR_GROUPS_NSID].every(
+			(nsid) => holdsRpc(scope, nsid)
+		)
+	);
 }
 
 const META_SELF = `space:${META_SPACE_TYPE}?authority=self&skey=self`;

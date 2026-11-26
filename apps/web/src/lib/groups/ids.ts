@@ -13,6 +13,13 @@ export const GROUP_CONFIG_COLLECTION = 'org.atgrp.config';
 export const GROUP_CONFIG_RKEY = 'self';
 export const GROUP_JOIN_POLICIES = ['open', 'approval', 'invite'] as const;
 export type GroupJoinPolicy = (typeof GROUP_JOIN_POLICIES)[number];
+/** Who is in the group: the group's memberships, and each member's own confirmation. */
+export const MEMBERS_SPACE_TYPE = 'org.atgrp.members';
+/** In the group's repo in the members space, keyed by the member's DID: `{roles, createdAt}`. */
+export const GROUP_MEMBERSHIP_COLLECTION = 'org.atgrp.membership';
+/** In the member's own repo in the members space: `{createdAt}`, their side of the membership. */
+export const GROUP_CONFIRMATION_COLLECTION = 'org.atgrp.confirmation';
+export const GROUP_CONFIRMATION_RKEY = 'self';
 /** The `$type` of a group space's policy, which `com.atproto.space.updateSpace` takes whole. */
 export const GROUP_POLICY_TYPE = 'org.atgrp.policy';
 /** Where the host publishes a space's `org.atgrp.policy`, which says whether it is public. */
@@ -33,6 +40,16 @@ export function spaceUri(ownerDid: string, type: string, skey = SPACE_SKEY): str
 
 export function metaSpaceUri(groupDid: string): string {
 	return spaceUri(groupDid, META_SPACE_TYPE);
+}
+
+export function membersSpaceUri(groupDid: string): string {
+	return spaceUri(groupDid, MEMBERS_SPACE_TYPE);
+}
+
+/** A membership's record key: the member's DID, with a did:web port's `%3A` written as `:`, as the
+ *  group host keys it. */
+export function membershipRkey(memberDid: string): string {
+	return memberDid.replaceAll('%3A', ':');
 }
 
 export function declarationUri(groupDid: string): string {

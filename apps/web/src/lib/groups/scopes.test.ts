@@ -5,7 +5,12 @@ import {
 	grantsSettings,
 	GROUP_SETTINGS_SCOPES,
 	groupAbilities,
-	holdsCreateGroup
+	holdsConfirmationGrant,
+	holdsCreateGroup,
+	holdsMetaRead,
+	holdsParticipate,
+	holdsRpc,
+	YOUR_GROUPS_SCOPE
 } from './scopes';
 
 const GROUP = 'did:plc:group';
@@ -103,5 +108,61 @@ describe("the person's own permission to make a group", () => {
 		expect(holdsCreateGroup('atproto include:community.lexicon.calendar.authFull')).toBe(false);
 		expect(holdsCreateGroup('rpc:org.atgrp.requestJoin?aud=*')).toBe(false);
 		expect(holdsCreateGroup('rpc:org.atgrp.internal.createGroup')).toBe(false);
+	});
+});
+
+// The spec's org.atgrp.authParticipate as a PDS hands it back expanded, each parameter left at its
+// default dropped (all four actions, here), with "your groups" as asked.
+const PARTICIPATE_EXPANDED = [
+	'atproto',
+	'space:org.atgrp.meta?authority=*&skey=self&action=read',
+	'space:org.atgrp.members?authority=*&skey=self&collection=org.atgrp.confirmation',
+	'space:org.atgrp.inbox?skey=self&action=read&manage=create',
+	'rpc?lxm=org.atgrp.requestJoin&lxm=org.atgrp.cancelJoinRequest&lxm=org.atgrp.leaveGroup&lxm=org.atgrp.mod.submitReport&lxm=org.atgrp.mod.submitAppeal&lxm=org.atgrp.mod.querySelfHistory&aud=*',
+	YOUR_GROUPS_SCOPE
+].join(' ');
+
+describe("a person's group permissions, as their PDS granted them", () => {
+	it('reads the expanded participate set and "your groups" as all a group page needs', () => {
+		expect(holdsParticipate(PARTICIPATE_EXPANDED)).toBe(true);
+		expect(holdsParticipate(PARTICIPATE_EXPANDED.replace(YOUR_GROUPS_SCOPE, ''))).toBe(false);
+		expect(holdsParticipate('atproto include:community.lexicon.calendar.authFull')).toBe(false);
+	});
+
+	it('reads a PDS that dropped the space grants, having no spaces, as not enough', () => {
+		const noSpaces = PARTICIPATE_EXPANDED.split(' ')
+			.filter((token) => !token.startsWith('space:'))
+			.join(' ');
+		expect(holdsRpc(noSpaces, 'org.atgrp.requestJoin')).toBe(true);
+		expect(holdsMetaRead(noSpaces)).toBe(false);
+		expect(holdsParticipate(noSpaces)).toBe(false);
+	});
+
+	it("needs a meta read for any group, not the signer's own", () => {
+		expect(holdsMetaRead('space:org.atgrp.meta?action=read')).toBe(false);
+		expect(holdsMetaRead('space:org.atgrp.meta?authority=*&action=read')).toBe(true);
+		expect(holdsMetaRead('space:org.atgrp.meta?authority=*&skey=other&action=read')).toBe(false);
+		expect(holdsMetaRead('space:org.atgrp.meta?authority=*&action=create')).toBe(false);
+	});
+
+	it("needs a grant naming the confirmation for the person's own, for any group or this one", () => {
+		const anyGroup = 'space:org.atgrp.members?authority=*&collection=org.atgrp.confirmation';
+		expect(holdsConfirmationGrant(anyGroup, 'create')).toBe(true);
+		expect(holdsConfirmationGrant(anyGroup, 'delete', GROUP)).toBe(true);
+		const oneGroup = anyGroup.replace('authority=*', `authority=${GROUP}`);
+		expect(holdsConfirmationGrant(oneGroup, 'create', GROUP)).toBe(true);
+		expect(holdsConfirmationGrant(oneGroup, 'create')).toBe(false);
+		expect(holdsConfirmationGrant(oneGroup, 'create', 'did:plc:other')).toBe(false);
+		const readOnly = 'space:org.atgrp.members?authority=*&action=read';
+		expect(holdsConfirmationGrant(readOnly, 'create')).toBe(false);
+		const membership = anyGroup.replace('org.atgrp.confirmation', 'org.atgrp.membership');
+		expect(holdsConfirmationGrant(membership, 'create')).toBe(false);
+	});
+
+	it('reads an rpc grant in either form, for any audience, for that method alone', () => {
+		expect(holdsRpc(YOUR_GROUPS_SCOPE, 'org.atgrp.internal.getActorGroups')).toBe(true);
+		expect(holdsRpc('rpc?lxm=org.atgrp.leaveGroup&aud=*', 'org.atgrp.leaveGroup')).toBe(true);
+		expect(holdsRpc('rpc?lxm=org.atgrp.leaveGroup', 'org.atgrp.leaveGroup')).toBe(false);
+		expect(holdsRpc(YOUR_GROUPS_SCOPE, 'org.atgrp.requestJoin')).toBe(false);
 	});
 });

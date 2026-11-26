@@ -5,6 +5,9 @@ import { GROUP_JOIN_POLICIES, type GroupJoinPolicy } from './ids';
 
 export const GROUP_NAME_MAX = 64;
 export const GROUP_DESCRIPTION_MAX = 2000;
+/** A request to join's message. The spec's bound is 2000 graphemes, which 2000 characters never
+ *  pass. */
+export const JOIN_MESSAGE_MAX = 2000;
 /** One DNS label: the host gives each group a name one label under its own domain. */
 export const GROUP_ADDRESS_MAX = 63;
 

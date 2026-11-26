@@ -9,9 +9,13 @@ const mocks = vi.hoisted(() => ({
 	unlinkGroupSession: vi.fn(),
 	finishGroupSetup: vi.fn()
 }));
+const member = vi.hoisted(() => ({ joinGroup: vi.fn(), cancelJoin: vi.fn(), leave: vi.fn() }));
+const oauth = vi.hoisted(() => ({ requestPermissions: vi.fn() }));
 // The page's writes and its event list's paging go through SvelteKit remote functions, which a
 // browser test has no server for.
 vi.mock('#lib/groups/group.remote.js', () => mocks);
+vi.mock('#lib/groups/members.remote.js', () => member);
+vi.mock('@svelte-atproto/oauth/client', () => oauth);
 vi.mock('#lib/contrail/events.remote.js', () => ({ loadMoreEvents: vi.fn() }));
 
 import GroupPage from './+page.svelte';
@@ -144,5 +148,104 @@ describe('listing a linked group', () => {
 		await expect
 			.element(page.getByRole('alert'))
 			.toHaveTextContent('That did not work. Try again, or link the group again.');
+	});
+});
+
+/** The page for a signed-in person who has not linked the group, as its load returns it. */
+function personPage(
+	personal: { joinPolicy: string; public?: boolean } | null,
+	isMember: boolean | null,
+	access: 'ask' | 'refused' | null = null
+) {
+	return {
+		pageTitle: 'Knitters',
+		pageDescription: 'Events from Knitters.',
+		group: {
+			did: GROUP,
+			handle: 'knit.example',
+			name: 'Knitters',
+			description: null,
+			atHost: true,
+			linked: null,
+			relink: false,
+			hasLink: false,
+			personal: personal && {
+				profile: { name: 'Knitters', description: null },
+				public: personal.public ?? true,
+				joinPolicy: personal.joinPolicy
+			},
+			member: isMember,
+			askAccess: access !== null
+		},
+		events: [],
+		cursor: null,
+		signedIn: true,
+		you: 'did:plc:alice',
+		access,
+		spacesServer:
+			access === 'refused' ? { url: 'https://spaces.example/', host: 'spaces.example' } : null,
+		notice: null
+	};
+}
+
+describe("a person's own membership", () => {
+	it('joins an open group at once', async () => {
+		member.joinGroup.mockResolvedValue({ outcome: 'joined' });
+		render(GroupPage, { data: personPage({ joinPolicy: 'open' }, false) as never });
+		await page.getByRole('button', { name: 'Join' }).click();
+		await expect.poll(() => member.joinGroup).toHaveBeenCalledWith({ groupDid: GROUP });
+	});
+
+	it('asks to join with a message, says the request waits, and cancels it', async () => {
+		member.joinGroup.mockResolvedValue({ outcome: 'pending' });
+		member.cancelJoin.mockResolvedValue({ ok: true });
+		render(GroupPage, { data: personPage({ joinPolicy: 'approval' }, false) as never });
+		await page.getByLabelText("A message for the group's admins (optional)").fill('I knit.');
+		await page.getByRole('button', { name: 'Ask to join' }).click();
+		await expect
+			.element(page.getByText("Request sent. The group's admins will decide."))
+			.toBeVisible();
+		expect(member.joinGroup).toHaveBeenCalledWith({ groupDid: GROUP, message: 'I knit.' });
+		await page.getByRole('button', { name: 'Cancel request' }).click();
+		await expect.poll(() => member.cancelJoin).toHaveBeenCalledWith({ groupDid: GROUP });
+		await expect.element(page.getByRole('button', { name: 'Ask to join' })).toBeVisible();
+	});
+
+	it('says a group takes members by invitation only, and offers no join', async () => {
+		render(GroupPage, { data: personPage({ joinPolicy: 'invite' }, false) as never });
+		await expect.poll(shown).toContain('This group takes members by invitation only.');
+		expect(page.getByRole('button', { name: /join/i }).elements()).toHaveLength(0);
+	});
+
+	it("shows a private group's member they are one, and says why the last admin can't leave", async () => {
+		const message =
+			"You're the group's only admin, so you can't leave it. Make someone else an admin first.";
+		member.leave.mockImplementation(async () => error(409, message));
+		render(GroupPage, {
+			data: personPage({ joinPolicy: 'approval', public: false }, true) as never
+		});
+		await expect.poll(shown).toContain('Private');
+		await expect.poll(shown).toContain('Member');
+		await page.getByRole('button', { name: 'Leave group' }).click();
+		await expect.element(page.getByRole('alert')).toHaveTextContent(message);
+	});
+
+	it('asks for the group permissions, and says why when their server said no', async () => {
+		render(GroupPage, { data: personPage(null, null, 'ask') as never });
+		await page.getByRole('button', { name: 'Allow joining groups' }).click();
+		await expect
+			.poll(() => oauth.requestPermissions.mock.calls[0]?.[0])
+			.toEqual([
+				'include:org.atgrp.authParticipate',
+				'rpc:org.atgrp.internal.getActorGroups?aud=*'
+			]);
+	});
+
+	it('points someone whose server has no spaces at the spaces server', async () => {
+		render(GroupPage, { data: personPage(null, null, 'refused') as never });
+		await expect.poll(shown).toContain('it takes spaces support');
+		await expect
+			.element(page.getByRole('link', { name: 'spaces.example' }))
+			.toHaveAttribute('href', 'https://spaces.example/');
 	});
 });

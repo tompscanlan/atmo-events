@@ -44,16 +44,18 @@ describe("a person's sign-in permissions, with groups", () => {
 		]);
 	});
 
-	it('add only the group host’s permission to make a group with groups on', async () => {
-		expect(await declared({ groupHost: 'https://host.example' })).toEqual([
-			...scopes,
-			'rpc:org.atgrp.internal.createGroup?aud=*'
-		]);
+	it('add making a group, the participate set and "your groups" with groups on', async () => {
+		const groups = [
+			'rpc:org.atgrp.internal.createGroup?aud=*',
+			'include:org.atgrp.authParticipate',
+			'rpc:org.atgrp.internal.getActorGroups?aud=*'
+		];
+		expect(await declared({ groupHost: 'https://host.example' })).toEqual([...scopes, ...groups]);
 		expect(await declared({ groupHost: 'https://host.example', privateEvents: 'true' })).toEqual([
 			...scopes,
 			...HOST_SCOPES,
 			BETA_SCOPE,
-			'rpc:org.atgrp.internal.createGroup?aud=*'
+			...groups
 		]);
 	});
 });

@@ -2,8 +2,11 @@ import { env } from 'cloudflare:workers';
 import type { ActorIdentifier } from '@atcute/lexicons';
 import { getServerClient } from '#lib/contrail/index.js';
 import { hostingQuery } from '#lib/contrail/queries.js';
+import { groupAccess } from '#lib/groups/permissions-asked.js';
 import { groupView } from '#lib/groups/server/context.js';
 import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
+import { callerSession } from '#lib/private-events/server/caller.js';
+import { spacesServer } from '#lib/private-events/server/enabled.js';
 
 const LINK_NOTICES = {
 	linked: 'Linked. What your role allows, you can now do for this group here.',
@@ -14,7 +17,9 @@ export async function load({ params, locals, url, setHeaders }) {
 	requireGroupsEnabled();
 	// What's on it depends on who's asking.
 	setHeaders({ 'cache-control': 'no-store' });
-	const group = await groupView(params.actor, locals.did);
+	const person = locals.did ? await callerSession(locals.session ?? null) : null;
+	const group = await groupView(params.actor, locals.did, person);
+	const access = group.askAccess && person ? groupAccess(url, person.did) : null;
 	const page = await hostingQuery(
 		getServerClient(env.DB),
 		{ actor: group.did as ActorIdentifier },
@@ -28,6 +33,10 @@ export async function load({ params, locals, url, setHeaders }) {
 		events: page.events,
 		cursor: page.cursor,
 		signedIn: Boolean(locals.did),
+		you: locals.did,
+		/** What the person's own sign-in needs before they can join or see the group as a member. */
+		access,
+		spacesServer: access === 'refused' ? spacesServer() : null,
 		notice:
 			link && Object.hasOwn(LINK_NOTICES, link)
 				? LINK_NOTICES[link as keyof typeof LINK_NOTICES]
