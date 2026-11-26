@@ -59,7 +59,7 @@ declare global {
 			GEOCODER_KEY?: string;
 			/** Optional User-Agent for geocoder requests. */
 			GEOCODER_USER_AGENT?: string;
-			/** The opensocial.group group host whose groups people may link; unset hides groups. */
+			/** The Atmosphere Groups host whose groups people may link; unset hides groups. */
 			GROUP_HOST_URL?: string;
 		}
 	}

@@ -9,14 +9,14 @@ import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 import { getServerClient } from '#lib/contrail/index.js';
 import {
 	declarationUri,
-	GROUP_ACCESS_COLLECTION,
-	GROUP_ACCESS_RKEY,
+	GROUP_ABOUT_COLLECTION,
+	GROUP_ABOUT_RKEY,
 	GROUP_DECLARATION_COLLECTION,
 	GROUP_DECLARATION_RKEY,
-	GROUP_PROFILE_COLLECTION,
-	GROUP_PROFILE_RKEY,
 	groupDeclarationRecord,
-	metaSpaceUri
+	metaSpaceUri,
+	SPACE_POLICY_COLLECTION,
+	SPACE_POLICY_RKEY
 } from '../ids';
 import { cachedHandles, crowdedServers, type CrowdedServer } from './declared';
 import { isRecordNotFound, xrpc, type XrpcHandle } from './xrpc';
@@ -188,7 +188,7 @@ export interface GroupProfile {
 	description: string | null;
 }
 
-/** The profile requires `displayName`; a record without one reads as no profile. */
+/** The about record requires `displayName`; a record without one reads as no profile. */
 export function parseGroupProfile(value: unknown): GroupProfile | null {
 	if (!value || typeof value !== 'object') return null;
 	const raw = value as Record<string, unknown>;
@@ -200,7 +200,7 @@ export function parseGroupProfile(value: unknown): GroupProfile | null {
 
 export interface GroupMeta {
 	profile: GroupProfile | null;
-	/** The meta space's `access.public`; a missing record reads as private. */
+	/** `publicRead` in the meta space's policy; a missing record reads as private. */
 	public: boolean;
 }
 
@@ -224,11 +224,12 @@ async function metaRecord(
 
 /** Read as the group itself, through a session someone linked. */
 export async function readGroupMeta(handle: XrpcHandle, groupDid: string): Promise<GroupMeta> {
-	const [profile, access] = await Promise.all([
-		metaRecord(handle, groupDid, GROUP_PROFILE_COLLECTION, GROUP_PROFILE_RKEY),
-		metaRecord(handle, groupDid, GROUP_ACCESS_COLLECTION, GROUP_ACCESS_RKEY)
+	const [about, policy] = await Promise.all([
+		metaRecord(handle, groupDid, GROUP_ABOUT_COLLECTION, GROUP_ABOUT_RKEY),
+		metaRecord(handle, groupDid, SPACE_POLICY_COLLECTION, SPACE_POLICY_RKEY)
 	]);
-	return { profile: parseGroupProfile(profile), public: access?.public === true };
+	const publicRead = (policy?.policy as { publicRead?: unknown } | null | undefined)?.publicRead;
+	return { profile: parseGroupProfile(about), public: publicRead === true };
 }
 
 /** Whether the group's public repo holds its declaration, which may not be indexed yet. */

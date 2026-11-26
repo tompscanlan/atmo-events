@@ -1,4 +1,4 @@
-// Collections, space types and URIs for groups, as the opensocial.group proposal names them.
+// Collections, space types and URIs for groups, as the Atmosphere Groups spec names them.
 // Values only, so the contrail config and the pages can import them.
 import { spaceUri as spaceAt } from '../spaces/uri';
 
@@ -6,11 +6,12 @@ import { spaceUri as spaceAt } from '../spaces/uri';
 export const GROUP_DECLARATION_COLLECTION = 'org.atgrp.declaration';
 export const GROUP_DECLARATION_RKEY = 'self';
 
-export const META_SPACE_TYPE = 'group.opensocial.meta';
-export const GROUP_PROFILE_COLLECTION = 'group.opensocial.profile';
-export const GROUP_PROFILE_RKEY = 'self';
-export const GROUP_ACCESS_COLLECTION = 'group.opensocial.access';
-export const GROUP_ACCESS_RKEY = 'self';
+export const META_SPACE_TYPE = 'org.atgrp.meta';
+export const GROUP_ABOUT_COLLECTION = 'org.atgrp.about';
+export const GROUP_ABOUT_RKEY = 'self';
+/** Where the host publishes a space's `org.atgrp.policy`, which says whether it is public. */
+export const SPACE_POLICY_COLLECTION = 'com.atproto.space.policy';
+export const SPACE_POLICY_RKEY = 'self';
 
 /** A group's public events are ordinary events in its public repo. */
 export const GROUP_EVENT_COLLECTION = 'community.lexicon.calendar.event';
