@@ -7,7 +7,8 @@ import '../../../../app.css';
 const mocks = vi.hoisted(() => ({
 	setGroupListed: vi.fn(),
 	unlinkGroupSession: vi.fn(),
-	finishGroupSetup: vi.fn()
+	finishGroupSetup: vi.fn(),
+	turnOnMembersOnlyEvents: vi.fn()
 }));
 const member = vi.hoisted(() => ({ joinGroup: vi.fn(), cancelJoin: vi.fn(), leave: vi.fn() }));
 const oauth = vi.hoisted(() => ({ requestPermissions: vi.fn() }));
@@ -264,5 +265,72 @@ describe("a person's own membership", () => {
 		await expect
 			.element(page.getByRole('link', { name: 'spaces.example' }))
 			.toHaveAttribute('href', 'https://spaces.example/');
+	});
+});
+
+describe('members-only events', () => {
+	const ADMIN = {
+		post: true,
+		list: true,
+		settings: true,
+		turnOnMembersOnly: true,
+		membersOnly: false
+	};
+
+	it('are turned on from the page, as the first of three steps', async () => {
+		mocks.turnOnMembersOnlyEvents.mockResolvedValue({ ok: true });
+		const data = { ...linkedPage({ public: true, listed: true }, ADMIN), calendar: 'missing' };
+		render(GroupPage, { data: data as never });
+		const setup = page.getByTestId('members-only-setup');
+		await expect.element(setup).toBeVisible();
+		expect(setup.element().querySelectorAll('li')).toHaveLength(3);
+		await page.getByRole('button', { name: 'Turn on members-only events' }).click();
+		await expect
+			.poll(() => mocks.turnOnMembersOnlyEvents.mock.calls[0]?.[0])
+			.toEqual({ groupDid: GROUP });
+	});
+
+	it('then ask the link to be approved once more, before anything is posted there', async () => {
+		const data = { ...linkedPage({ public: true, listed: true }, ADMIN), calendar: 'ready' };
+		render(GroupPage, { data: data as never });
+		const approve = page.getByRole('button', { name: 'Approve once more' });
+		await expect.element(approve).toBeVisible();
+		const form = approve.element().closest('form');
+		expect(form?.getAttribute('action')).toBe('/oauth/group/link');
+		expect(form?.querySelector('input[name="group"]')?.getAttribute('value')).toBe(GROUP);
+		expect(
+			page.getByRole('button', { name: 'Turn on members-only events' }).elements()
+		).toHaveLength(0);
+	});
+
+	it('are listed for those who may see them, marked members only, each to its own page', async () => {
+		const posting = { ...ADMIN, membersOnly: true };
+		const data = {
+			...linkedPage({ public: true, listed: true }, posting),
+			calendar: 'ready',
+			membersOnly: {
+				unread: false,
+				events: [
+					{
+						name: 'Supper',
+						rkey: '3ksupper',
+						did: GROUP,
+						startsAt: '2030-01-01T18:00:00Z',
+						createdAt: '2029-01-01T00:00:00Z',
+						uri: `at:space/${GROUP}/community.lexicon.calendar.collection/self/${GROUP}/community.lexicon.calendar.event/3ksupper`
+					}
+				]
+			}
+		};
+		render(GroupPage, { data: data as never });
+		const listed = page.getByTestId('members-only-event');
+		await expect.element(listed).toBeVisible();
+		expect(listed.element().textContent?.replace(/\s+/g, ' ')).toContain('Members only');
+		const hrefs = [...listed.element().querySelectorAll('a')].map((a) =>
+			decodeURIComponent(a.getAttribute('href') ?? '')
+		);
+		expect(hrefs).toContain(`/groups/${GROUP}/events/3ksupper`);
+		expect(hrefs).toContain(`/groups/${GROUP}/events/3ksupper/edit`);
+		expect(page.getByTestId('members-only-setup').elements()).toHaveLength(0);
 	});
 });

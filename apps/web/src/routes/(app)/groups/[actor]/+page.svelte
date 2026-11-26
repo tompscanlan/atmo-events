@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { Avatar, Badge, Button, Label, Textarea } from '@atmo-dev/kit';
+	import { Avatar, Badge, Button, Icon, Label, Textarea } from '@atmo-dev/kit';
+	import { EventCard } from '@atmo-dev/kit/events';
+	import { LockKeyhole } from '@sketchyicons/svelte';
 	import { isHttpError } from '@sveltejs/kit';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -9,6 +11,7 @@
 	import {
 		finishGroupSetup,
 		setGroupListed,
+		turnOnMembersOnlyEvents,
 		unlinkGroupSession
 	} from '#lib/groups/group.remote.js';
 	import { cancelJoin, joinGroup, leave } from '#lib/groups/members.remote.js';
@@ -22,6 +25,10 @@
 	 *  read one back, and asking again is answered with the same request. */
 	let requested = $state(false);
 	let message = $state('');
+	/** Members-only events are on, and this link may post them. */
+	let postsMembersOnly = $derived(
+		data.calendar === 'ready' && Boolean(group.linked?.can.membersOnly)
+	);
 	/** Members see who else is in the group; an admin who linked it, also those asking to join. */
 	let showMembers = $derived(
 		group.member === true ||
@@ -127,7 +134,9 @@
 				kind="participate"
 				access={data.access}
 				did={data.you}
-				purpose="To join this group, or see it as one of its members, atmo asks your server to act for you in groups."
+				purpose={data.accessForMembersOnly
+					? "To see this group's members-only events and RSVP to them, atmo asks your server to act for you in groups."
+					: 'To join this group, or see it as one of its members, atmo asks your server to act for you in groups.'}
 				spacesServer={data.spacesServer}
 			/>
 		{/if}
@@ -182,7 +191,7 @@
 
 		{#if group.linked}
 			<section class="mt-6 flex flex-wrap items-center gap-2" aria-label="Manage this group">
-				{#if group.linked.can.post}
+				{#if group.linked.can.post || postsMembersOnly}
 					<Button
 						href={resolve('/(app)/groups/[actor]/events/new', { actor: group.did })}
 						variant="primary">Post an event</Button
@@ -232,6 +241,50 @@
 						>Finish setting up</Button
 					>
 				</div>
+			{/if}
+			{#if data.calendar && data.calendar !== 'ready' && data.calendar !== 'missing'}
+				<p class="text-base-600 dark:text-base-400 mt-3 text-sm" role="status">
+					{data.calendar === 'readable'
+						? "This group's calendar can be read by more than its members, so atmo posts no members-only events to it."
+						: "Whether members-only events are on couldn't be checked just now. Reload to try again."}
+				</p>
+			{:else if data.calendar && !postsMembersOnly}
+				<!-- Turning them on makes the calendar space; the host gives a link no scope for a space
+				     that was not there when it was approved, so the link is approved once more. -->
+				<section
+					class="rounded-ui border-base-200 dark:border-base-800 mt-4 border p-4"
+					aria-label="Members-only events"
+					data-testid="members-only-setup"
+				>
+					<h2 class="text-base-900 dark:text-base-50 text-sm font-semibold">Members-only events</h2>
+					<p class="text-base-700 dark:text-base-300 mt-1 text-sm">
+						Events only this group's members can see, posted from this page as the group.
+					</p>
+					<ol class="text-base-700 dark:text-base-300 mt-2 list-decimal space-y-1 pl-5 text-sm">
+						<li class:font-medium={data.calendar === 'missing'}>
+							Turn them on. atmo makes the group a calendar only its members can read.
+						</li>
+						<li class:font-medium={data.calendar === 'ready'}>
+							Approve your link once more, so it may post to that calendar.
+						</li>
+						<li>Post an event, and choose Members only.</li>
+					</ol>
+					{#if data.calendar === 'missing' && group.linked.can.turnOnMembersOnly}
+						<Button
+							class="mt-3"
+							size="sm"
+							variant="secondary"
+							disabled={busy}
+							onclick={() => act(() => turnOnMembersOnlyEvents({ groupDid: group.did }))}
+							>Turn on members-only events</Button
+						>
+					{:else if data.calendar === 'ready'}
+						<form method="POST" action="/oauth/group/link" class="mt-3">
+							<input type="hidden" name="group" value={group.did} />
+							<Button type="submit" size="sm" variant="secondary">Approve once more</Button>
+						</form>
+					{/if}
+				</section>
 			{/if}
 			{#if group.linked.reapprove}
 				<form
@@ -304,6 +357,49 @@
 			{/if}
 		{:else}
 			<p class="text-base-600 dark:text-base-400 py-12 text-center">No upcoming events.</p>
+		{/if}
+		{#if data.membersOnly}
+			<section class="mt-8" aria-labelledby="members-only-heading">
+				<h2 id="members-only-heading" class="text-base-900 dark:text-base-50 text-lg font-semibold">
+					Members-only events
+				</h2>
+				{#if data.membersOnly.unread}
+					<p class="text-base-600 dark:text-base-400 mt-2 text-sm" role="status">
+						Members-only events couldn't be loaded right now. Try again shortly.
+					</p>
+				{:else if data.membersOnly.events.length > 0}
+					<ul class="mt-4 space-y-3">
+						{#each data.membersOnly.events as event (event.uri)}
+							{@const href = resolve('/(app)/groups/[actor]/events/[rkey]', {
+								actor: group.did,
+								rkey: event.rkey
+							})}
+							<li data-testid="members-only-event">
+								<EventCard {event} {href} />
+								<p class="text-base-600 dark:text-base-400 mt-1 flex gap-3 text-xs">
+									<span>
+										<Icon img={LockKeyhole} size={12} class="mr-1 inline align-[-2px]" />Members
+										only
+									</span>
+									{#if postsMembersOnly}
+										<a
+											class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 font-medium transition-colors"
+											href={resolve('/(app)/groups/[actor]/events/[rkey]/edit', {
+												actor: group.did,
+												rkey: event.rkey
+											})}>Edit</a
+										>
+									{/if}
+								</p>
+							</li>
+						{/each}
+					</ul>
+				{:else}
+					<p class="text-base-600 dark:text-base-400 py-6 text-center text-sm">
+						No upcoming members-only events.
+					</p>
+				{/if}
+			</section>
 		{/if}
 		<a
 			href={resolve('/(app)/p/[actor]/past-events', { actor: group.did })}
