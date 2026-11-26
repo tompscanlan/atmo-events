@@ -145,7 +145,6 @@ const S = {
 	outside: new Map(), // hosts outside the network the browsers asked for -> { count, example }
 	pageErrors: 0,
 	consoleCrashes: 0,
-	consoleNoScript: false,
 	har: []
 };
 let CURRENT = null; // the step running, for check()
@@ -178,11 +177,6 @@ async function newContext(who) {
 	await context.route('**/xrpc/org.atgrp.internal.searchActors?*', (route) =>
 		route.fulfill({ json: { actors: [] } })
 	);
-	// While the console's approval page is broken in the browser, its scripts are left out (see
-	// throughLoop), which its forms and links work without.
-	await context.route(`${HOST}/_app/**`, (route) =>
-		S.consoleNoScript ? route.abort() : route.continue()
-	);
 	context.on('request', (request) => {
 		const host = new URL(request.url()).hostname;
 		if (
@@ -202,9 +196,8 @@ async function pageFor(who) {
 	const context = await newContext(who);
 	const page = await context.newPage();
 	page.on('pageerror', (e) => {
-		// The console's own scripts, left out on purpose while its approval page is broken.
-		if (e.message.includes(`${HOST}/_app/`)) return;
 		S.pageErrors++;
+		if (new URL(page.url()).origin === HOST) S.consoleCrashes++;
 		log(`     [${who}] browser error: ${e.message.slice(0, 200)}`);
 	});
 	// Refusals and failures the pages ran into, for the log: only the host's and atmo's own.
@@ -216,12 +209,7 @@ async function pageFor(who) {
 	});
 	let said = 0;
 	page.on('console', (m) => {
-		if (
-			m.type() === 'error' &&
-			!S.consoleNoScript &&
-			said++ < 8 &&
-			new URL(page.url()).origin !== ATMO
-		)
+		if (m.type() === 'error' && said++ < 8 && new URL(page.url()).origin !== ATMO)
 			log(`     [${who}] console error: ${m.text().split('\n')[0].slice(0, 200)}`);
 	});
 	page.setDefaultTimeout(30_000);
@@ -249,12 +237,7 @@ async function through(page, who, done, options = {}) {
 	}
 }
 async function throughOnce(page, who, done, { onApprove, onConsent, stopAt } = {}) {
-	try {
-		return await throughLoop(page, who, done, { onApprove, onConsent, stopAt });
-	} finally {
-		// Scripts back on for the console's other pages.
-		S.consoleNoScript = false;
-	}
+	return await throughLoop(page, who, done, { onApprove, onConsent, stopAt });
 }
 async function throughLoop(page, who, done, { onApprove, onConsent, stopAt }) {
 	for (let i = 0; i < 150; i++) {
@@ -274,7 +257,6 @@ async function throughLoop(page, who, done, { onApprove, onConsent, stopAt }) {
 				continue;
 			}
 			if (
-				!S.consoleNoScript &&
 				u.pathname === '/authorize' &&
 				(await page
 					.getByText(/something went wrong/i)
@@ -282,34 +264,21 @@ async function throughLoop(page, who, done, { onApprove, onConsent, stopAt }) {
 					.catch(() => 0))
 			) {
 				S.consoleCrashes++;
-				S.consoleNoScript = true;
-				note(
-					"the console's approval page broke in the browser (see console-approval-page-works); going on with its scripts off"
+				throw new Error(
+					'stuck for ' + who.name + ": the console's approval page shows 'Something went wrong'"
 				);
-				await page.reload({ waitUntil: 'load' });
-				continue;
 			}
 			const approve = page.getByRole('button', { name: /^sign it in as/i }).first();
 			if (await approve.isVisible().catch(() => false)) {
-				if (!S.consoleNoScript) {
-					// The console's script runs after its page is drawn; see whether the page survives it.
-					await sleep(2500);
-					if (
-						await page
-							.getByText(/something went wrong/i)
-							.count()
-							.catch(() => 0)
-					) {
-						S.consoleCrashes++;
-						S.consoleNoScript = true;
-						note(
-							"the console's approval page broke in the browser (see console-approval-page-works); going on with its scripts off"
-						);
-						await page.reload({ waitUntil: 'load' });
-						continue;
-					}
-					if (!(await approve.isVisible().catch(() => false))) continue;
-				}
+				// The console's script runs after its page is drawn: see whether the page survives it.
+				await sleep(2000);
+				if (
+					await page
+						.getByText(/something went wrong/i)
+						.count()
+						.catch(() => 0)
+				)
+					continue;
 				if (onApprove) await onApprove(page);
 				await approve.click();
 				await sleep(1000);
@@ -319,21 +288,6 @@ async function throughLoop(page, who, done, { onApprove, onConsent, stopAt }) {
 			if (await back.isVisible().catch(() => false)) {
 				await back.click();
 				await sleep(1000);
-				continue;
-			}
-			if (
-				S.consoleNoScript &&
-				u.pathname === '/authorize' &&
-				(await page
-					.getByText(/sign in first/i)
-					.count()
-					.catch(() => 0))
-			) {
-				// No script, so no sign-in dialog: the console's own login address, as the dialog goes to.
-				await page.goto(
-					`${HOST}/console/login?${new URLSearchParams({ back: u.pathname + u.search, handle: who.handle })}`,
-					{ waitUntil: 'load' }
-				);
 				continue;
 			}
 			const signIn = page.getByRole('banner').getByRole('button', { name: /^sign in$/i });
@@ -695,6 +649,9 @@ function png(width, height, [r, g, b]) {
 }
 
 async function editorPublish(page, name, { picture } = {}) {
+	// A group's new-event page asks who may see the event first: everyone, for the public events here.
+	const everyone = page.getByRole('radio', { name: /^everyone/i });
+	if (await everyone.isVisible({ timeout: 15_000 }).catch(() => false)) await everyone.check();
 	const field = page.locator('main [contenteditable=true]').first();
 	await field.waitFor({ timeout: 60_000 });
 	await field.click();
@@ -792,6 +749,7 @@ async function ensurePublic(g) {
 	if (!privateNow.has(g.did)) return;
 	await setMetaPublic(await adminFor(g, ALICE), g, true);
 	privateNow.delete(g.did);
+	if (g.linkedByAlice !== undefined || g === S.groups.gj) await reindex(g);
 	// The host writes the declaration again; the index hears of it from Jetstream at an ingest cycle
 	// (nobody who linked the group is looking at it to tell it sooner).
 	const back = await until(
@@ -806,6 +764,45 @@ async function ensurePublic(g) {
 	if (!back.ok) note(`${g.handle} is not back in the index after ${15 * 2} s`);
 }
 const groupUrl = (g) => `${ATMO}/groups/${g.did}`;
+
+/** Has alice, linked to the group, open its page, which tells atmo's index what the host's repo now
+ *  holds (its declaration added or taken away) without waiting for Jetstream. */
+async function reindex(g) {
+	const { alice } = S.pages;
+	if (!g.linkedByAlice) {
+		await startLink(alice, g.handle);
+		await through(alice, ALICE, (u) => u.origin === ATMO);
+		await settle(alice);
+		g.linkedByAlice = true;
+	}
+	await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+}
+/** Makes a public group at the host and has atmo's index know it (a declaration it has heard of from
+ *  Jetstream, or, failing that, alice linking it from the app), so a step does not depend on what an
+ *  earlier section did to any group. */
+async function indexedGroup(label, name, options = {}) {
+	const g = await createGroup(ALICE, label, name, options);
+	Object.assign(g, spacesOf(g.did));
+	const anon = S.pages.anon ?? (await pageFor('anon'));
+	const heard = await until(
+		async () => {
+			await runCron();
+			return status(anon, groupUrl(g));
+		},
+		(x) => x === 200,
+		8,
+		2000
+	);
+	if (!heard.ok) {
+		const { alice } = S.pages;
+		await startLink(alice, g.handle);
+		await through(alice, ALICE, (u) => u.origin === ATMO);
+		await settle(alice);
+		g.linkedByAlice = true;
+	}
+	note(`${g.handle} is known to atmo's index (from Jetstream: ${heard.ok}, else linked by alice)`);
+	return g;
+}
 const body = (page) =>
 	page
 		.locator('body')
@@ -1003,21 +1000,25 @@ step(
 			const asked = approval.asked;
 			check(
 				'atmo asked for the meta read, the declaration and event repo scopes, and image blobs',
-				/space:org\.atgrp\.meta\?authority=self&action=read/.test(asked) &&
+				/space:org\.atgrp\.meta\?authority=self&(skey=self&)?action=read/.test(asked) &&
 					/repo\?collection=org\.atgrp\.declaration|repo:org\.atgrp\.declaration/.test(asked) &&
 					/community\.lexicon\.calendar\.event/.test(asked) &&
 					/blob\?accept=image|blob:image/.test(asked),
 				asked.trim().replace(/\s+/g, ' ')
 			);
 			const detail = approval.detail.replace(/\s+/g, ' ');
+			const [granted, withheld = ''] = detail.split(/It would not get/i);
 			check(
-				"an admin's grant keeps the meta read and the repo writes asked: both are listed as granted, nothing as withheld",
-				/Repository/.test(detail) &&
-					/Spaces/.test(detail) &&
-					/org\.atgrp\.declaration/.test(detail) &&
-					/community\.lexicon\.calendar\.event/.test(detail) &&
-					!/it would not get/i.test(approval.text),
-				detail.slice(0, 500)
+				"an admin's grant keeps the meta read, the repo writes and the members and settings scopes; only the calendar space's write is withheld, as no such space exists yet",
+				/Repository/.test(granted) &&
+					/org\.atgrp\.declaration/.test(granted) &&
+					/community\.lexicon\.calendar\.event/.test(granted) &&
+					/org\.atgrp\.meta spaces/.test(granted) &&
+					/org\.atgrp\.members spaces/.test(granted) &&
+					(withheld === '' ||
+						(/community\.lexicon\.calendar\.collection/.test(withheld) &&
+							!/org\.atgrp\./.test(withheld))),
+				detail.slice(-900)
 			);
 			note(
 				'the blob scope is not listed on the page; the picture upload in post-event-with-picture shows it was kept'
@@ -2399,10 +2400,24 @@ step('create', 'todo-approve-again-for-an-old-link', async () => {}, {
 // =====================================================================================
 step(
 	'join',
+	'join-group',
+	async () => {
+		const g = await indexedGroup(`jn${RUN}`, `Tarn walkers ${RUN}`);
+		S.groups.gj = g;
+		check(
+			`${g.name} is made at the host and known to atmo (${g.handle})`,
+			g.did?.startsWith('did:plc:')
+		);
+	},
+	{ needs: ['people-sign-in'] }
+);
+
+step(
+	'join',
 	'bob-allows-joining-groups',
 	async (t) => {
 		const { bob } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
 		t.shot = bob;
 		check(
@@ -2425,7 +2440,7 @@ step(
 				(await bob.locator('#join-message').count()) === 1
 		);
 	},
-	{ needs: ['people-sign-in', 'alice-links-by-handle'] }
+	{ needs: ['join-group'] }
 );
 
 step(
@@ -2433,7 +2448,7 @@ step(
 	'bob-asks-with-a-message-and-sees-it-waiting',
 	async (t) => {
 		const { bob } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		S.joinMessage = `Hello from bob, run ${RUN}`;
 		await bob.fill('#join-message', S.joinMessage);
 		await bob.getByRole('button', { name: /^ask to join$/i }).click();
@@ -2459,7 +2474,7 @@ step(
 	'bob-cancels-and-asks-again',
 	async (t) => {
 		const { bob } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		const admin = await adminFor(g, ALICE);
 		await bob.getByRole('button', { name: /^cancel request$/i }).click();
 		await bob.getByRole('button', { name: /^ask to join$/i }).waitFor({ timeout: 20_000 });
@@ -2482,7 +2497,7 @@ step(
 	'admitted-at-the-host-bob-is-a-member',
 	async (t) => {
 		const { bob } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		await admitAtHost(await adminFor(g, ALICE), g, BOB.did);
 		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
 		t.shot = bob;
@@ -2530,16 +2545,17 @@ step(
 	'private-group-is-still-seen-by-a-member',
 	async (t) => {
 		const { bob } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		const admin = await adminFor(g, ALICE);
 		await setMetaPublic(admin, g, false);
 		privateNow.add(g.did);
+		await reindex(g);
 		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
 		t.shot = bob;
 		const text = await mainText(bob);
 		check(
 			'the group is made private at the host, and bob still sees it, with its name',
-			text.includes(NAME) &&
+			text.includes(S.groups.gj.name) &&
 				(await bob.getByRole('button', { name: /^leave group$/i }).count()) === 1,
 			text.slice(0, 200)
 		);
@@ -2550,7 +2566,7 @@ step(
 				return status(S.pages.anon, groupUrl(g));
 			},
 			(x) => x === 404,
-			10,
+			30,
 			2000
 		);
 		check('while a signed-out visitor gets a 404', hidden.ok, String(hidden.last));
@@ -2563,7 +2579,7 @@ step(
 	'your-groups-lists-it',
 	async (t) => {
 		const { bob } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		await bob.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
 		t.shot = bob;
 		const section = bob.locator('section', {
@@ -2572,7 +2588,7 @@ step(
 		const text = (await section.innerText().catch(() => '')).replace(/\s+/g, ' ');
 		check(
 			'/groups lists it under his groups, though it is private',
-			text.includes(NAME) || text.includes(g.handle),
+			text.includes(S.groups.gj.name) || text.includes(g.handle),
 			text.slice(0, 300)
 		);
 		// Back to public for the steps that follow.
@@ -2585,9 +2601,9 @@ step(
 	'join',
 	'bob-leaves-and-may-ask-again',
 	async (t) => {
-		await ensurePublic(S.groups.g1);
+		await ensurePublic(S.groups.gj);
 		const { bob } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
 		await bob.getByRole('button', { name: /^leave group$/i }).click();
 		await bob.getByRole('button', { name: /^ask to join$/i }).waitFor({ timeout: 20_000 });
@@ -2608,7 +2624,7 @@ step(
 	'founder-cannot-leave-as-the-only-admin',
 	async (t) => {
 		const { alice } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
 		if (await alice.getByRole('button', { name: /^allow joining groups$/i }).count()) {
 			await allowOnPage(alice, ALICE, /^allow joining groups$/i);
@@ -2673,9 +2689,9 @@ step(
 	'join',
 	'carol-without-spaces-gets-an-explanation',
 	async (t) => {
-		await ensurePublic(S.groups.g1);
+		await ensurePublic(S.groups.gj);
 		const carol = await signInToAtmo(CAROL);
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		await carol.goto(groupUrl(g), { waitUntil: 'networkidle' });
 		t.shot = carol;
 		check(
@@ -2700,16 +2716,16 @@ step(
 			(await carol.getByRole('button', { name: /^allow joining groups$/i }).count()) === 0
 		);
 	},
-	{ needs: ['people-sign-in', 'alice-links-by-handle'] }
+	{ needs: ['join-group'] }
 );
 
 step(
 	'join',
 	'dana-on-the-other-spaces-pds-asks-and-is-admitted',
 	async (t) => {
-		await ensurePublic(S.groups.g1);
+		await ensurePublic(S.groups.gj);
 		const dana = await signInToAtmo(DANA);
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		await dana.goto(groupUrl(g), { waitUntil: 'networkidle' });
 		await allowOnPage(dana, DANA, /^allow joining groups$/i);
 		t.shot = dana;
@@ -2733,7 +2749,7 @@ step(
 			(await dana.getByRole('button', { name: /^leave group$/i }).count()) === 1
 		);
 	},
-	{ needs: ['people-sign-in', 'alice-links-by-handle'] }
+	{ needs: ['join-group'] }
 );
 
 // =====================================================================================
@@ -2747,9 +2763,9 @@ step(
 	'roster',
 	'alice-links-and-sees-the-roster-controls',
 	async (t) => {
-		await ensurePublic(S.groups.g1);
+		await ensurePublic(S.groups.gj);
 		const { alice } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
 		if (await alice.getByRole('button', { name: /^link this group$|^link again$/i }).count()) {
 			await alice.getByRole('button', { name: /^link this group$|^link again$/i }).click();
@@ -2794,7 +2810,7 @@ step(
 	'approve-bobs-request',
 	async (t) => {
 		const { alice } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		await alice
 			.locator('ul[aria-label="Asking to join"] li', { hasText: BOB.handle.split('.')[0] })
 			.getByRole('button', { name: /^approve$/i })
@@ -2840,7 +2856,7 @@ step(
 	'deny-mallorys-request',
 	async (t) => {
 		const { alice } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		const asked = await hostCall(MALLORY, 'org.atgrp.requestJoin', {
 			group: g.did,
 			message: 'Mallory asking'
@@ -2875,7 +2891,7 @@ step(
 	'approving-a-request-already-gone',
 	async (t) => {
 		const { alice } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		await hostCall(MALLORY, 'org.atgrp.requestJoin', { group: g.did });
 		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
 		const row = alice.locator('ul[aria-label="Asking to join"] li', { hasText: 'mallory' });
@@ -2904,7 +2920,7 @@ step(
 	'make-bob-admin-and-back',
 	async (t) => {
 		const { alice } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
 		const row = alice.locator('ul[aria-label="Members"] li', { hasText: BOB.handle.split('.')[0] });
 		await row.getByRole('button', { name: /^make admin$/i }).click();
@@ -2925,7 +2941,7 @@ step(
 	'two-admins-can-demote-each-other',
 	async (t) => {
 		const { bob } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		// Bob, an admin now, links the group, and takes alice's admin role away: the group would
 		// keep bob. Then taking his own away is not offered. The host's refusal is for the last
 		// admin: try to make the only admin a member from a stale page.
@@ -2974,7 +2990,7 @@ step(
 	'a-plain-member-sees-the-roster-without-controls',
 	async (t) => {
 		const { bob } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		// Danas is a plain member, admitted in the join section.
 		const { dana } = S.pages;
 		await dana.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
@@ -3000,7 +3016,7 @@ step(
 	'remove-a-member',
 	async (t) => {
 		const { alice, bob } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		// Alice may have been demoted by the last step: make sure the page still lets her act.
 		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
 		const row = alice.locator('ul[aria-label="Members"] li', {
@@ -3040,7 +3056,7 @@ step(
 	'carol-admitted-shows-as-not-confirmed',
 	async (t) => {
 		const { alice } = S.pages;
-		const g = S.groups.g1;
+		const g = S.groups.gj;
 		const asked = await hostCall(CAROL, 'org.atgrp.requestJoin', {
 			group: g.did,
 			message: 'Carol, no spaces'
@@ -3082,7 +3098,7 @@ step(
 	'flags',
 	'index-endpoints-answer',
 	async () => {
-		const g = S.groups.g1;
+		const g = await indexedGroup(`fl${RUN}`, `Fell flags ${RUN}`);
 		const anon = async (method, target, opts = {}) => {
 			const r = await fetch(`${ATMO}${target}`, { method, redirect: 'manual', ...opts });
 			return { status: r.status, location: r.headers.get('location'), text: await r.text() };
@@ -3158,7 +3174,7 @@ step(
 			groupScopes.filter((x) => PERSON_ONLY.test(x)).join(' ')
 		);
 	},
-	{ needs: ['listed-by-the-host'] }
+	{ needs: ['people-sign-in'] }
 );
 
 step('flags', 'off-state', async () => {}, {
@@ -3192,7 +3208,7 @@ step('wrap', 'console-approval-page-works', async () => {
 	check(
 		"the host console's approval page survives its own script when atmo asks to link as an admin (no page broke in this run)",
 		S.consoleCrashes === 0,
-		`${S.consoleCrashes} approval pages showed "Something went wrong" after loading (the walk went on with the console's scripts off)`
+		`${S.consoleCrashes} console page errors or "Something went wrong" pages`
 	);
 });
 

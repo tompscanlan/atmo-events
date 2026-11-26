@@ -28,7 +28,7 @@ pds:
 grouphosts:
   - name: gh                   # https://gh.atmogroups.local.snowglobe.at; groups <group>.gh.atmogroups.local.snowglobe.at
     kind: atgrp
-    image: group-host:patches-243ffe8   # a locally built image of the host (group-host 0.4.0) with two patches
+    image: group-host:patches-6670d5c   # a locally built image of the host (group-host 0.4.0) with its patches
 
 services:
   relay: auto
