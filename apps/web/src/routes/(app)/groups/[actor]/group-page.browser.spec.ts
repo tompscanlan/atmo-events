@@ -14,8 +14,19 @@ import GroupPage from './+page.svelte';
 
 const GROUP = 'did:plc:group';
 
-/** The page for someone who linked the group, as its load returns it. */
-function linkedPage(linked: { public: boolean; listed: boolean }) {
+const EVENT = {
+	uri: `at://${GROUP}/community.lexicon.calendar.event/e1`,
+	rkey: 'e1',
+	name: 'Night ride'
+};
+
+/** The page for someone who linked the group, as its load returns it; `can` is what the session's
+ *  granted scope allows. */
+function linkedPage(
+	linked: { public: boolean; listed: boolean },
+	can = { post: true, list: true },
+	events: (typeof EVENT)[] = []
+) {
 	return {
 		pageTitle: 'Knitters',
 		pageDescription: 'Events from Knitters.',
@@ -27,12 +38,13 @@ function linkedPage(linked: { public: boolean; listed: boolean }) {
 			atHost: true,
 			linked: {
 				meta: { profile: { name: 'Knitters', description: null }, public: linked.public },
-				listed: linked.listed
+				listed: linked.listed,
+				can
 			},
 			relink: false,
 			hasLink: true
 		},
-		events: [],
+		events,
 		cursor: null,
 		signedIn: true,
 		notice: null
@@ -43,6 +55,31 @@ const listButton = () => page.getByRole('button', { name: 'Add to the groups lis
 const shown = () => (document.body.textContent ?? '').replace(/\s+/g, ' ');
 
 afterEach(() => vi.resetAllMocks());
+
+describe("what a link's granted scope offers", () => {
+	it('offers posting, editing and listing to a session that may', async () => {
+		render(GroupPage, { data: linkedPage({ public: true, listed: false }) as never });
+		await expect.element(page.getByRole('link', { name: 'Post an event' })).toBeVisible();
+		await expect.element(listButton()).toBeVisible();
+	});
+
+	it("offers none of it to a member's session, and says why", async () => {
+		render(GroupPage, {
+			data: linkedPage({ public: true, listed: false }, { post: false, list: false }, [
+				EVENT
+			]) as never
+		});
+		await expect
+			.poll(shown)
+			.toContain(
+				'Your role in this group lets you see it here, but not post its events or list it.'
+			);
+		expect(page.getByRole('link', { name: 'Post an event' }).elements()).toHaveLength(0);
+		expect(page.getByRole('link', { name: 'Edit' }).elements()).toHaveLength(0);
+		expect(listButton().elements()).toHaveLength(0);
+		expect(page.getByRole('button', { name: 'Unlink' }).elements()).toHaveLength(1);
+	});
+});
 
 describe('listing a linked group', () => {
 	it('offers no listing for a private group, and says why', async () => {

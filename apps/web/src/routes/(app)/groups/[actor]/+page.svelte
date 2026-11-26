@@ -71,32 +71,41 @@
 
 		{#if group.linked}
 			<section class="mt-6 flex flex-wrap items-center gap-2" aria-label="Manage this group">
-				<Button
-					href={resolve('/(app)/groups/[actor]/events/new', { actor: group.did })}
-					variant="primary">Post an event</Button
-				>
-				{#if group.linked.listed}
+				{#if group.linked.can.post}
+					<Button
+						href={resolve('/(app)/groups/[actor]/events/new', { actor: group.did })}
+						variant="primary">Post an event</Button
+					>
+				{/if}
+				{#if !group.linked.meta.public}
+					<Badge>Private</Badge>
+					{#if group.linked.can.list}
+						<span class="text-base-600 dark:text-base-400 text-sm">
+							Only a public group can be on the groups list.
+						</span>
+					{/if}
+				{:else if group.linked.can.list && group.linked.listed}
 					<Button
 						variant="secondary"
 						disabled={busy}
 						onclick={() => act(() => setGroupListed({ groupDid: group.did, listed: false }))}
 						>Remove from the groups list</Button
 					>
-				{:else if group.linked.meta.public}
+				{:else if group.linked.can.list}
 					<Button
 						variant="secondary"
 						disabled={busy}
 						onclick={() => act(() => setGroupListed({ groupDid: group.did, listed: true }))}
 						>Add to the groups list</Button
 					>
-				{:else}
-					<Badge>Private</Badge>
-					<span class="text-base-600 dark:text-base-400 text-sm">
-						Only a public group can be on the groups list.
-					</span>
 				{/if}
 				<Button variant="ghost" disabled={busy} onclick={unlink}>Unlink</Button>
 			</section>
+			{#if !group.linked.can.post && !group.linked.can.list}
+				<p class="text-base-600 dark:text-base-400 mt-2 text-sm" role="status">
+					Your role in this group lets you see it here, but not post its events or list it.
+				</p>
+			{/if}
 		{:else if group.atHost && data.signedIn}
 			<div class="mt-6 flex flex-wrap items-center gap-3">
 				<form method="POST" action="/oauth/group/link" class="contents">
@@ -133,7 +142,7 @@
 					gridClass="space-y-3"
 				/>
 			</div>
-			{#if group.linked}
+			{#if group.linked?.can.post}
 				<ul class="mt-6 space-y-2 text-sm" aria-label="Edit events">
 					{#each data.events as event (event.uri)}
 						<li class="flex justify-between gap-3">

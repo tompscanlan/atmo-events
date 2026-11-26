@@ -40,6 +40,13 @@ import { GROUP_NOT_FOUND, groupView, requireGroupWriter, requireStoredLink } fro
 const GROUP = 'did:plc:group';
 const ALICE = 'did:plc:alice';
 const META = `at:space/${GROUP}/org.atgrp.meta/self`;
+/** The scope the host grants an admin's session, and a member's. */
+const ADMIN_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&action=read repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event blob?accept=image/*`;
+const MEMBER_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&action=read`;
+const linkedSession = (scope = ADMIN_SCOPE) => ({
+	did: GROUP,
+	getTokenInfo: vi.fn(async () => ({ scope }))
+});
 const resolved = { did: GROUP, handle: 'knit.example', pds: 'https://host.example' };
 const meta = { profile: { name: 'Knitters', description: 'Yarn' }, public: true };
 
@@ -99,7 +106,7 @@ describe('groupView for a visitor', () => {
 
 describe('groupView for someone who linked the group', () => {
 	beforeEach(() => {
-		mocks.groupSession.mockResolvedValue({ did: GROUP });
+		mocks.groupSession.mockResolvedValue(linkedSession());
 	});
 
 	it('reads as the group, caches its profile, and needs no declaration', async () => {
@@ -108,7 +115,7 @@ describe('groupView for someone who linked the group', () => {
 		const view = await groupView(GROUP, ALICE);
 		expect(view).toMatchObject({
 			name: 'Knitters',
-			linked: { meta: { public: false }, listed: false },
+			linked: { meta: { public: false }, listed: false, can: { post: true, list: true } },
 			relink: false,
 			hasLink: true
 		});
@@ -116,6 +123,25 @@ describe('groupView for someone who linked the group', () => {
 		expect(mocks.storeCachedProfile).toHaveBeenCalledWith(resolved, { ...meta, public: false });
 		expect(mocks.isDeclared).not.toHaveBeenCalled();
 		expect(mocks.syncDeclarationIndex).toHaveBeenCalledWith(GROUP, false);
+	});
+
+	it("offers only what the session's granted scope allows", async () => {
+		mocks.groupSession.mockResolvedValue(linkedSession(MEMBER_SCOPE));
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(false);
+		const view = await groupView(GROUP, ALICE);
+		expect(view.linked).toMatchObject({ can: { post: false, list: false } });
+		expect(view.relink).toBe(false);
+	});
+
+	it('asks to link again when the session cannot say what it was granted', async () => {
+		const broken = linkedSession();
+		broken.getTokenInfo.mockRejectedValue(new TokenRefreshError(GROUP, 'invalid_grant'));
+		mocks.groupSession.mockResolvedValue(broken);
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		mocks.isDeclared.mockResolvedValue(true);
+		expect(await groupView(GROUP, ALICE)).toMatchObject({ linked: null, relink: true });
 	});
 
 	it('shows a group the host listed itself as listed, and has the index follow its repo', async () => {
@@ -188,7 +214,7 @@ describe('groupView for someone who linked the group', () => {
 			expect.objectContaining({ ...bareView, relink: true })
 		);
 
-		mocks.groupSession.mockResolvedValue({ did: GROUP });
+		mocks.groupSession.mockResolvedValue(linkedSession());
 		mocks.readGroupMeta.mockRejectedValue(
 			new XrpcError('com.atproto.space.getDelegationToken', 401, 'invalid_token')
 		);
@@ -265,7 +291,7 @@ describe('requireGroupWriter', () => {
 	});
 
 	it("writes with the caller's own session as the group", async () => {
-		mocks.groupSession.mockResolvedValue({ did: GROUP });
+		mocks.groupSession.mockResolvedValue(linkedSession());
 		expect(await requireGroupWriter(GROUP, ALICE)).toMatchObject({ did: GROUP });
 		expect(mocks.groupSession).toHaveBeenCalledWith(GROUP, ALICE);
 	});

@@ -5,7 +5,7 @@ import { GROUP_EVENT_COLLECTION } from './ids';
 import { requireGroupWriter, requireStoredLink } from './server/context';
 import { listGroup, notifyIndex, readGroupMeta, unlistGroup } from './server/group';
 import { unlinkGroup } from './server/sign-in';
-import { isRoleRefused, xrpc, xrpcBlob, XrpcError } from './server/xrpc';
+import { isLinkBroken, isRoleRefused, xrpc, xrpcBlob, XrpcError } from './server/xrpc';
 
 const didSchema = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,2048}$/));
 const rkeySchema = v.pipe(v.string(), v.regex(/^[a-zA-Z0-9._:~-]{1,512}$/));
@@ -17,6 +17,17 @@ function callerDid(): string | null {
 const ONLY_PUBLIC =
 	'Only a public group can be listed, and this one is private. Make it public at its group host first.';
 const NO_ROLE = 'Your role in this group no longer allows that.';
+const RELINK = 'Your link to this group stopped working. Link it again from its page.';
+
+/** A refusal from the group's host, as a 403 whose words the page shows; any other failure is
+ *  `outage`, a 502, which says nothing of what the host answered. */
+function refusedOr(outage: string) {
+	return (e: unknown): never => {
+		if (isRoleRefused(e)) error(403, NO_ROLE);
+		if (isLinkBroken(e)) error(403, RELINK);
+		error(502, outage);
+	};
+}
 
 /** Lists only a public group. This site's rule, kept from the earlier proposal: the spec's
  *  declaration says nothing of the meta space being public. */
@@ -35,6 +46,7 @@ export const setGroupListed = command(
 		} catch (e) {
 			if (isHttpError(e)) throw e;
 			if (isRoleRefused(e)) error(403, NO_ROLE);
+			if (isLinkBroken(e)) error(403, RELINK);
 			// A group host refuses the declaration while the meta space is private, with the
 			// generic InvalidRequest: it turned private since it was read.
 			if (
@@ -63,7 +75,7 @@ export const putGroupEvent = command(
 		const writer = await requireGroupWriter(groupDid, callerDid());
 		const result = await xrpc(writer.handle, 'com.atproto.repo.putRecord', {
 			body: { repo: groupDid, collection: GROUP_EVENT_COLLECTION, rkey, record }
-		}).catch(() => error(502, 'Saving the event failed'));
+		}).catch(refusedOr('Saving the event failed'));
 		const uri = String(result.uri);
 		await notifyIndex(uri);
 		return { uri, cid: String(result.cid) };
@@ -76,7 +88,7 @@ export const deleteGroupEvent = command(
 		const writer = await requireGroupWriter(groupDid, callerDid());
 		await xrpc(writer.handle, 'com.atproto.repo.deleteRecord', {
 			body: { repo: groupDid, collection: GROUP_EVENT_COLLECTION, rkey }
-		}).catch(() => error(502, 'Deleting the event failed'));
+		}).catch(refusedOr('Deleting the event failed'));
 		await notifyIndex(`at://${groupDid}/${GROUP_EVENT_COLLECTION}/${rkey}`);
 		return { ok: true };
 	}
@@ -87,8 +99,8 @@ export const uploadGroupBlob = command(
 	async ({ groupDid, bytes, mimeType }) => {
 		const writer = await requireGroupWriter(groupDid, callerDid());
 		const blob = new Blob([new Uint8Array(bytes)], { type: mimeType });
-		const result = await xrpcBlob(writer.handle, 'com.atproto.repo.uploadBlob', blob).catch(() =>
-			error(502, 'Upload failed')
+		const result = await xrpcBlob(writer.handle, 'com.atproto.repo.uploadBlob', blob).catch(
+			refusedOr('Upload failed')
 		);
 		return result.blob as { $type: 'blob'; ref: { $link: string }; mimeType: string; size: number };
 	}

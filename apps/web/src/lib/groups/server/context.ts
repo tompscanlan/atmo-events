@@ -2,13 +2,9 @@
 // a group. A visitor sees a group only through its declaration; someone who linked it
 // sees it as the group does. Every refusal is the same 404.
 import { error } from '@sveltejs/kit';
-import {
-	TokenInvalidError,
-	TokenRefreshError,
-	TokenRevokedError,
-	type OAuthSession
-} from '@atcute/oauth-node-client';
+import type { OAuthSession } from '@atcute/oauth-node-client';
 import { isSpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
+import { groupAbilities, type GroupAbilities } from '../scopes';
 import {
 	atGroupHost,
 	isDeclared,
@@ -22,10 +18,13 @@ import {
 } from './group';
 import { requireGroupsEnabled } from './enabled';
 import { groupHandle, groupSession, groupSignInAvailable, hasGroupSession } from './sign-in';
-import { errorKind, isAuthRefused, isRoleRefused, type XrpcHandle } from './xrpc';
+import { errorKind, isLinkBroken, isRoleRefused, type XrpcHandle } from './xrpc';
 
 /** Byte for byte, so the causes cannot be told apart. */
 export const GROUP_NOT_FOUND = 'Group not found';
+
+/** To someone who linked the group, whose role does not let the link post as it. */
+export const NO_POSTING = "Your role in this group doesn't let you post its events.";
 
 export interface GroupView {
 	did: string;
@@ -35,11 +34,18 @@ export interface GroupView {
 	/** Whether this site may link it: the group is at its group host. */
 	atHost: boolean;
 	/** Present when the caller linked the group and the session still works. */
-	linked: { meta: GroupMeta; listed: boolean } | null;
+	linked: LinkedGroup | null;
 	/** The caller linked it, but the group's PDS no longer takes the session. */
 	relink: boolean;
 	/** The caller has a link stored here, working or not, so they can unlink it. */
 	hasLink: boolean;
+}
+
+export interface LinkedGroup {
+	meta: GroupMeta;
+	listed: boolean;
+	/** What the session's granted scope lets it do; the host still checks the roles at each write. */
+	can: GroupAbilities;
 }
 
 export interface GroupWriter {
@@ -47,30 +53,22 @@ export interface GroupWriter {
 	handle: XrpcHandle;
 }
 
-/** Only linking again fixes these; an outage at the group's PDS is not one of them. */
-function needsRelink(e: unknown): boolean {
-	return (
-		isAuthRefused(e) ||
-		e instanceof TokenRefreshError ||
-		e instanceof TokenRevokedError ||
-		e instanceof TokenInvalidError
-	);
-}
-
 async function linkedRead(
 	session: OAuthSession,
 	groupDid: string,
 	personDid: string
-): Promise<{ meta: GroupMeta; listed: boolean } | 'refused' | 'no-role'> {
+): Promise<LinkedGroup | 'refused' | 'no-role'> {
 	const handle = groupHandle(session, personDid);
 	try {
-		const [meta, listed] = await Promise.all([
+		const [meta, listed, token] = await Promise.all([
 			readGroupMeta(handle, groupDid),
-			repoHasDeclaration(handle, groupDid)
+			repoHasDeclaration(handle, groupDid),
+			// As granted at the approval; a refresh would not change it.
+			session.getTokenInfo(false)
 		]);
-		return { meta, listed };
+		return { meta, listed, can: groupAbilities(token.scope) };
 	} catch (e) {
-		if (needsRelink(e)) return 'refused';
+		if (isLinkBroken(e)) return 'refused';
 		// Their role was lowered or taken away, so the session's scope or its credential for the
 		// meta space was refused: the page shows the group as they may see it without the link,
 		// since linking again would bring back the same link.

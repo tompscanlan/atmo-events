@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { error } from '@sveltejs/kit';
+import { TokenRefreshError } from '@atcute/oauth-node-client';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { XrpcError } from './server/xrpc';
 
@@ -35,7 +36,8 @@ import {
 	deleteGroupEvent,
 	putGroupEvent,
 	setGroupListed,
-	unlinkGroupSession
+	unlinkGroupSession,
+	uploadGroupBlob
 } from './group.remote';
 
 const GROUP = 'did:plc:group';
@@ -82,14 +84,51 @@ describe('group writes', () => {
 		);
 	});
 
-	it('report a refused write without the PDS wording', async () => {
-		mocks.handle.mockResolvedValue(
-			Response.json({ error: 'Forbidden', message: 'x' }, { status: 403 })
+	it.each([
+		['Forbidden', 'the role no longer writes as the group'],
+		['ScopeMissing', "the session's scope never held the write"],
+		['ScopeMissingError', 'a PDS says the scope is missing']
+	])('report a refusal (%s: %s) as a 403 with a reason, without the PDS wording', async (name) => {
+		mocks.handle.mockImplementation(async () =>
+			Response.json({ error: name, message: 'x' }, { status: 403 })
+		);
+		for (const write of [
+			() => putGroupEvent({ groupDid: GROUP, rkey: 'r', record: {} }),
+			() => deleteGroupEvent({ groupDid: GROUP, rkey: 'r' }),
+			() => uploadGroupBlob({ groupDid: GROUP, bytes: [1], mimeType: 'image/png' })
+		]) {
+			await expect(write()).rejects.toMatchObject({
+				status: 403,
+				body: { message: 'Your role in this group no longer allows that.' }
+			});
+		}
+		expect(mocks.notifyIndex).not.toHaveBeenCalled();
+	});
+
+	it('report a link the host no longer takes as a 403 that says to link again', async () => {
+		mocks.handle.mockResolvedValue(Response.json({ error: 'invalid_token' }, { status: 401 }));
+		await expect(putGroupEvent({ groupDid: GROUP, rkey: 'r', record: {} })).rejects.toMatchObject({
+			status: 403,
+			body: { message: expect.stringContaining('Link it again') }
+		});
+		mocks.handle.mockRejectedValue(new TokenRefreshError(GROUP, 'invalid_grant'));
+		await expect(deleteGroupEvent({ groupDid: GROUP, rkey: 'r' })).rejects.toMatchObject({
+			status: 403,
+			body: { message: expect.stringContaining('Link it again') }
+		});
+	});
+
+	it('report an outage as a 502, without the PDS wording', async () => {
+		mocks.handle.mockImplementation(async () =>
+			Response.json({ error: 'InternalServerError', message: 'x' }, { status: 500 })
 		);
 		await expect(putGroupEvent({ groupDid: GROUP, rkey: 'r', record: {} })).rejects.toMatchObject({
 			status: 502,
 			body: { message: 'Saving the event failed' }
 		});
+		await expect(
+			uploadGroupBlob({ groupDid: GROUP, bytes: [1], mimeType: 'image/png' })
+		).rejects.toMatchObject({ status: 502, body: { message: 'Upload failed' } });
 		expect(mocks.notifyIndex).not.toHaveBeenCalled();
 	});
 });
