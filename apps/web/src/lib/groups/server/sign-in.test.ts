@@ -130,10 +130,10 @@ describe('the group client', () => {
 		}
 	});
 
-	it("asks for the meta read as its own scope, writes declarations and events, the settings' records and policy, and the members page's writes and calls", () => {
+	it("asks for the meta read as its own scope, writes declarations and events, the settings' records and policy, the members page's writes and calls, and members-only events'", () => {
 		expect(GROUP_SESSION_SCOPE.split(' ')).toEqual([
 			'atproto',
-			'space:org.atgrp.meta?authority=self&action=read',
+			'space:org.atgrp.meta?authority=self&skey=self&action=read',
 			'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
 			'blob?accept=image/*',
 			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.about&action=read&action=create&action=update',
@@ -143,8 +143,28 @@ describe('the group client', () => {
 			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.membership&action=read&action=update',
 			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.membership&action=read&action=delete',
 			'rpc:org.atgrp.listJoinRequests?aud=*',
-			'rpc:org.atgrp.denyJoinRequest?aud=*'
+			'rpc:org.atgrp.denyJoinRequest?aud=*',
+			'space:community.lexicon.calendar.collection?authority=self&skey=self&manage=create',
+			'space:community.lexicon.calendar.collection?authority=self&skey=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
 		]);
+	});
+
+	// The host's approval page lists one row per space type, owner and key, keyed by type and owner
+	// alone: a space asked for once with its key and once without makes two rows with one key, and
+	// the page fails for anyone whose roles keep both.
+	it('names the same key in every scope for one space', () => {
+		const keys = new Map<string, Set<string | null>>();
+		for (const token of GROUP_SESSION_SCOPE.split(' ').filter((t) => t.startsWith('space:'))) {
+			const at = token.indexOf('?');
+			const params = new URLSearchParams(at === -1 ? '' : token.slice(at + 1));
+			const space = `${token.slice(0, at === -1 ? undefined : at)} ${params.get('authority')}`;
+			if (!keys.has(space)) keys.set(space, new Set());
+			keys.get(space)!.add(params.get('skey'));
+		}
+		expect(keys.size).toBeGreaterThan(1);
+		for (const [space, skeys] of keys) {
+			expect([space, [...skeys]]).toEqual([space, ['self']]);
+		}
 	});
 
 	it('keeps sign-in state under its prefix in OAUTH_SESSIONS, never in the library store', async () => {

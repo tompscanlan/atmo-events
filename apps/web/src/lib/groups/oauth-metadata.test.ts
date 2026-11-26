@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AtprotoAuthConfig } from '@svelte-atproto/oauth/server';
 import { scopes } from '#lib/atproto/settings.js';
 import { BETA_SCOPE } from '#lib/private-events/beta.js';
-import { HOST_SCOPES } from '#lib/private-events/scopes.js';
+import { GUEST_SCOPE, HOST_SCOPES } from '#lib/private-events/scopes.js';
 
 const mocks = vi.hoisted(() => ({
 	create: vi.fn<(config: AtprotoAuthConfig) => unknown>(() => ({ api: {}, handlers: {} }))
@@ -44,13 +44,18 @@ describe("a person's sign-in permissions, with groups", () => {
 		]);
 	});
 
-	it('add making a group, the participate set and "your groups" with groups on', async () => {
+	it('add making a group, the participate set, "your groups" and the guest scope with groups on', async () => {
 		const groups = [
 			'rpc:org.atgrp.internal.createGroup?aud=*',
 			'include:org.atgrp.authParticipate',
 			'rpc:org.atgrp.internal.getActorGroups?aud=*'
 		];
-		expect(await declared({ groupHost: 'https://host.example' })).toEqual([...scopes, ...groups]);
+		expect(await declared({ groupHost: 'https://host.example' })).toEqual([
+			...scopes,
+			...groups,
+			GUEST_SCOPE
+		]);
+		// Private events declare the guest scope already, and it is declared once.
 		expect(await declared({ groupHost: 'https://host.example', privateEvents: 'true' })).toEqual([
 			...scopes,
 			...HOST_SCOPES,

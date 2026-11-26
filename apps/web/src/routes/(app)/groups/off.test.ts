@@ -20,6 +20,7 @@ import { load as list } from './+page.server';
 import { load as group } from './[actor]/+page.server';
 import { load as newEvent } from './[actor]/events/new/+page.server';
 import { load as editEvent } from './[actor]/events/[rkey]/edit/+page.server';
+import { load as membersOnlyEvent } from './[actor]/events/[rkey]/+page.server';
 import { load as settings } from './[actor]/settings/+page.server';
 import { load as members } from './[actor]/members/+page.server';
 import { actions as createActions, load as create } from './create/+page.server';
@@ -53,6 +54,7 @@ describe('with groups off', () => {
 			[`/groups/${GROUP}`, group],
 			[`/groups/${GROUP}/events/new`, newEvent],
 			[`/groups/${GROUP}/events/a/edit`, editEvent],
+			[`/groups/${GROUP}/events/a`, membersOnlyEvent],
 			[`/groups/${GROUP}/settings`, settings],
 			[`/groups/${GROUP}/members`, members],
 			['/groups/create', create]

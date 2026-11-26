@@ -59,4 +59,28 @@ describe('the group editor adapter', () => {
 			record: { name: 'Meet' }
 		});
 	});
+
+	it('writes a members-only event to where it is, with no image, listing or index', async () => {
+		mocks.putGroupEvent.mockResolvedValue({ uri: 'at:space/u', cid: 'c' });
+		const adapter = createGroupAdapter(GROUP, viewer, undefined, 'members');
+		expect(adapter.features).toEqual({
+			delete: true,
+			recurring: false,
+			images: false,
+			visibility: false
+		});
+		expect(adapter.linkedRecords).toBeUndefined();
+		const record = { collection: 'community.lexicon.calendar.event', rkey: 'r', record: {} };
+		await adapter.putRecord(record);
+		await adapter.createRecord(record);
+		await adapter.deleteRecord(record);
+		const sent = { groupDid: GROUP, rkey: 'r', placement: 'members' };
+		expect(mocks.putGroupEvent.mock.calls).toEqual([
+			[{ ...sent, record: {} }],
+			[{ ...sent, record: {} }]
+		]);
+		expect(mocks.deleteGroupEvent).toHaveBeenCalledWith(sent);
+		await expect(adapter.uploadBlob(new Blob([new Uint8Array([1])]))).rejects.toThrow();
+		expect(mocks.uploadGroupBlob).not.toHaveBeenCalled();
+	});
 });

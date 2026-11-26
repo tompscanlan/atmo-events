@@ -830,6 +830,20 @@ describe('myPrivateEvents', () => {
 		expect(host.sent[0].query.get('spaceDid')).toBe(HOST);
 	});
 
+	it("leaves out a group's calendar, which is no single event's, without reading it", async () => {
+		reader.get.mockResolvedValue(spaceRecord(HOST, EVENT_COLLECTION, RECORD));
+		const group = privateEventSpace(OTHER, 'self');
+		const guest = caller(GUEST, GUEST_SCOPE, {
+			'com.atproto.space.listSpaces': () =>
+				Response.json({ spaces: [{ space: group }, { space: SPACE }] })
+		});
+		const { events, incomplete } = await myPrivateEvents(guest);
+		expect(events.map((e) => e.event.rkey)).toEqual([RKEY]);
+		expect(incomplete).toBe(false);
+		expect(reader.get).toHaveBeenCalledTimes(1);
+		expect(reader.get).not.toHaveBeenCalledWith(expect.objectContaining({ space: group }));
+	});
+
 	it('says the list is incomplete when an event could not be read', async () => {
 		const down = privateEventSpace(OTHER, '3laaaaaaaaaaa');
 		reader.get.mockImplementation(async ({ space }: Read) => {

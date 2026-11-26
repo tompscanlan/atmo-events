@@ -1,0 +1,178 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+	CALENDAR,
+	calendarHosts,
+	event,
+	fakeCalendar,
+	GROUP,
+	READY_POLICY
+} from './__fixtures__/group-calendar';
+
+const mocks = vi.hoisted(() => ({ networkFetch: vi.fn<typeof fetch>() }));
+vi.mock('#lib/atproto/network.js', () => ({
+	atprotoNetwork: () => ({
+		fetch: (input: RequestInfo | URL, init?: RequestInit) => mocks.networkFetch(input, init),
+		isolated: false,
+		assertUrl: () => {}
+	})
+}));
+
+import {
+	CALENDAR_POLICY,
+	calendarSpaceState,
+	deleteMembersOnlyEvent,
+	GroupEventRefused,
+	putMembersOnlyEvent,
+	readMembersOnlyEventAsGroup,
+	turnOnMembersOnly
+} from './group-events';
+
+let calendar: ReturnType<typeof fakeCalendar>;
+const writer = () => ({ did: GROUP, handle: calendar.groupHandle });
+const nsids = () => calendar.state.sent.map(([, nsid]) => nsid);
+
+beforeEach(() => {
+	vi.resetAllMocks();
+	vi.spyOn(console, 'error').mockImplementation(() => {});
+	calendar = fakeCalendar();
+	mocks.networkFetch.mockImplementation(calendar.fetch);
+});
+
+describe('turning members-only events on', () => {
+	it("makes the group's one calendar space, private, with the policy the host needs", async () => {
+		await turnOnMembersOnly(writer());
+		expect(calendar.state.sent).toEqual([
+			[
+				'group',
+				'com.atproto.space.createSpace',
+				{
+					spaceType: 'community.lexicon.calendar.collection',
+					skey: 'self',
+					policy: CALENDAR_POLICY
+				}
+			]
+		]);
+		expect(CALENDAR_POLICY).toEqual({
+			$type: 'org.atgrp.policy',
+			publicRead: false,
+			grants: [
+				{
+					role: 'admin',
+					read: true,
+					write: true,
+					permissions: [
+						'space:community.lexicon.calendar.collection?collection=community.lexicon.calendar.event'
+					]
+				},
+				{ role: 'member', read: true, write: true }
+			]
+		});
+		expect(await calendarSpaceState(writer())).toBe('ready');
+	});
+
+	it('takes a space already there as done, and leaves its policy as it is', async () => {
+		calendar.state.policy = READY_POLICY;
+		await turnOnMembersOnly(writer());
+		expect(calendar.state.policy).toBe(READY_POLICY);
+	});
+
+	it('throws any other refusal', async () => {
+		calendar.state.refuse.set(
+			'com.atproto.space.createSpace',
+			Response.json({ error: 'NotAuthorized' }, { status: 403 })
+		);
+		await expect(turnOnMembersOnly(writer())).rejects.toMatchObject({ error: 'NotAuthorized' });
+	});
+});
+
+describe("the calendar space's state", () => {
+	it.each([
+		['missing', null],
+		['ready', READY_POLICY],
+		['readable', { ...READY_POLICY, publicRead: true }],
+		['readable', { $type: 'com.atproto.memberspace.policy' }]
+	])('is %s', async (expected, policy) => {
+		calendar.state.policy = policy;
+		expect(await calendarSpaceState(writer())).toBe(expected);
+	});
+
+	it('is unchecked in an outage, and throws a refused link, as a write would', async () => {
+		calendar.state.refuse.set('com.atproto.space.getSpace', new Response('', { status: 502 }));
+		expect(await calendarSpaceState(writer())).toBe('unchecked');
+		calendar.state.refuse.set(
+			'com.atproto.space.getSpace',
+			Response.json({ error: 'ScopeMissing' }, { status: 403 })
+		);
+		await expect(calendarSpaceState(writer())).rejects.toMatchObject({ error: 'ScopeMissing' });
+	});
+});
+
+describe('a members-only event', () => {
+	beforeEach(() => {
+		calendar.state.policy = READY_POLICY;
+	});
+
+	it('goes into the calendar space as the group, never its public repo', async () => {
+		const saved = await putMembersOnlyEvent(writer(), { rkey: 'r1', record: event('Supper') });
+		expect(saved).toEqual({
+			uri: `${CALENDAR}/${GROUP}/community.lexicon.calendar.event/r1`,
+			cid: 'cid'
+		});
+		expect(calendar.state.events.get('r1')).toMatchObject({ name: 'Supper' });
+		expect(calendar.state.publicRepo.size).toBe(0);
+		expect(nsids()).not.toContain('com.atproto.repo.putRecord');
+		expect(calendar.state.sent.at(-1)?.[2]).toMatchObject({
+			repo: GROUP,
+			space: CALENDAR,
+			collection: 'community.lexicon.calendar.event',
+			rkey: 'r1'
+		});
+	});
+
+	it.each([
+		['missing', null, "Members-only events aren't turned on"],
+		['readable', { ...READY_POLICY, publicRead: true }, 'can be read by more than its members']
+	])('is refused, unsent, when the space is %s', async (_, policy, words) => {
+		calendar.state.policy = policy;
+		const put = putMembersOnlyEvent(writer(), { rkey: 'r1', record: event('Supper') });
+		await expect(put).rejects.toThrow(GroupEventRefused);
+		await expect(put).rejects.toThrow(words);
+		expect(nsids()).not.toContain('com.atproto.space.putRecord');
+	});
+
+	it('is refused when it is no event, or carries an image, which would be public', async () => {
+		const refusedFor = (record: Record<string, unknown>) =>
+			putMembersOnlyEvent(writer(), { rkey: 'r1', record }).catch(
+				(e: GroupEventRefused) => e.reason
+			);
+		expect(await refusedFor({ name: 'No start or date' })).toBe('not-an-event');
+		const image = { image: { $type: 'blob', ref: { $link: 'b' }, mimeType: 'image/png', size: 1 } };
+		expect(await refusedFor({ ...event('Supper'), media: [image] })).toBe('has-image');
+		expect(calendar.state.events.size).toBe(0);
+	});
+
+	it('does not copy a public event of the same key into the space', async () => {
+		calendar.state.publicRepo.set('r1', event('Open day'));
+		await expect(
+			putMembersOnlyEvent(writer(), { rkey: 'r1', record: event('Supper') })
+		).rejects.toMatchObject({ reason: 'moved' });
+		expect(calendar.state.events.size).toBe(0);
+	});
+
+	it('is deleted from the space', async () => {
+		calendar.state.events.set('r1', event('Supper'));
+		await deleteMembersOnlyEvent(writer(), 'r1');
+		expect(calendar.state.events.size).toBe(0);
+		expect(nsids()).toEqual(['com.atproto.space.deleteRecord']);
+	});
+
+	it("is read as stored, as the group, with the group's own credential", async () => {
+		calendar.state.events.set('r1', { ...event('Supper'), poster: 'kept' });
+		calendar.state.readers.add('group');
+		const found = await readMembersOnlyEventAsGroup(writer(), 'r1', calendarHosts);
+		expect(found?.value).toMatchObject({ name: 'Supper', poster: 'kept' });
+		expect(nsids()).toEqual(['com.atproto.space.getDelegationToken']);
+		calendar.state.readers.clear();
+		expect(await readMembersOnlyEventAsGroup(writer(), 'r1', calendarHosts)).toBeNull();
+	});
+});
