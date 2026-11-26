@@ -139,7 +139,16 @@ describe('the settings a group session may change', () => {
 		for (const scope of GROUP_SETTINGS_SCOPES) {
 			expect(scope).toMatch(/^space:org\.atgrp\.meta\?authority=self&skey=self&/);
 			expect(scope).not.toContain('delete');
+			// The host makes the about record and config with the group; a put of either is an update.
+			expect(scope).not.toContain('action=create');
 		}
+	});
+
+	it('still takes a link approved when the settings asked for create too', () => {
+		const older = SETTINGS.map((s) => s.replace('action=update', 'action=create&action=update'));
+		expect(grantsSettings(older.join(' '), GROUP)).toBe(true);
+		const createOnly = SETTINGS.map((s) => s.replace('action=update', 'action=create'));
+		expect(grantsSettings(createOnly.join(' '), GROUP)).toBe(false);
 	});
 });
 

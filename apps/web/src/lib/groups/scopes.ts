@@ -178,7 +178,9 @@ export function holdsParticipate(scope: string): boolean {
 }
 
 const META_SELF = `space:${META_SPACE_TYPE}?authority=self&skey=self`;
-const META_RECORD_WRITES = 'action=read&action=create&action=update';
+/** No `create`: the host makes a group's about record and config with the group, keeps them, and
+ *  takes a put of a record that is there as its update. */
+const META_RECORD_WRITES = 'action=read&action=update';
 
 /** A group session's read of the group's meta space, its own scope so that a member whose roles
  *  grant no writes keeps it. It names the space's key, which is always `self`, as the settings'
@@ -215,8 +217,7 @@ function writesMetaRecord(grants: URLSearchParams[], collection: string): boolea
 		const collections = grant.getAll('collection');
 		const actions = grant.getAll('action');
 		return (
-			(collections.includes('*') || collections.includes(collection)) &&
-			['create', 'update'].every((action) => actions.includes(action))
+			(collections.includes('*') || collections.includes(collection)) && actions.includes('update')
 		);
 	});
 }
