@@ -131,8 +131,8 @@ describe('the group client', () => {
 
 	it('asks for the meta read as its own scope, and writes only declarations and events', () => {
 		const scopes = GROUP_SESSION_SCOPE.split(' ');
-		expect(scopes).toContain('space:group.opensocial.meta?authority=self&action=read');
-		expect(GROUP_SESSION_SCOPE).toContain('group.opensocial.declaration');
+		expect(scopes).toContain('space:org.atgrp.meta?authority=self&action=read');
+		expect(GROUP_SESSION_SCOPE).toContain('org.atgrp.declaration');
 		expect(GROUP_SESSION_SCOPE).toContain('community.lexicon.calendar.event');
 		expect(scopes.some((s) => s.startsWith('include:'))).toBe(false);
 	});

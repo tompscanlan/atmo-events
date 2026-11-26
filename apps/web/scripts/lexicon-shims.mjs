@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
  * Codegen copies of lexicons the tooling cannot read yet; `pnpm generate` runs this first.
- * The group declaration's `meta` has the opensocial.group proposal's `space-ref` format,
- * which @atcute/lex-cli rejects, so its copy in lexicons/custom says `uri`. When the tooling
- * reads `space-ref`, delete the copy, this script, its test and its step in `pnpm generate`.
+ * @atcute/lex-cli rejects the `space-ref` format, so a copy in lexicons/custom says `uri` in
+ * its place. The Atmosphere Groups declaration has no fields, so its copy is the reference
+ * unchanged. When the tooling reads `space-ref`, delete the copy, this script, its test and
+ * its step in `pnpm generate`.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -12,9 +13,9 @@ const path = (/** @type {string} */ rel) => fileURLToPath(new URL(`../${rel}`, i
 
 export const SHIMS = [
 	{
-		nsid: 'group.opensocial.declaration',
-		reference: path('lexicons/reference/group/opensocial/declaration.json'),
-		shim: path('lexicons/custom/group/opensocial/declaration.json')
+		nsid: 'org.atgrp.declaration',
+		reference: path('lexicons/reference/org/atgrp/declaration.json'),
+		shim: path('lexicons/custom/org/atgrp/declaration.json')
 	}
 ];
 

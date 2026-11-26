@@ -4,7 +4,7 @@
   "defs": {
     "main": {
       "type": "query",
-      "description": "Query group.opensocial.declaration records",
+      "description": "Query org.atgrp.declaration records",
       "parameters": {
         "type": "params",
         "properties": {
@@ -79,7 +79,7 @@
         },
         "value": {
           "type": "ref",
-          "ref": "group.opensocial.declaration#main"
+          "ref": "org.atgrp.declaration#main"
         },
         "did": {
           "type": "string",

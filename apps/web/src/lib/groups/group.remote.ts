@@ -14,7 +14,8 @@ function callerDid(): string | null {
 	return getRequestEvent().locals.did;
 }
 
-/** Lists only a public group, as the proposal publishes a declaration only then. */
+/** Lists only a public group. This site's rule, kept from the earlier proposal: the spec's
+ *  declaration says nothing of the meta space being public. */
 export const setGroupListed = command(
 	v.object({ groupDid: didSchema, listed: v.boolean() }),
 	async ({ groupDid, listed }) => {
