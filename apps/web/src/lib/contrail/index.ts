@@ -22,7 +22,7 @@ function instance(db: D1Database) {
 	let state = instances.get(db);
 	if (!state) {
 		const contrail = new Contrail({
-			...servedConfig(groupsEnabled()),
+			...servedConfig(groupsEnabled(), declaredHome),
 			...contrailNetwork(),
 			moderation: { moderators: moderatorDids(env.MODERATOR_DIDS), reports: false }
 		});
@@ -30,6 +30,12 @@ function instance(db: D1Database) {
 		instances.set(db, state);
 	}
 	return state;
+}
+
+/** The site's own group host, for the groups list; imported when first asked for, as it reads
+ *  the index through this module. */
+async function declaredHome() {
+	return (await import('../groups/server/group')).declaredHome();
 }
 
 export async function ensureInit(db: D1Database): Promise<Contrail> {

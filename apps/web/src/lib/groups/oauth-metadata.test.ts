@@ -44,10 +44,12 @@ describe("a person's sign-in permissions, with groups", () => {
 		]);
 	});
 
-	it('add making a group, the participate set, "your groups" and the guest scope with groups on', async () => {
+	it('add making a group, joining, "your groups" and the guest scope with groups on', async () => {
 		const groups = [
 			'rpc:org.atgrp.internal.createGroup?aud=*',
-			'include:org.atgrp.authParticipate',
+			'space:org.atgrp.meta?authority=*&skey=self&action=read',
+			'space:org.atgrp.members?authority=*&skey=self&collection=org.atgrp.confirmation&action=read&action=create&action=delete',
+			'rpc?lxm=org.atgrp.requestJoin&lxm=org.atgrp.cancelJoinRequest&lxm=org.atgrp.leaveGroup&aud=*',
 			'rpc:org.atgrp.internal.getActorGroups?aud=*'
 		];
 		expect(await declared({ groupHost: 'https://host.example' })).toEqual([

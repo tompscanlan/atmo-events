@@ -6,6 +6,9 @@
 
 	let { data, form } = $props();
 
+	/** Sent, and the browser waiting for the answer: a second press would ask for the group again. */
+	let sending = $state(false);
+
 	// What the person typed, kept when the host refuses it.
 	let values = $derived(
 		form?.values ?? {
@@ -18,6 +21,9 @@
 		}
 	);
 </script>
+
+<!-- Back to this page from the host, the browser may show it as it was left, still sending. -->
+<svelte:window onpageshow={() => (sending = false)} />
 
 <div class="min-h-screen px-6 py-12 sm:py-12">
 	<div class="mx-auto max-w-2xl">
@@ -82,13 +88,24 @@
 					{form.message}
 				</p>
 			{/if}
+			{#if form && 'made' in form && form.made}
+				<form
+					method="POST"
+					action="/oauth/group/link"
+					class="mt-3 flex flex-wrap items-center gap-3"
+				>
+					<input type="hidden" name="group" value={form.made.did} />
+					<span class="text-base-900 dark:text-base-50 font-medium">@{form.made.handle}</span>
+					<Button type="submit" size="sm" variant="secondary">Finish setting up</Button>
+				</form>
+			{/if}
 
 			{#if !data.host}
 				<p class="text-base-600 dark:text-base-400 mt-6">
 					The group host could not be reached. Try again shortly.
 				</p>
 			{:else if !data.access}
-				<form method="POST" class="mt-6 space-y-5">
+				<form method="POST" class="mt-6 space-y-5" onsubmit={() => (sending = true)}>
 					<GroupSettingsFields
 						name={values.name}
 						description={values.description}
@@ -97,7 +114,7 @@
 						listed={values.listed}
 						address={{ label: values.address, domain: data.host.domain }}
 					/>
-					<Button type="submit" variant="primary">Make the group</Button>
+					<Button type="submit" variant="primary" disabled={sending}>Make the group</Button>
 				</form>
 			{/if}
 		{/if}

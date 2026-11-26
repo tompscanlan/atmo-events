@@ -2,6 +2,7 @@ import type { ContrailConfig } from '@atmo-dev/contrail';
 import { variables } from '../../env';
 import { contrailNetworkOf, type NetworkSettings } from '../atproto/network-settings';
 import { servedConfig } from '../contrail.config';
+import { parseGroupHostUrl } from '../groups/host-url';
 
 // What contrail's own CLI loads (`pnpm backfill`), outside SvelteKit. The Worker adds the
 // network from $app/env/public (contrail/index.ts); the CLI has no $app, so it reads the same
@@ -28,6 +29,6 @@ export function networkSettingsFrom(env: Record<string, unknown>): NetworkSettin
 // Groups' declarations only when the shell names a group host, as the Worker serves them, so a
 // backfill with groups off adds no table and fetches no declarations.
 export const config: ContrailConfig = {
-	...servedConfig(Boolean(process.env.GROUP_HOST_URL?.trim())),
+	...servedConfig(parseGroupHostUrl(process.env.GROUP_HOST_URL) !== null),
 	...contrailNetworkOf(networkSettingsFrom(process.env))
 };

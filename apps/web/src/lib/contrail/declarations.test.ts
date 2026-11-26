@@ -7,8 +7,13 @@ import {
 	type Database,
 	type Statement
 } from '@atmo-dev/contrail';
-import { config } from '../contrail.config';
-import { cachedHandles, crowdedServers, DECLARED_PER_SERVER } from '../groups/server/declared';
+import { servedConfig } from '../contrail.config';
+import {
+	cachedHandles,
+	crowdedServers,
+	DECLARED_PER_SERVER,
+	type DeclaredHome
+} from '../groups/server/declared';
 
 const COLLECTION = 'org.atgrp.declaration';
 const HOME = 'https://home.example';
@@ -50,10 +55,16 @@ function setup(declarations: Declaration[], hidden: string[] = []) {
 	return { sqlite, db };
 }
 
-/** One page of rsvp.atmo.declaration.listDeclared, as contrail serves it. */
-async function listDeclared(db: Database, query: Record<string, string> = {}, cursor?: string) {
-	const resolved = resolveConfig(config);
-	const source = await config.collections.declaration.pipelineQueries!.listDeclared(
+/** One page of rsvp.atmo.declaration.listDeclared, as contrail serves it, for a Worker whose group
+ *  host is `home`. */
+async function listDeclared(
+	db: Database,
+	query: Record<string, string> = {},
+	{ cursor, home = null }: { cursor?: string; home?: DeclaredHome | null } = {}
+) {
+	const served = servedConfig(true, async () => home);
+	const resolved = resolveConfig(served);
+	const source = await served.collections.declaration.pipelineQueries!.listDeclared(
 		db,
 		new URLSearchParams(query),
 		resolved
@@ -73,8 +84,11 @@ function groupsAt(pds: string | null, prefix: string, count: number, newest = 10
 
 const dids = (page: { records: { did: string }[] }) => page.records.map((record) => record.did);
 
-/** What `home` says it holds, as listDeclared takes it. */
-const held = (declarations: Declaration[]) => JSON.stringify(declarations.map(([did]) => did));
+/** HOME as the Worker names it, holding `declarations`; null when it does not say what it holds. */
+const home = (declarations: Declaration[] | null): DeclaredHome => ({
+	origin: HOME,
+	held: async () => declarations && declarations.map(([did]) => did)
+});
 
 describe('rsvp.atmo.declaration.listDeclared', () => {
 	it("lists one server's groups without reading every account contrail knows", async () => {
@@ -149,13 +163,13 @@ describe('rsvp.atmo.declaration.listDeclared', () => {
 			...atHome
 		]);
 		try {
-			const page = dids(await listDeclared(db, { home: HOME, held: held(atHome) }));
+			const page = dids(await listDeclared(db, {}, { home: home(atHome) }));
 			const flood = page.filter((did) => did.startsWith('did:plc:f'));
 			expect(flood).toEqual(groupsAt(null, 'f', DECLARED_PER_SERVER).map(([did]) => did));
 			// The trailing slash in a DID document's address is the same server.
 			expect(page.filter((did) => did.startsWith('did:plc:s'))).toHaveLength(2);
 			expect(page.filter((did) => did.startsWith('did:plc:h'))).toHaveLength(25);
-			// Without `home`, the home server is limited too.
+			// Without a home, the home server is limited too.
 			const capped = dids(await listDeclared(db));
 			expect(capped.filter((did) => did.startsWith('did:plc:h'))).toHaveLength(20);
 		} finally {
@@ -169,12 +183,12 @@ describe('rsvp.atmo.declaration.listDeclared', () => {
 		const fakes = groupsAt(HOME, 'x', 30, 2000);
 		const { sqlite, db } = setup([...atHome, ...fakes]);
 		try {
-			const page = dids(await listDeclared(db, { home: HOME, held: held(atHome) }));
+			const page = dids(await listDeclared(db, {}, { home: home(atHome) }));
 			expect(page).toEqual(atHome.map(([did]) => did));
-			// Without what home holds, or with a held list that is not one, home gets 20 places.
-			expect(dids(await listDeclared(db, { home: HOME }))).toHaveLength(DECLARED_PER_SERVER);
-			const unreadable = await listDeclared(db, { home: HOME, held: 'did:plc:h000' });
-			expect(dids(unreadable)).toHaveLength(DECLARED_PER_SERVER);
+			// Without what home holds, home gets 20 places.
+			expect(dids(await listDeclared(db, {}, { home: home(null) }))).toHaveLength(
+				DECLARED_PER_SERVER
+			);
 		} finally {
 			sqlite.close();
 		}
@@ -184,9 +198,26 @@ describe('rsvp.atmo.declaration.listDeclared', () => {
 		const atHome = groupsAt(HOME, 'h', 2, 1000);
 		const { sqlite, db } = setup([...atHome, ...groupsAt(HOME, 'x', 2, 2000)]);
 		try {
-			const page = await listDeclared(db, { server: HOME, home: HOME, held: held(atHome) });
+			const page = await listDeclared(db, { server: HOME }, { home: home(atHome) });
 			expect(dids(page)).toEqual(atHome.map(([did]) => did));
 			expect(dids(await listDeclared(db, { server: HOME }))).toHaveLength(4);
+		} finally {
+			sqlite.close();
+		}
+	});
+
+	it('takes the home server and what it holds from the Worker, never from a caller', async () => {
+		const atHome = groupsAt(HOME, 'h', 25, 1000);
+		const { sqlite, db } = setup([...atHome, ...groupsAt(HOME, 'x', 2, 2000)]);
+		try {
+			const named = { home: HOME, held: JSON.stringify(atHome.map(([did]) => did)) };
+			expect(dids(await listDeclared(db, named))).toHaveLength(DECLARED_PER_SERVER);
+			expect(dids(await listDeclared(db, { ...named, server: HOME }))).toHaveLength(27);
+			// A caller who names another server as home changes nothing either.
+			const other = { home: 'https://x.example', held: '["did:plc:x000"]' };
+			const asWorker = dids(await listDeclared(db, {}, { home: home(atHome) }));
+			expect(dids(await listDeclared(db, other, { home: home(atHome) }))).toEqual(asWorker);
+			expect(asWorker).toHaveLength(25);
 		} finally {
 			sqlite.close();
 		}
@@ -234,11 +265,10 @@ describe('rsvp.atmo.declaration.listDeclared', () => {
 		const atHome = groupsAt(HOME, 'g', 101);
 		const { sqlite, db } = setup(atHome);
 		try {
-			const query = { home: HOME, held: held(atHome) };
-			const first = await listDeclared(db, query);
+			const first = await listDeclared(db, {}, { home: home(atHome) });
 			expect(first.records).toHaveLength(100);
 			expect(first.cursor).toBeTruthy();
-			const second = await listDeclared(db, query, first.cursor);
+			const second = await listDeclared(db, {}, { cursor: first.cursor, home: home(atHome) });
 			expect(dids(second)).toEqual(['did:plc:g100']);
 			expect(second.cursor).toBeUndefined();
 		} finally {

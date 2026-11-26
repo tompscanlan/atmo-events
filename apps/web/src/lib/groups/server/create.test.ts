@@ -8,8 +8,12 @@ const mocks = vi.hoisted(() => ({
 	networkFetch: vi.fn<typeof fetch>(),
 	unlistGroup: vi.fn(),
 	groupSession: vi.fn(),
-	groupHandle: vi.fn()
+	groupHandle: vi.fn(),
+	hasGroupSession: vi.fn(),
+	actorGroups: vi.fn(),
+	makeMetaPublic: vi.fn()
 }));
+vi.mock('./settings', () => ({ makeMetaPublic: mocks.makeMetaPublic }));
 vi.mock('#lib/atproto/network.js', () => ({
 	atprotoNetwork: () => ({
 		fetch: (input: RequestInfo | URL, init?: RequestInit) => mocks.networkFetch(input, init),
@@ -18,13 +22,19 @@ vi.mock('#lib/atproto/network.js', () => ({
 	})
 }));
 vi.mock('./group', () => ({ unlistGroup: mocks.unlistGroup }));
-vi.mock('./sign-in', () => ({ groupSession: mocks.groupSession, groupHandle: mocks.groupHandle }));
+vi.mock('./sign-in', () => ({
+	groupSession: mocks.groupSession,
+	groupHandle: mocks.groupHandle,
+	hasGroupSession: mocks.hasGroupSession
+}));
+vi.mock('./host', () => ({ actorGroups: mocks.actorGroups }));
 
 import {
 	createGroupAtHost,
 	finishCreatedGroup,
 	finishSetup,
 	GroupNotCreated,
+	ownGroupNotNoted,
 	parseNewGroup,
 	rememberUnfinished,
 	unfinishedGroup,
@@ -140,6 +150,14 @@ describe('making a group at the group host', () => {
 		});
 	});
 
+	it('makes a group asked to be public but not listed private, so the host never lists it', async () => {
+		hostAnswers(() => Response.json({ did: GROUP }));
+		await createGroupAtHost(caller(), { ...RIDERS, listed: false }, HOST);
+		expect(JSON.parse(String(mocks.networkFetch.mock.calls[0][1]?.body))).toMatchObject({
+			metaPublicRead: false
+		});
+	});
+
 	it('makes a members-only group, and sends no empty description', async () => {
 		hostAnswers(() => Response.json({ did: GROUP }));
 		await createGroupAtHost(caller(), { ...RIDERS, description: null, public: false }, HOST);
@@ -175,6 +193,66 @@ describe('making a group at the group host', () => {
 	});
 });
 
+describe('making a group when nothing answers', () => {
+	it("is the host that couldn't be reached when the person's PDS does not answer", async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const person = caller();
+		person.handle.mockRejectedValue(new TypeError('fetch failed'));
+		const thrown = await createGroupAtHost(person, RIDERS, HOST).catch((e: unknown) => e);
+		expect(thrown).toMatchObject({ reason: 'unavailable', madeMaybe: false });
+		expect(mocks.networkFetch).not.toHaveBeenCalled();
+	});
+
+	it('is the same, though the group may be made, when the host gives no answer in time', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		mocks.networkFetch.mockRejectedValue(
+			new DOMException('The operation timed out.', 'TimeoutError')
+		);
+		const thrown = await createGroupAtHost(caller(), RIDERS, HOST).catch((e: unknown) => e);
+		expect(thrown).toBeInstanceOf(GroupNotCreated);
+		expect(thrown).toMatchObject({ reason: 'unavailable', madeMaybe: true });
+	});
+});
+
+describe('a group the person made that this site never noted', () => {
+	const YOURS = 'atproto rpc:org.atgrp.internal.getActorGroups?aud=*';
+	const person = (scope = YOURS) => ({ ...caller(), scope });
+	const riders = { did: GROUP, handle: 'riders.groups.example', displayName: 'Night Riders' };
+
+	beforeEach(() => {
+		mocks.hasGroupSession.mockResolvedValue(false);
+		mocks.actorGroups.mockResolvedValue([
+			{ did: 'did:plc:other', handle: 'other.groups.example', displayName: 'Other' },
+			riders
+		]);
+	});
+
+	it('is found by its address among the groups the host says they are in, by the name they typed', async () => {
+		const who = person();
+		expect(await ownGroupNotNoted(who, RIDERS, HOST)).toEqual({
+			did: GROUP,
+			handle: 'riders.groups.example'
+		});
+		expect(mocks.actorGroups).toHaveBeenCalledWith(who);
+		expect(mocks.hasGroupSession).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+
+	it('is not one they are outside of, one of another name, or one they linked here', async () => {
+		expect(await ownGroupNotNoted(person(), { ...RIDERS, address: 'walkers' }, HOST)).toBeNull();
+		expect(await ownGroupNotNoted(person(), { ...RIDERS, name: 'Day Riders' }, HOST)).toBeNull();
+		mocks.hasGroupSession.mockResolvedValue(true);
+		expect(await ownGroupNotNoted(person(), RIDERS, HOST)).toBeNull();
+	});
+
+	it("can't be told without their permission for their groups, or when the host does not answer", async () => {
+		expect(await ownGroupNotNoted(person('atproto'), RIDERS, HOST)).toBeNull();
+		expect(mocks.actorGroups).not.toHaveBeenCalled();
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		mocks.actorGroups.mockRejectedValue(new Error('down'));
+		expect(await ownGroupNotNoted(person(), RIDERS, HOST)).toBeNull();
+	});
+});
+
 describe('a group made here, until its first link', () => {
 	const made = { did: GROUP, handle: 'riders.groups.example', public: true, listed: false };
 
@@ -185,11 +263,15 @@ describe('a group made here, until its first link', () => {
 		expect(kv.ttlOf(`group:setup:${ALICE}/${GROUP}`)).toBe(30 * 24 * 60 * 60);
 	});
 
-	it('takes a public group its maker asked not to list off the list, as the group, then forgets it', async () => {
+	it('makes a group its maker asked to be public but not listed public, then takes it off the list, as the group, then forgets it', async () => {
 		await rememberUnfinished(ALICE, made);
 		const writer = { did: GROUP, handle: vi.fn<XrpcHandle>() };
 		expect(await finishSetup(writer, ALICE)).toBe(true);
+		expect(mocks.makeMetaPublic).toHaveBeenCalledWith(writer);
 		expect(mocks.unlistGroup).toHaveBeenCalledWith(writer.handle, GROUP);
+		expect(mocks.makeMetaPublic.mock.invocationCallOrder[0]).toBeLessThan(
+			mocks.unlistGroup.mock.invocationCallOrder[0]
+		);
 		expect(await unfinishedGroup(ALICE, GROUP)).toBeNull();
 		expect(await finishSetup(writer, ALICE)).toBe(false);
 	});
@@ -203,6 +285,16 @@ describe('a group made here, until its first link', () => {
 			await finishSetup({ did: GROUP, handle: vi.fn<XrpcHandle>() }, ALICE);
 		}
 		expect(mocks.unlistGroup).not.toHaveBeenCalled();
+		expect(mocks.makeMetaPublic).not.toHaveBeenCalled();
+	});
+
+	it('leaves the group private, never listed, and keeps the note, when making it public stops', async () => {
+		await rememberUnfinished(ALICE, made);
+		mocks.makeMetaPublic.mockRejectedValueOnce(new Error('host down'));
+		const writer = { did: GROUP, handle: vi.fn<XrpcHandle>() };
+		await expect(finishSetup(writer, ALICE)).rejects.toThrow();
+		expect(mocks.unlistGroup).not.toHaveBeenCalled();
+		expect(await unfinishedGroup(ALICE, GROUP)).toEqual(made);
 	});
 
 	it('keeps the note when finishing stops, so it can be finished from the group page', async () => {
@@ -214,6 +306,16 @@ describe('a group made here, until its first link', () => {
 		expect(await unfinishedGroup(ALICE, GROUP)).toEqual(made);
 		expect(await finishCreatedGroup(GROUP, ALICE)).toBe('created');
 		expect(await unfinishedGroup(ALICE, GROUP)).toBeNull();
+	});
+
+	it('leaves a link that worked as linked when the note cannot be read', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		await rememberUnfinished(ALICE, made);
+		vi.spyOn(kv, 'get').mockRejectedValueOnce(new Error('KV down'));
+		expect(await finishCreatedGroup(GROUP, ALICE)).toBeNull();
+		expect(mocks.groupSession).not.toHaveBeenCalled();
+		// The note stays, for the group's page to offer finishing.
+		expect(await unfinishedGroup(ALICE, GROUP)).toEqual(made);
 	});
 
 	it('is nothing to finish for a group linked any other way', async () => {

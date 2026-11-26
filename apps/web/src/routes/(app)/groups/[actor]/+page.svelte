@@ -14,7 +14,7 @@
 		turnOnMembersOnlyEvents,
 		unlinkGroupSession
 	} from '#lib/groups/group.remote.js';
-	import { cancelJoin, joinGroup, leave } from '#lib/groups/members.remote.js';
+	import { cancelJoin, confirmMember, joinGroup, leave } from '#lib/groups/members.remote.js';
 
 	let { data } = $props();
 
@@ -22,9 +22,19 @@
 	let busy = $state(false);
 	let failure: string | null = $state(null);
 	/** A request sent from this page, shown until the page is loaded again: the spec has no way to
-	 *  read one back, and asking again is answered with the same request. */
-	let requested = $state(false);
+	 *  read one back, and asking again is answered with the same request. Kept for the group it was
+	 *  sent to, since moving to another group's page keeps this component. */
+	let requestedOf: string | null = $state(null);
+	let requested = $derived(requestedOf === group.did);
 	let message = $state('');
+	// A message typed for one group is not carried to another's page.
+	let messageOf: string | null = null;
+	$effect.pre(() => {
+		if (group.did !== messageOf) {
+			messageOf = group.did;
+			message = '';
+		}
+	});
 	/** Members-only events are on, and this link may post them. */
 	let postsMembersOnly = $derived(
 		data.calendar === 'ready' && Boolean(group.linked?.can.membersOnly)
@@ -51,15 +61,21 @@
 	const join = () =>
 		asMember(async () => {
 			const { outcome } = await joinGroup({ groupDid: group.did, message: message || undefined });
-			if (outcome === 'pending') requested = true;
+			if (outcome === 'pending') requestedOf = group.did;
 			else await invalidateAll();
 		});
 
 	const cancel = () =>
 		asMember(async () => {
 			await cancelJoin({ groupDid: group.did });
-			requested = false;
+			requestedOf = null;
 			// Admitted meanwhile, perhaps.
+			await invalidateAll();
+		});
+
+	const confirm = () =>
+		asMember(async () => {
+			await confirmMember({ groupDid: group.did });
 			await invalidateAll();
 		});
 
@@ -93,6 +109,17 @@
 		);
 </script>
 
+<!-- For an admin who linked a group that approves its members: where requests to join wait. One
+     snippet and its one use, to drop wherever the page lists the requests itself. -->
+{#snippet joinRequestsWaitAtHost()}
+	{#if group.linked && group.linked.meta.joinPolicy === 'approval' && (group.linked.can.settings || group.linked.can.admit)}
+		<p class="text-base-600 dark:text-base-400 mt-3 text-sm">
+			Requests to join this group are kept at the group host, where its admins admit or decline
+			them.
+		</p>
+	{/if}
+{/snippet}
+
 <div class="min-h-screen px-6 py-12 sm:py-12">
 	<div class="mx-auto max-w-2xl">
 		<div class="mb-6">
@@ -125,6 +152,10 @@
 		{#if data.notice}<p role="status" class="text-base-600 dark:text-base-400 mt-4 text-sm">
 				{data.notice}
 			</p>{/if}
+		{#if group.unreachable}<p role="status" class="text-base-600 dark:text-base-400 mt-4 text-sm">
+				The group host couldn't be reached through your link just now, so this page shows the group
+				as anyone sees it. Try again shortly.
+			</p>{/if}
 		{#if failure}<p role="alert" class="text-base-950 dark:text-base-50 mt-4 text-sm">
 				{failure}
 			</p>{/if}
@@ -141,13 +172,28 @@
 			/>
 		{/if}
 
-		{#if group.personal && group.member !== null}
+		{#if group.personal && group.member === null}
+			<p class="text-base-600 dark:text-base-400 mt-6 text-sm" role="status">
+				Whether you're a member of this group couldn't be checked just now. Try again shortly.
+			</p>
+		{:else if group.personal}
 			<section class="mt-6" aria-label="Membership">
 				{#if group.member}
 					<div class="flex flex-wrap items-center gap-3">
 						<Badge>Member</Badge>
 						<Button variant="ghost" disabled={busy} onclick={leaveIt}>Leave group</Button>
 					</div>
+					{#if group.confirmed === false}
+						<!-- Admitted some other way than a request made here: confirming is theirs to do. -->
+						<div class="mt-3 flex flex-wrap items-center gap-3">
+							<p class="text-base-700 dark:text-base-300 text-sm" role="status">
+								The group counts you a member. Confirm it to be listed among its members.
+							</p>
+							<Button size="sm" variant="secondary" disabled={busy} onclick={confirm}
+								>Confirm membership</Button
+							>
+						</div>
+					{/if}
 				{:else if requested}
 					<div class="flex flex-wrap items-center gap-3">
 						<p class="text-base-700 dark:text-base-300 text-sm" role="status">
@@ -227,11 +273,16 @@
 				{/if}
 				<Button variant="ghost" disabled={busy} onclick={unlink}>Unlink</Button>
 			</section>
+			{@render joinRequestsWaitAtHost()}
 			{#if group.linked.unfinished}
 				<div class="mt-3 flex flex-wrap items-center gap-3">
 					<p class="text-base-700 dark:text-base-300 text-sm" role="status">
-						Setting up this group didn't finish: it is still on the groups list, which you asked it
-						not to be.
+						{#if group.linked.unfinished.public && !group.linked.unfinished.listed}
+							Setting up this group didn't finish: it isn't yet public and off the groups list, as
+							you asked.
+						{:else}
+							Setting up this group here didn't finish.
+						{/if}
 					</p>
 					<Button
 						size="sm"
@@ -303,7 +354,7 @@
 					Your role in this group lets you see it here, but not post its events or list it.
 				</p>
 			{/if}
-		{:else if group.atHost && data.signedIn}
+		{:else if group.atHost && data.signedIn && !group.unreachable}
 			<div class="mt-6 flex flex-wrap items-center gap-3">
 				<form method="POST" action="/oauth/group/link" class="contents">
 					<input type="hidden" name="group" value={group.did} />

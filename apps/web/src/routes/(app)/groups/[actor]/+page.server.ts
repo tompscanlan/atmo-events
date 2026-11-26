@@ -5,7 +5,13 @@ import { hostingQuery } from '#lib/contrail/queries.js';
 import type { FlatEventRecord } from '#lib/contrail.js';
 import { groupAccess } from '#lib/groups/permissions-asked.js';
 import { listMembersOnlyEvents, upcoming } from '#lib/groups/server/calendar-read.js';
-import { groupView, requireGroupWriter, type GroupView } from '#lib/groups/server/context.js';
+import {
+	groupView,
+	requireGroupWriter,
+	type GroupView,
+	type LinkedGroup
+} from '#lib/groups/server/context.js';
+import type { GroupAbilities } from '#lib/groups/scopes.js';
 import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
 import { calendarSpaceState, type CalendarSpaceState } from '#lib/groups/server/group-events.js';
 import { callerSession, type CallerSession } from '#lib/private-events/server/caller.js';
@@ -14,9 +20,30 @@ import { holdsGuestGrant } from '#lib/private-events/scopes.js';
 import { errorKind } from '#lib/spaces/server/xrpc.js';
 
 const LINK_NOTICES = {
-	linked: 'Linked. What your role allows, you can now do for this group here.',
-	created: 'Your group is made, and linked. Post its events from here.'
+	linked: 'Linked.',
+	created: 'Your group is made, and linked.'
 } as const;
+
+/** What a working link lets the person do here, as the page offers it. */
+function linkAbilities(can: GroupAbilities): string {
+	const things = [
+		(can.post || can.membersOnly) && 'post its events',
+		can.list && 'list it',
+		can.settings && 'change its settings',
+		(can.admit || can.assign || can.remove) && 'manage its members'
+	].filter((thing): thing is string => Boolean(thing));
+	if (things.length === 0) return 'Your role in this group lets you see it here.';
+	const all =
+		things.length === 1 ? things[0] : `${things.slice(0, -1).join(', ')} and ${things.at(-1)}`;
+	return `You can now ${all} here.`;
+}
+
+/** After a link, only to the person who holds it and only while it works, worded from what it
+ *  may do; a made-up `?link=` is no notice. */
+function linkNotice(link: string | null, linked: LinkedGroup | null): string | null {
+	if (!link || !linked || !Object.hasOwn(LINK_NOTICES, link)) return null;
+	return `${LINK_NOTICES[link as keyof typeof LINK_NOTICES]} ${linkAbilities(linked.can)}`;
+}
 
 /** `unread` says why `events` is empty when they could not be read. */
 interface MembersOnlySlice {
@@ -74,7 +101,6 @@ export async function load({ params, locals, url, setHeaders }) {
 		membersOnlySlice(group, person),
 		calendarState(group, locals.did)
 	]);
-	const link = url.searchParams.get('link');
 	return {
 		pageTitle: group.name,
 		pageDescription: group.description ?? `Events from ${group.name}.`,
@@ -92,9 +118,6 @@ export async function load({ params, locals, url, setHeaders }) {
 		/** The ask is for members-only events: they are a member already. */
 		accessForMembersOnly: needsGuest,
 		spacesServer: access === 'refused' ? spacesServer() : null,
-		notice:
-			link && Object.hasOwn(LINK_NOTICES, link)
-				? LINK_NOTICES[link as keyof typeof LINK_NOTICES]
-				: null
+		notice: linkNotice(url.searchParams.get('link'), group.linked)
 	};
 }

@@ -11,6 +11,7 @@ import {
 	scope,
 	type ClientAssertionPrivateJwk,
 	type OAuthSession,
+	type Store,
 	type StoredSession,
 	type StoredState
 } from '@atcute/oauth-node-client';
@@ -79,30 +80,59 @@ function clientFor(personDid: string | null): OAuthClient {
 	const key = personDid ?? '';
 	let client = byPerson.get(key);
 	if (!client) {
-		// The library's origin, so a trailing slash in the setting is the same client.
-		const origin = oauthOrigin(env.OAUTH_PUBLIC_URL);
-		// Every call to the group host, its sign-in and the group's own session alike, with the same
-		// time limit as other servers: a page waits on them.
-		const network = timeLimitedNetwork();
-		client = new OAuthClient({
-			metadata: {
-				client_id: origin + GROUP_CLIENT_METADATA_PATH,
-				redirect_uris: [origin + GROUP_CALLBACK_PATH],
-				scope: GROUP_SESSION_SCOPE,
-				jwks_uri: origin + JWKS_PATH
-			},
-			keyset: [JSON.parse(env.CLIENT_ASSERTION_KEY) as ClientAssertionPrivateJwk],
-			actorResolver: createActorResolver({ network }),
-			fetch: network.fetch as typeof fetch,
-			stores: {
-				sessions: prefixedKV<Did, StoredSession>(kv, personPrefix(key)),
-				states: prefixedKV<string, StoredState>(kv, STATE_PREFIX, { ttl: STATE_TTL_SECONDS })
-			},
-			requestLock: (name, operation) => oauthRequestLock(`group:${key}:${name}`, operation)
-		});
+		client = buildClient(key, prefixedKV<Did, StoredSession>(kv, personPrefix(key)));
 		byPerson.set(key, client);
 	}
 	return client;
+}
+
+/** `lock` names the client's own request lock. */
+function buildClient(lock: string, sessions: Store<Did, StoredSession>): OAuthClient {
+	// The library's origin, so a trailing slash in the setting is the same client.
+	const origin = oauthOrigin(env.OAUTH_PUBLIC_URL);
+	// Every call to the group host, its sign-in and the group's own session alike, with the same
+	// time limit as other servers: a page waits on them.
+	const network = timeLimitedNetwork();
+	return new OAuthClient({
+		metadata: {
+			client_id: origin + GROUP_CLIENT_METADATA_PATH,
+			redirect_uris: [origin + GROUP_CALLBACK_PATH],
+			scope: GROUP_SESSION_SCOPE,
+			jwks_uri: origin + JWKS_PATH
+		},
+		keyset: [JSON.parse(env.CLIENT_ASSERTION_KEY) as ClientAssertionPrivateJwk],
+		actorResolver: createActorResolver({ network }),
+		fetch: network.fetch as typeof fetch,
+		stores: {
+			sessions,
+			states: prefixedKV<string, StoredState>(env.OAUTH_SESSIONS, STATE_PREFIX, {
+				ttl: STATE_TTL_SECONDS
+			})
+		},
+		requestLock: (name, operation) => oauthRequestLock(`group:${lock}:${name}`, operation)
+	});
+}
+
+/** Revokes a session a new link replaced in the store, so its grant does not stay live at the
+ *  group's PDS until it expires. Through a client that holds that session alone, so the new one,
+ *  stored under the same key, is left as it is. Logged, not thrown: the new link works either way. */
+async function revokeReplaced(
+	groupDid: string,
+	personDid: string,
+	replaced: StoredSession
+): Promise<void> {
+	const held = new Map<Did, StoredSession>([[groupDid as Did, replaced]]);
+	const only: Store<Did, StoredSession> = {
+		get: (did) => held.get(did),
+		set: (did, session) => void held.set(did, session),
+		delete: (did) => void held.delete(did),
+		clear: () => held.clear()
+	};
+	try {
+		await buildClient(`${personDid}:replaced`, only).revoke(groupDid as Did);
+	} catch (e) {
+		console.warn(`[groups] revoking ${personDid}'s replaced session for ${groupDid} failed:`, e);
+	}
 }
 
 export function groupClientMetadata() {
@@ -161,6 +191,11 @@ export async function finishGroupLink(
 	}
 
 	const client = clientFor(link.by);
+	// A link already stored here is replaced by this one; its grant is revoked once this one is in.
+	const replaced = await prefixedKV<Did, StoredSession>(
+		env.OAUTH_SESSIONS,
+		personPrefix(link.by)
+	).get(link.groupDid as Did);
 	let session: OAuthSession;
 	try {
 		({ session } = await client.callback(params));
@@ -182,6 +217,7 @@ export async function finishGroupLink(
 		};
 	}
 	await env.OAUTH_SESSIONS.put(askedKey(link.by, link.groupDid), GROUP_SESSION_SCOPE);
+	if (replaced) await revokeReplaced(link.groupDid, link.by, replaced);
 	// A group just linked may be one the cached answer from its host does not hold yet.
 	await forgetHeldAtGroupHost();
 	return { ok: true, groupDid: link.groupDid };

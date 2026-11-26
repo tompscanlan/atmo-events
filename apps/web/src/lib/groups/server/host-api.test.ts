@@ -59,6 +59,23 @@ describe('the group host, as it describes itself', () => {
 		await expect(groupHostInfo()).rejects.toThrow();
 	});
 
+	it.each([
+		['another host', 'did:web:other.example'],
+		['a DID that is not its did:web', 'did:plc:host'],
+		['its domain with a path', 'did:web:host.example:path']
+	])('refuses, and says why, a host that names %s as its DID', async (_why, did) => {
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		described({ did, availableUserDomains: ['.groups.example'] });
+		await expect(groupHostInfo()).rejects.toThrow(did);
+		expect(String(logged.mock.calls[0]?.[0])).toContain(did);
+	});
+
+	it('takes the did:web of an address with a port, its colon encoded', async () => {
+		Object.assign(env, { GROUP_HOST_URL: 'https://Host.Example:8443' });
+		described({ did: 'did:web:host.example%3A8443', availableUserDomains: ['.groups.example'] });
+		expect((await groupHostInfo()).did).toBe('did:web:host.example%3A8443');
+	});
+
 	it('throws when the host does not answer, or there is none', async () => {
 		mocks.networkFetch.mockImplementation(async () => new Response('down', { status: 502 }));
 		await expect(groupHostInfo()).rejects.toThrow();

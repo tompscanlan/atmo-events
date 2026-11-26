@@ -36,7 +36,9 @@ vi.mock('@svelte-atproto/oauth/network', () => ({
 
 import {
 	atGroupHost,
+	declaredHome,
 	forgetHeldAtGroupHost,
+	groupHostSpaces,
 	heldAtGroupHost,
 	isDeclared,
 	listCrowdedServers,
@@ -46,6 +48,7 @@ import {
 	readCachedHandles,
 	readCachedProfiles,
 	readGroupMeta,
+	readLinkedMeta,
 	resolveGroup,
 	storeCachedProfile,
 	syncDeclarationIndex,
@@ -104,10 +107,20 @@ describe('resolveGroup', () => {
 	});
 });
 
+describe("a link's reads of the group's spaces", () => {
+	it('go to the configured group host, whatever the DID document names now', async () => {
+		expect(await groupHostSpaces.repoHost(GROUP)).toBe('https://host.example');
+		expect(mocks.resolve).not.toHaveBeenCalled();
+		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
+		await expect(groupHostSpaces.repoHost(GROUP)).rejects.toThrow();
+	});
+});
+
 describe('atGroupHost', () => {
 	it('is true only for a PDS at the configured host', () => {
 		expect(atGroupHost({ pds: 'https://host.example' })).toBe(true);
 		expect(atGroupHost({ pds: 'https://elsewhere.example' })).toBe(false);
+		expect(atGroupHost({ pds: 'not a url' })).toBe(false);
 		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
 		expect(atGroupHost({ pds: 'https://host.example' })).toBe(false);
 	});
@@ -148,20 +161,27 @@ describe('the declaration index', () => {
 			cursor: 'next'
 		});
 		const [nsid, { params }] = mocks.get.mock.calls[0];
-		// One per account, at most 20 per server, but all the groups this site's group host holds.
+		// One per account, at most 20 per server; the index asks what the group host holds itself.
 		expect(nsid).toBe('rsvp.atmo.declaration.listDeclared');
-		expect(params).toEqual({ limit: 100, home: 'https://host.example', held: `["${GROUP}"]` });
+		expect(params).toEqual({ limit: 100 });
+	});
+
+	it('names the group host to the index, with what it holds, read only when asked', async () => {
+		const home = declaredHome();
+		expect(home?.origin).toBe('https://host.example');
+		expect(hostFetch).not.toHaveBeenCalled();
+		expect(await home?.held()).toEqual([GROUP]);
+		hostFetch.mockResolvedValue(new Response('down', { status: 502 }));
+		await forgetHeldAtGroupHost();
+		expect(await home?.held()).toBeNull();
+		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
+		expect(declaredHome()).toBeNull();
 	});
 
 	it('asks for the page after a cursor, and says when there is none after it', async () => {
 		mocks.get.mockResolvedValue({ ok: true, data: { records: [] } });
 		expect(await listDeclaredGroups({ cursor: 'page2' })).toEqual({ groups: [], cursor: null });
-		expect(mocks.get.mock.calls[0][1].params).toEqual({
-			limit: 100,
-			cursor: 'page2',
-			home: 'https://host.example',
-			held: `["${GROUP}"]`
-		});
+		expect(mocks.get.mock.calls[0][1].params).toEqual({ limit: 100, cursor: 'page2' });
 	});
 
 	it("lists one server's groups for its own page", async () => {
@@ -174,22 +194,8 @@ describe('the declaration index', () => {
 		expect(hostFetch).not.toHaveBeenCalled();
 	});
 
-	it("lists only what the group host holds on the host's own page", async () => {
-		mocks.get.mockResolvedValue({ ok: true, data: { records: [] } });
-		await listDeclaredGroups({ server: 'https://host.example' });
-		expect(mocks.get.mock.calls[0][1].params).toEqual({
-			limit: 100,
-			server: 'https://host.example',
-			home: 'https://host.example',
-			held: `["${GROUP}"]`
-		});
-	});
-
-	it('limits the group host like any server when it does not say what it holds', async () => {
+	it('leaves the group host out of the crowded servers only when it says what it holds', async () => {
 		hostFetch.mockResolvedValue(new Response('down', { status: 502 }));
-		mocks.get.mockResolvedValue({ ok: true, data: { records: [] } });
-		await listDeclaredGroups();
-		expect(mocks.get.mock.calls[0][1].params).toEqual({ limit: 100 });
 		mocks.crowdedServers.mockResolvedValue([]);
 		await listCrowdedServers();
 		expect(mocks.crowdedServers.mock.calls[0][1]).toBeNull();
@@ -288,6 +294,27 @@ describe('readGroupMeta', () => {
 		});
 		return { handle, exchanges, reads };
 	}
+
+	it('reads how the group takes members too, for the page of someone who linked it, with one credential', async () => {
+		for (const [config, joinPolicy] of [
+			[{ joinPolicy: 'approval' }, 'approval'],
+			[{ joinPolicy: 'open' }, 'open'],
+			[{ joinPolicy: 'x' }, null],
+			[{}, 'approval']
+		] as const) {
+			const host = groupHost({
+				'org.atgrp.about': about,
+				'org.atgrp.config': config,
+				'com.atproto.space.policy': policy(true)
+			});
+			expect(await readLinkedMeta(host.handle, GROUP, spaceHosts)).toEqual({
+				profile: { name: 'Knitters', description: null },
+				public: true,
+				joinPolicy
+			});
+			expect(host.exchanges).toHaveLength(1);
+		}
+	});
 
 	it("reads the about record and the policy with a credential the group's session bought", async () => {
 		const host = groupHost({
@@ -501,6 +528,45 @@ describe('cached group profiles', () => {
 			public: false
 		});
 		expect(kv.keys()).toEqual([]);
+	});
+
+	it('writes or removes it only when it changes', async () => {
+		const put = vi.spyOn(kv, 'put');
+		const remove = vi.spyOn(kv, 'delete');
+		const knitters = { profile: { name: 'Knitters', description: 'Yarn' }, public: true };
+		await storeCachedProfile(group, knitters);
+		await storeCachedProfile(group, knitters);
+		await storeCachedProfile(group, { ...knitters, profile: { ...knitters.profile } });
+		expect(put).toHaveBeenCalledOnce();
+
+		await storeCachedProfile(group, {
+			...knitters,
+			profile: { ...knitters.profile, name: 'Purl' }
+		});
+		await storeCachedProfile(
+			{ ...group, handle: 'purl.example' },
+			{
+				...knitters,
+				profile: { ...knitters.profile, name: 'Purl' }
+			}
+		);
+		expect(put).toHaveBeenCalledTimes(3);
+
+		await storeCachedProfile(group, { ...knitters, public: false });
+		await storeCachedProfile(group, { ...knitters, public: false });
+		await storeCachedProfile(group, { profile: null, public: true });
+		expect(remove).toHaveBeenCalledOnce();
+		expect(kv.keys()).toEqual([]);
+	});
+
+	it('writes it when the cached one could not be read', async () => {
+		vi.spyOn(kv, 'get').mockRejectedValue(new Error('KV down'));
+		const put = vi.spyOn(kv, 'put');
+		await storeCachedProfile(group, {
+			profile: { name: 'Knitters', description: null },
+			public: true
+		});
+		expect(put).toHaveBeenCalledOnce();
 	});
 });
 

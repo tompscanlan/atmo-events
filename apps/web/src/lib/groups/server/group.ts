@@ -13,14 +13,19 @@ import {
 	declarationUri,
 	GROUP_ABOUT_COLLECTION,
 	GROUP_ABOUT_RKEY,
+	GROUP_CONFIG_COLLECTION,
+	GROUP_CONFIG_RKEY,
 	GROUP_DECLARATION_COLLECTION,
 	GROUP_DECLARATION_RKEY,
 	groupDeclarationRecord,
 	metaSpaceUri,
 	SPACE_POLICY_COLLECTION,
-	SPACE_POLICY_RKEY
+	SPACE_POLICY_RKEY,
+	type GroupJoinPolicy
 } from '../ids';
-import { cachedHandles, crowdedServers, type CrowdedServer } from './declared';
+import { groupJoinPolicy } from '../fields';
+import { groupHostUrl } from './enabled';
+import { cachedHandles, crowdedServers, type CrowdedServer, type DeclaredHome } from './declared';
 import { isRecordNotFound, xrpc, type XrpcHandle } from './xrpc';
 
 export interface ResolvedGroup {
@@ -43,15 +48,32 @@ export async function resolveGroup(actor: string): Promise<ResolvedGroup | null>
 }
 
 export function groupHostOrigin(): string | null {
-	const url = env.GROUP_HOST_URL?.trim();
-	return url ? new URL(url).origin : null;
+	return groupHostUrl()?.origin ?? null;
 }
 
 /** This site changes only groups whose PDS is its own group host. */
 export function atGroupHost(group: Pick<ResolvedGroup, 'pds'>): boolean {
 	const origin = groupHostOrigin();
-	return origin !== null && new URL(group.pds).origin === origin;
+	if (origin === null) return false;
+	try {
+		return new URL(group.pds).origin === origin;
+	} catch {
+		return false;
+	}
 }
+
+/** A group's spaces as this site reads them through a link: their authority is the configured
+ *  group host, whatever the group's DID document says now, so a document changed since the link
+ *  cannot send the link's reads elsewhere. Only the key that checks the host's answers comes from
+ *  the document. */
+export const groupHostSpaces: SpaceHosts = {
+	repoHost: async () => {
+		const origin = groupHostOrigin();
+		if (!origin) throw new Error('no group host is set');
+		return origin;
+	},
+	kemKey: (did, fresh) => didSpaceHosts.kemKey(did, fresh)
+};
 
 /** The index alone answers, so a declaration moderation hid stays hidden. Throws when the
  *  index cannot say, so "could not ask" never reads as "not declared". */
@@ -160,6 +182,13 @@ async function readHeld(origin: string): Promise<string[] | null> {
 	}
 }
 
+/** For the declarations' list: this site's group host, and what it holds, read only when a list
+ *  needs it. */
+export function declaredHome(): DeclaredHome | null {
+	const origin = groupHostOrigin();
+	return origin ? { origin, held: heldAtGroupHost } : null;
+}
+
 /** One page, newest first, the index's own order. Only the declaration at rkey `self`
  *  counts, so an account is listed once however many records it writes, and each server gets
  *  at most 20 places, except the groups this site's group host holds; `server` lists one
@@ -170,15 +199,12 @@ export async function listDeclaredGroups(
 	{ cursor = null, server = null }: { cursor?: string | null; server?: string | null } = {},
 	limit = 100
 ): Promise<DeclaredGroupsPage> {
-	const home = groupHostOrigin();
-	// Another server's page needs nothing from the host.
-	const held = home && (!server || server === home) ? await heldAtGroupHost() : null;
+	// The index reads what the group host holds itself: see declaredHome.
 	const res = await getServerClient(env.DB).get('rsvp.atmo.declaration.listDeclared', {
 		params: {
 			limit: Math.min(Math.max(limit, 1), 100),
 			...(cursor ? { cursor } : {}),
-			...(server ? { server } : {}),
-			...(home && held ? { home, held: JSON.stringify(held) } : {})
+			...(server ? { server } : {})
 		}
 	});
 	if (!res.ok) throw new Error(`the declaration index answered ${res.status}`);
@@ -237,7 +263,7 @@ export interface GroupMeta {
 export async function readGroupMeta(
 	handle: XrpcHandle,
 	groupDid: string,
-	hosts: SpaceHosts = didSpaceHosts
+	hosts: SpaceHosts = groupHostSpaces
 ): Promise<GroupMeta> {
 	const reader = credentialSpaceReader({ handle }, hosts);
 	const space = metaSpaceUri(groupDid);
@@ -248,6 +274,35 @@ export async function readGroupMeta(
 		read(SPACE_POLICY_COLLECTION, SPACE_POLICY_RKEY)
 	]);
 	return groupMetaOf(about?.value ?? null, policy?.value ?? null);
+}
+
+export interface LinkedMeta extends GroupMeta {
+	/** From its config: null for one this site does not know; approval, as the host takes it, for
+	 *  none. */
+	joinPolicy: GroupJoinPolicy | null;
+}
+
+/** As `readGroupMeta`, with how the group takes members, for the page of someone who linked it:
+ *  one credential for all three reads. */
+export async function readLinkedMeta(
+	handle: XrpcHandle,
+	groupDid: string,
+	hosts: SpaceHosts = groupHostSpaces
+): Promise<LinkedMeta> {
+	const reader = credentialSpaceReader({ handle }, hosts);
+	const space = metaSpaceUri(groupDid);
+	const read = (collection: string, rkey: string) =>
+		reader.get({ space, repo: groupDid, collection, rkey });
+	const [about, config, policy] = await Promise.all([
+		read(GROUP_ABOUT_COLLECTION, GROUP_ABOUT_RKEY),
+		read(GROUP_CONFIG_COLLECTION, GROUP_CONFIG_RKEY),
+		read(SPACE_POLICY_COLLECTION, SPACE_POLICY_RKEY)
+	]);
+	const joinPolicy = config?.value.joinPolicy;
+	return {
+		...groupMetaOf(about?.value ?? null, policy?.value ?? null),
+		joinPolicy: joinPolicy === undefined ? 'approval' : groupJoinPolicy(joinPolicy)
+	};
 }
 
 /** From the meta space's about record and its published policy, either missing. */
@@ -305,10 +360,10 @@ export async function syncDeclarationIndex(groupDid: string, inRepo: boolean): P
 	}
 }
 
-/** Only a public group may be listed. This site's rule, kept from the earlier proposal: the spec's
- *  declaration says nothing of the meta space being public. A group host holds to it too: it
- *  writes the declaration itself while the meta space is public, and refuses one while it is
- *  private, with InvalidRequest. Putting the declaration it wrote changes nothing. */
+/** Only a public group may be listed. This site lists only groups whose meta space is public; the
+ *  spec's declaration leaves that open. A group host holds to it too: it writes the declaration
+ *  itself while the meta space is public, and refuses one while it is private, with
+ *  InvalidRequest. Putting the declaration it wrote changes nothing. */
 export async function listGroup(handle: XrpcHandle, groupDid: string): Promise<void> {
 	await xrpc(handle, 'com.atproto.repo.putRecord', {
 		body: {
@@ -360,17 +415,23 @@ export async function readCachedProfiles(dids: string[]): Promise<Map<string, Ca
 	return profiles;
 }
 
-/** A private group's cached profile is removed, so its name never reaches a visitor. */
+/** A private group's cached profile is removed, so its name never reaches a visitor. Written or
+ *  removed only when it changes, since every page view by someone who reads the group lands here,
+ *  and KV bills each write and takes about one a second for a key. A read that fails counts as a
+ *  change. */
 export async function storeCachedProfile(
 	group: Pick<ResolvedGroup, 'did' | 'handle'>,
 	meta: GroupMeta
 ): Promise<void> {
 	const kv = env.OAUTH_SESSIONS;
 	if (!kv) return;
+	const key = CACHED_PROFILE_PREFIX + group.did;
+	const cached = await kv.get(key, 'text').catch(() => undefined);
 	if (!meta.public || !meta.profile) {
-		await kv.delete(CACHED_PROFILE_PREFIX + group.did);
+		if (cached !== null) await kv.delete(key);
 		return;
 	}
 	const profile: CachedGroupProfile = { ...meta.profile, handle: group.handle };
-	await kv.put(CACHED_PROFILE_PREFIX + group.did, JSON.stringify(profile));
+	const value = JSON.stringify(profile);
+	if (cached !== value) await kv.put(key, value);
 }

@@ -89,8 +89,7 @@ export type JoinOutcome = 'joined' | 'pending';
 
 /** An open group admits at once; one that approves its members queues the request, and asking
  *  again is answered with the request still waiting. A member is answered with their membership.
- *  The confirmation is written on their next visit to the group's page, once the host's records
- *  say they are a member. */
+ *  The confirmation is the caller's to write (../members.remote.ts). */
 export async function requestJoin(
 	caller: CallerSession,
 	groupDid: string,
@@ -114,16 +113,17 @@ export async function cancelJoinRequest(caller: CallerSession, groupDid: string)
 	}
 }
 
-/** The confirmation goes first, as the spec asks, while the host still counts them a member. Not a
- *  member already (the host's own `NotAMember`) is what they asked for. */
+/** The spec asks a member who leaves to delete their confirmation too, in no order. It goes only
+ *  once the host has taken the leave, so a leave it refuses, such as the last admin's, or one that
+ *  fails, leaves them a member who is still confirmed. Not a member already (the host's own
+ *  `NotAMember`) is what they asked for, and their confirmation goes as well. */
 export async function leaveGroup(caller: CallerSession, groupDid: string): Promise<void> {
-	await withdrawConfirmation(caller, groupDid);
 	try {
 		await asPerson(caller, LEAVE_GROUP_NSID, { body: { group: groupDid } });
 	} catch (e) {
-		if (e instanceof XrpcError && e.error === 'NotAMember') return;
-		throw e;
+		if (!(e instanceof XrpcError && e.error === 'NotAMember')) throw e;
 	}
+	await withdrawConfirmation(caller, groupDid);
 }
 
 export interface ActorGroup {

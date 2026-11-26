@@ -41,19 +41,23 @@ export interface GroupSettings {
 	name: string;
 	description: string | null;
 	website: string | null;
-	joinPolicy: GroupJoinPolicy;
+	/** Null for a join policy this site does not know, as the spec's `knownValues` allows: shown as
+	 *  it is, and kept as it is on save unless the person picks another. */
+	joinPolicy: GroupJoinPolicy | null;
 	public: boolean;
 	/** On the groups list; only a public group may be. */
 	listed: boolean;
 }
 
-/** Null for anything that is not a whole, valid set of settings. */
+/** Null for anything that is not a whole, valid set of settings. An empty join policy is the one
+ *  the group has, kept. */
 export function parseGroupSettings(value: Record<string, unknown>): GroupSettings | null {
 	const name = groupName(value.name);
 	const description = groupDescription(value.description);
 	const website = groupWebsite(value.website);
-	const joinPolicy = groupJoinPolicy(value.joinPolicy);
-	if (!name || description === undefined || website === undefined || !joinPolicy) return null;
+	const joinPolicy = value.joinPolicy === '' ? null : groupJoinPolicy(value.joinPolicy);
+	if (!name || description === undefined || website === undefined) return null;
+	if (joinPolicy === null && value.joinPolicy !== '') return null;
 	if (typeof value.public !== 'boolean' || typeof value.listed !== 'boolean') return null;
 	return {
 		name,
@@ -100,8 +104,8 @@ async function readMeta(writer: GroupWriter, hosts: SpaceHosts): Promise<MetaRec
 
 const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
 
-/** What the settings form starts from. A config the host would not have written reads as its
- *  default, approval. */
+/** What the settings form starts from. A group with no join policy reads as the host's default,
+ *  approval; one with a policy this site does not know, as null, to keep. */
 export async function readGroupSettings(
 	writer: GroupWriter,
 	hosts: SpaceHosts = didSpaceHosts
@@ -112,7 +116,7 @@ export async function readGroupSettings(
 		name: text(about?.displayName) ?? '',
 		description: text(about?.description),
 		website: text(about?.website),
-		joinPolicy: groupJoinPolicy(config?.joinPolicy) ?? 'approval',
+		joinPolicy: config?.joinPolicy === undefined ? 'approval' : groupJoinPolicy(config.joinPolicy),
 		public: isPublic,
 		listed: isPublic && declared
 	};
@@ -148,10 +152,13 @@ export async function saveGroupSettings(
 		await notifyIndex(declarationUri(writer.did));
 	}
 
-	await putMeta(writer, GROUP_CONFIG_COLLECTION, GROUP_CONFIG_RKEY, {
-		...config,
-		joinPolicy: settings.joinPolicy
-	});
+	// A join policy this site does not know is left as it is, unless the person picked another.
+	if (settings.joinPolicy !== null) {
+		await putMeta(writer, GROUP_CONFIG_COLLECTION, GROUP_CONFIG_RKEY, {
+			...config,
+			joinPolicy: settings.joinPolicy
+		});
+	}
 	// The record's other fields, such as its avatar, are kept.
 	const next: Record<string, unknown> = { ...about, displayName: settings.name };
 	for (const [field, value] of [
@@ -169,6 +176,21 @@ export async function saveGroupSettings(
 	}).catch((e) =>
 		console.warn(`[groups] ${writer.did}: the cached profile could not be stored:`, e)
 	);
+}
+
+/** Makes the group's meta space public, its policy otherwise as it is, so the host lists it: for a
+ *  group made private so it was never listed, whose maker asked for it public. Nothing when it is
+ *  public already, so running it again changes nothing. */
+export async function makeMetaPublic(
+	writer: GroupWriter,
+	hosts: SpaceHosts = didSpaceHosts
+): Promise<void> {
+	const { policy } = await readMeta(writer, hosts);
+	if (!policy) throw new Error(`${writer.did} publishes no policy for its meta space`);
+	if (policy.publicRead === true) return;
+	await xrpc(writer.handle, 'com.atproto.space.updateSpace', {
+		body: { space: metaSpaceUri(writer.did), policy: { ...policy, publicRead: true } }
+	});
 }
 
 async function putMeta(

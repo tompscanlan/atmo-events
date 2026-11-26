@@ -10,7 +10,12 @@ const mocks = vi.hoisted(() => ({
 	finishGroupSetup: vi.fn(),
 	turnOnMembersOnlyEvents: vi.fn()
 }));
-const member = vi.hoisted(() => ({ joinGroup: vi.fn(), cancelJoin: vi.fn(), leave: vi.fn() }));
+const member = vi.hoisted(() => ({
+	joinGroup: vi.fn(),
+	cancelJoin: vi.fn(),
+	leave: vi.fn(),
+	confirmMember: vi.fn()
+}));
 const oauth = vi.hoisted(() => ({ requestPermissions: vi.fn() }));
 // The page's writes and its event list's paging go through SvelteKit remote functions, which a
 // browser test has no server for.
@@ -33,7 +38,12 @@ const EVENT = {
 /** The page for someone who linked the group, as its load returns it; `can` is what the session's
  *  granted scope allows. */
 function linkedPage(
-	linked: { public: boolean; listed: boolean; reapprove?: boolean; unfinished?: boolean },
+	linked: {
+		public: boolean;
+		listed: boolean;
+		reapprove?: boolean;
+		unfinished?: { public: boolean; listed: boolean };
+	},
 	can = { post: true, list: true, settings: true },
 	events: (typeof EVENT)[] = []
 ) {
@@ -51,7 +61,7 @@ function linkedPage(
 				listed: linked.listed,
 				can,
 				reapprove: linked.reapprove ?? false,
-				unfinished: linked.unfinished ?? false
+				unfinished: linked.unfinished ?? null
 			},
 			relink: false,
 			hasLink: true
@@ -118,10 +128,77 @@ describe("what a link's granted scope offers", () => {
 	it("finishes setting up a group made here when its link didn't", async () => {
 		mocks.finishGroupSetup.mockResolvedValue({ ok: true });
 		render(GroupPage, {
-			data: linkedPage({ public: true, listed: true, unfinished: true }) as never
+			data: linkedPage({
+				public: false,
+				listed: false,
+				unfinished: { public: true, listed: false }
+			}) as never
 		});
+		await expect
+			.poll(shown)
+			.toContain(
+				"Setting up this group didn't finish: it isn't yet public and off the groups list"
+			);
 		await page.getByRole('button', { name: 'Finish setting up' }).click();
 		await expect.poll(() => mocks.finishGroupSetup).toHaveBeenCalledWith({ groupDid: GROUP });
+	});
+});
+
+describe('a link whose group host could not be reached', () => {
+	it('shows the page as a visitor sees it, says why, and still unlinks', async () => {
+		const data = linkedPage({ public: true, listed: true });
+		render(GroupPage, {
+			data: { ...data, group: { ...data.group, linked: null, unreachable: true } } as never
+		});
+		await expect.poll(shown).toContain("The group host couldn't be reached through your link");
+		expect(page.getByRole('button', { name: 'Link this group' }).elements()).toHaveLength(0);
+		expect(page.getByRole('button', { name: 'Unlink' }).elements()).toHaveLength(1);
+		expect(page.getByRole('link', { name: 'Post an event' }).elements()).toHaveLength(0);
+	});
+});
+
+describe("a group whose setup didn't finish", () => {
+	it.each([
+		['listed', { public: true, listed: true }],
+		['members-only', { public: false, listed: false }]
+	])('says no more than that of a %s group, which is as it was made', async (_kind, asked) => {
+		render(GroupPage, {
+			data: linkedPage({ public: asked.public, listed: asked.listed, unfinished: asked }) as never
+		});
+		await expect.poll(shown).toContain("Setting up this group here didn't finish.");
+		expect(shown()).not.toContain('groups list, as you asked');
+		expect(shown()).not.toContain('still on the groups list');
+	});
+});
+
+describe('where requests to join wait', () => {
+	const linkedWith = (
+		joinPolicy: string | null,
+		can = { post: true, list: true, settings: true }
+	) => {
+		const data = linkedPage({ public: true, listed: true }, can);
+		const linked = { ...data.group.linked, meta: { ...data.group.linked.meta, joinPolicy } };
+		return { ...data, group: { ...data.group, linked } };
+	};
+	const note = 'Requests to join this group are kept at the group host';
+
+	it('is said to an admin who linked a group that approves its members', async () => {
+		render(GroupPage, { data: linkedWith('approval') as never });
+		await expect.poll(shown).toContain(note);
+	});
+
+	it.each([
+		['one open to all', linkedWith('open')],
+		['one by invitation', linkedWith('invite')],
+		['one whose policy atmo does not know', linkedWith(null)],
+		[
+			'a link that manages nothing',
+			linkedWith('approval', { post: true, list: false, settings: false })
+		]
+	])('is not said of %s', async (_what, data) => {
+		render(GroupPage, { data: data as never });
+		await expect.element(page.getByRole('button', { name: 'Unlink' })).toBeVisible();
+		expect(shown()).not.toContain(note);
 	});
 });
 
@@ -213,6 +290,37 @@ describe("a person's own membership", () => {
 		await expect.element(page.getByRole('button', { name: 'Ask to join' })).toBeVisible();
 	});
 
+	it("offers no join, and says why, when it couldn't tell whether they are a member", async () => {
+		render(GroupPage, { data: personPage({ joinPolicy: 'open' }, null) as never });
+		await expect.poll(shown).toContain("Whether you're a member of this group couldn't be checked");
+		expect(page.getByRole('button', { name: /join/i }).elements()).toHaveLength(0);
+		expect(page.getByRole('button', { name: 'Leave group' }).elements()).toHaveLength(0);
+	});
+
+	it("carries a request sent, and a message typed, to no other group's page", async () => {
+		member.joinGroup.mockResolvedValue({ outcome: 'pending' });
+		const knitters = personPage({ joinPolicy: 'approval' }, false);
+		const { rerender } = await render(GroupPage, { data: knitters as never });
+		const box = page.getByLabelText("A message for the group's admins (optional)");
+		await box.fill('I knit.');
+		await page.getByRole('button', { name: 'Ask to join' }).click();
+		await expect
+			.element(page.getByText("Request sent. The group's admins will decide."))
+			.toBeVisible();
+
+		const other = { ...knitters, group: { ...knitters.group, did: 'did:plc:other', name: 'Purl' } };
+		await rerender({ data: other as never });
+		await expect.element(page.getByRole('button', { name: 'Ask to join' })).toBeVisible();
+		expect(shown()).not.toContain('Request sent.');
+		await expect.element(box).toHaveValue('');
+
+		// Back on the first group's page, its request still shows until the page loads again.
+		await rerender({ data: knitters as never });
+		await expect
+			.element(page.getByText("Request sent. The group's admins will decide."))
+			.toBeVisible();
+	});
+
 	it('says a group takes members by invitation only, and offers no join', async () => {
 		render(GroupPage, { data: personPage({ joinPolicy: 'invite' }, false) as never });
 		await expect.poll(shown).toContain('This group takes members by invitation only.');
@@ -231,6 +339,24 @@ describe("a person's own membership", () => {
 		await page.getByRole('button', { name: 'Leave group' }).click();
 		await expect.element(page.getByRole('alert')).toHaveTextContent(message);
 	});
+
+	it('offers a member who has not confirmed to confirm, and confirms when asked', async () => {
+		member.confirmMember.mockResolvedValue({ ok: true });
+		const data = personPage({ joinPolicy: 'approval' }, true);
+		render(GroupPage, { data: { ...data, group: { ...data.group, confirmed: false } } as never });
+		await page.getByRole('button', { name: 'Confirm membership' }).click();
+		await expect.poll(() => member.confirmMember).toHaveBeenCalledWith({ groupDid: GROUP });
+	});
+
+	it.each([true, null])(
+		'offers nothing to confirm to a member who has, or one it could not tell of (%s)',
+		async (confirmed) => {
+			const data = personPage({ joinPolicy: 'approval' }, true);
+			render(GroupPage, { data: { ...data, group: { ...data.group, confirmed } } as never });
+			await expect.element(page.getByRole('button', { name: 'Leave group' })).toBeVisible();
+			expect(page.getByRole('button', { name: 'Confirm membership' }).elements()).toHaveLength(0);
+		}
+	);
 
 	it('links a member to the members page', async () => {
 		const members = page.getByRole('link', { name: /^Members/ });
@@ -253,7 +379,9 @@ describe("a person's own membership", () => {
 		await expect
 			.poll(() => oauth.requestPermissions.mock.calls[0]?.[0])
 			.toEqual([
-				'include:org.atgrp.authParticipate',
+				'space:org.atgrp.meta?authority=*&skey=self&action=read',
+				'space:org.atgrp.members?authority=*&skey=self&collection=org.atgrp.confirmation&action=read&action=create&action=delete',
+				'rpc?lxm=org.atgrp.requestJoin&lxm=org.atgrp.cancelJoinRequest&lxm=org.atgrp.leaveGroup&aud=*',
 				'rpc:org.atgrp.internal.getActorGroups?aud=*',
 				GUEST_SCOPE
 			]);

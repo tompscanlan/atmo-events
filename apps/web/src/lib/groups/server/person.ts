@@ -55,7 +55,8 @@ export async function readMetaAsPerson(
 
 /** A member has a membership in the group's repo in its members space, keyed by their DID, which
  *  only members may read. A person the host does not let in is not a member; any other failure
- *  throws. */
+ *  throws, SpaceNotFound among them: their PDS answers it for a refusal and also when it could not
+ *  reach the host, so it says nothing either way. */
 export async function isMemberAsPerson(
 	reader: SpaceReader,
 	groupDid: string,
@@ -70,7 +71,7 @@ export async function isMemberAsPerson(
 		});
 		return found !== null;
 	} catch (e) {
-		if (isSpaceAccessDenied(e)) return false;
+		if (isSpaceAccessDenied(e) && !e.reason.endsWith('SpaceNotFound')) return false;
 		throw e;
 	}
 }

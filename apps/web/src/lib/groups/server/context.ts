@@ -6,6 +6,7 @@ import { waitUntil } from 'cloudflare:workers';
 import { error } from '@sveltejs/kit';
 import type { OAuthSession } from '@atcute/oauth-node-client';
 import type { CallerSession } from '#lib/private-events/server/caller.js';
+import type { SpaceReader } from '#lib/spaces/server/space-read.js';
 import {
 	isSpaceAccessDenied,
 	type SpaceAccessDenied
@@ -23,16 +24,16 @@ import {
 	atGroupHost,
 	isDeclared,
 	readCachedProfiles,
-	readGroupMeta,
+	readLinkedMeta,
 	repoHasDeclaration,
 	resolveGroup,
 	storeCachedProfile,
 	syncDeclarationIndex,
-	type GroupMeta
+	type LinkedMeta
 } from './group';
 import { requireGroupsEnabled } from './enabled';
 import { unfinishedGroup } from './create';
-import { confirmMembership } from './confirmation';
+import { confirmAdmitted, hasConfirmation, joinRequested } from './confirmation';
 import { actorGroups } from './host';
 import { isMemberAsPerson, personReader, readMetaAsPerson, type PersonalMeta } from './person';
 import {
@@ -70,25 +71,32 @@ export interface GroupView {
 	relink: boolean;
 	/** The caller has a link stored here, working or not, so they can unlink it. */
 	hasLink: boolean;
+	/** The caller's link could not reach the group's host just now, so the page shows what a
+	 *  visitor sees. */
+	unreachable: boolean;
 	/** Present when the group host let the caller read the group with their own access. */
 	personal: PersonalMeta | null;
 	/** Whether the host's records count the caller a member; null when they could not be read. */
 	member: boolean | null;
+	/** For a member whose sign-in may write it: whether their own confirmation is there. Null for
+	 *  anyone else, and when it could not be read. */
+	confirmed: boolean | null;
 	/** Signed in, at a group at this site's host, without the group permissions their own sign-in
 	 *  needs to join it or see it as a member. */
 	askAccess: boolean;
 }
 
 export interface LinkedGroup {
-	meta: GroupMeta;
+	meta: LinkedMeta;
 	listed: boolean;
 	/** What the session's granted scope lets it do; the host still checks the roles at each write. */
 	can: GroupAbilities;
 	/** The link was approved for less than this site asks for now, and lacks some of it: approving
 	 *  again may bring the rest. False once it was approved for all of it, whatever the roles kept. */
 	reapprove: boolean;
-	/** The caller made the group here, and setting it up did not finish at the link. */
-	unfinished: boolean;
+	/** The caller made the group here, and setting it up did not finish at the link: what they asked
+	 *  of it, which says what is left to do. Null for any other group. */
+	unfinished: { public: boolean; listed: boolean } | null;
 }
 
 export interface GroupWriter {
@@ -96,15 +104,42 @@ export interface GroupWriter {
 	handle: XrpcHandle;
 }
 
+/** The longest a page waits on the reads through a link, every call in them together: each call
+ *  has its own limit, and a host that is down would otherwise cost the sum of them. */
+export const LINKED_READ_LIMIT_MS = 10_000;
+
+type LinkedRead = LinkedGroup | 'refused' | 'no-role' | 'unreachable';
+
+/** `unreachable` when the group's host did not answer in time, or failed: the page then shows
+ *  what a visitor sees, never an error, so the person can still see its events and unlink it. */
 async function linkedRead(
 	session: OAuthSession,
 	groupDid: string,
 	personDid: string
-): Promise<LinkedGroup | 'refused' | 'no-role'> {
+): Promise<LinkedRead> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<'unreachable'>((resolve) => {
+		timer = setTimeout(() => {
+			console.warn(`[groups] ${groupDid}: ${personDid}'s link had no answer in time`);
+			resolve('unreachable');
+		}, LINKED_READ_LIMIT_MS);
+	});
+	try {
+		return await Promise.race([readLinked(session, groupDid, personDid), late]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+async function readLinked(
+	session: OAuthSession,
+	groupDid: string,
+	personDid: string
+): Promise<LinkedRead> {
 	const handle = groupHandle(session, personDid);
 	try {
 		const [meta, listed, token, current, setup] = await Promise.all([
-			readGroupMeta(handle, groupDid),
+			readLinkedMeta(handle, groupDid),
 			repoHasDeclaration(handle, groupDid),
 			// As granted at the approval; a refresh would not change it.
 			session.getTokenInfo(false),
@@ -113,7 +148,13 @@ async function linkedRead(
 		]);
 		const can = groupAbilities(token.scope, groupDid);
 		const everything = Object.values(can).every(Boolean);
-		return { meta, listed, can, reapprove: !current && !everything, unfinished: setup !== null };
+		return {
+			meta,
+			listed,
+			can,
+			reapprove: !current && !everything,
+			unfinished: setup && { public: setup.public, listed: setup.listed }
+		};
 	} catch (e) {
 		if (isLinkBroken(e)) return 'refused';
 		// Their role was lowered or taken away, so the session's scope or its credential for the
@@ -124,18 +165,42 @@ async function linkedRead(
 			console.info(`[groups] ${groupDid} refused ${personDid}'s link: ${why}`);
 			return 'no-role';
 		}
-		throw e;
+		console.error(`[groups] ${groupDid}: ${personDid}'s link could not read it: ${errorKind(e)}`);
+		return 'unreachable';
 	}
 }
 
-/** Whether the person's groups at the host include this one, by the host's own list. */
-async function knowsGroup(caller: CallerSession, groupDid: string): Promise<boolean> {
-	if (!holdsRpc(caller.scope, ACTOR_GROUPS_NSID)) return false;
+/** Whether the person's groups at the host include this one, by the host's own list; null when
+ *  their sign-in can't ask for it, or the host did not answer. */
+async function hostListsGroup(caller: CallerSession, groupDid: string): Promise<boolean | null> {
+	if (!holdsRpc(caller.scope, ACTOR_GROUPS_NSID)) return null;
 	try {
 		return (await actorGroups(caller)).some((group) => group.did === groupDid);
 	} catch (e) {
 		console.warn(`[groups] ${caller.did}'s groups could not be listed: ${errorKind(e)}`);
-		return false;
+		return null;
+	}
+}
+
+const knowsGroup = async (caller: CallerSession, groupDid: string) =>
+	(await hostListsGroup(caller, groupDid)) === true;
+
+/** Whether the person is a member. An ambiguous refusal of the members space is settled by the
+ *  host's own list of their groups, so a brief failure never shows a member a Join button: null,
+ *  could not tell, unless the list says they are not in it. */
+async function membershipOf(
+	caller: CallerSession,
+	reader: SpaceReader,
+	groupDid: string
+): Promise<boolean | null> {
+	try {
+		return await isMemberAsPerson(reader, groupDid, caller.did);
+	} catch (e) {
+		if (isSpaceAccessDenied(e) && isAmbiguousDenial(e)) {
+			return (await hostListsGroup(caller, groupDid)) === false ? false : null;
+		}
+		console.warn(`[groups] ${groupDid}: ${caller.did}'s membership could not be read:`, e);
+		return null;
 	}
 }
 
@@ -146,14 +211,32 @@ const isAmbiguousDenial = (e: SpaceAccessDenied) => e.reason.endsWith('SpaceNotF
 interface PersonalRead {
 	meta: PersonalMeta | null;
 	member: boolean | null;
+	confirmed: boolean | null;
 	/** The host could not be asked about a group the person is in: never a reason to act, only to
 	 *  say "try again". */
 	unsure: boolean;
 }
 
-/** The group read with the caller's own access, and whether they are a member. A member's visit
- *  writes their confirmation, only after the host's records say they are one: a write the host
- *  would not count still lands in the writer's own repo. */
+/** A member's own confirmation. Written only for a request they made here that the host has since
+ *  admitted, on the first visit after; otherwise only read, so the page can offer to confirm.
+ *  Never written for merely opening the page. */
+async function ownConfirmation(
+	caller: CallerSession,
+	reader: SpaceReader,
+	groupDid: string
+): Promise<boolean | null> {
+	if (await joinRequested(caller.did, groupDid)) {
+		waitUntil(confirmAdmitted(caller, groupDid));
+		return true;
+	}
+	return hasConfirmation(reader, groupDid, caller.did).catch((e) => {
+		console.warn(`[groups] ${groupDid}: ${caller.did}'s confirmation could not be read:`, e);
+		return null;
+	});
+}
+
+/** The group read with the caller's own access, whether they are a member, and, for a member,
+ *  whether they confirmed it. */
 async function personalRead(caller: CallerSession, groupDid: string): Promise<PersonalRead> {
 	const reader = personReader(caller);
 	let meta: PersonalMeta;
@@ -162,19 +245,17 @@ async function personalRead(caller: CallerSession, groupDid: string): Promise<Pe
 	} catch (e) {
 		if (isSpaceAccessDenied(e)) {
 			const unsure = isAmbiguousDenial(e) && (await knowsGroup(caller, groupDid));
-			return { meta: null, member: null, unsure };
+			return { meta: null, member: null, confirmed: null, unsure };
 		}
 		console.error(`[groups] ${groupDid}: the meta space could not be read for ${caller.did}:`, e);
-		return { meta: null, member: null, unsure: true };
+		return { meta: null, member: null, confirmed: null, unsure: true };
 	}
-	const member = await isMemberAsPerson(reader, groupDid, caller.did).catch((e) => {
-		console.warn(`[groups] ${groupDid}: ${caller.did}'s membership could not be read:`, e);
-		return null;
-	});
-	if (member && holdsConfirmationGrant(caller.scope, 'create', groupDid)) {
-		waitUntil(confirmMembership(caller, groupDid));
-	}
-	return { meta, member, unsure: false };
+	const member = await membershipOf(caller, reader, groupDid);
+	const confirmed =
+		member && holdsConfirmationGrant(caller.scope, 'create', groupDid)
+			? await ownConfirmation(caller, reader, groupDid)
+			: null;
+	return { meta, member, confirmed, unsure: false };
 }
 
 /** `person` is the caller's own session, for the page that reads the group as they may see it. */
@@ -191,6 +272,7 @@ export async function groupView(
 	let linked: GroupView['linked'] = null;
 	let relink = false;
 	let hasLink = false;
+	let unreachable = false;
 	let session: OAuthSession | null = null;
 	if (callerDid) {
 		try {
@@ -202,9 +284,12 @@ export async function groupView(
 		}
 		hasLink = relink || session !== null;
 	}
-	if (session && callerDid) {
+	// A link is read only while the group is at this site's group host, and through it: one to a
+	// group that moved, or made at a host this site no longer uses, can only come off.
+	if (session && callerDid && atHost && (await linkAtGroupHost(session))) {
 		const read = await linkedRead(session, group.did, callerDid);
 		if (read === 'refused') relink = true;
+		else if (read === 'unreachable') unreachable = true;
 		else if (read !== 'no-role') {
 			linked = read;
 			await storeCachedProfile(group, read.meta).catch((e) => {
@@ -218,7 +303,7 @@ export async function groupView(
 	// Only for a group at this site's host: elsewhere a DID's PDS answers whatever it likes, and
 	// such a group shows only through its declaration.
 	const caller = person && person.did === callerDid ? person : null;
-	let personal: PersonalRead = { meta: null, member: null, unsure: false };
+	let personal: PersonalRead = { meta: null, member: null, confirmed: null, unsure: false };
 	if (atHost && caller && holdsMetaRead(caller.scope)) {
 		personal = await personalRead(caller, group.did);
 		if (personal.meta && !linked) {
@@ -259,13 +344,28 @@ export async function groupView(
 		linked,
 		relink,
 		hasLink,
+		unreachable,
 		personal: personal.meta,
 		member: personal.member,
+		confirmed: personal.confirmed,
 		askAccess: atHost && caller !== null && !holdsParticipate(caller.scope)
 	};
 }
 
-/** For a write as the group: the caller's own linked session, or the same 404. */
+/** Whether the session's PDS, as it was when the link was approved, is this site's group host now:
+ *  read from the stored session, with no call to the host. */
+async function linkAtGroupHost(session: OAuthSession): Promise<boolean> {
+	try {
+		return atGroupHost({ pds: (await session.getTokenInfo(false)).aud });
+	} catch {
+		// What the session says of itself is read again by the linked read, which tells a broken
+		// link from an outage.
+		return true;
+	}
+}
+
+/** For a write as the group: the caller's own linked session, or the same 404. Only a link to a
+ *  group at this site's group host, as the session says, which costs no call to the host. */
 export async function requireGroupWriter(
 	groupDid: string,
 	callerDid: string | null
@@ -273,7 +373,7 @@ export async function requireGroupWriter(
 	requireGroupsEnabled();
 	if (!callerDid) error(404, GROUP_NOT_FOUND);
 	const session = await groupSession(groupDid, callerDid).catch(() => null);
-	if (!session) error(404, GROUP_NOT_FOUND);
+	if (!session || !(await linkAtGroupHost(session))) error(404, GROUP_NOT_FOUND);
 	return { did: groupDid, handle: groupHandle(session, callerDid) };
 }
 

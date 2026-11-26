@@ -54,7 +54,7 @@ const linked = (can: typeof ALL, reapprove = false) => ({
 	listed: true,
 	can: { post: true, list: true, settings: true, ...can },
 	reapprove,
-	unfinished: false
+	unfinished: null
 });
 
 const entry = (did: string, roles: string[], confirmed: boolean | null) => ({

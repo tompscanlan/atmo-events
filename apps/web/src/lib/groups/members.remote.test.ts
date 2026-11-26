@@ -14,7 +14,27 @@ const mocks = vi.hoisted(() => ({
 	admitMember: vi.fn(),
 	denyJoinRequest: vi.fn(),
 	setMemberAdmin: vi.fn(),
-	removeMember: vi.fn()
+	removeMember: vi.fn(),
+	confirmMembership: vi.fn(),
+	writeConfirmation: vi.fn(),
+	rememberJoinRequest: vi.fn(),
+	forgetJoinRequest: vi.fn(),
+	isMemberAsPerson: vi.fn(),
+	resolveGroup: vi.fn()
+}));
+vi.mock('./server/group', () => ({
+	resolveGroup: mocks.resolveGroup,
+	atGroupHost: ({ pds }: { pds: string }) => pds === 'https://host.example'
+}));
+vi.mock('./server/confirmation', () => ({
+	confirmMembership: mocks.confirmMembership,
+	writeConfirmation: mocks.writeConfirmation,
+	rememberJoinRequest: mocks.rememberJoinRequest,
+	forgetJoinRequest: mocks.forgetJoinRequest
+}));
+vi.mock('./server/person', () => ({
+	personReader: () => ({}),
+	isMemberAsPerson: mocks.isMemberAsPerson
 }));
 vi.mock('$app/server', () => ({
 	command: (_schema: unknown, handler: unknown) =>
@@ -44,6 +64,7 @@ import {
 	approveRequest,
 	cancelJoin,
 	changeRole,
+	confirmMember,
 	denyRequest,
 	joinGroup,
 	leave,
@@ -62,6 +83,8 @@ beforeEach(() => {
 	mocks.getRequestEvent.mockReturnValue({ locals: { did: ALICE, session: {} } });
 	mocks.callerSession.mockResolvedValue(caller);
 	mocks.requireGroupWriter.mockResolvedValue(writer);
+	mocks.rememberJoinRequest.mockResolvedValue(undefined);
+	mocks.resolveGroup.mockResolvedValue({ did: GROUP, handle: null, pds: 'https://host.example' });
 });
 
 describe("a person's own membership", () => {
@@ -77,11 +100,84 @@ describe("a person's own membership", () => {
 		expect(mocks.requestJoin).toHaveBeenLastCalledWith(caller, GROUP, null);
 	});
 
-	it('cancels a request and leaves, as the person', async () => {
+	it('cancels a request and leaves, as the person, forgetting any request made here', async () => {
 		expect(await cancelJoin({ groupDid: GROUP })).toEqual({ ok: true });
 		expect(mocks.cancelJoinRequest).toHaveBeenCalledWith(caller, GROUP);
 		expect(await leave({ groupDid: GROUP })).toEqual({ ok: true });
 		expect(mocks.leaveGroup).toHaveBeenCalledWith(caller, GROUP);
+		expect(mocks.forgetJoinRequest).toHaveBeenCalledTimes(2);
+		expect(mocks.forgetJoinRequest).toHaveBeenCalledWith(ALICE, GROUP);
+	});
+
+	it('writes the confirmation when they join an open group, since joining is their act', async () => {
+		mocks.requestJoin.mockResolvedValue('joined');
+		await joinGroup({ groupDid: GROUP });
+		expect(mocks.confirmMembership).toHaveBeenCalledWith(caller, GROUP);
+		expect(mocks.rememberJoinRequest).not.toHaveBeenCalled();
+	});
+
+	it('notes a request that waits, for the first visit after they are admitted, and writes nothing yet', async () => {
+		mocks.requestJoin.mockResolvedValue('pending');
+		await joinGroup({ groupDid: GROUP });
+		expect(mocks.rememberJoinRequest).toHaveBeenCalledWith(ALICE, GROUP);
+		expect(mocks.confirmMembership).not.toHaveBeenCalled();
+	});
+
+	it('writes nothing when the host refuses the join', async () => {
+		mocks.requestJoin.mockRejectedValue(new GroupActionRefused('join-closed'));
+		await expect(joinGroup({ groupDid: GROUP })).rejects.toMatchObject({ status: 409 });
+		expect(mocks.confirmMembership).not.toHaveBeenCalled();
+		expect(mocks.rememberJoinRequest).not.toHaveBeenCalled();
+	});
+
+	it('confirms a membership on request, only once the host counts them a member', async () => {
+		mocks.isMemberAsPerson.mockResolvedValue(true);
+		mocks.writeConfirmation.mockResolvedValue('written');
+		expect(await confirmMember({ groupDid: GROUP })).toEqual({ ok: true });
+		expect(mocks.writeConfirmation).toHaveBeenCalledWith(caller, GROUP);
+
+		mocks.writeConfirmation.mockClear();
+		mocks.isMemberAsPerson.mockResolvedValue(false);
+		await expect(confirmMember({ groupDid: GROUP })).rejects.toMatchObject({ status: 409 });
+		expect(mocks.writeConfirmation).not.toHaveBeenCalled();
+	});
+
+	it('does nothing in a group at another host, its confirmation included: the same 404', async () => {
+		mocks.resolveGroup.mockResolvedValue({
+			did: GROUP,
+			handle: null,
+			pds: 'https://elsewhere.example'
+		});
+		for (const act of [
+			() => joinGroup({ groupDid: GROUP }),
+			() => cancelJoin({ groupDid: GROUP }),
+			() => leave({ groupDid: GROUP }),
+			() => confirmMember({ groupDid: GROUP })
+		]) {
+			await expect(act()).rejects.toMatchObject({
+				status: 404,
+				body: { message: 'Group not found' }
+			});
+		}
+		mocks.resolveGroup.mockResolvedValue(null);
+		await expect(leave({ groupDid: GROUP })).rejects.toMatchObject({ status: 404 });
+		for (const touched of [
+			mocks.requestJoin,
+			mocks.cancelJoinRequest,
+			mocks.leaveGroup,
+			mocks.writeConfirmation,
+			mocks.confirmMembership,
+			mocks.forgetJoinRequest,
+			mocks.rememberJoinRequest
+		]) {
+			expect(touched).not.toHaveBeenCalled();
+		}
+	});
+
+	it('says a sign-in that cannot write the confirmation needs the permission', async () => {
+		mocks.isMemberAsPerson.mockResolvedValue(true);
+		mocks.writeConfirmation.mockResolvedValue('skipped');
+		await expect(confirmMember({ groupDid: GROUP })).rejects.toMatchObject({ status: 403 });
 	});
 
 	it.each([
