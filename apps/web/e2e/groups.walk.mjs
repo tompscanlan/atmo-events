@@ -827,6 +827,16 @@ async function allowOnPage(page, who, buttonName, seen) {
 	await settle(page);
 }
 const MADE_UP_SITE = 'https://walkers.example.com';
+/** The confirmations `who` holds in their own repo in a group's members space, read with a password
+ *  session at their PDS. */
+async function confirmationsOf(who, g) {
+	const jwt = await pdsSession(who);
+	const r = await getJson(
+		`${who.pds}/xrpc/com.atproto.space.listRecords?${new URLSearchParams({ space: spacesOf(g.did).members, repo: who.did, collection: 'org.atgrp.confirmation' })}`,
+		{ headers: { authorization: `Bearer ${jwt}` } }
+	);
+	return { status: r.status, count: (r.body?.records ?? []).length, text: r.text.slice(0, 160) };
+}
 
 // =====================================================================================
 // setup
@@ -1503,6 +1513,50 @@ step(
 	{ needs: ['edit-event'] }
 );
 
+step(
+	'link',
+	'linking-again-revokes-the-old-grant',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups.g1;
+		// The grants atmo holds for the group, as the console's page for apps lists them.
+		const grants = async () => {
+			await alice.goto(`${HOST}/g/${g.handle}/settings/apps`, { waitUntil: 'networkidle' });
+			await alice.locator('html[data-hydrated]').waitFor({ state: 'attached', timeout: 30_000 });
+			await settle(alice);
+			return alice.getByRole('button', { name: /^revoke .*atmo\.app.*access$/i }).count();
+		};
+		const before = await grants();
+		const since = new Date(Date.now() - 1000);
+		await startLink(alice, g.handle);
+		await through(alice, ALICE, (u) => u.origin === ATMO);
+		await settle(alice);
+		t.shot = alice;
+		check(
+			'alice links the group again while her link still works, and lands on it linked',
+			new URL(alice.url()).searchParams.get('link') === 'linked' &&
+				(await alice.getByRole('link', { name: /^post an event$/i }).count()) === 1,
+			alice.url()
+		);
+		const revokes = hostRequests(since).filter((r) => /revoke/i.test(r.route ?? ''));
+		note(
+			`the host saw: ${revokes.map((r) => `${r.method} ${r.route} ${r.status}`).join(', ') || 'no revoke call'}`
+		);
+		check(
+			'atmo revoked the grant the new link replaced: the host answered its revoke 200',
+			revokes.some((r) => r.status === 200)
+		);
+		const after = await grants();
+		t.shot = alice;
+		check(
+			'the console lists as many atmo grants as before, not one more',
+			before >= 1 && after === before,
+			`${before} -> ${after}`
+		);
+	},
+	{ needs: ['delete-event'] }
+);
+
 // ---------- the group made private, and its link broken, at the host ----------
 step(
 	'private',
@@ -2133,22 +2187,58 @@ step(
 		const { alice, anon } = S.pages;
 		const label = `un${RUN}`;
 		const name = `Quiet beck ${RUN}`;
-		await makeThroughApp(alice, {
-			name,
-			address: label,
-			join: 'approval',
-			visibility: 'public',
-			listed: false
-		});
-		t.shot = alice;
-		const did = new URL(alice.url()).pathname.split('/')[2];
-		S.groups.un = { did, handle: `${label}.${GROUP_DOMAIN}`, name };
-		const decl = await repoRecords(did, DECLARATION);
-		check(
-			'a public group made unlisted has no declaration at the host',
-			decl.length === 0,
-			String(decl.length)
+		const handle = `${label}.${GROUP_DOMAIN}`;
+		// Made, and stopped at the console's approval page: its first link has not finished.
+		await makeThroughApp(
+			alice,
+			{ name, address: label, join: 'approval', visibility: 'public', listed: false },
+			{ approve: false }
 		);
+		check('the console opens for it', new URL(alice.url()).origin === HOST, alice.url());
+		const did = (await (await fetch(`https://${handle}/.well-known/atproto-did`)).text()).trim();
+		const g = { did, handle, name, ...spacesOf(did) };
+		S.groups.un = g;
+		const session = await adminFor(g, ALICE);
+		const policy = async () =>
+			(
+				await asGroup(
+					session,
+					`com.atproto.space.getSpace?${new URLSearchParams({ space: g.meta })}`,
+					{ method: 'GET' }
+				)
+			).policy;
+		const early = await policy();
+		const earlyDecl = await repoRecords(did, DECLARATION);
+		check(
+			'"public, not listed": until its first link finishes, the group is private at the host, with no declaration',
+			early.publicRead !== true && earlyDecl.length === 0,
+			`${JSON.stringify(early)} / ${earlyDecl.length} declarations`
+		);
+		check(
+			'...and not on the signed-out list',
+			!(await (await fetch(`${ATMO}/groups`)).text()).includes(name)
+		);
+		await alice.goto(`${ATMO}/groups/create`, { waitUntil: 'networkidle' });
+		await alice
+			.locator('form', { hasText: label })
+			.getByRole('button', { name: /^finish setting up$/i })
+			.click();
+		await alice.waitForURL((u) => u.origin !== ATMO, { timeout: 30_000 });
+		await through(alice, ALICE, (u) => u.origin === ATMO);
+		await settle(alice);
+		t.shot = alice;
+		check(
+			'"Finish setting up" links it',
+			new URL(alice.url()).pathname === `/groups/${did}` &&
+				['linked', 'created'].includes(new URL(alice.url()).searchParams.get('link') ?? ''),
+			alice.url()
+		);
+		const late = await policy();
+		check('once linked it is public at the host', late.publicRead === true, JSON.stringify(late));
+		// Made public, the host writes a declaration, which the first link's setup takes away.
+		await sleep(3000);
+		const decl = await repoRecords(did, DECLARATION);
+		check('...with no declaration at the host', decl.length === 0, String(decl.length));
 		const list = await (await fetch(`${ATMO}/groups`)).text();
 		check('...and is not on the signed-out list', !list.includes(name));
 		check(
@@ -2205,12 +2295,131 @@ step(
 		t.shot = alice;
 		const text = await body(alice);
 		check(
-			'the same address again says the address is taken',
+			'the same address again, for a group she linked, says the address is taken',
 			/that address is taken/i.test(text) && new URL(alice.url()).origin === ATMO,
 			text.slice(0, 300)
 		);
 	},
 	{ needs: ['make-a-public-listed-group'] }
+);
+
+step(
+	'create',
+	'double-submit-offers-finish-setting-up',
+	async (t) => {
+		const { alice } = S.pages;
+		const label = `ds${RUN}`;
+		const name = `Twice pressed ${RUN}`;
+		const handle = `${label}.${GROUP_DOMAIN}`;
+		await makeResolvable(handle);
+		await alice.goto(`${ATMO}/groups/create`, { waitUntil: 'networkidle' });
+		await fillGroupForm(alice, { name, address: label, join: 'approval', visibility: 'private' });
+		// The button is off once the form is sent.
+		const button = alice.getByRole('button', { name: /^make the group$/i });
+		const posts = [];
+		alice.on('request', (r) => {
+			if (r.method() === 'POST' && new URL(r.url()).pathname === '/groups/create') posts.push(r);
+		});
+		await button.dblclick();
+		await alice.waitForURL((u) => u.origin !== ATMO || u.pathname !== '/groups/create', {
+			timeout: 60_000
+		});
+		check(
+			'a double click on "Make the group" sends the form once',
+			posts.length === 1,
+			`${posts.length} POSTs`
+		);
+		// Approved, so no half-made group is left for the steps after this one.
+		if (new URL(alice.url()).origin === HOST) {
+			await through(alice, ALICE, (u) => u.origin === ATMO);
+			await settle(alice);
+		}
+		// Two presses that both reach the server, as from two tabs: the second is told the group is
+		// hers already, and offered to finish it.
+		await alice.goto(`${ATMO}/groups/create`, { waitUntil: 'networkidle' });
+		const label2 = `dt${RUN}`;
+		const name2 = `Pressed again ${RUN}`;
+		await makeResolvable(`${label2}.${GROUP_DOMAIN}`);
+		const answers = await alice.evaluate(
+			async ([n, a]) => {
+				const send = () => {
+					const form = new FormData();
+					form.set('name', n);
+					form.set('address', a);
+					form.set('description', '');
+					form.set('joinPolicy', 'approval');
+					form.set('visibility', 'private');
+					return fetch('/groups/create', {
+						headers: { accept: 'text/html' },
+						method: 'POST',
+						body: form,
+						redirect: 'manual'
+					}).then(async (r) => ({
+						status: r.status,
+						type: r.type,
+						text: await r.text().catch(() => '')
+					}));
+				};
+				return Promise.all([send(), send()]);
+			},
+			[name2, label2]
+		);
+		note(
+			`the two sends were answered ${answers.map((x) => `${x.status}/${x.type}`).join(' and ')}`
+		);
+		const started = answers.filter((x) => x.type === 'opaqueredirect').length;
+		const offered = answers.filter(
+			(x) =>
+				x.status === 409 &&
+				/made this group already/i.test(x.text) &&
+				/finish setting up/i.test(x.text)
+		).length;
+		check(
+			'of two sends of the same form, one starts the link and the other offers "Finish setting up"',
+			started === 1 && offered === 1,
+			answers
+				.map(
+					(x) =>
+						`${x.status} ${x.text
+							.replace(/<[^>]+>/g, ' ')
+							.replace(/\s+/g, ' ')
+							.slice(0, 160)}`
+				)
+				.join(' | ')
+		);
+		// The same address sent again from the page, once the group is made, offers the same.
+		await alice.goto(`${ATMO}/groups/create`, { waitUntil: 'networkidle' });
+		await fillGroupForm(alice, {
+			name: name2,
+			address: label2,
+			join: 'approval',
+			visibility: 'private'
+		});
+		await alice.getByRole('button', { name: /^make the group$/i }).click();
+		await alice.getByRole('alert').waitFor({ timeout: 30_000 });
+		await settle(alice);
+		t.shot = alice;
+		const text = await mainText(alice);
+		const finish = alice.locator('form', { hasText: label2 }).getByRole('button', {
+			name: /^finish setting up$/i
+		});
+		check(
+			're-sending the address of the group she just made says she made it already, and offers "Finish setting up"',
+			/made this group already/i.test(text) && (await finish.count()) >= 1,
+			text.slice(0, 300)
+		);
+		await finish.first().click();
+		await alice.waitForURL((u) => u.origin !== ATMO, { timeout: 30_000 });
+		await through(alice, ALICE, (u) => u.origin === ATMO);
+		await settle(alice);
+		check(
+			'...which links it',
+			['linked', 'created'].includes(new URL(alice.url()).searchParams.get('link') ?? '') &&
+				(await alice.getByRole('link', { name: /^post an event$/i }).count()) === 1,
+			alice.url()
+		);
+	},
+	{ needs: ['allow-making-groups'] }
 );
 
 step(
@@ -2613,10 +2822,21 @@ step(
 		const { bob } = S.pages;
 		const g = S.groups.gj;
 		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		const held = await confirmationsOf(BOB, g);
 		await bob.getByRole('button', { name: /^leave group$/i }).click();
 		await bob.getByRole('button', { name: /^ask to join$/i }).waitFor({ timeout: 20_000 });
 		t.shot = bob;
 		check('bob leaves, and is offered to ask again', true);
+		const left = await until(
+			() => confirmationsOf(BOB, g),
+			(x) => x.status === 200 && x.count === 0,
+			20
+		);
+		check(
+			'his confirmation, in his own repo before he left, is deleted once the host took the leave',
+			held.count >= 1 && left.ok,
+			`${JSON.stringify(held)} -> ${JSON.stringify(left.last)}`
+		);
 		await bob.reload({ waitUntil: 'networkidle' });
 		check(
 			'on the next visit too',
@@ -2671,6 +2891,16 @@ step(
 		await bob.getByRole('button', { name: /^join$/i }).click();
 		await bob.getByRole('button', { name: /^leave group$/i }).waitFor({ timeout: 20_000 });
 		check('joining admits him at once: he is a member', true);
+		const written = await until(
+			() => confirmationsOf(BOB, g),
+			(x) => x.count >= 1,
+			20
+		);
+		check(
+			"joining here wrote his confirmation in his own repo, in the group's members space",
+			written.ok,
+			JSON.stringify(written.last)
+		);
 	},
 	{ needs: ['bob-allows-joining-groups', 'more-groups'] }
 );
