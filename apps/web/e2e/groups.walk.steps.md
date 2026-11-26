@@ -41,14 +41,23 @@ name or section (`WALK_ONLY=join`). The old checks are quoted from its labels.
 | an admin adds them by handle, and they wait under not confirmed yet                   | roster/carol-admitted-shows-as-not-confirmed (through a request, not "by handle")                       |
 | after their visit they are still not confirmed, and the group still loads             | none yet                                                                                                |
 
+## Members-only events, and the old checks they now cover
+
+| Old check                                                 | Walk step                                                                                       |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| a members-only event stays out of the group's public repo | members-only/nothing-public-shows-it                                                            |
+| the member sees the members-only event                    | members-only/bob-joins-and-sees-it, members-only/bob-rsvps-into-his-own-repo                    |
+| never sees the members-only event                         | members-only/outsider-mallory-gets-not-found, members-only/nothing-public-shows-it (signed out) |
+| still sees it, members-only event included                | members-only/private-group-member-still-sees-it                                                 |
+| no longer sees the members-only event                     | members-only/bob-leaves-and-it-is-gone                                                          |
+
+The section's other steps have no old counterpart: alice-turns-on-members-only-events,
+approve-once-more-at-the-console, alice-posts-a-members-only-event, carol-is-told-why-she-cannot.
+
 ## Old checks with no counterpart yet
 
-The members-only layer (members-only events: posting, who sees them, a removed member no longer
-sees them) is a later section: old checks "a members-only event stays out of the group's public
-repo", "the member sees the members-only event", "never sees the members-only event", "still sees
-it, members-only event included" and "no longer sees the members-only event". Also the old
-"admin adds a member by handle" (the walk's members page has no add-by-handle; asking and approving
-is used), "an event the new admin posts", and carol's members page.
+The old "admin adds a member by handle" (the walk's members page has no add-by-handle; asking and
+approving is used), "an event the new admin posts", and carol's members page.
 
 ## Steps with no old counterpart
 

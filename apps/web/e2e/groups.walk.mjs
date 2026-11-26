@@ -162,12 +162,16 @@ const browser = await chromium.launch({
 	args: [`--host-resolver-rules=MAP *.${DOMAIN} 127.0.0.1`]
 });
 let contexts = 0;
+const HAR_KEEPS =
+	/^(?!https:\/\/[^/]+\/(@fs|@vite|@id|node_modules|src|\.svelte-kit|_app\/immutable)\/)/;
 async function newContext(who) {
 	const index = ++contexts;
 	const options = { ignoreHTTPSErrors: true };
 	if (EVIDENCE) {
 		const file = path.join(EVIDENCE, `.har-part-${index}-${who}.har`);
-		options.recordHar = { path: file, content: 'omit' };
+		// Without bodies, and without the dev server's modules or the console's built assets: one page
+		// load of the dev server asks for hundreds of them, which made each HAR tens of megabytes.
+		options.recordHar = { path: file, content: 'omit', urlFilter: HAR_KEEPS };
 		S.har.push(file);
 	}
 	const context = await browser.newContext(options);
@@ -648,11 +652,15 @@ function png(width, height, [r, g, b]) {
 	]);
 }
 
-async function editorPublish(page, name, { picture } = {}) {
-	// A group's new-event page asks who may see the event first: everyone, for the public events here.
-	const everyone = page.getByRole('radio', { name: /^everyone/i });
-	if (await everyone.isVisible({ timeout: 15_000 }).catch(() => false)) await everyone.check();
+async function editorPublish(page, name, { picture, placement = 'everyone' } = {}) {
+	// A group's new-event page asks who may see the event first, and draws the editor only once that
+	// is chosen; other editors have no such choice. Wait for whichever the page draws.
+	const choice = page.getByRole('radio', {
+		name: placement === 'members' ? /^members only/i : /^everyone/i
+	});
 	const field = page.locator('main [contenteditable=true]').first();
+	await choice.or(field).first().waitFor({ timeout: 60_000 });
+	if (await choice.isVisible().catch(() => false)) await choice.check();
 	await field.waitFor({ timeout: 60_000 });
 	await field.click();
 	await page.keyboard.type(name);
@@ -3089,6 +3097,455 @@ step(
 		);
 	},
 	{ needs: ['remove-a-member'] }
+);
+
+// =====================================================================================
+// members-only: events only the group's members see, posted from its page into its calendar space
+// =====================================================================================
+const MO_EVENT = `Moonlit supper ${RUN}`;
+const CALENDAR_SPACE = (did) => `at:space/${did}/community.lexicon.calendar.collection/self`;
+const moEventUrl = (g, rkey) => `${groupUrl(g)}/events/${rkey}`;
+/** Another key of the same shape as `rkey`, for an event that does not exist. */
+const madeUpKey = (rkey) => rkey.slice(0, -4) + (rkey.endsWith('zzzz') ? 'yyyy' : 'zzzz');
+/** What a page answers at the event's address and at a made-up key: status and main text. */
+async function sameAsMadeUp(page, g, rkey) {
+	const real = await status(page, moEventUrl(g, rkey));
+	const realText = await mainText(page).catch(() => '');
+	const fake = await status(page, moEventUrl(g, madeUpKey(rkey)));
+	const fakeText = await mainText(page).catch(() => '');
+	return { real, fake, realText, fakeText, same: real === fake && realText === fakeText };
+}
+const moSection = (page) => page.getByRole('heading', { name: /^members-only events$/i, level: 2 });
+
+step(
+	'members-only',
+	'alice-turns-on-members-only-events',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = await indexedGroup(`mo${RUN}`, `Fell runners ${RUN}`);
+		S.groups.gm = g;
+		if (!g.linkedByAlice) {
+			await startLink(alice, g.handle);
+			await through(alice, ALICE, (u) => u.origin === ATMO);
+			await settle(alice);
+			g.linkedByAlice = true;
+		}
+		await alice.goto(`${groupUrl(g)}/events/new`, { waitUntil: 'networkidle' });
+		const membersOnly = alice.getByRole('radio', { name: /^members only/i });
+		const before = await mainText(alice);
+		check(
+			'before they are on, the new-event page offers Members only disabled, and says to turn them on from the group page',
+			(await membersOnly.isDisabled()) &&
+				before.includes("Members-only events aren't turned on for this group"),
+			before.slice(0, 300)
+		);
+		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		const turnOn = alice.getByRole('button', { name: /^turn on members-only events$/i });
+		check(
+			'the group page, for alice who linked it, offers "Turn on members-only events"',
+			(await turnOn.count()) === 1,
+			(await mainText(alice)).slice(0, 300)
+		);
+		await turnOn.click();
+		const again = alice.getByRole('button', { name: /^approve once more$/i });
+		await again.waitFor({ timeout: 30_000 });
+		t.shot = alice;
+		check(
+			'turned on, the page asks her to approve the link once more, for the calendar it made',
+			(await again.count()) === 1 &&
+				(await alice.getByTestId('members-only-setup').innerText()).includes(
+					'Approve your link once more'
+				)
+		);
+		await alice.reload({ waitUntil: 'networkidle' });
+		check(
+			'...and still does after a reload (the calendar is there, the link may not post to it yet)',
+			(await again.count()) === 1
+		);
+	},
+	{ needs: ['people-sign-in'] }
+);
+
+step(
+	'members-only',
+	'approve-once-more-at-the-console',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups.gm;
+		let detail = null;
+		await alice.getByRole('button', { name: /^approve once more$/i }).click();
+		await alice.waitForURL((u) => u.origin !== ATMO, { timeout: 30_000 });
+		await through(alice, ALICE, (u) => u.origin === ATMO, {
+			onApprove: async (page) => {
+				detail = (
+					(await page
+						.locator('main form')
+						.first()
+						.textContent()
+						.catch(() => '')) ?? ''
+				).replace(/\s+/g, ' ');
+				await page
+					.screenshot({ path: shotPath('approve-once-more-at-the-console-approval') })
+					.catch(() => {});
+			}
+		});
+		await settle(alice);
+		t.shot = alice;
+		check(
+			'the console asked her to approve, and she is back on the group page',
+			detail !== null && new URL(alice.url()).pathname === `/groups/${g.did}`,
+			alice.url()
+		);
+		const [granted = '', withheld = ''] = (detail ?? '').split(/It would not get/i);
+		check(
+			"this time the grant keeps the calendar space's write too: nothing is withheld",
+			/community\.lexicon\.calendar\.collection/.test(granted) && withheld === '',
+			(detail ?? '').slice(-600)
+		);
+		check(
+			'the page no longer shows the setup steps',
+			(await alice.getByTestId('members-only-setup').count()) === 0
+		);
+		await alice.goto(`${groupUrl(g)}/events/new`, { waitUntil: 'networkidle' });
+		check(
+			'the new-event page now offers Members only',
+			await alice.getByRole('radio', { name: /^members only/i }).isEnabled()
+		);
+	},
+	{ needs: ['alice-turns-on-members-only-events'] }
+);
+
+step(
+	'members-only',
+	'alice-posts-a-members-only-event',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups.gm;
+		await alice.goto(`${groupUrl(g)}/events/new`, { waitUntil: 'networkidle' });
+		await editorPublish(alice, MO_EVENT, { placement: 'members' });
+		await alice.waitForURL((u) => !u.pathname.endsWith('/events/new'), { timeout: 60_000 });
+		await settle(alice);
+		t.shot = alice;
+		const at = new URL(alice.url()).pathname;
+		S.moRkey = at.split('/').pop();
+		check(
+			"alice chooses Members only and posts it: she lands on its page at the group's address, not the public one",
+			at === `/groups/${g.did}/events/${S.moRkey}`,
+			alice.url()
+		);
+		const note = (
+			await alice
+				.getByTestId('private-note')
+				.innerText()
+				.catch(() => '')
+		).trim();
+		check(
+			'the page shows the event, marked private',
+			(await mainText(alice)).includes(MO_EVENT) && /^Private event\./.test(note),
+			note
+		);
+		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		const item = alice.getByTestId('members-only-event').filter({ hasText: MO_EVENT });
+		check(
+			'the group page lists it under "Members-only events", with an Edit link for her',
+			(await moSection(alice).count()) === 1 &&
+				(await item.count()) === 1 &&
+				(await item.locator(`a[href$="/groups/${g.did}/events/${S.moRkey}/edit"]`).count()) === 1
+		);
+		check(
+			'...and not among the public events',
+			!(await alice.getByRole('list', { name: 'Edit events' }).count()) ||
+				!(await alice.getByRole('list', { name: 'Edit events' }).innerText()).includes(MO_EVENT)
+		);
+	},
+	{ needs: ['approve-once-more-at-the-console'] }
+);
+
+step(
+	'members-only',
+	'nothing-public-shows-it',
+	async (t) => {
+		const g = S.groups.gm;
+		const rkey = S.moRkey;
+		const fake = madeUpKey(rkey);
+		const records = await repoRecords(g.did, EVENTS);
+		check(
+			"it is not in the group's public repo, by key or by name",
+			!records.some((r) => r.rkey === rkey || r.value?.name === MO_EVENT),
+			JSON.stringify(records.map((r) => r.rkey))
+		);
+		for (const [what, suffix] of [
+			['the public event address', ''],
+			['its data.json', '/data.json'],
+			['its picture card', '/og.png']
+		]) {
+			const real = await getJson(`${ATMO}/p/${g.did}/e/${rkey}${suffix}`);
+			const other = await getJson(`${ATMO}/p/${g.did}/e/${fake}${suffix}`);
+			check(
+				`${what} answers 404, as at a made-up key, and never names it`,
+				real.status === 404 && other.status === 404 && !real.text.includes(MO_EVENT),
+				`${real.status} / made-up ${other.status}`
+			);
+		}
+		for (const feed of ['calendar.ics', 'e/calendar']) {
+			const r = await getJson(`${ATMO}/p/${g.did}/${feed}`);
+			check(
+				`the group's calendar feed (${feed}) does not carry it`,
+				!r.text.includes(MO_EVENT) && !r.text.includes(rkey),
+				`${r.status} ${r.text.slice(0, 120)}`
+			);
+		}
+		const { anon } = S.pages;
+		await anon.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		t.shot = anon;
+		check(
+			'signed out, the group page shows neither it nor a members-only section',
+			!(await mainText(anon)).includes(MO_EVENT) && (await moSection(anon).count()) === 0
+		);
+		const seen = await sameAsMadeUp(anon, g, rkey);
+		check(
+			"signed out, the event's address answers the same as a made-up key",
+			seen.same && !seen.realText.includes(MO_EVENT),
+			`${seen.real} "${seen.realText.slice(0, 120)}" / ${seen.fake} "${seen.fakeText.slice(0, 120)}"`
+		);
+		note(`signed out, both answer ${seen.real}: ${seen.realText.slice(0, 120)}`);
+	},
+	{ needs: ['alice-posts-a-members-only-event'] }
+);
+
+step(
+	'members-only',
+	'bob-joins-and-sees-it',
+	async (t) => {
+		const { alice, bob } = S.pages;
+		const g = S.groups.gm;
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		if (await bob.getByRole('button', { name: /^allow joining groups$/i }).count()) {
+			await allowOnPage(bob, BOB, /^allow joining groups$/i);
+			await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		}
+		check(
+			'before he is a member, bob sees no members-only section',
+			(await moSection(bob).count()) === 0 && !(await mainText(bob)).includes(MO_EVENT)
+		);
+		await bob.fill('#join-message', `Bob for the supper, run ${RUN}`);
+		await bob.getByRole('button', { name: /^ask to join$/i }).click();
+		await bob.getByText(/request sent/i).waitFor({ timeout: 20_000 });
+		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		// The members page reads the roster with alice's own sign-in, which may lack the group
+		// permissions in a run where she has not joined anything yet.
+		if (await alice.getByRole('button', { name: /^allow joining groups$/i }).count()) {
+			note("alice's members page asked her own sign-in for the group permissions first");
+			await allowOnPage(alice, ALICE, /^allow joining groups$/i);
+			await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		}
+		const row = alice.locator('ul[aria-label="Asking to join"] li', {
+			hasText: BOB.handle.split('.')[0]
+		});
+		await row.getByRole('button', { name: /^approve$/i }).click();
+		await until(
+			async () => (await row.count()) === 0,
+			(x) => x,
+			20,
+			500
+		);
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		// A member whose own sign-in can't open members-only events is asked for it here.
+		if (await bob.getByRole('button', { name: /^allow joining groups$/i }).count()) {
+			note('as a member, his page asked again for what members-only events take');
+			await allowOnPage(bob, BOB, /^allow joining groups$/i);
+			await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		}
+		t.shot = bob;
+		const item = bob.getByTestId('members-only-event').filter({ hasText: MO_EVENT });
+		check(
+			'alice approves him; as a member he sees it on the group page, marked Members only with a lock',
+			(await bob.getByRole('button', { name: /^leave group$/i }).count()) === 1 &&
+				(await item.count()) === 1 &&
+				/members only/i.test(await item.innerText()) &&
+				(await item.locator('svg').count()) >= 1,
+			(await mainText(bob)).slice(0, 400)
+		);
+		check('...without an Edit link', (await item.locator('a[href$="/edit"]').count()) === 0);
+		await bob.goto(moEventUrl(g, S.moRkey), { waitUntil: 'networkidle' });
+		const noteEl = bob.getByTestId('private-note');
+		const sentence = (await noteEl.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+		check(
+			`its own page says exactly "Private event. Only members of ${g.name} can see it." with a lock`,
+			sentence === `Private event. Only members of ${g.name} can see it.` &&
+				(await noteEl.locator('svg').count()) === 1,
+			sentence
+		);
+		check('...and shows the event', (await mainText(bob)).includes(MO_EVENT));
+	},
+	{ needs: ['nothing-public-shows-it'] }
+);
+
+step(
+	'members-only',
+	'bob-rsvps-into-his-own-repo',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = S.groups.gm;
+		await bob.getByRole('button', { name: 'Going', exact: true }).click();
+		await bob.getByText(/you're going/i).waitFor({ timeout: 20_000 });
+		t.shot = bob;
+		check('bob answers Going, and the page says so', true);
+		const jwt = await pdsSession(BOB);
+		const listed = await until(
+			() =>
+				getJson(
+					`${BOB.pds}/xrpc/com.atproto.space.listRecords?${new URLSearchParams({ space: CALENDAR_SPACE(g.did), repo: BOB.did, collection: 'community.lexicon.calendar.rsvp' })}`,
+					{ headers: { authorization: `Bearer ${jwt}` } }
+				),
+			(r) => (r.body?.records ?? []).some((x) => x.rkey === S.moRkey),
+			20
+		);
+		const rsvp = (listed.last?.body?.records ?? []).find((x) => x.rkey === S.moRkey);
+		check(
+			"his RSVP is in his own repo, in the group's calendar space, naming the event, as going",
+			Boolean(rsvp) &&
+				/#going$/.test(rsvp.value?.status ?? '') &&
+				String(rsvp.value?.subject?.uri ?? '').includes(g.did) &&
+				String(rsvp.value?.subject?.uri ?? '').includes(S.moRkey),
+			`${listed.last?.status} ${JSON.stringify(rsvp ?? listed.last?.text?.slice(0, 200))}`
+		);
+		const pub = await getJson(
+			`${BOB.pds}/xrpc/com.atproto.repo.listRecords?${new URLSearchParams({ repo: BOB.did, collection: 'community.lexicon.calendar.rsvp' })}`
+		);
+		check(
+			'...and not in his public repo',
+			!(pub.body?.records ?? []).some((x) => x.uri?.endsWith(`/${S.moRkey}`)),
+			pub.text.slice(0, 200)
+		);
+		await bob.reload({ waitUntil: 'networkidle' });
+		check(
+			'after a reload the page still says he is going',
+			(await bob.getByText(/you're going/i).count()) === 1
+		);
+	},
+	{ needs: ['bob-joins-and-sees-it'] }
+);
+
+step(
+	'members-only',
+	'outsider-mallory-gets-not-found',
+	async (t) => {
+		const g = S.groups.gm;
+		const mallory = S.pages.mallory ?? (await signInToAtmo(MALLORY));
+		const first = await sameAsMadeUp(mallory, g, S.moRkey);
+		note(
+			`before she allows joining groups, mallory gets ${first.real} at the event and ${first.fake} at a made-up key: ${first.realText.slice(0, 120)}`
+		);
+		check(
+			'signed in, before she allows joining groups, the event address answers her as a made-up key does',
+			first.same && !first.realText.includes(MO_EVENT),
+			`${first.real} / ${first.fake}`
+		);
+		await mallory.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		if (await mallory.getByRole('button', { name: /^allow joining groups$/i }).count()) {
+			await allowOnPage(mallory, MALLORY, /^allow joining groups$/i);
+			await mallory.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		}
+		t.shot = mallory;
+		check(
+			'an outsider who may join groups sees no members-only section on the group page',
+			(await moSection(mallory).count()) === 0 && !(await mainText(mallory)).includes(MO_EVENT)
+		);
+		const after = await sameAsMadeUp(mallory, g, S.moRkey);
+		check(
+			"...and gets 404 at the event's address, the same as at a made-up key",
+			after.real === 404 && after.same && !after.realText.includes(MO_EVENT),
+			`${after.real} "${after.realText.slice(0, 100)}" / ${after.fake} "${after.fakeText.slice(0, 100)}"`
+		);
+	},
+	{ needs: ['bob-rsvps-into-his-own-repo'] }
+);
+
+step(
+	'members-only',
+	'private-group-member-still-sees-it',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = S.groups.gm;
+		await setMetaPublic(await adminFor(g, ALICE), g, false);
+		privateNow.add(g.did);
+		await reindex(g);
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		t.shot = bob;
+		const item = bob.getByTestId('members-only-event').filter({ hasText: MO_EVENT });
+		check(
+			'the group is made private altogether at the host; bob, a member, still sees its members-only event',
+			(await mainText(bob)).includes(g.name) && (await item.count()) === 1,
+			(await mainText(bob)).slice(0, 300)
+		);
+		await bob.goto(moEventUrl(g, S.moRkey), { waitUntil: 'networkidle' });
+		check(
+			'...and its page',
+			(await mainText(bob)).includes(MO_EVENT) &&
+				(await bob.getByTestId('private-note').count()) === 1
+		);
+		await ensurePublic(g);
+	},
+	{ needs: ['bob-rsvps-into-his-own-repo'] }
+);
+
+step(
+	'members-only',
+	'carol-is-told-why-she-cannot',
+	async (t) => {
+		const g = S.groups.gm;
+		const carol = S.pages.carol ?? (await signInToAtmo(CAROL));
+		const first = await sameAsMadeUp(carol, g, S.moRkey);
+		check(
+			"carol (a PDS without spaces) gets the same page at the event's address as at a made-up key, without the event",
+			first.same && !first.realText.includes(MO_EVENT),
+			`${first.real} / ${first.fake}: ${first.realText.slice(0, 160)}`
+		);
+		// Her server's answer is told on the page it returns her to.
+		await carol.goto(moEventUrl(g, S.moRkey), { waitUntil: 'networkidle' });
+		const asked =
+			(await carol.getByRole('button', { name: /^allow joining groups$/i }).count()) > 0;
+		if (asked) await allowOnPage(carol, CAROL, /^allow joining groups$/i);
+		t.shot = carol;
+		const text = await mainText(carol);
+		check(
+			'asked to allow joining groups, back from her server she is told it gave no permission, and where spaces are',
+			asked &&
+				/did not give atmo permission to act for you in groups/i.test(text) &&
+				text.includes(new URL(ALPHA).host),
+			text.slice(0, 300)
+		);
+		check('...and is not shown the event', !text.includes(MO_EVENT));
+	},
+	{ needs: ['alice-posts-a-members-only-event'] }
+);
+
+step(
+	'members-only',
+	'bob-leaves-and-it-is-gone',
+	async (t) => {
+		await ensurePublic(S.groups.gm);
+		const { bob } = S.pages;
+		const g = S.groups.gm;
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		await bob.getByRole('button', { name: /^leave group$/i }).click();
+		await bob.getByRole('button', { name: /^ask to join$/i }).waitFor({ timeout: 20_000 });
+		await bob.reload({ waitUntil: 'networkidle' });
+		t.shot = bob;
+		check(
+			'bob leaves: on his next visit the members-only section and the event are gone',
+			(await moSection(bob).count()) === 0 && !(await mainText(bob)).includes(MO_EVENT),
+			(await mainText(bob)).slice(0, 300)
+		);
+		const seen = await sameAsMadeUp(bob, g, S.moRkey);
+		check(
+			'...and its address is a 404 for him, the same as a made-up key',
+			seen.real === 404 && seen.same && !seen.realText.includes(MO_EVENT),
+			`${seen.real} / ${seen.fake}: ${seen.realText.slice(0, 120)}`
+		);
+	},
+	{ needs: ['outsider-mallory-gets-not-found', 'private-group-member-still-sees-it'] }
 );
 
 // =====================================================================================
