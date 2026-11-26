@@ -1,0 +1,73 @@
+# Harness only: a test network for atmo's groups feature on the Atmosphere Groups group host
+# (group-host, kind atgrp), with PDSes on the spaces alpha it was made for and one release PDS
+# whose people have no spaces. Every account is made up. Bring it up with a snowglobe that knows
+# kind atgrp:
+#
+#   export SG_FILE=$PWD/snowglobe.groups.yml
+#   snowglobe up
+#   snowglobe run --app atmo -- pnpm --filter web exec vite dev --config scripts/groups.vite.config.ts --host 0.0.0.0 --strictPort
+#   WALK_EVIDENCE_DIR=<folder> WALK_ATMO_LOG=<the dev server's log> \
+#     snowglobe run --app atmo -- node apps/web/e2e/groups.walk.mjs
+#
+# The walk reads atmo's settings from atmo's own block below, and the people's passwords from the
+# network's accounts.env. The app's own lexicons (the calendar permission sets its sign-in asks for)
+# are published with the spec's, from snowglobe/lexicons-groups. A name this machine cannot resolve
+# (a person's or a group's handle) is added by the walk to the marked block of /etc/hosts.
+globe: atmogroups              # every name is under atmogroups.local.snowglobe.at
+
+pds:
+  - name: alpha                # https://alpha.atmogroups.local.snowglobe.at; handles <name>.atmogroups.local.snowglobe.at
+    image: spaces-alpha-20261124
+    bare_handles: true
+    invites: required
+  - name: beta                 # handles <name>.beta.atmogroups.local.snowglobe.at
+    image: spaces-alpha-20261124
+  - name: regular              # a release without spaces; handles <name>.regular.atmogroups.local.snowglobe.at
+    image: ghcr.io/bluesky-social/pds:0.4.5037
+
+grouphosts:
+  - name: gh                   # https://gh.atmogroups.local.snowglobe.at; groups <group>.gh.atmogroups.local.snowglobe.at
+    kind: atgrp
+
+services:
+  relay: auto
+  jetstream: true
+  slingshot: true
+  cdn: true
+  pdsls: false
+
+lexicons:
+  authority: alpha
+  publish: snowglobe/lexicons-groups   # org.atgrp from the spec (9d99ee2), and the app's calendar sets
+
+accounts:
+  - alice@alpha
+  - bob@alpha
+  - mallory@alpha
+  - dana@beta
+  - carol@regular
+
+apps:
+  - name: atmo                 # https://atmo.app.atmogroups.local.snowglobe.at -> port 5454 on this machine
+    local: { port: 5454 }
+    env:
+      CLOUDFLARE_INCLUDE_PROCESS_ENV: 'true'
+      OAUTH_PUBLIC_URL: ${apps.atmo.url}
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: ${apps.atmo.host}
+      GROUP_HOST_URL: ${grouphosts.gh.url}
+      GROUP_HOST_DID: ${grouphosts.gh.did}
+      PUBLIC_PLC_URL: ${services.plc.url}
+      PUBLIC_SLINGSHOT_URL: ${services.slingshot.url}
+      PUBLIC_JETSTREAM_URL: ${services.jetstream.url}
+      PUBLIC_RELAY_URLS: ${services.relay.url}
+      PUBLIC_SIGNUP_PDS_URL: ${pds.alpha.url}
+      SPACES_PDS_URL: ${pds.alpha.url}
+      # atmo's own local database for this network, apart from plain `pnpm dev`'s (relative to apps/web).
+      LOCAL_STATE_DIR: .wrangler/snowglobe-groups
+      CRON_SECRET: local-network-only
+      PUBLIC_CDN_URL: ${services.cdn.url}
+      # Nothing here is a DNS-over-HTTPS resolver. Left unset, atmo's handle lookup asks
+      # mozilla.cloudflare-dns.com, which this machine refuses. Pointed at the network's PLC, which
+      # answers any such query with an error, the lookup falls through at once to the handle's own
+      # /.well-known/atproto-did, which the network does serve.
+      PUBLIC_DOH_URL: ${services.plc.url}/dns-query
