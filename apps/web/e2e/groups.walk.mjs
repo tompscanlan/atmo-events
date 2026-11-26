@@ -3122,7 +3122,7 @@ step(
 	'alice-turns-on-members-only-events',
 	async (t) => {
 		const { alice } = S.pages;
-		const g = await indexedGroup(`mo${RUN}`, `Fell runners ${RUN}`);
+		const g = await indexedGroup(`me${RUN}`, `Fell runners ${RUN}`);
 		S.groups.gm = g;
 		if (!g.linkedByAlice) {
 			await startLink(alice, g.handle);
