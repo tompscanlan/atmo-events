@@ -89,15 +89,21 @@ const accountsEnv = Object.fromEntries(
 			l.slice(l.indexOf('=') + 1).replace(/^['"]|['"]$/g, '')
 		])
 );
-const person = (name) => ({
+// `suffix` is the PDS's part of the key in accounts.env for the accounts that are not on alpha.
+const person = (name, suffix = '', pds = ALPHA) => ({
 	name,
-	handle: accountsEnv[`${name.toUpperCase()}_HANDLE`],
-	did: accountsEnv[`${name.toUpperCase()}_DID`],
-	password: accountsEnv[`${name.toUpperCase()}_PASSWORD`]
+	pds,
+	handle: accountsEnv[`${name.toUpperCase()}${suffix}_HANDLE`],
+	did: accountsEnv[`${name.toUpperCase()}${suffix}_DID`],
+	password: accountsEnv[`${name.toUpperCase()}${suffix}_PASSWORD`]
 });
 const ALICE = person('alice');
 const BOB = person('bob');
-for (const p of [ALICE, BOB])
+const MALLORY = person('mallory');
+// dana is on the other PDS with spaces, carol on the release without them.
+const DANA = person('dana', '_BETA', `https://beta.${DOMAIN}`);
+const CAROL = person('carol', '_REGULAR', `https://regular.${DOMAIN}`);
+for (const p of [ALICE, BOB, MALLORY, DANA, CAROL])
 	if (!p.handle || !p.password) throw new Error(`no ${p.name} in ${ACCOUNTS_FILE}`);
 
 const RUN = Date.now().toString(36);
@@ -111,7 +117,7 @@ const DECLARATION = 'org.atgrp.declaration';
 const EVENTS = 'community.lexicon.calendar.event';
 
 // ---------- log, masked ----------
-const secrets = [ALICE.password, BOB.password];
+const secrets = [ALICE, BOB, MALLORY, DANA, CAROL].map((p) => p.password);
 const JWT = /eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]*/g;
 const mask = (s) =>
 	secrets.reduce((t, x) => t.split(x).join('<masked>'), String(s)).replace(JWT, '<jwt>');
@@ -138,6 +144,8 @@ const S = {
 	groups: {}, // by key: { did, handle, name, ... }
 	outside: new Map(), // hosts outside the network the browsers asked for -> { count, example }
 	pageErrors: 0,
+	consoleCrashes: 0,
+	consoleNoScript: false,
 	har: []
 };
 let CURRENT = null; // the step running, for check()
@@ -170,6 +178,11 @@ async function newContext(who) {
 	await context.route('**/xrpc/org.atgrp.internal.searchActors?*', (route) =>
 		route.fulfill({ json: { actors: [] } })
 	);
+	// While the console's approval page is broken in the browser, its scripts are left out (see
+	// throughLoop), which its forms and links work without.
+	await context.route(`${HOST}/_app/**`, (route) =>
+		S.consoleNoScript ? route.abort() : route.continue()
+	);
 	context.on('request', (request) => {
 		const host = new URL(request.url()).hostname;
 		if (
@@ -189,8 +202,27 @@ async function pageFor(who) {
 	const context = await newContext(who);
 	const page = await context.newPage();
 	page.on('pageerror', (e) => {
+		// The console's own scripts, left out on purpose while its approval page is broken.
+		if (e.message.includes(`${HOST}/_app/`)) return;
 		S.pageErrors++;
 		log(`     [${who}] browser error: ${e.message.slice(0, 200)}`);
+	});
+	// Refusals and failures the pages ran into, for the log: only the host's and atmo's own.
+	let refused = 0;
+	page.on('response', (r) => {
+		const o = new URL(r.url()).origin;
+		if (r.status() >= 500 && (o === HOST || o === ATMO) && refused++ < 12)
+			log(`     [${who}] ${r.status()} ${r.request().method()} ${r.url().split('?')[0]}`);
+	});
+	let said = 0;
+	page.on('console', (m) => {
+		if (
+			m.type() === 'error' &&
+			!S.consoleNoScript &&
+			said++ < 8 &&
+			new URL(page.url()).origin !== ATMO
+		)
+			log(`     [${who}] console error: ${m.text().split('\n')[0].slice(0, 200)}`);
 	});
 	page.setDefaultTimeout(30_000);
 	S.pages[who] = page;
@@ -216,7 +248,15 @@ async function through(page, who, done, options = {}) {
 		}
 	}
 }
-async function throughOnce(page, who, done, { onApprove, stopAt } = {}) {
+async function throughOnce(page, who, done, { onApprove, onConsent, stopAt } = {}) {
+	try {
+		return await throughLoop(page, who, done, { onApprove, onConsent, stopAt });
+	} finally {
+		// Scripts back on for the console's other pages.
+		S.consoleNoScript = false;
+	}
+}
+async function throughLoop(page, who, done, { onApprove, onConsent, stopAt }) {
 	for (let i = 0; i < 150; i++) {
 		const u = new URL(page.url());
 		if (done(u)) return;
@@ -233,11 +273,67 @@ async function throughOnce(page, who, done, { onApprove, stopAt } = {}) {
 				await page.locator('#recovery').waitFor({ state: 'detached', timeout: 45_000 });
 				continue;
 			}
+			if (
+				!S.consoleNoScript &&
+				u.pathname === '/authorize' &&
+				(await page
+					.getByText(/something went wrong/i)
+					.count()
+					.catch(() => 0))
+			) {
+				S.consoleCrashes++;
+				S.consoleNoScript = true;
+				note(
+					"the console's approval page broke in the browser (see console-approval-page-works); going on with its scripts off"
+				);
+				await page.reload({ waitUntil: 'load' });
+				continue;
+			}
 			const approve = page.getByRole('button', { name: /^sign it in as/i }).first();
 			if (await approve.isVisible().catch(() => false)) {
+				if (!S.consoleNoScript) {
+					// The console's script runs after its page is drawn; see whether the page survives it.
+					await sleep(2500);
+					if (
+						await page
+							.getByText(/something went wrong/i)
+							.count()
+							.catch(() => 0)
+					) {
+						S.consoleCrashes++;
+						S.consoleNoScript = true;
+						note(
+							"the console's approval page broke in the browser (see console-approval-page-works); going on with its scripts off"
+						);
+						await page.reload({ waitUntil: 'load' });
+						continue;
+					}
+					if (!(await approve.isVisible().catch(() => false))) continue;
+				}
 				if (onApprove) await onApprove(page);
 				await approve.click();
 				await sleep(1000);
+				continue;
+			}
+			const back = page.getByRole('link', { name: /go back to the app/i });
+			if (await back.isVisible().catch(() => false)) {
+				await back.click();
+				await sleep(1000);
+				continue;
+			}
+			if (
+				S.consoleNoScript &&
+				u.pathname === '/authorize' &&
+				(await page
+					.getByText(/sign in first/i)
+					.count()
+					.catch(() => 0))
+			) {
+				// No script, so no sign-in dialog: the console's own login address, as the dialog goes to.
+				await page.goto(
+					`${HOST}/console/login?${new URLSearchParams({ back: u.pathname + u.search, handle: who.handle })}`,
+					{ waitUntil: 'load' }
+				);
 				continue;
 			}
 			const signIn = page.getByRole('banner').getByRole('button', { name: /^sign in$/i });
@@ -271,12 +367,18 @@ async function throughOnce(page, who, done, { onApprove, stopAt } = {}) {
 		}
 		const btn = page.getByRole('button', { name: /^(accept|authorize|allow(?! atmo))/i }).first();
 		if (u.origin !== ATMO && (await btn.isVisible().catch(() => false))) {
+			if (onConsent) await onConsent(page);
 			await btn.click({ timeout: 10_000 });
 			await sleep(800);
 			continue;
 		}
 		await sleep(400);
 	}
+	if (EVIDENCE)
+		fs.writeFileSync(
+			path.join(EVIDENCE, `stuck-${who.name}.html`),
+			mask(await page.content().catch(() => ''))
+		);
 	throw new Error(`stuck for ${who.name} at ${page.url().split('?')[0]}`);
 }
 
@@ -428,7 +530,7 @@ async function makeResolvable(name) {
 
 // ---------- making groups, as a founder's own PDS vouches for it ----------
 async function pdsSession(who) {
-	const { status: s, body } = await getJson(`${ALPHA}/xrpc/com.atproto.server.createSession`, {
+	const { status: s, body } = await getJson(`${who.pds}/xrpc/com.atproto.server.createSession`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({ identifier: who.handle, password: who.password })
@@ -440,7 +542,7 @@ async function serviceAuth(who, lxm) {
 	const jwt = await pdsSession(who);
 	const q = new URLSearchParams({ aud: HOST_DID, lxm });
 	const { status: s, body } = await getJson(
-		`${ALPHA}/xrpc/com.atproto.server.getServiceAuth?${q}`,
+		`${who.pds}/xrpc/com.atproto.server.getServiceAuth?${q}`,
 		{ headers: { authorization: `Bearer ${jwt}` } }
 	);
 	if (s !== 200) throw new Error(`getServiceAuth answered ${s}`);
@@ -448,7 +550,12 @@ async function serviceAuth(who, lxm) {
 }
 /** The host's own createGroup: a public group (the host's default), its declaration written by the
  *  host. `stewards` are DIDs given a role at once. */
-async function createGroup(founder, label, displayName, { stewards = [] } = {}) {
+async function createGroup(
+	founder,
+	label,
+	displayName,
+	{ stewards = [], joinPolicy = 'approval', publicRead = true } = {}
+) {
 	const handle = `${label}.${GROUP_DOMAIN}`;
 	const token = await serviceAuth(founder, 'org.atgrp.internal.createGroup');
 	const made = await getJson(`${HOST}/xrpc/org.atgrp.internal.createGroup`, {
@@ -458,7 +565,8 @@ async function createGroup(founder, label, displayName, { stewards = [] } = {}) 
 			handle,
 			displayName,
 			description: `A made-up walking group, run ${RUN}.`,
-			joinPolicy: 'approval',
+			joinPolicy,
+			metaPublicRead: publicRead,
 			...(stewards.length ? { stewards: stewards.map((did) => ({ did })) } : {})
 		})
 	});
@@ -618,6 +726,103 @@ async function editorPublish(page, name, { picture } = {}) {
 	await page.getByRole('button', { name: /^publish/i }).click();
 }
 
+// ---------- scripted acts at the group host ----------
+const spacesOf = (did) => ({
+	meta: `at:space/${did}/org.atgrp.meta/self`,
+	members: `at:space/${did}/org.atgrp.members/self`
+});
+/** A call to one of the host's methods, as `who`'s own PDS vouches for it (service auth). */
+async function hostCall(who, nsid, body) {
+	const token = await serviceAuth(who, nsid);
+	return getJson(`${HOST}/xrpc/${nsid}`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+		body: JSON.stringify(body)
+	});
+}
+const adminSessions = new Map();
+/** A session as the group for `who` (an admin of it), approved once at the console. */
+async function adminFor(group, who = ALICE) {
+	const key = `${group.did}/${who.name}`;
+	if (!adminSessions.has(key)) {
+		const page = S.pages[`${who.name}-script`] ?? (await pageFor(`${who.name}-script`));
+		adminSessions.set(key, await signInAsGroup(page, who, group, ADMIN_SCOPE));
+	}
+	return adminSessions.get(key);
+}
+async function admitAtHost(session, group, did) {
+	await asGroup(
+		session,
+		'com.atproto.space.createRecord',
+		post({
+			space: group.members,
+			repo: group.did,
+			collection: 'org.atgrp.membership',
+			rkey: did,
+			record: {
+				$type: 'org.atgrp.membership',
+				roles: ['member'],
+				createdAt: new Date().toISOString()
+			}
+		})
+	);
+}
+const joinRequests = async (session) =>
+	(await asGroup(session, 'org.atgrp.listJoinRequests?limit=100', { method: 'GET' })).requests ??
+	[];
+const metaRecord = async (session, group, collection) =>
+	(
+		await asGroup(
+			session,
+			`com.atproto.space.getRecord?${new URLSearchParams({ space: group.meta, repo: group.did, collection, rkey: 'self' })}`,
+			{ method: 'GET' }
+		)
+	).value;
+/** The host's own account of a group (its about and config records, as it reads them), for `who`. */
+async function hostGroup(who, did) {
+	const token = await serviceAuth(who, 'org.atgrp.internal.getGroup');
+	const r = await getJson(`${HOST}/xrpc/org.atgrp.internal.getGroup?group=${did}`, {
+		headers: { authorization: `Bearer ${token}` }
+	});
+	return r.body?.group ?? {};
+}
+const privateNow = new Set();
+/** Puts a group the walk made private back to public, if it is still private. */
+async function ensurePublic(g) {
+	if (!privateNow.has(g.did)) return;
+	await setMetaPublic(await adminFor(g, ALICE), g, true);
+	privateNow.delete(g.did);
+	// The host writes the declaration again; the index hears of it from Jetstream at an ingest cycle
+	// (nobody who linked the group is looking at it to tell it sooner).
+	const back = await until(
+		async () => {
+			await runCron();
+			return status(S.pages.anon, groupUrl(g));
+		},
+		(x) => x === 200,
+		15,
+		2000
+	);
+	if (!back.ok) note(`${g.handle} is not back in the index after ${15 * 2} s`);
+}
+const groupUrl = (g) => `${ATMO}/groups/${g.did}`;
+const body = (page) =>
+	page
+		.locator('body')
+		.innerText({ timeout: 15_000 })
+		.then((t) => t.replace(/\s+/g, ' '));
+/** From a page of atmo: press `button`, go through the PDS's consent (its text given to `seen`),
+ *  and come back to atmo. */
+async function allowOnPage(page, who, buttonName, seen) {
+	await page.getByRole('button', { name: buttonName }).click();
+	await page.waitForURL((u) => u.origin !== ATMO, { timeout: 30_000 });
+	await through(page, who, (u) => u.origin === ATMO, {
+		onConsent: async (p) => seen?.(await body(p))
+	});
+	await settle(page);
+}
+const MADE_UP_SITE = 'https://walkers.example.com';
+
 // =====================================================================================
 // setup
 // =====================================================================================
@@ -636,7 +841,7 @@ step('setup', 'network-answers', async () => {
 	check("alice's and bob's PDS answers", alpha.status === 200, `${alpha.status}`);
 	// atmo's server looks a handle up at https://<handle>/.well-known/atproto-did. This machine's DNS
 	// does not answer the network's names, so the two people's handles are added to /etc/hosts too.
-	for (const who of [ALICE, BOB])
+	for (const who of [ALICE, BOB, MALLORY, DANA, CAROL])
 		check(
 			`${who.name}'s handle resolves for atmo's server`,
 			await makeResolvable(who.handle),
@@ -976,21 +1181,17 @@ step(
 				(await alice.getByRole('button', { name: /^add to the groups list$/i }).count()) === 0
 		);
 		// One linked view told the index, which does not otherwise hear of the host.
-		// atmo reads which groups its host holds once and keeps that for ten minutes (heldAtGroupHost),
-		// and a group the host holds counts only if it is in that read: a group made after it waits.
+		// A group linked here counts as at the host at once, so no waiting for atmo's read of the host.
 		const began = Date.now();
-		// Read as plain requests, not page loads, so a wait of minutes does not fill the browser traffic.
-		const seen = () =>
-			fetch(`${ATMO}/groups`)
-				.then((r) => r.text())
-				.then((x) => x.includes(NAME));
-		let shown = await until(seen, (x) => x === true, 6, 1000);
-		if (!shown.ok) {
-			note(
-				"not listed yet: atmo's read of the host's groups may be up to ten minutes old; waiting for it"
-			);
-			shown = await until(seen, (x) => x === true, 66, 10_000);
-		}
+		const shown = await until(
+			() =>
+				fetch(`${ATMO}/groups`)
+					.then((r) => r.text())
+					.then((x) => x.includes(NAME)),
+			(x) => x === true,
+			20,
+			1000
+		);
 		note(`listed for a visitor after ${Math.round((Date.now() - began) / 1000)} s`);
 		check(
 			"after one linked view, the group is in the index's list: signed out, /groups shows it",
@@ -1591,6 +1792,1290 @@ step(
 );
 
 // =====================================================================================
+// more groups, made at the host by script, for the steps that follow
+// =====================================================================================
+step(
+	'setup',
+	'more-groups',
+	async () => {
+		const ga = await createGroup(ALICE, `ga${RUN}`, `Ash court ${RUN}`, {
+			stewards: [MALLORY.did]
+		});
+		const go = await createGroup(ALICE, `go${RUN}`, `Open fell ${RUN}`, { joinPolicy: 'open' });
+		const gi = await createGroup(ALICE, `gi${RUN}`, `Inner circle ${RUN}`, {
+			joinPolicy: 'invite'
+		});
+		Object.assign(S.groups, { ga, go, gi });
+		for (const g of [ga, go, gi]) {
+			g.meta = spacesOf(g.did).meta;
+			g.members = spacesOf(g.did).members;
+			check(`${g.name} is made at the host (${g.handle})`, g.did?.startsWith('did:plc:'));
+		}
+		// Whether atmo's index hears of them from Jetstream alone (the relay follows the host).
+		for (const g of [go, gi]) {
+			const heard = await until(
+				async () => {
+					await runCron();
+					return status(S.pages.anon ?? (await pageFor('anon')), groupUrl(g));
+				},
+				(x) => x === 200,
+				8,
+				2000
+			);
+			if (!heard.ok) {
+				// Not yet: linking it from the app tells the index, as a person would.
+				const { alice } = S.pages;
+				await startLink(alice, g.handle);
+				await through(alice, ALICE, (u) => u.origin === ATMO);
+				await settle(alice);
+			}
+			note(`${g.handle}: the index heard from Jetstream and cron: ${heard.ok}`);
+		}
+		check(
+			'both are on atmo for a visitor',
+			(await status(S.pages.anon, groupUrl(go))) === 200 &&
+				(await status(S.pages.anon, groupUrl(gi))) === 200
+		);
+	},
+	{ needs: ['alice-makes-groups', 'people-sign-in'] }
+);
+
+// =====================================================================================
+// link, additions: a plain member links a group; an admin whose role is lowered
+// =====================================================================================
+step(
+	'link',
+	'member-links-the-group-and-can-do-little',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = S.groups.ga;
+		const asked = await hostCall(BOB, 'org.atgrp.requestJoin', { group: g.did });
+		check(
+			'bob asks to join the group, as his PDS vouches for him (by script)',
+			asked.status === 200 && asked.body?.status === 'pending',
+			`${asked.status} ${asked.text.slice(0, 120)}`
+		);
+		await admitAtHost(await adminFor(g, ALICE), g, BOB.did);
+		check('its founder admits him at the host, as a plain member', true);
+		let approval = '';
+		await startLink(bob, g.handle);
+		await through(bob, BOB, (u) => u.origin === ATMO, {
+			onApprove: async (page) => {
+				approval = await mainText(page);
+			}
+		});
+		await settle(bob);
+		t.shot = bob;
+		note(`the console offered bob: ${approval.slice(0, 300)}`);
+		check(
+			'bob, a member, links the group through the console',
+			new URL(bob.url()).pathname === `/groups/${g.did}` &&
+				new URL(bob.url()).searchParams.get('link') === 'linked',
+			bob.url()
+		);
+		const text = await mainText(bob);
+		check(
+			'his page offers no Post, list or Settings controls, and no Edit links',
+			(await bob.getByRole('link', { name: /^post an event$/i }).count()) === 0 &&
+				(await bob.getByRole('button', { name: /groups list/i }).count()) === 0 &&
+				(await bob
+					.locator('main')
+					.getByRole('button', { name: /^settings$/i })
+					.count()) +
+					(await bob
+						.locator('main')
+						.getByRole('link', { name: /^settings$/i })
+						.count()) ===
+					0 &&
+				(await bob
+					.locator('main')
+					.getByRole('link', { name: /^edit$/i })
+					.count()) === 0,
+			text.slice(0, 300)
+		);
+		check(
+			'...and says what his role lets him do',
+			text.includes(
+				'Your role in this group lets you see it here, but not post its events or list it.'
+			),
+			text.slice(0, 300)
+		);
+		const res = await bob.goto(`${groupUrl(g)}/events/new`, { waitUntil: 'networkidle' });
+		const reason = await body(bob);
+		check(
+			'the new-event page answers 403 with the reason',
+			res?.status() === 403 && /doesn.t let you post/i.test(reason),
+			`${res?.status()} ${reason.slice(0, 200)}`
+		);
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+	},
+	{ needs: ['more-groups', 'people-sign-in'] }
+);
+
+step(
+	'link',
+	'lowered-role-refuses-the-save',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups[process.env.DBG_G ?? 'ga'];
+		await startLink(alice, g.handle);
+		await through(alice, ALICE, (u) => u.origin === ATMO);
+		await settle(alice);
+		const title = `Fell run ${RUN}`;
+		await alice.goto(`${groupUrl(g)}/events/new`, { waitUntil: 'networkidle' });
+		await editorPublish(alice, title);
+		await alice.waitForURL((u) => !u.pathname.endsWith('/events/new'), { timeout: 60_000 });
+		const rkey = new URL(alice.url()).pathname.split('/').pop();
+		const posted = await until(
+			() => repoRecords(g.did, EVENTS),
+			(rs) => rs.some((r) => r.rkey === rkey)
+		);
+		check('alice, an admin, posts an event as the group', posted.ok);
+		// Another admin, the steward mallory, lowers alice to a plain member at the host.
+		const page = await pageFor('mallory-script');
+		const session = await signInAsGroup(page, MALLORY, g, ADMIN_SCOPE);
+		await asGroup(
+			session,
+			'com.atproto.space.putRecord',
+			post({
+				space: g.members,
+				repo: g.did,
+				collection: 'org.atgrp.membership',
+				rkey: ALICE.did,
+				record: {
+					$type: 'org.atgrp.membership',
+					roles: ['member'],
+					createdAt: new Date().toISOString()
+				}
+			})
+		);
+		check('mallory, another admin, lowers alice to a plain member at the host', true);
+		const logAt = atmoLogSize();
+		await alice.goto(`${groupUrl(g)}/events/${rkey}/edit`, { waitUntil: 'networkidle' });
+		const field = alice.locator('main [contenteditable=true]').first();
+		await field.waitFor({ timeout: 60_000 });
+		await field.click();
+		await alice.keyboard.press('End');
+		await alice.keyboard.type(' again');
+		await alice.getByRole('button', { name: /^save changes$/i }).click();
+		await sleep(3000);
+		t.shot = alice;
+		const text = await body(alice);
+		check(
+			'her save shows the reason above the editor: her role no longer allows it',
+			/no longer allows that/i.test(text) && alice.url().includes('/edit'),
+			text.slice(0, 300)
+		);
+		const log = atmoLogSince(logAt);
+		const line =
+			log.split('\n').find((l) => l.includes('putRecord') && l.includes(ALICE.did)) ?? '';
+		check(
+			"atmo's log shows the host's refusal as 403, not 502",
+			/putRecord for .*: 403/.test(line) &&
+				!/ 502 /.test(log.split('\n').find((l) => /putRecord/.test(l) && /502/.test(l)) ?? ''),
+			line || log.slice(-300)
+		);
+		const after = await repoRecords(g.did, EVENTS);
+		check(
+			'the event in the group repo is unchanged',
+			after.find((r) => r.rkey === rkey)?.value?.name === title
+		);
+	},
+	{ needs: ['more-groups', 'people-sign-in'] }
+);
+
+// =====================================================================================
+// create: make a group from the app, and change its settings
+// =====================================================================================
+const NEW = { label: `cr${RUN}`, name: `Moor club ${RUN}` };
+async function fillGroupForm(page, { name, address, description, join, visibility, listed }) {
+	await page.fill('#group-name', name);
+	if (address !== undefined) await page.fill('#group-address', address);
+	if (description !== undefined) await page.fill('#group-description', description);
+	if (join) await page.locator('#group-join').selectOption(join);
+	if (visibility) await page.locator(`input[name=visibility][value=${visibility}]`).check();
+	if (listed !== undefined) {
+		const box = page.getByRole('checkbox', { name: /list it on the groups page/i });
+		if ((await box.isChecked()) !== listed && (await box.isEnabled())) await box.click();
+	}
+}
+/** Submits the create form and goes through the console, approving for the group named. */
+async function makeThroughApp(page, form, { approve = true } = {}) {
+	await makeResolvable(`${form.address}.${GROUP_DOMAIN}`);
+	await page.goto(`${ATMO}/groups/create`, { waitUntil: 'networkidle' });
+	await page.locator('html').waitFor();
+	await fillGroupForm(page, form);
+	await page.getByRole('button', { name: /^make the group$/i }).click();
+	await page.waitForURL((u) => u.origin !== ATMO || u.pathname !== '/groups/create', {
+		timeout: 60_000
+	});
+	let consoleText = '';
+	if (new URL(page.url()).origin !== HOST) return { consoleText: '' };
+	if (!approve) {
+		await page.waitForLoadState('networkidle').catch(() => {});
+		return { consoleText: '' };
+	}
+	await through(page, ALICE, (u) => u.origin === ATMO, {
+		onApprove: async (p) => {
+			consoleText = await mainText(p);
+		}
+	});
+	await settle(page);
+	return { consoleText };
+}
+
+step(
+	'create',
+	'allow-making-groups',
+	async (t) => {
+		const { alice } = S.pages;
+		await alice.goto(`${ATMO}/groups/create`, { waitUntil: 'networkidle' });
+		t.shot = alice;
+		check(
+			'the create page offers "Allow making groups" before there is a form',
+			(await alice.getByRole('button', { name: /^allow making groups$/i }).count()) === 1 &&
+				(await alice.locator('#group-name').count()) === 0
+		);
+		let consent = '';
+		await allowOnPage(alice, ALICE, /^allow making groups$/i, (x) => (consent = x));
+		t.shot = alice;
+		check(
+			"her PDS's consent asks to act on her behalf (it words the createGroup grant only so: it does not name the method)",
+			/perform actions on your behalf/i.test(consent),
+			consent.slice(0, 600)
+		);
+		note(`her PDS asked: ${consent.slice(0, 1500)}`);
+		await alice.goto(`${ATMO}/groups/create`, { waitUntil: 'networkidle' });
+		const text = await mainText(alice);
+		check(
+			"the form comes back, with the host's domain after the address",
+			(await alice.locator('#group-name').count()) === 1 && text.includes(GROUP_DOMAIN),
+			text.slice(0, 300)
+		);
+	},
+	{ needs: ['people-sign-in'] }
+);
+
+step(
+	'create',
+	'make-a-public-listed-group',
+	async (t) => {
+		const { alice } = S.pages;
+		const { consoleText } = await makeThroughApp(alice, {
+			name: NEW.name,
+			address: NEW.label,
+			description: `Made from the app, run ${RUN}.`,
+			join: 'approval',
+			visibility: 'public',
+			listed: true
+		});
+		t.shot = alice;
+		const handle = `${NEW.label}.${GROUP_DOMAIN}`;
+		note(`the console offered: ${consoleText.slice(0, 300)}`);
+		check(
+			"the host's console opened with the new group preselected, and only it",
+			consoleText.includes(handle) &&
+				!/no group you can sign it in as/i.test(consoleText) &&
+				(consoleText.match(/Sign it in as/g) ?? []).length === 1,
+			consoleText.slice(0, 300)
+		);
+		const landed = new URL(alice.url());
+		const did = landed.pathname.split('/')[2];
+		S.groups.cr = { did, handle, name: NEW.name };
+		Object.assign(S.groups.cr, spacesOf(did));
+		check(
+			'after approval she lands on the group with the made-and-linked notice',
+			landed.searchParams.get('link') === 'created' &&
+				(await mainText(alice)).includes('Your group is made, and linked.'),
+			alice.url()
+		);
+		check(
+			'...and a Settings button',
+			(await alice
+				.locator('main')
+				.getByRole('link', { name: /^settings$/i })
+				.count()) +
+				(await alice
+					.locator('main')
+					.getByRole('button', { name: /^settings$/i })
+					.count()) >=
+				1
+		);
+		const shown = await until(
+			() =>
+				fetch(`${ATMO}/groups`)
+					.then((r) => r.text())
+					.then((x) => x.includes(NEW.name)),
+			(x) => x,
+			15,
+			1000
+		);
+		check('the group is on the signed-out list at once', shown.ok);
+		const decl = await repoRecords(did, DECLARATION);
+		check('the host holds its declaration', decl.length === 1);
+	},
+	{ needs: ['allow-making-groups'] }
+);
+
+step(
+	'create',
+	'unlisted-group-has-no-declaration',
+	async (t) => {
+		const { alice, anon } = S.pages;
+		const label = `un${RUN}`;
+		const name = `Quiet beck ${RUN}`;
+		await makeThroughApp(alice, {
+			name,
+			address: label,
+			join: 'approval',
+			visibility: 'public',
+			listed: false
+		});
+		t.shot = alice;
+		const did = new URL(alice.url()).pathname.split('/')[2];
+		S.groups.un = { did, handle: `${label}.${GROUP_DOMAIN}`, name };
+		const decl = await repoRecords(did, DECLARATION);
+		check(
+			'a public group made unlisted has no declaration at the host',
+			decl.length === 0,
+			String(decl.length)
+		);
+		const list = await (await fetch(`${ATMO}/groups`)).text();
+		check('...and is not on the signed-out list', !list.includes(name));
+		check(
+			'...and its page is a 404 for a visitor',
+			(await status(anon, groupUrl(S.groups.un))) === 404
+		);
+		check(
+			'...while its admin sees it, with the option to list it',
+			(await alice
+				.goto(groupUrl(S.groups.un))
+				.then(() => alice.getByRole('button', { name: /^add to the groups list$/i }).count())) === 1
+		);
+	},
+	{ needs: ['allow-making-groups'] }
+);
+
+step(
+	'create',
+	'members-only-group-is-not-found-signed-out',
+	async (t) => {
+		const { alice, anon } = S.pages;
+		const label = `mo${RUN}`;
+		const name = `Closed barn ${RUN}`;
+		await makeThroughApp(alice, { name, address: label, join: 'approval', visibility: 'private' });
+		t.shot = alice;
+		const did = new URL(alice.url()).pathname.split('/')[2];
+		S.groups.mo = { did, handle: `${label}.${GROUP_DOMAIN}`, name };
+		check(
+			"a members-only group's page is a 404 signed out",
+			(await status(anon, groupUrl(S.groups.mo))) === 404
+		);
+		check(
+			'...and it is not on the signed-out list',
+			!(await (await fetch(`${ATMO}/groups`)).text()).includes(name)
+		);
+		check(
+			'...while its admin reaches it, with the Private badge',
+			(await alice.goto(groupUrl(S.groups.mo)).then(() => mainText(alice))).includes('Private')
+		);
+	},
+	{ needs: ['allow-making-groups'] }
+);
+
+step(
+	'create',
+	'same-address-again-is-taken',
+	async (t) => {
+		const { alice } = S.pages;
+		await makeResolvable(`${NEW.label}.${GROUP_DOMAIN}`);
+		await alice.goto(`${ATMO}/groups/create`, { waitUntil: 'networkidle' });
+		await fillGroupForm(alice, { name: 'Another moor club', address: NEW.label });
+		await alice.getByRole('button', { name: /^make the group$/i }).click();
+		await alice.waitForLoadState('networkidle');
+		t.shot = alice;
+		const text = await body(alice);
+		check(
+			'the same address again says the address is taken',
+			/that address is taken/i.test(text) && new URL(alice.url()).origin === ATMO,
+			text.slice(0, 300)
+		);
+	},
+	{ needs: ['make-a-public-listed-group'] }
+);
+
+step(
+	'create',
+	'unfinished-group-can-be-finished',
+	async (t) => {
+		const { alice } = S.pages;
+		const label = `uf${RUN}`;
+		const name = `Half done ${RUN}`;
+		await makeThroughApp(alice, { name, address: label, join: 'approval' }, { approve: false });
+		check('the console opens for it', new URL(alice.url()).origin === HOST, alice.url());
+		// Closed without approving: back to atmo.
+		await alice.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+		t.shot = alice;
+		check(
+			'the groups page says a group is not set up yet',
+			/not set up yet/i.test(await mainText(alice))
+		);
+		await alice.goto(`${ATMO}/groups/create`, { waitUntil: 'networkidle' });
+		const text = await mainText(alice);
+		check(
+			'the create page lists it under "Not set up yet", with "Finish setting up"',
+			/not set up yet/i.test(text) &&
+				text.includes(`${label}.${GROUP_DOMAIN}`) &&
+				(await alice.getByRole('button', { name: /^finish setting up$/i }).count()) >= 1,
+			text.slice(0, 300)
+		);
+		await alice
+			.locator('form', { hasText: label })
+			.getByRole('button', { name: /^finish setting up$/i })
+			.click();
+		await alice.waitForURL((u) => u.origin !== ATMO, { timeout: 30_000 });
+		await through(alice, ALICE, (u) => u.origin === ATMO);
+		await settle(alice);
+		t.shot = alice;
+		const did = new URL(alice.url()).pathname.split('/')[2];
+		S.groups.uf = { did, handle: `${label}.${GROUP_DOMAIN}`, name };
+		check(
+			'"Finish setting up" links it: she lands on the group (made-and-linked notice) with its controls',
+			['linked', 'created'].includes(new URL(alice.url()).searchParams.get('link') ?? '') &&
+				(await alice.getByRole('link', { name: /^post an event$/i }).count()) === 1,
+			alice.url()
+		);
+		await alice.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+		check(
+			'and the groups page no longer says it is unfinished',
+			!/not set up yet/i.test(await mainText(alice))
+		);
+	},
+	{ needs: ['allow-making-groups'] }
+);
+
+step(
+	'create',
+	'settings-change-and-records',
+	async (t) => {
+		const { alice, anon } = S.pages;
+		const g = S.groups.cr;
+		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		await alice
+			.locator('main')
+			.getByRole('link', { name: /^settings$/i })
+			.click();
+		await alice.waitForURL((u) => u.pathname.endsWith('/settings'));
+		await alice.locator('#group-name').waitFor();
+		S.newName = `Moor club renamed ${RUN}`;
+		await alice.fill('#group-name', S.newName);
+		await alice.fill('#group-description', 'A new description.');
+		await alice.fill('#group-website', MADE_UP_SITE);
+		await alice.locator('#group-join').selectOption('open');
+		await alice.getByRole('button', { name: /^save$/i }).click();
+		await alice.waitForURL((u) => u.pathname === `/groups/${g.did}`, { timeout: 30_000 });
+		await settle(alice);
+		t.shot = alice;
+		const text = await mainText(alice);
+		check(
+			'saved settings come back to the group page with the new name and description',
+			text.includes(S.newName) && text.includes('A new description.'),
+			text.slice(0, 200)
+		);
+		const at = await hostGroup(ALICE, g.did);
+		note(
+			`the host's own account of it: ${JSON.stringify({ ...at, viewer: undefined, labels: undefined })}`
+		);
+		check(
+			"the host's about record (as it reports it) holds the new name, description and website",
+			at.displayName === S.newName &&
+				at.description === 'A new description.' &&
+				String(at.website).startsWith(MADE_UP_SITE),
+			JSON.stringify(at).slice(0, 300)
+		);
+		check(
+			"the host's config record says anyone may join",
+			at.joinPolicy === 'open',
+			String(at.joinPolicy)
+		);
+		await alice.goto(`${groupUrl(g)}/settings`, { waitUntil: 'networkidle' });
+		check(
+			'the settings form shows the saved values',
+			(await alice.inputValue('#group-name')) === S.newName &&
+				(await alice.inputValue('#group-website')).startsWith(MADE_UP_SITE) &&
+				(await alice.locator('#group-join').inputValue()) === 'open',
+			`${await alice.inputValue('#group-name')} | ${await alice.inputValue('#group-website')} | ${await alice.locator('#group-join').inputValue()}`
+		);
+		const listed = await until(
+			() =>
+				fetch(`${ATMO}/groups`)
+					.then((r) => r.text())
+					.then((x) => x.includes(S.newName)),
+			(x) => x,
+			10,
+			1000
+		);
+		note(`the renamed group on the signed-out list: ${listed.ok}`);
+	},
+	{ needs: ['make-a-public-listed-group'] }
+);
+
+step(
+	'create',
+	'settings-members-only-and-back',
+	async (t) => {
+		const { alice, anon } = S.pages;
+		const g = S.groups.cr;
+		const session = await adminFor(g, ALICE);
+		const before = (
+			await asGroup(
+				session,
+				`com.atproto.space.getSpace?${new URLSearchParams({ space: g.meta })}`,
+				{ method: 'GET' }
+			)
+		).policy;
+		const save = async (visibility, listed) => {
+			await alice.goto(`${groupUrl(g)}/settings`, { waitUntil: 'networkidle' });
+			await alice.locator(`input[name=visibility][value=${visibility}]`).check();
+			const box = alice.getByRole('checkbox', { name: /list it on the groups page/i });
+			if ((await box.isEnabled()) && (await box.isChecked()) !== listed) await box.click();
+			await alice.getByRole('button', { name: /^save$/i }).click();
+			await alice.waitForURL((u) => u.pathname === `/groups/${g.did}`, { timeout: 30_000 });
+			await settle(alice);
+		};
+		await save('private', false);
+		t.shot = alice;
+		const after = (
+			await asGroup(
+				session,
+				`com.atproto.space.getSpace?${new URLSearchParams({ space: g.meta })}`,
+				{ method: 'GET' }
+			)
+		).policy;
+		check(
+			"made members-only, the meta space's grants are unchanged and only publicRead changed",
+			JSON.stringify(after.grants) === JSON.stringify(before.grants) && after.publicRead !== true,
+			`${JSON.stringify(before)} -> ${JSON.stringify(after)}`
+		);
+		const gone = await until(
+			async () => ({
+				s: await status(anon, groupUrl(g)),
+				listed: (await (await fetch(`${ATMO}/groups`)).text()).includes(S.newName)
+			}),
+			(x) => x.s === 404 && !x.listed,
+			15,
+			1000
+		);
+		check(
+			'signed out, its page is a 404 and it is gone from the list',
+			gone.ok,
+			JSON.stringify(gone.last)
+		);
+		await save('public', true);
+		const back = await until(
+			async () => ({
+				s: await status(anon, groupUrl(g)),
+				listed: (await (await fetch(`${ATMO}/groups`)).text()).includes(S.newName)
+			}),
+			(x) => x.s === 200 && x.listed,
+			15,
+			1000
+		);
+		check('made public and listed again, it shows signed out', back.ok, JSON.stringify(back.last));
+		check(
+			'...and its declaration is back at the host',
+			(await repoRecords(g.did, DECLARATION)).length === 1
+		);
+	},
+	{ needs: ['settings-change-and-records'] }
+);
+
+step('create', 'todo-approve-again-for-an-old-link', async () => {}, {
+	todo: 'a link approved before the settings scope existed needs a stored link whose asked scope is out of date (a key atmo writes at the link) and whose grant lacks something; this run starts from a fresh database, and nothing in the pages can make one without changing app code'
+});
+
+// =====================================================================================
+// join: ask, cancel, be admitted, leave; groups that admit at once or take invitations only
+// =====================================================================================
+step(
+	'join',
+	'bob-allows-joining-groups',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = S.groups.g1;
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		t.shot = bob;
+		check(
+			'bob opens a group whose admins decide, and is offered "Allow joining groups"',
+			(await bob.getByRole('button', { name: /^allow joining groups$/i }).count()) === 1
+		);
+		let consent = '';
+		await allowOnPage(bob, BOB, /^allow joining groups$/i, (x) => (consent = x));
+		t.shot = bob;
+		note(`his PDS asked: ${consent.slice(0, 1500)}`);
+		check(
+			'his PDS asks for the permissions (it words acting in groups and the groups list generally), and the page then has the join form',
+			/perform actions on your behalf|space/i.test(consent) && consent.length > 0,
+			consent.slice(0, 600)
+		);
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		check(
+			'back on the page, there is a message box and "Ask to join"',
+			(await bob.getByRole('button', { name: /^ask to join$/i }).count()) === 1 &&
+				(await bob.locator('#join-message').count()) === 1
+		);
+	},
+	{ needs: ['people-sign-in', 'alice-links-by-handle'] }
+);
+
+step(
+	'join',
+	'bob-asks-with-a-message-and-sees-it-waiting',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = S.groups.g1;
+		S.joinMessage = `Hello from bob, run ${RUN}`;
+		await bob.fill('#join-message', S.joinMessage);
+		await bob.getByRole('button', { name: /^ask to join$/i }).click();
+		await bob.getByText(/request sent/i).waitFor({ timeout: 20_000 });
+		t.shot = bob;
+		check(
+			'he sees the request waiting, and a way to cancel it',
+			(await bob.getByRole('button', { name: /^cancel request$/i }).count()) === 1
+		);
+		const admin = await adminFor(g, ALICE);
+		const asking = (await joinRequests(admin)).find((r) => r.member === BOB.did);
+		check(
+			'at the host, the request is there with his message',
+			asking?.message === S.joinMessage,
+			JSON.stringify(asking)
+		);
+	},
+	{ needs: ['bob-allows-joining-groups'] }
+);
+
+step(
+	'join',
+	'bob-cancels-and-asks-again',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = S.groups.g1;
+		const admin = await adminFor(g, ALICE);
+		await bob.getByRole('button', { name: /^cancel request$/i }).click();
+		await bob.getByRole('button', { name: /^ask to join$/i }).waitFor({ timeout: 20_000 });
+		const gone = !(await joinRequests(admin)).some((r) => r.member === BOB.did);
+		check('he cancels: the request is gone at the host and the page offers to ask again', gone);
+		await bob.fill('#join-message', S.joinMessage);
+		await bob.getByRole('button', { name: /^ask to join$/i }).click();
+		await bob.getByText(/request sent/i).waitFor({ timeout: 20_000 });
+		t.shot = bob;
+		check(
+			'asking again is a request again',
+			(await joinRequests(admin)).some((r) => r.member === BOB.did)
+		);
+	},
+	{ needs: ['bob-asks-with-a-message-and-sees-it-waiting'] }
+);
+
+step(
+	'join',
+	'admitted-at-the-host-bob-is-a-member',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = S.groups.g1;
+		await admitAtHost(await adminFor(g, ALICE), g, BOB.did);
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		t.shot = bob;
+		check(
+			'the admin admits him at the host; on reload bob sees he is a member, with a way to leave',
+			(await bob.getByRole('button', { name: /^leave group$/i }).count()) === 1 &&
+				(await mainText(bob)).includes('Member')
+		);
+		// His confirmation is written on that visit; the same write again, as the second visit makes it.
+		const jwt = await pdsSession(BOB);
+		const again = await getJson(`${BOB.pds}/xrpc/com.atproto.space.createRecord`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', authorization: `Bearer ${jwt}` },
+			body: JSON.stringify({
+				space: spacesOf(g.did).members,
+				repo: BOB.did,
+				collection: 'org.atgrp.confirmation',
+				rkey: 'self',
+				record: { $type: 'org.atgrp.confirmation', createdAt: new Date().toISOString() }
+			})
+		});
+		note(
+			`a second write of his confirmation is answered ${again.status} ${again.body?.error ?? ''}`
+		);
+		const read = await getJson(
+			`${BOB.pds}/xrpc/com.atproto.space.listRecords?${new URLSearchParams({ space: spacesOf(g.did).members, repo: BOB.did, collection: 'org.atgrp.confirmation' })}`,
+			{ headers: { authorization: `Bearer ${jwt}` } }
+		);
+		check(
+			'his confirmation is in his own repo (the first visit wrote it)',
+			again.status === 400 || (read.body?.records ?? []).length >= 1,
+			`${again.status} ${again.text.slice(0, 120)} / ${read.status} ${read.text.slice(0, 120)}`
+		);
+		await bob.reload({ waitUntil: 'networkidle' });
+		check(
+			'a second visit still shows him a member',
+			(await bob.getByRole('button', { name: /^leave group$/i }).count()) === 1
+		);
+	},
+	{ needs: ['bob-cancels-and-asks-again'] }
+);
+
+step(
+	'join',
+	'private-group-is-still-seen-by-a-member',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = S.groups.g1;
+		const admin = await adminFor(g, ALICE);
+		await setMetaPublic(admin, g, false);
+		privateNow.add(g.did);
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		t.shot = bob;
+		const text = await mainText(bob);
+		check(
+			'the group is made private at the host, and bob still sees it, with its name',
+			text.includes(NAME) &&
+				(await bob.getByRole('button', { name: /^leave group$/i }).count()) === 1,
+			text.slice(0, 200)
+		);
+		// The index drops the declaration when it hears of it, from Jetstream at the next ingest cycle.
+		const hidden = await until(
+			async () => {
+				await runCron();
+				return status(S.pages.anon, groupUrl(g));
+			},
+			(x) => x === 404,
+			10,
+			2000
+		);
+		check('while a signed-out visitor gets a 404', hidden.ok, String(hidden.last));
+	},
+	{ needs: ['admitted-at-the-host-bob-is-a-member'] }
+);
+
+step(
+	'join',
+	'your-groups-lists-it',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = S.groups.g1;
+		await bob.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+		t.shot = bob;
+		const section = bob.locator('section', {
+			has: bob.getByRole('heading', { name: /your groups/i })
+		});
+		const text = (await section.innerText().catch(() => '')).replace(/\s+/g, ' ');
+		check(
+			'/groups lists it under his groups, though it is private',
+			text.includes(NAME) || text.includes(g.handle),
+			text.slice(0, 300)
+		);
+		// Back to public for the steps that follow.
+		await ensurePublic(g);
+	},
+	{ needs: ['private-group-is-still-seen-by-a-member'] }
+);
+
+step(
+	'join',
+	'bob-leaves-and-may-ask-again',
+	async (t) => {
+		await ensurePublic(S.groups.g1);
+		const { bob } = S.pages;
+		const g = S.groups.g1;
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		await bob.getByRole('button', { name: /^leave group$/i }).click();
+		await bob.getByRole('button', { name: /^ask to join$/i }).waitFor({ timeout: 20_000 });
+		t.shot = bob;
+		check('bob leaves, and is offered to ask again', true);
+		await bob.reload({ waitUntil: 'networkidle' });
+		check(
+			'on the next visit too',
+			(await bob.getByRole('button', { name: /^ask to join$/i }).count()) === 1 &&
+				(await bob.getByRole('button', { name: /^leave group$/i }).count()) === 0
+		);
+	},
+	{ needs: ['your-groups-lists-it'] }
+);
+
+step(
+	'join',
+	'founder-cannot-leave-as-the-only-admin',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups.g1;
+		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		if (await alice.getByRole('button', { name: /^allow joining groups$/i }).count()) {
+			await allowOnPage(alice, ALICE, /^allow joining groups$/i);
+			await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		}
+		await alice.getByRole('button', { name: /^leave group$/i }).click();
+		await alice.getByRole('alert').waitFor({ timeout: 20_000 });
+		t.shot = alice;
+		const text = await body(alice);
+		check(
+			'the founder trying to leave sees the only-admin message',
+			/only admin, so you can.t leave it/i.test(text),
+			text.slice(0, 300)
+		);
+		check(
+			'and is still a member',
+			(await alice.getByRole('button', { name: /^leave group$/i }).count()) === 1
+		);
+	},
+	{ needs: ['bob-leaves-and-may-ask-again'] }
+);
+
+step(
+	'join',
+	'open-group-admits-at-once',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = S.groups.go;
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		t.shot = bob;
+		check(
+			'an open group offers "Join"',
+			(await bob.getByRole('button', { name: /^join$/i }).count()) === 1,
+			(await mainText(bob)).slice(0, 200)
+		);
+		await bob.getByRole('button', { name: /^join$/i }).click();
+		await bob.getByRole('button', { name: /^leave group$/i }).waitFor({ timeout: 20_000 });
+		check('joining admits him at once: he is a member', true);
+	},
+	{ needs: ['bob-allows-joining-groups', 'more-groups'] }
+);
+
+step(
+	'join',
+	'invitation-only-group-says-so',
+	async (t) => {
+		const { bob } = S.pages;
+		await bob.goto(groupUrl(S.groups.gi), { waitUntil: 'networkidle' });
+		t.shot = bob;
+		const text = await mainText(bob);
+		check(
+			'an invitation-only group says it takes members by invitation only, and offers no join',
+			/invitation only/i.test(text) &&
+				(await bob.getByRole('button', { name: /^(join|ask to join)$/i }).count()) === 0,
+			text.slice(0, 200)
+		);
+	},
+	{ needs: ['bob-allows-joining-groups', 'more-groups'] }
+);
+
+step(
+	'join',
+	'carol-without-spaces-gets-an-explanation',
+	async (t) => {
+		await ensurePublic(S.groups.g1);
+		const carol = await signInToAtmo(CAROL);
+		const g = S.groups.g1;
+		await carol.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		t.shot = carol;
+		check(
+			'carol (a PDS without spaces) opens the group and is offered "Allow joining groups"',
+			(await carol.getByRole('button', { name: /^allow joining groups$/i }).count()) === 1
+		);
+		await allowOnPage(carol, CAROL, /^allow joining groups$/i);
+		t.shot = carol;
+		const text = await mainText(carol);
+		check(
+			'back from her PDS, the page explains her server gave no permission',
+			/did not give atmo permission to act for you in groups/i.test(text),
+			text.slice(0, 300)
+		);
+		check(
+			'...names a server with spaces support',
+			text.includes(new URL(ALPHA).host),
+			text.slice(0, 300)
+		);
+		check(
+			'...and does not ask again: no "Allow joining groups" button',
+			(await carol.getByRole('button', { name: /^allow joining groups$/i }).count()) === 0
+		);
+	},
+	{ needs: ['people-sign-in', 'alice-links-by-handle'] }
+);
+
+step(
+	'join',
+	'dana-on-the-other-spaces-pds-asks-and-is-admitted',
+	async (t) => {
+		await ensurePublic(S.groups.g1);
+		const dana = await signInToAtmo(DANA);
+		const g = S.groups.g1;
+		await dana.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		await allowOnPage(dana, DANA, /^allow joining groups$/i);
+		t.shot = dana;
+		check(
+			'dana (the other PDS with spaces) is granted the permissions and offered "Ask to join"',
+			(await dana.getByRole('button', { name: /^ask to join$/i }).count()) === 1,
+			(await mainText(dana)).slice(0, 200)
+		);
+		await dana.fill('#join-message', 'Dana here');
+		await dana.getByRole('button', { name: /^ask to join$/i }).click();
+		await dana.getByText(/request sent/i).waitFor({ timeout: 20_000 });
+		const admin = await adminFor(g, ALICE);
+		check(
+			'her request reaches the host',
+			(await joinRequests(admin)).some((r) => r.member === DANA.did)
+		);
+		await admitAtHost(admin, g, DANA.did);
+		await dana.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		check(
+			'admitted at the host, she is a member on her next visit',
+			(await dana.getByRole('button', { name: /^leave group$/i }).count()) === 1
+		);
+	},
+	{ needs: ['people-sign-in', 'alice-links-by-handle'] }
+);
+
+// =====================================================================================
+// roster: the members page, for an admin who linked the group and for a member
+// =====================================================================================
+step('roster', 'todo-approve-again-on-the-members-page', async () => {}, {
+	todo: 'an earlier link showing "Approve again" needs a link whose asked scope is out of date and whose grant lacks something (see create/todo-approve-again-for-an-old-link); a link made in this run asks for the current scope'
+});
+
+step(
+	'roster',
+	'alice-links-and-sees-the-roster-controls',
+	async (t) => {
+		await ensurePublic(S.groups.g1);
+		const { alice } = S.pages;
+		const g = S.groups.g1;
+		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		if (await alice.getByRole('button', { name: /^link this group$|^link again$/i }).count()) {
+			await alice.getByRole('button', { name: /^link this group$|^link again$/i }).click();
+			await alice.waitForURL((u) => u.origin !== ATMO, { timeout: 30_000 });
+			await through(alice, ALICE, (u) => u.origin === ATMO);
+			await settle(alice);
+		}
+		// Bob asks with a message, to give the page something to show.
+		const { bob } = S.pages;
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		S.rosterMessage = `Please let me in, run ${RUN}`;
+		await bob.fill('#join-message', S.rosterMessage);
+		await bob.getByRole('button', { name: /^ask to join$/i }).click();
+		await bob.getByText(/request sent/i).waitFor({ timeout: 20_000 });
+		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		t.shot = alice;
+		const text = await mainText(alice);
+		check(
+			'the members page shows who asks, with their message, and Approve and Deny',
+			text.includes(S.rosterMessage) &&
+				(await alice.getByRole('button', { name: /^approve$/i }).count()) >= 1 &&
+				(await alice.getByRole('button', { name: /^deny$/i }).count()) >= 1,
+			text.slice(0, 400)
+		);
+		check(
+			'...and Make admin and Remove for the other members',
+			(await alice.getByRole('button', { name: /^make admin$/i }).count()) >= 1 &&
+				(await alice.getByRole('button', { name: /^remove$/i }).count()) >= 1,
+			text.slice(0, 400)
+		);
+	},
+	{
+		needs: [
+			'founder-cannot-leave-as-the-only-admin',
+			'dana-on-the-other-spaces-pds-asks-and-is-admitted'
+		]
+	}
+);
+
+step(
+	'roster',
+	'approve-bobs-request',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups.g1;
+		await alice
+			.locator('ul[aria-label="Asking to join"] li', { hasText: BOB.handle.split('.')[0] })
+			.getByRole('button', { name: /^approve$/i })
+			.click();
+		await until(
+			async () => !(await mainText(alice)).includes(S.rosterMessage),
+			(x) => x,
+			20,
+			500
+		);
+		t.shot = alice;
+		const handleName = BOB.handle.split('.')[0];
+		const unconfirmed = (
+			await alice
+				.locator('ul[aria-label="Not confirmed yet"]')
+				.innerText()
+				.catch(() => '')
+		).replace(/\s+/g, ' ');
+		check(
+			'alice approves him: he appears, under "Not confirmed yet" until he visits',
+			unconfirmed.includes(handleName),
+			unconfirmed.slice(0, 300)
+		);
+		// His visit writes his confirmation.
+		await S.pages.bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		const members = (await alice.locator('ul[aria-label="Members"]').innerText()).replace(
+			/\s+/g,
+			' '
+		);
+		check(
+			'after his visit he is on the member list',
+			members.includes(handleName),
+			members.slice(0, 300)
+		);
+		check('...and no longer in the requests', !(await mainText(alice)).includes(S.rosterMessage));
+	},
+	{ needs: ['alice-links-and-sees-the-roster-controls'] }
+);
+
+step(
+	'roster',
+	'deny-mallorys-request',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups.g1;
+		const asked = await hostCall(MALLORY, 'org.atgrp.requestJoin', {
+			group: g.did,
+			message: 'Mallory asking'
+		});
+		check(
+			'mallory asks to join (by script)',
+			asked.status === 200 && asked.body?.status === 'pending',
+			asked.text.slice(0, 120)
+		);
+		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		const row = alice.locator('ul[aria-label="Asking to join"] li', { hasText: 'mallory' });
+		check('alice sees the request', (await row.count()) === 1);
+		await row.getByRole('button', { name: /^deny$/i }).click();
+		await until(
+			async () => (await row.count()) === 0,
+			(x) => x,
+			20,
+			500
+		);
+		t.shot = alice;
+		check('denying removes it from the page', (await row.count()) === 0);
+		const left = (await joinRequests(await adminFor(g, ALICE))).some(
+			(r) => r.member === MALLORY.did
+		);
+		check('...and at the host', !left);
+	},
+	{ needs: ['approve-bobs-request'] }
+);
+
+step(
+	'roster',
+	'approving-a-request-already-gone',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups.g1;
+		await hostCall(MALLORY, 'org.atgrp.requestJoin', { group: g.did });
+		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		const row = alice.locator('ul[aria-label="Asking to join"] li', { hasText: 'mallory' });
+		check('alice sees mallory asking again', (await row.count()) === 1);
+		const gone = await hostCall(MALLORY, 'org.atgrp.cancelJoinRequest', { group: g.did });
+		check(
+			'mallory withdraws it meanwhile (by script)',
+			gone.status === 200,
+			gone.text.slice(0, 100)
+		);
+		await row.getByRole('button', { name: /^approve$/i }).click();
+		await alice.getByRole('alert').waitFor({ timeout: 20_000 });
+		t.shot = alice;
+		const text = await body(alice);
+		check(
+			'approving it says they are no longer asking',
+			/no longer asking to join/i.test(text),
+			text.slice(0, 300)
+		);
+	},
+	{ needs: ['deny-mallorys-request'] }
+);
+
+step(
+	'roster',
+	'make-bob-admin-and-back',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups.g1;
+		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		const row = alice.locator('ul[aria-label="Members"] li', { hasText: BOB.handle.split('.')[0] });
+		await row.getByRole('button', { name: /^make admin$/i }).click();
+		await row.getByRole('button', { name: /^make member$/i }).waitFor({ timeout: 20_000 });
+		t.shot = alice;
+		check('alice makes bob an admin: his row now offers "Make member"', true);
+		await row.getByRole('button', { name: /^make member$/i }).click();
+		await row.getByRole('button', { name: /^make admin$/i }).waitFor({ timeout: 20_000 });
+		check('and a member again', true);
+		await row.getByRole('button', { name: /^make admin$/i }).click();
+		await row.getByRole('button', { name: /^make member$/i }).waitFor({ timeout: 20_000 });
+	},
+	{ needs: ['approve-bobs-request'] }
+);
+
+step(
+	'roster',
+	'two-admins-can-demote-each-other',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = S.groups.g1;
+		// Bob, an admin now, links the group, and takes alice's admin role away: the group would
+		// keep bob. Then taking his own away is not offered. The host's refusal is for the last
+		// admin: try to make the only admin a member from a stale page.
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		await bob.getByRole('button', { name: /^link this group$|^link again$/i }).click();
+		await bob.waitForURL((u) => u.origin !== ATMO, { timeout: 30_000 });
+		await through(bob, BOB, (u) => u.origin === ATMO);
+		await settle(bob);
+		await bob.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		const alicesRow = bob.locator('ul[aria-label="Members"] li', {
+			hasText: ALICE.handle.split('.')[0]
+		});
+		check(
+			'bob, now an admin who linked it, gets the controls',
+			(await alicesRow.getByRole('button', { name: /^make member$/i }).count()) === 1,
+			(await mainText(bob)).slice(0, 300)
+		);
+		await alicesRow.getByRole('button', { name: /^make member$/i }).click();
+		await bob.waitForTimeout(3000);
+		t.shot = bob;
+		const text = await body(bob);
+		const demoted = (await alicesRow.getByRole('button', { name: /^make admin$/i }).count()) === 1;
+		note(
+			`demoting the founder from bob's page: ${demoted ? 'it worked' : 'it did not'}; ${text.slice(0, 300)}`
+		);
+		if (demoted) {
+			// Put her back, as bob, so the steps after this one still have an admin who linked.
+			await alicesRow.getByRole('button', { name: /^make admin$/i }).click();
+			await alicesRow.getByRole('button', { name: /^make member$/i }).waitFor({ timeout: 20_000 });
+		}
+		check(
+			'with two admins, bob (an admin who linked it) can demote alice, who is put back as admin after',
+			demoted && !/leave the group with no admin/i.test(text),
+			text.slice(0, 300)
+		);
+	},
+	{ needs: ['make-bob-admin-and-back'] }
+);
+
+step('roster', 'todo-last-admin-sentence', async () => {}, {
+	todo: "the no-admin sentence needs an action that would leave the group without an admin; the members page offers no controls on one's own row, and demoting or removing another admin leaves the actor as an admin, so no click reaches it (the unit tests cover the host's LastConfigurer answer)"
+});
+
+step(
+	'roster',
+	'a-plain-member-sees-the-roster-without-controls',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = S.groups.g1;
+		// Danas is a plain member, admitted in the join section.
+		const { dana } = S.pages;
+		await dana.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		t.shot = dana;
+		const text = await mainText(dana);
+		check(
+			'dana, a member who is not an admin, sees the roster',
+			(await dana.locator('ul[aria-label="Members"] li').count()) >= 1,
+			text.slice(0, 300)
+		);
+		check(
+			'...without Approve, Deny, Make admin, Make member or Remove',
+			(await dana
+				.getByRole('button', { name: /^(approve|deny|make admin|make member|remove)$/i })
+				.count()) === 0
+		);
+	},
+	{ needs: ['two-admins-can-demote-each-other'] }
+);
+
+step(
+	'roster',
+	'remove-a-member',
+	async (t) => {
+		const { alice, bob } = S.pages;
+		const g = S.groups.g1;
+		// Alice may have been demoted by the last step: make sure the page still lets her act.
+		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		const row = alice.locator('ul[aria-label="Members"] li', {
+			hasText: DANA.handle.split('.')[0]
+		});
+		await row.getByRole('button', { name: /^remove$/i }).click();
+		await until(
+			async () => (await row.count()) === 0,
+			(x) => x,
+			20,
+			500
+		);
+		t.shot = alice;
+		check(
+			'alice removes dana: she drops off the roster',
+			(await row.count()) === 0,
+			(await mainText(alice)).slice(0, 300)
+		);
+		const { dana } = S.pages;
+		await dana.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		check(
+			'on her next visit she is not a member',
+			(await dana.getByRole('button', { name: /^leave group$/i }).count()) === 0 &&
+				(await dana.getByRole('button', { name: /^ask to join$/i }).count()) === 1
+		);
+		await dana.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		check(
+			'and the members page is for members only',
+			/only members can see who is in this group/i.test(await mainText(dana))
+		);
+	},
+	{ needs: ['a-plain-member-sees-the-roster-without-controls'] }
+);
+
+step(
+	'roster',
+	'carol-admitted-shows-as-not-confirmed',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups.g1;
+		const asked = await hostCall(CAROL, 'org.atgrp.requestJoin', {
+			group: g.did,
+			message: 'Carol, no spaces'
+		});
+		check(
+			'carol asks to join (by script: her server has no spaces)',
+			asked.status === 200 && asked.body?.status === 'pending',
+			asked.text.slice(0, 120)
+		);
+		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		const row = alice.locator('ul[aria-label="Asking to join"] li', { hasText: 'carol' });
+		await row.getByRole('button', { name: /^approve$/i }).click();
+		await until(
+			async () => (await row.count()) === 0,
+			(x) => x,
+			20,
+			500
+		);
+		t.shot = alice;
+		const unconfirmed = (
+			await alice
+				.locator('ul[aria-label="Not confirmed yet"]')
+				.innerText()
+				.catch(() => '')
+		).replace(/\s+/g, ' ');
+		check(
+			'admitted, she shows under "Not confirmed yet"',
+			unconfirmed.includes('carol'),
+			unconfirmed.slice(0, 300)
+		);
+	},
+	{ needs: ['remove-a-member'] }
+);
+
+// =====================================================================================
 // flags: what atmo answers with groups on (the off state needs a server started without the host)
 // =====================================================================================
 step(
@@ -1653,10 +3138,24 @@ step(
 			`${link.status} ${link.location}`
 		);
 		const meta = await anon('GET', '/oauth-client-metadata.json');
-		const scopes = String(JSON.parse(meta.text || '{}').scope ?? '').split(' ');
+		const personScopes = String(JSON.parse(meta.text || '{}').scope ?? '').split(' ');
+		const groupMeta = await anon('GET', '/oauth/group/client-metadata.json');
+		const groupScopes = String(JSON.parse(groupMeta.text || '{}').scope ?? '').split(' ');
+		const GROUP_CLIENT_ONLY =
+			/^(repo\?collection=org\.atgrp\.declaration|space:org\.atgrp\.(meta|members)|rpc:org\.atgrp\.(listJoinRequests|denyJoinRequest))/;
+		const PERSON_ONLY =
+			/^(rpc:org\.atgrp\.internal\.(createGroup|getActorGroups)|include:org\.atgrp\.authParticipate)/;
 		check(
-			"atmo's own client metadata does not ask for the group's scopes (a person's session is never a group's)",
-			meta.status === 200 && !scopes.some((s) => s.includes('org.atgrp'))
+			"a person's client metadata asks for none of the group client's scopes",
+			meta.status === 200 && !personScopes.some((x) => GROUP_CLIENT_ONLY.test(x)),
+			personScopes.filter((x) => GROUP_CLIENT_ONLY.test(x)).join(' ')
+		);
+		check(
+			"the group client's metadata asks for none of the person-only scopes",
+			groupMeta.status === 200 &&
+				groupScopes.length > 1 &&
+				!groupScopes.some((x) => PERSON_ONLY.test(x)),
+			groupScopes.filter((x) => PERSON_ONLY.test(x)).join(' ')
 		);
 	},
 	{ needs: ['listed-by-the-host'] }
@@ -1670,16 +3169,33 @@ step('flags', 'off-state', async () => {}, {
 step('private', 'todo-lowered-role-gives-visitor-page', async () => {}, {
 	todo: 'the visitor page without "Link again" (a role lowered, not removed) needs a role whose read of the meta space the host refuses; by default members read it, so lowering to member leaves the link working. Needs a policy that withholds the meta read, which the host does not allow for members'
 });
-step('link', 'todo-narrowed-scope-for-a-member', async () => {}, {
-	todo: 'needs a person who holds a role without write rights, which comes with the join and roster sections (requestJoin and admit); until then the console grant is only seen for an admin'
-});
-step('link', 'todo-event-in-index-from-jetstream', async () => {}, {
-	todo: 'whether atmo ingests a group host event from Jetstream alone depends on the relay following the group host (requestCrawl), which the network does at its own pace; atmo is told of writes through notifyOfUpdate instead'
-});
-
 // =====================================================================================
 // the end
 // =====================================================================================
+const LOG_START = atmoLogSize();
+step('wrap', 'groups-page-needs-no-missing-tables', async () => {
+	if (!ATMO_LOG) {
+		note('no WALK_ATMO_LOG, so the log is not read');
+		check('the dev server log was named', false, 'set WALK_ATMO_LOG');
+		return;
+	}
+	const log = atmoLogSince(LOG_START);
+	const lines = log.split('\n').filter((l) => /no such table: records_/i.test(l));
+	check(
+		'atmo\'s log from this run has no "no such table: records_*" (the groups list, before any declaration was indexed, was read on a fresh database at the start of the dev server)',
+		lines.length === 0,
+		lines.slice(0, 2).join(' | ').slice(0, 300)
+	);
+});
+
+step('wrap', 'console-approval-page-works', async () => {
+	check(
+		"the host console's approval page survives its own script when atmo asks to link as an admin (no page broke in this run)",
+		S.consoleCrashes === 0,
+		`${S.consoleCrashes} approval pages showed "Something went wrong" after loading (the walk went on with the console's scripts off)`
+	);
+});
+
 step('wrap', 'no-browser-errors', async () => {
 	check('no page errors in any browser', S.pageErrors === 0, String(S.pageErrors));
 });
