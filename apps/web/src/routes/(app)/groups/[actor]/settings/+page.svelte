@@ -75,7 +75,7 @@
 					name={data.settings.name}
 					description={data.settings.description ?? ''}
 					website={data.settings.website ?? ''}
-					joinPolicy={data.settings.joinPolicy}
+					joinPolicy={data.settings.joinPolicy ?? ''}
 					isPublic={data.settings.public}
 					listed={data.settings.listed}
 				/>

@@ -15,6 +15,7 @@
 	}: {
 		name: string;
 		description: string;
+		/** Empty for a join policy atmo does not know, offered to keep. */
 		joinPolicy: string;
 		isPublic: boolean;
 		listed: boolean;
@@ -97,6 +98,8 @@
 <div>
 	<Label for="group-join">How people join</Label>
 	<Select id="group-join" name="joinPolicy" value={joinPolicy}>
+		<!-- Empty: the group has a join policy atmo does not know, kept as it is. -->
+		{#if joinPolicy === ''}<option value="">As it is now, set outside atmo</option>{/if}
 		<option value="open">Anyone can join</option>
 		<option value="approval">People ask, and an admin decides</option>
 		<option value="invite">Only people an admin invites</option>

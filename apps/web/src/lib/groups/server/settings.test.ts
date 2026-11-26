@@ -110,6 +110,10 @@ describe('parseGroupSettings', () => {
 		expect(parseGroupSettings({ ...form, public: false })).toMatchObject({ listed: false });
 	});
 
+	it('reads an empty join policy as the one the group has, to keep', () => {
+		expect(parseGroupSettings({ ...form, joinPolicy: '' })).toMatchObject({ joinPolicy: null });
+	});
+
 	it.each([
 		['no name', { name: '' }],
 		['a website that is not http', { website: 'ftp://riders.example' }],
@@ -138,14 +142,20 @@ describe('reading the settings', () => {
 		});
 	});
 
-	it('reads a config the host would not have written as its default, approval', async () => {
+	it('reads a join policy this site does not know as one to keep, not as approval', async () => {
 		const { writer } = group({ about: { displayName: 'Riders' }, config: { joinPolicy: 'x' } });
 		mocks.repoHasDeclaration.mockResolvedValue(false);
 		expect(await readGroupSettings(writer, hosts)).toMatchObject({
-			joinPolicy: 'approval',
+			joinPolicy: null,
 			public: false,
 			listed: false
 		});
+	});
+
+	it('reads a group with no join policy as the host does, approval', async () => {
+		const { writer } = group({ about: { displayName: 'Riders' }, config: {} });
+		mocks.repoHasDeclaration.mockResolvedValue(false);
+		expect(await readGroupSettings(writer, hosts)).toMatchObject({ joinPolicy: 'approval' });
 	});
 });
 
@@ -167,6 +177,38 @@ describe('making a group made private public', () => {
 		mocks.repoHasDeclaration.mockResolvedValue(true);
 		await makeMetaPublic(writer, hosts);
 		expect(writes).toEqual([]);
+	});
+});
+
+describe('saving the settings of a group whose join policy this site does not know', () => {
+	it('keeps that policy, and writes the rest', async () => {
+		const { writer, writes } = group({
+			about: { displayName: 'Riders' },
+			config: { joinPolicy: 'x', other: 1 },
+			publicRead: true
+		});
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		await saveGroupSettings(
+			writer,
+			{ did: GROUP, handle: null },
+			{ ...SETTINGS, joinPolicy: null },
+			true,
+			hosts
+		);
+		expect(writes.map(([, body]) => body.collection)).toEqual(['org.atgrp.about']);
+	});
+
+	it('writes another the person picked, keeping the rest of the config', async () => {
+		const { writer, writes } = group({
+			about: { displayName: 'Riders' },
+			config: { joinPolicy: 'x', other: 1 },
+			publicRead: true
+		});
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		await saveGroupSettings(writer, { did: GROUP, handle: null }, SETTINGS, true, hosts);
+		expect(writes.find(([, body]) => body.collection === 'org.atgrp.config')?.[1]).toMatchObject({
+			record: { $type: 'org.atgrp.config', joinPolicy: 'open', other: 1 }
+		});
 	});
 });
 
