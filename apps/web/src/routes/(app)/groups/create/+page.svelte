@@ -80,16 +80,6 @@
 			{#if form?.message}
 				<p role="alert" class="text-base-950 dark:text-base-50 mt-4 text-sm">
 					{form.message}
-					{#if form.reason === 'not-allowed' && data.host}
-						<!-- The group host's address, from this site's settings, so there is nothing to resolve. -->
-						<!-- eslint-disable svelte/no-navigation-without-resolve -->
-						<a
-							href={data.host.newGroupUrl}
-							rel="external noopener"
-							class="text-accent-600 dark:text-accent-400 hover:underline"
-							>The group host's own page for making groups</a
-						><!-- eslint-enable svelte/no-navigation-without-resolve -->
-					{/if}
 				</p>
 			{/if}
 

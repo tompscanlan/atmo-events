@@ -18,8 +18,7 @@ import { callerSession } from '#lib/private-events/server/caller.js';
 /** What the form says when the group was not made, by why. */
 const NOT_CREATED: Record<NotCreatedReason | 'form', string> = {
 	form: 'Check the form: a name is needed, up to 64 characters, and an address of letters, digits and inner hyphens.',
-	'not-allowed':
-		"This group host makes groups only for the people it names, and you aren't one of them. Ask the people who run it.",
+	'not-allowed': 'This group host limits who may make groups. Ask whoever runs it.',
 	'address-taken': 'That address is taken. Try another.',
 	'address-invalid': 'The group host does not take that address. Try another.',
 	invalid: 'The group host did not take these details. Check them and try again.',

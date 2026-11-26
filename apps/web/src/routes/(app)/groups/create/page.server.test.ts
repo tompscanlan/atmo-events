@@ -156,7 +156,7 @@ describe('making a group', () => {
 	});
 
 	it.each([
-		['not-allowed', 403, 'names'],
+		['not-allowed', 403, 'limits who may'],
 		['address-taken', 400, 'taken'],
 		['address-invalid', 400, 'address'],
 		['unavailable', 502, 'reached']
