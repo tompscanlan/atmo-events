@@ -40,8 +40,8 @@ function refusedOr(outage: string) {
 	};
 }
 
-/** Lists only a public group. This site's rule, kept from the earlier proposal: the spec's
- *  declaration says nothing of the meta space being public. */
+/** Lists only a public group: this site lists only groups whose meta space is public, which the
+ *  spec's declaration leaves open. */
 export const setGroupListed = command(
 	v.object({ groupDid: didSchema, listed: v.boolean() }),
 	async ({ groupDid, listed }) => {

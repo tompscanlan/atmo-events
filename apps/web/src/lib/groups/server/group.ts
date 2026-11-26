@@ -305,10 +305,10 @@ export async function syncDeclarationIndex(groupDid: string, inRepo: boolean): P
 	}
 }
 
-/** Only a public group may be listed. This site's rule, kept from the earlier proposal: the spec's
- *  declaration says nothing of the meta space being public. A group host holds to it too: it
- *  writes the declaration itself while the meta space is public, and refuses one while it is
- *  private, with InvalidRequest. Putting the declaration it wrote changes nothing. */
+/** Only a public group may be listed. This site lists only groups whose meta space is public; the
+ *  spec's declaration leaves that open. A group host holds to it too: it writes the declaration
+ *  itself while the meta space is public, and refuses one while it is private, with
+ *  InvalidRequest. Putting the declaration it wrote changes nothing. */
 export async function listGroup(handle: XrpcHandle, groupDid: string): Promise<void> {
 	await xrpc(handle, 'com.atproto.repo.putRecord', {
 		body: {
