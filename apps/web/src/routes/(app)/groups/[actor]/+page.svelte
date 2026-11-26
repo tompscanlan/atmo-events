@@ -22,9 +22,19 @@
 	let busy = $state(false);
 	let failure: string | null = $state(null);
 	/** A request sent from this page, shown until the page is loaded again: the spec has no way to
-	 *  read one back, and asking again is answered with the same request. */
-	let requested = $state(false);
+	 *  read one back, and asking again is answered with the same request. Kept for the group it was
+	 *  sent to, since moving to another group's page keeps this component. */
+	let requestedOf: string | null = $state(null);
+	let requested = $derived(requestedOf === group.did);
 	let message = $state('');
+	// A message typed for one group is not carried to another's page.
+	let messageOf: string | null = null;
+	$effect.pre(() => {
+		if (group.did !== messageOf) {
+			messageOf = group.did;
+			message = '';
+		}
+	});
 	/** Members-only events are on, and this link may post them. */
 	let postsMembersOnly = $derived(
 		data.calendar === 'ready' && Boolean(group.linked?.can.membersOnly)
@@ -51,14 +61,14 @@
 	const join = () =>
 		asMember(async () => {
 			const { outcome } = await joinGroup({ groupDid: group.did, message: message || undefined });
-			if (outcome === 'pending') requested = true;
+			if (outcome === 'pending') requestedOf = group.did;
 			else await invalidateAll();
 		});
 
 	const cancel = () =>
 		asMember(async () => {
 			await cancelJoin({ groupDid: group.did });
-			requested = false;
+			requestedOf = null;
 			// Admitted meanwhile, perhaps.
 			await invalidateAll();
 		});

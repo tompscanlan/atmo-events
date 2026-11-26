@@ -297,6 +297,30 @@ describe("a person's own membership", () => {
 		expect(page.getByRole('button', { name: 'Leave group' }).elements()).toHaveLength(0);
 	});
 
+	it("carries a request sent, and a message typed, to no other group's page", async () => {
+		member.joinGroup.mockResolvedValue({ outcome: 'pending' });
+		const knitters = personPage({ joinPolicy: 'approval' }, false);
+		const { rerender } = await render(GroupPage, { data: knitters as never });
+		const box = page.getByLabelText("A message for the group's admins (optional)");
+		await box.fill('I knit.');
+		await page.getByRole('button', { name: 'Ask to join' }).click();
+		await expect
+			.element(page.getByText("Request sent. The group's admins will decide."))
+			.toBeVisible();
+
+		const other = { ...knitters, group: { ...knitters.group, did: 'did:plc:other', name: 'Purl' } };
+		await rerender({ data: other as never });
+		await expect.element(page.getByRole('button', { name: 'Ask to join' })).toBeVisible();
+		expect(shown()).not.toContain('Request sent.');
+		await expect.element(box).toHaveValue('');
+
+		// Back on the first group's page, its request still shows until the page loads again.
+		await rerender({ data: knitters as never });
+		await expect
+			.element(page.getByText("Request sent. The group's admins will decide."))
+			.toBeVisible();
+	});
+
 	it('says a group takes members by invitation only, and offers no join', async () => {
 		render(GroupPage, { data: personPage({ joinPolicy: 'invite' }, false) as never });
 		await expect.poll(shown).toContain('This group takes members by invitation only.');
