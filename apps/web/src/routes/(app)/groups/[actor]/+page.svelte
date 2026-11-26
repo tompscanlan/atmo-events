@@ -14,7 +14,7 @@
 		turnOnMembersOnlyEvents,
 		unlinkGroupSession
 	} from '#lib/groups/group.remote.js';
-	import { cancelJoin, joinGroup, leave } from '#lib/groups/members.remote.js';
+	import { cancelJoin, confirmMember, joinGroup, leave } from '#lib/groups/members.remote.js';
 
 	let { data } = $props();
 
@@ -60,6 +60,12 @@
 			await cancelJoin({ groupDid: group.did });
 			requested = false;
 			// Admitted meanwhile, perhaps.
+			await invalidateAll();
+		});
+
+	const confirm = () =>
+		asMember(async () => {
+			await confirmMember({ groupDid: group.did });
 			await invalidateAll();
 		});
 
@@ -152,6 +158,17 @@
 						<Badge>Member</Badge>
 						<Button variant="ghost" disabled={busy} onclick={leaveIt}>Leave group</Button>
 					</div>
+					{#if group.confirmed === false}
+						<!-- Admitted some other way than a request made here: confirming is theirs to do. -->
+						<div class="mt-3 flex flex-wrap items-center gap-3">
+							<p class="text-base-700 dark:text-base-300 text-sm" role="status">
+								The group counts you a member. Confirm it to be listed among its members.
+							</p>
+							<Button size="sm" variant="secondary" disabled={busy} onclick={confirm}
+								>Confirm membership</Button
+							>
+						</div>
+					{/if}
 				{:else if requested}
 					<div class="flex flex-wrap items-center gap-3">
 						<p class="text-base-700 dark:text-base-300 text-sm" role="status">

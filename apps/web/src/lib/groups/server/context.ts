@@ -6,6 +6,7 @@ import { waitUntil } from 'cloudflare:workers';
 import { error } from '@sveltejs/kit';
 import type { OAuthSession } from '@atcute/oauth-node-client';
 import type { CallerSession } from '#lib/private-events/server/caller.js';
+import type { SpaceReader } from '#lib/spaces/server/space-read.js';
 import {
 	isSpaceAccessDenied,
 	type SpaceAccessDenied
@@ -32,7 +33,7 @@ import {
 } from './group';
 import { requireGroupsEnabled } from './enabled';
 import { unfinishedGroup } from './create';
-import { confirmMembership } from './confirmation';
+import { confirmAdmitted, hasConfirmation, joinRequested } from './confirmation';
 import { actorGroups } from './host';
 import { isMemberAsPerson, personReader, readMetaAsPerson, type PersonalMeta } from './person';
 import {
@@ -77,6 +78,9 @@ export interface GroupView {
 	personal: PersonalMeta | null;
 	/** Whether the host's records count the caller a member; null when they could not be read. */
 	member: boolean | null;
+	/** For a member whose sign-in may write it: whether their own confirmation is there. Null for
+	 *  anyone else, and when it could not be read. */
+	confirmed: boolean | null;
 	/** Signed in, at a group at this site's host, without the group permissions their own sign-in
 	 *  needs to join it or see it as a member. */
 	askAccess: boolean;
@@ -184,14 +188,32 @@ const isAmbiguousDenial = (e: SpaceAccessDenied) => e.reason.endsWith('SpaceNotF
 interface PersonalRead {
 	meta: PersonalMeta | null;
 	member: boolean | null;
+	confirmed: boolean | null;
 	/** The host could not be asked about a group the person is in: never a reason to act, only to
 	 *  say "try again". */
 	unsure: boolean;
 }
 
-/** The group read with the caller's own access, and whether they are a member. A member's visit
- *  writes their confirmation, only after the host's records say they are one: a write the host
- *  would not count still lands in the writer's own repo. */
+/** A member's own confirmation. Written only for a request they made here that the host has since
+ *  admitted, on the first visit after; otherwise only read, so the page can offer to confirm.
+ *  Never written for merely opening the page. */
+async function ownConfirmation(
+	caller: CallerSession,
+	reader: SpaceReader,
+	groupDid: string
+): Promise<boolean | null> {
+	if (await joinRequested(caller.did, groupDid)) {
+		waitUntil(confirmAdmitted(caller, groupDid));
+		return true;
+	}
+	return hasConfirmation(reader, groupDid, caller.did).catch((e) => {
+		console.warn(`[groups] ${groupDid}: ${caller.did}'s confirmation could not be read:`, e);
+		return null;
+	});
+}
+
+/** The group read with the caller's own access, whether they are a member, and, for a member,
+ *  whether they confirmed it. */
 async function personalRead(caller: CallerSession, groupDid: string): Promise<PersonalRead> {
 	const reader = personReader(caller);
 	let meta: PersonalMeta;
@@ -200,19 +222,20 @@ async function personalRead(caller: CallerSession, groupDid: string): Promise<Pe
 	} catch (e) {
 		if (isSpaceAccessDenied(e)) {
 			const unsure = isAmbiguousDenial(e) && (await knowsGroup(caller, groupDid));
-			return { meta: null, member: null, unsure };
+			return { meta: null, member: null, confirmed: null, unsure };
 		}
 		console.error(`[groups] ${groupDid}: the meta space could not be read for ${caller.did}:`, e);
-		return { meta: null, member: null, unsure: true };
+		return { meta: null, member: null, confirmed: null, unsure: true };
 	}
 	const member = await isMemberAsPerson(reader, groupDid, caller.did).catch((e) => {
 		console.warn(`[groups] ${groupDid}: ${caller.did}'s membership could not be read:`, e);
 		return null;
 	});
-	if (member && holdsConfirmationGrant(caller.scope, 'create', groupDid)) {
-		waitUntil(confirmMembership(caller, groupDid));
-	}
-	return { meta, member, unsure: false };
+	const confirmed =
+		member && holdsConfirmationGrant(caller.scope, 'create', groupDid)
+			? await ownConfirmation(caller, reader, groupDid)
+			: null;
+	return { meta, member, confirmed, unsure: false };
 }
 
 /** `person` is the caller's own session, for the page that reads the group as they may see it. */
@@ -260,7 +283,7 @@ export async function groupView(
 	// Only for a group at this site's host: elsewhere a DID's PDS answers whatever it likes, and
 	// such a group shows only through its declaration.
 	const caller = person && person.did === callerDid ? person : null;
-	let personal: PersonalRead = { meta: null, member: null, unsure: false };
+	let personal: PersonalRead = { meta: null, member: null, confirmed: null, unsure: false };
 	if (atHost && caller && holdsMetaRead(caller.scope)) {
 		personal = await personalRead(caller, group.did);
 		if (personal.meta && !linked) {
@@ -304,6 +327,7 @@ export async function groupView(
 		unreachable,
 		personal: personal.meta,
 		member: personal.member,
+		confirmed: personal.confirmed,
 		askAccess: atHost && caller !== null && !holdsParticipate(caller.scope)
 	};
 }

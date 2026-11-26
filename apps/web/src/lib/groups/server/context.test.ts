@@ -23,7 +23,9 @@ const mocks = vi.hoisted(() => ({
 	readMetaAsPerson: vi.fn(),
 	isMemberAsPerson: vi.fn(),
 	actorGroups: vi.fn(),
-	confirmMembership: vi.fn()
+	confirmAdmitted: vi.fn(),
+	hasConfirmation: vi.fn(),
+	joinRequested: vi.fn()
 }));
 vi.mock('./group', () => ({
 	resolveGroup: mocks.resolveGroup,
@@ -49,7 +51,11 @@ vi.mock('./person', () => ({
 	isMemberAsPerson: mocks.isMemberAsPerson
 }));
 vi.mock('./host', () => ({ actorGroups: mocks.actorGroups }));
-vi.mock('./confirmation', () => ({ confirmMembership: mocks.confirmMembership }));
+vi.mock('./confirmation', () => ({
+	confirmAdmitted: mocks.confirmAdmitted,
+	hasConfirmation: mocks.hasConfirmation,
+	joinRequested: mocks.joinRequested
+}));
 
 import {
 	GROUP_NOT_FOUND,
@@ -498,6 +504,8 @@ describe('groupView for a person with their own group permissions', () => {
 		vi.mocked(waitUntil).mockClear();
 		mocks.readMetaAsPerson.mockResolvedValue(personal);
 		mocks.isMemberAsPerson.mockResolvedValue(false);
+		mocks.joinRequested.mockResolvedValue(false);
+		mocks.hasConfirmation.mockResolvedValue(true);
 	});
 
 	it('reads the group as they may see it, with how it takes members, and asks nothing more', async () => {
@@ -512,7 +520,7 @@ describe('groupView for a person with their own group permissions', () => {
 		expect(waitUntil).not.toHaveBeenCalled();
 	});
 
-	it('shows a private group to its member without a declaration, and writes their confirmation', async () => {
+	it('shows a private group to its member without a declaration, and writes nothing for the visit', async () => {
 		mocks.isDeclared.mockResolvedValue(false);
 		mocks.readMetaAsPerson.mockResolvedValue({ ...personal, public: false });
 		mocks.isMemberAsPerson.mockResolvedValue(true);
@@ -520,11 +528,46 @@ describe('groupView for a person with their own group permissions', () => {
 		expect(await groupView(GROUP, ALICE, caller)).toMatchObject({
 			name: 'Knitters',
 			personal: { public: false },
-			member: true
+			member: true,
+			confirmed: true
 		});
 		expect(mocks.isDeclared).not.toHaveBeenCalled();
+		expect(waitUntil).not.toHaveBeenCalled();
+		expect(mocks.confirmAdmitted).not.toHaveBeenCalled();
+	});
+
+	it("says when a member admitted some other way hasn't confirmed, and writes nothing for them", async () => {
+		mocks.isDeclared.mockResolvedValue(true);
+		mocks.isMemberAsPerson.mockResolvedValue(true);
+		mocks.hasConfirmation.mockResolvedValue(false);
+		expect(await groupView(GROUP, ALICE, person())).toMatchObject({
+			member: true,
+			confirmed: false
+		});
+		expect(mocks.joinRequested).toHaveBeenCalledWith(ALICE, GROUP);
+		expect(waitUntil).not.toHaveBeenCalled();
+		expect(mocks.confirmAdmitted).not.toHaveBeenCalled();
+	});
+
+	it('writes the confirmation on the first visit after a request made here was admitted', async () => {
+		mocks.isDeclared.mockResolvedValue(true);
+		mocks.isMemberAsPerson.mockResolvedValue(true);
+		mocks.joinRequested.mockResolvedValue(true);
+		const caller = person();
+		expect(await groupView(GROUP, ALICE, caller)).toMatchObject({ member: true, confirmed: true });
 		expect(waitUntil).toHaveBeenCalledOnce();
-		expect(mocks.confirmMembership).toHaveBeenCalledWith(caller, GROUP);
+		expect(mocks.confirmAdmitted).toHaveBeenCalledWith(caller, GROUP);
+		expect(mocks.hasConfirmation).not.toHaveBeenCalled();
+	});
+
+	it('writes nothing for a request still waiting', async () => {
+		mocks.isDeclared.mockResolvedValue(true);
+		mocks.joinRequested.mockResolvedValue(true);
+		expect(await groupView(GROUP, ALICE, person())).toMatchObject({
+			member: false,
+			confirmed: null
+		});
+		expect(mocks.confirmAdmitted).not.toHaveBeenCalled();
 	});
 
 	it('writes no confirmation for a member whose sign-in cannot write it', async () => {
@@ -532,11 +575,13 @@ describe('groupView for a person with their own group permissions', () => {
 		const scope = PARTICIPATE.split(' ')
 			.filter((token) => !token.startsWith('space:org.atgrp.members'))
 			.join(' ');
+		mocks.joinRequested.mockResolvedValue(true);
 		expect(await groupView(GROUP, ALICE, person(scope))).toMatchObject({
 			member: true,
+			confirmed: null,
 			askAccess: true
 		});
-		expect(mocks.confirmMembership).not.toHaveBeenCalled();
+		expect(mocks.confirmAdmitted).not.toHaveBeenCalled();
 	});
 
 	it('says it could not tell when the membership read fails', async () => {

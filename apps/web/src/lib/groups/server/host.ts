@@ -89,8 +89,7 @@ export type JoinOutcome = 'joined' | 'pending';
 
 /** An open group admits at once; one that approves its members queues the request, and asking
  *  again is answered with the request still waiting. A member is answered with their membership.
- *  The confirmation is written on their next visit to the group's page, once the host's records
- *  say they are a member. */
+ *  The confirmation is the caller's to write (../members.remote.ts). */
 export async function requestJoin(
 	caller: CallerSession,
 	groupDid: string,

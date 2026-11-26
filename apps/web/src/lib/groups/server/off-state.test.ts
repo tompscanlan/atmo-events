@@ -37,6 +37,7 @@ import {
 	approveRequest,
 	cancelJoin,
 	changeRole,
+	confirmMember,
 	denyRequest,
 	joinGroup,
 	leave,
@@ -90,8 +91,9 @@ describe('with groups off', () => {
 		expect(await shown(() => requireStoredLink(GROUP, ALICE))).toBe(expected);
 	});
 
-	it("refuses a person's join, cancel and leave with the same 404", async () => {
+	it("refuses a person's join, cancel, leave and confirming with the same 404", async () => {
 		const expected = unknownAddress();
+		expect(await shown(() => confirmMember({ groupDid: GROUP }))).toBe(expected);
 		expect(await shown(() => joinGroup({ groupDid: GROUP, message: 'hi' }))).toBe(expected);
 		expect(await shown(() => cancelJoin({ groupDid: GROUP }))).toBe(expected);
 		expect(await shown(() => leave({ groupDid: GROUP }))).toBe(expected);

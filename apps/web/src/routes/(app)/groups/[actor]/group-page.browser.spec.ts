@@ -10,7 +10,12 @@ const mocks = vi.hoisted(() => ({
 	finishGroupSetup: vi.fn(),
 	turnOnMembersOnlyEvents: vi.fn()
 }));
-const member = vi.hoisted(() => ({ joinGroup: vi.fn(), cancelJoin: vi.fn(), leave: vi.fn() }));
+const member = vi.hoisted(() => ({
+	joinGroup: vi.fn(),
+	cancelJoin: vi.fn(),
+	leave: vi.fn(),
+	confirmMember: vi.fn()
+}));
 const oauth = vi.hoisted(() => ({ requestPermissions: vi.fn() }));
 // The page's writes and its event list's paging go through SvelteKit remote functions, which a
 // browser test has no server for.
@@ -272,6 +277,24 @@ describe("a person's own membership", () => {
 		await page.getByRole('button', { name: 'Leave group' }).click();
 		await expect.element(page.getByRole('alert')).toHaveTextContent(message);
 	});
+
+	it('offers a member who has not confirmed to confirm, and confirms when asked', async () => {
+		member.confirmMember.mockResolvedValue({ ok: true });
+		const data = personPage({ joinPolicy: 'approval' }, true);
+		render(GroupPage, { data: { ...data, group: { ...data.group, confirmed: false } } as never });
+		await page.getByRole('button', { name: 'Confirm membership' }).click();
+		await expect.poll(() => member.confirmMember).toHaveBeenCalledWith({ groupDid: GROUP });
+	});
+
+	it.each([true, null])(
+		'offers nothing to confirm to a member who has, or one it could not tell of (%s)',
+		async (confirmed) => {
+			const data = personPage({ joinPolicy: 'approval' }, true);
+			render(GroupPage, { data: { ...data, group: { ...data.group, confirmed } } as never });
+			await expect.element(page.getByRole('button', { name: 'Leave group' })).toBeVisible();
+			expect(page.getByRole('button', { name: 'Confirm membership' }).elements()).toHaveLength(0);
+		}
+	);
 
 	it('links a member to the members page', async () => {
 		const members = page.getByRole('link', { name: /^Members/ });

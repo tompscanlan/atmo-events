@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { env } from 'cloudflare:workers';
+import { memoryKV, type MemoryKV } from './__fixtures__/kv';
 import {
+	confirmAdmitted,
 	confirmMembership,
 	deleteConfirmation,
+	forgetJoinRequest,
+	hasConfirmation,
+	joinRequested,
+	rememberJoinRequest,
 	withdrawConfirmation,
 	writeConfirmation
 } from './confirmation';
@@ -21,8 +28,58 @@ function member(scope = `atproto ${GRANT}`, answer: () => Response = () => Respo
 const body = (handle: ReturnType<typeof member>['handle']) =>
 	JSON.parse(String(handle.mock.calls[0][1].body));
 
+let kv: MemoryKV;
+
 beforeEach(() => {
 	vi.restoreAllMocks();
+	kv = memoryKV();
+	Object.assign(env, { OAUTH_SESSIONS: kv });
+});
+
+describe('a request to join made here', () => {
+	it('is noted under the person, for that group, until it is forgotten', async () => {
+		expect(await joinRequested(ALICE, GROUP)).toBe(false);
+		await rememberJoinRequest(ALICE, GROUP);
+		expect(await joinRequested(ALICE, GROUP)).toBe(true);
+		expect(await joinRequested(ALICE, 'did:plc:other')).toBe(false);
+		expect(await joinRequested('did:plc:bob', GROUP)).toBe(false);
+		expect(kv.ttlOf(`group:join-requested:${ALICE}/${GROUP}`)).toBe(90 * 24 * 60 * 60);
+		await forgetJoinRequest(ALICE, GROUP);
+		expect(await joinRequested(ALICE, GROUP)).toBe(false);
+	});
+
+	it('once admitted, has the confirmation written and is then forgotten', async () => {
+		await rememberJoinRequest(ALICE, GROUP);
+		const person = member();
+		await confirmAdmitted(person, GROUP);
+		expect(person.handle.mock.calls[0][0]).toBe('/xrpc/com.atproto.space.createRecord');
+		expect(await joinRequested(ALICE, GROUP)).toBe(false);
+	});
+
+	it('is kept when the confirmation could not be written, for the next visit', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		await rememberJoinRequest(ALICE, GROUP);
+		await confirmAdmitted(
+			member(undefined, () => new Response('', { status: 502 })),
+			GROUP
+		);
+		expect(await joinRequested(ALICE, GROUP)).toBe(true);
+	});
+});
+
+describe('whether a member confirmed', () => {
+	it("reads their own confirmation in the group's members space", async () => {
+		const get = vi.fn(async () => ({ uri: 'x', cid: 'c', value: {} }));
+		expect(await hasConfirmation({ get } as never, GROUP, ALICE)).toBe(true);
+		expect(get).toHaveBeenCalledWith({
+			space: MEMBERS,
+			repo: ALICE,
+			collection: 'org.atgrp.confirmation',
+			rkey: 'self'
+		});
+		get.mockResolvedValue(null as never);
+		expect(await hasConfirmation({ get } as never, GROUP, ALICE)).toBe(false);
+	});
 });
 
 describe("a member's confirmation", () => {
