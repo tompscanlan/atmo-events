@@ -8,7 +8,7 @@ import { createActorResolver } from '@svelte-atproto/oauth/network';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 import { didSpaceHosts, type SpaceHosts } from '#lib/spaces/server/space-credential.js';
 import { credentialSpaceReader } from '#lib/spaces/server/space-read.js';
-import { getServerClient } from '#lib/contrail/index.js';
+import { ensureInit, getServerClient } from '#lib/contrail/index.js';
 import {
 	declarationUri,
 	GROUP_ABOUT_COLLECTION,
@@ -192,15 +192,19 @@ export async function listDeclaredGroups(
 }
 
 /** The servers whose other groups the list leaves out, for links to their own pages. The group
- *  host is left out only when the list could be told what it holds. */
+ *  host is left out only when the list could be told what it holds. Read from the index's tables
+ *  directly, so only once contrail has made them: the declarations' table is made with the rest
+ *  when the Worker first uses the index, and only while groups are on. */
 export async function listCrowdedServers(): Promise<CrowdedServer[]> {
 	const home = groupHostOrigin();
-	const held = home ? await heldAtGroupHost() : null;
+	const [held] = await Promise.all([home ? heldAtGroupHost() : null, ensureInit(env.DB)]);
 	return crowdedServers(env.DB, held ? home : null);
 }
 
-/** The groups' handles as the index last resolved them, for groups with no cached profile. */
-export function readCachedHandles(dids: string[]): Promise<Map<string, string>> {
+/** The groups' handles as the index last resolved them, for groups with no cached profile. Read
+ *  from its identities table directly, so only once contrail has made it. */
+export async function readCachedHandles(dids: string[]): Promise<Map<string, string>> {
+	await ensureInit(env.DB);
 	return cachedHandles(env.DB, dids);
 }
 

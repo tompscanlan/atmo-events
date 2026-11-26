@@ -10,11 +10,17 @@ const mocks = vi.hoisted(() => ({
 	post: vi.fn(),
 	resolve: vi.fn(),
 	crowdedServers: vi.fn(),
+	cachedHandles: vi.fn(),
+	ensureInit: vi.fn(),
 	/** Calls to other servers: the group host's space methods. */
 	networkFetch: vi.fn<typeof fetch>()
 }));
-vi.mock('./declared', () => ({ crowdedServers: mocks.crowdedServers }));
+vi.mock('./declared', () => ({
+	crowdedServers: mocks.crowdedServers,
+	cachedHandles: mocks.cachedHandles
+}));
 vi.mock('#lib/contrail/index.js', () => ({
+	ensureInit: mocks.ensureInit,
 	getServerClient: () => ({ get: mocks.get, post: mocks.post })
 }));
 vi.mock('#lib/atproto/network.js', () => ({
@@ -37,6 +43,7 @@ import {
 	listDeclaredGroups,
 	listGroup,
 	parseGroupProfile,
+	readCachedHandles,
 	readCachedProfiles,
 	readGroupMeta,
 	resolveGroup,
@@ -186,6 +193,31 @@ describe('the declaration index', () => {
 		mocks.crowdedServers.mockResolvedValue([]);
 		await listCrowdedServers();
 		expect(mocks.crowdedServers.mock.calls[0][1]).toBeNull();
+	});
+
+	it("reads the index's tables only once contrail has made them, as on a fresh database", async () => {
+		// contrail makes its tables, the declarations' among them, when the Worker first uses it.
+		let made = false;
+		let make: () => void = () => {};
+		mocks.ensureInit.mockReturnValue(
+			new Promise<void>((resolve) => (make = resolve)).then(() => {
+				made = true;
+			})
+		);
+		const table = () =>
+			made ? Promise.resolve([]) : Promise.reject(new Error('no such table: records_declaration'));
+		mocks.crowdedServers.mockImplementation(table);
+		mocks.cachedHandles.mockImplementation(() =>
+			made ? Promise.resolve(new Map()) : Promise.reject(new Error('no such table: identities'))
+		);
+		const crowded = listCrowdedServers();
+		const handles = readCachedHandles([GROUP]);
+		await vi.waitFor(() => expect(mocks.ensureInit).toHaveBeenCalledTimes(2));
+		expect(mocks.crowdedServers).not.toHaveBeenCalled();
+		expect(mocks.cachedHandles).not.toHaveBeenCalled();
+		make();
+		expect(await crowded).toEqual([]);
+		expect(await handles).toEqual(new Map());
 	});
 
 	it("names the crowded servers, with this site's group host left out", async () => {
