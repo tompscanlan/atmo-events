@@ -1,7 +1,9 @@
 // A members-only event never reaches the public index, so every public address answers for it as
 // for an event that was never made: its page, its JSON, its picture card and the group's calendar
 // feed. The index here holds only what the group's writes put in its public repo and tell it of,
-// as the real one does.
+// as the real one does. The calendar space beside it holds the members-only event, and lets the
+// group's link and a member read it, so each public address is checked against a store a loader
+// could find it in: one that read the space, as the group or as the member asking, would show it.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	fakeCalendar,
@@ -14,7 +16,8 @@ const EVENT = 'community.lexicon.calendar.event';
 const mocks = vi.hoisted(() => ({
 	index: new Map<string, Record<string, unknown>>(),
 	notified: [] as string[],
-	requireGroupWriter: vi.fn()
+	requireGroupWriter: vi.fn(),
+	callerSession: vi.fn()
 }));
 let calendar: ReturnType<typeof fakeCalendar>;
 
@@ -41,6 +44,7 @@ vi.mock('#lib/spaces/server/space-credential.js', async (importActual) => ({
 	didSpaceHosts: (await import('#lib/groups/server/__fixtures__/group-calendar.js')).calendarHosts
 }));
 vi.mock('#lib/groups/server/create.js', () => ({ finishSetup: vi.fn() }));
+vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.callerSession }));
 // The index fetches what it is told of from the group's public repo, and keeps it if it is there.
 vi.mock('#lib/groups/server/group.js', () => ({
 	notifyIndex: async (uri: string) => {
@@ -89,6 +93,7 @@ const { GET: eventJson } = await import('../../../p/[actor]/e/[rkey]/data.json/+
 const { GET: eventCard } = await import('../../../p/[actor]/e/[rkey]/og.png/+server');
 const { GET: calendarFeed } = await import('../../../p/[actor]/e/calendar/+server');
 
+const MEMBER = 'did:plc:member';
 const SECRET = '3lsecret';
 const MADE_UP = '3lmadeup';
 const OPEN = '3lopen';
@@ -107,7 +112,13 @@ beforeEach(async () => {
 	calendar = fakeCalendar();
 	calendar.state.policy = READY_POLICY;
 	calendar.state.readers.add('group');
+	calendar.state.readers.add(MEMBER);
 	mocks.requireGroupWriter.mockResolvedValue({ did: GROUP, handle: calendar.groupHandle });
+	mocks.callerSession.mockResolvedValue({
+		did: MEMBER,
+		scope: 'atproto',
+		handle: calendar.personHandle(MEMBER)
+	});
 	await putGroupEvent({
 		groupDid: GROUP,
 		rkey: SECRET,
@@ -138,11 +149,20 @@ describe('a members-only event and the public index', () => {
 
 	it.each([
 		[
-			'its public page',
+			'its public page, signed out',
 			(rkey: string) =>
 				eventPage({
 					params: { actor: GROUP, rkey },
-					locals: { did: null },
+					locals: { did: null, session: null },
+					url: new URL(`https://atmo.example/p/${GROUP}/e/${rkey}`)
+				} as never)
+		],
+		[
+			'its public page, signed in as a member',
+			(rkey: string) =>
+				eventPage({
+					params: { actor: GROUP, rkey },
+					locals: { did: MEMBER, session: {} },
 					url: new URL(`https://atmo.example/p/${GROUP}/e/${rkey}`)
 				} as never)
 		],
@@ -162,6 +182,8 @@ describe('a members-only event and the public index', () => {
 		expect(await answer(() => read(SECRET))).toEqual(made);
 		// The public event next to it is there, so the address is the right one.
 		expect(await answer(() => read(OPEN))).not.toEqual(made);
+		// And the members-only one is in the space, for any loader that read it.
+		expect(calendar.state.events.get(SECRET)).toMatchObject({ name: 'Members supper' });
 	});
 
 	it("leaves it out of the group's calendar feed", async () => {

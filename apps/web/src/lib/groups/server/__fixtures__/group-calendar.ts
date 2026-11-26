@@ -135,11 +135,18 @@ export const calendarHosts: SpaceHosts = {
 	kemKey: async () => kem.did
 };
 
-/** The calendar space's policy as the host keeps it once turned on. */
+/** The calendar space's policy as the host keeps it once turned on: admins post its events as the
+ *  group, and members read it. */
 export const READY_POLICY = {
 	$type: 'org.atgrp.policy',
 	publicRead: false,
-	grants: [{ role: 'member', read: true, write: true }]
+	grants: [
+		{
+			role: 'admin',
+			permissions: [`space:community.lexicon.calendar.collection?collection=${EVENT}`]
+		},
+		{ role: 'member', read: true }
+	]
 };
 
 export const event = (name: string, startsAt = '2099-01-01T18:00:00.000Z') => ({

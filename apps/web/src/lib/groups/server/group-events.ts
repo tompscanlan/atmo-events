@@ -19,6 +19,7 @@ import {
 	MEMBER_ROLE,
 	SPACE_SKEY
 } from '../ids';
+import { grantsMembersOnly } from '../scopes';
 import type { GroupWriter } from './context';
 import { errorKind, isLinkBroken, isRecordNotFound, isRoleRefused, xrpc, XrpcError } from './xrpc';
 
@@ -49,6 +50,8 @@ const REFUSALS = {
 		"This group's calendar can be read by more than its members, so the members-only event was not saved.",
 	'calendar-space-unchecked':
 		"The group's calendar couldn't be checked, so the members-only event was not saved. Try again shortly.",
+	'calendar-space-unusable':
+		"This group's calendar wasn't set up for atmo to post members-only events to, so the event was not saved.",
 	moved: 'This event is public, and a public event stays public. Nothing was saved.',
 	'members-only':
 		'This event is members-only, and a members-only event stays members-only. Nothing was saved.',
@@ -74,26 +77,68 @@ function isSpaceNotFound(e: unknown): boolean {
 }
 
 /** `ready` when members-only events can go in: the space is there and its policy, as the host keeps
- *  it, does not let anyone read it. */
-export type CalendarSpaceState = 'ready' | 'missing' | 'readable' | 'unchecked';
+ *  it, does not let anyone read it, lets members read it and lets some role post its events as the
+ *  group. `unusable` for a private space whose policy does not, such as one made some other way. */
+export type CalendarSpaceState = 'ready' | 'missing' | 'readable' | 'unusable' | 'unchecked';
 
-/** Read as the group, by `com.atproto.space.getSpace`, which the group host serves a group's session
- *  as a PDS serves its account's. A refused or broken link throws, as any write would; an outage is
- *  `unchecked`. */
-export async function calendarSpaceState(writer: GroupWriter): Promise<CalendarSpaceState> {
+export interface CalendarSpace {
+	state: CalendarSpaceState;
+	/** The roles whose grant in the policy lets a link post events as the group; empty unless
+	 *  `ready`. */
+	posters: string[];
+}
+
+interface PolicyGrant {
+	role?: unknown;
+	read?: unknown;
+	permissions?: unknown;
+}
+
+/** What posting needs of the policy: a grant whose permissions write events there as the group, as
+ *  the host gives a link at its approval from the approving person's roles' grants, and members
+ *  reading the space, for whom the events are. */
+function checkedPolicy(groupDid: string, policy: unknown): CalendarSpace {
+	const kept = policy as { $type?: unknown; publicRead?: unknown; grants?: unknown } | undefined;
+	if (kept?.$type !== GROUP_POLICY_TYPE || kept.publicRead === true) {
+		return { state: 'readable', posters: [] };
+	}
+	const grants = (Array.isArray(kept.grants) ? kept.grants : []) as PolicyGrant[];
+	const posters = grants.flatMap((grant) => {
+		const permissions = Array.isArray(grant.permissions)
+			? grant.permissions.filter((p): p is string => typeof p === 'string')
+			: [];
+		return typeof grant.role === 'string' &&
+			grantsMembersOnly(permissions.join(' '), groupDid).membersOnly
+			? [grant.role]
+			: [];
+	});
+	const membersRead = grants.some((grant) => grant.role === MEMBER_ROLE && grant.read === true);
+	return membersRead && posters.length > 0
+		? { state: 'ready', posters }
+		: { state: 'unusable', posters: [] };
+}
+
+/** Read as the group, by `com.atproto.space.getSpace`. Not the spec's: the group host's own, which it
+ *  serves a group's session as a PDS serves its account's. The spec's way to read a policy is the
+ *  `com.atproto.space.policy` record the host publishes in the space. A refused or broken link
+ *  throws, as any write would; an outage is `unchecked`. */
+export async function readCalendarSpace(writer: GroupWriter): Promise<CalendarSpace> {
 	let found: Record<string, unknown>;
 	try {
 		found = await xrpc(writer.handle, 'com.atproto.space.getSpace', {
 			query: { space: calendarSpaceUri(writer.did) }
 		});
 	} catch (e) {
-		if (isSpaceNotFound(e)) return 'missing';
+		if (isSpaceNotFound(e)) return { state: 'missing', posters: [] };
 		if (isLinkBroken(e) || isRoleRefused(e)) throw e;
 		console.error(`[groups] the calendar space could not be checked: ${errorKind(e)}`);
-		return 'unchecked';
+		return { state: 'unchecked', posters: [] };
 	}
-	const policy = found.policy as { $type?: unknown; publicRead?: unknown } | undefined;
-	return policy?.$type === GROUP_POLICY_TYPE && policy.publicRead !== true ? 'ready' : 'readable';
+	return checkedPolicy(writer.did, found.policy);
+}
+
+export async function calendarSpaceState(writer: GroupWriter): Promise<CalendarSpaceState> {
+	return (await readCalendarSpace(writer)).state;
 }
 
 /** Makes the group's calendar space. One already there is not a failure, so turning it on again
@@ -115,6 +160,7 @@ const RESERVED_RKEY = 'self';
 const SPACE_REFUSALS = {
 	missing: 'no-calendar-space',
 	readable: 'calendar-space-readable',
+	unusable: 'calendar-space-unusable',
 	unchecked: 'calendar-space-unchecked'
 } as const;
 

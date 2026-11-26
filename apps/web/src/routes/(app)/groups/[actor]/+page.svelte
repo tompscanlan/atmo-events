@@ -297,7 +297,11 @@
 				<p class="text-base-600 dark:text-base-400 mt-3 text-sm" role="status">
 					{data.calendar === 'readable'
 						? "This group's calendar can be read by more than its members, so atmo posts no members-only events to it."
-						: "Whether members-only events are on couldn't be checked just now. Reload to try again."}
+						: data.calendar === 'unusable'
+							? "This group's calendar wasn't set up for atmo to post members-only events to, so atmo posts none to it."
+							: data.calendar === 'no-role'
+								? "Your role in this group doesn't let you post to its calendar, so atmo can't post members-only events for you, and approving your link again won't change that."
+								: "Whether members-only events are on couldn't be checked just now. Reload to try again."}
 				</p>
 			{:else if data.calendar && !postsMembersOnly}
 				<!-- Turning them on makes the calendar space; the host gives a link no scope for a space
@@ -414,6 +418,12 @@
 				<h2 id="members-only-heading" class="text-base-900 dark:text-base-50 text-lg font-semibold">
 					Members-only events
 				</h2>
+				{#if data.membersOnly.stoppedAt}
+					<p class="text-base-600 dark:text-base-400 mt-2 text-sm" role="status">
+						atmo stopped reading this group's calendar at {data.membersOnly.stoppedAt} events, so some
+						upcoming ones may be missing here.
+					</p>
+				{/if}
 				{#if data.membersOnly.unread}
 					<p class="text-base-600 dark:text-base-400 mt-2 text-sm" role="status">
 						Members-only events couldn't be loaded right now. Try again shortly.

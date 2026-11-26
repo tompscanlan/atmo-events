@@ -7,7 +7,8 @@ const mocks = vi.hoisted(() => ({
 	callerSession: vi.fn(),
 	requireGroupWriter: vi.fn(),
 	listMembersOnlyEvents: vi.fn(),
-	calendarSpaceState: vi.fn()
+	readCalendarSpace: vi.fn(),
+	readRolesAsPerson: vi.fn()
 }));
 vi.mock('#lib/groups/server/context.js', () => ({
 	groupView: mocks.groupView,
@@ -18,7 +19,11 @@ vi.mock('#lib/groups/server/calendar-read.js', async (importActual) => ({
 	listMembersOnlyEvents: mocks.listMembersOnlyEvents
 }));
 vi.mock('#lib/groups/server/group-events.js', () => ({
-	calendarSpaceState: mocks.calendarSpaceState
+	readCalendarSpace: mocks.readCalendarSpace
+}));
+vi.mock('#lib/groups/server/person.js', () => ({
+	personReader: () => ({}),
+	readRolesAsPerson: mocks.readRolesAsPerson
 }));
 vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.callerSession }));
 vi.mock('#lib/contrail/queries.js', () => ({ hostingQuery: mocks.hostingQuery }));
@@ -136,8 +141,8 @@ describe("a group page's members-only events", () => {
 	const person = (scope: string) => ({ did: ALICE, scope, handle: vi.fn() });
 
 	beforeEach(() => {
-		mocks.listMembersOnlyEvents.mockResolvedValue([SUPPER]);
-		mocks.calendarSpaceState.mockResolvedValue('ready');
+		mocks.listMembersOnlyEvents.mockResolvedValue({ events: [SUPPER], cutOff: false });
+		mocks.readCalendarSpace.mockResolvedValue({ state: 'ready', posters: ['admin'] });
 	});
 
 	it('are listed for a member, read with their own access', async () => {
@@ -145,7 +150,7 @@ describe("a group page's members-only events", () => {
 		mocks.callerSession.mockResolvedValue(caller);
 		mocks.groupView.mockResolvedValue({ did: GROUP, name: 'Knitters', member: true });
 		const page = await load(request('', ALICE));
-		expect(page.membersOnly).toEqual({ events: [SUPPER], unread: false });
+		expect(page.membersOnly).toEqual({ events: [SUPPER], unread: false, stoppedAt: null });
 		expect(mocks.listMembersOnlyEvents).toHaveBeenCalledWith(caller, GROUP);
 		expect(page).toMatchObject({ access: null, calendar: null });
 	});
@@ -170,14 +175,14 @@ describe("a group page's members-only events", () => {
 			[ALICE, { member: null }],
 			[ALICE, { member: false, linked: { can: { post: true } } }]
 		] as const) {
-			mocks.listMembersOnlyEvents.mockResolvedValue([SUPPER]);
+			mocks.listMembersOnlyEvents.mockResolvedValue({ events: [SUPPER], cutOff: false });
 			const some = await outside(did, view);
 			mocks.listMembersOnlyEvents.mockResolvedValue(null);
 			expect(await outside(did, view)).toEqual(some);
 			expect(some).toMatchObject({ membersOnly: null, calendar: null });
 		}
 		expect(mocks.listMembersOnlyEvents).not.toHaveBeenCalled();
-		expect(mocks.calendarSpaceState).not.toHaveBeenCalled();
+		expect(mocks.readCalendarSpace).not.toHaveBeenCalled();
 	});
 
 	it('are read as the group, with whether they are on, through a link that may post them', async () => {
@@ -193,13 +198,13 @@ describe("a group page's members-only events", () => {
 		const page = await load(request('', ALICE));
 		expect(page).toMatchObject({ membersOnly: { events: [SUPPER] }, calendar: 'ready' });
 		expect(mocks.listMembersOnlyEvents).toHaveBeenCalledWith(writer, GROUP);
-		expect(mocks.calendarSpaceState).toHaveBeenCalledWith(writer);
+		expect(mocks.readCalendarSpace).toHaveBeenCalledWith(writer);
 	});
 
 	it("says whether they are on to a link that may turn them on, but can't read them yet", async () => {
 		mocks.requireGroupWriter.mockResolvedValue({ did: GROUP, handle: vi.fn() });
 		mocks.callerSession.mockResolvedValue(person('atproto'));
-		mocks.calendarSpaceState.mockResolvedValue('missing');
+		mocks.readCalendarSpace.mockResolvedValue({ state: 'missing', posters: [] });
 		mocks.groupView.mockResolvedValue({
 			did: GROUP,
 			name: 'Knitters',
@@ -216,6 +221,67 @@ describe("a group page's members-only events", () => {
 		mocks.callerSession.mockResolvedValue(person(`atproto ${GUEST_SCOPE}`));
 		mocks.groupView.mockResolvedValue({ did: GROUP, name: 'Knitters', member: true });
 		mocks.listMembersOnlyEvents.mockRejectedValue(new Error('502'));
-		expect((await load(request('', ALICE))).membersOnly).toEqual({ events: [], unread: true });
+		expect((await load(request('', ALICE))).membersOnly).toEqual({
+			events: [],
+			unread: true,
+			stoppedAt: null
+		});
+	});
+
+	it('say where the list stopped when it stopped at its limit', async () => {
+		mocks.callerSession.mockResolvedValue(person(`atproto ${GUEST_SCOPE}`));
+		mocks.groupView.mockResolvedValue({ did: GROUP, name: 'Knitters', member: true });
+		mocks.listMembersOnlyEvents.mockResolvedValue({ events: [SUPPER], cutOff: true });
+		expect((await load(request('', ALICE))).membersOnly).toEqual({
+			events: [SUPPER],
+			unread: false,
+			stoppedAt: 500
+		});
+	});
+});
+
+describe("a group page's calendar setup, for a link that turned it on but can't post yet", () => {
+	const linkedFor = (can: object) => {
+		mocks.requireGroupWriter.mockResolvedValue({ did: GROUP, handle: vi.fn() });
+		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: 'atproto', handle: vi.fn() });
+		mocks.groupView.mockResolvedValue({
+			did: GROUP,
+			name: 'Knitters',
+			linked: { can: { turnOnMembersOnly: true, membersOnly: false, ...can } }
+		});
+	};
+
+	beforeEach(() => {
+		mocks.readCalendarSpace.mockResolvedValue({ state: 'ready', posters: ['admin'] });
+	});
+
+	it('is ready, to approve once more, for a role the policy lets post', async () => {
+		linkedFor({});
+		mocks.readRolesAsPerson.mockResolvedValue(['member', 'admin']);
+		expect((await load(request('', ALICE))).calendar).toBe('ready');
+	});
+
+	it("says the person's role can't post, rather than to approve again, for any other", async () => {
+		linkedFor({});
+		mocks.readRolesAsPerson.mockResolvedValue(['member', 'organizer']);
+		expect((await load(request('', ALICE))).calendar).toBe('no-role');
+	});
+
+	it('stays ready when the roles could not be read', async () => {
+		vi.spyOn(console, 'info').mockImplementation(() => {});
+		linkedFor({});
+		mocks.readRolesAsPerson.mockRejectedValue(new Error('502'));
+		expect((await load(request('', ALICE))).calendar).toBe('ready');
+		mocks.readRolesAsPerson.mockResolvedValue(null);
+		expect((await load(request('', ALICE))).calendar).toBe('ready');
+	});
+
+	it('reads no roles for a link that already posts, or a calendar not ready', async () => {
+		linkedFor({ membersOnly: true });
+		expect((await load(request('', ALICE))).calendar).toBe('ready');
+		linkedFor({});
+		mocks.readCalendarSpace.mockResolvedValue({ state: 'unusable', posters: [] });
+		expect((await load(request('', ALICE))).calendar).toBe('unusable');
+		expect(mocks.readRolesAsPerson).not.toHaveBeenCalled();
 	});
 });

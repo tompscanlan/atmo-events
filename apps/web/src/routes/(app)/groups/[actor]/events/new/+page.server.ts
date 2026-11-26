@@ -13,6 +13,7 @@ import { calendarSpaceState } from '#lib/groups/server/group-events.js';
 const MEMBERS_ONLY_UNAVAILABLE = {
 	missing: "Members-only events aren't turned on for this group. Turn them on from its page.",
 	readable: "This group's calendar can be read by more than its members.",
+	unusable: "This group's calendar wasn't set up for atmo to post members-only events to.",
 	unchecked: "Whether members-only events are on couldn't be checked just now. Reload to try again."
 } as const;
 

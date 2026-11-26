@@ -102,6 +102,7 @@ describe('members-only events, from the editor', () => {
 			'Approve your link once more'
 		],
 		['readable by anyone', 'readable', { membersOnly: true }, 'more than its members'],
+		['set up some other way', 'unusable', { membersOnly: true }, "wasn't set up for atmo"],
 		['out of reach', 'unchecked', { membersOnly: true }, "couldn't be checked"]
 	])('says why not, when they are %s', async (_, state, can, words) => {
 		mocks.groupView.mockResolvedValue(admin(can));

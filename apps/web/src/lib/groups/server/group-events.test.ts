@@ -23,6 +23,7 @@ import {
 	deleteMembersOnlyEvent,
 	GroupEventRefused,
 	putMembersOnlyEvent,
+	readCalendarSpace,
 	readMembersOnlyEventAsGroup,
 	refuseMembersOnlyKey,
 	turnOnMembersOnly
@@ -91,10 +92,50 @@ describe("the calendar space's state", () => {
 		['missing', null],
 		['ready', READY_POLICY],
 		['readable', { ...READY_POLICY, publicRead: true }],
-		['readable', { $type: 'com.atproto.memberspace.policy' }]
+		['readable', { $type: 'com.atproto.memberspace.policy' }],
+		['unusable', { ...READY_POLICY, grants: [{ role: 'member', read: true }] }],
+		['unusable', { ...READY_POLICY, grants: [READY_POLICY.grants[0]] }],
+		[
+			'unusable',
+			{
+				...READY_POLICY,
+				grants: [
+					{
+						role: 'admin',
+						permissions: ['space:community.lexicon.calendar.collection?collection=x']
+					},
+					{ role: 'member', read: true }
+				]
+			}
+		]
 	])('is %s', async (expected, policy) => {
 		calendar.state.policy = policy;
 		expect(await calendarSpaceState(writer())).toBe(expected);
+	});
+
+	it('names the roles its policy lets post events as the group', async () => {
+		calendar.state.policy = {
+			...READY_POLICY,
+			grants: [
+				...READY_POLICY.grants,
+				{
+					role: 'organizer',
+					permissions: [
+						'space:community.lexicon.calendar.collection?collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
+					]
+				},
+				{
+					role: 'helper',
+					permissions: [
+						'space:community.lexicon.calendar.collection?collection=community.lexicon.calendar.event&action=read'
+					]
+				}
+			]
+		};
+		expect(await readCalendarSpace(writer())).toEqual({
+			state: 'ready',
+			posters: ['admin', 'organizer']
+		});
 	});
 
 	it('is unchecked in an outage, and throws a refused link, as a write would', async () => {
@@ -132,7 +173,12 @@ describe('a members-only event', () => {
 
 	it.each([
 		['missing', null, "Members-only events aren't turned on"],
-		['readable', { ...READY_POLICY, publicRead: true }, 'can be read by more than its members']
+		['readable', { ...READY_POLICY, publicRead: true }, 'can be read by more than its members'],
+		[
+			'unusable',
+			{ ...READY_POLICY, grants: [{ role: 'member', read: true }] },
+			"wasn't set up for atmo"
+		]
 	])('is refused, unsent, when the space is %s', async (_, policy, words) => {
 		calendar.state.policy = policy;
 		const put = putMembersOnlyEvent(writer(), { rkey: 'r1', record: event('Supper') });

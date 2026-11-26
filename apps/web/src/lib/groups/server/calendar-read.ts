@@ -63,6 +63,16 @@ const LIST_RECORDS = 'com.atproto.space.listRecords';
 const LIST_LIMIT = 100;
 const MAX_PAGES = 5;
 
+/** How many of the calendar space's records a list reads, at most. */
+export const MEMBERS_ONLY_LIST_LIMIT = LIST_LIMIT * MAX_PAGES;
+
+export interface MembersOnlyList {
+	events: FlatEventRecord[];
+	/** It stopped at `MEMBERS_ONLY_LIST_LIMIT` records with more to read, in whatever order the host
+	 *  lists them, so an upcoming event may be missing. */
+	cutOff: boolean;
+}
+
 /** The group's events in its calendar space, every page up to a limit. Null when the holder may not
  *  read the space, or it is not there: the host answers both alike. Any other failure throws, so
  *  "could not read" never passes for "none".
@@ -74,7 +84,7 @@ export async function listMembersOnlyEvents(
 	holder: SpaceHolder,
 	groupDid: string,
 	hosts: SpaceHosts = didSpaceHosts
-): Promise<FlatEventRecord[] | null> {
+): Promise<MembersOnlyList | null> {
 	const space = calendarSpaceUri(groupDid);
 	const events: FlatEventRecord[] = [];
 	try {
@@ -97,7 +107,7 @@ export async function listMembersOnlyEvents(
 			});
 			const answer = await readXrpc(res);
 			// The group has written nothing there yet.
-			if (answerIsRecordNotFound(answer)) return events;
+			if (answerIsRecordNotFound(answer)) return { events, cutOff: false };
 			if (!answer.ok) throw answerError(LIST_RECORDS, answer);
 			const records = Array.isArray(answer.data.records) ? answer.data.records : [];
 			for (const entry of records) {
@@ -115,10 +125,10 @@ export async function listMembersOnlyEvents(
 			}
 			// The group host ends its last page with a `cursor` of null, its own way: the spec says none.
 			const next = typeof answer.data.cursor === 'string' ? answer.data.cursor : undefined;
-			if (!next || next === cursor || records.length === 0) return events;
+			if (!next || next === cursor || records.length === 0) return { events, cutOff: false };
 			cursor = next;
 		}
-		return events;
+		return { events, cutOff: true };
 	} catch (e) {
 		if (isSpaceAccessDenied(e)) return null;
 		throw e;
