@@ -4,7 +4,7 @@
   "defs": {
     "main": {
       "type": "query",
-      "description": "Get a group.opensocial.declaration record by AT URI",
+      "description": "Get a org.atgrp.declaration record by AT URI",
       "parameters": {
         "type": "params",
         "required": [
@@ -45,7 +45,7 @@
             },
             "value": {
               "type": "ref",
-              "ref": "group.opensocial.declaration#main"
+              "ref": "org.atgrp.declaration#main"
             },
             "did": {
               "type": "string",

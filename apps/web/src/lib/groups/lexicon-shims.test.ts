@@ -24,7 +24,6 @@ describe('lexicon shims', () => {
 
 		it(`${nsid}: the copy differs from the reference only in its space-ref formats`, () => {
 			const referenceText = read(reference);
-			expect(referenceText).toContain('"space-ref"');
 			expect(JSON.parse(shimLexicon(referenceText))).toEqual(
 				withUriFormats(JSON.parse(referenceText))
 			);

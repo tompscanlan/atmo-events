@@ -3,7 +3,7 @@ import * as v from '@atcute/lexicons/validations';
 import type {} from '@atcute/lexicons/ambient';
 import * as AppBskyActorProfile from "@atcute/bluesky/types/app/actor/profile";
 import * as ComAtprotoLabelDefs from "../../../com/atproto/label/defs.js";
-import * as GroupOpensocialDeclaration from "../../../group/opensocial/declaration.js";
+import * as OrgAtgrpDeclaration from "../../../org/atgrp/declaration.js";
 
 const _mainSchema = /*#__PURE__*/ v.query(
 	"rsvp.atmo.declaration.listRecords",
@@ -93,7 +93,7 @@ const _recordSchema = /*#__PURE__*/ v.object(
 		"time_us": /*#__PURE__*/ v.integer(),
 		"uri": /*#__PURE__*/ v.resourceUriString(),
 		get "value"() {
-			return GroupOpensocialDeclaration.mainSchema
+			return OrgAtgrpDeclaration.mainSchema
 		},
 	}
 );

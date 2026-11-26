@@ -9,7 +9,7 @@ vi.mock('../atproto/network', () => ({ contrailNetwork: () => ({}) }));
 import { handleContrailRequest } from './index';
 
 const GROUP = 'did:plc:group';
-const DECLARATION = `at://${GROUP}/group.opensocial.declaration/self`;
+const DECLARATION = `at://${GROUP}/org.atgrp.declaration/self`;
 const DECLARED = [
 	'rsvp.atmo.declaration.listDeclared',
 	`rsvp.atmo.declaration.getRecord?${new URLSearchParams({ uri: DECLARATION })}`,

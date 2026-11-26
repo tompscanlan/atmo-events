@@ -97,7 +97,7 @@ describe('the declaration index', () => {
 		mocks.get.mockResolvedValueOnce({ ok: false, status: 404, data: { error: 'NotFound' } });
 		expect(await isDeclared(GROUP)).toBe(false);
 		expect(mocks.get).toHaveBeenLastCalledWith('rsvp.atmo.declaration.getRecord', {
-			params: { uri: `at://${GROUP}/group.opensocial.declaration/self` }
+			params: { uri: `at://${GROUP}/org.atgrp.declaration/self` }
 		});
 	});
 
@@ -217,22 +217,19 @@ describe('readGroupMeta', () => {
 });
 
 describe('listing', () => {
-	it('writes the declaration naming the meta space, then tells the index', async () => {
+	it('writes the empty declaration, then tells the index', async () => {
 		const handle = pds({});
 		await listGroup(handle, GROUP);
 		const [pathname, init] = handle.mock.calls[0];
 		expect(pathname).toBe('/xrpc/com.atproto.repo.putRecord');
 		expect(JSON.parse(String(init.body))).toEqual({
 			repo: GROUP,
-			collection: 'group.opensocial.declaration',
+			collection: 'org.atgrp.declaration',
 			rkey: 'self',
-			record: {
-				$type: 'group.opensocial.declaration',
-				meta: `at://${GROUP}/space/group.opensocial.meta/self`
-			}
+			record: { $type: 'org.atgrp.declaration' }
 		});
 		expect(mocks.post).toHaveBeenCalledWith('rsvp.atmo.notifyOfUpdate', {
-			input: { uris: [`at://${GROUP}/group.opensocial.declaration/self`] }
+			input: { uris: [`at://${GROUP}/org.atgrp.declaration/self`] }
 		});
 	});
 
@@ -243,11 +240,11 @@ describe('listing', () => {
 		expect(pathname).toBe('/xrpc/com.atproto.repo.deleteRecord');
 		expect(JSON.parse(String(init.body))).toEqual({
 			repo: GROUP,
-			collection: 'group.opensocial.declaration',
+			collection: 'org.atgrp.declaration',
 			rkey: 'self'
 		});
 		expect(mocks.post).toHaveBeenCalledWith('rsvp.atmo.notifyOfUpdate', {
-			input: { uris: [`at://${GROUP}/group.opensocial.declaration/self`] }
+			input: { uris: [`at://${GROUP}/org.atgrp.declaration/self`] }
 		});
 	});
 });

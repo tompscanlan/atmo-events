@@ -3,7 +3,7 @@
 import { spaceUri as spaceAt } from '../spaces/uri';
 
 /** In the group's public repo while its meta space is public and it is listed. */
-export const GROUP_DECLARATION_COLLECTION = 'group.opensocial.declaration';
+export const GROUP_DECLARATION_COLLECTION = 'org.atgrp.declaration';
 export const GROUP_DECLARATION_RKEY = 'self';
 
 export const META_SPACE_TYPE = 'group.opensocial.meta';
@@ -30,6 +30,7 @@ export function declarationUri(groupDid: string): string {
 	return `at://${groupDid}/${GROUP_DECLARATION_COLLECTION}/${GROUP_DECLARATION_RKEY}`;
 }
 
-export function groupDeclarationRecord(groupDid: string): Record<string, unknown> {
-	return { $type: GROUP_DECLARATION_COLLECTION, meta: metaSpaceUri(groupDid) };
+/** Empty: the group's meta space is always at `org.atgrp.meta/self`. */
+export function groupDeclarationRecord(): Record<string, unknown> {
+	return { $type: GROUP_DECLARATION_COLLECTION };
 }

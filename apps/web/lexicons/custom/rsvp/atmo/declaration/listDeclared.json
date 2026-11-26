@@ -81,7 +81,7 @@
 				},
 				"value": {
 					"type": "ref",
-					"ref": "group.opensocial.declaration#main"
+					"ref": "org.atgrp.declaration#main"
 				},
 				"did": {
 					"type": "string",

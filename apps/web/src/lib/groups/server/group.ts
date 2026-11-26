@@ -262,14 +262,15 @@ export async function notifyIndex(uri: string): Promise<void> {
 	}
 }
 
-/** Only a public group may be listed: the proposal publishes it only while meta is public. */
+/** Only a public group may be listed. This site's rule, kept from the earlier proposal: the spec's
+ *  declaration says nothing of the meta space being public. */
 export async function listGroup(handle: XrpcHandle, groupDid: string): Promise<void> {
 	await xrpc(handle, 'com.atproto.repo.putRecord', {
 		body: {
 			repo: groupDid,
 			collection: GROUP_DECLARATION_COLLECTION,
 			rkey: GROUP_DECLARATION_RKEY,
-			record: groupDeclarationRecord(groupDid)
+			record: groupDeclarationRecord()
 		}
 	});
 	await notifyIndex(declarationUri(groupDid));

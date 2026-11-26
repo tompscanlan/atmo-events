@@ -10,7 +10,7 @@ import {
 import { config } from '../contrail.config';
 import { cachedHandles, crowdedServers, DECLARED_PER_SERVER } from '../groups/server/declared';
 
-const COLLECTION = 'group.opensocial.declaration';
+const COLLECTION = 'org.atgrp.declaration';
 const HOME = 'https://home.example';
 
 /** A declaration as [did, rkey, time_us, the account's PDS (null: not resolved yet)]. */
