@@ -29,6 +29,9 @@ describe('the config contrail’s CLI loads', () => {
 		expect((await cliConfig({ GROUP_HOST_URL: ' ' })).collections).not.toHaveProperty(
 			'declaration'
 		);
+		expect((await cliConfig({ GROUP_HOST_URL: 'host.example' })).collections).not.toHaveProperty(
+			'declaration'
+		);
 		expect(
 			(await cliConfig({ GROUP_HOST_URL: 'https://host.example' })).collections
 		).toHaveProperty('declaration');

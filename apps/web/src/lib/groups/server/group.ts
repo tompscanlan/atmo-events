@@ -20,6 +20,7 @@ import {
 	SPACE_POLICY_COLLECTION,
 	SPACE_POLICY_RKEY
 } from '../ids';
+import { groupHostUrl } from './enabled';
 import { cachedHandles, crowdedServers, type CrowdedServer, type DeclaredHome } from './declared';
 import { isRecordNotFound, xrpc, type XrpcHandle } from './xrpc';
 
@@ -43,8 +44,7 @@ export async function resolveGroup(actor: string): Promise<ResolvedGroup | null>
 }
 
 export function groupHostOrigin(): string | null {
-	const url = env.GROUP_HOST_URL?.trim();
-	return url ? new URL(url).origin : null;
+	return groupHostUrl()?.origin ?? null;
 }
 
 /** This site changes only groups whose PDS is its own group host. */

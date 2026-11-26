@@ -79,4 +79,10 @@ describe('with groups on', () => {
 		Object.assign(env, { GROUP_HOST_URL: '  ' });
 		expect(rerouted('/groups/create')).toBe(NO_ROUTE);
 	});
+
+	it('takes a group host that is not a URL for off', () => {
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		Object.assign(env, { GROUP_HOST_URL: 'host.example' });
+		for (const path of GROUP_ADDRESSES) expect(rerouted(path), path).toBe(NO_ROUTE);
+	});
 });

@@ -1,11 +1,28 @@
 import { env } from 'cloudflare:workers';
 import { error } from '@sveltejs/kit';
+import { parseGroupHostUrl } from '../host-url';
+
+/** The setting last found not to be a URL, so each wrong value is logged once per isolate, not on
+ *  every request. */
+let reported: string | null = null;
+
+/** The group host's URL, or null with groups off: when no group host is named, or the setting is
+ *  not an http(s) URL, which is logged rather than failing every group page. */
+export function groupHostUrl(): URL | null {
+	const raw = env.GROUP_HOST_URL;
+	const url = parseGroupHostUrl(raw);
+	if (!url && raw?.trim() && reported !== raw) {
+		reported = raw;
+		console.error('[groups] GROUP_HOST_URL is not an http(s) URL, so groups are off');
+	}
+	return url;
+}
 
 /** Off unless a deployment names a group host. The URL itself stays config. Turning groups back
  *  off takes their permission out of people's sign-in, so, as with private events, anyone who
  *  granted it can't be asked for a new permission until they sign in again. */
 export function groupsEnabled(): boolean {
-	return Boolean(env.GROUP_HOST_URL?.trim());
+	return groupHostUrl() !== null;
 }
 
 /** With groups off, a group address answers as one this site never had: a 404 with SvelteKit's
