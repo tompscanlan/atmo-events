@@ -16,7 +16,8 @@ const mocks = vi.hoisted(() => ({
 	atGroupHost: vi.fn(),
 	groupSession: vi.fn(),
 	groupSignInAvailable: vi.fn(),
-	hasGroupSession: vi.fn()
+	hasGroupSession: vi.fn(),
+	unfinishedGroup: vi.fn()
 }));
 vi.mock('./group', () => ({
 	resolveGroup: mocks.resolveGroup,
@@ -34,6 +35,7 @@ vi.mock('./sign-in', () => ({
 	groupSignInAvailable: mocks.groupSignInAvailable,
 	hasGroupSession: mocks.hasGroupSession
 }));
+vi.mock('./create', () => ({ unfinishedGroup: mocks.unfinishedGroup }));
 
 import { GROUP_NOT_FOUND, groupView, requireGroupWriter, requireStoredLink } from './context';
 
@@ -59,6 +61,7 @@ beforeEach(() => {
 	mocks.groupSession.mockResolvedValue(null);
 	mocks.groupSignInAvailable.mockReturnValue(true);
 	mocks.atGroupHost.mockReturnValue(true);
+	mocks.unfinishedGroup.mockResolvedValue(null);
 });
 
 describe('groupView for a visitor', () => {
@@ -115,7 +118,12 @@ describe('groupView for someone who linked the group', () => {
 		const view = await groupView(GROUP, ALICE);
 		expect(view).toMatchObject({
 			name: 'Knitters',
-			linked: { meta: { public: false }, listed: false, can: { post: true, list: true } },
+			linked: {
+				meta: { public: false },
+				listed: false,
+				can: { post: true, list: true },
+				unfinished: false
+			},
 			relink: false,
 			hasLink: true
 		});
@@ -132,6 +140,14 @@ describe('groupView for someone who linked the group', () => {
 		const view = await groupView(GROUP, ALICE);
 		expect(view.linked).toMatchObject({ can: { post: false, list: false } });
 		expect(view.relink).toBe(false);
+	});
+
+	it("says when setting up a group the caller made here didn't finish", async () => {
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		mocks.unfinishedGroup.mockResolvedValue({ did: GROUP, handle: 'knit.example' });
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({ unfinished: true });
+		expect(mocks.unfinishedGroup).toHaveBeenCalledWith(ALICE, GROUP);
 	});
 
 	it('asks to link again when the session cannot say what it was granted', async () => {

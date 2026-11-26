@@ -7,12 +7,22 @@ const { page } = vi.hoisted(() => ({
 	page: { status: 404, error: null as { message: string } | null }
 }));
 vi.mock('$app/state', () => ({ page }));
+vi.mock('$app/server', () => ({
+	command: (_schema: unknown, handler: unknown) =>
+		Object.assign(handler as object, { __: { type: 'command' } }),
+	getRequestEvent: () => ({ locals: { did: 'did:plc:alice' } })
+}));
 vi.mock('./browse', () => ({ browseGroups: vi.fn() }));
 vi.mock('./group', () => ({ resolveGroup: vi.fn(), isDeclared: vi.fn() }));
 vi.mock('./sign-in', () => ({ groupSession: vi.fn(), hasGroupSession: vi.fn() }));
 
 import ErrorPage from '../../../routes/+error.svelte';
 import { load as listGroups } from '../../../routes/(app)/groups/+page.server';
+import {
+	actions as createActions,
+	load as createPage
+} from '../../../routes/(app)/groups/create/+page.server';
+import { finishGroupSetup } from '../group.remote';
 import { groupView, requireGroupWriter, requireStoredLink } from './context';
 
 const GROUP = 'did:plc:group';
@@ -59,5 +69,25 @@ describe('with groups off', () => {
 		const expected = unknownAddress();
 		expect(await shown(() => requireGroupWriter(GROUP, ALICE))).toBe(expected);
 		expect(await shown(() => requireStoredLink(GROUP, ALICE))).toBe(expected);
+	});
+
+	it('shows making a group as an unknown address, and makes nothing', async () => {
+		const expected = unknownAddress();
+		const request = {
+			locals: { did: ALICE, session: null },
+			url: new URL('https://atmo.example/groups/create'),
+			params: { actor: GROUP },
+			setHeaders: vi.fn()
+		} as never;
+		expect(await shown(() => createPage(request))).toBe(expected);
+		const post = {
+			request: new Request('https://atmo.example/groups/create', {
+				method: 'POST',
+				body: new FormData()
+			}),
+			locals: { did: ALICE, session: null }
+		} as never;
+		expect(await shown(() => createActions.default(post))).toBe(expected);
+		expect(await shown(() => finishGroupSetup({ groupDid: GROUP }))).toBe(expected);
 	});
 });

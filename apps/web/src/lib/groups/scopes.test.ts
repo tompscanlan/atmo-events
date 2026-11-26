@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { grantsRepoWrites, groupAbilities } from './scopes';
+import { CREATE_GROUP_SCOPE, grantsRepoWrites, groupAbilities, holdsCreateGroup } from './scopes';
 
 const GROUP = 'did:plc:group';
 const META_READ = `space:org.atgrp.meta?authority=${GROUP}&action=read`;
@@ -41,5 +41,21 @@ describe('what a group session may do, by the scope its host granted', () => {
 			grantsRepoWrites(`atproto space:x.y?collection=${event} rpc:${event}?aud=*`, event)
 		).toBe(false);
 		expect(grantsRepoWrites('', event)).toBe(false);
+	});
+});
+
+describe("the person's own permission to make a group", () => {
+	it('is the rpc grant for the host’s createGroup, for any audience', () => {
+		expect(CREATE_GROUP_SCOPE).toBe('rpc:org.atgrp.internal.createGroup?aud=*');
+		expect(holdsCreateGroup(`atproto ${CREATE_GROUP_SCOPE}`)).toBe(true);
+		expect(
+			holdsCreateGroup('rpc?lxm=org.atgrp.internal.createGroup&aud=did:web:host.example')
+		).toBe(true);
+	});
+
+	it('is not held without it, or for another method', () => {
+		expect(holdsCreateGroup('atproto include:community.lexicon.calendar.authFull')).toBe(false);
+		expect(holdsCreateGroup('rpc:org.atgrp.requestJoin?aud=*')).toBe(false);
+		expect(holdsCreateGroup('rpc:org.atgrp.internal.createGroup')).toBe(false);
 	});
 });

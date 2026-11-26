@@ -8,6 +8,9 @@ export const GROUP_DECLARATION_RKEY = 'self';
 export const META_SPACE_TYPE = 'org.atgrp.meta';
 export const GROUP_ABOUT_COLLECTION = 'org.atgrp.about';
 export const GROUP_ABOUT_RKEY = 'self';
+/** Who may join, as the meta space's config says it. */
+export const GROUP_JOIN_POLICIES = ['open', 'approval', 'invite'] as const;
+export type GroupJoinPolicy = (typeof GROUP_JOIN_POLICIES)[number];
 /** Where the host publishes a space's `org.atgrp.policy`, which says whether it is public. */
 export const SPACE_POLICY_COLLECTION = 'com.atproto.space.policy';
 export const SPACE_POLICY_RKEY = 'self';

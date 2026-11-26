@@ -4,7 +4,11 @@ import { render } from 'vitest-browser-svelte';
 import { error } from '@sveltejs/kit';
 import '../../../../app.css';
 
-const mocks = vi.hoisted(() => ({ setGroupListed: vi.fn(), unlinkGroupSession: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+	setGroupListed: vi.fn(),
+	unlinkGroupSession: vi.fn(),
+	finishGroupSetup: vi.fn()
+}));
 // The page's writes and its event list's paging go through SvelteKit remote functions, which a
 // browser test has no server for.
 vi.mock('#lib/groups/group.remote.js', () => mocks);
@@ -23,7 +27,7 @@ const EVENT = {
 /** The page for someone who linked the group, as its load returns it; `can` is what the session's
  *  granted scope allows. */
 function linkedPage(
-	linked: { public: boolean; listed: boolean },
+	linked: { public: boolean; listed: boolean; unfinished?: boolean },
 	can = { post: true, list: true },
 	events: (typeof EVENT)[] = []
 ) {
@@ -39,7 +43,8 @@ function linkedPage(
 			linked: {
 				meta: { profile: { name: 'Knitters', description: null }, public: linked.public },
 				listed: linked.listed,
-				can
+				can,
+				unfinished: linked.unfinished ?? false
 			},
 			relink: false,
 			hasLink: true
@@ -78,6 +83,15 @@ describe("what a link's granted scope offers", () => {
 		expect(page.getByRole('link', { name: 'Edit' }).elements()).toHaveLength(0);
 		expect(listButton().elements()).toHaveLength(0);
 		expect(page.getByRole('button', { name: 'Unlink' }).elements()).toHaveLength(1);
+	});
+
+	it("finishes setting up a group made here when its link didn't", async () => {
+		mocks.finishGroupSetup.mockResolvedValue({ ok: true });
+		render(GroupPage, {
+			data: linkedPage({ public: true, listed: true, unfinished: true }) as never
+		});
+		await page.getByRole('button', { name: 'Finish setting up' }).click();
+		await expect.poll(() => mocks.finishGroupSetup).toHaveBeenCalledWith({ groupDid: GROUP });
 	});
 });
 

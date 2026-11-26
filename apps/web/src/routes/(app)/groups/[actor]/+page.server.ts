@@ -6,7 +6,8 @@ import { groupView } from '#lib/groups/server/context.js';
 import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
 
 const LINK_NOTICES = {
-	linked: 'Linked. You can now post events for this group.'
+	linked: 'Linked. What your role allows, you can now do for this group here.',
+	created: 'Your group is made, and linked. Post its events from here.'
 } as const;
 
 export async function load({ params, locals, url, setHeaders }) {

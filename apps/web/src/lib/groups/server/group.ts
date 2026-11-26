@@ -106,6 +106,14 @@ export async function heldAtGroupHost(): Promise<string[] | null> {
 
 let heldReading: Promise<string[] | null> | null = null;
 
+/** After the host makes a group, so the list counts the new group as at the host at once rather
+ *  than after the cached answer expires. */
+export async function forgetHeldAtGroupHost(): Promise<void> {
+	await env.OAUTH_SESSIONS?.delete(HELD_KEY).catch((e) => {
+		console.warn('[groups] what the group host holds could not be forgotten:', e);
+	});
+}
+
 async function readHeld(origin: string): Promise<string[] | null> {
 	const kv = env.OAUTH_SESSIONS;
 	try {

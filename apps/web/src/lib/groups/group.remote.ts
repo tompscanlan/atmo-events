@@ -3,6 +3,7 @@ import { command, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
 import { GROUP_EVENT_COLLECTION } from './ids';
 import { requireGroupWriter, requireStoredLink } from './server/context';
+import { finishSetup } from './server/create';
 import { listGroup, notifyIndex, readGroupMeta, unlistGroup } from './server/group';
 import { unlinkGroup } from './server/sign-in';
 import { isLinkBroken, isRoleRefused, xrpc, xrpcBlob, XrpcError } from './server/xrpc';
@@ -62,6 +63,20 @@ export const setGroupListed = command(
 		return { listed };
 	}
 );
+
+/** For a group made here whose first link did not finish setting it up. */
+export const finishGroupSetup = command(v.object({ groupDid: didSchema }), async ({ groupDid }) => {
+	const did = callerDid();
+	const writer = await requireGroupWriter(groupDid, did);
+	try {
+		await finishSetup(writer, did as string);
+	} catch (e) {
+		if (isRoleRefused(e)) error(403, NO_ROLE);
+		if (isLinkBroken(e)) error(403, RELINK);
+		throw e;
+	}
+	return { ok: true };
+});
 
 export const unlinkGroupSession = command(v.object({ groupDid: didSchema }), async (input) => {
 	const did = await requireStoredLink(input.groupDid, callerDid());

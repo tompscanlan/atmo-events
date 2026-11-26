@@ -5,7 +5,8 @@ const mocks = vi.hoisted(() => ({
 	atGroupHost: vi.fn(),
 	available: vi.fn(),
 	startGroupLink: vi.fn(),
-	finishGroupLink: vi.fn()
+	finishGroupLink: vi.fn(),
+	finishCreatedGroup: vi.fn()
 }));
 vi.mock('#lib/groups/server/group.js', () => ({
 	resolveGroup: mocks.resolveGroup,
@@ -16,6 +17,8 @@ vi.mock('#lib/groups/server/sign-in.js', () => ({
 	startGroupLink: mocks.startGroupLink,
 	finishGroupLink: mocks.finishGroupLink
 }));
+
+vi.mock('#lib/groups/server/create.js', () => ({ finishCreatedGroup: mocks.finishCreatedGroup }));
 
 import { POST } from './link/+server';
 import { GET } from './callback/+server';
@@ -89,6 +92,23 @@ describe('the callback', () => {
 			location: `/groups/${GROUP}?link=linked`
 		});
 		expect(mocks.finishGroupLink.mock.calls[0][1]).toBe(ALICE);
+	});
+
+	it('finishes setting up a group the person made here, and says it is made', async () => {
+		mocks.finishGroupLink.mockResolvedValue({ ok: true, groupDid: GROUP });
+		mocks.finishCreatedGroup.mockResolvedValue('created');
+		await expect(GET(callback(ALICE))).rejects.toMatchObject({
+			location: `/groups/${GROUP}?link=created`
+		});
+		expect(mocks.finishCreatedGroup).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+
+	it('lands on the page, linked, when finishing the setup did not, which says so there', async () => {
+		mocks.finishGroupLink.mockResolvedValue({ ok: true, groupDid: GROUP });
+		mocks.finishCreatedGroup.mockResolvedValue('unfinished');
+		await expect(GET(callback(ALICE))).rejects.toMatchObject({
+			location: `/groups/${GROUP}?link=linked`
+		});
 	});
 
 	it("goes back to the list on a refusal, since the group's page may be a 404", async () => {

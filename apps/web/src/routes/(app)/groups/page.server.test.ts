@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
 
-const mocks = vi.hoisted(() => ({ browseGroups: vi.fn(), available: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+	browseGroups: vi.fn(),
+	available: vi.fn(),
+	unfinishedGroups: vi.fn()
+}));
 const setHeaders = vi.fn();
 vi.mock('#lib/groups/server/browse.js', () => ({ browseGroups: mocks.browseGroups }));
 vi.mock('#lib/groups/server/sign-in.js', () => ({ groupSignInAvailable: mocks.available }));
+vi.mock('#lib/groups/server/create.js', () => ({ unfinishedGroups: mocks.unfinishedGroups }));
 
 import { load } from './+page.server';
 
@@ -70,5 +75,28 @@ describe('the groups list', () => {
 	it('is a 404 with groups off', async () => {
 		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
 		await expect(load(request())).rejects.toMatchObject({ status: 404 });
+	});
+});
+
+describe('making a group from the list', () => {
+	const signedIn = () =>
+		({
+			locals: { did: 'did:plc:alice' },
+			url: new URL('https://atmo.example/groups'),
+			setHeaders
+		}) as unknown as Parameters<typeof load>[0];
+
+	it('counts the groups the caller made and has not linked yet', async () => {
+		mocks.available.mockReturnValue(true);
+		mocks.unfinishedGroups.mockResolvedValue([{ did: 'did:plc:g', handle: 'g.example' }]);
+		expect(await load(signedIn())).toMatchObject({ canLink: true, unfinished: 1 });
+		expect(mocks.unfinishedGroups).toHaveBeenCalledWith('did:plc:alice');
+	});
+
+	it('looks for none signed out, or without a group sign-in', async () => {
+		mocks.available.mockReturnValue(false);
+		expect(await load(signedIn())).toMatchObject({ canLink: false, unfinished: 0 });
+		expect(await load(request())).toMatchObject({ canLink: false, unfinished: 0 });
+		expect(mocks.unfinishedGroups).not.toHaveBeenCalled();
 	});
 });

@@ -13,7 +13,8 @@ const mocks = vi.hoisted(() => ({
 	unlistGroup: vi.fn(),
 	notifyIndex: vi.fn(),
 	unlinkGroup: vi.fn(),
-	handle: vi.fn()
+	handle: vi.fn(),
+	finishSetup: vi.fn()
 }));
 vi.mock('$app/server', () => ({
 	command: (_schema: unknown, handler: unknown) =>
@@ -31,9 +32,11 @@ vi.mock('./server/group', () => ({
 	notifyIndex: mocks.notifyIndex
 }));
 vi.mock('./server/sign-in', () => ({ unlinkGroup: mocks.unlinkGroup }));
+vi.mock('./server/create', () => ({ finishSetup: mocks.finishSetup }));
 
 import {
 	deleteGroupEvent,
+	finishGroupSetup,
 	putGroupEvent,
 	setGroupListed,
 	unlinkGroupSession,
@@ -221,5 +224,19 @@ describe('unlink', () => {
 		mocks.requireStoredLink.mockImplementation(() => error(404, 'Group not found'));
 		await expect(unlinkGroupSession({ groupDid: GROUP })).rejects.toMatchObject({ status: 404 });
 		expect(mocks.unlinkGroup).not.toHaveBeenCalled();
+	});
+});
+
+describe('finishing a group made here', () => {
+	it("finishes it as the group, on the caller's own link", async () => {
+		await finishGroupSetup({ groupDid: GROUP });
+		expect(mocks.finishSetup).toHaveBeenCalledWith({ did: GROUP, handle: mocks.handle }, ALICE);
+	});
+
+	it('answers a refusal with a 403 that says why', async () => {
+		mocks.finishSetup.mockRejectedValue(
+			new XrpcError('com.atproto.repo.deleteRecord', 403, 'Forbidden')
+		);
+		await expect(finishGroupSetup({ groupDid: GROUP })).rejects.toMatchObject({ status: 403 });
 	});
 });

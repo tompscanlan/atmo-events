@@ -4,7 +4,11 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import EventList from '#lib/components/EventList.svelte';
-	import { setGroupListed, unlinkGroupSession } from '#lib/groups/group.remote.js';
+	import {
+		finishGroupSetup,
+		setGroupListed,
+		unlinkGroupSession
+	} from '#lib/groups/group.remote.js';
 
 	let { data } = $props();
 
@@ -101,6 +105,21 @@
 				{/if}
 				<Button variant="ghost" disabled={busy} onclick={unlink}>Unlink</Button>
 			</section>
+			{#if group.linked.unfinished}
+				<div class="mt-3 flex flex-wrap items-center gap-3">
+					<p class="text-base-700 dark:text-base-300 text-sm" role="status">
+						Setting up this group didn't finish: it is still on the groups list, which you asked it
+						not to be.
+					</p>
+					<Button
+						size="sm"
+						variant="secondary"
+						disabled={busy}
+						onclick={() => act(() => finishGroupSetup({ groupDid: group.did }))}
+						>Finish setting up</Button
+					>
+				</div>
+			{/if}
 			{#if !group.linked.can.post && !group.linked.can.list}
 				<p class="text-base-600 dark:text-base-400 mt-2 text-sm" role="status">
 					Your role in this group lets you see it here, but not post its events or list it.

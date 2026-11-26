@@ -17,6 +17,7 @@ import {
 	type GroupMeta
 } from './group';
 import { requireGroupsEnabled } from './enabled';
+import { unfinishedGroup } from './create';
 import { groupHandle, groupSession, groupSignInAvailable, hasGroupSession } from './sign-in';
 import { errorKind, isLinkBroken, isRoleRefused, type XrpcHandle } from './xrpc';
 
@@ -46,6 +47,8 @@ export interface LinkedGroup {
 	listed: boolean;
 	/** What the session's granted scope lets it do; the host still checks the roles at each write. */
 	can: GroupAbilities;
+	/** The caller made the group here, and setting it up did not finish at the link. */
+	unfinished: boolean;
 }
 
 export interface GroupWriter {
@@ -60,13 +63,14 @@ async function linkedRead(
 ): Promise<LinkedGroup | 'refused' | 'no-role'> {
 	const handle = groupHandle(session, personDid);
 	try {
-		const [meta, listed, token] = await Promise.all([
+		const [meta, listed, token, setup] = await Promise.all([
 			readGroupMeta(handle, groupDid),
 			repoHasDeclaration(handle, groupDid),
 			// As granted at the approval; a refresh would not change it.
-			session.getTokenInfo(false)
+			session.getTokenInfo(false),
+			unfinishedGroup(personDid, groupDid)
 		]);
-		return { meta, listed, can: groupAbilities(token.scope) };
+		return { meta, listed, can: groupAbilities(token.scope), unfinished: setup !== null };
 	} catch (e) {
 		if (isLinkBroken(e)) return 'refused';
 		// Their role was lowered or taken away, so the session's scope or its credential for the

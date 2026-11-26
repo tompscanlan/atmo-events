@@ -1,5 +1,6 @@
 import { error, redirect } from '@sveltejs/kit';
 import { groupPath } from '#lib/groups/server/context.js';
+import { finishCreatedGroup } from '#lib/groups/server/create.js';
 import { finishGroupLink, groupSignInAvailable } from '#lib/groups/server/sign-in.js';
 
 // Where the group's host returns after a person approves this site as the group. It sets
@@ -12,5 +13,7 @@ export async function GET({ url, locals }) {
 		redirect(303, '/groups?link=failed');
 	}
 	console.info(`[groups] ${result.groupDid} linked by ${locals.did}`);
-	redirect(303, `${groupPath(result.groupDid)}?link=linked`);
+	// A group they made here is set up as they asked; one that does not finish says so on its page.
+	const made = await finishCreatedGroup(result.groupDid, locals.did as string);
+	redirect(303, `${groupPath(result.groupDid)}?link=${made === 'created' ? 'created' : 'linked'}`);
 }
