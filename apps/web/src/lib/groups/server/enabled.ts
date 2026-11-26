@@ -1,7 +1,9 @@
 import { env } from 'cloudflare:workers';
 import { error } from '@sveltejs/kit';
 
-/** Off unless a deployment names a group host. The URL itself stays config. */
+/** Off unless a deployment names a group host. The URL itself stays config. Turning groups back
+ *  off takes their permission out of people's sign-in, so, as with private events, anyone who
+ *  granted it can't be asked for a new permission until they sign in again. */
 export function groupsEnabled(): boolean {
 	return Boolean(env.GROUP_HOST_URL?.trim());
 }

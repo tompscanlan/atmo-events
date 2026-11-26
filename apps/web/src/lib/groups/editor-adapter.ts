@@ -1,3 +1,4 @@
+import { isHttpError } from '@sveltejs/kit';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import {
@@ -19,28 +20,44 @@ export function groupViewer(group: { did: string; handle: string | null; name: s
 	} satisfies EditorViewer;
 }
 
-/** The in-app adapter, with every write sent as the group. */
-export function createGroupAdapter(groupDid: string, viewer: EditorViewer): EditorAdapter {
+/** The in-app adapter, with every write sent as the group. The editor words every failure its own
+ *  way, so a refusal the server explains (a 403: the person's role no longer allows it, or the link
+ *  broke) also goes to `onRefused`, for the page to show beside it. */
+export function createGroupAdapter(
+	groupDid: string,
+	viewer: EditorViewer,
+	onRefused: (reason: string) => void = () => {}
+): EditorAdapter {
 	const base = createInAppAdapter({ viewer });
+	const explained = async <T>(write: Promise<T>): Promise<T> => {
+		try {
+			return await write;
+		} catch (e) {
+			if (isHttpError(e, 403)) onRefused(e.body.message);
+			throw e;
+		}
+	};
 	return {
 		...base,
 		features: { delete: true, recurring: false },
 		async putRecord({ rkey, record }) {
-			return putGroupEvent({ groupDid, rkey, record });
+			return explained(putGroupEvent({ groupDid, rkey, record }));
 		},
 		async createRecord({ rkey, record }) {
 			if (!rkey) throw new Error('a group event needs its rkey');
-			return putGroupEvent({ groupDid, rkey, record });
+			return explained(putGroupEvent({ groupDid, rkey, record }));
 		},
 		async deleteRecord({ rkey }) {
-			await deleteGroupEvent({ groupDid, rkey });
+			await explained(deleteGroupEvent({ groupDid, rkey }));
 		},
 		async uploadBlob(blob) {
-			return uploadGroupBlob({
-				groupDid,
-				bytes: Array.from(new Uint8Array(await blob.arrayBuffer())),
-				mimeType: blob.type || 'application/octet-stream'
-			});
+			return explained(
+				uploadGroupBlob({
+					groupDid,
+					bytes: Array.from(new Uint8Array(await blob.arrayBuffer())),
+					mimeType: blob.type || 'application/octet-stream'
+				})
+			);
 		},
 		onSaved({ rkey, isNew }) {
 			const event = resolve('/(app)/p/[actor]/e/[rkey]', { actor: groupDid, rkey });

@@ -1,8 +1,13 @@
 import { error } from '@sveltejs/kit';
-import { browseGroups } from '#lib/groups/server/browse.js';
+import { groupAccess } from '#lib/groups/permissions-asked.js';
+import { holdsParticipate } from '#lib/groups/scopes.js';
+import { browseGroups, yourGroups } from '#lib/groups/server/browse.js';
+import { unfinishedGroups } from '#lib/groups/server/create.js';
 import { serverOrigin } from '#lib/groups/server/declared.js';
 import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
 import { groupSignInAvailable } from '#lib/groups/server/sign-in.js';
+import { callerSession } from '#lib/private-events/server/caller.js';
+import { spacesServer } from '#lib/private-events/server/enabled.js';
 
 const LINK_NOTICES = {
 	'not-here': 'That is not a group at this site’s group host.',
@@ -16,10 +21,16 @@ export async function load({ locals, url, setHeaders }) {
 	const asked = url.searchParams.get('server');
 	const server = serverOrigin(asked);
 	if (asked !== null && !server) error(404, 'Not found');
-	const { groups, cursor, declaredUnavailable, crowded } = await browseGroups(locals.did, {
-		cursor: url.searchParams.get('cursor'),
-		server
-	});
+	const canLink = Boolean(locals.did) && groupSignInAvailable();
+	// The person's own groups lead the whole list's first page.
+	const firstPage = !server && !url.searchParams.get('cursor');
+	const person = firstPage && locals.did ? await callerSession(locals.session ?? null) : null;
+	const [{ groups, cursor, declaredUnavailable, crowded }, unfinished, own] = await Promise.all([
+		browseGroups(locals.did, { cursor: url.searchParams.get('cursor'), server }),
+		canLink && locals.did ? unfinishedGroups(locals.did) : [],
+		person ? yourGroups(person) : null
+	]);
+	const access = person && !holdsParticipate(person.scope) ? groupAccess(url, person.did) : null;
 	const host = server ? new URL(server).host : null;
 	const link = url.searchParams.get('link');
 	return {
@@ -30,8 +41,16 @@ export async function load({ locals, url, setHeaders }) {
 		declaredUnavailable,
 		server: server && host ? { origin: server, host } : null,
 		crowded: crowded.map((entry) => ({ ...entry, host: new URL(entry.server).host })),
-		canLink: Boolean(locals.did) && groupSignInAvailable(),
+		canLink,
+		/** Groups the caller made here and has not linked yet. */
+		unfinished: unfinished.length,
 		signedIn: Boolean(locals.did),
+		you: locals.did,
+		/** The groups the caller is in, at this site's group host; null when not asked. */
+		yourGroups: own,
+		/** What the caller's own sign-in needs to list their groups and join others. */
+		access,
+		spacesServer: access === 'refused' ? spacesServer() : null,
 		notice:
 			link && Object.hasOwn(LINK_NOTICES, link)
 				? LINK_NOTICES[link as keyof typeof LINK_NOTICES]

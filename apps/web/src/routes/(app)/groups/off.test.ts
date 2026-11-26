@@ -20,6 +20,9 @@ import { load as list } from './+page.server';
 import { load as group } from './[actor]/+page.server';
 import { load as newEvent } from './[actor]/events/new/+page.server';
 import { load as editEvent } from './[actor]/events/[rkey]/edit/+page.server';
+import { load as settings } from './[actor]/settings/+page.server';
+import { load as members } from './[actor]/members/+page.server';
+import { actions as createActions, load as create } from './create/+page.server';
 import { load as layout } from '../+layout.server';
 
 const GROUP = 'did:plc:group';
@@ -49,7 +52,10 @@ describe('with groups off', () => {
 			['/groups', list],
 			[`/groups/${GROUP}`, group],
 			[`/groups/${GROUP}/events/new`, newEvent],
-			[`/groups/${GROUP}/events/a/edit`, editEvent]
+			[`/groups/${GROUP}/events/a/edit`, editEvent],
+			[`/groups/${GROUP}/settings`, settings],
+			[`/groups/${GROUP}/members`, members],
+			['/groups/create', create]
 		] as const) {
 			const { setHeaders, event } = request(path);
 			await expect((load as (e: never) => Promise<unknown>)(event)).rejects.toMatchObject({
@@ -57,6 +63,18 @@ describe('with groups off', () => {
 			});
 			expect(setHeaders, path).not.toHaveBeenCalled();
 		}
+	});
+
+	it('refuses to make a group, before reading the form', async () => {
+		const request = new Request('https://atmo.example/groups/create', {
+			method: 'POST',
+			body: new FormData()
+		});
+		const formData = vi.spyOn(request, 'formData');
+		await expect(
+			createActions.default({ request, locals: { did: 'did:plc:alice', session: null } } as never)
+		).rejects.toMatchObject({ status: 404 });
+		expect(formData).not.toHaveBeenCalled();
 	});
 
 	it("leaves groups out of every page's data", () => {

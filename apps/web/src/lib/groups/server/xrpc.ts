@@ -1,5 +1,6 @@
 // What groups add to lib/spaces' XRPC: a blob upload as the group, and telling a refused session
 // from an outage. The rest is lib/spaces'.
+import { TokenInvalidError, TokenRefreshError, TokenRevokedError } from '@atcute/oauth-node-client';
 import { GET_RECORD, isSpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { answerError, readXrpc, XrpcError, type XrpcHandle } from '#lib/spaces/server/xrpc.js';
 
@@ -31,6 +32,17 @@ function isCredentialRefused(e: unknown): boolean {
 /** The session was revoked or expired at the PDS, so only signing in again fixes it. */
 export function isAuthRefused(e: unknown): boolean {
 	return e instanceof XrpcError && e.status === 401 && !isCredentialRefused(e);
+}
+
+/** Only linking again fixes these: the PDS refused the session, or it can no longer be refreshed.
+ *  An outage at the group's PDS is not one of them. */
+export function isLinkBroken(e: unknown): boolean {
+	return (
+		isAuthRefused(e) ||
+		e instanceof TokenRefreshError ||
+		e instanceof TokenRevokedError ||
+		e instanceof TokenInvalidError
+	);
 }
 
 // `ScopeMissingError` is the reference PDS's name for a scope the session lacks. A group host

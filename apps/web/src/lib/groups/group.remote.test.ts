@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { error } from '@sveltejs/kit';
+import { TokenRefreshError } from '@atcute/oauth-node-client';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { XrpcError } from './server/xrpc';
 
@@ -12,7 +13,10 @@ const mocks = vi.hoisted(() => ({
 	unlistGroup: vi.fn(),
 	notifyIndex: vi.fn(),
 	unlinkGroup: vi.fn(),
-	handle: vi.fn()
+	handle: vi.fn(),
+	resolveGroup: vi.fn(),
+	saveSettings: vi.fn(),
+	finishSetup: vi.fn()
 }));
 vi.mock('$app/server', () => ({
 	command: (_schema: unknown, handler: unknown) =>
@@ -27,15 +31,24 @@ vi.mock('./server/group', () => ({
 	readGroupMeta: mocks.readGroupMeta,
 	listGroup: mocks.listGroup,
 	unlistGroup: mocks.unlistGroup,
-	notifyIndex: mocks.notifyIndex
+	notifyIndex: mocks.notifyIndex,
+	resolveGroup: mocks.resolveGroup
 }));
 vi.mock('./server/sign-in', () => ({ unlinkGroup: mocks.unlinkGroup }));
+vi.mock('./server/settings', async (importActual) => ({
+	parseGroupSettings: (await importActual<typeof import('./server/settings')>()).parseGroupSettings,
+	saveGroupSettings: mocks.saveSettings
+}));
+vi.mock('./server/create', () => ({ finishSetup: mocks.finishSetup }));
 
 import {
 	deleteGroupEvent,
+	finishGroupSetup,
 	putGroupEvent,
+	saveGroupSettings,
 	setGroupListed,
-	unlinkGroupSession
+	unlinkGroupSession,
+	uploadGroupBlob
 } from './group.remote';
 
 const GROUP = 'did:plc:group';
@@ -82,14 +95,51 @@ describe('group writes', () => {
 		);
 	});
 
-	it('report a refused write without the PDS wording', async () => {
-		mocks.handle.mockResolvedValue(
-			Response.json({ error: 'Forbidden', message: 'x' }, { status: 403 })
+	it.each([
+		['Forbidden', 'the role no longer writes as the group'],
+		['ScopeMissing', "the session's scope never held the write"],
+		['ScopeMissingError', 'a PDS says the scope is missing']
+	])('report a refusal (%s: %s) as a 403 with a reason, without the PDS wording', async (name) => {
+		mocks.handle.mockImplementation(async () =>
+			Response.json({ error: name, message: 'x' }, { status: 403 })
+		);
+		for (const write of [
+			() => putGroupEvent({ groupDid: GROUP, rkey: 'r', record: {} }),
+			() => deleteGroupEvent({ groupDid: GROUP, rkey: 'r' }),
+			() => uploadGroupBlob({ groupDid: GROUP, bytes: [1], mimeType: 'image/png' })
+		]) {
+			await expect(write()).rejects.toMatchObject({
+				status: 403,
+				body: { message: 'Your role in this group no longer allows that.' }
+			});
+		}
+		expect(mocks.notifyIndex).not.toHaveBeenCalled();
+	});
+
+	it('report a link the host no longer takes as a 403 that says to link again', async () => {
+		mocks.handle.mockResolvedValue(Response.json({ error: 'invalid_token' }, { status: 401 }));
+		await expect(putGroupEvent({ groupDid: GROUP, rkey: 'r', record: {} })).rejects.toMatchObject({
+			status: 403,
+			body: { message: expect.stringContaining('Link it again') }
+		});
+		mocks.handle.mockRejectedValue(new TokenRefreshError(GROUP, 'invalid_grant'));
+		await expect(deleteGroupEvent({ groupDid: GROUP, rkey: 'r' })).rejects.toMatchObject({
+			status: 403,
+			body: { message: expect.stringContaining('Link it again') }
+		});
+	});
+
+	it('report an outage as a 502, without the PDS wording', async () => {
+		mocks.handle.mockImplementation(async () =>
+			Response.json({ error: 'InternalServerError', message: 'x' }, { status: 500 })
 		);
 		await expect(putGroupEvent({ groupDid: GROUP, rkey: 'r', record: {} })).rejects.toMatchObject({
 			status: 502,
 			body: { message: 'Saving the event failed' }
 		});
+		await expect(
+			uploadGroupBlob({ groupDid: GROUP, bytes: [1], mimeType: 'image/png' })
+		).rejects.toMatchObject({ status: 502, body: { message: 'Upload failed' } });
 		expect(mocks.notifyIndex).not.toHaveBeenCalled();
 	});
 });
@@ -182,5 +232,84 @@ describe('unlink', () => {
 		mocks.requireStoredLink.mockImplementation(() => error(404, 'Group not found'));
 		await expect(unlinkGroupSession({ groupDid: GROUP })).rejects.toMatchObject({ status: 404 });
 		expect(mocks.unlinkGroup).not.toHaveBeenCalled();
+	});
+});
+
+describe('settings', () => {
+	const form = {
+		name: 'Night Riders',
+		description: '',
+		website: 'https://riders.example',
+		joinPolicy: 'open',
+		public: true,
+		listed: false
+	};
+
+	it("saves them as the group, on the caller's own link, keeping what the form showed", async () => {
+		mocks.resolveGroup.mockResolvedValue({
+			did: GROUP,
+			handle: 'riders.example',
+			pds: 'https://h'
+		});
+		expect(
+			await saveGroupSettings({ groupDid: GROUP, shownPublic: false, settings: form })
+		).toEqual({
+			ok: true
+		});
+		expect(mocks.requireGroupWriter).toHaveBeenCalledWith(GROUP, ALICE);
+		expect(mocks.saveSettings).toHaveBeenCalledWith(
+			{ did: GROUP, handle: mocks.handle },
+			{ did: GROUP, handle: 'riders.example', pds: 'https://h' },
+			{
+				name: 'Night Riders',
+				description: null,
+				website: 'https://riders.example/',
+				joinPolicy: 'open',
+				public: true,
+				listed: false
+			},
+			false
+		);
+	});
+
+	it('says what is wrong with a form it cannot take, and writes nothing', async () => {
+		await expect(
+			saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings: { ...form, name: ' ' } })
+		).rejects.toMatchObject({ status: 400, body: { message: expect.stringContaining('name') } });
+		expect(mocks.saveSettings).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		[new XrpcError('com.atproto.space.updateSpace', 403, 'NotAuthorized'), 403, 'role'],
+		[new XrpcError('com.atproto.space.putRecord', 403, 'ScopeMissing'), 403, 'role'],
+		[new XrpcError('com.atproto.space.getDelegationToken', 401, 'invalid_token'), 403, 'Link'],
+		[new XrpcError('com.atproto.space.putRecord', 400, 'InvalidRequest'), 400, 'did not take']
+	])('answers %s with a %i that says why', async (refusal, status, words) => {
+		mocks.saveSettings.mockRejectedValue(refusal);
+		await expect(
+			saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings: form })
+		).rejects.toMatchObject({ status, body: { message: expect.stringContaining(words) } });
+	});
+
+	it('is the same 404 without a link', async () => {
+		mocks.requireGroupWriter.mockImplementation(() => error(404, 'Group not found'));
+		await expect(
+			saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings: form })
+		).rejects.toMatchObject({ status: 404 });
+		expect(mocks.saveSettings).not.toHaveBeenCalled();
+	});
+});
+
+describe('finishing a group made here', () => {
+	it("finishes it as the group, on the caller's own link", async () => {
+		await finishGroupSetup({ groupDid: GROUP });
+		expect(mocks.finishSetup).toHaveBeenCalledWith({ did: GROUP, handle: mocks.handle }, ALICE);
+	});
+
+	it('answers a refusal with a 403 that says why', async () => {
+		mocks.finishSetup.mockRejectedValue(
+			new XrpcError('com.atproto.repo.deleteRecord', 403, 'Forbidden')
+		);
+		await expect(finishGroupSetup({ groupDid: GROUP })).rejects.toMatchObject({ status: 403 });
 	});
 });

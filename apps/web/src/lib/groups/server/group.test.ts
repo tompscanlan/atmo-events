@@ -10,11 +10,17 @@ const mocks = vi.hoisted(() => ({
 	post: vi.fn(),
 	resolve: vi.fn(),
 	crowdedServers: vi.fn(),
+	cachedHandles: vi.fn(),
+	ensureInit: vi.fn(),
 	/** Calls to other servers: the group host's space methods. */
 	networkFetch: vi.fn<typeof fetch>()
 }));
-vi.mock('./declared', () => ({ crowdedServers: mocks.crowdedServers }));
+vi.mock('./declared', () => ({
+	crowdedServers: mocks.crowdedServers,
+	cachedHandles: mocks.cachedHandles
+}));
 vi.mock('#lib/contrail/index.js', () => ({
+	ensureInit: mocks.ensureInit,
 	getServerClient: () => ({ get: mocks.get, post: mocks.post })
 }));
 vi.mock('#lib/atproto/network.js', () => ({
@@ -30,12 +36,14 @@ vi.mock('@svelte-atproto/oauth/network', () => ({
 
 import {
 	atGroupHost,
+	forgetHeldAtGroupHost,
 	heldAtGroupHost,
 	isDeclared,
 	listCrowdedServers,
 	listDeclaredGroups,
 	listGroup,
 	parseGroupProfile,
+	readCachedHandles,
 	readCachedProfiles,
 	readGroupMeta,
 	resolveGroup,
@@ -185,6 +193,31 @@ describe('the declaration index', () => {
 		mocks.crowdedServers.mockResolvedValue([]);
 		await listCrowdedServers();
 		expect(mocks.crowdedServers.mock.calls[0][1]).toBeNull();
+	});
+
+	it("reads the index's tables only once contrail has made them, as on a fresh database", async () => {
+		// contrail makes its tables, the declarations' among them, when the Worker first uses it.
+		let made = false;
+		let make: () => void = () => {};
+		mocks.ensureInit.mockReturnValue(
+			new Promise<void>((resolve) => (make = resolve)).then(() => {
+				made = true;
+			})
+		);
+		const table = () =>
+			made ? Promise.resolve([]) : Promise.reject(new Error('no such table: records_declaration'));
+		mocks.crowdedServers.mockImplementation(table);
+		mocks.cachedHandles.mockImplementation(() =>
+			made ? Promise.resolve(new Map()) : Promise.reject(new Error('no such table: identities'))
+		);
+		const crowded = listCrowdedServers();
+		const handles = readCachedHandles([GROUP]);
+		await vi.waitFor(() => expect(mocks.ensureInit).toHaveBeenCalledTimes(2));
+		expect(mocks.crowdedServers).not.toHaveBeenCalled();
+		expect(mocks.cachedHandles).not.toHaveBeenCalled();
+		make();
+		expect(await crowded).toEqual([]);
+		expect(await handles).toEqual(new Map());
 	});
 
 	it("names the crowded servers, with this site's group host left out", async () => {
@@ -415,6 +448,17 @@ describe('listing', () => {
 		});
 	});
 
+	it('forgets what the group host was last said to hold, so the group is counted at once', async () => {
+		hostHolds([['did:plc:other', true]]);
+		expect(await heldAtGroupHost()).toEqual(['did:plc:other']);
+		await listGroup(pds({}), GROUP);
+		hostHolds([
+			['did:plc:other', true],
+			[GROUP, true]
+		]);
+		expect(await heldAtGroupHost()).toEqual(['did:plc:other', GROUP]);
+	});
+
 	it('deletes the declaration to unlist, then tells the index', async () => {
 		const handle = pds({});
 		await unlistGroup(handle, GROUP);
@@ -511,6 +555,21 @@ describe('heldAtGroupHost', () => {
 	it('asks the host once for two lists that want it at the same time', async () => {
 		expect(await Promise.all([heldAtGroupHost(), heldAtGroupHost()])).toEqual([[GROUP], [GROUP]]);
 		expect(hostFetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('keeps the cached answer otherwise, and caches no read that began before it was forgotten', async () => {
+		let answer: (res: Response) => void = () => {};
+		hostFetch.mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+		const before = heldAtGroupHost();
+		await vi.waitFor(() => expect(hostFetch).toHaveBeenCalled());
+		await forgetHeldAtGroupHost();
+		answer(Response.json({ repos: [{ did: 'did:plc:other', active: true }] }));
+		expect(await before).toEqual(['did:plc:other']);
+		expect(kv.keys()).toEqual([]);
+		hostHolds([[GROUP, true]]);
+		expect(await heldAtGroupHost()).toEqual([GROUP]);
+		hostHolds([['did:plc:later', true]]);
+		expect(await heldAtGroupHost()).toEqual([GROUP]);
 	});
 
 	it('is null with no group host, or when the host does not answer', async () => {

@@ -13,6 +13,8 @@ import { oauthOrigin } from './origin';
 import { BETA_SCOPE } from '../../private-events/beta';
 import { HOST_SCOPES } from '../../private-events/scopes';
 import { privateEventsEnabled } from '../../private-events/server/enabled';
+import { GROUP_PERSON_SCOPES } from '../../groups/scopes';
+import { groupsEnabled } from '../../groups/server/enabled';
 
 const pending = new Map<string, Promise<unknown>>();
 
@@ -42,7 +44,11 @@ export function getAuth(): AtprotoAuth {
 		clientAssertionKey: env.CLIENT_ASSERTION_KEY,
 		// Declared when a deployment offers them; requested only when someone turns the beta on in
 		// Settings, or first hosts or opens one.
-		scope: privateEventsEnabled() ? [...scopes, ...HOST_SCOPES, BETA_SCOPE] : scopes,
+		scope: [
+			...(privateEventsEnabled() ? [...scopes, ...HOST_SCOPES, BETA_SCOPE] : scopes),
+			// Likewise groups' (making one at the group host), requested when someone sets out to.
+			...(groupsEnabled() ? GROUP_PERSON_SCOPES : [])
+		],
 		signupPDS: ALLOW_SIGNUP
 			? (PUBLIC_SIGNUP_PDS_URL ?? signUpPDS[dev ? 'development' : 'production'])
 			: undefined,

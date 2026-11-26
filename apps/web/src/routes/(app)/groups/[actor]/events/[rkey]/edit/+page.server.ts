@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers';
 import { error } from '@sveltejs/kit';
 import { flattenEventRecord, getEventRecordFromContrail } from '#lib/contrail.js';
 import { getServerClient } from '#lib/contrail/index.js';
-import { GROUP_NOT_FOUND, groupView } from '#lib/groups/server/context.js';
+import { GROUP_NOT_FOUND, groupView, NO_POSTING } from '#lib/groups/server/context.js';
 import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
 
 export async function load({ params, locals, setHeaders }) {
@@ -10,6 +10,7 @@ export async function load({ params, locals, setHeaders }) {
 	setHeaders({ 'cache-control': 'no-store' });
 	const group = await groupView(params.actor, locals.did);
 	if (!group.linked) error(404, GROUP_NOT_FOUND);
+	if (!group.linked.can.post) error(403, NO_POSTING);
 
 	const record = await getEventRecordFromContrail(getServerClient(env.DB), {
 		did: group.did,

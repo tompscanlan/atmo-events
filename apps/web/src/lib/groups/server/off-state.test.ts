@@ -7,12 +7,33 @@ const { page } = vi.hoisted(() => ({
 	page: { status: 404, error: null as { message: string } | null }
 }));
 vi.mock('$app/state', () => ({ page }));
+vi.mock('$app/server', () => ({
+	command: (_schema: unknown, handler: unknown) =>
+		Object.assign(handler as object, { __: { type: 'command' } }),
+	getRequestEvent: () => ({ locals: { did: 'did:plc:alice' } })
+}));
 vi.mock('./browse', () => ({ browseGroups: vi.fn() }));
 vi.mock('./group', () => ({ resolveGroup: vi.fn(), isDeclared: vi.fn() }));
 vi.mock('./sign-in', () => ({ groupSession: vi.fn(), hasGroupSession: vi.fn() }));
 
 import ErrorPage from '../../../routes/+error.svelte';
 import { load as listGroups } from '../../../routes/(app)/groups/+page.server';
+import {
+	actions as createActions,
+	load as createPage
+} from '../../../routes/(app)/groups/create/+page.server';
+import { load as settingsPage } from '../../../routes/(app)/groups/[actor]/settings/+page.server';
+import { load as membersPage } from '../../../routes/(app)/groups/[actor]/members/+page.server';
+import { finishGroupSetup, saveGroupSettings } from '../group.remote';
+import {
+	approveRequest,
+	cancelJoin,
+	changeRole,
+	denyRequest,
+	joinGroup,
+	leave,
+	removeFromGroup
+} from '../members.remote';
 import { groupView, requireGroupWriter, requireStoredLink } from './context';
 
 const GROUP = 'did:plc:group';
@@ -59,5 +80,63 @@ describe('with groups off', () => {
 		const expected = unknownAddress();
 		expect(await shown(() => requireGroupWriter(GROUP, ALICE))).toBe(expected);
 		expect(await shown(() => requireStoredLink(GROUP, ALICE))).toBe(expected);
+	});
+
+	it("refuses a person's join, cancel and leave with the same 404", async () => {
+		const expected = unknownAddress();
+		expect(await shown(() => joinGroup({ groupDid: GROUP, message: 'hi' }))).toBe(expected);
+		expect(await shown(() => cancelJoin({ groupDid: GROUP }))).toBe(expected);
+		expect(await shown(() => leave({ groupDid: GROUP }))).toBe(expected);
+	});
+
+	it("refuses an admin's admit, deny, role change and removal with the same 404", async () => {
+		const expected = unknownAddress();
+		const member = { groupDid: GROUP, did: 'did:plc:bob' };
+		expect(await shown(() => approveRequest(member))).toBe(expected);
+		expect(await shown(() => denyRequest(member))).toBe(expected);
+		expect(await shown(() => changeRole({ ...member, admin: true }))).toBe(expected);
+		expect(await shown(() => removeFromGroup(member))).toBe(expected);
+	});
+
+	it('shows the members page as an unknown address', async () => {
+		const request = {
+			locals: { did: ALICE, session: null },
+			url: new URL(`https://atmo.example/groups/${GROUP}/members`),
+			params: { actor: GROUP },
+			setHeaders: vi.fn()
+		} as never;
+		expect(await shown(() => membersPage(request))).toBe(unknownAddress());
+	});
+
+	it('shows making a group and the settings as unknown addresses, and saves nothing', async () => {
+		const expected = unknownAddress();
+		const request = {
+			locals: { did: ALICE, session: null },
+			url: new URL('https://atmo.example/groups/create'),
+			params: { actor: GROUP },
+			setHeaders: vi.fn()
+		} as never;
+		expect(await shown(() => createPage(request))).toBe(expected);
+		expect(await shown(() => settingsPage(request))).toBe(expected);
+		const post = {
+			request: new Request('https://atmo.example/groups/create', {
+				method: 'POST',
+				body: new FormData()
+			}),
+			locals: { did: ALICE, session: null }
+		} as never;
+		expect(await shown(() => createActions.default(post))).toBe(expected);
+		const settings = {
+			name: 'x',
+			description: '',
+			website: '',
+			joinPolicy: 'open',
+			public: true,
+			listed: true
+		};
+		expect(
+			await shown(() => saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings }))
+		).toBe(expected);
+		expect(await shown(() => finishGroupSetup({ groupDid: GROUP }))).toBe(expected);
 	});
 });
