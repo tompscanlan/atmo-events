@@ -239,12 +239,18 @@ export async function finishSetup(writer: GroupWriter, personDid: string): Promi
 }
 
 /** After a link: finishes a group the person made here, if it is one. 'created' when it was, and
- *  is done; 'unfinished' when it was and is not yet; null for any other group. */
+ *  is done; 'unfinished' when it was and is not yet; null for any other group, and when the note
+ *  could not be read: the link worked, and a note still there shows on the group's page. */
 export async function finishCreatedGroup(
 	groupDid: string,
 	personDid: string
 ): Promise<'created' | 'unfinished' | null> {
-	if (!(await unfinishedGroup(personDid, groupDid))) return null;
+	try {
+		if (!(await unfinishedGroup(personDid, groupDid))) return null;
+	} catch (e) {
+		console.warn(`[groups] whether ${groupDid} was made here could not be read: ${errorKind(e)}`);
+		return null;
+	}
 	try {
 		const session = await groupSession(groupDid, personDid);
 		if (!session) return 'unfinished';

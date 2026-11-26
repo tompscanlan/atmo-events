@@ -308,6 +308,16 @@ describe('a group made here, until its first link', () => {
 		expect(await unfinishedGroup(ALICE, GROUP)).toBeNull();
 	});
 
+	it('leaves a link that worked as linked when the note cannot be read', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		await rememberUnfinished(ALICE, made);
+		vi.spyOn(kv, 'get').mockRejectedValueOnce(new Error('KV down'));
+		expect(await finishCreatedGroup(GROUP, ALICE)).toBeNull();
+		expect(mocks.groupSession).not.toHaveBeenCalled();
+		// The note stays, for the group's page to offer finishing.
+		expect(await unfinishedGroup(ALICE, GROUP)).toEqual(made);
+	});
+
 	it('is nothing to finish for a group linked any other way', async () => {
 		expect(await finishCreatedGroup(GROUP, ALICE)).toBeNull();
 		expect(mocks.groupSession).not.toHaveBeenCalled();
