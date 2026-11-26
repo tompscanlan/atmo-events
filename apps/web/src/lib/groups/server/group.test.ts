@@ -30,6 +30,7 @@ vi.mock('@svelte-atproto/oauth/network', () => ({
 
 import {
 	atGroupHost,
+	forgetHeldAtGroupHost,
 	heldAtGroupHost,
 	isDeclared,
 	listCrowdedServers,
@@ -415,6 +416,17 @@ describe('listing', () => {
 		});
 	});
 
+	it('forgets what the group host was last said to hold, so the group is counted at once', async () => {
+		hostHolds([['did:plc:other', true]]);
+		expect(await heldAtGroupHost()).toEqual(['did:plc:other']);
+		await listGroup(pds({}), GROUP);
+		hostHolds([
+			['did:plc:other', true],
+			[GROUP, true]
+		]);
+		expect(await heldAtGroupHost()).toEqual(['did:plc:other', GROUP]);
+	});
+
 	it('deletes the declaration to unlist, then tells the index', async () => {
 		const handle = pds({});
 		await unlistGroup(handle, GROUP);
@@ -511,6 +523,21 @@ describe('heldAtGroupHost', () => {
 	it('asks the host once for two lists that want it at the same time', async () => {
 		expect(await Promise.all([heldAtGroupHost(), heldAtGroupHost()])).toEqual([[GROUP], [GROUP]]);
 		expect(hostFetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('keeps the cached answer otherwise, and caches no read that began before it was forgotten', async () => {
+		let answer: (res: Response) => void = () => {};
+		hostFetch.mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+		const before = heldAtGroupHost();
+		await vi.waitFor(() => expect(hostFetch).toHaveBeenCalled());
+		await forgetHeldAtGroupHost();
+		answer(Response.json({ repos: [{ did: 'did:plc:other', active: true }] }));
+		expect(await before).toEqual(['did:plc:other']);
+		expect(kv.keys()).toEqual([]);
+		hostHolds([[GROUP, true]]);
+		expect(await heldAtGroupHost()).toEqual([GROUP]);
+		hostHolds([['did:plc:later', true]]);
+		expect(await heldAtGroupHost()).toEqual([GROUP]);
 	});
 
 	it('is null with no group host, or when the host does not answer', async () => {

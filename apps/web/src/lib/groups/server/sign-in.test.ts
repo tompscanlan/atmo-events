@@ -226,6 +226,21 @@ describe('finishGroupLink', () => {
 		expect(await finishGroupLink(params('s1'), ALICE)).toEqual({ ok: true, groupDid: GROUP });
 	});
 
+	it('forgets what the group host was last said to hold, so the group just linked is counted at once', async () => {
+		const held = JSON.stringify({ origin: 'https://host.example', dids: [] });
+		await sessions.put('groups:held-at-host', held);
+		await storedState('s1', { groupDid: GROUP, by: ALICE });
+		await startGroupLink(GROUP, ALICE);
+		latest().client.callback.mockRejectedValue(new Error('access_denied'));
+		await finishGroupLink(params('s1'), ALICE);
+		expect(await sessions.get('groups:held-at-host', 'text')).toBe(held);
+
+		await storedState('s2', { groupDid: GROUP, by: ALICE });
+		latest().client.callback.mockResolvedValue({ session: { did: GROUP }, state: null });
+		expect(await finishGroupLink(params('s2'), ALICE)).toEqual({ ok: true, groupDid: GROUP });
+		expect(await sessions.get('groups:held-at-host', 'text')).toBeNull();
+	});
+
 	it('notes what the link was approved for, so a link from before the ask grew can be told', async () => {
 		expect(await linkAskedCurrentScope(GROUP, ALICE)).toBe(false);
 		await storedState('s1', { groupDid: GROUP, by: ALICE });

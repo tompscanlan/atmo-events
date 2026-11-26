@@ -105,10 +105,15 @@ export async function heldAtGroupHost(): Promise<string[] | null> {
 }
 
 let heldReading: Promise<string[] | null> | null = null;
+/** Counts the times the answer was forgotten here, so a read that began before is not cached. */
+let heldForgotten = 0;
 
-/** After the host makes a group, so the list counts the new group as at the host at once rather
- *  than after the cached answer expires. */
+/** After this site makes a group at the host, links one or lists one, so the list counts it as at
+ *  the host at once rather than after the cached answer expires. A read already under way is not
+ *  cached, since it may have begun before the group was there. */
 export async function forgetHeldAtGroupHost(): Promise<void> {
+	heldForgotten++;
+	heldReading = null;
 	await env.OAUTH_SESSIONS?.delete(HELD_KEY).catch((e) => {
 		console.warn('[groups] what the group host holds could not be forgotten:', e);
 	});
@@ -116,6 +121,8 @@ export async function forgetHeldAtGroupHost(): Promise<void> {
 
 async function readHeld(origin: string): Promise<string[] | null> {
 	const kv = env.OAUTH_SESSIONS;
+	const forgotten = heldForgotten;
+	const current = () => forgotten === heldForgotten;
 	try {
 		const signal = AbortSignal.timeout(HELD_TIME_LIMIT_MS);
 		const dids: string[] = [];
@@ -136,15 +143,19 @@ async function readHeld(origin: string): Promise<string[] | null> {
 			cursor = typeof body.cursor === 'string' && body.cursor ? body.cursor : null;
 			if (!cursor) break;
 		}
-		await kv
-			?.put(HELD_KEY, JSON.stringify({ origin, dids }), { expirationTtl: HELD_TTL_SECONDS })
-			.catch((e) => console.warn('[groups] what the group host holds was not cached:', e));
+		if (current()) {
+			await kv
+				?.put(HELD_KEY, JSON.stringify({ origin, dids }), { expirationTtl: HELD_TTL_SECONDS })
+				.catch((e) => console.warn('[groups] what the group host holds was not cached:', e));
+		}
 		return dids;
 	} catch (e) {
 		console.warn('[groups] the group host did not say which groups it holds:', e);
-		await kv
-			?.put(HELD_KEY, JSON.stringify({ origin }), { expirationTtl: HELD_FAILURE_TTL_SECONDS })
-			.catch(() => {});
+		if (current()) {
+			await kv
+				?.put(HELD_KEY, JSON.stringify({ origin }), { expirationTtl: HELD_FAILURE_TTL_SECONDS })
+				.catch(() => {});
+		}
 		return null;
 	}
 }
@@ -304,6 +315,7 @@ export async function listGroup(handle: XrpcHandle, groupDid: string): Promise<v
 		}
 	});
 	await notifyIndex(declarationUri(groupDid));
+	await forgetHeldAtGroupHost();
 }
 
 /** Deletes the declaration, the group host's own included, which it writes again only the next

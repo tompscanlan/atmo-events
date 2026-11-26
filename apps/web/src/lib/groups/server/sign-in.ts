@@ -22,6 +22,7 @@ import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 import { GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION, META_SPACE_TYPE } from '../ids';
 import { GROUP_SETTINGS_SCOPES, ROSTER_SCOPES } from '../scopes';
 import { groupsEnabled } from './enabled';
+import { forgetHeldAtGroupHost } from './group';
 import { listKeys, prefixedKV } from './kv';
 import type { XrpcHandle } from './xrpc';
 
@@ -174,6 +175,8 @@ export async function finishGroupLink(
 		};
 	}
 	await env.OAUTH_SESSIONS.put(askedKey(link.by, link.groupDid), GROUP_SESSION_SCOPE);
+	// A group just linked may be one the cached answer from its host does not hold yet.
+	await forgetHeldAtGroupHost();
 	return { ok: true, groupDid: link.groupDid };
 }
 
