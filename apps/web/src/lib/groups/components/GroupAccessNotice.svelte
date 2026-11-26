@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Button } from '@atmo-dev/kit';
 	import { requestPermissions } from '@svelte-atproto/oauth/client';
-	import { CREATE_GROUP_SCOPE, PARTICIPATE_SCOPES } from '../scopes';
+	import { CREATE_GROUP_SCOPE, JOIN_SCOPES } from '../scopes';
 	import { askedReturnTo, type GroupAccess } from '../permissions-asked';
 
 	// Shaped on private events' notice (PrivateEventAccessNotice.svelte), for what a person's own
@@ -17,7 +17,8 @@
 		access: GroupAccess;
 		/** The signed-in person's DID, in the address the ask comes back to. */
 		did: string;
-		/** `participate`: joining groups, and reading those they are in, with their own access. */
+		/** `participate`: joining groups, and reading those they are in, members-only events too,
+		 *  with their own access. */
 		kind?: 'create' | 'participate';
 		/** For `participate`: what granting it lets the person do on this page. */
 		purpose?: string | null;
@@ -35,7 +36,7 @@
 		failure = null;
 		try {
 			const back = location.pathname + location.search;
-			const scopes = kind === 'create' ? [CREATE_GROUP_SCOPE] : [...PARTICIPATE_SCOPES];
+			const scopes = kind === 'create' ? [CREATE_GROUP_SCOPE] : [...JOIN_SCOPES];
 			await requestPermissions(scopes, { returnTo: askedReturnTo(back, did) });
 		} catch {
 			failure = 'That did not work. Try again.';

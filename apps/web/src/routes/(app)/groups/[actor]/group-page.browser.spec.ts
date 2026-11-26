@@ -18,6 +18,7 @@ vi.mock('#lib/groups/members.remote.js', () => member);
 vi.mock('@svelte-atproto/oauth/client', () => oauth);
 vi.mock('#lib/contrail/events.remote.js', () => ({ loadMoreEvents: vi.fn() }));
 
+import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 import GroupPage from './+page.svelte';
 
 const GROUP = 'did:plc:group';
@@ -252,7 +253,8 @@ describe("a person's own membership", () => {
 			.poll(() => oauth.requestPermissions.mock.calls[0]?.[0])
 			.toEqual([
 				'include:org.atgrp.authParticipate',
-				'rpc:org.atgrp.internal.getActorGroups?aud=*'
+				'rpc:org.atgrp.internal.getActorGroups?aud=*',
+				GUEST_SCOPE
 			]);
 	});
 

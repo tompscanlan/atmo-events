@@ -20,7 +20,7 @@ import { oauthRequestLock } from '#lib/atproto/server/oauth.js';
 import { oauthOrigin } from '#lib/atproto/server/origin.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 import { GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION, META_SPACE_TYPE } from '../ids';
-import { GROUP_SETTINGS_SCOPES, ROSTER_SCOPES } from '../scopes';
+import { GROUP_SETTINGS_SCOPES, MEMBERS_ONLY_SCOPES, ROSTER_SCOPES } from '../scopes';
 import { groupsEnabled } from './enabled';
 import { forgetHeldAtGroupHost } from './group';
 import { listKeys, prefixedKV } from './kv';
@@ -39,15 +39,16 @@ const STATE_PREFIX = 'group:state:';
 const STATE_TTL_SECONDS = 600;
 
 /** The host keeps or drops each scope whole, so the meta read is its own scope and
- *  survives for a member whose roles grant no writes, and each of the settings' and the members
- *  page's writes is its own too. */
+ *  survives for a member whose roles grant no writes, and each of the settings', the members
+ *  page's and members-only events' writes is its own too. */
 export const GROUP_SESSION_SCOPE = [
 	'atproto',
 	`space:${META_SPACE_TYPE}?authority=self&action=read`,
 	scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
 	scope.blob({ accept: ['image/*'] }),
 	...GROUP_SETTINGS_SCOPES,
-	...ROSTER_SCOPES
+	...ROSTER_SCOPES,
+	...MEMBERS_ONLY_SCOPES
 ].join(' ');
 
 /** A loopback client cannot have a second client_id, and only one group host is served. */

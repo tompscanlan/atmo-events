@@ -11,6 +11,7 @@ import {
 	holdsParticipate,
 	grantsRoster,
 	holdsRpc,
+	MEMBERS_ONLY_SCOPES,
 	ROSTER_SCOPES,
 	YOUR_GROUPS_SCOPE
 } from './scopes';
@@ -24,19 +25,31 @@ const SETTINGS = GROUP_SETTINGS_SCOPES.map((s) =>
 );
 /** The members page's scopes, as the host gives them back. */
 const ROSTER = ROSTER_SCOPES.map((s) => s.replace('authority=self', `authority=${GROUP}`));
+/** Members-only events' scopes, as the host gives them back once the calendar space is there. */
+const MEMBERS_ONLY = MEMBERS_ONLY_SCOPES.map((s) =>
+	s.replace('authority=self', `authority=${GROUP}`)
+);
 
 describe('what a group session may do, by the scope its host granted', () => {
 	it("lets an admin's session, which keeps every grant asked, post, list, change settings and manage members", () => {
-		const scope = ['atproto', META_READ, REPO, 'blob?accept=image/*', ...SETTINGS, ...ROSTER].join(
-			' '
-		);
+		const scope = [
+			'atproto',
+			META_READ,
+			REPO,
+			'blob?accept=image/*',
+			...SETTINGS,
+			...ROSTER,
+			...MEMBERS_ONLY
+		].join(' ');
 		expect(groupAbilities(scope, GROUP)).toEqual({
 			post: true,
 			list: true,
 			settings: true,
 			admit: true,
 			assign: true,
-			remove: true
+			remove: true,
+			turnOnMembersOnly: true,
+			membersOnly: true
 		});
 	});
 
@@ -47,7 +60,9 @@ describe('what a group session may do, by the scope its host granted', () => {
 			settings: false,
 			admit: false,
 			assign: false,
-			remove: false
+			remove: false,
+			turnOnMembersOnly: false,
+			membersOnly: false
 		});
 	});
 
@@ -64,7 +79,9 @@ describe('what a group session may do, by the scope its host granted', () => {
 			settings: true,
 			admit: false,
 			assign: false,
-			remove: false
+			remove: false,
+			turnOnMembersOnly: false,
+			membersOnly: false
 		});
 	});
 

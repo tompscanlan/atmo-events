@@ -130,7 +130,7 @@ describe('the group client', () => {
 		}
 	});
 
-	it("asks for the meta read as its own scope, writes declarations and events, the settings' records and policy, and the members page's writes and calls", () => {
+	it("asks for the meta read as its own scope, writes declarations and events, the settings' records and policy, the members page's writes and calls, and members-only events'", () => {
 		expect(GROUP_SESSION_SCOPE.split(' ')).toEqual([
 			'atproto',
 			'space:org.atgrp.meta?authority=self&action=read',
@@ -143,7 +143,9 @@ describe('the group client', () => {
 			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.membership&action=read&action=update',
 			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.membership&action=read&action=delete',
 			'rpc:org.atgrp.listJoinRequests?aud=*',
-			'rpc:org.atgrp.denyJoinRequest?aud=*'
+			'rpc:org.atgrp.denyJoinRequest?aud=*',
+			'space:community.lexicon.calendar.collection?authority=self&skey=self&manage=create',
+			'space:community.lexicon.calendar.collection?authority=self&skey=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
 		]);
 	});
 
