@@ -24,7 +24,15 @@ import {
 } from '../../../routes/(app)/groups/create/+page.server';
 import { load as settingsPage } from '../../../routes/(app)/groups/[actor]/settings/+page.server';
 import { load as membersPage } from '../../../routes/(app)/groups/[actor]/members/+page.server';
-import { finishGroupSetup, saveGroupSettings } from '../group.remote';
+import {
+	deleteGroupEvent,
+	finishGroupSetup,
+	putGroupEvent,
+	saveGroupSettings,
+	turnOnMembersOnlyEvents
+} from '../group.remote';
+import { cancelMembersOnlyRsvp, rsvpToMembersOnlyEvent } from '../members-only.remote';
+import { load as membersOnlyEventPage } from '../../../routes/(app)/groups/[actor]/events/[rkey]/+page.server';
 import {
 	approveRequest,
 	cancelJoin,
@@ -138,5 +146,26 @@ describe('with groups off', () => {
 			await shown(() => saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings }))
 		).toBe(expected);
 		expect(await shown(() => finishGroupSetup({ groupDid: GROUP }))).toBe(expected);
+	});
+
+	it('shows a members-only event as an unknown address, and turns on, posts and RSVPs nothing', async () => {
+		const expected = unknownAddress();
+		const request = {
+			locals: { did: ALICE, session: null },
+			url: new URL(`https://atmo.example/groups/${GROUP}/events/r`),
+			params: { actor: GROUP, rkey: 'r' },
+			setHeaders: vi.fn()
+		} as never;
+		expect(await shown(() => membersOnlyEventPage(request))).toBe(expected);
+		expect(await shown(() => turnOnMembersOnlyEvents({ groupDid: GROUP }))).toBe(expected);
+		const members = { groupDid: GROUP, rkey: 'r', placement: 'members' as const };
+		expect(await shown(() => putGroupEvent({ ...members, record: {} }))).toBe(expected);
+		expect(await shown(() => deleteGroupEvent(members))).toBe(expected);
+		expect(
+			await shown(() =>
+				rsvpToMembersOnlyEvent({ groupDid: GROUP, rkey: 'r', status: 'going', cid: null })
+			)
+		).toBe(expected);
+		expect(await shown(() => cancelMembersOnlyRsvp({ groupDid: GROUP, rkey: 'r' }))).toBe(expected);
 	});
 });

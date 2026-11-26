@@ -1,9 +1,16 @@
 import { error, isHttpError } from '@sveltejs/kit';
 import { command, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
+import { EVENT_PLACEMENTS } from './event-placement';
 import { GROUP_EVENT_COLLECTION } from './ids';
 import { requireGroupWriter, requireStoredLink } from './server/context';
 import { finishSetup } from './server/create';
+import {
+	deleteMembersOnlyEvent,
+	GroupEventRefused,
+	putMembersOnlyEvent,
+	turnOnMembersOnly
+} from './server/group-events';
 import { listGroup, notifyIndex, readGroupMeta, resolveGroup, unlistGroup } from './server/group';
 import { parseGroupSettings, saveGroupSettings as saveSettings } from './server/settings';
 import { unlinkGroup } from './server/sign-in';
@@ -11,6 +18,8 @@ import { isLinkBroken, isRoleRefused, xrpc, xrpcBlob, XrpcError } from './server
 
 const didSchema = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,2048}$/));
 const rkeySchema = v.pipe(v.string(), v.regex(/^[a-zA-Z0-9._:~-]{1,512}$/));
+/** Public unless the page says members only. */
+const placementSchema = v.optional(v.picklist(EVENT_PLACEMENTS), 'everyone');
 
 function callerDid(): string | null {
 	return getRequestEvent().locals.did;
@@ -121,10 +130,30 @@ export const unlinkGroupSession = command(v.object({ groupDid: didSchema }), asy
 	return { ok: true };
 });
 
+/** A refusal of a members-only write, in its own words, as a 409; anything else as `refusedOr`. */
+function membersOnlyRefusedOr(outage: string) {
+	const refused = refusedOr(outage);
+	return (e: unknown): never => {
+		if (e instanceof GroupEventRefused) error(409, e.message);
+		return refused(e);
+	};
+}
+
 export const putGroupEvent = command(
-	v.object({ groupDid: didSchema, rkey: rkeySchema, record: v.record(v.string(), v.unknown()) }),
-	async ({ groupDid, rkey, record }) => {
+	v.object({
+		groupDid: didSchema,
+		rkey: rkeySchema,
+		record: v.record(v.string(), v.unknown()),
+		placement: placementSchema
+	}),
+	async ({ groupDid, rkey, record, placement }) => {
 		const writer = await requireGroupWriter(groupDid, callerDid());
+		if (placement === 'members') {
+			// Into the group's calendar space: never the public repo, and nothing to the index.
+			return putMembersOnlyEvent(writer, { rkey, record }).catch(
+				membersOnlyRefusedOr('Saving the event failed')
+			);
+		}
 		const result = await xrpc(writer.handle, 'com.atproto.repo.putRecord', {
 			body: { repo: groupDid, collection: GROUP_EVENT_COLLECTION, rkey, record }
 		}).catch(refusedOr('Saving the event failed'));
@@ -135,13 +164,33 @@ export const putGroupEvent = command(
 );
 
 export const deleteGroupEvent = command(
-	v.object({ groupDid: didSchema, rkey: rkeySchema }),
-	async ({ groupDid, rkey }) => {
+	v.object({ groupDid: didSchema, rkey: rkeySchema, placement: placementSchema }),
+	async ({ groupDid, rkey, placement }) => {
 		const writer = await requireGroupWriter(groupDid, callerDid());
+		if (placement === 'members') {
+			await deleteMembersOnlyEvent(writer, rkey).catch(refusedOr('Deleting the event failed'));
+			return { ok: true };
+		}
 		await xrpc(writer.handle, 'com.atproto.repo.deleteRecord', {
 			body: { repo: groupDid, collection: GROUP_EVENT_COLLECTION, rkey }
 		}).catch(refusedOr('Deleting the event failed'));
 		await notifyIndex(`at://${groupDid}/${GROUP_EVENT_COLLECTION}/${rkey}`);
+		return { ok: true };
+	}
+);
+
+/** Makes the group's calendar space. The link then needs approving once more before it may post
+ *  there: the host gives a link no scope for a space that was not there at its approval. */
+export const turnOnMembersOnlyEvents = command(
+	v.object({ groupDid: didSchema }),
+	async ({ groupDid }) => {
+		const writer = await requireGroupWriter(groupDid, callerDid());
+		await turnOnMembersOnly(writer).catch((e) => {
+			if (e instanceof XrpcError && e.status === 400) {
+				error(409, "The group host didn't take the group's calendar. Nothing was turned on.");
+			}
+			return refusedOr("Members-only events couldn't be turned on")(e);
+		});
 		return { ok: true };
 	}
 );
