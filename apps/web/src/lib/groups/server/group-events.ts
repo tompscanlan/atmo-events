@@ -22,20 +22,21 @@ import {
 import type { GroupWriter } from './context';
 import { errorKind, isLinkBroken, isRecordNotFound, isRoleRefused, xrpc, XrpcError } from './xrpc';
 
-/** The calendar space's policy: private; admins write its events as the group; every role reads
- *  it, and writes its own records there (a member's RSVP, in their own repo), which puts them in
- *  its writer set so other readers see them. */
+/** The calendar space's policy: private; admins write its events as the group; members read it.
+ *  No role has `write`, which says only who is in the space's writer set, whose own records sync
+ *  to every reader: a member's RSVP goes into their own repo in the space through their own PDS,
+ *  and is read back from there, so it needs no `write`, and with it every member's RSVPs would
+ *  reach every other member. Writing as the group takes only `permissions`. Admins need no `read`
+ *  of their own: everyone in a group holds `member`. */
 export const CALENDAR_POLICY = {
 	$type: GROUP_POLICY_TYPE,
 	publicRead: false,
 	grants: [
 		{
 			role: ADMIN_ROLE,
-			read: true,
-			write: true,
 			permissions: [`space:${CALENDAR_SPACE_TYPE}?collection=${GROUP_EVENT_COLLECTION}`]
 		},
-		{ role: MEMBER_ROLE, read: true, write: true }
+		{ role: MEMBER_ROLE, read: true }
 	]
 };
 

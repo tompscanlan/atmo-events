@@ -59,15 +59,15 @@ describe('turning members-only events on', () => {
 			grants: [
 				{
 					role: 'admin',
-					read: true,
-					write: true,
 					permissions: [
 						'space:community.lexicon.calendar.collection?collection=community.lexicon.calendar.event'
 					]
 				},
-				{ role: 'member', read: true, write: true }
+				{ role: 'member', read: true }
 			]
 		});
+		// No one is put in its writer set, so no member's RSVP reaches another member.
+		expect(CALENDAR_POLICY.grants.some((grant) => 'write' in grant)).toBe(false);
 		expect(await calendarSpaceState(writer())).toBe('ready');
 	});
 
