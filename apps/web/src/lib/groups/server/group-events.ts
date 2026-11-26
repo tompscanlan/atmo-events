@@ -48,7 +48,12 @@ const REFUSALS = {
 		"This group's calendar can be read by more than its members, so the members-only event was not saved.",
 	'calendar-space-unchecked':
 		"The group's calendar couldn't be checked, so the members-only event was not saved. Try again shortly.",
-	moved: 'This event is public, and a public event stays public. Nothing was saved.'
+	moved: 'This event is public, and a public event stays public. Nothing was saved.',
+	'members-only':
+		'This event is members-only, and a members-only event stays members-only. Nothing was saved.',
+	'key-unchecked':
+		"The group's calendar couldn't be checked for this event, so it was not saved. Try again shortly.",
+	'reserved-key': 'A members-only event cannot be saved under that key. Nothing was saved.'
 } as const;
 
 export type GroupEventRefusal = keyof typeof REFUSALS;
@@ -104,6 +109,8 @@ export async function turnOnMembersOnly(writer: GroupWriter): Promise<void> {
 	}
 }
 
+const RESERVED_RKEY = 'self';
+
 const SPACE_REFUSALS = {
 	missing: 'no-calendar-space',
 	readable: 'calendar-space-readable',
@@ -132,6 +139,9 @@ export async function putMembersOnlyEvent(
 	writer: GroupWriter,
 	input: { rkey: string; record: Record<string, unknown> }
 ): Promise<{ uri: string; cid: string }> {
+	// `self` is the key private events give the one event in a space of their own; a group event
+	// under it would read there as someone's private event.
+	if (input.rkey === RESERVED_RKEY) throw new GroupEventRefused('reserved-key');
 	const record: Record<string, unknown> = { ...input.record, $type: GROUP_EVENT_COLLECTION };
 	// A space record is not validated at all.
 	if (!v.safeParse(eventSchema, record).ok) throw new GroupEventRefused('not-an-event');
@@ -153,6 +163,25 @@ export async function putMembersOnlyEvent(
 		}
 	});
 	return { uri: membersOnlyEventUri(writer.did, input.rkey), cid: String(result.cid) };
+}
+
+/** Before a public save: refused when the calendar space already has a members-only event under
+ *  `rkey`, which stays members-only, so no public copy is made under its key. A link that may not
+ *  read the space, or a group with no calendar space, has none to find. Fails closed otherwise. */
+export async function refuseMembersOnlyKey(
+	writer: GroupWriter,
+	rkey: string,
+	hosts: SpaceHosts = didSpaceHosts
+): Promise<void> {
+	let found: SpaceRecord | null;
+	try {
+		found = await readMembersOnlyEventAsGroup(writer, rkey, hosts);
+	} catch (e) {
+		if (isLinkBroken(e) || isRoleRefused(e)) throw e;
+		console.error(`[groups] a public event's key could not be checked: ${errorKind(e)}`);
+		throw new GroupEventRefused('key-unchecked');
+	}
+	if (found) throw new GroupEventRefused('members-only');
 }
 
 /** The host answers the same for an event already gone. Members' RSVPs to it stay in their own

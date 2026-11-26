@@ -9,6 +9,7 @@ import {
 	deleteMembersOnlyEvent,
 	GroupEventRefused,
 	putMembersOnlyEvent,
+	refuseMembersOnlyKey,
 	turnOnMembersOnly
 } from './server/group-events';
 import { listGroup, notifyIndex, readGroupMeta, resolveGroup, unlistGroup } from './server/group';
@@ -154,6 +155,8 @@ export const putGroupEvent = command(
 				membersOnlyRefusedOr('Saving the event failed')
 			);
 		}
+		// A members-only event stays members-only: no public copy under its key.
+		await refuseMembersOnlyKey(writer, rkey).catch(membersOnlyRefusedOr('Saving the event failed'));
 		const result = await xrpc(writer.handle, 'com.atproto.repo.putRecord', {
 			body: { repo: groupDid, collection: GROUP_EVENT_COLLECTION, rkey, record }
 		}).catch(refusedOr('Saving the event failed'));

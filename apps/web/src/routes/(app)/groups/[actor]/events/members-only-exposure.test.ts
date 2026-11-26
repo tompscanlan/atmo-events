@@ -28,6 +28,18 @@ vi.mock('#lib/groups/server/context.js', () => ({
 	requireStoredLink: vi.fn()
 }));
 vi.mock('#lib/groups/server/sign-in.js', () => ({ unlinkGroup: vi.fn() }));
+// Reads of the calendar space go to the group's host as the fake keeps it.
+vi.mock('#lib/atproto/network.js', () => ({
+	atprotoNetwork: () => ({
+		fetch: (input: RequestInfo | URL, init?: RequestInit) => calendar.fetch(input, init),
+		isolated: false,
+		assertUrl: () => {}
+	})
+}));
+vi.mock('#lib/spaces/server/space-credential.js', async (importActual) => ({
+	...(await importActual<typeof import('#lib/spaces/server/space-credential.js')>()),
+	didSpaceHosts: (await import('#lib/groups/server/__fixtures__/group-calendar.js')).calendarHosts
+}));
 vi.mock('#lib/groups/server/create.js', () => ({ finishSetup: vi.fn() }));
 // The index fetches what it is told of from the group's public repo, and keeps it if it is there.
 vi.mock('#lib/groups/server/group.js', () => ({
@@ -94,6 +106,7 @@ beforeEach(async () => {
 	mocks.notified.length = 0;
 	calendar = fakeCalendar();
 	calendar.state.policy = READY_POLICY;
+	calendar.state.readers.add('group');
 	mocks.requireGroupWriter.mockResolvedValue({ did: GROUP, handle: calendar.groupHandle });
 	await putGroupEvent({
 		groupDid: GROUP,
@@ -114,6 +127,13 @@ describe('a members-only event and the public index', () => {
 			nsid.startsWith('com.atproto.repo.put')
 		);
 		expect(repoWrites.map(([, , body]) => body.rkey)).toEqual([OPEN]);
+	});
+
+	it('is not made public under its key', async () => {
+		const copy = putGroupEvent({ groupDid: GROUP, rkey: SECRET, record: event('Members supper') });
+		await expect(copy).rejects.toMatchObject({ status: 409 });
+		expect(calendar.state.publicRepo.has(SECRET)).toBe(false);
+		expect(mocks.notified).toEqual([`at://${GROUP}/${EVENT}/${OPEN}`]);
 	});
 
 	it.each([

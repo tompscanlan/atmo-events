@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { error } from '@sveltejs/kit';
 import { TokenRefreshError } from '@atcute/oauth-node-client';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
+import { GroupEventRefused } from './server/group-events';
 import { XrpcError } from './server/xrpc';
 
 const mocks = vi.hoisted(() => ({
@@ -16,7 +17,8 @@ const mocks = vi.hoisted(() => ({
 	handle: vi.fn(),
 	resolveGroup: vi.fn(),
 	saveSettings: vi.fn(),
-	finishSetup: vi.fn()
+	finishSetup: vi.fn(),
+	refuseMembersOnlyKey: vi.fn()
 }));
 vi.mock('$app/server', () => ({
 	command: (_schema: unknown, handler: unknown) =>
@@ -40,6 +42,10 @@ vi.mock('./server/settings', async (importActual) => ({
 	saveGroupSettings: mocks.saveSettings
 }));
 vi.mock('./server/create', () => ({ finishSetup: mocks.finishSetup }));
+vi.mock('./server/group-events', async (importActual) => ({
+	...(await importActual<typeof import('./server/group-events')>()),
+	refuseMembersOnlyKey: mocks.refuseMembersOnlyKey
+}));
 
 import {
 	deleteGroupEvent,
@@ -59,6 +65,7 @@ beforeEach(() => {
 	mocks.getRequestEvent.mockReturnValue({ locals: { did: ALICE } });
 	mocks.requireGroupWriter.mockResolvedValue({ did: GROUP, handle: mocks.handle });
 	mocks.handle.mockImplementation(async () => Response.json({ uri: 'at://u', cid: 'c' }));
+	mocks.refuseMembersOnlyKey.mockResolvedValue(undefined);
 });
 
 describe('group writes', () => {
@@ -86,6 +93,29 @@ describe('group writes', () => {
 		});
 		expect(mocks.notifyIndex).toHaveBeenCalledWith('at://u');
 	});
+
+	it("check the group's calendar space for the key first, as the group", async () => {
+		await putGroupEvent({ groupDid: GROUP, rkey: 'r', record: { name: 'Meet' } });
+		expect(mocks.refuseMembersOnlyKey).toHaveBeenCalledWith(
+			{ did: GROUP, handle: mocks.handle },
+			'r'
+		);
+	});
+
+	it.each([
+		['members-only', 'a members-only event stays members-only'],
+		['key-unchecked', "couldn't be checked"]
+	] as const)(
+		'refuse a public save the calendar space refuses (%s), writing nothing',
+		async (reason, words) => {
+			mocks.refuseMembersOnlyKey.mockRejectedValue(new GroupEventRefused(reason));
+			await expect(
+				putGroupEvent({ groupDid: GROUP, rkey: 'r', record: { name: 'Meet' } })
+			).rejects.toMatchObject({ status: 409, body: { message: expect.stringContaining(words) } });
+			expect(mocks.handle).not.toHaveBeenCalled();
+			expect(mocks.notifyIndex).not.toHaveBeenCalled();
+		}
+	);
 
 	it('delete an event from the group repo and tell the index', async () => {
 		await deleteGroupEvent({ groupDid: GROUP, rkey: 'r' });

@@ -24,6 +24,7 @@ import {
 	GroupEventRefused,
 	putMembersOnlyEvent,
 	readMembersOnlyEventAsGroup,
+	refuseMembersOnlyKey,
 	turnOnMembersOnly
 } from './group-events';
 
@@ -159,6 +160,13 @@ describe('a members-only event', () => {
 		expect(calendar.state.events.size).toBe(0);
 	});
 
+	it('is refused under the key self, which private events read as their own', async () => {
+		await expect(
+			putMembersOnlyEvent(writer(), { rkey: 'self', record: event('Supper') })
+		).rejects.toMatchObject({ reason: 'reserved-key' });
+		expect(calendar.state.sent).toEqual([]);
+	});
+
 	it('is deleted from the space', async () => {
 		calendar.state.events.set('r1', event('Supper'));
 		await deleteMembersOnlyEvent(writer(), 'r1');
@@ -174,5 +182,45 @@ describe('a members-only event', () => {
 		expect(nsids()).toEqual(['com.atproto.space.getDelegationToken']);
 		calendar.state.readers.clear();
 		expect(await readMembersOnlyEventAsGroup(writer(), 'r1', calendarHosts)).toBeNull();
+	});
+});
+
+describe('a public save over a members-only key', () => {
+	beforeEach(() => {
+		calendar.state.policy = READY_POLICY;
+		calendar.state.readers.add('group');
+	});
+
+	it('is refused when the calendar space has an event under that key', async () => {
+		calendar.state.events.set('r1', event('Supper'));
+		await expect(refuseMembersOnlyKey(writer(), 'r1', calendarHosts)).rejects.toMatchObject({
+			reason: 'members-only'
+		});
+	});
+
+	it('goes ahead under a key the space does not have, with no space, or a link that may not read it', async () => {
+		calendar.state.events.set('r1', event('Supper'));
+		await expect(refuseMembersOnlyKey(writer(), 'r2', calendarHosts)).resolves.toBeUndefined();
+		calendar.state.readers.clear();
+		await expect(refuseMembersOnlyKey(writer(), 'r1', calendarHosts)).resolves.toBeUndefined();
+		calendar.state.policy = null;
+		await expect(refuseMembersOnlyKey(writer(), 'r1', calendarHosts)).resolves.toBeUndefined();
+	});
+
+	it('is refused when the space could not be checked, and throws a refused link', async () => {
+		calendar.state.refuse.set(
+			'com.atproto.space.getDelegationToken',
+			new Response('', { status: 502 })
+		);
+		await expect(refuseMembersOnlyKey(writer(), 'r1', calendarHosts)).rejects.toMatchObject({
+			reason: 'key-unchecked'
+		});
+		calendar.state.refuse.set(
+			'com.atproto.space.getDelegationToken',
+			Response.json({ error: 'invalid_token' }, { status: 401 })
+		);
+		await expect(refuseMembersOnlyKey(writer(), 'r1', calendarHosts)).rejects.not.toBeInstanceOf(
+			GroupEventRefused
+		);
 	});
 });
