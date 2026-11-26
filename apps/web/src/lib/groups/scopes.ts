@@ -150,6 +150,12 @@ export function holdsParticipate(scope: string): boolean {
 const META_SELF = `space:${META_SPACE_TYPE}?authority=self&skey=self`;
 const META_RECORD_WRITES = 'action=read&action=create&action=update';
 
+/** A group session's read of the group's meta space, its own scope so that a member whose roles
+ *  grant no writes keeps it. It names the space's key, which is always `self`, as the settings'
+ *  writes do: the host's approval page shows one row per space type, owner and key, and two rows
+ *  for the one space, one with the key and one without, break it. */
+export const GROUP_META_READ_SCOPE = `${META_SELF}&action=read`;
+
 /** What a group's settings write as the group, each its own scope, since its host keeps or drops
  *  each whole: the about record, the config (who may join), and the meta space's policy, which says
  *  whether it is public. Only what the settings write: not the spec's `authManageAdmin` set, which

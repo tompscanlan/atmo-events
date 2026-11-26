@@ -65,14 +65,16 @@ const META = `at:space/${GROUP}/org.atgrp.meta/self`;
 /** The scope the host grants an admin's session, and a member's. */
 const ADMIN_SCOPE = [
 	'atproto',
-	`space:org.atgrp.meta?authority=${GROUP}&action=read`,
+	`space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`,
 	'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
 	'blob?accept=image/*',
 	...[...GROUP_SETTINGS_SCOPES, ...ROSTER_SCOPES, ...MEMBERS_ONLY_SCOPES].map((scope) =>
 		scope.replace('authority=self', `authority=${GROUP}`)
 	)
 ].join(' ');
-const MEMBER_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&action=read`;
+const MEMBER_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`;
+/** A member's, from a link approved when the meta read named no key. */
+const KEYLESS_MEMBER_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&action=read`;
 const linkedSession = (scope = ADMIN_SCOPE) => ({
 	did: GROUP,
 	getTokenInfo: vi.fn(async () => ({ scope }))
@@ -185,6 +187,20 @@ describe('groupView for someone who linked the group', () => {
 		mocks.groupSession.mockResolvedValue(linkedSession(ADMIN_SCOPE));
 		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({ reapprove: false });
 		expect(mocks.linkAskedCurrentScope).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+
+	it('still reads with a link whose meta read named no key, and offers to approve it again', async () => {
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(false);
+		mocks.linkAskedCurrentScope.mockResolvedValue(false);
+		mocks.groupSession.mockResolvedValue(linkedSession(KEYLESS_MEMBER_SCOPE));
+		const view = await groupView(GROUP, ALICE);
+		expect(view.linked).toMatchObject({
+			meta,
+			can: { post: false, list: false, settings: false },
+			reapprove: true
+		});
+		expect(view.relink).toBe(false);
 	});
 
 	it("says when setting up a group the caller made here didn't finish", async () => {

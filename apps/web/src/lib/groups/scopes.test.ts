@@ -17,7 +17,7 @@ import {
 } from './scopes';
 
 const GROUP = 'did:plc:group';
-const META_READ = `space:org.atgrp.meta?authority=${GROUP}&action=read`;
+const META_READ = `space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`;
 const REPO = 'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event';
 /** The settings scopes as the host gives them back: `authority=self` made the group's DID. */
 const SETTINGS = GROUP_SETTINGS_SCOPES.map((s) =>
