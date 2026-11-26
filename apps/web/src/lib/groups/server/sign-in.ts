@@ -108,16 +108,15 @@ function linkState(value: unknown): LinkState | null {
 }
 
 /** Where to send the browser. The host signs in whoever approves, at their own PDS, and
- *  turns them away unless they hold a role in the group. `gh_person` suggests this person;
- *  nothing makes it them. */
+ *  turns them away unless they hold a role in the group. The group is the request's
+ *  `login_hint`, which the client takes from the account it signs in as; the host offers
+ *  that group to approve. Nothing names the person to the host. */
 export async function startGroupLink(groupDid: string, personDid: string): Promise<URL> {
 	const { url } = await clientFor(personDid).authorize({
 		target: { type: 'account', identifier: groupDid as Did },
 		scope: GROUP_SESSION_SCOPE,
 		state: { groupDid, by: personDid } satisfies LinkState
 	});
-	// A hint for the host's sign-in page, which fills in the person's handle from it.
-	url.searchParams.set('gh_person', personDid);
 	return url;
 }
 

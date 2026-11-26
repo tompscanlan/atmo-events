@@ -155,17 +155,19 @@ describe('the group client', () => {
 });
 
 describe('startGroupLink', () => {
-	it('authorizes as the group, notes who started it, and hints the person to the host', async () => {
+	it('authorizes as the group, which the host gets as the login hint, and notes who started it', async () => {
 		const url = await startGroupLink(GROUP, ALICE);
 		const { client } = latest();
 
 		expect(client.authorize).toHaveBeenCalledWith(
 			expect.objectContaining({
 				target: { type: 'account', identifier: GROUP },
+				scope: GROUP_SESSION_SCOPE,
 				state: { groupDid: GROUP, by: ALICE }
 			})
 		);
-		expect(url.searchParams.get('gh_person')).toBe(ALICE);
+		// The client's own authorization URL, with nothing added: the host keeps no other hint.
+		expect(url.toString()).toBe('https://host.example/oauth/authorize?request_uri=x');
 	});
 });
 
