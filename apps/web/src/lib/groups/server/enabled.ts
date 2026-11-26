@@ -26,7 +26,11 @@ export function groupsEnabled(): boolean {
 }
 
 /** With groups off, a group address answers as one this site never had: a 404 with SvelteKit's
- *  own message for that, which the error page words as it does for any unknown address. */
+ *  own message for that, which the error page words as it does for any unknown address. A groups
+ *  command, a remote function, answers otherwise: SvelteKit sends its address to the command
+ *  before any of this site's code can tell it apart, so with groups off it answers 200 with an
+ *  error inside, this 404 for a well-formed call, SvelteKit's own 400 for one whose payload does
+ *  not parse and its 500 for a GET, where an address this site never had answers 404. */
 export function requireGroupsEnabled(): void {
 	if (!groupsEnabled()) error(404, 'Not Found');
 }
