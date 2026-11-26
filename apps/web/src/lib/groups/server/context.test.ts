@@ -155,7 +155,7 @@ describe('groupView for someone who linked the group', () => {
 				listed: false,
 				can: { post: true, list: true, settings: true },
 				reapprove: false,
-				unfinished: false
+				unfinished: null
 			},
 			relink: false,
 			hasLink: true
@@ -207,8 +207,15 @@ describe('groupView for someone who linked the group', () => {
 	it("says when setting up a group the caller made here didn't finish", async () => {
 		mocks.readGroupMeta.mockResolvedValue(meta);
 		mocks.repoHasDeclaration.mockResolvedValue(true);
-		mocks.unfinishedGroup.mockResolvedValue({ did: GROUP, handle: 'knit.example' });
-		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({ unfinished: true });
+		mocks.unfinishedGroup.mockResolvedValue({
+			did: GROUP,
+			handle: 'knit.example',
+			public: true,
+			listed: false
+		});
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({
+			unfinished: { public: true, listed: false }
+		});
 		expect(mocks.unfinishedGroup).toHaveBeenCalledWith(ALICE, GROUP);
 	});
 

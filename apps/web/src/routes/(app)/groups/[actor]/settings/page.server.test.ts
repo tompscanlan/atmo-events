@@ -32,7 +32,7 @@ const linked = (settings: boolean, reapprove = false) => ({
 		listed: true,
 		can: { post: true, list: true, settings },
 		reapprove,
-		unfinished: false
+		unfinished: null
 	}
 });
 

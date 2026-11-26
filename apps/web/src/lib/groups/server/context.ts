@@ -90,8 +90,9 @@ export interface LinkedGroup {
 	/** The link was approved for less than this site asks for now, and lacks some of it: approving
 	 *  again may bring the rest. False once it was approved for all of it, whatever the roles kept. */
 	reapprove: boolean;
-	/** The caller made the group here, and setting it up did not finish at the link. */
-	unfinished: boolean;
+	/** The caller made the group here, and setting it up did not finish at the link: what they asked
+	 *  of it, which says what is left to do. Null for any other group. */
+	unfinished: { public: boolean; listed: boolean } | null;
 }
 
 export interface GroupWriter {
@@ -143,7 +144,13 @@ async function readLinked(
 		]);
 		const can = groupAbilities(token.scope, groupDid);
 		const everything = Object.values(can).every(Boolean);
-		return { meta, listed, can, reapprove: !current && !everything, unfinished: setup !== null };
+		return {
+			meta,
+			listed,
+			can,
+			reapprove: !current && !everything,
+			unfinished: setup && { public: setup.public, listed: setup.listed }
+		};
 	} catch (e) {
 		if (isLinkBroken(e)) return 'refused';
 		// Their role was lowered or taken away, so the session's scope or its credential for the

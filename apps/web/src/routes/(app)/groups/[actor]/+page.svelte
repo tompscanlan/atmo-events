@@ -234,8 +234,12 @@
 			{#if group.linked.unfinished}
 				<div class="mt-3 flex flex-wrap items-center gap-3">
 					<p class="text-base-700 dark:text-base-300 text-sm" role="status">
-						Setting up this group didn't finish: it is still on the groups list, which you asked it
-						not to be.
+						{#if group.linked.unfinished.public && !group.linked.unfinished.listed}
+							Setting up this group didn't finish: it isn't yet public and off the groups list, as
+							you asked.
+						{:else}
+							Setting up this group here didn't finish.
+						{/if}
 					</p>
 					<Button
 						size="sm"
