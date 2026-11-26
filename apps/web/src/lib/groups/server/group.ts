@@ -6,6 +6,8 @@ import type { ActorIdentifier } from '@atcute/lexicons';
 import type { ResourceUri } from '@atcute/lexicons/syntax';
 import { createActorResolver } from '@svelte-atproto/oauth/network';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
+import { didSpaceHosts, type SpaceHosts } from '#lib/spaces/server/space-credential.js';
+import { credentialSpaceReader } from '#lib/spaces/server/space-read.js';
 import { getServerClient } from '#lib/contrail/index.js';
 import {
 	declarationUri,
@@ -204,32 +206,26 @@ export interface GroupMeta {
 	public: boolean;
 }
 
-async function metaRecord(
+/** Read as the group itself, through a session someone linked. A group host serves a space's
+ *  records only to a space credential: the session asks the host for a delegation token for the
+ *  meta space, the host, as the space's authority, exchanges it for a credential, and each record
+ *  comes back with a MAC. Both reads share the one credential. A session whose member may no
+ *  longer read the space throws `SpaceAccessDenied`. */
+export async function readGroupMeta(
 	handle: XrpcHandle,
 	groupDid: string,
-	collection: string,
-	rkey: string
-): Promise<Record<string, unknown> | null> {
-	try {
-		const body = await xrpc(handle, 'com.atproto.space.getRecord', {
-			query: { space: metaSpaceUri(groupDid), repo: groupDid, collection, rkey }
-		});
-		const value = body.value;
-		return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-	} catch (e) {
-		if (isRecordNotFound(e)) return null;
-		throw e;
-	}
-}
-
-/** Read as the group itself, through a session someone linked. */
-export async function readGroupMeta(handle: XrpcHandle, groupDid: string): Promise<GroupMeta> {
+	hosts: SpaceHosts = didSpaceHosts
+): Promise<GroupMeta> {
+	const reader = credentialSpaceReader({ handle }, hosts);
+	const space = metaSpaceUri(groupDid);
+	const read = (collection: string, rkey: string) =>
+		reader.get({ space, repo: groupDid, collection, rkey });
 	const [about, policy] = await Promise.all([
-		metaRecord(handle, groupDid, GROUP_ABOUT_COLLECTION, GROUP_ABOUT_RKEY),
-		metaRecord(handle, groupDid, SPACE_POLICY_COLLECTION, SPACE_POLICY_RKEY)
+		read(GROUP_ABOUT_COLLECTION, GROUP_ABOUT_RKEY),
+		read(SPACE_POLICY_COLLECTION, SPACE_POLICY_RKEY)
 	]);
-	const publicRead = (policy?.policy as { publicRead?: unknown } | null | undefined)?.publicRead;
-	return { profile: parseGroupProfile(about), public: publicRead === true };
+	const publicRead = (policy?.value.policy as { publicRead?: unknown } | undefined)?.publicRead;
+	return { profile: parseGroupProfile(about?.value ?? null), public: publicRead === true };
 }
 
 /** Whether the group's public repo holds its declaration, which may not be indexed yet. */

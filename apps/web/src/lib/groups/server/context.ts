@@ -8,6 +8,7 @@ import {
 	TokenRevokedError,
 	type OAuthSession
 } from '@atcute/oauth-node-client';
+import { isSpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import {
 	atGroupHost,
 	isDeclared,
@@ -20,7 +21,7 @@ import {
 } from './group';
 import { requireGroupsEnabled } from './enabled';
 import { groupHandle, groupSession, groupSignInAvailable, hasGroupSession } from './sign-in';
-import { isAuthRefused, isRoleRefused, type XrpcHandle } from './xrpc';
+import { errorKind, isAuthRefused, isRoleRefused, type XrpcHandle } from './xrpc';
 
 /** Byte for byte, so the causes cannot be told apart. */
 export const GROUP_NOT_FOUND = 'Group not found';
@@ -69,9 +70,14 @@ async function linkedRead(
 		return { meta, listed };
 	} catch (e) {
 		if (needsRelink(e)) return 'refused';
-		// Their role was lowered or taken away: the page shows the group as they may see it
-		// without the link, since linking again would bring back the same link.
-		if (isRoleRefused(e)) return 'no-role';
+		// Their role was lowered or taken away, so the session's scope or its credential for the
+		// meta space was refused: the page shows the group as they may see it without the link,
+		// since linking again would bring back the same link.
+		if (isRoleRefused(e)) {
+			const why = isSpaceAccessDenied(e) ? e.reason : errorKind(e);
+			console.info(`[groups] ${groupDid} refused ${personDid}'s link: ${why}`);
+			return 'no-role';
+		}
 		throw e;
 	}
 }

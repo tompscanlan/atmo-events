@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { isAuthRefused, isRoleRefused, xrpc, xrpcBlob, XrpcError, type XrpcHandle } from './xrpc';
 
 const answering = (status: number, body: unknown) =>
@@ -41,6 +42,29 @@ describe('telling a refused session from an outage', () => {
 		expect(isRoleRefused(await refusal(403, 'ScopeMissingError'))).toBe(true);
 		expect(isRoleRefused(await refusal(403, 'Forbidden'))).toBe(true);
 		expect(isAuthRefused(await refusal(403, 'Forbidden'))).toBe(false);
+	});
+
+	it("reads a group host's own names for a missing scope or role the same way", async () => {
+		for (const name of ['ScopeMissing', 'NotAuthorized']) {
+			expect(isRoleRefused(await refusal(403, name))).toBe(true);
+			expect(isAuthRefused(await refusal(403, name))).toBe(false);
+		}
+	});
+
+	it('reads a space it may not read, or a credential refused at the read, as roles, not the session', () => {
+		const META = 'at:space/did:plc:group/org.atgrp.meta/self';
+		for (const refused of [
+			new SpaceAccessDenied(META, '403 ScopeMissing'),
+			new XrpcError('com.atproto.space.getRecord', 401, 'CredentialRevoked'),
+			new XrpcError('com.atproto.space.getRecord', 401, 'MissingJwt')
+		]) {
+			expect(isRoleRefused(refused)).toBe(true);
+			expect(isAuthRefused(refused)).toBe(false);
+		}
+		// The session itself refused where it asks for the credential: only linking again fixes it.
+		const session = new XrpcError('com.atproto.space.getDelegationToken', 401, 'invalid_token');
+		expect(isAuthRefused(session)).toBe(true);
+		expect(isRoleRefused(session)).toBe(false);
 	});
 
 	it('reads neither into an outage or another 403', async () => {

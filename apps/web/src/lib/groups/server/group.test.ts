@@ -1,19 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
+import { fakeKemHost } from '#lib/spaces/server/__fixtures__/space-mac-host.js';
+import { SpaceAccessDenied, type SpaceHosts } from '#lib/spaces/server/space-credential.js';
 import { memoryKV, type MemoryKV } from './__fixtures__/kv';
-import type { XrpcHandle } from './xrpc';
+import { isAuthRefused, isRoleRefused, XrpcError, type XrpcHandle } from './xrpc';
 
 const mocks = vi.hoisted(() => ({
 	get: vi.fn(),
 	post: vi.fn(),
 	resolve: vi.fn(),
-	crowdedServers: vi.fn()
+	crowdedServers: vi.fn(),
+	/** Calls to other servers: the group host's space methods. */
+	networkFetch: vi.fn<typeof fetch>()
 }));
 vi.mock('./declared', () => ({ crowdedServers: mocks.crowdedServers }));
 vi.mock('#lib/contrail/index.js', () => ({
 	getServerClient: () => ({ get: mocks.get, post: mocks.post })
 }));
-vi.mock('#lib/atproto/network.js', () => ({ atprotoNetwork: () => ({ fetch: vi.fn() }) }));
+vi.mock('#lib/atproto/network.js', () => ({
+	atprotoNetwork: () => ({
+		fetch: (input: RequestInfo | URL, init?: RequestInit) => mocks.networkFetch(input, init),
+		isolated: false,
+		assertUrl: () => {}
+	})
+}));
 vi.mock('@svelte-atproto/oauth/network', () => ({
 	createActorResolver: () => ({ resolve: mocks.resolve })
 }));
@@ -34,6 +44,10 @@ import {
 } from './group';
 
 const GROUP = 'did:plc:group';
+const HOST = 'https://host.example';
+const META = `at:space/${GROUP}/org.atgrp.meta/self`;
+const kem = await fakeKemHost();
+const spaceHosts: SpaceHosts = { repoHost: async () => HOST, kemKey: async () => kem.did };
 let kv: MemoryKV;
 const hostFetch = vi.fn<typeof fetch>();
 
@@ -191,35 +205,162 @@ describe('parseGroupProfile', () => {
 });
 
 describe('readGroupMeta', () => {
-	it('reads the about record and the policy out of the meta space', async () => {
-		const handle = pds({
-			'org.atgrp.about': { displayName: 'Knitters' },
-			'com.atproto.space.policy': {
-				policy: { $type: 'org.atgrp.policy', publicRead: true, grants: [] }
+	const about = { displayName: 'Knitters' };
+	const policy = (publicRead?: boolean) => ({
+		policy: {
+			$type: 'org.atgrp.policy',
+			grants: [],
+			...(publicRead === undefined ? {} : { publicRead })
+		}
+	});
+
+	/** The group host as a meta read meets it: a delegation token to the group's session, a
+	 *  credential for it from authorizeSpaceSync, and each record in the meta space with its MAC.
+	 *  `refuse` answers a step instead. */
+	function groupHost(
+		records: Record<string, unknown>,
+		refuse: {
+			delegate?: () => Response;
+			exchange?: () => Response;
+			read?: (url: URL) => Response;
+		} = {}
+	) {
+		const exchanges: Record<string, unknown>[] = [];
+		const reads: { url: URL; headers: Headers }[] = [];
+		const handle = vi.fn<XrpcHandle>(
+			async () => refuse.delegate?.() ?? Response.json({ token: 'delegation' })
+		);
+		mocks.networkFetch.mockImplementation(async (input, init) => {
+			const url = new URL(String(input));
+			const headers = new Headers(init?.headers);
+			if (url.pathname === '/xrpc/com.atproto.space.authorizeSpaceSync') {
+				exchanges.push(JSON.parse(String(init?.body)));
+				return refuse.exchange?.() ?? Response.json({ credential: 'credential' });
 			}
+			if (url.pathname === '/xrpc/com.atproto.space.getRecord') {
+				reads.push({ url, headers });
+				if (refuse.read) return refuse.read(url);
+				const q = url.searchParams;
+				const collection = q.get('collection')!;
+				if (!(collection in records)) {
+					return Response.json({ error: 'RecordNotFound' }, { status: 400 });
+				}
+				const value = records[collection];
+				const uri = `${q.get('space')}/${q.get('repo')}/${collection}/${q.get('rkey')}`;
+				const answered = await kem.recordAnswer(headers, { uri, cid: 'bafy', value });
+				return Response.json({ uri, cid: answered.cid, value }, { headers: answered.headers });
+			}
+			return Response.json({ error: 'MethodNotImplemented' }, { status: 501 });
 		});
-		expect(await readGroupMeta(handle, GROUP)).toEqual({
+		return { handle, exchanges, reads };
+	}
+
+	it("reads the about record and the policy with a credential the group's session bought", async () => {
+		const host = groupHost({
+			'org.atgrp.about': about,
+			'com.atproto.space.policy': policy(true)
+		});
+		expect(await readGroupMeta(host.handle, GROUP, spaceHosts)).toEqual({
 			profile: { name: 'Knitters', description: null },
 			public: true
 		});
-		expect(handle.mock.calls[0][0]).toContain(
-			`space=${encodeURIComponent(`at:space/${GROUP}/org.atgrp.meta/self`)}`
-		);
+
+		// The session asks only for the delegation token, once for both records.
+		expect(host.handle.mock.calls).toEqual([
+			[
+				`/xrpc/com.atproto.space.getDelegationToken?${new URLSearchParams({ space: META })}`,
+				{ method: 'GET' }
+			]
+		]);
+		expect(host.exchanges).toEqual([
+			{
+				space: META,
+				credentialKey: expect.stringMatching(/^did:key:zDn/),
+				delegationToken: 'delegation'
+			}
+		]);
+		// Each read is signed for the group's repo with the credential, and asks for the MAC.
+		expect(host.reads.map((r) => r.url.searchParams.get('collection')).sort()).toEqual([
+			'com.atproto.space.policy',
+			'org.atgrp.about'
+		]);
+		for (const { url, headers } of host.reads) {
+			expect(url.origin).toBe(HOST);
+			expect(Object.fromEntries(url.searchParams)).toMatchObject({
+				space: META,
+				repo: GROUP,
+				rkey: 'self'
+			});
+			expect(headers.get('authorization')).toBe('Atproto-Space-Credential credential');
+			expect(headers.get('atproto-space-audience')).toBe(GROUP);
+			expect(headers.get('accept-signature')).toContain('tag="atproto-space-record"');
+		}
 	});
 
 	it('reads a missing policy, or one without publicRead, as private', async () => {
-		const handle = pds({ 'org.atgrp.about': { displayName: 'Knitters' } });
-		expect((await readGroupMeta(handle, GROUP)).public).toBe(false);
-		const unset = pds({
-			'org.atgrp.about': { displayName: 'Knitters' },
-			'com.atproto.space.policy': { policy: { $type: 'org.atgrp.policy', grants: [] } }
-		});
-		expect((await readGroupMeta(unset, GROUP)).public).toBe(false);
+		const missing = groupHost({ 'org.atgrp.about': about });
+		expect((await readGroupMeta(missing.handle, GROUP, spaceHosts)).public).toBe(false);
+		const unset = groupHost({ 'org.atgrp.about': about, 'com.atproto.space.policy': policy() });
+		expect((await readGroupMeta(unset.handle, GROUP, spaceHosts)).public).toBe(false);
+	});
+
+	it('never takes a record whose MAC does not verify', async () => {
+		// The record asked for, but with no MAC.
+		const host = groupHost(
+			{},
+			{
+				read: (url) =>
+					Response.json({
+						uri: `${META}/${GROUP}/${url.searchParams.get('collection')}/self`,
+						cid: 'bafy',
+						value: about
+					})
+			}
+		);
+		await expect(readGroupMeta(host.handle, GROUP, spaceHosts)).rejects.toThrow('MAC of at:space/');
+	});
+
+	it.each([
+		['the session holds no scope that reads it', 'delegate', 403, 'ScopeMissing'],
+		['its member no longer reads it', 'delegate', 403, 'NotAuthorized'],
+		['the host no longer lets the grant read it', 'exchange', 400, 'SpaceNotFound']
+	] as const)('is a refusal, not an outage, when %s', async (_why, step, status, error) => {
+		const host = groupHost({}, { [step]: () => Response.json({ error }, { status }) });
+		const thrown = await readGroupMeta(host.handle, GROUP, spaceHosts).catch((e: unknown) => e);
+		expect(thrown).toBeInstanceOf(SpaceAccessDenied);
+		expect(isRoleRefused(thrown)).toBe(true);
+		expect(isAuthRefused(thrown)).toBe(false);
+		expect(host.reads).toEqual([]);
+	});
+
+	it('asks to link again when the host refuses the session itself', async () => {
+		const host = groupHost(
+			{},
+			{ delegate: () => Response.json({ error: 'invalid_token' }, { status: 401 }) }
+		);
+		const thrown = await readGroupMeta(host.handle, GROUP, spaceHosts).catch((e: unknown) => e);
+		expect(thrown).toMatchObject({ nsid: 'com.atproto.space.getDelegationToken', status: 401 });
+		expect(isAuthRefused(thrown)).toBe(true);
+		expect(isRoleRefused(thrown)).toBe(false);
+	});
+
+	it('reads a credential the host refuses at the read as roles that no longer allow it', async () => {
+		const host = groupHost(
+			{},
+			{ read: () => Response.json({ error: 'CredentialRevoked' }, { status: 401 }) }
+		);
+		const thrown = await readGroupMeta(host.handle, GROUP, spaceHosts).catch((e: unknown) => e);
+		expect(thrown).toBeInstanceOf(XrpcError);
+		expect(isRoleRefused(thrown)).toBe(true);
+		expect(isAuthRefused(thrown)).toBe(false);
 	});
 
 	it('throws on anything but a record or RecordNotFound', async () => {
-		const handle = vi.fn<XrpcHandle>(async () => new Response('{}', { status: 502 }));
-		await expect(readGroupMeta(handle, GROUP)).rejects.toThrow();
+		const host = groupHost({}, { read: () => new Response('{}', { status: 502 }) });
+		const thrown = await readGroupMeta(host.handle, GROUP, spaceHosts).catch((e: unknown) => e);
+		expect(thrown).toBeInstanceOf(XrpcError);
+		expect(isRoleRefused(thrown)).toBe(false);
+		expect(isAuthRefused(thrown)).toBe(false);
 	});
 });
 

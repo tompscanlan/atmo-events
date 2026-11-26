@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
 import { isHttpError } from '@sveltejs/kit';
 import { TokenRefreshError } from '@atcute/oauth-node-client';
+import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { XrpcError } from './xrpc';
 
 const mocks = vi.hoisted(() => ({
@@ -36,6 +37,7 @@ import { GROUP_NOT_FOUND, groupView, requireGroupWriter, requireStoredLink } fro
 
 const GROUP = 'did:plc:group';
 const ALICE = 'did:plc:alice';
+const META = `at:space/${GROUP}/org.atgrp.meta/self`;
 const resolved = { did: GROUP, handle: 'knit.example', pds: 'https://host.example' };
 const meta = { profile: { name: 'Knitters', description: 'Yarn' }, public: true };
 
@@ -114,7 +116,9 @@ describe('groupView for someone who linked the group', () => {
 	});
 
 	it('asks to link again when the PDS refuses the session', async () => {
-		mocks.readGroupMeta.mockRejectedValue(new XrpcError('com.atproto.space.getRecord', 401, null));
+		mocks.readGroupMeta.mockRejectedValue(
+			new XrpcError('com.atproto.space.getDelegationToken', 401, 'invalid_token')
+		);
 		mocks.repoHasDeclaration.mockResolvedValue(true);
 		mocks.isDeclared.mockResolvedValue(true);
 		expect(await groupView(GROUP, ALICE)).toMatchObject({
@@ -161,7 +165,9 @@ describe('groupView for someone who linked the group', () => {
 		);
 
 		mocks.groupSession.mockResolvedValue({ did: GROUP });
-		mocks.readGroupMeta.mockRejectedValue(new XrpcError('com.atproto.space.getRecord', 401, null));
+		mocks.readGroupMeta.mockRejectedValue(
+			new XrpcError('com.atproto.space.getDelegationToken', 401, 'invalid_token')
+		);
 		mocks.repoHasDeclaration.mockResolvedValue(true);
 		expect(await groupView(GROUP, ALICE)).toEqual(
 			expect.objectContaining({ ...bareView, relink: true })
@@ -178,12 +184,21 @@ describe('groupView for someone who linked the group', () => {
 		});
 	});
 
-	it.each(['ScopeMissingError', 'Forbidden'])(
-		'shows the group without the link when its roles no longer allow reading it (%s)',
-		async (name) => {
-			mocks.readGroupMeta.mockRejectedValue(
-				new XrpcError('com.atproto.space.getRecord', 403, name)
-			);
+	it.each([
+		['the PDS', new XrpcError('com.atproto.space.getRecord', 403, 'ScopeMissingError')],
+		['the PDS', new XrpcError('com.atproto.space.getRecord', 403, 'Forbidden')],
+		// A group host's own names, at the delegation for the meta space.
+		['the group host', new XrpcError('com.atproto.space.getDelegationToken', 403, 'ScopeMissing')],
+		['the group host', new XrpcError('com.atproto.space.getDelegationToken', 403, 'NotAuthorized')],
+		['the space', new SpaceAccessDenied(META, '403 ScopeMissing')],
+		['the space', new SpaceAccessDenied(META, '400 SpaceNotFound')],
+		// The credential it bought, refused at the read: not the session, so linking again won't help.
+		['the space', new XrpcError('com.atproto.space.getRecord', 401, 'CredentialRevoked')],
+		['the space', new XrpcError('com.atproto.space.getRecord', 401, 'MissingJwt')]
+	])(
+		'shows the group without the link when its roles no longer allow reading it (%s: %s)',
+		async (_from, refusal) => {
+			mocks.readGroupMeta.mockRejectedValue(refusal);
 			mocks.repoHasDeclaration.mockResolvedValue(true);
 			mocks.isDeclared.mockResolvedValue(true);
 			expect(await groupView(GROUP, ALICE)).toMatchObject({
