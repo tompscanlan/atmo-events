@@ -69,8 +69,9 @@ export const GROUP_PERSON_SCOPES: readonly string[] = [
 ];
 
 /** Whether the person's granted scope lets their PDS vouch for them to call `nsid`: an rpc grant
- *  for the method, written `rpc:<method>` or `rpc?lxm=<method>`, for any audience. */
-export function holdsRpc(scope: string, nsid: string): boolean {
+ *  for the method, written `rpc:<method>` or `rpc?lxm=<method>`, for `audience` or any audience;
+ *  for any audience at all when `audience` is left out. */
+export function holdsRpc(scope: string, nsid: string, audience?: string): boolean {
 	return scope.split(' ').some((token) => {
 		if (!token.startsWith('rpc:') && !token.startsWith('rpc?')) return false;
 		const at = token.indexOf('?');
@@ -79,12 +80,19 @@ export function holdsRpc(scope: string, nsid: string): boolean {
 		const methods = resource.startsWith(':')
 			? [decodeURIComponent(resource.slice(1))]
 			: params.getAll('lxm');
-		return methods.includes(nsid) && params.getAll('aud').length > 0;
+		const auds = params.getAll('aud');
+		const forAudience =
+			audience === undefined
+				? auds.length > 0
+				: auds.some((aud) => aud === '*' || aud.toLowerCase() === audience.toLowerCase());
+		return methods.includes(nsid) && forAudience;
 	});
 }
 
-export function holdsCreateGroup(scope: string): boolean {
-	return holdsRpc(scope, CREATE_GROUP_NSID);
+/** For the group host at `audience`: a grant for another audience is not one this site can use, so
+ *  the person is asked again. */
+export function holdsCreateGroup(scope: string, audience: string): boolean {
+	return holdsRpc(scope, CREATE_GROUP_NSID, audience);
 }
 
 // A PDS hands an `include:` back expanded, and drops each parameter left at its default: no

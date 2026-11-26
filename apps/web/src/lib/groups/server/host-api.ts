@@ -29,6 +29,13 @@ export function groupHostDid(url: URL): string {
 	return `did:web:${url.host.replace(':', '%3A')}`;
 }
 
+/** The group host's DID, from GROUP_HOST_URL alone, with no call to the host; null with groups
+ *  off. */
+export function configuredGroupHostDid(): string | null {
+	const url = groupHostUrl();
+	return url ? groupHostDid(url) : null;
+}
+
 /** Throws when there is no group host, it does not answer as one, or it names a DID other than
  *  the did:web of its own address. */
 export async function groupHostInfo(): Promise<GroupHostInfo> {

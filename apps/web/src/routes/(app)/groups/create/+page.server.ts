@@ -11,7 +11,7 @@ import {
 } from '#lib/groups/server/create.js';
 import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
 import { forgetHeldAtGroupHost } from '#lib/groups/server/group.js';
-import { groupHostInfo } from '#lib/groups/server/host-api.js';
+import { configuredGroupHostDid, groupHostInfo } from '#lib/groups/server/host-api.js';
 import { groupSignInAvailable, startGroupLink } from '#lib/groups/server/sign-in.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
 
@@ -47,7 +47,10 @@ export async function load({ locals, url, setHeaders }) {
 		available: true as const,
 		did: locals.did,
 		host: host ? { domain: host.domain, newGroupUrl: host.newGroupUrl } : null,
-		access: caller && !holdsCreateGroup(caller.scope) ? groupAccess(url, caller.did) : null,
+		access:
+			caller && !holdsCreateGroup(caller.scope, configuredGroupHostDid() ?? '')
+				? groupAccess(url, caller.did)
+				: null,
 		unfinished: unfinished.map(({ did, handle }) => ({ did, handle }))
 	};
 }
@@ -74,7 +77,9 @@ export const actions = {
 		if (!group) return refused(400, 'form');
 		const caller = await callerSession(locals.session ?? null);
 		if (!caller) redirect(303, '/login');
-		if (!holdsCreateGroup(caller.scope)) return refused(403, 'no-permission');
+		if (!holdsCreateGroup(caller.scope, configuredGroupHostDid() ?? '')) {
+			return refused(403, 'no-permission');
+		}
 		const host = await groupHostInfo().catch(() => null);
 		if (!host) return refused(503, 'unavailable');
 

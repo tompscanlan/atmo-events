@@ -191,18 +191,25 @@ describe('the member controls a group session may offer', () => {
 });
 
 describe("the person's own permission to make a group", () => {
-	it('is the rpc grant for the host’s createGroup, for any audience', () => {
+	const HOST = 'did:web:host.example';
+
+	it('is the rpc grant for the host’s createGroup, for any audience or the host', () => {
 		expect(CREATE_GROUP_SCOPE).toBe('rpc:org.atgrp.internal.createGroup?aud=*');
-		expect(holdsCreateGroup(`atproto ${CREATE_GROUP_SCOPE}`)).toBe(true);
+		expect(holdsCreateGroup(`atproto ${CREATE_GROUP_SCOPE}`, HOST)).toBe(true);
 		expect(
-			holdsCreateGroup('rpc?lxm=org.atgrp.internal.createGroup&aud=did:web:host.example')
+			holdsCreateGroup('rpc?lxm=org.atgrp.internal.createGroup&aud=did:web:host.example', HOST)
 		).toBe(true);
 	});
 
-	it('is not held without it, or for another method', () => {
-		expect(holdsCreateGroup('atproto include:community.lexicon.calendar.authFull')).toBe(false);
-		expect(holdsCreateGroup('rpc:org.atgrp.requestJoin?aud=*')).toBe(false);
-		expect(holdsCreateGroup('rpc:org.atgrp.internal.createGroup')).toBe(false);
+	it('is not held without it, for another method, or for another audience', () => {
+		expect(holdsCreateGroup('atproto include:community.lexicon.calendar.authFull', HOST)).toBe(
+			false
+		);
+		expect(holdsCreateGroup('rpc:org.atgrp.requestJoin?aud=*', HOST)).toBe(false);
+		expect(holdsCreateGroup('rpc:org.atgrp.internal.createGroup', HOST)).toBe(false);
+		expect(
+			holdsCreateGroup('rpc?lxm=org.atgrp.internal.createGroup&aud=did:web:other.example', HOST)
+		).toBe(false);
 	});
 });
 

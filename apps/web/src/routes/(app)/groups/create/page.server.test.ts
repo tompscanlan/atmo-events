@@ -17,7 +17,10 @@ vi.mock('#lib/groups/server/sign-in.js', () => ({
 	startGroupLink: mocks.startGroupLink
 }));
 vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.callerSession }));
-vi.mock('#lib/groups/server/host-api.js', () => ({ groupHostInfo: mocks.groupHostInfo }));
+vi.mock('#lib/groups/server/host-api.js', async (importActual) => ({
+	...(await importActual<typeof import('#lib/groups/server/host-api.js')>()),
+	groupHostInfo: mocks.groupHostInfo
+}));
 vi.mock('#lib/groups/server/group.js', () => ({
 	forgetHeldAtGroupHost: mocks.forgetHeldAtGroupHost
 }));
@@ -94,6 +97,17 @@ describe('the make-a-group page', () => {
 		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: 'atproto', handle: vi.fn() });
 		expect(await loadAs(ALICE)).toMatchObject({ access: 'ask' });
 		expect(await loadAs(ALICE, `?asked=${ALICE}`)).toMatchObject({ access: 'refused' });
+	});
+
+	it('asks again, rather than refusing, someone whose permission is for another host', async () => {
+		const elsewhere = 'atproto rpc?lxm=org.atgrp.internal.createGroup&aud=did:web:other.example';
+		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: elsewhere, handle: vi.fn() });
+		expect(await loadAs(ALICE)).toMatchObject({ access: 'ask' });
+		expect(await post(FORM)).toMatchObject({ status: 403, data: { reason: 'no-permission' } });
+		expect(mocks.createGroupAtHost).not.toHaveBeenCalled();
+		const here = 'atproto rpc?lxm=org.atgrp.internal.createGroup&aud=did:web:host.example';
+		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: here, handle: vi.fn() });
+		expect(await loadAs(ALICE)).toMatchObject({ access: null });
 	});
 
 	it('lists the groups they made and have not linked yet, to finish', async () => {
