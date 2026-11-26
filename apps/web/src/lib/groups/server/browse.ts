@@ -2,6 +2,8 @@
 // but this site's group host, and on the first page before them the groups the caller linked.
 // A server's other groups are on a page of their own. Names come from the cached group profiles;
 // a group without one shows the handle the index holds for it.
+import type { CallerSession } from '#lib/private-events/server/caller.js';
+import { ACTOR_GROUPS_NSID, holdsRpc } from '../scopes';
 import type { CrowdedServer } from './declared';
 import {
 	listCrowdedServers,
@@ -10,7 +12,9 @@ import {
 	readCachedProfiles,
 	resolveGroup
 } from './group';
+import { actorGroups } from './host';
 import { linkedGroups } from './sign-in';
+import { errorKind } from './xrpc';
 
 export interface BrowseEntry {
 	did: string;
@@ -91,4 +95,28 @@ export async function browseGroups(
 		declaredUnavailable: declared === null,
 		crowded
 	};
+}
+
+export interface OwnGroup {
+	did: string;
+	name: string;
+	handle: string;
+}
+
+/** "Your groups": the groups the person is in at this site's group host, by the host's own list,
+ *  named as the host shows them to a member. Null when their sign-in cannot ask for it, or the host
+ *  did not answer. */
+export async function yourGroups(caller: CallerSession): Promise<OwnGroup[] | null> {
+	if (!holdsRpc(caller.scope, ACTOR_GROUPS_NSID)) return null;
+	try {
+		const groups = await actorGroups(caller);
+		return groups.map(({ did, handle, displayName }) => ({
+			did,
+			name: displayName ?? handle,
+			handle
+		}));
+	} catch (e) {
+		console.error(`[groups] ${caller.did}'s groups could not be listed: ${errorKind(e)}`);
+		return null;
+	}
 }
