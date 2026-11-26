@@ -16,14 +16,6 @@ const _mainSchema = /*#__PURE__*/ v.query(
 				"actor": /*#__PURE__*/ v.optional(/*#__PURE__*/ v.actorIdentifierString()),
 				"cursor": /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
 				/**
-				 * With home: a JSON array of the DIDs home says it holds. Only these count as at home; a group whose DID document names home but that home does not hold is left out
-				 */
-				"held": /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
-				/**
-				 * A server whose groups are not limited, such as the site's own group host. It needs held: without it, home is limited like any server
-				 */
-				"home": /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
-				/**
 				 * @minimum 1
 				 * @maximum 200
 				 * @default 50

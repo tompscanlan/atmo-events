@@ -4,7 +4,7 @@
 	"defs": {
 		"main": {
 			"type": "query",
-			"description": "List group declarations at rkey self, one per account and at most 20 per server",
+			"description": "List group declarations at rkey self, one per account and at most 20 per server, except the groups at the site's own group host that it says it holds",
 			"parameters": {
 				"type": "params",
 				"properties": {
@@ -25,14 +25,6 @@
 					"server": {
 						"type": "string",
 						"description": "Only the groups at this server, a PDS origin such as https://pds.example, with no limit"
-					},
-					"home": {
-						"type": "string",
-						"description": "A server whose groups are not limited, such as the site's own group host. It needs held: without it, home is limited like any server"
-					},
-					"held": {
-						"type": "string",
-						"description": "With home: a JSON array of the DIDs home says it holds. Only these count as at home; a group whose DID document names home but that home does not hold is left out"
 					},
 					"profiles": {
 						"type": "boolean",

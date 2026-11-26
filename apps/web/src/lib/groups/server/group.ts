@@ -20,7 +20,7 @@ import {
 	SPACE_POLICY_COLLECTION,
 	SPACE_POLICY_RKEY
 } from '../ids';
-import { cachedHandles, crowdedServers, type CrowdedServer } from './declared';
+import { cachedHandles, crowdedServers, type CrowdedServer, type DeclaredHome } from './declared';
 import { isRecordNotFound, xrpc, type XrpcHandle } from './xrpc';
 
 export interface ResolvedGroup {
@@ -160,6 +160,13 @@ async function readHeld(origin: string): Promise<string[] | null> {
 	}
 }
 
+/** For the declarations' list: this site's group host, and what it holds, read only when a list
+ *  needs it. */
+export function declaredHome(): DeclaredHome | null {
+	const origin = groupHostOrigin();
+	return origin ? { origin, held: heldAtGroupHost } : null;
+}
+
 /** One page, newest first, the index's own order. Only the declaration at rkey `self`
  *  counts, so an account is listed once however many records it writes, and each server gets
  *  at most 20 places, except the groups this site's group host holds; `server` lists one
@@ -170,15 +177,12 @@ export async function listDeclaredGroups(
 	{ cursor = null, server = null }: { cursor?: string | null; server?: string | null } = {},
 	limit = 100
 ): Promise<DeclaredGroupsPage> {
-	const home = groupHostOrigin();
-	// Another server's page needs nothing from the host.
-	const held = home && (!server || server === home) ? await heldAtGroupHost() : null;
+	// The index reads what the group host holds itself: see declaredHome.
 	const res = await getServerClient(env.DB).get('rsvp.atmo.declaration.listDeclared', {
 		params: {
 			limit: Math.min(Math.max(limit, 1), 100),
 			...(cursor ? { cursor } : {}),
-			...(server ? { server } : {}),
-			...(home && held ? { home, held: JSON.stringify(held) } : {})
+			...(server ? { server } : {})
 		}
 	});
 	if (!res.ok) throw new Error(`the declaration index answered ${res.status}`);

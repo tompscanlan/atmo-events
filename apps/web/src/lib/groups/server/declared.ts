@@ -37,31 +37,27 @@ export function serverOrigin(value: string | null | undefined): string | null {
 	}
 }
 
-/** `held`: the DIDs `home` says it holds, as a JSON array, re-serialized for SQLite's json_each;
- *  null when absent or not an array of strings. */
-function heldDids(params: URLSearchParams): string | null {
-	const raw = params.get('held');
-	if (!raw) return null;
-	try {
-		const value: unknown = JSON.parse(raw);
-		return Array.isArray(value) && value.every((did) => typeof did === 'string')
-			? JSON.stringify(value)
-			: null;
-	} catch {
-		return null;
-	}
+/** This site's own group host, whose groups the list does not limit: its origin, and the DIDs it
+ *  says it holds, read only when a list needs them, and null when it did not say. Set by the
+ *  Worker, never by a caller, so the public method cannot be told to treat another server so. */
+export interface DeclaredHome {
+	origin: string;
+	held(): Promise<string[] | null>;
 }
 
 /** rsvp.atmo.declaration.listDeclared. With `server`, every group at that server. Otherwise each
- *  server's newest DECLARED_PER_SERVER, and, given `home` and `held`, every group home holds and
- *  none that only names it. Without `held`, home is limited like any server. */
-export function declaredSource(params: URLSearchParams): RecordSource {
+ *  server's newest DECLARED_PER_SERVER, and every group `home` says it holds and none that only
+ *  names it. A home that does not say what it holds is limited like any server. */
+export async function declaredSource(
+	params: URLSearchParams,
+	home: DeclaredHome | null = null
+): Promise<RecordSource> {
 	const only = serverOrigin(params.get('server'));
-	const home = serverOrigin(params.get('home'));
-	const held = home ? heldDids(params) : null;
-	const verified = home !== null && held !== null;
+	// Another server's page needs nothing from the host.
+	const dids = home && (!only || only === home.origin) ? await home.held() : null;
+	const held = home && dids ? { origin: home.origin, dids: JSON.stringify(dids) } : null;
 	if (only) {
-		const atHome = verified && only === home;
+		const atHome = held !== null && only === held.origin;
 		return {
 			conditions: [
 				`r.rkey = 'self'`,
@@ -69,18 +65,18 @@ export function declaredSource(params: URLSearchParams): RecordSource {
 				`EXISTS (SELECT 1 FROM identities i WHERE i.did = r.did AND ${serverOf('i')} = ?)`,
 				...(atHome ? [`r.did IN (SELECT value FROM json_each(?))`] : [])
 			],
-			params: atHome ? [only, held] : [only]
+			params: atHome ? [only, held.dids] : [only]
 		};
 	}
 	const placed = visible(
 		`d.uri, d.did, ${serverOf('i')} AS server, ROW_NUMBER() OVER (PARTITION BY ${serverOf('i')} ORDER BY d.time_us DESC, d.uri) AS place`
 	);
-	const keep = verified
+	const keep = held
 		? `CASE WHEN server = ? THEN did IN (SELECT value FROM json_each(?)) ELSE place <= ${DECLARED_PER_SERVER} END`
 		: `place <= ${DECLARED_PER_SERVER}`;
 	return {
 		conditions: [`r.rkey = 'self'`, `r.uri IN (SELECT uri FROM (${placed}) placed WHERE ${keep})`],
-		params: verified ? [home, held] : []
+		params: held ? [held.origin, held.dids] : []
 	};
 }
 

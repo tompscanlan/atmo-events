@@ -43,11 +43,20 @@ describe('groups declarations as the Worker serves them', () => {
 		expect(off.tables).not.toContain('records_declaration');
 	});
 
-	it('serves them with groups on', async () => {
+	it('serves them with groups on, asking the group host itself what it holds', async () => {
 		Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
-		const on = await serve(DECLARED.slice(0, 1));
-		expect(on.answers[0]).toMatch(/^200 /);
-		expect(on.tables).toContain('records_declaration');
+		const listRepos = vi.fn<typeof fetch>(async () => Response.json({ repos: [{ did: GROUP }] }));
+		vi.stubGlobal('fetch', listRepos);
+		try {
+			const on = await serve(DECLARED.slice(0, 1));
+			expect(on.answers[0]).toMatch(/^200 /);
+			expect(on.tables).toContain('records_declaration');
+			expect(String(listRepos.mock.calls[0]?.[0])).toMatch(
+				/^https:\/\/host\.example\/xrpc\/com\.atproto\.sync\.listRepos\?/
+			);
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it('reads an empty or blank GROUP_HOST_URL as off', async () => {
