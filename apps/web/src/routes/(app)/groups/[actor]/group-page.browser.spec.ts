@@ -125,6 +125,19 @@ describe("what a link's granted scope offers", () => {
 	});
 });
 
+describe('a link whose group host could not be reached', () => {
+	it('shows the page as a visitor sees it, says why, and still unlinks', async () => {
+		const data = linkedPage({ public: true, listed: true });
+		render(GroupPage, {
+			data: { ...data, group: { ...data.group, linked: null, unreachable: true } } as never
+		});
+		await expect.poll(shown).toContain("The group host couldn't be reached through your link");
+		expect(page.getByRole('button', { name: 'Link this group' }).elements()).toHaveLength(0);
+		expect(page.getByRole('button', { name: 'Unlink' }).elements()).toHaveLength(1);
+		expect(page.getByRole('link', { name: 'Post an event' }).elements()).toHaveLength(0);
+	});
+});
+
 describe('listing a linked group', () => {
 	it('offers no listing for a private group, and says why', async () => {
 		render(GroupPage, { data: linkedPage({ public: false, listed: false }) as never });

@@ -125,6 +125,10 @@
 		{#if data.notice}<p role="status" class="text-base-600 dark:text-base-400 mt-4 text-sm">
 				{data.notice}
 			</p>{/if}
+		{#if group.unreachable}<p role="status" class="text-base-600 dark:text-base-400 mt-4 text-sm">
+				The group host couldn't be reached through your link just now, so this page shows the group
+				as anyone sees it. Try again shortly.
+			</p>{/if}
 		{#if failure}<p role="alert" class="text-base-950 dark:text-base-50 mt-4 text-sm">
 				{failure}
 			</p>{/if}
@@ -303,7 +307,7 @@
 					Your role in this group lets you see it here, but not post its events or list it.
 				</p>
 			{/if}
-		{:else if group.atHost && data.signedIn}
+		{:else if group.atHost && data.signedIn && !group.unreachable}
 			<div class="mt-6 flex flex-wrap items-center gap-3">
 				<form method="POST" action="/oauth/group/link" class="contents">
 					<input type="hidden" name="group" value={group.did} />

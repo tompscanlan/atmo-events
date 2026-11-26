@@ -55,6 +55,7 @@ import {
 	GROUP_NOT_FOUND,
 	GROUP_UNCHECKED,
 	groupView,
+	LINKED_READ_LIMIT_MS,
 	requireGroupWriter,
 	requireStoredLink
 } from './context';
@@ -349,14 +350,57 @@ describe('groupView for someone who linked the group', () => {
 		expect(mocks.readCachedProfiles).not.toHaveBeenCalled();
 	});
 
-	it("fails the page, rather than offering a link, when the group's PDS is down", async () => {
+	it("shows what a visitor sees, and says so, when the group's PDS is down", async () => {
+		vi.spyOn(console, 'error').mockImplementation(() => {});
 		mocks.readGroupMeta.mockRejectedValue(new XrpcError('com.atproto.space.getRecord', 502, null));
 		mocks.repoHasDeclaration.mockResolvedValue(true);
-		const failure = await groupView(GROUP, ALICE).catch((e: unknown) => e);
-		// Not an HttpError, so SvelteKit renders the page as a 500, whatever the PDS answered.
-		expect(failure).toBeInstanceOf(XrpcError);
-		expect(isHttpError(failure)).toBe(false);
-		expect(mocks.isDeclared).not.toHaveBeenCalled();
+		mocks.isDeclared.mockResolvedValue(true);
+		mocks.readCachedProfiles.mockResolvedValue(
+			new Map([[GROUP, { name: 'Knitters', description: 'Yarn', handle: 'knit.example' }]])
+		);
+		expect(await groupView(GROUP, ALICE)).toMatchObject({
+			name: 'Knitters',
+			linked: null,
+			relink: false,
+			hasLink: true,
+			unreachable: true
+		});
+		expect(mocks.isDeclared).toHaveBeenCalledWith(GROUP);
+		expect(mocks.storeCachedProfile).not.toHaveBeenCalled();
+		expect(mocks.syncDeclarationIndex).not.toHaveBeenCalled();
+	});
+
+	it('shows an undeclared group bare when its PDS is down, so it can still be unlinked', async () => {
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		mocks.readGroupMeta.mockRejectedValue(new Error('fetch failed'));
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		mocks.isDeclared.mockResolvedValue(false);
+		const view = await groupView(GROUP, ALICE).catch((e: unknown) => e);
+		expect(isHttpError(view)).toBe(false);
+		expect(view).toEqual(expect.objectContaining({ ...bareView, unreachable: true }));
+	});
+
+	it('waits on a link no longer than its limit, however slow the host', async () => {
+		vi.useFakeTimers();
+		try {
+			vi.spyOn(console, 'warn').mockImplementation(() => {});
+			mocks.readGroupMeta.mockReturnValue(new Promise(() => {}));
+			mocks.repoHasDeclaration.mockResolvedValue(true);
+			mocks.isDeclared.mockResolvedValue(true);
+			const view = groupView(GROUP, ALICE);
+			await vi.advanceTimersByTimeAsync(LINKED_READ_LIMIT_MS - 1);
+			expect(mocks.isDeclared).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(await view).toMatchObject({ linked: null, hasLink: true, unreachable: true });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('says nothing of an unreachable host when the link reads the group', async () => {
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		expect(await groupView(GROUP, ALICE)).toMatchObject({ unreachable: false });
 	});
 });
 

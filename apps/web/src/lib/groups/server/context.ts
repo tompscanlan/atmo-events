@@ -70,6 +70,9 @@ export interface GroupView {
 	relink: boolean;
 	/** The caller has a link stored here, working or not, so they can unlink it. */
 	hasLink: boolean;
+	/** The caller's link could not reach the group's host just now, so the page shows what a
+	 *  visitor sees. */
+	unreachable: boolean;
 	/** Present when the group host let the caller read the group with their own access. */
 	personal: PersonalMeta | null;
 	/** Whether the host's records count the caller a member; null when they could not be read. */
@@ -96,11 +99,38 @@ export interface GroupWriter {
 	handle: XrpcHandle;
 }
 
+/** The longest a page waits on the reads through a link, every call in them together: each call
+ *  has its own limit, and a host that is down would otherwise cost the sum of them. */
+export const LINKED_READ_LIMIT_MS = 10_000;
+
+type LinkedRead = LinkedGroup | 'refused' | 'no-role' | 'unreachable';
+
+/** `unreachable` when the group's host did not answer in time, or failed: the page then shows
+ *  what a visitor sees, never an error, so the person can still see its events and unlink it. */
 async function linkedRead(
 	session: OAuthSession,
 	groupDid: string,
 	personDid: string
-): Promise<LinkedGroup | 'refused' | 'no-role'> {
+): Promise<LinkedRead> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<'unreachable'>((resolve) => {
+		timer = setTimeout(() => {
+			console.warn(`[groups] ${groupDid}: ${personDid}'s link had no answer in time`);
+			resolve('unreachable');
+		}, LINKED_READ_LIMIT_MS);
+	});
+	try {
+		return await Promise.race([readLinked(session, groupDid, personDid), late]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+async function readLinked(
+	session: OAuthSession,
+	groupDid: string,
+	personDid: string
+): Promise<LinkedRead> {
 	const handle = groupHandle(session, personDid);
 	try {
 		const [meta, listed, token, current, setup] = await Promise.all([
@@ -124,7 +154,8 @@ async function linkedRead(
 			console.info(`[groups] ${groupDid} refused ${personDid}'s link: ${why}`);
 			return 'no-role';
 		}
-		throw e;
+		console.error(`[groups] ${groupDid}: ${personDid}'s link could not read it: ${errorKind(e)}`);
+		return 'unreachable';
 	}
 }
 
@@ -191,6 +222,7 @@ export async function groupView(
 	let linked: GroupView['linked'] = null;
 	let relink = false;
 	let hasLink = false;
+	let unreachable = false;
 	let session: OAuthSession | null = null;
 	if (callerDid) {
 		try {
@@ -205,6 +237,7 @@ export async function groupView(
 	if (session && callerDid) {
 		const read = await linkedRead(session, group.did, callerDid);
 		if (read === 'refused') relink = true;
+		else if (read === 'unreachable') unreachable = true;
 		else if (read !== 'no-role') {
 			linked = read;
 			await storeCachedProfile(group, read.meta).catch((e) => {
@@ -259,6 +292,7 @@ export async function groupView(
 		linked,
 		relink,
 		hasLink,
+		unreachable,
 		personal: personal.meta,
 		member: personal.member,
 		askAccess: atHost && caller !== null && !holdsParticipate(caller.scope)
