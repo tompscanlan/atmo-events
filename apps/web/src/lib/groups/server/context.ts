@@ -24,12 +24,12 @@ import {
 	atGroupHost,
 	isDeclared,
 	readCachedProfiles,
-	readGroupMeta,
+	readLinkedMeta,
 	repoHasDeclaration,
 	resolveGroup,
 	storeCachedProfile,
 	syncDeclarationIndex,
-	type GroupMeta
+	type LinkedMeta
 } from './group';
 import { requireGroupsEnabled } from './enabled';
 import { unfinishedGroup } from './create';
@@ -87,7 +87,7 @@ export interface GroupView {
 }
 
 export interface LinkedGroup {
-	meta: GroupMeta;
+	meta: LinkedMeta;
 	listed: boolean;
 	/** What the session's granted scope lets it do; the host still checks the roles at each write. */
 	can: GroupAbilities;
@@ -139,7 +139,7 @@ async function readLinked(
 	const handle = groupHandle(session, personDid);
 	try {
 		const [meta, listed, token, current, setup] = await Promise.all([
-			readGroupMeta(handle, groupDid),
+			readLinkedMeta(handle, groupDid),
 			repoHasDeclaration(handle, groupDid),
 			// As granted at the approval; a refresh would not change it.
 			session.getTokenInfo(false),

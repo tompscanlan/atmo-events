@@ -171,6 +171,37 @@ describe("a group whose setup didn't finish", () => {
 	});
 });
 
+describe('where requests to join wait', () => {
+	const linkedWith = (
+		joinPolicy: string | null,
+		can = { post: true, list: true, settings: true }
+	) => {
+		const data = linkedPage({ public: true, listed: true }, can);
+		const linked = { ...data.group.linked, meta: { ...data.group.linked.meta, joinPolicy } };
+		return { ...data, group: { ...data.group, linked } };
+	};
+	const note = 'Requests to join this group are kept at the group host';
+
+	it('is said to an admin who linked a group that approves its members', async () => {
+		render(GroupPage, { data: linkedWith('approval') as never });
+		await expect.poll(shown).toContain(note);
+	});
+
+	it.each([
+		['one open to all', linkedWith('open')],
+		['one by invitation', linkedWith('invite')],
+		['one whose policy atmo does not know', linkedWith(null)],
+		[
+			'a link that manages nothing',
+			linkedWith('approval', { post: true, list: false, settings: false })
+		]
+	])('is not said of %s', async (_what, data) => {
+		render(GroupPage, { data: data as never });
+		await expect.element(page.getByRole('button', { name: 'Unlink' })).toBeVisible();
+		expect(shown()).not.toContain(note);
+	});
+});
+
 describe('listing a linked group', () => {
 	it('offers no listing for a private group, and says why', async () => {
 		render(GroupPage, { data: linkedPage({ public: false, listed: false }) as never });

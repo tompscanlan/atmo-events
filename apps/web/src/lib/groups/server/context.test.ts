@@ -31,6 +31,7 @@ vi.mock('./group', () => ({
 	resolveGroup: mocks.resolveGroup,
 	isDeclared: mocks.isDeclared,
 	readGroupMeta: mocks.readGroupMeta,
+	readLinkedMeta: mocks.readGroupMeta,
 	repoHasDeclaration: mocks.repoHasDeclaration,
 	syncDeclarationIndex: mocks.syncDeclarationIndex,
 	readCachedProfiles: mocks.readCachedProfiles,

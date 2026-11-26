@@ -99,6 +99,17 @@
 		);
 </script>
 
+<!-- For an admin who linked a group that approves its members: where requests to join wait. One
+     snippet and its one use, to drop wherever the page lists the requests itself. -->
+{#snippet joinRequestsWaitAtHost()}
+	{#if group.linked && group.linked.meta.joinPolicy === 'approval' && (group.linked.can.settings || group.linked.can.admit)}
+		<p class="text-base-600 dark:text-base-400 mt-3 text-sm">
+			Requests to join this group are kept at the group host, where its admins admit or decline
+			them.
+		</p>
+	{/if}
+{/snippet}
+
 <div class="min-h-screen px-6 py-12 sm:py-12">
 	<div class="mx-auto max-w-2xl">
 		<div class="mb-6">
@@ -248,6 +259,7 @@
 				{/if}
 				<Button variant="ghost" disabled={busy} onclick={unlink}>Unlink</Button>
 			</section>
+			{@render joinRequestsWaitAtHost()}
 			{#if group.linked.unfinished}
 				<div class="mt-3 flex flex-wrap items-center gap-3">
 					<p class="text-base-700 dark:text-base-300 text-sm" role="status">

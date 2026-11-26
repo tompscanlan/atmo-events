@@ -48,6 +48,7 @@ import {
 	readCachedHandles,
 	readCachedProfiles,
 	readGroupMeta,
+	readLinkedMeta,
 	resolveGroup,
 	storeCachedProfile,
 	syncDeclarationIndex,
@@ -293,6 +294,27 @@ describe('readGroupMeta', () => {
 		});
 		return { handle, exchanges, reads };
 	}
+
+	it('reads how the group takes members too, for the page of someone who linked it, with one credential', async () => {
+		for (const [config, joinPolicy] of [
+			[{ joinPolicy: 'approval' }, 'approval'],
+			[{ joinPolicy: 'open' }, 'open'],
+			[{ joinPolicy: 'x' }, null],
+			[{}, 'approval']
+		] as const) {
+			const host = groupHost({
+				'org.atgrp.about': about,
+				'org.atgrp.config': config,
+				'com.atproto.space.policy': policy(true)
+			});
+			expect(await readLinkedMeta(host.handle, GROUP, spaceHosts)).toEqual({
+				profile: { name: 'Knitters', description: null },
+				public: true,
+				joinPolicy
+			});
+			expect(host.exchanges).toHaveLength(1);
+		}
+	});
 
 	it("reads the about record and the policy with a credential the group's session bought", async () => {
 		const host = groupHost({

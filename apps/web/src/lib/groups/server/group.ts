@@ -13,13 +13,17 @@ import {
 	declarationUri,
 	GROUP_ABOUT_COLLECTION,
 	GROUP_ABOUT_RKEY,
+	GROUP_CONFIG_COLLECTION,
+	GROUP_CONFIG_RKEY,
 	GROUP_DECLARATION_COLLECTION,
 	GROUP_DECLARATION_RKEY,
 	groupDeclarationRecord,
 	metaSpaceUri,
 	SPACE_POLICY_COLLECTION,
-	SPACE_POLICY_RKEY
+	SPACE_POLICY_RKEY,
+	type GroupJoinPolicy
 } from '../ids';
+import { groupJoinPolicy } from '../fields';
 import { groupHostUrl } from './enabled';
 import { cachedHandles, crowdedServers, type CrowdedServer, type DeclaredHome } from './declared';
 import { isRecordNotFound, xrpc, type XrpcHandle } from './xrpc';
@@ -270,6 +274,35 @@ export async function readGroupMeta(
 		read(SPACE_POLICY_COLLECTION, SPACE_POLICY_RKEY)
 	]);
 	return groupMetaOf(about?.value ?? null, policy?.value ?? null);
+}
+
+export interface LinkedMeta extends GroupMeta {
+	/** From its config: null for one this site does not know; approval, as the host takes it, for
+	 *  none. */
+	joinPolicy: GroupJoinPolicy | null;
+}
+
+/** As `readGroupMeta`, with how the group takes members, for the page of someone who linked it:
+ *  one credential for all three reads. */
+export async function readLinkedMeta(
+	handle: XrpcHandle,
+	groupDid: string,
+	hosts: SpaceHosts = groupHostSpaces
+): Promise<LinkedMeta> {
+	const reader = credentialSpaceReader({ handle }, hosts);
+	const space = metaSpaceUri(groupDid);
+	const read = (collection: string, rkey: string) =>
+		reader.get({ space, repo: groupDid, collection, rkey });
+	const [about, config, policy] = await Promise.all([
+		read(GROUP_ABOUT_COLLECTION, GROUP_ABOUT_RKEY),
+		read(GROUP_CONFIG_COLLECTION, GROUP_CONFIG_RKEY),
+		read(SPACE_POLICY_COLLECTION, SPACE_POLICY_RKEY)
+	]);
+	const joinPolicy = config?.value.joinPolicy;
+	return {
+		...groupMetaOf(about?.value ?? null, policy?.value ?? null),
+		joinPolicy: joinPolicy === undefined ? 'approval' : groupJoinPolicy(joinPolicy)
+	};
 }
 
 /** From the meta space's about record and its published policy, either missing. */
