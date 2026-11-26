@@ -23,8 +23,17 @@ import {
 	load as createPage
 } from '../../../routes/(app)/groups/create/+page.server';
 import { load as settingsPage } from '../../../routes/(app)/groups/[actor]/settings/+page.server';
+import { load as membersPage } from '../../../routes/(app)/groups/[actor]/members/+page.server';
 import { finishGroupSetup, saveGroupSettings } from '../group.remote';
-import { cancelJoin, joinGroup, leave } from '../members.remote';
+import {
+	approveRequest,
+	cancelJoin,
+	changeRole,
+	denyRequest,
+	joinGroup,
+	leave,
+	removeFromGroup
+} from '../members.remote';
 import { groupView, requireGroupWriter, requireStoredLink } from './context';
 
 const GROUP = 'did:plc:group';
@@ -78,6 +87,25 @@ describe('with groups off', () => {
 		expect(await shown(() => joinGroup({ groupDid: GROUP, message: 'hi' }))).toBe(expected);
 		expect(await shown(() => cancelJoin({ groupDid: GROUP }))).toBe(expected);
 		expect(await shown(() => leave({ groupDid: GROUP }))).toBe(expected);
+	});
+
+	it("refuses an admin's admit, deny, role change and removal with the same 404", async () => {
+		const expected = unknownAddress();
+		const member = { groupDid: GROUP, did: 'did:plc:bob' };
+		expect(await shown(() => approveRequest(member))).toBe(expected);
+		expect(await shown(() => denyRequest(member))).toBe(expected);
+		expect(await shown(() => changeRole({ ...member, admin: true }))).toBe(expected);
+		expect(await shown(() => removeFromGroup(member))).toBe(expected);
+	});
+
+	it('shows the members page as an unknown address', async () => {
+		const request = {
+			locals: { did: ALICE, session: null },
+			url: new URL(`https://atmo.example/groups/${GROUP}/members`),
+			params: { actor: GROUP },
+			setHeaders: vi.fn()
+		} as never;
+		expect(await shown(() => membersPage(request))).toBe(unknownAddress());
 	});
 
 	it('shows making a group and the settings as unknown addresses, and saves nothing', async () => {

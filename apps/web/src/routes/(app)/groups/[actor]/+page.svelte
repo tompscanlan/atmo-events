@@ -22,6 +22,11 @@
 	 *  read one back, and asking again is answered with the same request. */
 	let requested = $state(false);
 	let message = $state('');
+	/** Members see who else is in the group; an admin who linked it, also those asking to join. */
+	let showMembers = $derived(
+		group.member === true ||
+			Boolean(group.linked && (group.linked.can.admit || group.linked.can.remove))
+	);
 
 	/** The person's own membership: the host's refusals come back in words to show. */
 	async function asMember(run: () => Promise<unknown>) {
@@ -165,6 +170,14 @@
 					</p>
 				{/if}
 			</section>
+		{/if}
+
+		{#if showMembers}
+			<a
+				href={resolve('/(app)/groups/[actor]/members', { actor: group.did })}
+				class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 mt-4 inline-block text-sm font-medium transition-colors"
+				>Members &rarr;</a
+			>
 		{/if}
 
 		{#if group.linked}

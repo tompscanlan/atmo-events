@@ -17,6 +17,13 @@ export type GroupJoinPolicy = (typeof GROUP_JOIN_POLICIES)[number];
 export const MEMBERS_SPACE_TYPE = 'org.atgrp.members';
 /** In the group's repo in the members space, keyed by the member's DID: `{roles, createdAt}`. */
 export const GROUP_MEMBERSHIP_COLLECTION = 'org.atgrp.membership';
+/** In the group's repo in the members space, keyed by the role's ID: `{displayName, permissions,
+ *  canAssign, …}`. A new group has `admin` and `member`. */
+export const GROUP_ROLE_COLLECTION = 'org.atgrp.role';
+/** Everyone in a group holds `member`; the group host refuses a membership without it. */
+export const MEMBER_ROLE = 'member';
+/** The role a new group gives its founder, with every permission. */
+export const ADMIN_ROLE = 'admin';
 /** In the member's own repo in the members space: `{createdAt}`, their side of the membership. */
 export const GROUP_CONFIRMATION_COLLECTION = 'org.atgrp.confirmation';
 export const GROUP_CONFIRMATION_RKEY = 'self';
@@ -50,6 +57,13 @@ export function membersSpaceUri(groupDid: string): string {
  *  group host keys it. */
 export function membershipRkey(memberDid: string): string {
 	return memberDid.replaceAll('%3A', ':');
+}
+
+/** The member's DID from a membership's record key: a did:web whose host is followed by a port, all
+ *  digits, has it encoded again, as the group host reads the key. */
+export function membershipDid(rkey: string): string {
+	const match = /^did:web:([^:]+):(\d+)((?::.*)?)$/.exec(rkey);
+	return match ? `did:web:${match[1]}%3A${match[2]}${match[3]}` : rkey;
 }
 
 export function declarationUri(groupDid: string): string {

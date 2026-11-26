@@ -230,6 +230,21 @@ describe("a person's own membership", () => {
 		await expect.element(page.getByRole('alert')).toHaveTextContent(message);
 	});
 
+	it('links a member to the members page', async () => {
+		const members = page.getByRole('link', { name: /^Members/ });
+		render(GroupPage, { data: personPage({ joinPolicy: 'approval' }, true) as never });
+		await expect.element(members).toBeVisible();
+		expect(decodeURIComponent(members.query()?.getAttribute('href') ?? '')).toBe(
+			`/groups/${GROUP}/members`
+		);
+	});
+
+	it('does not link someone outside the group to the members page', async () => {
+		render(GroupPage, { data: personPage({ joinPolicy: 'approval' }, false) as never });
+		await expect.element(page.getByRole('button', { name: 'Ask to join' })).toBeVisible();
+		expect(page.getByRole('link', { name: /^Members/ }).elements()).toHaveLength(0);
+	});
+
 	it('asks for the group permissions, and says why when their server said no', async () => {
 		render(GroupPage, { data: personPage(null, null, 'ask') as never });
 		await page.getByRole('button', { name: 'Allow joining groups' }).click();
