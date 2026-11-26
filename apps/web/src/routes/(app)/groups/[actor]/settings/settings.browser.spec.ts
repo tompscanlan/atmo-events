@@ -75,6 +75,20 @@ describe("a group's settings page", () => {
 		).toHaveLength(0);
 	});
 
+	it('takes a name as long as the server does, counted as the server counts it', async () => {
+		render(SettingsPage, { data: settingsPage() as never });
+		const name = page.getByLabelText('Name');
+		const input = () => name.element() as HTMLInputElement;
+		// 64 characters, one of them an emoji of several code units.
+		await name.fill(`${'x'.repeat(63)}👩‍👩‍👧`);
+		expect(input().checkValidity()).toBe(true);
+		await name.fill('x'.repeat(65));
+		expect(input().checkValidity()).toBe(false);
+		expect(input().validationMessage).toBe('Up to 64 characters.');
+		await page.getByRole('button', { name: 'Save' }).click();
+		expect(mocks.saveGroupSettings).not.toHaveBeenCalled();
+	});
+
 	it('shows the reason the server gives for a refusal', async () => {
 		mocks.saveGroupSettings.mockImplementation(async () =>
 			error(403, 'Your role in this group no longer allows that.')

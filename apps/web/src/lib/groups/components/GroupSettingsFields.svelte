@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Checkbox, Input, Label, Select, Textarea } from '@atmo-dev/kit';
 	import { untrack } from 'svelte';
-	import { GROUP_ADDRESS_MAX } from '../fields';
+	import { GROUP_ADDRESS_MAX, GROUP_NAME_MAX, groupName } from '../fields';
 
 	// Native names, so a plain form post and a script read the same fields.
 	let {
@@ -27,11 +27,18 @@
 
 	// The form's starting value; the person's choice takes over from there.
 	let visibility = $state(untrack(() => (isPublic ? 'public' : 'private')));
+
+	/** The server's bound for a name, in graphemes and bytes, which `maxlength` cannot count. */
+	function checkName(event: Event & { currentTarget: HTMLInputElement }) {
+		const input = event.currentTarget;
+		const tooLong = input.value.trim() !== '' && groupName(input.value) === null;
+		input.setCustomValidity(tooLong ? `Up to ${GROUP_NAME_MAX} characters.` : '');
+	}
 </script>
 
 <div>
 	<Label for="group-name">Name</Label>
-	<Input id="group-name" name="name" value={name} required maxlength={640} />
+	<Input id="group-name" name="name" value={name} required oninput={checkName} />
 </div>
 
 {#if address}
