@@ -203,7 +203,7 @@ describe('readGroupMeta', () => {
 			public: true
 		});
 		expect(handle.mock.calls[0][0]).toContain(
-			`space=${encodeURIComponent(`at://${GROUP}/space/org.atgrp.meta/self`)}`
+			`space=${encodeURIComponent(`at:space/${GROUP}/org.atgrp.meta/self`)}`
 		);
 	});
 
