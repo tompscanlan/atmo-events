@@ -3,7 +3,7 @@ import { env, waitUntil } from 'cloudflare:workers';
 import { isHttpError } from '@sveltejs/kit';
 import { TokenRefreshError } from '@atcute/oauth-node-client';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
-import { GROUP_SETTINGS_SCOPES } from '../scopes';
+import { GROUP_SETTINGS_SCOPES, ROSTER_SCOPES } from '../scopes';
 import { XrpcError } from './xrpc';
 
 const mocks = vi.hoisted(() => ({
@@ -68,7 +68,9 @@ const ADMIN_SCOPE = [
 	`space:org.atgrp.meta?authority=${GROUP}&action=read`,
 	'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
 	'blob?accept=image/*',
-	...GROUP_SETTINGS_SCOPES.map((scope) => scope.replace('authority=self', `authority=${GROUP}`))
+	...[...GROUP_SETTINGS_SCOPES, ...ROSTER_SCOPES].map((scope) =>
+		scope.replace('authority=self', `authority=${GROUP}`)
+	)
 ].join(' ');
 const MEMBER_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&action=read`;
 const linkedSession = (scope = ADMIN_SCOPE) => ({

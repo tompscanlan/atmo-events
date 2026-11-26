@@ -130,7 +130,7 @@ describe('the group client', () => {
 		}
 	});
 
-	it("asks for the meta read as its own scope, writes declarations and events, and the settings' records and policy", () => {
+	it("asks for the meta read as its own scope, writes declarations and events, the settings' records and policy, and the members page's writes and calls", () => {
 		expect(GROUP_SESSION_SCOPE.split(' ')).toEqual([
 			'atproto',
 			'space:org.atgrp.meta?authority=self&action=read',
@@ -138,7 +138,12 @@ describe('the group client', () => {
 			'blob?accept=image/*',
 			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.about&action=read&action=create&action=update',
 			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.config&action=read&action=create&action=update',
-			'space:org.atgrp.meta?authority=self&skey=self&manage=update'
+			'space:org.atgrp.meta?authority=self&skey=self&manage=update',
+			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.membership&action=read&action=create',
+			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.membership&action=read&action=update',
+			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.membership&action=read&action=delete',
+			'rpc:org.atgrp.listJoinRequests?aud=*',
+			'rpc:org.atgrp.denyJoinRequest?aud=*'
 		]);
 	});
 

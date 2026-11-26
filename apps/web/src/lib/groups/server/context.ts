@@ -110,7 +110,7 @@ async function linkedRead(
 			unfinishedGroup(personDid, groupDid)
 		]);
 		const can = groupAbilities(token.scope, groupDid);
-		const everything = can.post && can.list && can.settings;
+		const everything = Object.values(can).every(Boolean);
 		return { meta, listed, can, reapprove: !current && !everything, unfinished: setup !== null };
 	} catch (e) {
 		if (isLinkBroken(e)) return 'refused';
