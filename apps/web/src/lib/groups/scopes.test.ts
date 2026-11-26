@@ -12,9 +12,12 @@ import {
 	grantsRoster,
 	holdsRpc,
 	MEMBERS_ONLY_SCOPES,
+	JOIN_SCOPES,
+	PARTICIPATE_SCOPES,
 	ROSTER_SCOPES,
 	YOUR_GROUPS_SCOPE
 } from './scopes';
+import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 
 const GROUP = 'did:plc:group';
 const META_READ = `space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`;
@@ -210,6 +213,31 @@ describe("the person's own permission to make a group", () => {
 		expect(
 			holdsCreateGroup('rpc?lxm=org.atgrp.internal.createGroup&aud=did:web:other.example', HOST)
 		).toBe(false);
+	});
+});
+
+describe("a person's group permissions, as asked", () => {
+	it('are exactly what the code calls, for any group host', () => {
+		expect(PARTICIPATE_SCOPES).toEqual([
+			'space:org.atgrp.meta?authority=*&skey=self&action=read',
+			'space:org.atgrp.members?authority=*&skey=self&collection=org.atgrp.confirmation&action=read&action=create&action=delete',
+			'rpc?lxm=org.atgrp.requestJoin&lxm=org.atgrp.cancelJoinRequest&lxm=org.atgrp.leaveGroup&aud=*',
+			'rpc:org.atgrp.internal.getActorGroups?aud=*'
+		]);
+		expect(JOIN_SCOPES).toEqual([...PARTICIPATE_SCOPES, GUEST_SCOPE]);
+		const all = [CREATE_GROUP_SCOPE, ...JOIN_SCOPES].join(' ');
+		expect(all).not.toContain('include:');
+		expect(all).not.toContain('inbox');
+		expect(all).not.toContain('org.atgrp.mod.');
+		expect(PARTICIPATE_SCOPES.join(' ')).not.toContain('action=update');
+	});
+
+	it('are held as asked', () => {
+		expect(holdsParticipate(['atproto', ...JOIN_SCOPES].join(' '))).toBe(true);
+		for (const left of PARTICIPATE_SCOPES) {
+			const rest = PARTICIPATE_SCOPES.filter((scope) => scope !== left);
+			expect(holdsParticipate(['atproto', ...rest].join(' ')), left).toBe(false);
+		}
 	});
 });
 

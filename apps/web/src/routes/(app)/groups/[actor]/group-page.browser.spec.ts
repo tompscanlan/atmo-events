@@ -266,7 +266,9 @@ describe("a person's own membership", () => {
 		await expect
 			.poll(() => oauth.requestPermissions.mock.calls[0]?.[0])
 			.toEqual([
-				'include:org.atgrp.authParticipate',
+				'space:org.atgrp.meta?authority=*&skey=self&action=read',
+				'space:org.atgrp.members?authority=*&skey=self&collection=org.atgrp.confirmation&action=read&action=create&action=delete',
+				'rpc?lxm=org.atgrp.requestJoin&lxm=org.atgrp.cancelJoinRequest&lxm=org.atgrp.leaveGroup&aud=*',
 				'rpc:org.atgrp.internal.getActorGroups?aud=*',
 				GUEST_SCOPE
 			]);

@@ -24,11 +24,6 @@ import { CALENDAR_SPACE_TYPE } from './calendar';
  *  this host does not take. */
 export const CREATE_GROUP_NSID = 'org.atgrp.internal.createGroup';
 
-/** The person's own permission to have their PDS vouch for them to the group host when they make a
- *  group. Any audience: the host's DID is learned from the host when the group is made, so the
- *  client metadata names no deployment's host. */
-export const CREATE_GROUP_SCOPE = `rpc:${CREATE_GROUP_NSID}?aud=*`;
-
 /** The spec's methods for a person's own membership, each by their service auth for the host. */
 export const REQUEST_JOIN_NSID = 'org.atgrp.requestJoin';
 export const CANCEL_JOIN_REQUEST_NSID = 'org.atgrp.cancelJoinRequest';
@@ -38,23 +33,46 @@ export const LEAVE_GROUP_NSID = 'org.atgrp.leaveGroup';
  *  (bluesky-social/group-host's `org.atgrp.internal.getActorGroups`). */
 export const ACTOR_GROUPS_NSID = 'org.atgrp.internal.getActorGroups';
 
-/** The spec's permission set for a person's own sessions: read any group's meta space, write their
- *  own confirmation in a group's members space, and join, cancel a request and leave. */
-export const PARTICIPATE_SCOPE = 'include:org.atgrp.authParticipate';
+// ---- the person's own permissions, all of them here ----
+//
+// Each is what the code calls, no more. The spec's `org.atgrp.authParticipate` permission set is
+// the wider alternative: as an `include:` it would also grant the person's invite inbox (read, and
+// making it), the spec's three moderation methods (submitReport, submitAppeal, querySelfHistory)
+// and the confirmation's update. Every rpc grant is for any audience, since a group may live at
+// any group host; each call's service auth is still minted for the one host being called, its
+// did:web (./server/host-api.ts).
 
-/** "Your groups", by the host's own method, which the spec's set does not name. Any audience, as
- *  for making a group. */
+/** Their server vouches for them to the group host when they make a group. */
+export const CREATE_GROUP_SCOPE = `rpc:${CREATE_GROUP_NSID}?aud=*`;
+
+/** Any group's meta space, read with their own access: its name, how it takes members, and whether
+ *  it is public. */
+export const PERSON_META_SCOPE = `space:${META_SPACE_TYPE}?authority=*&skey=${SPACE_SKEY}&action=read`;
+
+/** Their own confirmation in any group's members space: written when they join, deleted when they
+ *  leave; and that space read, for whether they are a member and who else is. */
+export const PERSON_CONFIRMATION_SCOPE = `space:${MEMBERS_SPACE_TYPE}?authority=*&skey=${SPACE_SKEY}&collection=${GROUP_CONFIRMATION_COLLECTION}&action=read&action=create&action=delete`;
+
+/** The spec's join, cancel a request and leave. */
+export const MEMBERSHIP_RPC_SCOPE = `rpc?lxm=${REQUEST_JOIN_NSID}&lxm=${CANCEL_JOIN_REQUEST_NSID}&lxm=${LEAVE_GROUP_NSID}&aud=*`;
+
+/** "Your groups", by the host's own method, which the spec does not have. */
 export const YOUR_GROUPS_SCOPE = `rpc:${ACTOR_GROUPS_NSID}?aud=*`;
 
 /** What a person is asked for at their first group action: joining, or seeing their groups. */
-export const PARTICIPATE_SCOPES: readonly string[] = [PARTICIPATE_SCOPE, YOUR_GROUPS_SCOPE];
+export const PARTICIPATE_SCOPES: readonly string[] = [
+	PERSON_META_SCOPE,
+	PERSON_CONFIRMATION_SCOPE,
+	MEMBERSHIP_RPC_SCOPE,
+	YOUR_GROUPS_SCOPE
+];
 
 /** A member reads the group's members-only events, and RSVPs to them in their own repo in its
  *  calendar space, with private events' guest scope: the calendar space has their type. */
 export const MEMBERS_ONLY_PERSON_SCOPES: readonly string[] = GUEST_SCOPES;
 
-/** What joining a group asks for: the participate set, "your groups", and what seeing the group's
- *  members-only events takes. */
+/** What joining a group asks for: the participate grants, and what seeing the group's members-only
+ *  events takes. */
 export const JOIN_SCOPES: readonly string[] = [
 	...PARTICIPATE_SCOPES,
 	...MEMBERS_ONLY_PERSON_SCOPES
@@ -95,7 +113,7 @@ export function holdsCreateGroup(scope: string, audience: string): boolean {
 	return holdsRpc(scope, CREATE_GROUP_NSID, audience);
 }
 
-// A PDS hands an `include:` back expanded, and drops each parameter left at its default: no
+// A PDS drops each parameter left at its default, as it hands an `include:` back expanded too: no
 // `action` is all four, no `skey` any key, and no `authority` the signer's own, never a group's.
 const DEFAULT_ACTIONS: readonly string[] = ['read', 'create', 'update', 'delete'];
 
@@ -142,8 +160,8 @@ export function holdsConfirmationGrant(
 	});
 }
 
-/** Whether the person's sign-in holds all a group page asks of it: the participate set, as their
- *  PDS expanded it, and "your groups". */
+/** Whether the person's sign-in holds all a group page asks of it: the participate grants as asked,
+ *  or the spec's set as a PDS hands it back expanded, with "your groups". */
 export function holdsParticipate(scope: string): boolean {
 	return (
 		holdsMetaRead(scope) &&
