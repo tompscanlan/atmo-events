@@ -42,6 +42,7 @@ import {
 	GROUP_SESSION_SCOPE,
 	groupClientMetadata,
 	groupSignInAvailable,
+	linkAskedCurrentScope,
 	linkedGroups,
 	startGroupLink,
 	unlinkGroup
@@ -129,12 +130,16 @@ describe('the group client', () => {
 		}
 	});
 
-	it('asks for the meta read as its own scope, and writes only declarations and events', () => {
-		const scopes = GROUP_SESSION_SCOPE.split(' ');
-		expect(scopes).toContain('space:org.atgrp.meta?authority=self&action=read');
-		expect(GROUP_SESSION_SCOPE).toContain('org.atgrp.declaration');
-		expect(GROUP_SESSION_SCOPE).toContain('community.lexicon.calendar.event');
-		expect(scopes.some((s) => s.startsWith('include:'))).toBe(false);
+	it("asks for the meta read as its own scope, writes declarations and events, and the settings' records and policy", () => {
+		expect(GROUP_SESSION_SCOPE.split(' ')).toEqual([
+			'atproto',
+			'space:org.atgrp.meta?authority=self&action=read',
+			'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
+			'blob?accept=image/*',
+			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.about&action=read&action=create&action=update',
+			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.config&action=read&action=create&action=update',
+			'space:org.atgrp.meta?authority=self&skey=self&manage=update'
+		]);
 	});
 
 	it('keeps sign-in state under its prefix in OAUTH_SESSIONS, never in the library store', async () => {
@@ -215,6 +220,19 @@ describe('finishGroupLink', () => {
 		latest().client.callback.mockResolvedValue({ session: { did: GROUP }, state: null });
 		expect(await finishGroupLink(params('s1'), ALICE)).toEqual({ ok: true, groupDid: GROUP });
 	});
+
+	it('notes what the link was approved for, so a link from before the ask grew can be told', async () => {
+		expect(await linkAskedCurrentScope(GROUP, ALICE)).toBe(false);
+		await storedState('s1', { groupDid: GROUP, by: ALICE });
+		await startGroupLink(GROUP, ALICE);
+		latest().client.callback.mockResolvedValue({ session: { did: GROUP }, state: null });
+		await finishGroupLink(params('s1'), ALICE);
+		expect(await sessions.get(`group:asked:${ALICE}/${GROUP}`, 'text')).toBe(GROUP_SESSION_SCOPE);
+		expect(await linkAskedCurrentScope(GROUP, ALICE)).toBe(true);
+		expect(await linkAskedCurrentScope(GROUP, BOB)).toBe(false);
+		await sessions.put(`group:asked:${ALICE}/${GROUP}`, 'atproto');
+		expect(await linkAskedCurrentScope(GROUP, ALICE)).toBe(false);
+	});
 });
 
 describe('linked groups', () => {
@@ -227,6 +245,7 @@ describe('linked groups', () => {
 
 	it('forgets a link even when the PDS cannot revoke it', async () => {
 		await sessions.put(`group:session:${ALICE}/${GROUP}`, '{}');
+		await sessions.put(`group:asked:${ALICE}/${GROUP}`, GROUP_SESSION_SCOPE);
 		await startGroupLink(GROUP, ALICE);
 		latest().client.revoke.mockRejectedValue(new Error('offline'));
 		await unlinkGroup(GROUP, ALICE);

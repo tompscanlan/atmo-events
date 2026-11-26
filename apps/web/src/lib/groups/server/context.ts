@@ -18,7 +18,13 @@ import {
 } from './group';
 import { requireGroupsEnabled } from './enabled';
 import { unfinishedGroup } from './create';
-import { groupHandle, groupSession, groupSignInAvailable, hasGroupSession } from './sign-in';
+import {
+	groupHandle,
+	groupSession,
+	groupSignInAvailable,
+	hasGroupSession,
+	linkAskedCurrentScope
+} from './sign-in';
 import { errorKind, isLinkBroken, isRoleRefused, type XrpcHandle } from './xrpc';
 
 /** Byte for byte, so the causes cannot be told apart. */
@@ -26,6 +32,8 @@ export const GROUP_NOT_FOUND = 'Group not found';
 
 /** To someone who linked the group, whose role does not let the link post as it. */
 export const NO_POSTING = "Your role in this group doesn't let you post its events.";
+/** The same, for the group's settings. */
+export const NO_SETTINGS = "Your role in this group doesn't let you change its settings.";
 
 export interface GroupView {
 	did: string;
@@ -47,6 +55,9 @@ export interface LinkedGroup {
 	listed: boolean;
 	/** What the session's granted scope lets it do; the host still checks the roles at each write. */
 	can: GroupAbilities;
+	/** The link was approved for less than this site asks for now, and lacks some of it: approving
+	 *  again may bring the rest. False once it was approved for all of it, whatever the roles kept. */
+	reapprove: boolean;
 	/** The caller made the group here, and setting it up did not finish at the link. */
 	unfinished: boolean;
 }
@@ -63,14 +74,17 @@ async function linkedRead(
 ): Promise<LinkedGroup | 'refused' | 'no-role'> {
 	const handle = groupHandle(session, personDid);
 	try {
-		const [meta, listed, token, setup] = await Promise.all([
+		const [meta, listed, token, current, setup] = await Promise.all([
 			readGroupMeta(handle, groupDid),
 			repoHasDeclaration(handle, groupDid),
 			// As granted at the approval; a refresh would not change it.
 			session.getTokenInfo(false),
+			linkAskedCurrentScope(groupDid, personDid),
 			unfinishedGroup(personDid, groupDid)
 		]);
-		return { meta, listed, can: groupAbilities(token.scope), unfinished: setup !== null };
+		const can = groupAbilities(token.scope, groupDid);
+		const everything = can.post && can.list && can.settings;
+		return { meta, listed, can, reapprove: !current && !everything, unfinished: setup !== null };
 	} catch (e) {
 		if (isLinkBroken(e)) return 'refused';
 		// Their role was lowered or taken away, so the session's scope or its credential for the

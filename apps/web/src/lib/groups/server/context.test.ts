@@ -3,6 +3,7 @@ import { env } from 'cloudflare:workers';
 import { isHttpError } from '@sveltejs/kit';
 import { TokenRefreshError } from '@atcute/oauth-node-client';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
+import { GROUP_SETTINGS_SCOPES } from '../scopes';
 import { XrpcError } from './xrpc';
 
 const mocks = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 	groupSession: vi.fn(),
 	groupSignInAvailable: vi.fn(),
 	hasGroupSession: vi.fn(),
+	linkAskedCurrentScope: vi.fn(),
 	unfinishedGroup: vi.fn()
 }));
 vi.mock('./group', () => ({
@@ -33,7 +35,8 @@ vi.mock('./sign-in', () => ({
 	groupSession: mocks.groupSession,
 	groupHandle: () => vi.fn(),
 	groupSignInAvailable: mocks.groupSignInAvailable,
-	hasGroupSession: mocks.hasGroupSession
+	hasGroupSession: mocks.hasGroupSession,
+	linkAskedCurrentScope: mocks.linkAskedCurrentScope
 }));
 vi.mock('./create', () => ({ unfinishedGroup: mocks.unfinishedGroup }));
 
@@ -43,7 +46,13 @@ const GROUP = 'did:plc:group';
 const ALICE = 'did:plc:alice';
 const META = `at:space/${GROUP}/org.atgrp.meta/self`;
 /** The scope the host grants an admin's session, and a member's. */
-const ADMIN_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&action=read repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event blob?accept=image/*`;
+const ADMIN_SCOPE = [
+	'atproto',
+	`space:org.atgrp.meta?authority=${GROUP}&action=read`,
+	'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
+	'blob?accept=image/*',
+	...GROUP_SETTINGS_SCOPES.map((scope) => scope.replace('authority=self', `authority=${GROUP}`))
+].join(' ');
 const MEMBER_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&action=read`;
 const linkedSession = (scope = ADMIN_SCOPE) => ({
 	did: GROUP,
@@ -61,6 +70,7 @@ beforeEach(() => {
 	mocks.groupSession.mockResolvedValue(null);
 	mocks.groupSignInAvailable.mockReturnValue(true);
 	mocks.atGroupHost.mockReturnValue(true);
+	mocks.linkAskedCurrentScope.mockResolvedValue(true);
 	mocks.unfinishedGroup.mockResolvedValue(null);
 });
 
@@ -121,7 +131,8 @@ describe('groupView for someone who linked the group', () => {
 			linked: {
 				meta: { public: false },
 				listed: false,
-				can: { post: true, list: true },
+				can: { post: true, list: true, settings: true },
+				reapprove: false,
 				unfinished: false
 			},
 			relink: false,
@@ -138,8 +149,23 @@ describe('groupView for someone who linked the group', () => {
 		mocks.readGroupMeta.mockResolvedValue(meta);
 		mocks.repoHasDeclaration.mockResolvedValue(false);
 		const view = await groupView(GROUP, ALICE);
-		expect(view.linked).toMatchObject({ can: { post: false, list: false } });
+		expect(view.linked).toMatchObject({
+			can: { post: false, list: false, settings: false },
+			reapprove: false
+		});
 		expect(view.relink).toBe(false);
+	});
+
+	it('offers to approve again a link approved for less than is asked now, and that lacks some of it', async () => {
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(false);
+		mocks.linkAskedCurrentScope.mockResolvedValue(false);
+		mocks.groupSession.mockResolvedValue(linkedSession(MEMBER_SCOPE));
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({ reapprove: true });
+		// Once it holds everything, there is nothing to approve again.
+		mocks.groupSession.mockResolvedValue(linkedSession(ADMIN_SCOPE));
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({ reapprove: false });
+		expect(mocks.linkAskedCurrentScope).toHaveBeenCalledWith(GROUP, ALICE);
 	});
 
 	it("says when setting up a group the caller made here didn't finish", async () => {

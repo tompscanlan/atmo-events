@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
 	notifyIndex: vi.fn(),
 	unlinkGroup: vi.fn(),
 	handle: vi.fn(),
+	resolveGroup: vi.fn(),
+	saveSettings: vi.fn(),
 	finishSetup: vi.fn()
 }));
 vi.mock('$app/server', () => ({
@@ -29,15 +31,21 @@ vi.mock('./server/group', () => ({
 	readGroupMeta: mocks.readGroupMeta,
 	listGroup: mocks.listGroup,
 	unlistGroup: mocks.unlistGroup,
-	notifyIndex: mocks.notifyIndex
+	notifyIndex: mocks.notifyIndex,
+	resolveGroup: mocks.resolveGroup
 }));
 vi.mock('./server/sign-in', () => ({ unlinkGroup: mocks.unlinkGroup }));
+vi.mock('./server/settings', async (importActual) => ({
+	parseGroupSettings: (await importActual<typeof import('./server/settings')>()).parseGroupSettings,
+	saveGroupSettings: mocks.saveSettings
+}));
 vi.mock('./server/create', () => ({ finishSetup: mocks.finishSetup }));
 
 import {
 	deleteGroupEvent,
 	finishGroupSetup,
 	putGroupEvent,
+	saveGroupSettings,
 	setGroupListed,
 	unlinkGroupSession,
 	uploadGroupBlob
@@ -224,6 +232,71 @@ describe('unlink', () => {
 		mocks.requireStoredLink.mockImplementation(() => error(404, 'Group not found'));
 		await expect(unlinkGroupSession({ groupDid: GROUP })).rejects.toMatchObject({ status: 404 });
 		expect(mocks.unlinkGroup).not.toHaveBeenCalled();
+	});
+});
+
+describe('settings', () => {
+	const form = {
+		name: 'Night Riders',
+		description: '',
+		website: 'https://riders.example',
+		joinPolicy: 'open',
+		public: true,
+		listed: false
+	};
+
+	it("saves them as the group, on the caller's own link, keeping what the form showed", async () => {
+		mocks.resolveGroup.mockResolvedValue({
+			did: GROUP,
+			handle: 'riders.example',
+			pds: 'https://h'
+		});
+		expect(
+			await saveGroupSettings({ groupDid: GROUP, shownPublic: false, settings: form })
+		).toEqual({
+			ok: true
+		});
+		expect(mocks.requireGroupWriter).toHaveBeenCalledWith(GROUP, ALICE);
+		expect(mocks.saveSettings).toHaveBeenCalledWith(
+			{ did: GROUP, handle: mocks.handle },
+			{ did: GROUP, handle: 'riders.example', pds: 'https://h' },
+			{
+				name: 'Night Riders',
+				description: null,
+				website: 'https://riders.example/',
+				joinPolicy: 'open',
+				public: true,
+				listed: false
+			},
+			false
+		);
+	});
+
+	it('says what is wrong with a form it cannot take, and writes nothing', async () => {
+		await expect(
+			saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings: { ...form, name: ' ' } })
+		).rejects.toMatchObject({ status: 400, body: { message: expect.stringContaining('name') } });
+		expect(mocks.saveSettings).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		[new XrpcError('com.atproto.space.updateSpace', 403, 'NotAuthorized'), 403, 'role'],
+		[new XrpcError('com.atproto.space.putRecord', 403, 'ScopeMissing'), 403, 'role'],
+		[new XrpcError('com.atproto.space.getDelegationToken', 401, 'invalid_token'), 403, 'Link'],
+		[new XrpcError('com.atproto.space.putRecord', 400, 'InvalidRequest'), 400, 'did not take']
+	])('answers %s with a %i that says why', async (refusal, status, words) => {
+		mocks.saveSettings.mockRejectedValue(refusal);
+		await expect(
+			saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings: form })
+		).rejects.toMatchObject({ status, body: { message: expect.stringContaining(words) } });
+	});
+
+	it('is the same 404 without a link', async () => {
+		mocks.requireGroupWriter.mockImplementation(() => error(404, 'Group not found'));
+		await expect(
+			saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings: form })
+		).rejects.toMatchObject({ status: 404 });
+		expect(mocks.saveSettings).not.toHaveBeenCalled();
 	});
 });
 

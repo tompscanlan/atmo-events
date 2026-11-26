@@ -20,6 +20,7 @@ import { oauthRequestLock } from '#lib/atproto/server/oauth.js';
 import { oauthOrigin } from '#lib/atproto/server/origin.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 import { GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION, META_SPACE_TYPE } from '../ids';
+import { GROUP_SETTINGS_SCOPES } from '../scopes';
 import { groupsEnabled } from './enabled';
 import { listKeys, prefixedKV } from './kv';
 import type { XrpcHandle } from './xrpc';
@@ -30,16 +31,21 @@ export const GROUP_CALLBACK_PATH = '/oauth/group/callback';
 const JWKS_PATH = '/oauth/jwks.json';
 
 const SESSION_PREFIX = 'group:session:';
+/** The scope this site asked for when each link was approved, beside the session, so a link
+ *  approved before the asked scope grew can be told from one whose roles withheld the rest. */
+const ASKED_PREFIX = 'group:asked:';
 const STATE_PREFIX = 'group:state:';
 const STATE_TTL_SECONDS = 600;
 
 /** The host keeps or drops each scope whole, so the meta read is its own scope and
- *  survives for a member whose roles grant no writes. */
+ *  survives for a member whose roles grant no writes, and each of the settings' writes is its own
+ *  too. */
 export const GROUP_SESSION_SCOPE = [
 	'atproto',
 	`space:${META_SPACE_TYPE}?authority=self&action=read`,
 	scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
-	scope.blob({ accept: ['image/*'] })
+	scope.blob({ accept: ['image/*'] }),
+	...GROUP_SETTINGS_SCOPES
 ].join(' ');
 
 /** A loopback client cannot have a second client_id, and only one group host is served. */
@@ -166,7 +172,17 @@ export async function finishGroupLink(
 			reason: `${session.did} was authorized, not ${link.groupDid}`
 		};
 	}
+	await env.OAUTH_SESSIONS.put(askedKey(link.by, link.groupDid), GROUP_SESSION_SCOPE);
 	return { ok: true, groupDid: link.groupDid };
+}
+
+const askedKey = (personDid: string, groupDid: string) => `${ASKED_PREFIX}${personDid}/${groupDid}`;
+
+/** Whether the person approved their link to the group for what this site asks for now. A link
+ *  from before the asked scope last grew may be missing what approving again would bring. */
+export async function linkAskedCurrentScope(groupDid: string, personDid: string): Promise<boolean> {
+	const asked = await env.OAUTH_SESSIONS?.get(askedKey(personDid, groupDid), 'text');
+	return asked === GROUP_SESSION_SCOPE;
 }
 
 export async function hasGroupSession(groupDid: string, personDid: string): Promise<boolean> {
@@ -212,5 +228,6 @@ export async function unlinkGroup(groupDid: string, personDid: string): Promise<
 		console.warn(`[groups] revoking ${personDid}'s session for ${groupDid} failed:`, e);
 	} finally {
 		await env.OAUTH_SESSIONS.delete(personPrefix(personDid) + groupDid);
+		await env.OAUTH_SESSIONS.delete(askedKey(personDid, groupDid));
 	}
 }

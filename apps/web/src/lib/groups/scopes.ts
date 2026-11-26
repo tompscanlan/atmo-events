@@ -5,7 +5,13 @@
 // offers. The host checks the person's roles again at each write, so a role taken away since the
 // approval is still refused then. Values and pure checks only, so the OAuth config, pages and tests
 // can import them.
-import { GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION } from './ids';
+import {
+	GROUP_ABOUT_COLLECTION,
+	GROUP_CONFIG_COLLECTION,
+	GROUP_DECLARATION_COLLECTION,
+	GROUP_EVENT_COLLECTION,
+	META_SPACE_TYPE
+} from './ids';
 
 /** The group host's own method for making a group, not the spec's (bluesky-social/group-host's
  *  `org.atgrp.internal.createGroup`). The spec's way is OAuth `prompt=create` at the host, which
@@ -34,6 +40,55 @@ export function holdsCreateGroup(scope: string): boolean {
 			: params.getAll('lxm');
 		return methods.includes(CREATE_GROUP_NSID) && params.getAll('aud').length > 0;
 	});
+}
+
+const META_SELF = `space:${META_SPACE_TYPE}?authority=self&skey=self`;
+const META_RECORD_WRITES = 'action=read&action=create&action=update';
+
+/** What a group's settings write as the group, each its own scope, since its host keeps or drops
+ *  each whole: the about record, the config (who may join), and the meta space's policy, which says
+ *  whether it is public. Only what the settings write: not the spec's `authManageAdmin` set, which
+ *  also covers the members space, invites and moderation. */
+export const GROUP_SETTINGS_SCOPES: readonly string[] = [
+	`${META_SELF}&collection=${GROUP_ABOUT_COLLECTION}&${META_RECORD_WRITES}`,
+	`${META_SELF}&collection=${GROUP_CONFIG_COLLECTION}&${META_RECORD_WRITES}`,
+	`${META_SELF}&manage=update`
+];
+
+/** The meta-space grants in a granted scope, for the group's own meta space: the host gives back
+ *  `authority=self` as the group's DID. */
+function metaGrants(scope: string, groupDid: string): URLSearchParams[] {
+	return scope
+		.split(' ')
+		.filter((token) => token.startsWith(`space:${META_SPACE_TYPE}?`))
+		.map((token) => new URLSearchParams(token.slice(token.indexOf('?') + 1)))
+		.filter((params) => {
+			const authority = params.get('authority') ?? 'self';
+			const skey = params.get('skey') ?? '*';
+			return [groupDid, 'self', '*'].includes(authority) && ['self', '*'].includes(skey);
+		});
+}
+
+function writesMetaRecord(grants: URLSearchParams[], collection: string): boolean {
+	return grants.some((grant) => {
+		const collections = grant.getAll('collection');
+		const actions = grant.getAll('action');
+		return (
+			(collections.includes('*') || collections.includes(collection)) &&
+			['create', 'update'].every((action) => actions.includes(action))
+		);
+	});
+}
+
+/** Whether the granted scope lets the session change the group's settings: its about record and
+ *  config, and the meta space's policy. */
+export function grantsSettings(scope: string, groupDid: string): boolean {
+	const grants = metaGrants(scope, groupDid);
+	return (
+		writesMetaRecord(grants, GROUP_ABOUT_COLLECTION) &&
+		writesMetaRecord(grants, GROUP_CONFIG_COLLECTION) &&
+		grants.some((grant) => grant.getAll('manage').includes('update'))
+	);
 }
 
 const RECORD_WRITES = ['create', 'update', 'delete'] as const;
@@ -70,11 +125,16 @@ export interface GroupAbilities {
 	post: boolean;
 	/** Add the group to the groups list, or take it off. */
 	list: boolean;
+	/** Change its name, description, website, who may join and whether it is public. */
+	settings: boolean;
 }
 
-export function groupAbilities(scope: string): GroupAbilities {
+export function groupAbilities(scope: string, groupDid: string): GroupAbilities {
+	const list = grantsRepoWrites(scope, GROUP_DECLARATION_COLLECTION);
 	return {
 		post: grantsRepoWrites(scope, GROUP_EVENT_COLLECTION),
-		list: grantsRepoWrites(scope, GROUP_DECLARATION_COLLECTION)
+		list,
+		// Making a group public or private moves its listing too.
+		settings: list && grantsSettings(scope, groupDid)
 	};
 }

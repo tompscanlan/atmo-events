@@ -22,7 +22,8 @@ import {
 	actions as createActions,
 	load as createPage
 } from '../../../routes/(app)/groups/create/+page.server';
-import { finishGroupSetup } from '../group.remote';
+import { load as settingsPage } from '../../../routes/(app)/groups/[actor]/settings/+page.server';
+import { finishGroupSetup, saveGroupSettings } from '../group.remote';
 import { groupView, requireGroupWriter, requireStoredLink } from './context';
 
 const GROUP = 'did:plc:group';
@@ -71,7 +72,7 @@ describe('with groups off', () => {
 		expect(await shown(() => requireStoredLink(GROUP, ALICE))).toBe(expected);
 	});
 
-	it('shows making a group as an unknown address, and makes nothing', async () => {
+	it('shows making a group and the settings as unknown addresses, and saves nothing', async () => {
 		const expected = unknownAddress();
 		const request = {
 			locals: { did: ALICE, session: null },
@@ -80,6 +81,7 @@ describe('with groups off', () => {
 			setHeaders: vi.fn()
 		} as never;
 		expect(await shown(() => createPage(request))).toBe(expected);
+		expect(await shown(() => settingsPage(request))).toBe(expected);
 		const post = {
 			request: new Request('https://atmo.example/groups/create', {
 				method: 'POST',
@@ -88,6 +90,17 @@ describe('with groups off', () => {
 			locals: { did: ALICE, session: null }
 		} as never;
 		expect(await shown(() => createActions.default(post))).toBe(expected);
+		const settings = {
+			name: 'x',
+			description: '',
+			website: '',
+			joinPolicy: 'open',
+			public: true,
+			listed: true
+		};
+		expect(
+			await shown(() => saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings }))
+		).toBe(expected);
 		expect(await shown(() => finishGroupSetup({ groupDid: GROUP }))).toBe(expected);
 	});
 });

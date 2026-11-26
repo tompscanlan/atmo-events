@@ -4,7 +4,8 @@ import * as v from 'valibot';
 import { GROUP_EVENT_COLLECTION } from './ids';
 import { requireGroupWriter, requireStoredLink } from './server/context';
 import { finishSetup } from './server/create';
-import { listGroup, notifyIndex, readGroupMeta, unlistGroup } from './server/group';
+import { listGroup, notifyIndex, readGroupMeta, resolveGroup, unlistGroup } from './server/group';
+import { parseGroupSettings, saveGroupSettings as saveSettings } from './server/settings';
 import { unlinkGroup } from './server/sign-in';
 import { isLinkBroken, isRoleRefused, xrpc, xrpcBlob, XrpcError } from './server/xrpc';
 
@@ -16,7 +17,7 @@ function callerDid(): string | null {
 }
 
 const ONLY_PUBLIC =
-	'Only a public group can be listed, and this one is private. Make it public at its group host first.';
+	'Only a public group can be listed, and this one is private. Make it public in its settings first.';
 const NO_ROLE = 'Your role in this group no longer allows that.';
 const RELINK = 'Your link to this group stopped working. Link it again from its page.';
 
@@ -61,6 +62,42 @@ export const setGroupListed = command(
 			throw e;
 		}
 		return { listed };
+	}
+);
+
+const settingsSchema = v.object({
+	name: v.string(),
+	description: v.string(),
+	website: v.string(),
+	joinPolicy: v.string(),
+	public: v.boolean(),
+	listed: v.boolean()
+});
+
+/** `shownPublic` is the visibility the form showed, so a change made elsewhere since is kept. */
+export const saveGroupSettings = command(
+	v.object({ groupDid: didSchema, shownPublic: v.boolean(), settings: settingsSchema }),
+	async ({ groupDid, shownPublic, settings }) => {
+		const writer = await requireGroupWriter(groupDid, callerDid());
+		const parsed = parseGroupSettings(settings);
+		if (!parsed) {
+			error(
+				400,
+				'Check the settings: a name is needed, up to 64 characters, and a website starts with https://.'
+			);
+		}
+		const group = (await resolveGroup(groupDid)) ?? { did: groupDid, handle: null };
+		try {
+			await saveSettings(writer, group, parsed, shownPublic);
+		} catch (e) {
+			if (isRoleRefused(e)) error(403, NO_ROLE);
+			if (isLinkBroken(e)) error(403, RELINK);
+			if (e instanceof XrpcError && e.status === 400 && e.error === 'InvalidRequest') {
+				error(400, 'The group host did not take these settings. Check them and try again.');
+			}
+			throw e;
+		}
+		return { ok: true };
 	}
 );
 

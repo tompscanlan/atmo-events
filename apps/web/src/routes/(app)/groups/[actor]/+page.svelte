@@ -103,6 +103,12 @@
 						>Add to the groups list</Button
 					>
 				{/if}
+				{#if group.linked.can.settings}
+					<Button
+						href={resolve('/(app)/groups/[actor]/settings', { actor: group.did })}
+						variant="secondary">Settings</Button
+					>
+				{/if}
 				<Button variant="ghost" disabled={busy} onclick={unlink}>Unlink</Button>
 			</section>
 			{#if group.linked.unfinished}
@@ -120,7 +126,19 @@
 					>
 				</div>
 			{/if}
-			{#if !group.linked.can.post && !group.linked.can.list}
+			{#if group.linked.reapprove}
+				<form
+					method="POST"
+					action="/oauth/group/link"
+					class="mt-3 flex flex-wrap items-center gap-3"
+				>
+					<input type="hidden" name="group" value={group.did} />
+					<span class="text-base-600 dark:text-base-400 text-sm">
+						Your link was approved before atmo asked for all it can do for a group.
+					</span>
+					<Button type="submit" size="sm" variant="secondary">Approve again</Button>
+				</form>
+			{:else if !group.linked.can.post && !group.linked.can.list}
 				<p class="text-base-600 dark:text-base-400 mt-2 text-sm" role="status">
 					Your role in this group lets you see it here, but not post its events or list it.
 				</p>

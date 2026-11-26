@@ -27,8 +27,8 @@ const EVENT = {
 /** The page for someone who linked the group, as its load returns it; `can` is what the session's
  *  granted scope allows. */
 function linkedPage(
-	linked: { public: boolean; listed: boolean; unfinished?: boolean },
-	can = { post: true, list: true },
+	linked: { public: boolean; listed: boolean; reapprove?: boolean; unfinished?: boolean },
+	can = { post: true, list: true, settings: true },
 	events: (typeof EVENT)[] = []
 ) {
 	return {
@@ -44,6 +44,7 @@ function linkedPage(
 				meta: { profile: { name: 'Knitters', description: null }, public: linked.public },
 				listed: linked.listed,
 				can,
+				reapprove: linked.reapprove ?? false,
 				unfinished: linked.unfinished ?? false
 			},
 			relink: false,
@@ -70,9 +71,11 @@ describe("what a link's granted scope offers", () => {
 
 	it("offers none of it to a member's session, and says why", async () => {
 		render(GroupPage, {
-			data: linkedPage({ public: true, listed: false }, { post: false, list: false }, [
-				EVENT
-			]) as never
+			data: linkedPage(
+				{ public: true, listed: false },
+				{ post: false, list: false, settings: false },
+				[EVENT]
+			) as never
 		});
 		await expect
 			.poll(shown)
@@ -83,6 +86,27 @@ describe("what a link's granted scope offers", () => {
 		expect(page.getByRole('link', { name: 'Edit' }).elements()).toHaveLength(0);
 		expect(listButton().elements()).toHaveLength(0);
 		expect(page.getByRole('button', { name: 'Unlink' }).elements()).toHaveLength(1);
+		expect(page.getByRole('link', { name: 'Settings' }).elements()).toHaveLength(0);
+	});
+
+	it("offers the group's settings to a session that may change them", async () => {
+		render(GroupPage, { data: linkedPage({ public: true, listed: true }) as never });
+		await expect
+			.element(page.getByRole('link', { name: 'Settings' }))
+			.toHaveAttribute('href', `/groups/${encodeURIComponent(GROUP)}/settings`);
+	});
+
+	it('offers to approve again a link approved before atmo asked for all it does now', async () => {
+		render(GroupPage, {
+			data: linkedPage(
+				{ public: true, listed: true, reapprove: true },
+				{ post: true, list: true, settings: false }
+			) as never
+		});
+		await expect.element(page.getByRole('button', { name: 'Approve again' })).toBeVisible();
+		const form = page.getByRole('button', { name: 'Approve again' }).element().closest('form');
+		expect(form?.getAttribute('action')).toBe('/oauth/group/link');
+		expect(new FormData(form as HTMLFormElement).get('group')).toBe(GROUP);
 	});
 
 	it("finishes setting up a group made here when its link didn't", async () => {
