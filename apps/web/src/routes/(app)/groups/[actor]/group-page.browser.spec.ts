@@ -290,6 +290,13 @@ describe("a person's own membership", () => {
 		await expect.element(page.getByRole('button', { name: 'Ask to join' })).toBeVisible();
 	});
 
+	it("offers no join, and says why, when it couldn't tell whether they are a member", async () => {
+		render(GroupPage, { data: personPage({ joinPolicy: 'open' }, null) as never });
+		await expect.poll(shown).toContain("Whether you're a member of this group couldn't be checked");
+		expect(page.getByRole('button', { name: /join/i }).elements()).toHaveLength(0);
+		expect(page.getByRole('button', { name: 'Leave group' }).elements()).toHaveLength(0);
+	});
+
 	it('says a group takes members by invitation only, and offers no join', async () => {
 		render(GroupPage, { data: personPage({ joinPolicy: 'invite' }, false) as never });
 		await expect.poll(shown).toContain('This group takes members by invitation only.');

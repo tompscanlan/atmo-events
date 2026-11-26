@@ -170,14 +170,37 @@ async function readLinked(
 	}
 }
 
-/** Whether the person's groups at the host include this one, by the host's own list. */
-async function knowsGroup(caller: CallerSession, groupDid: string): Promise<boolean> {
-	if (!holdsRpc(caller.scope, ACTOR_GROUPS_NSID)) return false;
+/** Whether the person's groups at the host include this one, by the host's own list; null when
+ *  their sign-in can't ask for it, or the host did not answer. */
+async function hostListsGroup(caller: CallerSession, groupDid: string): Promise<boolean | null> {
+	if (!holdsRpc(caller.scope, ACTOR_GROUPS_NSID)) return null;
 	try {
 		return (await actorGroups(caller)).some((group) => group.did === groupDid);
 	} catch (e) {
 		console.warn(`[groups] ${caller.did}'s groups could not be listed: ${errorKind(e)}`);
-		return false;
+		return null;
+	}
+}
+
+const knowsGroup = async (caller: CallerSession, groupDid: string) =>
+	(await hostListsGroup(caller, groupDid)) === true;
+
+/** Whether the person is a member. An ambiguous refusal of the members space is settled by the
+ *  host's own list of their groups, so a brief failure never shows a member a Join button: null,
+ *  could not tell, unless the list says they are not in it. */
+async function membershipOf(
+	caller: CallerSession,
+	reader: SpaceReader,
+	groupDid: string
+): Promise<boolean | null> {
+	try {
+		return await isMemberAsPerson(reader, groupDid, caller.did);
+	} catch (e) {
+		if (isSpaceAccessDenied(e) && isAmbiguousDenial(e)) {
+			return (await hostListsGroup(caller, groupDid)) === false ? false : null;
+		}
+		console.warn(`[groups] ${groupDid}: ${caller.did}'s membership could not be read:`, e);
+		return null;
 	}
 }
 
@@ -227,10 +250,7 @@ async function personalRead(caller: CallerSession, groupDid: string): Promise<Pe
 		console.error(`[groups] ${groupDid}: the meta space could not be read for ${caller.did}:`, e);
 		return { meta: null, member: null, confirmed: null, unsure: true };
 	}
-	const member = await isMemberAsPerson(reader, groupDid, caller.did).catch((e) => {
-		console.warn(`[groups] ${groupDid}: ${caller.did}'s membership could not be read:`, e);
-		return null;
-	});
+	const member = await membershipOf(caller, reader, groupDid);
 	const confirmed =
 		member && holdsConfirmationGrant(caller.scope, 'create', groupDid)
 			? await ownConfirmation(caller, reader, groupDid)

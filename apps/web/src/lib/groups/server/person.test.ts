@@ -79,4 +79,11 @@ describe('whether the person is a member', () => {
 		const down = reader({}, { [MEMBERS]: new Error('host down') });
 		await expect(isMemberAsPerson(down, GROUP, ALICE)).rejects.toThrow('host down');
 	});
+
+	it('cannot tell from SpaceNotFound, which a PDS also answers when it could not reach the host', async () => {
+		const unclear = new SpaceAccessDenied(MEMBERS, '400 SpaceNotFound');
+		await expect(isMemberAsPerson(reader({}, { [MEMBERS]: unclear }), GROUP, ALICE)).rejects.toBe(
+			unclear
+		);
+	});
 });

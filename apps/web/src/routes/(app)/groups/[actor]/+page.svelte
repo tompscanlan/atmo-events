@@ -162,7 +162,11 @@
 			/>
 		{/if}
 
-		{#if group.personal && group.member !== null}
+		{#if group.personal && group.member === null}
+			<p class="text-base-600 dark:text-base-400 mt-6 text-sm" role="status">
+				Whether you're a member of this group couldn't be checked just now. Try again shortly.
+			</p>
+		{:else if group.personal}
 			<section class="mt-6" aria-label="Membership">
 				{#if group.member}
 					<div class="flex flex-wrap items-center gap-3">

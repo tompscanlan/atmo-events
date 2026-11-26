@@ -585,6 +585,28 @@ describe('groupView for a person with their own group permissions', () => {
 		expect(mocks.confirmAdmitted).not.toHaveBeenCalled();
 	});
 
+	it.each([
+		[
+			'the host lists them in it',
+			[{ did: GROUP, handle: 'knit.example', displayName: null }],
+			null
+		],
+		['the host did not answer', null, null],
+		['the host lists them in other groups only', [], false]
+	] as const)(
+		'settles a members space their PDS could not open by the host’s list: %s',
+		async (_why, listed, member) => {
+			mocks.isDeclared.mockResolvedValue(true);
+			mocks.isMemberAsPerson.mockRejectedValue(
+				new SpaceAccessDenied(`at:space/${GROUP}/org.atgrp.members/self`, '400 SpaceNotFound')
+			);
+			if (listed) mocks.actorGroups.mockResolvedValue(listed);
+			else mocks.actorGroups.mockRejectedValue(new Error('host down'));
+			vi.spyOn(console, 'warn').mockImplementation(() => {});
+			expect(await groupView(GROUP, ALICE, person())).toMatchObject({ member, personal: personal });
+		}
+	);
+
 	it('says it could not tell when the membership read fails', async () => {
 		mocks.isMemberAsPerson.mockRejectedValue(new Error('host down'));
 		vi.spyOn(console, 'warn').mockImplementation(() => {});
