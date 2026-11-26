@@ -502,6 +502,45 @@ describe('cached group profiles', () => {
 		});
 		expect(kv.keys()).toEqual([]);
 	});
+
+	it('writes or removes it only when it changes', async () => {
+		const put = vi.spyOn(kv, 'put');
+		const remove = vi.spyOn(kv, 'delete');
+		const knitters = { profile: { name: 'Knitters', description: 'Yarn' }, public: true };
+		await storeCachedProfile(group, knitters);
+		await storeCachedProfile(group, knitters);
+		await storeCachedProfile(group, { ...knitters, profile: { ...knitters.profile } });
+		expect(put).toHaveBeenCalledOnce();
+
+		await storeCachedProfile(group, {
+			...knitters,
+			profile: { ...knitters.profile, name: 'Purl' }
+		});
+		await storeCachedProfile(
+			{ ...group, handle: 'purl.example' },
+			{
+				...knitters,
+				profile: { ...knitters.profile, name: 'Purl' }
+			}
+		);
+		expect(put).toHaveBeenCalledTimes(3);
+
+		await storeCachedProfile(group, { ...knitters, public: false });
+		await storeCachedProfile(group, { ...knitters, public: false });
+		await storeCachedProfile(group, { profile: null, public: true });
+		expect(remove).toHaveBeenCalledOnce();
+		expect(kv.keys()).toEqual([]);
+	});
+
+	it('writes it when the cached one could not be read', async () => {
+		vi.spyOn(kv, 'get').mockRejectedValue(new Error('KV down'));
+		const put = vi.spyOn(kv, 'put');
+		await storeCachedProfile(group, {
+			profile: { name: 'Knitters', description: null },
+			public: true
+		});
+		expect(put).toHaveBeenCalledOnce();
+	});
 });
 
 describe('heldAtGroupHost', () => {

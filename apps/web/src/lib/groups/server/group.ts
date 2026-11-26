@@ -360,17 +360,23 @@ export async function readCachedProfiles(dids: string[]): Promise<Map<string, Ca
 	return profiles;
 }
 
-/** A private group's cached profile is removed, so its name never reaches a visitor. */
+/** A private group's cached profile is removed, so its name never reaches a visitor. Written or
+ *  removed only when it changes, since every page view by someone who reads the group lands here,
+ *  and KV bills each write and takes about one a second for a key. A read that fails counts as a
+ *  change. */
 export async function storeCachedProfile(
 	group: Pick<ResolvedGroup, 'did' | 'handle'>,
 	meta: GroupMeta
 ): Promise<void> {
 	const kv = env.OAUTH_SESSIONS;
 	if (!kv) return;
+	const key = CACHED_PROFILE_PREFIX + group.did;
+	const cached = await kv.get(key, 'text').catch(() => undefined);
 	if (!meta.public || !meta.profile) {
-		await kv.delete(CACHED_PROFILE_PREFIX + group.did);
+		if (cached !== null) await kv.delete(key);
 		return;
 	}
 	const profile: CachedGroupProfile = { ...meta.profile, handle: group.handle };
-	await kv.put(CACHED_PROFILE_PREFIX + group.did, JSON.stringify(profile));
+	const value = JSON.stringify(profile);
+	if (cached !== value) await kv.put(key, value);
 }
