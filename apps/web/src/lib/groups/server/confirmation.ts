@@ -121,8 +121,8 @@ export async function confirmAdmitted(member: CallerSession, groupDid: string): 
 	}
 }
 
-/** Before a leave, while the host still counts them a member, as the spec asks. A confirmation
- *  with no membership confirms nothing, so a failure does not stop the leave. */
+/** Once the host has taken a leave. A confirmation with no membership confirms nothing, so a
+ *  failure here does not undo the leave. */
 export async function withdrawConfirmation(member: CallerSession, groupDid: string): Promise<void> {
 	try {
 		await deleteConfirmation(member, groupDid);

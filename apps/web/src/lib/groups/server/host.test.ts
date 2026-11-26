@@ -122,7 +122,7 @@ describe('cancelling a request', () => {
 });
 
 describe('leaving a group', () => {
-	it('withdraws the confirmation first, then leaves at the host', async () => {
+	it('leaves at the host, then withdraws the confirmation', async () => {
 		const order: string[] = [];
 		mocks.withdrawConfirmation.mockImplementation(async () => order.push('confirmation'));
 		hostAnswers((url) => {
@@ -132,7 +132,7 @@ describe('leaving a group', () => {
 		const person = caller();
 		await leaveGroup(person, GROUP);
 		expect(mocks.withdrawConfirmation).toHaveBeenCalledWith(person, GROUP);
-		expect(order).toEqual(['confirmation', '/xrpc/org.atgrp.leaveGroup']);
+		expect(order).toEqual(['/xrpc/org.atgrp.leaveGroup', 'confirmation']);
 		expect(person.handle.mock.calls[0][0]).toContain('lxm=org.atgrp.leaveGroup');
 	});
 
@@ -141,6 +141,15 @@ describe('leaving a group', () => {
 		await expect(leaveGroup(caller(), GROUP)).rejects.toEqual(new GroupActionRefused('last-admin'));
 		hostAnswers(refusal('NotAMember'));
 		await expect(leaveGroup(caller(), GROUP)).resolves.toBeUndefined();
+		expect(mocks.withdrawConfirmation).toHaveBeenCalledOnce();
+	});
+
+	it('keeps the confirmation of a member whose leave the host refused, or never answered', async () => {
+		hostAnswers(refusal('LastConfigurer'));
+		await expect(leaveGroup(caller(), GROUP)).rejects.toBeInstanceOf(GroupActionRefused);
+		hostAnswers(() => new Response('', { status: 502 }));
+		await expect(leaveGroup(caller(), GROUP)).rejects.toThrow();
+		expect(mocks.withdrawConfirmation).not.toHaveBeenCalled();
 	});
 });
 
