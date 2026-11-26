@@ -598,7 +598,9 @@ export async function myPrivateEvents(caller: CallerSession): Promise<MyPrivateE
 	const events = await Promise.all(
 		spaces.map(async (uri): Promise<MyPrivateEvent | null> => {
 			const parsed = parseSpaceUri(uri);
-			if (!parsed) return null;
+			// A group's calendar, keyed `self`, holds a group's events, not one event of its own: the
+			// group's page lists them. atmo never keys a private event's space `self`.
+			if (!parsed || parsed.key === 'self') return null;
 			const address = singleEvent(parsed.authority, parsed.key);
 			const event = await readEvent(reader, address).catch((e) => {
 				console.info(`[private-events] a space unread for the list: ${errorKind(e)}`);
