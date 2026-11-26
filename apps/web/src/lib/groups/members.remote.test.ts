@@ -19,7 +19,12 @@ const mocks = vi.hoisted(() => ({
 	writeConfirmation: vi.fn(),
 	rememberJoinRequest: vi.fn(),
 	forgetJoinRequest: vi.fn(),
-	isMemberAsPerson: vi.fn()
+	isMemberAsPerson: vi.fn(),
+	resolveGroup: vi.fn()
+}));
+vi.mock('./server/group', () => ({
+	resolveGroup: mocks.resolveGroup,
+	atGroupHost: ({ pds }: { pds: string }) => pds === 'https://host.example'
 }));
 vi.mock('./server/confirmation', () => ({
 	confirmMembership: mocks.confirmMembership,
@@ -79,6 +84,7 @@ beforeEach(() => {
 	mocks.callerSession.mockResolvedValue(caller);
 	mocks.requireGroupWriter.mockResolvedValue(writer);
 	mocks.rememberJoinRequest.mockResolvedValue(undefined);
+	mocks.resolveGroup.mockResolvedValue({ did: GROUP, handle: null, pds: 'https://host.example' });
 });
 
 describe("a person's own membership", () => {
@@ -134,6 +140,38 @@ describe("a person's own membership", () => {
 		mocks.isMemberAsPerson.mockResolvedValue(false);
 		await expect(confirmMember({ groupDid: GROUP })).rejects.toMatchObject({ status: 409 });
 		expect(mocks.writeConfirmation).not.toHaveBeenCalled();
+	});
+
+	it('does nothing in a group at another host, its confirmation included: the same 404', async () => {
+		mocks.resolveGroup.mockResolvedValue({
+			did: GROUP,
+			handle: null,
+			pds: 'https://elsewhere.example'
+		});
+		for (const act of [
+			() => joinGroup({ groupDid: GROUP }),
+			() => cancelJoin({ groupDid: GROUP }),
+			() => leave({ groupDid: GROUP }),
+			() => confirmMember({ groupDid: GROUP })
+		]) {
+			await expect(act()).rejects.toMatchObject({
+				status: 404,
+				body: { message: 'Group not found' }
+			});
+		}
+		mocks.resolveGroup.mockResolvedValue(null);
+		await expect(leave({ groupDid: GROUP })).rejects.toMatchObject({ status: 404 });
+		for (const touched of [
+			mocks.requestJoin,
+			mocks.cancelJoinRequest,
+			mocks.leaveGroup,
+			mocks.writeConfirmation,
+			mocks.confirmMembership,
+			mocks.forgetJoinRequest,
+			mocks.rememberJoinRequest
+		]) {
+			expect(touched).not.toHaveBeenCalled();
+		}
 	});
 
 	it('says a sign-in that cannot write the confirmation needs the permission', async () => {

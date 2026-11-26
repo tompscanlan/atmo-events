@@ -15,6 +15,7 @@ import {
 } from './server/confirmation';
 import { GROUP_NOT_FOUND, requireGroupWriter, type GroupWriter } from './server/context';
 import { requireGroupsEnabled } from './server/enabled';
+import { atGroupHost, resolveGroup } from './server/group';
 import {
 	cancelJoinRequest,
 	GroupActionRefused,
@@ -56,6 +57,15 @@ async function person(): Promise<CallerSession> {
 	return caller;
 }
 
+/** The person, for an act in a group at this site's group host: anywhere else, nothing is done,
+ *  their own confirmation included, and it is the same 404 as a group they may not see. */
+async function personIn(groupDid: string): Promise<CallerSession> {
+	const caller = await person();
+	const group = await resolveGroup(groupDid);
+	if (!group || !atGroupHost(group)) error(404, GROUP_NOT_FOUND);
+	return caller;
+}
+
 /** A refusal the host gave, in words the page shows; any other failure a 502 that says nothing of
  *  what the host answered. */
 async function atHost<T>(groupDid: string, run: () => Promise<T>): Promise<T> {
@@ -79,7 +89,7 @@ export const joinGroup = command(
 		message: v.optional(v.pipe(v.string(), v.maxLength(JOIN_MESSAGE_MAX)))
 	}),
 	async ({ groupDid, message }) => {
-		const caller = await person();
+		const caller = await personIn(groupDid);
 		const outcome = await atHost(groupDid, () =>
 			requestJoin(caller, groupDid, message?.trim() || null)
 		);
@@ -94,14 +104,14 @@ export const joinGroup = command(
 );
 
 export const cancelJoin = command(v.object({ groupDid: didSchema }), async ({ groupDid }) => {
-	const caller = await person();
+	const caller = await personIn(groupDid);
 	await atHost(groupDid, () => cancelJoinRequest(caller, groupDid));
 	await forgetJoinRequest(caller.did, groupDid);
 	return { ok: true };
 });
 
 export const leave = command(v.object({ groupDid: didSchema }), async ({ groupDid }) => {
-	const caller = await person();
+	const caller = await personIn(groupDid);
 	await atHost(groupDid, () => leaveGroup(caller, groupDid));
 	await forgetJoinRequest(caller.did, groupDid);
 	return { ok: true };
@@ -113,7 +123,7 @@ const NOT_A_MEMBER = 'The group host does not count you a member of this group.'
  *  records say they are a member, since a write the host would not count still lands in their
  *  own repo. */
 export const confirmMember = command(v.object({ groupDid: didSchema }), async ({ groupDid }) => {
-	const caller = await person();
+	const caller = await personIn(groupDid);
 	const member = await atHost(groupDid, () =>
 		isMemberAsPerson(personReader(caller), groupDid, caller.did)
 	);
