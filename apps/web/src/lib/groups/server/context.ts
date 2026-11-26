@@ -17,6 +17,7 @@ import {
 	repoHasDeclaration,
 	resolveGroup,
 	storeCachedProfile,
+	syncDeclarationIndex,
 	type GroupMeta
 } from './group';
 import { requireGroupsEnabled } from './enabled';
@@ -109,6 +110,8 @@ export async function groupView(actor: string, callerDid: string | null): Promis
 			await storeCachedProfile(group, read.meta).catch((e) => {
 				console.warn(`[groups] ${group.did}: the cached profile could not be stored:`, e);
 			});
+			// Listed or unlisted by the group host itself, perhaps, which the index may not know yet.
+			await syncDeclarationIndex(group.did, read.listed);
 		}
 	}
 

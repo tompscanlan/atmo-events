@@ -40,6 +40,7 @@ import {
 	readGroupMeta,
 	resolveGroup,
 	storeCachedProfile,
+	syncDeclarationIndex,
 	unlistGroup
 } from './group';
 
@@ -361,6 +362,39 @@ describe('readGroupMeta', () => {
 		expect(thrown).toBeInstanceOf(XrpcError);
 		expect(isRoleRefused(thrown)).toBe(false);
 		expect(isAuthRefused(thrown)).toBe(false);
+	});
+});
+
+describe('the index of a declaration the group host keeps itself', () => {
+	const DECLARATION = `at://${GROUP}/org.atgrp.declaration/self`;
+	const indexHas = (declared: boolean) =>
+		mocks.get.mockResolvedValueOnce(
+			declared
+				? { ok: true, status: 200, data: {} }
+				: { ok: false, status: 404, data: { error: 'NotFound' } }
+		);
+
+	it.each([
+		['the repo has one the index lacks', true, false],
+		['the index has one the repo no longer does', false, true]
+	])('is told to read it again when %s', async (_when, inRepo, indexed) => {
+		indexHas(indexed);
+		await syncDeclarationIndex(GROUP, inRepo);
+		expect(mocks.post).toHaveBeenCalledWith('rsvp.atmo.notifyOfUpdate', {
+			input: { uris: [DECLARATION] }
+		});
+	});
+
+	it.each([true, false])('is left alone when it agrees with the repo (%s)', async (inRepo) => {
+		indexHas(inRepo);
+		await syncDeclarationIndex(GROUP, inRepo);
+		expect(mocks.post).not.toHaveBeenCalled();
+	});
+
+	it('never fails the page when the index cannot say', async () => {
+		mocks.get.mockResolvedValueOnce({ ok: false, status: 500, data: { error: 'Internal' } });
+		await expect(syncDeclarationIndex(GROUP, true)).resolves.toBeUndefined();
+		expect(mocks.post).not.toHaveBeenCalled();
 	});
 });
 

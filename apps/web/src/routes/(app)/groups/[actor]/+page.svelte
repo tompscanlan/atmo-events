@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Avatar, Badge, Button } from '@atmo-dev/kit';
+	import { isHttpError } from '@sveltejs/kit';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import EventList from '#lib/components/EventList.svelte';
@@ -17,8 +18,12 @@
 		try {
 			await run();
 			await after();
-		} catch {
-			failure = 'That did not work. Try again, or link the group again.';
+		} catch (e) {
+			// The server says why where it can: the group is private, or the caller's role changed.
+			failure =
+				isHttpError(e, 409) || isHttpError(e, 403)
+					? e.body.message
+					: 'That did not work. Try again, or link the group again.';
 		} finally {
 			busy = false;
 		}
@@ -86,6 +91,9 @@
 					>
 				{:else}
 					<Badge>Private</Badge>
+					<span class="text-base-600 dark:text-base-400 text-sm">
+						Only a public group can be on the groups list.
+					</span>
 				{/if}
 				<Button variant="ghost" disabled={busy} onclick={unlink}>Unlink</Button>
 			</section>

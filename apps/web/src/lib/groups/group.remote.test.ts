@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { error } from '@sveltejs/kit';
+import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
+import { XrpcError } from './server/xrpc';
 
 const mocks = vi.hoisted(() => ({
 	getRequestEvent: vi.fn(),
@@ -107,6 +109,63 @@ describe('listing', () => {
 		expect(mocks.listGroup).toHaveBeenCalledWith(mocks.handle, GROUP);
 		await setGroupListed({ groupDid: GROUP, listed: false });
 		expect(mocks.unlistGroup).toHaveBeenCalledWith(mocks.handle, GROUP);
+	});
+
+	it('says why a private group cannot be listed', async () => {
+		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: false });
+		await expect(setGroupListed({ groupDid: GROUP, listed: true })).rejects.toMatchObject({
+			status: 409,
+			body: { message: expect.stringContaining('this one is private') }
+		});
+	});
+
+	it('says the same when the group host refuses the declaration, the group having turned private since it was read', async () => {
+		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: true });
+		mocks.listGroup.mockRejectedValue(
+			new XrpcError('com.atproto.repo.putRecord', 400, 'InvalidRequest')
+		);
+		await expect(setGroupListed({ groupDid: GROUP, listed: true })).rejects.toMatchObject({
+			status: 409,
+			body: { message: expect.stringContaining('this one is private') }
+		});
+	});
+
+	it.each([
+		[
+			'the meta space refuses its credential',
+			new SpaceAccessDenied('at:space/x', '403 ScopeMissing')
+		],
+		[
+			'the host says the scope is missing',
+			new XrpcError('com.atproto.repo.putRecord', 403, 'ScopeMissing')
+		],
+		[
+			'the host says the role may no longer',
+			new XrpcError('com.atproto.repo.putRecord', 403, 'Forbidden')
+		]
+	])('is a 403, not a 500, when %s', async (_why, refusal) => {
+		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: true });
+		mocks.listGroup.mockRejectedValue(refusal);
+		mocks.unlistGroup.mockRejectedValue(refusal);
+		for (const listed of [true, false]) {
+			await expect(setGroupListed({ groupDid: GROUP, listed })).rejects.toMatchObject({
+				status: 403
+			});
+		}
+		mocks.readGroupMeta.mockRejectedValue(refusal);
+		await expect(setGroupListed({ groupDid: GROUP, listed: true })).rejects.toMatchObject({
+			status: 403
+		});
+	});
+
+	it('passes on any other failure', async () => {
+		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: true });
+		const outage = new XrpcError('com.atproto.repo.putRecord', 502, null);
+		mocks.listGroup.mockRejectedValue(outage);
+		await expect(setGroupListed({ groupDid: GROUP, listed: true })).rejects.toBe(outage);
+		const unlisted = new XrpcError('com.atproto.repo.deleteRecord', 400, 'InvalidRequest');
+		mocks.unlistGroup.mockRejectedValue(unlisted);
+		await expect(setGroupListed({ groupDid: GROUP, listed: false })).rejects.toBe(unlisted);
 	});
 });
 

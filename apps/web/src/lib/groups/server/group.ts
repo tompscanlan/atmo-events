@@ -259,8 +259,25 @@ export async function notifyIndex(uri: string): Promise<void> {
 	}
 }
 
+/** A group host writes a public group's declaration itself, when the group is made and each time
+ *  the meta space's policy is set while it is public, and deletes it when the meta space turns
+ *  private. The index hears of either only through a relay that carries the host. So when someone
+ *  who linked the group reads its repo, `inRepo`, and the index says otherwise, the index is told
+ *  to read the record again, which adds or removes it. Logged, not thrown: the page shows the same
+ *  without it. */
+export async function syncDeclarationIndex(groupDid: string, inRepo: boolean): Promise<void> {
+	try {
+		if ((await isDeclared(groupDid)) === inRepo) return;
+		await notifyIndex(declarationUri(groupDid));
+	} catch (e) {
+		console.warn(`[groups] ${groupDid}: the index could not be asked for the declaration:`, e);
+	}
+}
+
 /** Only a public group may be listed. This site's rule, kept from the earlier proposal: the spec's
- *  declaration says nothing of the meta space being public. */
+ *  declaration says nothing of the meta space being public. A group host holds to it too: it
+ *  writes the declaration itself while the meta space is public, and refuses one while it is
+ *  private, with InvalidRequest. Putting the declaration it wrote changes nothing. */
 export async function listGroup(handle: XrpcHandle, groupDid: string): Promise<void> {
 	await xrpc(handle, 'com.atproto.repo.putRecord', {
 		body: {
@@ -273,6 +290,8 @@ export async function listGroup(handle: XrpcHandle, groupDid: string): Promise<v
 	await notifyIndex(declarationUri(groupDid));
 }
 
+/** Deletes the declaration, the group host's own included, which it writes again only the next
+ *  time the meta space's policy is set while it is public. */
 export async function unlistGroup(handle: XrpcHandle, groupDid: string): Promise<void> {
 	await xrpc(handle, 'com.atproto.repo.deleteRecord', {
 		body: {

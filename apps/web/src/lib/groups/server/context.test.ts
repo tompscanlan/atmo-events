@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 	isDeclared: vi.fn(),
 	readGroupMeta: vi.fn(),
 	repoHasDeclaration: vi.fn(),
+	syncDeclarationIndex: vi.fn(),
 	readCachedProfiles: vi.fn(),
 	storeCachedProfile: vi.fn(),
 	atGroupHost: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock('./group', () => ({
 	isDeclared: mocks.isDeclared,
 	readGroupMeta: mocks.readGroupMeta,
 	repoHasDeclaration: mocks.repoHasDeclaration,
+	syncDeclarationIndex: mocks.syncDeclarationIndex,
 	readCachedProfiles: mocks.readCachedProfiles,
 	storeCachedProfile: mocks.storeCachedProfile,
 	atGroupHost: mocks.atGroupHost
@@ -113,6 +115,28 @@ describe('groupView for someone who linked the group', () => {
 		expect(mocks.groupSession).toHaveBeenCalledWith(GROUP, ALICE);
 		expect(mocks.storeCachedProfile).toHaveBeenCalledWith(resolved, { ...meta, public: false });
 		expect(mocks.isDeclared).not.toHaveBeenCalled();
+		expect(mocks.syncDeclarationIndex).toHaveBeenCalledWith(GROUP, false);
+	});
+
+	it('shows a group the host listed itself as listed, and has the index follow its repo', async () => {
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		mocks.syncDeclarationIndex.mockResolvedValue(undefined);
+		expect(await groupView(GROUP, ALICE)).toMatchObject({
+			linked: { meta: { public: true }, listed: true },
+			relink: false
+		});
+		expect(mocks.syncDeclarationIndex).toHaveBeenCalledWith(GROUP, true);
+	});
+
+	it('leaves the index alone for a link that no longer reads the group', async () => {
+		mocks.readGroupMeta.mockRejectedValue(
+			new XrpcError('com.atproto.space.getDelegationToken', 403, 'NotAuthorized')
+		);
+		mocks.repoHasDeclaration.mockResolvedValue(false);
+		mocks.isDeclared.mockResolvedValue(true);
+		await groupView(GROUP, ALICE);
+		expect(mocks.syncDeclarationIndex).not.toHaveBeenCalled();
 	});
 
 	it('asks to link again when the PDS refuses the session', async () => {
