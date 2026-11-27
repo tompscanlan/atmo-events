@@ -142,9 +142,9 @@ describe('reading the settings', () => {
 		});
 	});
 
-	it('reads a join policy this site does not know as one to keep, not as approval', async () => {
+	it('reads a join policy this site does not know as one to keep, and a private group as unlisted though a declaration is left', async () => {
 		const { writer } = group({ about: { displayName: 'Riders' }, config: { joinPolicy: 'x' } });
-		mocks.repoHasDeclaration.mockResolvedValue(false);
+		mocks.repoHasDeclaration.mockResolvedValue(true);
 		expect(await readGroupSettings(writer, hosts)).toMatchObject({
 			joinPolicy: null,
 			public: false,
@@ -206,8 +206,10 @@ describe('saving the settings of a group whose join policy this site does not kn
 		});
 		mocks.repoHasDeclaration.mockResolvedValue(true);
 		await saveGroupSettings(writer, { did: GROUP, handle: null }, SETTINGS, true, hosts);
-		expect(writes.find(([, body]) => body.collection === 'org.atgrp.config')?.[1]).toMatchObject({
-			record: { $type: 'org.atgrp.config', joinPolicy: 'open', other: 1 }
+		expect(writes.find(([, body]) => body.collection === 'org.atgrp.config')?.[1].record).toEqual({
+			$type: 'org.atgrp.config',
+			joinPolicy: 'open',
+			other: 1
 		});
 	});
 });
@@ -255,8 +257,11 @@ describe('saving the settings', () => {
 			rkey: 'self',
 			record: { $type: 'org.atgrp.config', joinPolicy: 'open' }
 		});
-		expect(writes[2][1]).toMatchObject({
+		expect(writes[2][1]).toEqual({
+			repo: GROUP,
+			space: META,
 			collection: 'org.atgrp.about',
+			rkey: 'self',
 			record: {
 				$type: 'org.atgrp.about',
 				displayName: 'Night Riders',
