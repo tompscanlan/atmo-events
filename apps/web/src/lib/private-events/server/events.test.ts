@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { env } from 'cloudflare:workers';
 import { getEventExternalImage } from '@atmo-dev/kit/events-data';
 import { buildEventRecord, buildThumbnailMedia } from '@atmo-dev/kit/events/editor';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
@@ -828,6 +829,65 @@ describe('myPrivateEvents', () => {
 		});
 		await myPrivateEvents(host);
 		expect(host.sent[0].query.get('spaceDid')).toBe(HOST);
+	});
+
+	describe("with groups on, a space keyed self, as a group's calendar is", () => {
+		const theirs = privateEventSpace(OTHER, 'self');
+		const own = privateEventSpace(GUEST, 'self');
+		const guestListing = (...spaces: string[]) =>
+			caller(GUEST, GUEST_SCOPE, {
+				'com.atproto.space.listSpaces': () =>
+					Response.json({ spaces: [...spaces, SPACE].map((space) => ({ space })) })
+			});
+
+		beforeEach(() => {
+			Object.assign(env, { GROUP_HOST_URL: 'https://groups.example' });
+		});
+		afterEach(() => {
+			Reflect.deleteProperty(env, 'GROUP_HOST_URL');
+		});
+
+		it.each([
+			['on', 'leaves the list complete', false],
+			['off', 'says the list is incomplete', true]
+		])("with groups %s, %s when someone else's could not be read", async (groups, _, expected) => {
+			if (groups === 'off') Reflect.deleteProperty(env, 'GROUP_HOST_URL');
+			reader.get.mockImplementation(async ({ space }: Read) => {
+				if (space === theirs) throw new Error('503');
+				return spaceRecord(HOST, EVENT_COLLECTION, RECORD);
+			});
+			const { events, incomplete } = await myPrivateEvents(guestListing(theirs));
+			expect(events.map((e) => e.event.rkey)).toEqual([RKEY]);
+			expect(incomplete).toBe(expected);
+		});
+
+		it("says the list is incomplete when the person's own could not be read", async () => {
+			reader.get.mockImplementation(async ({ space }: Read) => {
+				if (space === own) throw new Error('503');
+				return spaceRecord(HOST, EVENT_COLLECTION, RECORD);
+			});
+			const { incomplete } = await myPrivateEvents(guestListing(own));
+			expect(incomplete).toBe(true);
+		});
+
+		it("says the list is incomplete when someone else's space keyed otherwise could not be read", async () => {
+			const down = privateEventSpace(OTHER, '3laaaaaaaaaaa');
+			reader.get.mockImplementation(async ({ space }: Read) => {
+				if (space === down) throw new Error('503');
+				return spaceRecord(HOST, EVENT_COLLECTION, RECORD);
+			});
+			const { incomplete } = await myPrivateEvents(guestListing(down));
+			expect(incomplete).toBe(true);
+		});
+
+		it('is never read in the at:space form, which lists nothing and leaves the list complete', async () => {
+			const group = `at:space/${OTHER}/community.lexicon.calendar.collection/self`;
+			reader.get.mockResolvedValue(spaceRecord(HOST, EVENT_COLLECTION, RECORD));
+			const { events, incomplete } = await myPrivateEvents(guestListing(group));
+			expect(events.map((e) => e.event.rkey)).toEqual([RKEY]);
+			expect(incomplete).toBe(false);
+			expect(reader.get).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	it('says the list is incomplete when an event could not be read', async () => {

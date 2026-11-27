@@ -10,6 +10,7 @@ import {
 	type FlatEventRecord
 } from '#lib/contrail.js';
 import { actorToDid } from '#lib/actor.js';
+import { mayBeGroupCalendar } from '#lib/groups/server/listed-calendar.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 import { isSpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import {
@@ -602,7 +603,7 @@ export async function myPrivateEvents(caller: CallerSession): Promise<MyPrivateE
 			const address = singleEvent(parsed.authority, parsed.key);
 			const event = await readEvent(reader, address).catch((e) => {
 				console.info(`[private-events] a space unread for the list: ${errorKind(e)}`);
-				unread++;
+				if (!mayBeGroupCalendar(caller.did, parsed)) unread++;
 				return null;
 			});
 			if (!event) return null;
