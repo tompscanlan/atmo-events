@@ -15,6 +15,35 @@ import {
 export const DECLARED_PER_SERVER = 20;
 
 const TABLE = recordsTableName('declaration');
+const PROFILES = 'group_profiles';
+
+/** What groups add to the database, made when a group page first needs it, so only while groups
+ *  are on: the profiles cached for visitors. */
+const SCHEMA = [
+	`CREATE TABLE IF NOT EXISTS ${PROFILES} (
+		did TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		description TEXT,
+		handle TEXT
+	)`
+];
+
+const schemaReady = new WeakMap<object, Promise<void>>();
+
+/** Once per database, after contrail has made its tables. */
+export function ensureGroupSchema(db: Database): Promise<void> {
+	let ready = schemaReady.get(db);
+	if (!ready) {
+		ready = (async () => {
+			for (const statement of SCHEMA) await db.prepare(statement).run();
+		})().catch((e) => {
+			schemaReady.delete(db);
+			throw e;
+		});
+		schemaReady.set(db, ready);
+	}
+	return ready;
+}
 
 /** Accounts contrail has not resolved yet count under '', so they share one server's places. */
 const serverOf = (identity: string) => `COALESCE(RTRIM(LOWER(${identity}.pds), '/'), '')`;
@@ -123,4 +152,50 @@ export async function crowdedServers(
 		.bind(home ?? '')
 		.all<CrowdedServer>();
 	return results ?? [];
+}
+
+export interface StoredProfile {
+	name: string;
+	description: string | null;
+	handle: string | null;
+}
+
+export async function cachedProfiles(
+	db: Database,
+	dids: string[]
+): Promise<Map<string, StoredProfile>> {
+	const profiles = new Map<string, StoredProfile>();
+	if (dids.length === 0) return profiles;
+	const { results } = await db
+		.prepare(
+			`SELECT did, name, description, handle FROM ${PROFILES}
+			WHERE did IN (SELECT value FROM json_each(?))`
+		)
+		.bind(JSON.stringify(dids))
+		.all<StoredProfile & { did: string }>();
+	for (const { did, ...profile } of results ?? []) profiles.set(did, profile);
+	return profiles;
+}
+
+/** Keeps `profile` for the group, or with null removes what was kept. A profile that is the same
+ *  as the one kept writes nothing. */
+export async function cacheProfile(
+	db: Database,
+	did: string,
+	profile: StoredProfile | null
+): Promise<void> {
+	if (!profile) {
+		await db.prepare(`DELETE FROM ${PROFILES} WHERE did = ?`).bind(did).run();
+		return;
+	}
+	await db
+		.prepare(
+			`INSERT INTO ${PROFILES} (did, name, description, handle) VALUES (?, ?, ?, ?)
+			ON CONFLICT (did) DO UPDATE SET
+				name = excluded.name, description = excluded.description, handle = excluded.handle
+			WHERE name IS NOT excluded.name OR description IS NOT excluded.description
+				OR handle IS NOT excluded.handle`
+		)
+		.bind(did, profile.name, profile.description, profile.handle)
+		.run();
 }

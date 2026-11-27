@@ -11,13 +11,17 @@ const mocks = vi.hoisted(() => ({
 	resolve: vi.fn(),
 	crowdedServers: vi.fn(),
 	cachedHandles: vi.fn(),
+	cacheProfile: vi.fn(),
 	ensureInit: vi.fn(),
 	/** Calls to other servers: the group host's space methods. */
 	networkFetch: vi.fn<typeof fetch>()
 }));
 vi.mock('./declared', () => ({
 	crowdedServers: mocks.crowdedServers,
-	cachedHandles: mocks.cachedHandles
+	cachedHandles: mocks.cachedHandles,
+	cachedProfiles: vi.fn(),
+	cacheProfile: mocks.cacheProfile,
+	ensureGroupSchema: vi.fn()
 }));
 vi.mock('#lib/contrail/index.js', () => ({
 	ensureInit: mocks.ensureInit,
@@ -46,7 +50,6 @@ import {
 	listGroup,
 	parseGroupProfile,
 	readCachedHandles,
-	readCachedProfiles,
 	readGroupMeta,
 	readLinkedMeta,
 	resolveGroup,
@@ -505,68 +508,17 @@ describe('listing', () => {
 describe('cached group profiles', () => {
 	const group = { did: GROUP, handle: 'knit.example' };
 
-	it("keeps a public group's name for visitors", async () => {
-		await storeCachedProfile(group, {
-			profile: { name: 'Knitters', description: 'Yarn' },
-			public: true
-		});
-		expect((await readCachedProfiles([GROUP, 'did:plc:none'])).get(GROUP)).toEqual({
-			name: 'Knitters',
-			description: 'Yarn',
+	it("keeps a public group's name and handle for visitors, and none of a private group's", async () => {
+		const profile = { name: 'Knitters', description: 'Yarn' };
+		await storeCachedProfile(group, { profile, public: true });
+		expect(mocks.cacheProfile).toHaveBeenLastCalledWith(env.DB, GROUP, {
+			...profile,
 			handle: 'knit.example'
 		});
-		expect(kv.keys()).toEqual([`group:profile:${GROUP}`]);
-	});
-
-	it("removes a group's cached profile once it is private", async () => {
-		await storeCachedProfile(group, {
-			profile: { name: 'Knitters', description: null },
-			public: true
-		});
-		await storeCachedProfile(group, {
-			profile: { name: 'Knitters', description: null },
-			public: false
-		});
-		expect(kv.keys()).toEqual([]);
-	});
-
-	it('writes or removes it only when it changes', async () => {
-		const put = vi.spyOn(kv, 'put');
-		const remove = vi.spyOn(kv, 'delete');
-		const knitters = { profile: { name: 'Knitters', description: 'Yarn' }, public: true };
-		await storeCachedProfile(group, knitters);
-		await storeCachedProfile(group, knitters);
-		await storeCachedProfile(group, { ...knitters, profile: { ...knitters.profile } });
-		expect(put).toHaveBeenCalledOnce();
-
-		await storeCachedProfile(group, {
-			...knitters,
-			profile: { ...knitters.profile, name: 'Purl' }
-		});
-		await storeCachedProfile(
-			{ ...group, handle: 'purl.example' },
-			{
-				...knitters,
-				profile: { ...knitters.profile, name: 'Purl' }
-			}
-		);
-		expect(put).toHaveBeenCalledTimes(3);
-
-		await storeCachedProfile(group, { ...knitters, public: false });
-		await storeCachedProfile(group, { ...knitters, public: false });
+		await storeCachedProfile(group, { profile, public: false });
+		expect(mocks.cacheProfile).toHaveBeenLastCalledWith(env.DB, GROUP, null);
 		await storeCachedProfile(group, { profile: null, public: true });
-		expect(remove).toHaveBeenCalledOnce();
-		expect(kv.keys()).toEqual([]);
-	});
-
-	it('writes it when the cached one could not be read', async () => {
-		vi.spyOn(kv, 'get').mockRejectedValue(new Error('KV down'));
-		const put = vi.spyOn(kv, 'put');
-		await storeCachedProfile(group, {
-			profile: { name: 'Knitters', description: null },
-			public: true
-		});
-		expect(put).toHaveBeenCalledOnce();
+		expect(mocks.cacheProfile).toHaveBeenLastCalledWith(env.DB, GROUP, null);
 	});
 });
 

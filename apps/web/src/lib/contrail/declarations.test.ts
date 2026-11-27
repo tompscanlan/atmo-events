@@ -7,10 +7,14 @@ import {
 	type Database,
 	type Statement
 } from '@atmo-dev/contrail';
+import { createSqliteDatabase } from '@atmo-dev/contrail/sqlite';
 import { servedConfig } from '../contrail.config';
 import {
 	cachedHandles,
+	cachedProfiles,
+	cacheProfile,
 	crowdedServers,
+	ensureGroupSchema,
 	DECLARED_PER_SERVER,
 	type DeclaredHome
 } from '../groups/server/declared';
@@ -316,5 +320,26 @@ describe('cachedHandles', () => {
 			])
 		).toEqual(new Map([['did:plc:knit', 'knit.example']]));
 		expect(await cachedHandles(db, [])).toEqual(new Map());
+	});
+});
+
+describe('cached group profiles', () => {
+	it('keeps one, writes nothing for the same one again, and removes it', async () => {
+		const db = createSqliteDatabase(':memory:');
+		await ensureGroupSchema(db);
+		const changes = async () =>
+			(await db.prepare('SELECT total_changes() AS n').first<{ n: number }>())!.n;
+		const knitters = { name: 'Knitters', description: 'Yarn', handle: 'knit.example' };
+		await cacheProfile(db, 'did:plc:g', knitters);
+		const written = await changes();
+		await cacheProfile(db, 'did:plc:g', { ...knitters });
+		expect(await changes()).toBe(written);
+		await cacheProfile(db, 'did:plc:g', { ...knitters, name: 'Purl' });
+		expect((await cachedProfiles(db, ['did:plc:g', 'did:plc:none'])).get('did:plc:g')).toEqual({
+			...knitters,
+			name: 'Purl'
+		});
+		await cacheProfile(db, 'did:plc:g', null);
+		expect(await cachedProfiles(db, ['did:plc:g'])).toEqual(new Map());
 	});
 });

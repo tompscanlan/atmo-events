@@ -1,6 +1,7 @@
-// What this site knows of a group. There is no table: a group is an account at the group
-// host, findable by its declaration in the index, and described by its meta space, which
-// only someone who linked it reads here. A copy of its profile is cached for visitors.
+// What this site knows of a group. There is no table of groups: a group is an account at the group
+// host, findable by its declaration in the index, and described by its meta space, which only
+// someone who linked it reads here. A copy of its profile is cached for visitors, in a table of
+// its own.
 import { env } from 'cloudflare:workers';
 import type { ActorIdentifier } from '@atcute/lexicons';
 import type { ResourceUri } from '@atcute/lexicons/syntax';
@@ -25,7 +26,15 @@ import {
 } from '../ids';
 import { groupJoinPolicy } from '../fields';
 import { groupHostUrl } from './enabled';
-import { cachedHandles, crowdedServers, type CrowdedServer, type DeclaredHome } from './declared';
+import {
+	cachedHandles,
+	cachedProfiles,
+	cacheProfile,
+	crowdedServers,
+	ensureGroupSchema,
+	type CrowdedServer,
+	type DeclaredHome
+} from './declared';
 import { isRecordNotFound, xrpc, type XrpcHandle } from './xrpc';
 
 export interface ResolvedGroup {
@@ -84,6 +93,13 @@ export async function isDeclared(groupDid: string): Promise<boolean> {
 	if (res.ok) return true;
 	if (res.status === 404 || res.data.error === 'RecordNotFound') return false;
 	throw new Error(`the declaration index answered ${res.status} ${res.data.error ?? ''}`.trim());
+}
+
+/** The index's tables and the groups' own, made when first needed. */
+async function groupsDatabase(): Promise<D1Database> {
+	await ensureInit(env.DB);
+	await ensureGroupSchema(env.DB);
+	return env.DB;
 }
 
 export interface DeclaredGroup {
@@ -391,47 +407,31 @@ export async function unlistGroup(handle: XrpcHandle, groupDid: string): Promise
 }
 
 // The cached group profile: what a visitor who cannot read the meta space is shown of a declared
-// group. Written only from a read as the group, and only while it is public.
-
-const CACHED_PROFILE_PREFIX = 'group:profile:';
+// group, and what search finds it by. Written only from a read as the group, and only while it is
+// public. Kept in the database, so a list reads every group's in one query.
 
 export interface CachedGroupProfile extends GroupProfile {
 	handle: string | null;
 }
 
+/** None, rather than a failed page, when the database does not answer. */
 export async function readCachedProfiles(dids: string[]): Promise<Map<string, CachedGroupProfile>> {
-	const profiles = new Map<string, CachedGroupProfile>();
-	const kv = env.OAUTH_SESSIONS;
-	if (!kv || dids.length === 0) return profiles;
-	const values = await Promise.all(
-		dids.map((did) =>
-			kv.get<CachedGroupProfile>(CACHED_PROFILE_PREFIX + did, 'json').catch(() => null)
-		)
-	);
-	dids.forEach((did, i) => {
-		const profile = values[i];
-		if (profile) profiles.set(did, profile);
-	});
-	return profiles;
+	if (dids.length === 0) return new Map();
+	try {
+		return await cachedProfiles(await groupsDatabase(), dids);
+	} catch (e) {
+		console.warn('[groups] the cached profiles could not be read:', e);
+		return new Map();
+	}
 }
 
-/** A private group's cached profile is removed, so its name never reaches a visitor. Written or
- *  removed only when it changes, since every page view by someone who reads the group lands here,
- *  and KV bills each write and takes about one a second for a key. A read that fails counts as a
- *  change. */
+/** A private group's cached profile is removed, so its name never reaches a visitor. Every page
+ *  view by someone who reads the group lands here, so a profile the same as the cached one writes
+ *  nothing. */
 export async function storeCachedProfile(
 	group: Pick<ResolvedGroup, 'did' | 'handle'>,
 	meta: GroupMeta
 ): Promise<void> {
-	const kv = env.OAUTH_SESSIONS;
-	if (!kv) return;
-	const key = CACHED_PROFILE_PREFIX + group.did;
-	const cached = await kv.get(key, 'text').catch(() => undefined);
-	if (!meta.public || !meta.profile) {
-		if (cached !== null) await kv.delete(key);
-		return;
-	}
-	const profile: CachedGroupProfile = { ...meta.profile, handle: group.handle };
-	const value = JSON.stringify(profile);
-	if (cached !== value) await kv.put(key, value);
+	const profile = meta.public && meta.profile ? { ...meta.profile, handle: group.handle } : null;
+	await cacheProfile(await groupsDatabase(), group.did, profile);
 }
