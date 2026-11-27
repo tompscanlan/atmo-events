@@ -5,7 +5,8 @@ import { render } from 'vitest-browser-svelte';
 import '../../../../app.css';
 
 vi.mock('#lib/groups/group.remote.js', () => ({
-	unlinkGroupSession: vi.fn()
+	unlinkGroupSession: vi.fn(),
+	turnOnMembersOnlyEvents: vi.fn()
 }));
 vi.mock('#lib/groups/members.remote.js', () => ({
 	joinGroup: vi.fn(),
@@ -20,7 +21,9 @@ import GroupPage from './+page.svelte';
 
 const GROUP = 'did:plc:group';
 const CAN = {
-	post: true
+	post: true,
+	turnOnMembersOnly: false,
+	membersOnly: false
 };
 
 /** The page as its load returns it for someone who linked the group, with a link that may do

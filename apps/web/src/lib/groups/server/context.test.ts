@@ -62,6 +62,7 @@ import {
 	groupView,
 	LINKED_READ_LIMIT_MS,
 	requireGroupWriter,
+	requireLinkedAbilities,
 	requireStoredLink
 } from './context';
 
@@ -481,6 +482,41 @@ describe('requireGroupWriter', () => {
 		mocks.groupSession.mockResolvedValue(linkedSession());
 		expect(await requireGroupWriter(GROUP, ALICE)).toMatchObject({ did: GROUP });
 		expect(mocks.groupSession).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+});
+
+describe('requireLinkedAbilities', () => {
+	it('says what the scope the host granted the link lets it do', async () => {
+		mocks.groupSession.mockResolvedValue(linkedSession());
+		const admin = await requireLinkedAbilities(GROUP, ALICE);
+		expect(admin.writer).toMatchObject({ did: GROUP });
+		expect(admin.can).toMatchObject({ turnOnMembersOnly: true, membersOnly: true });
+		mocks.groupSession.mockResolvedValue(linkedSession(MEMBER_SCOPE));
+		expect((await requireLinkedAbilities(GROUP, ALICE)).can).toMatchObject({
+			turnOnMembersOnly: false,
+			membersOnly: false,
+			post: false
+		});
+	});
+
+	it('holds nothing when the scope cannot be read, and is the same 404 without a link', async () => {
+		mocks.groupSession.mockResolvedValue({
+			did: GROUP,
+			// The first read, for the session's host, is taken as at the host, so the second decides.
+			getTokenInfo: vi
+				.fn()
+				.mockRejectedValueOnce(new Error('unreadable'))
+				.mockRejectedValueOnce(new Error('unreadable'))
+		});
+		expect((await requireLinkedAbilities(GROUP, ALICE)).can).toMatchObject({
+			turnOnMembersOnly: false,
+			membersOnly: false
+		});
+		mocks.groupSession.mockResolvedValue(null);
+		await expect(requireLinkedAbilities(GROUP, ALICE)).rejects.toMatchObject({
+			status: 404,
+			body: { message: GROUP_NOT_FOUND }
+		});
 	});
 });
 

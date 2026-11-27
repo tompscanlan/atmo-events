@@ -6,11 +6,13 @@ import { GroupEventRefused } from './server/group-events';
 const mocks = vi.hoisted(() => ({
 	getRequestEvent: vi.fn(),
 	requireGroupWriter: vi.fn(),
+	requireLinkedAbilities: vi.fn(),
 	requireStoredLink: vi.fn(),
 	notifyIndex: vi.fn(),
 	unlinkGroup: vi.fn(),
 	handle: vi.fn(),
-	refuseMembersOnlyKey: vi.fn()
+	refuseMembersOnlyKey: vi.fn(),
+	turnOnMembersOnly: vi.fn()
 }));
 vi.mock('$app/server', () => ({
 	command: (_schema: unknown, handler: unknown) =>
@@ -19,6 +21,7 @@ vi.mock('$app/server', () => ({
 }));
 vi.mock('./server/context', () => ({
 	requireGroupWriter: mocks.requireGroupWriter,
+	requireLinkedAbilities: mocks.requireLinkedAbilities,
 	requireStoredLink: mocks.requireStoredLink
 }));
 vi.mock('./server/group', () => ({
@@ -27,12 +30,14 @@ vi.mock('./server/group', () => ({
 vi.mock('./server/sign-in', () => ({ unlinkGroup: mocks.unlinkGroup }));
 vi.mock('./server/group-events', async (importActual) => ({
 	...(await importActual<typeof import('./server/group-events')>()),
-	refuseMembersOnlyKey: mocks.refuseMembersOnlyKey
+	refuseMembersOnlyKey: mocks.refuseMembersOnlyKey,
+	turnOnMembersOnly: mocks.turnOnMembersOnly
 }));
 
 import {
 	deleteGroupEvent,
 	putGroupEvent,
+	turnOnMembersOnlyEvents,
 	unlinkGroupSession,
 	uploadGroupBlob
 } from './group.remote';
@@ -160,5 +165,47 @@ describe('unlink', () => {
 		expect(mocks.requireStoredLink).toHaveBeenCalledWith(GROUP, ALICE);
 		expect(mocks.requireGroupWriter).not.toHaveBeenCalled();
 		expect(mocks.unlinkGroup).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+});
+
+describe('turning members-only events on', () => {
+	beforeEach(() => {
+		mocks.requireLinkedAbilities.mockResolvedValue({
+			writer: { did: GROUP, handle: mocks.handle },
+			can: { turnOnMembersOnly: true, membersOnly: false }
+		});
+	});
+
+	it("does it as the group, on the caller's own link", async () => {
+		mocks.turnOnMembersOnly.mockResolvedValue({ state: 'ready', posters: [], space: 's' });
+		expect(await turnOnMembersOnlyEvents({ groupDid: GROUP })).toEqual({ ok: true });
+		expect(mocks.requireLinkedAbilities).toHaveBeenCalledWith(GROUP, ALICE);
+		expect(mocks.turnOnMembersOnly).toHaveBeenCalledWith({ did: GROUP, handle: mocks.handle }, []);
+	});
+
+	it.each([
+		['may post there, but not make the calendar', { turnOnMembersOnly: false, membersOnly: true }]
+	])('is refused, with nothing read or chosen, for a link that %s', async (_, can) => {
+		mocks.requireLinkedAbilities.mockResolvedValue({
+			writer: { did: GROUP, handle: mocks.handle },
+			can
+		});
+		await expect(turnOnMembersOnlyEvents({ groupDid: GROUP })).rejects.toMatchObject({
+			status: 403,
+			body: { message: "Your role in this group doesn't let you turn on members-only events." }
+		});
+		expect(mocks.turnOnMembersOnly).not.toHaveBeenCalled();
+		expect(mocks.handle).not.toHaveBeenCalled();
+	});
+
+	it('says plainly why when the group has a calendar atmo may not post to, and makes none', async () => {
+		mocks.turnOnMembersOnly.mockRejectedValue(new GroupEventRefused('calendar-space-not-granted'));
+		await expect(turnOnMembersOnlyEvents({ groupDid: GROUP })).rejects.toMatchObject({
+			status: 409,
+			body: {
+				message:
+					'This group already has a calendar for its members, but its settings let no role post events to it from atmo, so atmo made no second one. An admin can allow it at the group host.'
+			}
+		});
 	});
 });
