@@ -1,0 +1,259 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { env } from 'cloudflare:workers';
+import { memoryKV, type MemoryKV } from './__fixtures__/kv';
+import type { GroupHostInfo } from './host-api';
+import type { XrpcHandle } from './xrpc';
+
+const mocks = vi.hoisted(() => ({
+	networkFetch: vi.fn<typeof fetch>(),
+	hasGroupSession: vi.fn(),
+	actorGroups: vi.fn()
+}));
+vi.mock('#lib/atproto/network.js', () => ({
+	atprotoNetwork: () => ({
+		fetch: (input: RequestInfo | URL, init?: RequestInit) => mocks.networkFetch(input, init),
+		isolated: false,
+		assertUrl: () => {}
+	})
+}));
+vi.mock('./sign-in', () => ({ hasGroupSession: mocks.hasGroupSession }));
+vi.mock('./host', () => ({ actorGroups: mocks.actorGroups }));
+
+import {
+	createGroupAtHost,
+	finishCreatedGroup,
+	GroupNotCreated,
+	ownGroupNotNoted,
+	parseNewGroup,
+	rememberUnfinished,
+	unfinishedGroup,
+	unfinishedGroups,
+	type NewGroup
+} from './create';
+
+const ALICE = 'did:plc:alice';
+const GROUP = 'did:plc:group';
+const HOST: GroupHostInfo = {
+	origin: 'https://host.example',
+	did: 'did:web:host.example',
+	domain: '.groups.example',
+	newGroupUrl: 'https://host.example/new'
+};
+const RIDERS: NewGroup = {
+	name: 'Night Riders',
+	address: 'riders',
+	description: 'We ride at night.',
+	joinPolicy: 'approval',
+	public: true
+};
+
+let kv: MemoryKV;
+
+/** The person's own session at their PDS, which answers getServiceAuth. */
+function caller(answer: () => Response = () => Response.json({ token: 'service-jwt' })) {
+	const handle = vi.fn<XrpcHandle>(async () => answer());
+	return { did: ALICE, scope: 'atproto', handle };
+}
+
+/** The group host's createGroup, answering with `answer`. */
+function hostAnswers(answer: () => Response) {
+	mocks.networkFetch.mockImplementation(async () => answer());
+}
+
+beforeEach(() => {
+	vi.resetAllMocks();
+	kv = memoryKV();
+	Object.assign(env, { OAUTH_SESSIONS: kv, GROUP_HOST_URL: 'https://host.example' });
+});
+
+describe('a new group as the form gives it', () => {
+	const form = {
+		name: ' Night Riders ',
+		address: 'Riders',
+		description: '',
+		joinPolicy: 'open',
+		public: true
+	};
+
+	it('is trimmed, its address lowercased, and an empty description none', () => {
+		expect(parseNewGroup(form)).toEqual({
+			name: 'Night Riders',
+			address: 'riders',
+			description: null,
+			joinPolicy: 'open',
+			public: true
+		});
+	});
+
+	it.each([
+		['no name', { name: '  ' }],
+		['a name past 64 characters', { name: 'x'.repeat(65) }],
+		['an address with a dot', { address: 'night.riders' }],
+		['an address with an outer hyphen', { address: '-riders' }],
+		['an address past one label', { address: 'x'.repeat(64) }],
+		['a description past 2000 characters', { description: 'x'.repeat(2001) }],
+		['a join policy the spec does not name', { joinPolicy: 'closed' }]
+	])('is refused with %s', (_why, change) => {
+		expect(parseNewGroup({ ...form, ...change })).toBeNull();
+	});
+});
+
+describe('making a group at the group host', () => {
+	it("asks the person's PDS to vouch for them to the host, then has the host make it", async () => {
+		hostAnswers(() =>
+			Response.json({
+				did: GROUP,
+				meta: `at:space/${GROUP}/org.atgrp.meta/self`,
+				members: `at:space/${GROUP}/org.atgrp.members/self`
+			})
+		);
+		const person = caller();
+		expect(await createGroupAtHost(person, RIDERS, HOST)).toEqual({
+			did: GROUP,
+			handle: 'riders.groups.example'
+		});
+
+		expect(person.handle.mock.calls).toEqual([
+			[
+				'/xrpc/com.atproto.server.getServiceAuth?aud=did%3Aweb%3Ahost.example&lxm=org.atgrp.internal.createGroup',
+				{ method: 'GET' }
+			]
+		]);
+		const [url, init] = mocks.networkFetch.mock.calls[0];
+		expect(String(url)).toBe('https://host.example/xrpc/org.atgrp.internal.createGroup');
+		expect(init?.method).toBe('POST');
+		expect(new Headers(init?.headers).get('authorization')).toBe('Bearer service-jwt');
+		expect(JSON.parse(String(init?.body))).toEqual({
+			handle: 'riders.groups.example',
+			displayName: 'Night Riders',
+			description: 'We ride at night.',
+			joinPolicy: 'approval',
+			metaPublicRead: true
+		});
+	});
+
+	it('makes a members-only group, and sends no empty description', async () => {
+		hostAnswers(() => Response.json({ did: GROUP }));
+		await createGroupAtHost(caller(), { ...RIDERS, description: null, public: false }, HOST);
+		const body = JSON.parse(String(mocks.networkFetch.mock.calls[0][1]?.body));
+		expect(body.metaPublicRead).toBe(false);
+		expect('description' in body).toBe(false);
+	});
+
+	it.each([
+		[403, 'NotAllowed', 'not-allowed'],
+		[400, 'HandleTaken', 'address-taken'],
+		[400, 'InvalidHandle', 'address-invalid'],
+		[400, 'InvalidRequest', 'invalid'],
+		[400, 'AccountCreationFailed', 'unavailable'],
+		[401, 'BadJwtAudience', 'unavailable'],
+		[502, null, 'unavailable']
+	])('reads the host’s %i %s as %s', async (status, error, reason) => {
+		hostAnswers(() => Response.json(error ? { error, message: 'x' } : {}, { status }));
+		const thrown = await createGroupAtHost(caller(), RIDERS, HOST).catch((e: unknown) => e);
+		expect(thrown).toBeInstanceOf(GroupNotCreated);
+		expect((thrown as GroupNotCreated).reason).toBe(reason);
+	});
+
+	it("goes no further when the person's PDS will not vouch for them", async () => {
+		for (const [answer, reason] of [
+			[() => Response.json({ error: 'ScopeMissingError' }, { status: 403 }), 'no-permission'],
+			[() => Response.json({ error: 'InternalServerError' }, { status: 500 }), 'unavailable']
+		] as const) {
+			const thrown = await createGroupAtHost(caller(answer), RIDERS, HOST).catch((e) => e);
+			expect((thrown as GroupNotCreated).reason).toBe(reason);
+		}
+		expect(mocks.networkFetch).not.toHaveBeenCalled();
+	});
+});
+
+describe('making a group when nothing answers', () => {
+	it("is the host that couldn't be reached when the person's PDS does not answer", async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const person = caller();
+		person.handle.mockRejectedValue(new TypeError('fetch failed'));
+		const thrown = await createGroupAtHost(person, RIDERS, HOST).catch((e: unknown) => e);
+		expect(thrown).toMatchObject({ reason: 'unavailable', madeMaybe: false });
+		expect(mocks.networkFetch).not.toHaveBeenCalled();
+	});
+
+	it('is the same, though the group may be made, when the host gives no answer in time', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		mocks.networkFetch.mockRejectedValue(
+			new DOMException('The operation timed out.', 'TimeoutError')
+		);
+		const thrown = await createGroupAtHost(caller(), RIDERS, HOST).catch((e: unknown) => e);
+		expect(thrown).toBeInstanceOf(GroupNotCreated);
+		expect(thrown).toMatchObject({ reason: 'unavailable', madeMaybe: true });
+	});
+});
+
+describe('a group the person made that this site never noted', () => {
+	const YOURS = 'atproto rpc:org.atgrp.internal.getActorGroups?aud=*';
+	const person = (scope = YOURS) => ({ ...caller(), scope });
+	const riders = { did: GROUP, handle: 'riders.groups.example', displayName: 'Night Riders' };
+
+	beforeEach(() => {
+		mocks.hasGroupSession.mockResolvedValue(false);
+		mocks.actorGroups.mockResolvedValue([
+			{ did: 'did:plc:other', handle: 'other.groups.example', displayName: 'Other' },
+			riders
+		]);
+	});
+
+	it('is found by its address among the groups the host says they are in, by the name they typed', async () => {
+		const who = person();
+		expect(await ownGroupNotNoted(who, RIDERS, HOST)).toEqual({
+			did: GROUP,
+			handle: 'riders.groups.example'
+		});
+		expect(mocks.actorGroups).toHaveBeenCalledWith(who);
+		expect(mocks.hasGroupSession).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+
+	it('is not one they are outside of, one of another name, or one they linked here', async () => {
+		expect(await ownGroupNotNoted(person(), { ...RIDERS, address: 'walkers' }, HOST)).toBeNull();
+		expect(await ownGroupNotNoted(person(), { ...RIDERS, name: 'Day Riders' }, HOST)).toBeNull();
+		mocks.hasGroupSession.mockResolvedValue(true);
+		expect(await ownGroupNotNoted(person(), RIDERS, HOST)).toBeNull();
+	});
+
+	it("can't be told without their permission for their groups, or when the host does not answer", async () => {
+		expect(await ownGroupNotNoted(person('atproto'), RIDERS, HOST)).toBeNull();
+		expect(mocks.actorGroups).not.toHaveBeenCalled();
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		mocks.actorGroups.mockRejectedValue(new Error('down'));
+		expect(await ownGroupNotNoted(person(), RIDERS, HOST)).toBeNull();
+	});
+});
+
+describe('a group made here, until its first link', () => {
+	const made = { did: GROUP, handle: 'riders.groups.example' };
+
+	it('is noted under the person who made it, for a month, and only theirs', async () => {
+		await rememberUnfinished(ALICE, made);
+		expect(await unfinishedGroups(ALICE)).toEqual([made]);
+		expect(await unfinishedGroups('did:plc:bob')).toEqual([]);
+		expect(kv.ttlOf(`group:setup:${ALICE}/${GROUP}`)).toBe(30 * 24 * 60 * 60);
+	});
+
+	it('is forgotten once its first link is done, which says it was made here', async () => {
+		await rememberUnfinished(ALICE, made);
+		expect(await finishCreatedGroup(GROUP, ALICE)).toBe('created');
+		expect(await unfinishedGroup(ALICE, GROUP)).toBeNull();
+		expect(await finishCreatedGroup(GROUP, ALICE)).toBeNull();
+	});
+
+	it('leaves a link that worked as linked when the note cannot be read', async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		await rememberUnfinished(ALICE, made);
+		vi.spyOn(kv, 'get').mockRejectedValueOnce(new Error('KV down'));
+		expect(await finishCreatedGroup(GROUP, ALICE)).toBeNull();
+		// The note stays, so the group is still offered among those not set up yet.
+		expect(await unfinishedGroup(ALICE, GROUP)).toEqual(made);
+	});
+
+	it('is nothing to finish for a group linked any other way', async () => {
+		expect(await finishCreatedGroup(GROUP, ALICE)).toBeNull();
+	});
+});

@@ -1,6 +1,7 @@
 // A person's own acts at the group host: join, cancel a request, leave, and the list of their
 // groups. Each goes to the host as the person, by service auth their PDS signs for the host's DID
-// and the exact method. The host decides every one: there is no check here it does not also make.
+// and the exact method, as making a group does (./create.ts). The host decides every one: there is
+// no check here it does not also make.
 import type { CallerSession } from '#lib/private-events/server/caller.js';
 import { fetchOtherServer } from '#lib/spaces/server/other-servers.js';
 import {

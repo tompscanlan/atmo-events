@@ -232,6 +232,7 @@
 		{#if data.access && data.you}
 			<div class="mb-6">
 				<GroupAccessNotice
+					kind="participate"
 					access={data.access}
 					did={data.you}
 					purpose={data.accessForMembersOnly

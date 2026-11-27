@@ -5,7 +5,8 @@ const mocks = vi.hoisted(() => ({
 	atGroupHost: vi.fn(),
 	available: vi.fn(),
 	startGroupLink: vi.fn(),
-	finishGroupLink: vi.fn()
+	finishGroupLink: vi.fn(),
+	finishCreatedGroup: vi.fn()
 }));
 vi.mock('#lib/groups/server/group.js', () => ({
 	resolveGroup: mocks.resolveGroup,
@@ -15,6 +16,16 @@ vi.mock('#lib/groups/server/sign-in.js', () => ({
 	groupSignInAvailable: mocks.available,
 	startGroupLink: mocks.startGroupLink,
 	finishGroupLink: mocks.finishGroupLink
+}));
+
+vi.mock('#lib/groups/server/create.js', () => ({ finishCreatedGroup: mocks.finishCreatedGroup }));
+/** Making groups here is tested in the build, and once without. */
+const build = vi.hoisted(() => ({ create: true }));
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	get CREATE_IN_THIS_BUILD() {
+		return build.create;
+	}
 }));
 
 import { POST } from './link/+server';
@@ -40,6 +51,7 @@ const callback = (did: string | null) =>
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	build.create = true;
 	mocks.available.mockReturnValue(true);
 	mocks.resolveGroup.mockResolvedValue({ did: GROUP, handle: 'knit.example', pds: 'https://h' });
 	mocks.atGroupHost.mockReturnValue(true);
@@ -85,10 +97,30 @@ describe('starting a link', () => {
 describe('the callback', () => {
 	it('opens the group once it is linked', async () => {
 		mocks.finishGroupLink.mockResolvedValue({ ok: true, groupDid: GROUP });
+		mocks.finishCreatedGroup.mockResolvedValue(null);
 		await expect(GET(callback(ALICE))).rejects.toMatchObject({
 			location: `/groups/${GROUP}?link=linked`
 		});
 		expect(mocks.finishGroupLink.mock.calls[0][1]).toBe(ALICE);
+	});
+
+	it('finishes setting up a group the person made here, and says it is made', async () => {
+		mocks.finishGroupLink.mockResolvedValue({ ok: true, groupDid: GROUP });
+		mocks.finishCreatedGroup.mockResolvedValue('created');
+		await expect(GET(callback(ALICE))).rejects.toMatchObject({
+			location: `/groups/${GROUP}?link=created`
+		});
+		expect(mocks.finishCreatedGroup).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+
+	it('looks for no group made here in a build without making groups here', async () => {
+		build.create = false;
+		mocks.finishGroupLink.mockResolvedValue({ ok: true, groupDid: GROUP });
+		mocks.finishCreatedGroup.mockResolvedValue('created');
+		await expect(GET(callback(ALICE))).rejects.toMatchObject({
+			location: `/groups/${GROUP}?link=linked`
+		});
+		expect(mocks.finishCreatedGroup).not.toHaveBeenCalled();
 	});
 
 	it("goes back to the list on a refusal, since the group's page may be a 404", async () => {
