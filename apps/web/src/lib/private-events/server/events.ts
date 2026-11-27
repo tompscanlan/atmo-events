@@ -18,7 +18,7 @@ import {
 	type SpaceRecord
 } from '#lib/spaces/server/space-read.js';
 import { errorKind, isRecordNotFound, xrpc, XrpcError } from '#lib/spaces/server/xrpc.js';
-import { parseSpaceUri } from '#lib/spaces/uri.js';
+import { currentSpaceUri, parseSpaceUri } from '#lib/spaces/uri.js';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
 import {
 	EVENT_COLLECTION,
@@ -246,9 +246,11 @@ async function readEvent(
 	}
 }
 
+/** An answer written before private events moved to the `at:space/` form names its event in the
+ *  older, deprecated one, and still counts. */
 function rsvpStatus(address: EventAddress, value: Record<string, unknown>): RsvpStatus | null {
 	const subject = value.subject as { uri?: unknown } | undefined;
-	if (subject?.uri !== eventUri(address)) return null;
+	if (currentSpaceUri(String(subject?.uri)) !== eventUri(address)) return null;
 	return RSVP_STATUSES.find((s) => value.status === `${RSVP_COLLECTION}#${s}`) ?? null;
 }
 
@@ -597,6 +599,7 @@ export async function myPrivateEvents(caller: CallerSession): Promise<MyPrivateE
 	let unread = 0;
 	const events = await Promise.all(
 		spaces.map(async (uri): Promise<MyPrivateEvent | null> => {
+			// A PDS may list a space in the older, deprecated form; it is read in the `at:space/` one.
 			const parsed = parseSpaceUri(uri);
 			if (!parsed) return null;
 			const address = singleEvent(parsed.authority, parsed.key);

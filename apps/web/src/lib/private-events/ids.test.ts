@@ -7,10 +7,10 @@ describe('where a private event is', () => {
 	it('keeps a single event in a space of its own, under the event’s key', () => {
 		const event = singleEvent(HOST, '3lzzzzzzzzzzz');
 		expect(eventSpace(event)).toBe(
-			`at://${HOST}/space/community.lexicon.calendar.collection/3lzzzzzzzzzzz`
+			`at:space/${HOST}/community.lexicon.calendar.collection/3lzzzzzzzzzzz`
 		);
 		expect(eventUri(event)).toBe(
-			`at://${HOST}/space/community.lexicon.calendar.collection/3lzzzzzzzzzzz/${HOST}/${EVENT_COLLECTION}/3lzzzzzzzzzzz`
+			`at:space/${HOST}/community.lexicon.calendar.collection/3lzzzzzzzzzzz/${HOST}/${EVENT_COLLECTION}/3lzzzzzzzzzzz`
 		);
 	});
 

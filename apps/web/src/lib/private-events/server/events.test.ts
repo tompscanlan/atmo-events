@@ -6,6 +6,7 @@ import { HOST_SCOPE, GUEST_SCOPE } from '../scopes';
 import {
 	EVENT_COLLECTION,
 	eventUri,
+	PRIVATE_CALENDAR_TYPE,
 	privateEventSpace,
 	RSVP_COLLECTION,
 	singleEvent
@@ -619,6 +620,15 @@ describe('readPrivateEventPage', () => {
 		expect(page?.attendees.goingCount).toBe(0);
 	});
 
+	it('counts an answer that names the event in the older at:// form, as one written before did', async () => {
+		const older = `at://${HOST}/space/${PRIVATE_CALENDAR_TYPE}/${RKEY}/${HOST}/${EVENT_COLLECTION}/${RKEY}`;
+		theSpaceHolds({ [GUEST]: rsvp('going', older) });
+		reader.writers.mockResolvedValue([GUEST]);
+		const page = await readPrivateEventPage(caller(GUEST, GUEST_SCOPE), EVENT);
+		expect(page?.viewerStatus).toBe('going');
+		expect(page?.attendees.going.map((a) => a.did)).toEqual([GUEST]);
+	});
+
 	it('ignores an answer that names another event', async () => {
 		theSpaceHolds({ [GUEST]: rsvp('going', 'at://someone/else/entirely') });
 		reader.writers.mockResolvedValue([GUEST]);
@@ -945,7 +955,7 @@ describe('every write', () => {
 				if (sent.body?.repo) expect(sent.body.repo).toBe(GUEST);
 				if (isAnswer(what)) continue;
 				for (const space of [sent.body?.space, sent.query.get('space')]) {
-					if (space) expect(space).toMatch(new RegExp(`^at://${GUEST}/`));
+					if (space) expect(space).toMatch(new RegExp(`^at:space/${GUEST}/`));
 				}
 			}
 		}
