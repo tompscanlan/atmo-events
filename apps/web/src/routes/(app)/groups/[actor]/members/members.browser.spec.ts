@@ -142,6 +142,10 @@ describe("a group's members page", () => {
 			.poll(() => text(page.getByRole('list', { name: 'Not confirmed yet' })))
 			.toContain(DAVE);
 		expect(text(page.getByRole('list', { name: 'Members' }))).not.toContain(DAVE);
+		// What is so of them; visiting the group's page confirms nothing.
+		const said = (document.body.textContent ?? '').replace(/\s+/g, ' ');
+		expect(said).toContain('Admitted, but they have not confirmed their membership yet');
+		expect(said).not.toMatch(/been back|visited/);
 	});
 
 	it('shows the reason the server gives for a refusal', async () => {

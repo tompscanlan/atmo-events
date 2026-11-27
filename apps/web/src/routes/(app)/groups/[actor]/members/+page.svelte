@@ -191,9 +191,8 @@
 					Not confirmed yet
 				</h2>
 				<p class="text-base-600 dark:text-base-400 text-sm">
-					Admitted, but their own server has not confirmed it yet: they have not been back to the
-					group's page to confirm it, or their server has no spaces support. Only those who can
-					admit members see them.
+					Admitted, but they have not confirmed their membership yet, or their confirmation could
+					not be read just now. Only those who can admit members see them.
 				</p>
 				<ul class="mt-4 space-y-2" aria-label="Not confirmed yet">
 					{#each data.unconfirmed as entry (entry.did)}
