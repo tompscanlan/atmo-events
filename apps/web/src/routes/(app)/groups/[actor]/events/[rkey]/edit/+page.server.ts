@@ -1,0 +1,28 @@
+import { env } from 'cloudflare:workers';
+import { error } from '@sveltejs/kit';
+import { flattenEventRecord, getEventRecordFromContrail } from '#lib/contrail.js';
+import { getServerClient } from '#lib/contrail/index.js';
+import { GROUP_NOT_FOUND, groupView, NO_POSTING } from '#lib/groups/server/context.js';
+import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
+
+export async function load({ params, locals, setHeaders }) {
+	requireGroupsEnabled();
+	setHeaders({ 'cache-control': 'no-store' });
+	const group = await groupView(params.actor, locals.did);
+	if (!group.linked) error(404, GROUP_NOT_FOUND);
+	if (!group.linked.can.post) error(403, NO_POSTING);
+
+	const record = await getEventRecordFromContrail(getServerClient(env.DB), {
+		did: group.did,
+		rkey: params.rkey
+	}).catch(() => null);
+	const eventData = record ? flattenEventRecord(record) : null;
+	if (!eventData) error(404, 'Event not found');
+
+	return {
+		pageTitle: `Edit event - ${group.name}`,
+		group: { did: group.did, handle: group.handle, name: group.name },
+		eventData,
+		rkey: params.rkey
+	};
+}
