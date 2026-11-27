@@ -233,10 +233,16 @@ describe("an admin's acts on the members page", () => {
 		expect(await denyRequest({ groupDid: GROUP, did: BOB })).toEqual({ ok: true });
 		expect(mocks.denyJoinRequest).toHaveBeenCalledWith(writer, BOB);
 		expect(await changeRole({ groupDid: GROUP, did: BOB, admin: true })).toEqual({ ok: true });
-		// Their membership is read with the admin's own access.
-		expect(mocks.setMemberAdmin).toHaveBeenCalledWith(writer, caller, BOB, true);
+		// Their membership is read as the group, through the link.
+		expect(mocks.setMemberAdmin).toHaveBeenCalledWith(writer, BOB, true);
 		expect(await removeFromGroup({ groupDid: GROUP, did: BOB })).toEqual({ ok: true });
 		expect(mocks.removeMember).toHaveBeenCalledWith(writer, BOB);
+	});
+
+	it("changes a role when the admin's own sign-in can't be restored, since it reads nothing", async () => {
+		mocks.callerSession.mockResolvedValue(null);
+		expect(await changeRole({ groupDid: GROUP, did: BOB, admin: false })).toEqual({ ok: true });
+		expect(mocks.setMemberAdmin).toHaveBeenCalledWith(writer, BOB, false);
 	});
 
 	it.each([

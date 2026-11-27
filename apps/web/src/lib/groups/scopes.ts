@@ -242,7 +242,10 @@ const MEMBERSHIPS_SELF = `space:${MEMBERS_SPACE_TYPE}?authority=self&skey=self&c
 /** What the members page writes and calls as the group, each its own scope, since the host keeps
  *  or drops each whole by what the approving person's roles may do: admit (a membership's create,
  *  with the join requests' two methods), change roles (its update) and remove (its delete). Only
- *  what the page uses: not the spec's `authManageMembers` set, which also covers invites. */
+ *  what the page uses: not the spec's `authManageMembers` set, which also covers invites. Each
+ *  also reads memberships, as the group: a role change reads the membership it rewrites that way,
+ *  and the group host gives a session a credential for the members space only when its scope
+ *  reads it. */
 export const ROSTER_SCOPES: readonly string[] = [
 	`${MEMBERSHIPS_SELF}&action=create`,
 	`${MEMBERSHIPS_SELF}&action=update`,

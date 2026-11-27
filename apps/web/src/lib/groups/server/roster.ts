@@ -1,8 +1,8 @@
 // The members page: who is in the group, read with the person's own access, and an admin's acts,
-// done as the group through the session they linked. Admitting someone is writing their membership
-// in the members space, which the group host takes only for someone whose request waits; changing
-// their roles rewrites it, and removing them deletes it. The host checks the approving person's
-// roles at each one, and refuses what they may not do.
+// done as the group through the session they linked, the reads they need included. Admitting
+// someone is writing their membership in the members space, which the group host takes only for
+// someone whose request waits; changing their roles rewrites it, and removing them deletes it. The
+// host checks the approving person's roles at each one, and refuses what they may not do.
 import type { CallerSession } from '#lib/private-events/server/caller.js';
 import {
 	didSpaceHosts,
@@ -35,8 +35,9 @@ import {
 	type RosterRole
 } from '../roster';
 import { DENY_JOIN_REQUEST_NSID, LIST_JOIN_REQUESTS_NSID } from '../scopes';
+import { credentialSpaceReader } from '#lib/spaces/server/space-read.js';
 import type { GroupWriter } from './context';
-import { personReader } from './person';
+import { groupHostSpaces } from './group';
 import { answerError, answerIsRecordNotFound, errorKind, readXrpc, xrpc, XrpcError } from './xrpc';
 
 const LIST_RECORDS = 'com.atproto.space.listRecords';
@@ -307,25 +308,39 @@ export async function admitMember(
 	}
 }
 
+/** A member's membership, read as the group through the admin's link, with its MAC checked; null
+ *  when there is none. The link's membership scopes read for this: the host gives a group session
+ *  a credential for the members space only when its scope reads that space, and only while the
+ *  person who linked it may read it themselves. */
+async function membershipAsGroup(
+	writer: GroupWriter,
+	memberDid: string,
+	hosts: SpaceHosts
+): Promise<Record<string, unknown> | null> {
+	const { repo, space, collection, rkey } = membershipAt(writer, memberDid);
+	const found = await credentialSpaceReader({ handle: writer.handle }, hosts).get({
+		space,
+		repo,
+		collection,
+		rkey
+	});
+	return found?.value ?? null;
+}
+
 /** Rewritten in place, keeping its date and every role this site does not change. The membership
- *  is read with the admin's own access, as a member. */
+ *  is read as the group, so the admin's own sign-in plays no part. */
 export async function setMemberAdmin(
 	writer: GroupWriter,
-	admin: CallerSession,
 	memberDid: string,
-	makeAdmin: boolean
+	makeAdmin: boolean,
+	hosts: SpaceHosts = groupHostSpaces
 ): Promise<void> {
 	const where = membershipAt(writer, memberDid);
-	const found = await personReader(admin).get({
-		space: where.space,
-		repo: where.repo,
-		collection: where.collection,
-		rkey: where.rkey
-	});
-	const roles = found ? membershipRoles(found.value) : null;
+	const found = await membershipAsGroup(writer, memberDid, hosts);
+	const roles = found ? membershipRoles(found) : null;
 	if (!found || !roles) throw new RosterRefused('not-member');
 	const createdAt =
-		typeof found.value.createdAt === 'string' ? found.value.createdAt : new Date().toISOString();
+		typeof found.createdAt === 'string' ? found.createdAt : new Date().toISOString();
 	try {
 		await xrpc(writer.handle, 'com.atproto.space.putRecord', {
 			body: { ...where, record: membershipRecord(rolesWithAdmin(roles, makeAdmin), createdAt) }

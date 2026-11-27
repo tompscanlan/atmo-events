@@ -9,8 +9,7 @@ import type { XrpcHandle } from './xrpc';
 const mocks = vi.hoisted(() => ({
 	exchangeSpaceCredential: vi.fn(),
 	fetchWithCredential: vi.fn(),
-	spaceIdentity: vi.fn(),
-	personGet: vi.fn()
+	spaceIdentity: vi.fn()
 }));
 vi.mock('#lib/spaces/server/space-credential.js', async (importActual) => ({
 	...(await importActual<typeof import('#lib/spaces/server/space-credential.js')>()),
@@ -18,7 +17,6 @@ vi.mock('#lib/spaces/server/space-credential.js', async (importActual) => ({
 	fetchWithCredential: mocks.fetchWithCredential,
 	spaceIdentity: mocks.spaceIdentity
 }));
-vi.mock('./person', () => ({ personReader: () => ({ get: mocks.personGet }) }));
 
 import {
 	admitMember,
@@ -290,24 +288,36 @@ describe('admitting, as the group', () => {
 	});
 });
 
+/** The membership the group's credential reads in the members space, or none. */
+function heldMembership(value: Record<string, unknown> | null) {
+	mocks.fetchWithCredential.mockImplementation(
+		async (_cred: unknown, _hosts: unknown, call: SpaceCall) => {
+			if (call.nsid !== 'com.atproto.space.getRecord') return new Response(null, { status: 500 });
+			if (!value) return Response.json({ error: 'RecordNotFound' }, { status: 400 });
+			return Response.json({ uri: 'u', cid: 'c', value });
+		}
+	);
+}
+
 describe('changing roles, as the group', () => {
 	beforeEach(() => {
-		mocks.personGet.mockResolvedValue({
-			uri: 'u',
-			cid: 'c',
-			rkey: BOB,
-			value: { roles: ['member', 'rider'], createdAt: '2026-11-01T00:00:00Z' }
-		});
+		heldMembership({ roles: ['member', 'rider'], createdAt: '2026-11-01T00:00:00Z' });
 	});
 
-	it('rewrites the membership read as the admin, keeping its date and other roles, with member', async () => {
+	it('rewrites the membership read as the group, keeping its date and other roles, with member', async () => {
 		const g = writer();
-		await setMemberAdmin(g, caller, BOB, true);
-		expect(mocks.personGet).toHaveBeenCalledWith({
-			space: MEMBERS,
-			repo: GROUP,
-			collection: 'org.atgrp.membership',
-			rkey: BOB
+		await setMemberAdmin(g, BOB, true, HOSTS);
+		// Read through the link's own credential for the members space, not the admin's sign-in.
+		expect(mocks.exchangeSpaceCredential).toHaveBeenCalledWith(
+			{ handle: g.handle },
+			MEMBERS,
+			'https://host.example'
+		);
+		expect(mocks.fetchWithCredential).toHaveBeenCalledWith(expect.anything(), HOSTS, {
+			host: 'https://host.example',
+			audience: GROUP,
+			nsid: 'com.atproto.space.getRecord',
+			query: { space: MEMBERS, repo: GROUP, collection: 'org.atgrp.membership', rkey: BOB }
 		});
 		expect(g.handle).toHaveBeenCalledWith('/xrpc/com.atproto.space.putRecord', expect.anything());
 		expect(body(g.handle).record).toEqual({
@@ -316,22 +326,25 @@ describe('changing roles, as the group', () => {
 			createdAt: '2026-11-01T00:00:00Z'
 		});
 
-		mocks.personGet.mockResolvedValue({
-			uri: 'u',
-			cid: 'c',
-			rkey: BOB,
-			value: { roles: ['admin', 'rider'], createdAt: '2026-11-01T00:00:00Z' }
-		});
-		await setMemberAdmin(g, caller, BOB, false);
+		heldMembership({ roles: ['admin', 'rider'], createdAt: '2026-11-01T00:00:00Z' });
+		await setMemberAdmin(g, BOB, false, HOSTS);
 		expect(body(g.handle, 1).record.roles).toEqual(['member', 'rider']);
 	});
 
 	it('says so for someone no longer a member, and writes nothing', async () => {
-		mocks.personGet.mockResolvedValue(null);
+		heldMembership(null);
 		const g = writer();
-		await expect(setMemberAdmin(g, caller, BOB, true)).rejects.toEqual(
+		await expect(setMemberAdmin(g, BOB, true, HOSTS)).rejects.toEqual(
 			new RosterRefused('not-member')
 		);
+		expect(g.handle).not.toHaveBeenCalled();
+	});
+
+	it('writes nothing when the link may not read the members space', async () => {
+		const denied = new SpaceAccessDenied(MEMBERS, '403 ScopeMissing');
+		mocks.exchangeSpaceCredential.mockRejectedValue(denied);
+		const g = writer();
+		await expect(setMemberAdmin(g, BOB, true, HOSTS)).rejects.toBe(denied);
 		expect(g.handle).not.toHaveBeenCalled();
 	});
 
@@ -341,14 +354,14 @@ describe('changing roles, as the group', () => {
 		['ScopeNotHeld', 'scope-not-held'],
 		['MemberRole', 'member-role']
 	])('names the host’s %s', async (error, reason) => {
-		await expect(setMemberAdmin(writer(refusal(error)), caller, BOB, false)).rejects.toEqual(
+		await expect(setMemberAdmin(writer(refusal(error)), BOB, false, HOSTS)).rejects.toEqual(
 			new RosterRefused(reason as never)
 		);
 	});
 
 	it('leaves a refused role or scope as it was thrown', async () => {
 		await expect(
-			setMemberAdmin(writer(refusal('ScopeMissing', 403)), caller, BOB, true)
+			setMemberAdmin(writer(refusal('ScopeMissing', 403)), BOB, true, HOSTS)
 		).rejects.toMatchObject({ status: 403, error: 'ScopeMissing' });
 	});
 });

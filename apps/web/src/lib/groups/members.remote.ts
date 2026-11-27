@@ -197,9 +197,7 @@ export const changeRole = command(
 	v.object({ groupDid: didSchema, did: didSchema, admin: v.boolean() }),
 	async ({ groupDid, did, admin: makeAdmin }) => {
 		const writer = await linked(groupDid);
-		// Their membership is read with their own access, as a member.
-		const caller = await person();
-		return asGroup(groupDid, () => setMemberAdmin(writer, caller, did, makeAdmin));
+		return asGroup(groupDid, () => setMemberAdmin(writer, did, makeAdmin));
 	}
 );
 
