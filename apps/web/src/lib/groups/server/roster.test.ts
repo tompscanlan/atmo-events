@@ -485,6 +485,13 @@ describe('changing roles, as the group', () => {
 		expect(g.handle).not.toHaveBeenCalled();
 	});
 
+	it('says they are no longer a member when they were removed between the read and the write', async () => {
+		// The host takes a put where there is no membership as a create, for a request.
+		await expect(
+			setMemberAdmin(writer(refusal('JoinRequestNotFound')), BOB, true, HOSTS)
+		).rejects.toEqual(new RosterRefused('not-member'));
+	});
+
 	it('writes nothing when the link may not read the members space', async () => {
 		const denied = new SpaceAccessDenied(MEMBERS, '403 ScopeMissing');
 		mocks.exchangeSpaceCredential.mockRejectedValue(denied);

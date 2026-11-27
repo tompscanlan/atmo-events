@@ -404,7 +404,10 @@ async function membershipAsGroup(
 }
 
 /** Rewritten in place, keeping its date and every role this site does not change. The membership
- *  is read as the group, so the admin's own sign-in plays no part. */
+ *  is read as the group, so the admin's own sign-in plays no part, and read here, just before the
+ *  write, never taken from the page. The group host's `putRecord` in a space takes no
+ *  `swapRecord`, so a narrow race remains: a change another admin makes between this read and the
+ *  write is overwritten. */
 export async function setMemberAdmin(
 	writer: GroupWriter,
 	memberDid: string,
@@ -422,7 +425,12 @@ export async function setMemberAdmin(
 			body: { ...where, record: membershipRecord(rolesWithAdmin(roles, makeAdmin), createdAt) }
 		});
 	} catch (e) {
-		throw refusal(e);
+		const refused = refusal(e);
+		// Removed since the read: the host takes the put as a create, which admits only on request.
+		if (refused instanceof RosterRefused && refused.reason === 'no-request') {
+			throw new RosterRefused('not-member');
+		}
+		throw refused;
 	}
 }
 
