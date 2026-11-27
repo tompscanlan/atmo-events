@@ -18,6 +18,7 @@ const GROUP_ADDRESSES = [
 	'/groups/',
 	`/groups/${GROUP}`,
 	`/groups/${GROUP}/events/new`,
+	`/groups/${GROUP}/events/3kabc`,
 	`/groups/${GROUP}/events/3kabc/edit`,
 	'/oauth/group/callback',
 	'/oauth/group/client-metadata.json',
