@@ -1,8 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// Tested with making groups here in the build; each check of a build without it names it.
+vi.mock('./build', async (importOriginal) => ({
+	...(await importOriginal<typeof import('./build')>()),
+	CREATE_IN_THIS_BUILD: true
+}));
+
 import {
+	CREATE_GROUP_SCOPE,
+	GROUP_PERSON_SCOPES,
+	groupPersonScopes,
 	grantsRepoWrites,
 	groupAbilities,
 	holdsConfirmationGrant,
+	holdsCreateGroup,
 	holdsMetaRead,
 	holdsParticipate,
 	holdsRpc,
@@ -93,6 +104,29 @@ describe('what a group session may do, by the scope its host granted', () => {
 	});
 });
 
+describe("the person's own permission to make a group", () => {
+	const HOST = 'did:web:host.example';
+
+	it('is the rpc grant for the host’s createGroup, for any audience or the host', () => {
+		expect(CREATE_GROUP_SCOPE).toBe('rpc:org.atgrp.internal.createGroup?aud=*');
+		expect(holdsCreateGroup(`atproto ${CREATE_GROUP_SCOPE}`, HOST)).toBe(true);
+		expect(
+			holdsCreateGroup('rpc?lxm=org.atgrp.internal.createGroup&aud=did:web:host.example', HOST)
+		).toBe(true);
+	});
+
+	it('is not held without it, for another method, or for another audience', () => {
+		expect(holdsCreateGroup('atproto include:community.lexicon.calendar.authFull', HOST)).toBe(
+			false
+		);
+		expect(holdsCreateGroup('rpc:org.atgrp.requestJoin?aud=*', HOST)).toBe(false);
+		expect(holdsCreateGroup('rpc:org.atgrp.internal.createGroup', HOST)).toBe(false);
+		expect(
+			holdsCreateGroup('rpc?lxm=org.atgrp.internal.createGroup&aud=did:web:other.example', HOST)
+		).toBe(false);
+	});
+});
+
 describe("a person's group permissions, as asked", () => {
 	it('are exactly what the code calls, for any group host', () => {
 		expect(PARTICIPATE_SCOPES).toEqual([
@@ -102,7 +136,7 @@ describe("a person's group permissions, as asked", () => {
 			'rpc:org.atgrp.internal.getActorGroups?aud=*'
 		]);
 		expect(JOIN_SCOPES).toEqual([...PARTICIPATE_SCOPES, GUEST_SCOPE]);
-		const all = JOIN_SCOPES.join(' ');
+		const all = [CREATE_GROUP_SCOPE, ...JOIN_SCOPES].join(' ');
 		expect(all).not.toContain('include:');
 		expect(all).not.toContain('inbox');
 		expect(all).not.toContain('org.atgrp.mod.');
@@ -167,5 +201,17 @@ describe("a person's group permissions, as their PDS granted them", () => {
 		expect(holdsRpc('rpc?lxm=org.atgrp.leaveGroup&aud=*', 'org.atgrp.leaveGroup')).toBe(true);
 		expect(holdsRpc('rpc?lxm=org.atgrp.leaveGroup', 'org.atgrp.leaveGroup')).toBe(false);
 		expect(holdsRpc(YOUR_GROUPS_SCOPE, 'org.atgrp.requestJoin')).toBe(false);
+	});
+});
+
+describe("the person's permissions for groups", () => {
+	it('include making a group only in a build that makes groups here', () => {
+		expect(GROUP_PERSON_SCOPES).toEqual(groupPersonScopes(true));
+		expect(groupPersonScopes(true)).toEqual([
+			CREATE_GROUP_SCOPE,
+			...PARTICIPATE_SCOPES,
+			GUEST_SCOPE
+		]);
+		expect(groupPersonScopes(false)).toEqual([...PARTICIPATE_SCOPES, GUEST_SCOPE]);
 	});
 });

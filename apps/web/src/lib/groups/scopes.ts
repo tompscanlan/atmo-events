@@ -1,8 +1,8 @@
-// The permissions groups need: the person's own sign-in, to join a group, and a session signed in
-// as a group, read from the scope its group host granted it. The host narrows what this site asks
-// for to what the approving person's roles allow, and gives back a concrete scope (`authority=self`
-// becomes the group's DID), so the granted scope, not the asked one, says which controls a page
-// offers. The host checks the person's roles again at each write, so a role taken away since the
+// The permissions groups need: the person's own sign-in, to make a group and to join one, and a
+// session signed in as a group, read from the scope its group host granted it. The host narrows
+// what this site asks for to what the approving person's roles allow, and gives back a concrete
+// scope (`authority=self` becomes the group's DID), so the granted scope, not the asked one, says
+// which controls a page offers. The host checks the person's roles again at each write, so a role taken away since the
 // approval is still refused then. Values and pure checks only, so the OAuth config, pages and tests
 // can import them.
 import {
@@ -15,6 +15,12 @@ import {
 } from './ids';
 import { GUEST_SCOPE, GUEST_SCOPES } from '#lib/private-events/scopes.js';
 import { CALENDAR_SPACE_TYPE } from './calendar';
+import { CREATE_IN_THIS_BUILD } from './build';
+
+/** The group host's own method for making a group, not the spec's (bluesky-social/group-host's
+ *  `org.atgrp.internal.createGroup`). The spec's way is OAuth `prompt=create` at the host, which
+ *  this host does not take. */
+export const CREATE_GROUP_NSID = 'org.atgrp.internal.createGroup';
 
 /** The spec's methods for a person's own membership, each by their service auth for the host. */
 export const REQUEST_JOIN_NSID = 'org.atgrp.requestJoin';
@@ -34,12 +40,15 @@ export const ACTOR_GROUPS_NSID = 'org.atgrp.internal.getActorGroups';
 // any group host; each call's service auth is still minted for the one host being called, its
 // did:web (./server/host-api.ts).
 
+/** Their server vouches for them to the group host when they make a group. */
+export const CREATE_GROUP_SCOPE = `rpc:${CREATE_GROUP_NSID}?aud=*`;
+
 /** Any group's meta space, read with their own access: its name, how it takes members, and whether
  *  it is public. */
 export const PERSON_META_SCOPE = `space:${META_SPACE_TYPE}?authority=*&skey=${SPACE_SKEY}&action=read`;
 
 /** Their own confirmation in any group's members space: written when they join, deleted when they
- *  leave; and that space read, for whether they are a member. */
+ *  leave; and that space read, for whether they are a member and who else is. */
 export const PERSON_CONFIRMATION_SCOPE = `space:${MEMBERS_SPACE_TYPE}?authority=*&skey=${SPACE_SKEY}&collection=${GROUP_CONFIRMATION_COLLECTION}&action=read&action=create&action=delete`;
 
 /** The spec's join, cancel a request and leave. */
@@ -47,6 +56,10 @@ export const MEMBERSHIP_RPC_SCOPE = `rpc?lxm=${REQUEST_JOIN_NSID}&lxm=${CANCEL_J
 
 /** "Your groups", by the host's own method, which the spec does not have. */
 export const YOUR_GROUPS_SCOPE = `rpc:${ACTOR_GROUPS_NSID}?aud=*`;
+
+/** What making a group asks for: making it, and the person's groups at the host, by which a group
+ *  they made whose answer never came is told from someone else's. */
+export const CREATE_SCOPES: readonly string[] = [CREATE_GROUP_SCOPE, YOUR_GROUPS_SCOPE];
 
 /** What a person is asked for at their first group action: joining, or seeing their groups. */
 export const PARTICIPATE_SCOPES: readonly string[] = [
@@ -67,9 +80,14 @@ export const JOIN_SCOPES: readonly string[] = [
 	...MEMBERS_ONLY_PERSON_SCOPES
 ];
 
-/** Declared in the person's client metadata while groups are on; each asked for only when they
- *  first act in a group, never at sign-in. */
-export const GROUP_PERSON_SCOPES: readonly string[] = [...PARTICIPATE_SCOPES, GUEST_SCOPE];
+/** Declared in the person's client metadata while groups are on; each asked for only when they set
+ *  out to make a group, or first act in one, never at sign-in. Making a group is declared only in a
+ *  build that has the create page (./build.ts). */
+export function groupPersonScopes(create: boolean): readonly string[] {
+	return [...(create ? [CREATE_GROUP_SCOPE] : []), ...PARTICIPATE_SCOPES, GUEST_SCOPE];
+}
+
+export const GROUP_PERSON_SCOPES: readonly string[] = groupPersonScopes(CREATE_IN_THIS_BUILD);
 
 /** Whether the person's granted scope lets their PDS vouch for them to call `nsid`: an rpc grant
  *  for the method, written `rpc:<method>` or `rpc?lxm=<method>`, for `audience` or any audience;
@@ -90,6 +108,12 @@ export function holdsRpc(scope: string, nsid: string, audience?: string): boolea
 				: auds.some((aud) => aud === '*' || aud.toLowerCase() === audience.toLowerCase());
 		return methods.includes(nsid) && forAudience;
 	});
+}
+
+/** For the group host at `audience`: a grant for another audience is not one this site can use, so
+ *  the person is asked again. */
+export function holdsCreateGroup(scope: string, audience: string): boolean {
+	return holdsRpc(scope, CREATE_GROUP_NSID, audience);
 }
 
 // A PDS drops each parameter left at its default, as it hands an `include:` back expanded too: no
