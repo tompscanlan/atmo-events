@@ -5,6 +5,8 @@
 // group profiles; a group without one shows the handle the index holds for it. All of it is read
 // from the database, with no call to another server but for a linked group the database knows
 // nothing of. A signed-in person's linked groups lead the list, for them alone.
+import type { CallerSession } from '#lib/private-events/server/caller.js';
+import { ACTOR_GROUPS_NSID, holdsRpc } from '../scopes';
 import { serverOrigin } from './declared';
 import {
 	heldOf,
@@ -14,7 +16,9 @@ import {
 	readGroupLabels,
 	resolveGroup
 } from './group';
+import { actorGroups } from './host';
 import { linkedGroups } from './sign-in';
+import { errorKind } from './xrpc';
 
 export interface UpcomingEntry {
 	did: string;
@@ -154,4 +158,28 @@ export async function browseLinked(personDid: string): Promise<BrowseEntry[]> {
 			};
 		})
 	);
+}
+
+export interface OwnGroup {
+	did: string;
+	name: string;
+	handle: string;
+}
+
+/** "Your groups": the groups the person is in at this site's group host, by the host's own list,
+ *  named as the host shows them to a member. Null when their sign-in cannot ask for it, or the host
+ *  did not answer. */
+export async function yourGroups(caller: CallerSession): Promise<OwnGroup[] | null> {
+	if (!holdsRpc(caller.scope, ACTOR_GROUPS_NSID)) return null;
+	try {
+		const groups = await actorGroups(caller);
+		return groups.map(({ did, handle, displayName }) => ({
+			did,
+			name: displayName ?? handle,
+			handle
+		}));
+	} catch (e) {
+		console.error(`[groups] ${caller.did}'s groups could not be listed: ${errorKind(e)}`);
+		return null;
+	}
 }
