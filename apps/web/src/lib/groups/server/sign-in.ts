@@ -27,7 +27,7 @@ import {
 	MEMBERS_ONLY_SCOPES,
 	ROSTER_SCOPES
 } from '../scopes';
-import { ROSTER_IN_THIS_BUILD } from '../roster-switch';
+import { ROSTER_IN_THIS_BUILD } from '../build';
 import { groupsEnabled } from './enabled';
 import { listKeys, prefixedKV } from './kv';
 import type { XrpcHandle } from './xrpc';
@@ -48,7 +48,7 @@ const STATE_TTL_SECONDS = 600;
  *  survives for a member whose roles grant no writes, and each of the settings', the members
  *  page's and members-only events' writes is its own too. Every scope for one space names the
  *  same key, since the host's approval page cannot show one space as two rows. The members page's
- *  are asked for only in a build that has it (../roster-switch.ts). */
+ *  are asked for only in a build that has it (../build.ts). */
 export function groupSessionScope(roster: boolean): string {
 	return [
 		'atproto',

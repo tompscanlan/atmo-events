@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
 import type { OAuthClientOptions, StoredState } from '@atcute/oauth-node-client';
 import { memoryKV, type MemoryKV } from './__fixtures__/kv';
-import { ROSTER_IN_THIS_BUILD } from '../roster-switch';
+import { ROSTER_IN_THIS_BUILD } from '../build';
 
 const mocks = vi.hoisted(() => ({
 	networkFetch: vi.fn<typeof fetch>(),

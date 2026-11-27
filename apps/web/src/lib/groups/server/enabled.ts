@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { error } from '@sveltejs/kit';
 import { parseGroupHostUrl } from '../host-url';
-import { ROSTER_IN_THIS_BUILD } from '../roster-switch';
+import { ROSTER_IN_THIS_BUILD } from '../build';
 
 /** The setting last found not to be a URL, so each wrong value is logged once per isolate, not on
  *  every request. */
@@ -36,7 +36,7 @@ export function requireGroupsEnabled(): void {
 	if (!groupsEnabled()) error(404, 'Not Found');
 }
 
-/** The members page and its commands, outside a build that has them (../roster-switch.ts): the
+/** The members page and its commands, outside a build that has them (../build.ts): the
  *  same answer as groups off. */
 export function requireRosterInBuild(): void {
 	if (!ROSTER_IN_THIS_BUILD) error(404, 'Not Found');

@@ -17,7 +17,7 @@
 		unlinkGroupSession
 	} from '#lib/groups/group.remote.js';
 	import { cancelJoin, confirmMember, joinGroup, leave } from '#lib/groups/members.remote.js';
-	import { ROSTER_IN_THIS_BUILD } from '#lib/groups/roster-switch.js';
+	import { ROSTER_IN_THIS_BUILD } from '#lib/groups/build.js';
 
 	let { data } = $props();
 

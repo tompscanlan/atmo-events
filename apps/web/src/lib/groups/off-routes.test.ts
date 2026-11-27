@@ -6,7 +6,7 @@ import { env } from 'cloudflare:workers';
 vi.mock('#lib/atproto/server/oauth.js', () => ({ getAuth: vi.fn() }));
 /** Whether the members page is in the build; each test says. */
 const build = vi.hoisted(() => ({ roster: false }));
-vi.mock('./roster-switch', () => ({
+vi.mock('./build', () => ({
 	get ROSTER_IN_THIS_BUILD() {
 		return build.roster;
 	}

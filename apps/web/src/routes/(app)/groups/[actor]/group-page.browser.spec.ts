@@ -24,7 +24,7 @@ vi.mock('#lib/groups/members.remote.js', () => member);
 vi.mock('@svelte-atproto/oauth/client', () => oauth);
 vi.mock('#lib/contrail/events.remote.js', () => ({ loadMoreEvents: vi.fn() }));
 // The members page is not in this build; members-link.browser.spec.ts has it in.
-vi.mock('#lib/groups/roster-switch.js', () => ({ ROSTER_IN_THIS_BUILD: false }));
+vi.mock('#lib/groups/build.js', () => ({ ROSTER_IN_THIS_BUILD: false }));
 
 import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 import GroupPage from './+page.svelte';
