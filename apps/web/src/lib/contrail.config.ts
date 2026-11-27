@@ -3,6 +3,8 @@ import { discoverableSql } from './contrail/discoverability';
 import { moderatorDids } from './moderation/config';
 import { cityConditions } from './server/cities';
 import { hasParentEventSql, parentEventSql } from './legacy-conference';
+import { GROUP_DECLARATION_COLLECTION } from './groups/ids';
+import { declaredSource } from './groups/server/declared';
 
 const MAX_CITY_HYDRATION_URIS = 60;
 
@@ -130,6 +132,32 @@ export const config: ContrailConfig = {
 					field: 'subject.uri'
 				}
 			}
+		},
+		// A group's declaration marks its DID as a group; groups browse lists them. Served only
+		// while groups are on: see servedConfig.
+		declaration: {
+			collection: GROUP_DECLARATION_COLLECTION,
+			pipelineQueries: {
+				// Endpoint: rsvp.atmo.declaration.listDeclared. Same shape as listRecords, but only
+				// the declaration at rkey `self`, the one a group publishes, so an account counts once
+				// however many records it writes. `server` lists one server's groups, `q` searches.
+				listDeclared: async (db, params) => declaredSource(db, params)
+			}
 		}
 	}
 };
+
+/** What the Worker serves. Groups' declarations only while groups are on, so with them off a
+ *  deployment has the same tables as one without groups, subscribes to nothing more, and answers
+ *  rsvp.atmo.declaration.* as an unknown method. Turning groups on adds the table at the next start,
+ *  and indexes declarations written from then on; `contrail backfill --only records`, run with the same
+ *  GROUP_HOST_URL in its shell, catches up older ones. Turning them off again leaves the table unread,
+ *  with the groups' own table and index (./groups/server/declared.ts).
+ *  Lexicon generation reads `config`, which always has them. */
+export function servedConfig(groups: boolean): ContrailConfig {
+	if (groups) return config;
+	const collections = Object.fromEntries(
+		Object.entries(config.collections).filter(([name]) => name !== 'declaration')
+	);
+	return { ...config, collections };
+}

@@ -5,7 +5,8 @@ const mocks = vi.hoisted(() => ({
 	processBotMentions: vi.fn(async () => {}),
 	syncEventStarterPacks: vi.fn(async () => {}),
 	refreshTopicCounts: vi.fn(async () => {}),
-	refreshCitySnapshot: vi.fn(async () => {})
+	refreshCitySnapshot: vi.fn(async () => {}),
+	ensureGroupEventIndex: vi.fn(async () => {})
 }));
 vi.mock('#lib/contrail/index.js', () => ({ ensureInit: vi.fn(async () => mocks) }));
 vi.mock('#lib/bot/process-mentions.js', () => ({ processBotMentions: mocks.processBotMentions }));
@@ -14,11 +15,14 @@ vi.mock('#lib/starter-packs/runtime.js', () => ({
 }));
 vi.mock('#lib/server/topic-counts.js', () => ({ refreshTopicCounts: mocks.refreshTopicCounts }));
 vi.mock('#lib/server/cities.js', () => ({ refreshCitySnapshot: mocks.refreshCitySnapshot }));
+vi.mock('#lib/groups/server/declared.js', () => ({
+	ensureGroupEventIndex: mocks.ensureGroupEventIndex
+}));
 import { env } from 'cloudflare:workers';
 import { POST } from './+server';
 const DB = {};
-function event(secret = 'secret') {
-	Object.assign(env, { DB, CRON_SECRET: 'secret' });
+function event(secret = 'secret', groupHost = '') {
+	Object.assign(env, { DB, CRON_SECRET: 'secret', GROUP_HOST_URL: groupHost });
 	return {
 		request: new Request('https://atmo.rsvp/api/cron', {
 			method: 'POST',
@@ -45,6 +49,19 @@ describe('scheduled ingestion', () => {
 		expect(mocks.processBotMentions).toHaveBeenCalledTimes(1);
 		expect(mocks.syncEventStarterPacks).toHaveBeenCalledExactlyOnceWith(env, DB);
 		expect(mocks.refreshTopicCounts).toHaveBeenCalledTimes(1);
+		expect(mocks.refreshCitySnapshot).toHaveBeenCalledExactlyOnceWith(DB);
+	});
+	it("builds the groups' index on the events only while groups are on", async () => {
+		expect((await POST(event())).status).toBe(200);
+		expect(mocks.ensureGroupEventIndex).not.toHaveBeenCalled();
+		expect((await POST(event('secret', 'https://groups.example'))).status).toBe(200);
+		expect(mocks.ensureGroupEventIndex).toHaveBeenCalledExactlyOnceWith(DB);
+	});
+	it("isolates a failure to build the groups' index from other jobs", async () => {
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		mocks.ensureGroupEventIndex.mockRejectedValueOnce(new Error('too long'));
+		expect((await POST(event('secret', 'https://groups.example'))).status).toBe(200);
+		expect(mocks.syncEventStarterPacks).toHaveBeenCalledTimes(1);
 		expect(mocks.refreshCitySnapshot).toHaveBeenCalledExactlyOnceWith(DB);
 	});
 	it('isolates ingestion failure from other jobs', async () => {
