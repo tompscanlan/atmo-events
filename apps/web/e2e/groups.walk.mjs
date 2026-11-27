@@ -3635,6 +3635,18 @@ step(
 	async (t) => {
 		const { bob } = S.pages;
 		const g = S.groups.gm;
+		// The calendar's policy, as the group reads it: what members and admins are granted there.
+		try {
+			const space = await asGroup(
+				await adminFor(g, ALICE),
+				`com.atproto.space.getSpace?${new URLSearchParams({ space: CALENDAR_SPACE(g.did) })}`,
+				{ method: 'GET' }
+			);
+			note(`the calendar space's policy: ${JSON.stringify(space.policy)}`);
+		} catch (e) {
+			note(`the calendar space's policy could not be read: ${e.message}`);
+		}
+		const since = new Date(Date.now() - 1000);
 		await bob.getByRole('button', { name: 'Going', exact: true }).click();
 		await bob.getByText(/you're going/i).waitFor({ timeout: 20_000 });
 		t.shot = bob;
@@ -3671,8 +3683,130 @@ step(
 			'after a reload the page still says he is going',
 			(await bob.getByText(/you're going/i).count()) === 1
 		);
+		// What the group host was told of his RSVP, and what it answered.
+		const told = hostRequests(since).filter(
+			(r) => !/getRecord|getViewer|atproto-did/.test(r.route)
+		);
+		note(
+			`the host since his RSVP: ${told.map((r) => `${r.method} ${r.route} ${r.status}`).join(', ')}`
+		);
+		const refusals = dockerLogs(GH, since)
+			.split('\n')
+			.filter(
+				(l) =>
+					/notifyRepoUpdate|writer|refus|denied|forbidden/i.test(l) && !/"status":2\d\d/.test(l)
+			);
+		note(
+			`host log lines that look like a refusal: ${
+				refusals.length
+					? refusals
+							.slice(0, 3)
+							.map((l) => l.slice(0, 400))
+							.join(' | ')
+					: 'none'
+			}`
+		);
 	},
 	{ needs: ['bob-joins-and-sees-it'] }
+);
+
+step(
+	'members-only',
+	'a-second-member-does-not-see-his-rsvp',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups.gm;
+		const dana = S.pages.dana ?? (await signInToAtmo(DANA));
+		await dana.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		if (await dana.getByRole('button', { name: /^allow joining groups$/i }).count()) {
+			await allowOnPage(dana, DANA, /^allow joining groups$/i);
+			await dana.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		}
+		await dana.fill('#join-message', 'Dana for the supper');
+		await dana.getByRole('button', { name: /^ask to join$/i }).click();
+		await dana.getByText(/request sent/i).waitFor({ timeout: 20_000 });
+		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		const row = alice.locator('ul[aria-label="Asking to join"] li', { hasText: 'dana' });
+		await row.getByRole('button', { name: /^approve$/i }).click();
+		await until(
+			async () => (await row.count()) === 0,
+			(x) => x,
+			20,
+			500
+		);
+		await dana.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		if (await dana.getByRole('button', { name: /^allow joining groups$/i }).count()) {
+			await allowOnPage(dana, DANA, /^allow joining groups$/i);
+			await dana.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		}
+		check(
+			'dana, another member, sees the members-only event on the group page',
+			(await dana.getByTestId('members-only-event').filter({ hasText: MO_EVENT }).count()) === 1,
+			(await mainText(dana)).slice(0, 300)
+		);
+		await dana.goto(moEventUrl(g, S.moRkey), { waitUntil: 'networkidle' });
+		t.shot = dana;
+		const text = await body(dana);
+		check(
+			"on the event's page nothing shows bob's RSVP: not his handle, nor anyone going",
+			text.includes(MO_EVENT) &&
+				!text.includes(BOB.handle) &&
+				!/\b1\s+going\b|going\s*\(?1\)?\b/i.test(text),
+			text.slice(0, 400)
+		);
+	},
+	{ needs: ['bob-rsvps-into-his-own-repo'] }
+);
+
+step(
+	'members-only',
+	'a-public-save-under-its-key-is-refused',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups.gm;
+		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		t.shot = alice;
+		// The editor's own command, called from the page as the editor calls it.
+		const tryPut = (rkey, placement) =>
+			alice.evaluate(
+				async ([groupDid, key, where, name]) => {
+					const { putGroupEvent } = await import('/src/lib/groups/group.remote.ts');
+					const now = new Date();
+					const record = {
+						$type: 'community.lexicon.calendar.event',
+						name,
+						createdAt: now.toISOString(),
+						startsAt: new Date(now.getTime() + 86_400_000).toISOString()
+					};
+					try {
+						await putGroupEvent({ groupDid, rkey: key, record, placement: where });
+						return { ok: true };
+					} catch (e) {
+						return { ok: false, status: e?.status, message: e?.body?.message ?? String(e) };
+					}
+				},
+				[g.did, rkey, placement, `Public copy ${RUN}`]
+			);
+		const pub = await tryPut(S.moRkey, 'everyone');
+		check(
+			"a public save as the group under the members-only event's key is refused (409) in words",
+			!pub.ok && pub.status === 409 && /members-only event stays members-only/i.test(pub.message),
+			JSON.stringify(pub)
+		);
+		const records = await repoRecords(g.did, EVENTS);
+		check(
+			"...and nothing reached the group's public repo under that key",
+			!records.some((r) => r.rkey === S.moRkey),
+			JSON.stringify(records.map((r) => r.rkey))
+		);
+		const self = await tryPut('self', 'members');
+		check(
+			'a members-only save under the key "self" is refused in words',
+			!self.ok && self.status === 409 && /cannot be saved under that key/i.test(self.message),
+			JSON.stringify(self)
+		);
+	},
+	{ needs: ['alice-posts-a-members-only-event'] }
 );
 
 step(
@@ -3794,6 +3928,187 @@ step(
 		);
 	},
 	{ needs: ['outsider-mallory-gets-not-found', 'private-group-member-still-sees-it'] }
+);
+
+// =====================================================================================
+// private-events: the app's own private events (not groups) on this network's PDS, on a dev server
+// started with PRIVATE_EVENTS=true; skipped otherwise
+// =====================================================================================
+const PE_OFF = process.env.WALK_PRIVATE_EVENTS
+	? null
+	: 'needs a dev server started with PRIVATE_EVENTS=true; set WALK_PRIVATE_EVENTS=1 to run it';
+const PE_EVENT = `Hidden supper ${RUN}`;
+/** atmo's own log lines since byte `from` that tell of a failed call. */
+const failedLines = (from) =>
+	atmoLogSince(from)
+		.split('\n')
+		.filter((l) => /\b(4\d\d|5\d\d)\b|error|refus|invalid/i.test(l) && !/ingest\] cycle/.test(l))
+		.slice(0, 12)
+		.map((l) => l.slice(0, 400));
+/** From a page of atmo: press the button, go through the PDS's consent, and come back. */
+async function consentFrom(page, who, button) {
+	await button.click();
+	await page.waitForURL((u) => u.origin !== ATMO, { timeout: 30_000 });
+	await through(page, who, (u) => u.origin === ATMO);
+	await settle(page);
+}
+
+step(
+	'private-events',
+	'alice-turns-on-the-beta',
+	async (t) => {
+		const { alice } = S.pages;
+		await alice.goto(`${ATMO}/settings`, { waitUntil: 'networkidle' });
+		const section = alice.getByTestId('private-events-beta');
+		await section.waitFor({ timeout: 20_000 });
+		const authorize = section.getByRole('button', { name: /^authorize now$/i });
+		if (await authorize.isVisible().catch(() => false)) {
+			await consentFrom(alice, ALICE, authorize);
+			await alice.goto(`${ATMO}/settings`, { waitUntil: 'networkidle' });
+		}
+		await section.getByText(/try private events/i).click({ timeout: 20_000 });
+		await section.getByRole('button', { name: /^save$/i }).click();
+		await section.getByText('Saved.').waitFor({ timeout: 20_000 });
+		t.shot = alice;
+		const saved = await getJson(
+			`${ALICE.pds}/xrpc/com.atproto.repo.getRecord?${new URLSearchParams({ repo: ALICE.did, collection: 'rsvp.atmo.actor.privateEventsBeta', rkey: 'self' })}`
+		);
+		check(
+			'alice turns on the private events beta in Settings: a record in her own repo',
+			saved.status === 200 && saved.body?.value?.privateEvents === true,
+			`${saved.status} ${saved.text.slice(0, 200)}`
+		);
+	},
+	{ needs: ['people-sign-in'], todo: PE_OFF }
+);
+
+step(
+	'private-events',
+	'alice-makes-a-private-event',
+	async (t) => {
+		const { alice } = S.pages;
+		const from = atmoLogSize();
+		await alice.goto(`${ATMO}/create`, { waitUntil: 'networkidle' });
+		const ask = alice
+			.getByTestId('ask-first')
+			.getByRole('button', { name: /^allow private events$/i });
+		if (await ask.isVisible().catch(() => false)) {
+			await consentFrom(alice, ALICE, ask);
+			await alice.goto(`${ATMO}/create`, { waitUntil: 'networkidle' });
+		}
+		const field = alice.locator('main [contenteditable=true]').first();
+		await field.waitFor({ timeout: 60_000 });
+		const privateChoice = alice
+			.getByRole('radio', { name: 'Private', exact: true })
+			.or(alice.getByRole('button', { name: 'Private', exact: true }));
+		await privateChoice.first().click();
+		const modal = alice.getByRole('dialog', { name: /make this event private/i });
+		await modal.waitFor({ timeout: 15_000 });
+		const hostAsk = modal.getByRole('button', { name: /^allow atmo to host private events$/i });
+		if (await hostAsk.isVisible().catch(() => false)) {
+			await consentFrom(alice, ALICE, hostAsk);
+			await field.waitFor({ timeout: 60_000 });
+			await privateChoice.first().click();
+			await modal.waitFor({ timeout: 15_000 });
+		}
+		await modal.getByRole('button', { name: /^make it private$/i }).click();
+		await field.click();
+		await alice.keyboard.type(PE_EVENT);
+		await alice.getByRole('button', { name: /^start date/i }).click();
+		await alice.keyboard.press('ArrowRight');
+		await alice.keyboard.press('Enter');
+		await alice.getByRole('button', { name: /^publish/i }).click();
+		const landed = await alice
+			.waitForURL((u) => /\/private\/[^/]+$/.test(u.pathname), { timeout: 60_000 })
+			.then(() => true)
+			.catch(() => false);
+		await settle(alice);
+		t.shot = alice;
+		const alerts = await alice
+			.getByRole('alert')
+			.allInnerTexts()
+			.catch(() => []);
+		const failed = failedLines(from);
+		note(`alerts on the page: ${alerts.join(' | ') || 'none'}`);
+		note(`atmo's log, failures since the step began: ${failed.join(' || ') || 'none'}`);
+		S.pePath = landed ? new URL(alice.url()).pathname : null;
+		check(
+			'alice publishes a private event and lands on its page',
+			landed && (await mainText(alice)).includes(PE_EVENT),
+			alice.url()
+		);
+	},
+	{ needs: ['alice-turns-on-the-beta'], todo: PE_OFF }
+);
+
+step(
+	'private-events',
+	'alice-opens-it-and-invites-bob',
+	async (t) => {
+		const { alice } = S.pages;
+		const from = atmoLogSize();
+		await alice.goto(`${ATMO}${S.pePath}`, { waitUntil: 'networkidle' });
+		t.shot = alice;
+		check(
+			'opened again, the page shows her private event',
+			(await mainText(alice)).includes(PE_EVENT)
+		);
+		await alice.locator('input[name=guest-handle]').fill(BOB.handle);
+		await alice.locator('[data-testid=guest-list] form button[type=submit]').click();
+		const added = await alice
+			.locator(`[data-guest="${BOB.did}"]`)
+			.waitFor({ timeout: 20_000 })
+			.then(() => true)
+			.catch(() => false);
+		note(`atmo's log, failures since the step began: ${failedLines(from).join(' || ') || 'none'}`);
+		check(
+			'she adds bob by handle, and he is on the guest list',
+			added,
+			(
+				await alice
+					.getByTestId('guest-list')
+					.innerText()
+					.catch(() => '')
+			).slice(0, 300)
+		);
+	},
+	{ needs: ['alice-makes-a-private-event'], todo: PE_OFF }
+);
+
+step(
+	'private-events',
+	'bob-opens-it-and-rsvps',
+	async (t) => {
+		const { bob } = S.pages;
+		const from = atmoLogSize();
+		await bob.goto(`${ATMO}${S.pePath}`, { waitUntil: 'networkidle' });
+		for (const name of [/^allow/i, /^authorize/i]) {
+			const allow = bob.locator('main').getByRole('button', { name }).first();
+			if (await allow.isVisible().catch(() => false)) {
+				await consentFrom(bob, BOB, allow);
+				await bob.goto(`${ATMO}${S.pePath}`, { waitUntil: 'networkidle' });
+				break;
+			}
+		}
+		t.shot = bob;
+		const seen = (await mainText(bob)).includes(PE_EVENT);
+		check('bob, invited, sees the event', seen, (await mainText(bob)).slice(0, 300));
+		if (seen) {
+			await bob.getByRole('button', { name: 'Going', exact: true }).click();
+			const going = await bob
+				.getByText(/you're going/i)
+				.waitFor({ timeout: 20_000 })
+				.then(() => true)
+				.catch(() => false);
+			await bob.reload({ waitUntil: 'networkidle' });
+			check(
+				'he answers Going, and after a reload it still says so',
+				going && (await bob.getByText(/you're going/i).count()) === 1
+			);
+		}
+		note(`atmo's log, failures since the step began: ${failedLines(from).join(' || ') || 'none'}`);
+	},
+	{ needs: ['alice-opens-it-and-invites-bob'], todo: PE_OFF }
 );
 
 // =====================================================================================
