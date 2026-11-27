@@ -285,11 +285,20 @@ function refusal(e: unknown): unknown {
 
 const MAX_REQUEST_PAGES = 5;
 
-/** The requests waiting to join, newest first, as the group. */
-export async function listJoinRequests(writer: GroupWriter): Promise<JoinRequestView[]> {
+export interface JoinRequests {
+	/** Newest first. */
+	requests: JoinRequestView[];
+	/** The host had more after the last page read: older requests wait that are not here. */
+	more: boolean;
+}
+
+/** The requests waiting to join, newest first, as the group: as many pages as `MAX_REQUEST_PAGES`
+ *  at most, and whether the host had more. */
+export async function listJoinRequests(writer: GroupWriter): Promise<JoinRequests> {
 	const requests: Omit<JoinRequestView, 'handle'>[] = [];
 	let cursor: string | undefined;
-	for (let page = 0; page < MAX_REQUEST_PAGES; page++) {
+	let more = false;
+	for (let page = 0; ; page++) {
 		const answer = await xrpc(writer.handle, LIST_JOIN_REQUESTS_NSID, {
 			query: { limit: String(LIST_LIMIT), ...(cursor ? { cursor } : {}) }
 		});
@@ -304,10 +313,17 @@ export async function listJoinRequests(writer: GroupWriter): Promise<JoinRequest
 		// `null` on the last page, from the group host, where the spec leaves it out.
 		const next = typeof answer.cursor === 'string' && answer.cursor ? answer.cursor : undefined;
 		if (!next || next === cursor || listed.length === 0) break;
+		if (page + 1 >= MAX_REQUEST_PAGES) {
+			more = true;
+			break;
+		}
 		cursor = next;
 	}
 	const handles = await handlesOf(requests.map((request) => request.did));
-	return requests.map((request) => ({ ...request, handle: handles.get(request.did) ?? null }));
+	return {
+		requests: requests.map((request) => ({ ...request, handle: handles.get(request.did) ?? null })),
+		more
+	};
 }
 
 /** Turns the request down. One no longer waiting (`JoinRequestNotFound`) is refused as approving

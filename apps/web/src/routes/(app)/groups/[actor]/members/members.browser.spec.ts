@@ -52,6 +52,7 @@ const rosterPage = (manage = { admit: true, assign: true, remove: true }, over =
 	requests: manage.admit
 		? [{ did: CAROL, handle: 'carol.example', message: 'I ride at night.', createdAt: 'x' }]
 		: null,
+	moreRequests: false,
 	reapprove: false,
 	...over
 });
@@ -92,6 +93,18 @@ describe("a group's members page", () => {
 		await expect
 			.poll(() => mocks.denyRequest)
 			.toHaveBeenCalledWith({ groupDid: GROUP, did: CAROL });
+	});
+
+	it('says older requests wait when the list stopped at its limit, and not otherwise', async () => {
+		render(MembersPage, { data: rosterPage() as never });
+		await expect
+			.poll(() => text(page.getByRole('list', { name: 'Asking to join' })))
+			.toMatch(/I ride/);
+		expect(page.getByText(/Older requests are waiting too/).elements()).toHaveLength(0);
+		render(MembersPage, { data: rosterPage(undefined, { moreRequests: true }) as never });
+		await expect
+			.element(page.getByText(/These are the newest 1\. Older requests are waiting too/))
+			.toBeVisible();
 	});
 
 	it('makes a member an admin, an admin a member, and removes, never for themselves', async () => {

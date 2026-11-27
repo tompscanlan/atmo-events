@@ -62,12 +62,15 @@ export async function load({ params, locals, url, setHeaders }) {
 		remove: Boolean(can?.remove)
 	};
 	let requests: JoinRequestView[] | null = null;
+	let moreRequests = false;
 	if (manage.admit) {
 		const writer = await requireGroupWriter(group.did, locals.did);
-		requests = await listJoinRequests(writer).catch((e: unknown) => {
+		const waiting = await listJoinRequests(writer).catch((e: unknown) => {
 			console.warn(`[groups] ${group.did}: the join requests could not be listed: ${errorKind(e)}`);
 			return null;
 		});
+		requests = waiting?.requests ?? null;
+		moreRequests = waiting?.more ?? false;
 	}
 	// Only a member whose own confirmation was read is listed as one. Someone who may admit also
 	// sees the rest, apart; nobody else sees them at all.
@@ -87,6 +90,8 @@ export async function load({ params, locals, url, setHeaders }) {
 		next: roster.next,
 		paged: cursor !== null,
 		requests,
+		/** The requests stopped at the most read for one view: older ones wait that are not shown. */
+		moreRequests,
 		/** A link approved before atmo asked for the members page: approving again may bring it. */
 		reapprove: Boolean(group.linked?.reapprove) && !manage.admit && !manage.assign && !manage.remove
 	};

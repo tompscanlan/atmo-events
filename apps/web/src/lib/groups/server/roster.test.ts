@@ -302,19 +302,36 @@ describe('the join requests, as the group', () => {
 				cursor: null
 			});
 		});
-		expect(await listJoinRequests(g)).toEqual([
-			{ did: BOB, createdAt: '2026-11-02T00:00:00Z', message: 'I ride.', handle: null },
-			{
-				did: CAROL,
-				createdAt: '2026-11-01T00:00:00Z',
-				message: null,
-				handle: 'carol.example%3A8443.example'
-			}
-		]);
+		expect(await listJoinRequests(g)).toEqual({
+			requests: [
+				{ did: BOB, createdAt: '2026-11-02T00:00:00Z', message: 'I ride.', handle: null },
+				{
+					did: CAROL,
+					createdAt: '2026-11-01T00:00:00Z',
+					message: null,
+					handle: 'carol.example%3A8443.example'
+				}
+			],
+			more: false
+		});
 		expect(g.handle.mock.calls.map(([path]) => path)).toEqual([
 			'/xrpc/org.atgrp.listJoinRequests?limit=100',
 			'/xrpc/org.atgrp.listJoinRequests?limit=100&cursor=7'
 		]);
+	});
+
+	it('stops after five pages, and says the host had more', async () => {
+		const g = writer((path) => {
+			const at = Number(new URL(path, 'https://host.example').searchParams.get('cursor') ?? 0);
+			return Response.json({
+				requests: [{ member: `did:plc:r${at}`, createdAt: '2026-11-01T00:00:00Z' }],
+				cursor: String(at + 1)
+			});
+		});
+		const waiting = await listJoinRequests(g);
+		expect(waiting.more).toBe(true);
+		expect(waiting.requests.map((r) => r.did)).toEqual([0, 1, 2, 3, 4].map((i) => `did:plc:r${i}`));
+		expect(g.handle).toHaveBeenCalledTimes(5);
 	});
 
 	it('denies by the member alone, and refuses a request no longer waiting as approving does', async () => {

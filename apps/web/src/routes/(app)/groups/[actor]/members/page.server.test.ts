@@ -88,7 +88,7 @@ beforeEach(() => {
 	mocks.groupView.mockResolvedValue(view());
 	mocks.requireGroupWriter.mockResolvedValue(writer);
 	mocks.readRoster.mockResolvedValue(ROSTER);
-	mocks.listJoinRequests.mockResolvedValue(REQUESTS);
+	mocks.listJoinRequests.mockResolvedValue({ requests: REQUESTS, more: false });
 });
 
 describe("a group's members page", () => {
@@ -107,6 +107,7 @@ describe("a group's members page", () => {
 			next: null,
 			paged: false,
 			requests: null,
+			moreRequests: false,
 			reapprove: false
 		});
 		expect(mocks.listJoinRequests).not.toHaveBeenCalled();
@@ -120,6 +121,7 @@ describe("a group's members page", () => {
 		expect(page).toMatchObject({
 			manage: ALL,
 			requests: REQUESTS,
+			moreRequests: false,
 			unconfirmed: [ROSTER.entries[1]],
 			reapprove: false
 		});
@@ -136,11 +138,21 @@ describe("a group's members page", () => {
 		expect(mocks.listJoinRequests).not.toHaveBeenCalled();
 	});
 
+	it('says when the requests stopped short of all that wait', async () => {
+		mocks.groupView.mockResolvedValue(view({ linked: linked(ALL) }));
+		mocks.listJoinRequests.mockResolvedValue({ requests: REQUESTS, more: true });
+		expect(await load(request())).toMatchObject({ requests: REQUESTS, moreRequests: true });
+	});
+
 	it('still shows the roster when the requests could not be listed', async () => {
 		vi.spyOn(console, 'warn').mockImplementation(() => {});
 		mocks.groupView.mockResolvedValue(view({ linked: linked(ALL) }));
 		mocks.listJoinRequests.mockRejectedValue(new Error('down'));
-		expect(await load(request())).toMatchObject({ state: 'roster', requests: null });
+		expect(await load(request())).toMatchObject({
+			state: 'roster',
+			requests: null,
+			moreRequests: false
+		});
 	});
 
 	it('lists as a member only someone whose confirmation was read, and shows an admin the rest apart', async () => {

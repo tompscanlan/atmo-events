@@ -173,6 +173,10 @@
 							</li>
 						{/each}
 					</ul>
+					{#if data.moreRequests}<p class="text-base-600 dark:text-base-400 mt-3 text-sm">
+							These are the newest {data.requests.length}. Older requests are waiting too, and show
+							here as these are decided.
+						</p>{/if}
 				{/if}
 			{/if}
 
