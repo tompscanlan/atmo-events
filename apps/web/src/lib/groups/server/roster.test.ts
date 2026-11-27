@@ -257,10 +257,34 @@ describe('the join requests, as the group', () => {
 	});
 });
 
+const MEMBER_ROLE_RECORD = { ...role('member'), value: { $type: 'org.atgrp.role', default: true } };
+
+/** The members space as the group's credential reads it: its roles, listed, and the membership,
+ *  read, or none, or a read that fails. */
+function heldMembership(
+	value: Record<string, unknown> | null | 'down',
+	roles: unknown[] = [MEMBER_ROLE_RECORD]
+) {
+	mocks.fetchWithCredential.mockImplementation(
+		async (_cred: unknown, _hosts: unknown, call: SpaceCall) => {
+			if (call.nsid === 'com.atproto.space.listRecords') {
+				const records = call.query.collection === 'org.atgrp.role' ? roles : [];
+				return Response.json({ records, cursor: null });
+			}
+			if (value === 'down') return new Response(null, { status: 502 });
+			if (!value) return Response.json({ error: 'RecordNotFound' }, { status: 400 });
+			return Response.json({ uri: 'u', cid: 'c', value });
+		}
+	);
+}
+
 describe('admitting, as the group', () => {
+	const at = new Date('2026-11-04T00:00:00Z');
+	beforeEach(() => heldMembership(null));
+
 	it("creates the requester's membership, keyed by their DID, holding member, with no member field", async () => {
 		const g = writer();
-		await admitMember(g, CAROL, new Date('2026-11-04T00:00:00Z'));
+		await admitMember(g, CAROL, at, HOSTS);
 		expect(g.handle).toHaveBeenCalledWith(
 			'/xrpc/com.atproto.space.createRecord',
 			expect.anything()
@@ -278,46 +302,54 @@ describe('admitting, as the group', () => {
 		});
 	});
 
-	it('names the host’s JoinRequestNotFound', async () => {
-		await expect(admitMember(writer(refusal('JoinRequestNotFound')), BOB)).rejects.toEqual(
-			new RosterRefused('no-request')
+	it('gives every role the group marks default, read as the group just before', async () => {
+		heldMembership(null, [
+			role('admin', 'Admin'),
+			{ ...role('rider'), value: { $type: 'org.atgrp.role', default: true } },
+			// Only `true` marks a role so.
+			{ ...role('aide'), value: { $type: 'org.atgrp.role', default: 'yes' } }
+		]);
+		const g = writer();
+		await admitMember(g, CAROL, at, HOSTS);
+		// The group's own credential for the members space, through the link.
+		expect(mocks.exchangeSpaceCredential).toHaveBeenCalledWith(
+			{ handle: g.handle },
+			MEMBERS,
+			'https://host.example'
 		);
+		// `member` too, though no longer marked: everyone in a group holds it.
+		expect(body(g.handle).record.roles).toEqual(['member', 'rider']);
+	});
+
+	it('admits nobody when the roles could not be read', async () => {
+		mocks.fetchWithCredential.mockResolvedValue(new Response(null, { status: 502 }));
+		const g = writer();
+		await expect(admitMember(g, CAROL, at, HOSTS)).rejects.toBeInstanceOf(XrpcError);
+		expect(g.handle).not.toHaveBeenCalled();
+	});
+
+	it('names the host’s JoinRequestNotFound', async () => {
+		await expect(
+			admitMember(writer(refusal('JoinRequestNotFound')), BOB, at, HOSTS)
+		).rejects.toEqual(new RosterRefused('no-request'));
 	});
 
 	it('takes the host’s generic InvalidRequest as already a member only when the membership is there', async () => {
-		const at = new Date();
 		heldMembership({ roles: ['member'], createdAt: '2026-11-01T00:00:00Z' });
 		await expect(admitMember(writer(refusal('InvalidRequest')), BOB, at, HOSTS)).rejects.toEqual(
 			new RosterRefused('already-member')
-		);
-		// Read as the group, through the link.
-		expect(mocks.exchangeSpaceCredential).toHaveBeenCalledWith(
-			{ handle: expect.any(Function) },
-			MEMBERS,
-			'https://host.example'
 		);
 		heldMembership(null);
 		await expect(
 			admitMember(writer(refusal('InvalidRequest')), BOB, at, HOSTS)
 		).rejects.toMatchObject({ status: 400, error: 'InvalidRequest' });
 		// A read that fails says nothing of it either.
-		mocks.fetchWithCredential.mockResolvedValue(new Response(null, { status: 502 }));
+		heldMembership('down');
 		await expect(
 			admitMember(writer(refusal('InvalidRequest')), BOB, at, HOSTS)
 		).rejects.toMatchObject({ status: 400, error: 'InvalidRequest' });
 	});
 });
-
-/** The membership the group's credential reads in the members space, or none. */
-function heldMembership(value: Record<string, unknown> | null) {
-	mocks.fetchWithCredential.mockImplementation(
-		async (_cred: unknown, _hosts: unknown, call: SpaceCall) => {
-			if (call.nsid !== 'com.atproto.space.getRecord') return new Response(null, { status: 500 });
-			if (!value) return Response.json({ error: 'RecordNotFound' }, { status: 400 });
-			return Response.json({ uri: 'u', cid: 'c', value });
-		}
-	);
-}
 
 describe('changing roles, as the group', () => {
 	beforeEach(() => {
@@ -411,7 +443,7 @@ describe('removing, as the group', () => {
 		await expect(removeMember(writer(refusal('InvalidRequest')), BOB, HOSTS)).rejects.toMatchObject(
 			{ status: 400, error: 'InvalidRequest' }
 		);
-		mocks.fetchWithCredential.mockResolvedValue(new Response(null, { status: 502 }));
+		heldMembership('down');
 		await expect(removeMember(writer(refusal('InvalidRequest')), BOB, HOSTS)).rejects.toMatchObject(
 			{ status: 400, error: 'InvalidRequest' }
 		);

@@ -26,6 +26,7 @@ import {
 	membershipRkey
 } from '../ids';
 import {
+	defaultRoles,
 	membershipRecord,
 	membershipRoles,
 	roleOf,
@@ -299,18 +300,23 @@ const membershipThere = (writer: GroupWriter, memberDid: string, hosts: SpaceHos
 	);
 
 /** A create, so it never replaces a member's roles: the host takes it only for someone whose
- *  request waits, and closes the request. As a member; making them an admin is a change after. */
+ *  request waits, and closes the request. With the roles the group marks `default`, which the spec
+ *  gives everyone admitted on request, read as the group just before; making them an admin is a
+ *  change after. */
 export async function admitMember(
 	writer: GroupWriter,
 	memberDid: string,
 	now: Date = new Date(),
 	hosts: SpaceHosts = groupHostSpaces
 ): Promise<void> {
+	const roles = defaultRoles(
+		await membersSpace({ handle: writer.handle }, writer.did, hosts).list(GROUP_ROLE_COLLECTION)
+	);
 	try {
 		await xrpc(writer.handle, 'com.atproto.space.createRecord', {
 			body: {
 				...membershipAt(writer, memberDid),
-				record: membershipRecord([MEMBER_ROLE], now.toISOString())
+				record: membershipRecord(roles, now.toISOString())
 			}
 		});
 	} catch (e) {

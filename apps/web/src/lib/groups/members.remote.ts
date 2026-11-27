@@ -181,7 +181,7 @@ async function asGroup(groupDid: string, run: () => Promise<void>): Promise<{ ok
 
 const memberSchema = v.object({ groupDid: didSchema, did: didSchema });
 
-/** Admits someone waiting to join, as a member. */
+/** Admits someone waiting to join, with the roles the group gives everyone admitted on request. */
 export const approveRequest = command(memberSchema, async ({ groupDid, did }) => {
 	const writer = await linked(groupDid);
 	return asGroup(groupDid, () => admitMember(writer, did));

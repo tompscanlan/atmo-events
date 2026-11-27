@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { membershipDid, membershipRkey } from './ids';
-import { membershipRecord, membershipRoles, roleOf, rolesWithAdmin, shownRoles } from './roster';
+import {
+	defaultRoles,
+	membershipRecord,
+	membershipRoles,
+	roleOf,
+	rolesWithAdmin,
+	shownRoles
+} from './roster';
 
 describe('a membership', () => {
 	it('always holds member, keeps roles this site does not change, and makes or unmakes an admin', () => {
@@ -8,6 +15,22 @@ describe('a membership', () => {
 		expect(rolesWithAdmin(['admin', 'member', 'rider'], false)).toEqual(['member', 'rider']);
 		expect(rolesWithAdmin(['rider'], false)).toEqual(['member', 'rider']);
 		expect(rolesWithAdmin(['admin'], true)).toEqual(['member', 'admin']);
+	});
+
+	it('gives on request the roles marked default, as the group host does on an open join', () => {
+		const marked = (rkey: string, mark: unknown = true) => ({ rkey, value: { default: mark } });
+		// None marked: `member`.
+		expect(defaultRoles([marked('admin', false), { rkey: 'member', value: {} }])).toEqual([
+			'member'
+		]);
+		// In the order listed, `member` where it is listed.
+		expect(defaultRoles([marked('aide'), marked('member'), marked('rider')])).toEqual([
+			'aide',
+			'member',
+			'rider'
+		]);
+		// `member` first when it is not marked.
+		expect(defaultRoles([marked('rider'), marked('admin', 'true')])).toEqual(['member', 'rider']);
 	});
 
 	it("is the spec's record, with no member field", () => {

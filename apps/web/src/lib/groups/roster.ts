@@ -54,6 +54,17 @@ export function membershipRecord(
 	return { $type: GROUP_MEMBERSHIP_COLLECTION, roles: [...roles], createdAt };
 }
 
+/** The roles someone admitted on request gets, as the group host gives them on an open join: each
+ *  role whose record is marked `default`, in the order listed, or `member` when none is; and
+ *  `member` first whenever it is not among them, since everyone in a group holds it. */
+export function defaultRoles(records: readonly { rkey: string; value: unknown }[]): string[] {
+	const marked = records
+		.filter(({ value }) => (value as { default?: unknown } | null)?.default === true)
+		.map(({ rkey }) => rkey);
+	const roles = [...new Set(marked)];
+	return roles.includes(MEMBER_ROLE) ? roles : [MEMBER_ROLE, ...roles];
+}
+
 export function roleOf(value: unknown, id: string): RosterRole {
 	const displayName = (value as { displayName?: unknown } | null)?.displayName;
 	const name = typeof displayName === 'string' ? displayName.trim() : '';
