@@ -2,11 +2,12 @@ import { error, isHttpError } from '@sveltejs/kit';
 import { command, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
 import { callerSession } from '#lib/private-events/server/caller.js';
+import { SETTINGS_IN_THIS_BUILD } from './build';
 import { EVENT_PLACEMENTS } from './event-placement';
 import { GROUP_EVENT_COLLECTION } from './ids';
 import { requireGroupWriter, requireLinkedAbilities, requireStoredLink } from './server/context';
 import { finishSetup } from './server/create';
-import { requireCreateInBuild } from './server/enabled';
+import { requireCreateInBuild, requireSettingsInBuild } from './server/enabled';
 import {
 	deleteMembersOnlyEvent,
 	GroupEventRefused,
@@ -14,7 +15,8 @@ import {
 	refuseMembersOnlyKey,
 	turnOnMembersOnly
 } from './server/group-events';
-import { listGroup, notifyIndex, readGroupMeta, unlistGroup } from './server/group';
+import { listGroup, notifyIndex, readGroupMeta, resolveGroup, unlistGroup } from './server/group';
+import { parseGroupSettings, saveGroupSettings as saveSettings } from './server/settings';
 import { unlinkGroup } from './server/sign-in';
 import { isLinkBroken, isRoleRefused, xrpc, xrpcBlob, XrpcError } from './server/xrpc';
 
@@ -27,8 +29,9 @@ function callerDid(): string | null {
 	return getRequestEvent().locals.did;
 }
 
-const ONLY_PUBLIC =
-	'Only a public group can be listed, and this one is private. Make it public at the group host first.';
+/** Where a group is made public: its settings here, or else its group host. */
+const onlyPublic = () =>
+	`Only a public group can be listed, and this one is private. Make it public ${SETTINGS_IN_THIS_BUILD ? 'in its settings' : 'at the group host'} first.`;
 const NO_ROLE = 'Your role in this group no longer allows that.';
 const RELINK = 'Your link to this group stopped working. Link it again from its page.';
 const NO_TURN_ON = "Your role in this group doesn't let you turn on members-only events.";
@@ -52,7 +55,7 @@ export const setGroupListed = command(
 		try {
 			if (listed) {
 				const meta = await readGroupMeta(writer.handle, groupDid);
-				if (!meta.public) error(409, ONLY_PUBLIC);
+				if (!meta.public) error(409, onlyPublic());
 				await listGroup(writer.handle, groupDid);
 			} else {
 				await unlistGroup(writer.handle, groupDid);
@@ -69,11 +72,49 @@ export const setGroupListed = command(
 				e.status === 400 &&
 				e.error === 'InvalidRequest'
 			) {
-				error(409, ONLY_PUBLIC);
+				error(409, onlyPublic());
 			}
 			throw e;
 		}
 		return { listed };
+	}
+);
+
+const settingsSchema = v.object({
+	name: v.string(),
+	description: v.string(),
+	website: v.string(),
+	joinPolicy: v.string(),
+	public: v.boolean(),
+	listed: v.boolean()
+});
+
+/** `shownPublic` is the visibility the form showed, so a change made elsewhere since is kept. In a
+ *  build without the settings page, the same 404 as groups off. */
+export const saveGroupSettings = command(
+	v.object({ groupDid: didSchema, shownPublic: v.boolean(), settings: settingsSchema }),
+	async ({ groupDid, shownPublic, settings }) => {
+		requireSettingsInBuild();
+		const writer = await requireGroupWriter(groupDid, callerDid());
+		const parsed = parseGroupSettings(settings);
+		if (!parsed) {
+			error(
+				400,
+				'Check the settings: a name is needed, up to 64 characters, and a website starts with https://.'
+			);
+		}
+		const group = (await resolveGroup(groupDid)) ?? { did: groupDid, handle: null };
+		try {
+			await saveSettings(writer, group, parsed, shownPublic);
+		} catch (e) {
+			if (isRoleRefused(e)) error(403, NO_ROLE);
+			if (isLinkBroken(e)) error(403, RELINK);
+			if (e instanceof XrpcError && e.status === 400 && e.error === 'InvalidRequest') {
+				error(400, 'The group host did not take these settings. Check them and try again.');
+			}
+			throw e;
+		}
+		return { ok: true };
 	}
 );
 

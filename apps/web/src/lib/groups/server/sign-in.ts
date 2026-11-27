@@ -21,8 +21,13 @@ import { oauthRequestLock } from '#lib/atproto/server/oauth.js';
 import { oauthOrigin } from '#lib/atproto/server/origin.js';
 import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 import { GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION } from '../ids';
-import { GROUP_META_READ_SCOPE, GROUP_POLICY_SCOPE, MEMBERS_ONLY_SCOPES } from '../scopes';
-import { CREATE_IN_THIS_BUILD } from '../build';
+import {
+	GROUP_META_READ_SCOPE,
+	GROUP_POLICY_SCOPE,
+	GROUP_SETTINGS_SCOPES,
+	MEMBERS_ONLY_SCOPES
+} from '../scopes';
+import { CREATE_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from '../build';
 import { groupsEnabled } from './enabled';
 import { forgetHeldAtGroupHost } from './group';
 import { listKeys, prefixedKV } from './kv';
@@ -41,19 +46,23 @@ const STATE_PREFIX = 'group:state:';
 const STATE_TTL_SECONDS = 600;
 
 /** The host keeps or drops each scope whole, so the meta read is its own scope and
- *  survives for a member whose roles grant no writes, and each of members-only events' writes is
- *  its own too. Every scope for one space names the same key, since the host's approval page
- *  cannot show one space as two rows. The meta space's policy is asked for only in a build that
- *  makes groups here (../build.ts), whose setting up makes a group public. Listing a group needs
- *  none of them: it writes the group's declaration, in its repo. Turning members-only events on
- *  reads the group's index of its spaces, in the members space. */
-export function groupSessionScope(create: boolean = CREATE_IN_THIS_BUILD): string {
+ *  survives for a member whose roles grant no writes, and each of the settings' and members-only
+ *  events' writes is its own too. Every scope for one space names the same key, since the host's
+ *  approval page cannot show one space as two rows. The settings' are asked for only in a build
+ *  that has them (../build.ts); without the settings, the meta space's policy is still asked for
+ *  while making a group here is in it, whose setting up makes a group public. Listing a group
+ *  needs none of them: it writes the group's declaration, in its repo. Turning members-only events
+ *  on reads the group's index of its spaces, in the members space. */
+export function groupSessionScope(
+	settings: boolean = SETTINGS_IN_THIS_BUILD,
+	create: boolean = CREATE_IN_THIS_BUILD
+): string {
 	return [
 		'atproto',
 		GROUP_META_READ_SCOPE,
 		scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
 		scope.blob({ accept: ['image/*'] }),
-		...(create ? [GROUP_POLICY_SCOPE] : []),
+		...(settings ? GROUP_SETTINGS_SCOPES : create ? [GROUP_POLICY_SCOPE] : []),
 		...MEMBERS_ONLY_SCOPES
 	].join(' ');
 }

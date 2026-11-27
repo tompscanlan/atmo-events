@@ -1,6 +1,21 @@
+// A group's settings, written as the group through a session someone linked: its about record and
+// config in its meta space, whether the meta space is public (its policy, which
+// com.atproto.space.updateSpace replaces whole) and whether it is on the groups list (its
+// declaration). Every read comes before the first write, and the writes go in this order, so saving
+// again finishes a save that stopped partway, and a group turning private is private before its
+// new name is written:
+//
+//   private  policy says private (the host takes the declaration down) -> config -> about
+//   public   policy says public (the host puts the declaration up) -> listing as asked -> config
+//            -> about
+//
+// When the policy's visibility is no longer the one the form showed, someone changed it since, so
+// it and the listing are kept rather than changed back.
 import { didSpaceHosts, type SpaceHosts } from '#lib/spaces/server/space-credential.js';
 import { credentialSpaceReader } from '#lib/spaces/server/space-read.js';
+import { groupDescription, groupJoinPolicy, groupName, groupWebsite } from '../fields';
 import {
+	declarationUri,
 	GROUP_ABOUT_COLLECTION,
 	GROUP_ABOUT_RKEY,
 	GROUP_CONFIG_COLLECTION,
@@ -8,11 +23,51 @@ import {
 	GROUP_POLICY_TYPE,
 	metaSpaceUri,
 	SPACE_POLICY_COLLECTION,
-	SPACE_POLICY_RKEY
+	SPACE_POLICY_RKEY,
+	type GroupJoinPolicy
 } from '../ids';
 import type { GroupWriter } from './context';
-import { repoHasDeclaration } from './group';
+import {
+	listGroup,
+	notifyIndex,
+	repoHasDeclaration,
+	storeCachedProfile,
+	unlistGroup,
+	type ResolvedGroup
+} from './group';
 import { xrpc } from './xrpc';
+
+export interface GroupSettings {
+	name: string;
+	description: string | null;
+	website: string | null;
+	/** Null for a join policy this site does not know, as the spec's `knownValues` allows: shown as
+	 *  it is, and kept as it is on save unless the person picks another. */
+	joinPolicy: GroupJoinPolicy | null;
+	public: boolean;
+	/** On the groups list; only a public group may be. */
+	listed: boolean;
+}
+
+/** Null for anything that is not a whole, valid set of settings. An empty join policy is the one
+ *  the group has, kept. */
+export function parseGroupSettings(value: Record<string, unknown>): GroupSettings | null {
+	const name = groupName(value.name);
+	const description = groupDescription(value.description);
+	const website = groupWebsite(value.website);
+	const joinPolicy = value.joinPolicy === '' ? null : groupJoinPolicy(value.joinPolicy);
+	if (!name || description === undefined || website === undefined) return null;
+	if (joinPolicy === null && value.joinPolicy !== '') return null;
+	if (typeof value.public !== 'boolean' || typeof value.listed !== 'boolean') return null;
+	return {
+		name,
+		description,
+		website,
+		joinPolicy,
+		public: value.public,
+		listed: value.public && value.listed
+	};
+}
 
 interface MetaRecords {
 	about: Record<string, unknown> | null;
@@ -47,6 +102,87 @@ async function readMeta(writer: GroupWriter, hosts: SpaceHosts): Promise<MetaRec
 	};
 }
 
+const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
+
+/** What the settings form starts from. A group with no join policy reads as the host's default,
+ *  approval; one with a policy this site does not know, as null, to keep. */
+export async function readGroupSettings(
+	writer: GroupWriter,
+	hosts: SpaceHosts = didSpaceHosts
+): Promise<GroupSettings> {
+	const { about, config, policy, declared } = await readMeta(writer, hosts);
+	const isPublic = policy?.publicRead === true;
+	return {
+		name: text(about?.displayName) ?? '',
+		description: text(about?.description),
+		website: text(about?.website),
+		joinPolicy: config?.joinPolicy === undefined ? 'approval' : groupJoinPolicy(config.joinPolicy),
+		public: isPublic,
+		listed: isPublic && declared
+	};
+}
+
+/** `shownPublic` is the visibility the form showed. */
+export async function saveGroupSettings(
+	writer: GroupWriter,
+	group: Pick<ResolvedGroup, 'did' | 'handle'>,
+	settings: GroupSettings,
+	shownPublic: boolean,
+	hosts: SpaceHosts = didSpaceHosts
+): Promise<void> {
+	const { about, config, policy, declared } = await readMeta(writer, hosts);
+	if (!policy) throw new Error(`${writer.did} publishes no policy for its meta space`);
+	const current = policy.publicRead === true;
+	const isPublic = shownPublic === current ? settings.public : current;
+	// The form's listing went with the visibility it asked for.
+	const listed = isPublic === settings.public ? settings.listed : declared;
+
+	if (isPublic !== current) {
+		// The whole policy, its grants as they are: updateSpace replaces it.
+		await xrpc(writer.handle, 'com.atproto.space.updateSpace', {
+			body: { space: metaSpaceUri(writer.did), policy: { ...policy, publicRead: isPublic } }
+		});
+	}
+	if (isPublic) {
+		// The host declares a group as its meta space turns public, or keeps the declaration.
+		if (listed && (!declared || isPublic !== current)) await listGroup(writer.handle, writer.did);
+		if (!listed && (declared || isPublic !== current)) await unlistGroup(writer.handle, writer.did);
+	} else if (declared) {
+		// The host took the declaration down; the index hears it now rather than from a relay.
+		await notifyIndex(declarationUri(writer.did));
+	}
+
+	// A join policy this site does not know is left as it is, unless the person picked another.
+	if (settings.joinPolicy !== null) {
+		await putMeta(writer, GROUP_CONFIG_COLLECTION, GROUP_CONFIG_RKEY, {
+			...config,
+			joinPolicy: settings.joinPolicy
+		});
+	}
+	// The record's other fields, such as its avatar, are kept.
+	const next: Record<string, unknown> = { ...about, displayName: settings.name };
+	for (const [field, value] of [
+		['description', settings.description],
+		['website', settings.website]
+	] as const) {
+		if (value) next[field] = value;
+		else delete next[field];
+	}
+	await putMeta(writer, GROUP_ABOUT_COLLECTION, GROUP_ABOUT_RKEY, next);
+
+	// As a read of the about record would cache it, its website too.
+	await storeCachedProfile(group, {
+		profile: {
+			name: settings.name,
+			description: settings.description,
+			...(settings.website ? { website: settings.website } : {})
+		},
+		public: isPublic
+	}).catch((e) =>
+		console.warn(`[groups] ${writer.did}: the cached profile could not be stored:`, e)
+	);
+}
+
 /** Makes the group's meta space public, its policy otherwise as it is, so the host lists it: for a
  *  group made private so it was never listed, whose maker asked for it public. Nothing when it is
  *  public already, so running it again changes nothing. */
@@ -59,5 +195,22 @@ export async function makeMetaPublic(
 	if (policy.publicRead === true) return;
 	await xrpc(writer.handle, 'com.atproto.space.updateSpace', {
 		body: { space: metaSpaceUri(writer.did), policy: { ...policy, publicRead: true } }
+	});
+}
+
+async function putMeta(
+	writer: GroupWriter,
+	collection: string,
+	rkey: string,
+	record: Record<string, unknown>
+) {
+	await xrpc(writer.handle, 'com.atproto.space.putRecord', {
+		body: {
+			repo: writer.did,
+			space: metaSpaceUri(writer.did),
+			collection,
+			rkey,
+			record: { ...record, $type: collection }
+		}
 	});
 }

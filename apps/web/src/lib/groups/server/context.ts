@@ -55,6 +55,8 @@ export const GROUP_UNCHECKED = 'This group could not be checked right now. Try a
 
 /** To someone who linked the group, whose role does not let the link post as it. */
 export const NO_POSTING = "Your role in this group doesn't let you post its events.";
+/** The same, for the group's settings. */
+export const NO_SETTINGS = "Your role in this group doesn't let you change its settings.";
 
 export interface GroupView {
 	did: string;

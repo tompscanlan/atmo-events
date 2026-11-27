@@ -20,6 +20,7 @@ import {
 	deleteGroupEvent,
 	finishGroupSetup,
 	putGroupEvent,
+	saveGroupSettings,
 	turnOnMembersOnlyEvents
 } from '../group.remote';
 import { cancelMembersOnlyRsvp, rsvpToMembersOnlyEvent } from '../members-only.remote';
@@ -74,8 +75,19 @@ describe('with groups off', () => {
 		expect(await shown(() => leave({ groupDid: GROUP }))).toBe(expected);
 	});
 
-	it("refuses finishing a group's setup with the same 404", async () => {
+	it("refuses saving a group's settings and finishing its setup with the same 404", async () => {
 		const expected = unknownAddress();
+		const settings = {
+			name: 'x',
+			description: '',
+			website: '',
+			joinPolicy: 'open',
+			public: true,
+			listed: true
+		};
+		expect(
+			await shown(() => saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings }))
+		).toBe(expected);
 		expect(await shown(() => finishGroupSetup({ groupDid: GROUP }))).toBe(expected);
 	});
 
