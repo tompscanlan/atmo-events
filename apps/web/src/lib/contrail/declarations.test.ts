@@ -280,13 +280,69 @@ describe('the groups with an event coming', () => {
 		]);
 	});
 
-	it("ends a page before a server's groups pass the limit, and pages through the rest", async () => {
+	it("leaves a server's groups past the limit for the next page, and pages through the rest", async () => {
 		const db = await setup();
 		const busy = await groupsAt(db, 'https://busy.example', 'b', 40, 1);
 		const quiet = await groupsAt(db, 'https://quiet.example', 'q', 3, 500);
 
 		const pages = await allPages(db);
 		expect(pages).toEqual([[...busy.slice(0, 15), ...quiet], busy.slice(15, 30), busy.slice(30)]);
+	});
+
+	/** Every group on the pages, once each: what repeats, and what is missing of `expected`. */
+	const onceEach = (pages: string[][], expected: string[]) => {
+		const seen = pages.flat();
+		return {
+			repeated: seen.filter((did, i) => seen.indexOf(did) !== i),
+			missing: expected.filter((did) => !seen.includes(did))
+		};
+	};
+
+	it('shows each group once when a group’s next event starts between one page and the next', async () => {
+		const db = await setup();
+		const busy = await groupsAt(db, 'https://busy.example', 'b', 20, 1);
+		const other = await groupsAt(db, 'https://other.example', 'o', 20, 100);
+		const first = await upcomingGroups(db, NOW);
+		expect(first.groups.map((group) => group.did)).toEqual([
+			...busy.slice(0, 15),
+			...other.slice(0, 15)
+		]);
+		// The first two of the busy server's events have started by the time page 2 is read.
+		const second = await upcomingGroups(db, at(2.5), first.cursor);
+		expect(second.groups.map((group) => group.did)).toEqual([
+			...busy.slice(15),
+			...other.slice(15)
+		]);
+		expect(second.cursor).toBeNull();
+		const pages = [first, second].map((page) => page.groups.map((group) => group.did));
+		expect(onceEach(pages, [...busy, ...other])).toEqual({ repeated: [], missing: [] });
+	});
+
+	it('shows each group once when groups and events are added between one page and the next', async () => {
+		const db = await setup();
+		const busy = await groupsAt(db, 'https://busy.example', 'b', 20, 1);
+		const other = await groupsAt(db, 'https://other.example', 'o', 20, 100);
+		const first = await upcomingGroups(db, NOW);
+		// A group of the busy server's with an event sooner than all of them, and one later.
+		await declare(db, 'did:plc:b-sooner', { pds: 'https://busy.example' });
+		await event(db, 'did:plc:b-sooner', 'e', at(0.5));
+		await declare(db, 'did:plc:o-later', { pds: 'https://other.example' });
+		await event(db, 'did:plc:o-later', 'e', at(500));
+		// And a new event sooner than its next for a group page 1 showed.
+		await event(db, busy[3], 'sooner', at(0.25));
+		const pages = [first.groups.map((group) => group.did)];
+		let cursor = first.cursor;
+		while (cursor && pages.length < 5) {
+			const page = await upcomingGroups(db, NOW, cursor);
+			pages.push(page.groups.map((group) => group.did));
+			cursor = page.cursor;
+		}
+		expect(onceEach(pages, [...busy, ...other, 'did:plc:o-later'])).toEqual({
+			repeated: [],
+			missing: []
+		});
+		// One placed before where page 1 ended shows on none of the pages after it.
+		expect(pages.flat()).not.toContain('did:plc:b-sooner');
 	});
 
 	it('finds each next event in one step of an index, and reads only the declarations whole', async () => {
