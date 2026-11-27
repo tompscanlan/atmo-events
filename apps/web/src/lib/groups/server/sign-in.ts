@@ -27,6 +27,7 @@ import {
 	MEMBERS_ONLY_SCOPES,
 	ROSTER_SCOPES
 } from '../scopes';
+import { ROSTER_IN_THIS_BUILD } from '../roster-switch';
 import { groupsEnabled } from './enabled';
 import { listKeys, prefixedKV } from './kv';
 import type { XrpcHandle } from './xrpc';
@@ -46,16 +47,21 @@ const STATE_TTL_SECONDS = 600;
 /** The host keeps or drops each scope whole, so the meta read is its own scope and
  *  survives for a member whose roles grant no writes, and each of the settings', the members
  *  page's and members-only events' writes is its own too. Every scope for one space names the
- *  same key, since the host's approval page cannot show one space as two rows. */
-export const GROUP_SESSION_SCOPE = [
-	'atproto',
-	GROUP_META_READ_SCOPE,
-	scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
-	scope.blob({ accept: ['image/*'] }),
-	...GROUP_SETTINGS_SCOPES,
-	...ROSTER_SCOPES,
-	...MEMBERS_ONLY_SCOPES
-].join(' ');
+ *  same key, since the host's approval page cannot show one space as two rows. The members page's
+ *  are asked for only in a build that has it (../roster-switch.ts). */
+export function groupSessionScope(roster: boolean): string {
+	return [
+		'atproto',
+		GROUP_META_READ_SCOPE,
+		scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
+		scope.blob({ accept: ['image/*'] }),
+		...GROUP_SETTINGS_SCOPES,
+		...(roster ? ROSTER_SCOPES : []),
+		...MEMBERS_ONLY_SCOPES
+	].join(' ');
+}
+
+export const GROUP_SESSION_SCOPE = groupSessionScope(ROSTER_IN_THIS_BUILD);
 
 /** A loopback client cannot have a second client_id, and only one group host is served. */
 export function groupSignInAvailable(): boolean {

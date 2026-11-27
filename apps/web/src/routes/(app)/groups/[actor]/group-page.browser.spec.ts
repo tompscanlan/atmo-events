@@ -23,6 +23,8 @@ vi.mock('#lib/groups/group.remote.js', () => mocks);
 vi.mock('#lib/groups/members.remote.js', () => member);
 vi.mock('@svelte-atproto/oauth/client', () => oauth);
 vi.mock('#lib/contrail/events.remote.js', () => ({ loadMoreEvents: vi.fn() }));
+// The members page is not in this build; members-link.browser.spec.ts has it in.
+vi.mock('#lib/groups/roster-switch.js', () => ({ ROSTER_IN_THIS_BUILD: false }));
 
 import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 import GroupPage from './+page.svelte';
@@ -361,41 +363,18 @@ describe("a person's own membership", () => {
 		}
 	);
 
-	it('links a member to the members page', async () => {
-		const members = page.getByRole('link', { name: /^Members/ });
+	it('links no one to the members page in a build without it, not a member, nor an admin who may manage members', async () => {
 		render(GroupPage, { data: personPage({ joinPolicy: 'approval' }, true) as never });
-		await expect.element(members).toBeVisible();
-		expect(decodeURIComponent(members.query()?.getAttribute('href') ?? '')).toBe(
-			`/groups/${GROUP}/members`
-		);
-	});
-
-	it.each([
-		[false, 0],
-		[null, 0],
-		[true, 1]
-	])(
-		'links an admin whose link may manage members to the members page only when the host counts them a member (%s)',
-		async (member, links) => {
-			const can = {
-				post: true,
-				list: true,
-				settings: true,
-				admit: true,
-				assign: true,
-				remove: true
-			};
-			const data = linkedPage({ public: true, listed: true }, can);
-			render(GroupPage, { data: { ...data, group: { ...data.group, member } } as never });
-			await expect.element(page.getByRole('link', { name: 'Settings' })).toBeVisible();
-			expect(page.getByRole('link', { name: /^Members/ }).elements()).toHaveLength(links);
-		}
-	);
-
-	it('does not link someone outside the group to the members page', async () => {
-		render(GroupPage, { data: personPage({ joinPolicy: 'approval' }, false) as never });
-		await expect.element(page.getByRole('button', { name: 'Ask to join' })).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Leave group' })).toBeVisible();
 		expect(page.getByRole('link', { name: /^Members/ }).elements()).toHaveLength(0);
+		expect(document.querySelector('a[href*="/members"]')).toBeNull();
+
+		const can = { post: true, list: true, settings: true, admit: true, assign: true, remove: true };
+		const data = linkedPage({ public: true, listed: true }, can);
+		render(GroupPage, { data: { ...data, group: { ...data.group, member: true } } as never });
+		await expect.element(page.getByRole('link', { name: 'Settings' })).toBeVisible();
+		expect(page.getByRole('link', { name: /^Members/ }).elements()).toHaveLength(0);
+		expect(document.querySelector('a[href*="/members"]')).toBeNull();
 	});
 
 	it('asks for the group permissions, and says why when their server said no', async () => {

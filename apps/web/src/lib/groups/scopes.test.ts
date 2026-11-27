@@ -6,6 +6,7 @@ import {
 	GROUP_SETTINGS_SCOPES,
 	groupAbilities,
 	holdsConfirmationGrant,
+	holdsEveryAbility,
 	holdsCreateGroup,
 	holdsMetaRead,
 	holdsParticipate,
@@ -44,7 +45,8 @@ describe('what a group session may do, by the scope its host granted', () => {
 			...ROSTER,
 			...MEMBERS_ONLY
 		].join(' ');
-		expect(groupAbilities(scope, GROUP)).toEqual({
+		// With the members page in the build.
+		expect(groupAbilities(scope, GROUP, true)).toEqual({
 			post: true,
 			list: true,
 			settings: true,
@@ -54,6 +56,31 @@ describe('what a group session may do, by the scope its host granted', () => {
 			turnOnMembersOnly: true,
 			membersOnly: true
 		});
+	});
+
+	it('gives no member controls, whatever the scope grants, in a build without the members page', () => {
+		const scope = ['atproto', META_READ, REPO, ...SETTINGS, ...ROSTER, ...MEMBERS_ONLY].join(' ');
+		expect(groupAbilities(scope, GROUP, false)).toEqual({
+			post: true,
+			list: true,
+			settings: true,
+			admit: false,
+			assign: false,
+			remove: false,
+			turnOnMembersOnly: true,
+			membersOnly: true
+		});
+	});
+
+	it("counts a link as holding everything by what the build offers, the members page's acts only with it", () => {
+		const all = ['atproto', META_READ, REPO, ...SETTINGS, ...ROSTER, ...MEMBERS_ONLY].join(' ');
+		const allButRoster = ['atproto', META_READ, REPO, ...SETTINGS, ...MEMBERS_ONLY].join(' ');
+		expect(holdsEveryAbility(groupAbilities(all, GROUP, true), true)).toBe(true);
+		expect(holdsEveryAbility(groupAbilities(allButRoster, GROUP, true), true)).toBe(false);
+		expect(holdsEveryAbility(groupAbilities(allButRoster, GROUP, false), false)).toBe(true);
+		// Whatever else it may do, a link that cannot post is short of something either way.
+		const noPosting = ['atproto', META_READ, ...SETTINGS, ...ROSTER, ...MEMBERS_ONLY].join(' ');
+		expect(holdsEveryAbility(groupAbilities(noPosting, GROUP, false), false)).toBe(false);
 	});
 
 	it("lets a member's session, which keeps only reads, do none of it", () => {

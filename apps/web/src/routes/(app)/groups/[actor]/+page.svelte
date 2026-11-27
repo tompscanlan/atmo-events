@@ -15,6 +15,7 @@
 		unlinkGroupSession
 	} from '#lib/groups/group.remote.js';
 	import { cancelJoin, confirmMember, joinGroup, leave } from '#lib/groups/members.remote.js';
+	import { ROSTER_IN_THIS_BUILD } from '#lib/groups/roster-switch.js';
 
 	let { data } = $props();
 
@@ -40,8 +41,9 @@
 		data.calendar === 'ready' && Boolean(group.linked?.can.membersOnly)
 	);
 	/** Members see who else is in the group; an admin who linked it, also those asking to join. As
-	 *  the members page lets in only someone the host's records count a member, so is the link. */
-	let showMembers = $derived(group.member === true);
+	 *  the members page lets in only someone the host's records count a member, so is the link; and
+	 *  only in a build that has the page. */
+	let showMembers = $derived(ROSTER_IN_THIS_BUILD && group.member === true);
 
 	/** The person's own membership: the host's refusals come back in words to show. */
 	async function asMember(run: () => Promise<unknown>) {
@@ -185,7 +187,7 @@
 						<!-- Admitted some other way than a request made here: confirming is theirs to do. -->
 						<div class="mt-3 flex flex-wrap items-center gap-3">
 							<p class="text-base-700 dark:text-base-300 text-sm" role="status">
-								The group counts you a member. Confirm it to be listed among its members.
+								The group counts you a member. Confirm it, so your own account says so too.
 							</p>
 							<Button size="sm" variant="secondary" disabled={busy} onclick={confirm}
 								>Confirm membership</Button

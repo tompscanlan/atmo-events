@@ -15,6 +15,7 @@ import {
 	ACTOR_GROUPS_NSID,
 	groupAbilities,
 	holdsConfirmationGrant,
+	holdsEveryAbility,
 	holdsMetaRead,
 	holdsParticipate,
 	holdsRpc,
@@ -55,8 +56,6 @@ export const GROUP_UNCHECKED = 'This group could not be checked right now. Try a
 export const NO_POSTING = "Your role in this group doesn't let you post its events.";
 /** The same, for the group's settings. */
 export const NO_SETTINGS = "Your role in this group doesn't let you change its settings.";
-/** Only a member reads who else is in a group. */
-export const MEMBERS_ONLY = 'Only members can see who is in this group.';
 
 export interface GroupView {
 	did: string;
@@ -147,12 +146,11 @@ async function readLinked(
 			unfinishedGroup(personDid, groupDid)
 		]);
 		const can = groupAbilities(token.scope, groupDid);
-		const everything = Object.values(can).every(Boolean);
 		return {
 			meta,
 			listed,
 			can,
-			reapprove: !current && !everything,
+			reapprove: !current && !holdsEveryAbility(can),
 			unfinished: setup && { public: setup.public, listed: setup.listed }
 		};
 	} catch (e) {

@@ -4,6 +4,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
 
 vi.mock('#lib/atproto/server/oauth.js', () => ({ getAuth: vi.fn() }));
+/** Whether the members page is in the build; each test says. */
+const build = vi.hoisted(() => ({ roster: false }));
+vi.mock('./roster-switch', () => ({
+	get ROSTER_IN_THIS_BUILD() {
+		return build.roster;
+	}
+}));
 
 // The server hooks hand the switch to the reroute hook.
 import '../../hooks.server';
@@ -12,12 +19,20 @@ import { NO_ROUTE } from './reroute';
 
 const GROUP = 'did:plc:group';
 
+/** Every address of the members page. */
+const MEMBERS_ADDRESSES = [
+	`/groups/${GROUP}/members`,
+	`/groups/${GROUP}/members/`,
+	'/groups/knit.example/members',
+	`/groups/${GROUP}/%6Dembers`
+];
+
 /** Every groups address, with each method its route answers. Reroute reads only the address. */
 const GROUP_ADDRESSES = [
 	'/groups',
 	'/groups/',
 	`/groups/${GROUP}`,
-	`/groups/${GROUP}/members`,
+	...MEMBERS_ADDRESSES,
 	`/groups/${GROUP}/settings`,
 	`/groups/${GROUP}/events/new`,
 	`/groups/${GROUP}/events/3kabc`,
@@ -38,6 +53,15 @@ const OTHER_ADDRESSES = [
 	'/oauth/groupx',
 	'/oauth-client-metadata.json',
 	'/groups/%zz'
+];
+
+/** Group addresses beside the members page's. */
+const NOT_MEMBERS = [
+	`/groups/${GROUP}`,
+	`/groups/${GROUP}/membersx`,
+	`/groups/${GROUP}/events/members`,
+	'/groups/members',
+	'/groups/create'
 ];
 
 const rerouted = (path: string) =>
@@ -68,10 +92,28 @@ describe('with groups off', () => {
 	});
 });
 
+describe('with groups off, in a build with the members page', () => {
+	it('matches no route for any groups address', () => {
+		build.roster = true;
+		for (const path of GROUP_ADDRESSES) expect(rerouted(path), path).toBe(NO_ROUTE);
+		build.roster = false;
+	});
+});
+
 describe('with groups on', () => {
-	it('reroutes nothing', () => {
+	it('reroutes nothing in a build with the members page', () => {
+		build.roster = true;
 		Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
-		for (const path of [...GROUP_ADDRESSES, ...OTHER_ADDRESSES])
+		for (const path of [...GROUP_ADDRESSES, ...OTHER_ADDRESSES, ...NOT_MEMBERS])
+			expect(rerouted(path), path).toBeUndefined();
+		build.roster = false;
+	});
+
+	it("matches no route for the members page's addresses alone in a build without it", () => {
+		Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
+		for (const path of MEMBERS_ADDRESSES) expect(rerouted(path), path).toBe(NO_ROUTE);
+		const others = GROUP_ADDRESSES.filter((path) => !MEMBERS_ADDRESSES.includes(path));
+		for (const path of [...others, ...OTHER_ADDRESSES, ...NOT_MEMBERS])
 			expect(rerouted(path), path).toBeUndefined();
 	});
 });

@@ -21,6 +21,9 @@ export interface RosterEntry {
 	confirmed: boolean | null;
 }
 
+/** Only a member reads who else is in a group. */
+export const MEMBERS_ONLY = 'Only members can see who is in this group.';
+
 export interface JoinRequestView {
 	did: string;
 	handle: string | null;

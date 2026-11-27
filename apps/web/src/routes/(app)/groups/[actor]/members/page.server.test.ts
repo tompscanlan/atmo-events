@@ -15,6 +15,13 @@ vi.mock('#lib/groups/server/context.js', async (importActual) => ({
 	requireGroupWriter: mocks.requireGroupWriter
 }));
 vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.callerSession }));
+/** The page is tested with it in the build, and once without. */
+const build = vi.hoisted(() => ({ roster: true }));
+vi.mock('#lib/groups/roster-switch.js', () => ({
+	get ROSTER_IN_THIS_BUILD() {
+		return build.roster;
+	}
+}));
 vi.mock('#lib/groups/server/roster.js', () => ({
 	readRoster: mocks.readRoster,
 	listJoinRequests: mocks.listJoinRequests
@@ -83,6 +90,7 @@ const REQUESTS = [{ did: CAROL, handle: null, message: 'I ride.', createdAt: 'x'
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	build.roster = true;
 	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 	mocks.callerSession.mockResolvedValue(person);
 	mocks.groupView.mockResolvedValue(view());
@@ -232,5 +240,15 @@ describe("a group's members page", () => {
 		});
 		expect(mocks.readRoster).not.toHaveBeenCalled();
 		Reflect.deleteProperty(env, 'SPACES_PDS_URL');
+	});
+
+	it("is groups-off's 404 in a build without it, with groups on, and reads nothing", async () => {
+		build.roster = false;
+		await expect(load(request())).rejects.toMatchObject({
+			status: 404,
+			body: { message: 'Not Found' }
+		});
+		expect(mocks.groupView).not.toHaveBeenCalled();
+		expect(mocks.readRoster).not.toHaveBeenCalled();
 	});
 });

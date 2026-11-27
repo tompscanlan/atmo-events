@@ -18,6 +18,7 @@ import {
 } from './ids';
 import { GUEST_SCOPE, GUEST_SCOPES } from '#lib/private-events/scopes.js';
 import { CALENDAR_SPACE_TYPE } from './calendar';
+import { ROSTER_IN_THIS_BUILD } from './roster-switch';
 
 /** The group host's own method for making a group, not the spec's (bluesky-social/group-host's
  *  `org.atgrp.internal.createGroup`). The spec's way is OAuth `prompt=create` at the host, which
@@ -379,14 +380,33 @@ export interface GroupAbilities extends RosterAbilities, MembersOnlyAbilities {
 	settings: boolean;
 }
 
-export function groupAbilities(scope: string, groupDid: string): GroupAbilities {
+const NO_ROSTER: RosterAbilities = { admit: false, assign: false, remove: false };
+
+/** `roster`: whether the members page is in this build; without it a link holds none of its acts,
+ *  whatever its scope grants. */
+export function groupAbilities(
+	scope: string,
+	groupDid: string,
+	roster: boolean = ROSTER_IN_THIS_BUILD
+): GroupAbilities {
 	const list = grantsRepoWrites(scope, GROUP_DECLARATION_COLLECTION);
 	return {
 		post: grantsRepoWrites(scope, GROUP_EVENT_COLLECTION),
 		list,
 		// Making a group public or private moves its listing too.
 		settings: list && grantsSettings(scope, groupDid),
-		...grantsRoster(scope, groupDid),
+		...(roster ? grantsRoster(scope, groupDid) : NO_ROSTER),
 		...grantsMembersOnly(scope, groupDid)
 	};
+}
+
+/** Whether a link holds every ability this build offers: the roster's count only while the
+ *  members page is in it, so a link is never asked to be approved again for what nothing uses. */
+export function holdsEveryAbility(
+	can: GroupAbilities,
+	roster: boolean = ROSTER_IN_THIS_BUILD
+): boolean {
+	return Object.entries(can).every(
+		([ability, held]) => held || (!roster && Object.hasOwn(NO_ROSTER, ability))
+	);
 }

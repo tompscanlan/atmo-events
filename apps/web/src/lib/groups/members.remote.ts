@@ -14,7 +14,7 @@ import {
 	writeConfirmation
 } from './server/confirmation';
 import { GROUP_NOT_FOUND, requireGroupWriter, type GroupWriter } from './server/context';
-import { requireGroupsEnabled } from './server/enabled';
+import { requireGroupsEnabled, requireRosterInBuild } from './server/enabled';
 import { atGroupHost, resolveGroup } from './server/group';
 import {
 	cancelJoinRequest,
@@ -156,9 +156,11 @@ const ROSTER_REFUSED: Record<RosterRefusal, [400 | 403 | 409, string]> = {
 const NO_ROLE = 'Your role in this group no longer allows that.';
 const RELINK = 'Your link to this group stopped working. Link it again from its page.';
 
-/** The caller's own link to the group, or the same 404 as any group they may not see. */
+/** The caller's own link to the group, or the same 404 as any group they may not see; and the
+ *  404 of groups off in a build without the members page. */
 function linked(groupDid: string): Promise<GroupWriter> {
 	requireGroupsEnabled();
+	requireRosterInBuild();
 	return requireGroupWriter(groupDid, getRequestEvent().locals.did);
 }
 
