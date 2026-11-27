@@ -41,6 +41,15 @@
 //   WALK_EVENT_INDEX_TEST  set on a dev server whose scheduled job has not run since it started:
 //                       the groups list's event index is dropped from its database first, to see
 //                       the list answer without it and the next ingest cycle build it
+//   WALK_ATMO_STATE_DIR the dev server's local state folder (apps/web/<its LOCAL_STATE_DIR>), when it
+//                       is not this tree's .wrangler/snowglobe-groups: its database is read there
+//   WALK_UNIT           the part of the feature the dev server's build has, when it is one of the
+//                       stacked parts on its own: link-group (link, list, browse, post as the group),
+//                       join (and asking to join, leaving, "Your groups"), or members-only-events
+//                       (the default: the whole feature). The steps of later parts are skipped as
+//                       "not in this unit", and checks are added that nothing of them shows
+//   WALK_GROUPS_OFF_URL with WALK_UNIT, the address of a dev server of the same build started without
+//                       GROUP_HOST_URL (groups off), to compare a person's client metadata with
 import { execFileSync } from 'node:child_process';
 import dns from 'node:dns/promises';
 import fs from 'node:fs';
@@ -857,6 +866,40 @@ async function confirmationsOf(who, g) {
 // ---------- the group page as this build lays it out ----------
 /** Parts of groups this build leaves out: their old steps stay in the file, skipped. */
 const HELD_BACK = 'held back in this build';
+/** The stacked parts of the feature, in order; a build of one has it and every part before it. */
+const UNITS = ['link-group', 'join', 'members-only-events'];
+const UNIT = process.env.WALK_UNIT?.trim() || UNITS.at(-1);
+if (!UNITS.includes(UNIT)) throw new Error(`WALK_UNIT is one of ${UNITS.join(', ')}`);
+/** Whether the build has `unit`. */
+const has = (unit) => UNITS.indexOf(UNIT) >= UNITS.indexOf(unit);
+const NOT_IN_UNIT = 'not in this unit';
+const GROUPS_OFF = process.env.WALK_GROUPS_OFF_URL?.trim().replace(/\/$/, '') || '';
+/** What the group's link asks for before members-only events: the meta read, the declaration and
+ *  event repo writes, image upload. */
+const LINK_UNIT_GROUP_SCOPES = [
+	'atproto',
+	'space:org.atgrp.meta?authority=self&skey=self&action=read',
+	'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
+	'blob?accept=image/*'
+];
+/** What the join unit adds to a person's client metadata: any group's meta read, their own
+ *  confirmation in its members space, join, cancel and leave, and "Your groups". */
+const JOIN_UNIT_PERSON_SCOPES = [
+	'space:org.atgrp.meta?authority=*&skey=self&action=read',
+	'space:org.atgrp.members?authority=*&skey=self&collection=org.atgrp.confirmation&action=read&action=create&action=delete',
+	'rpc?lxm=org.atgrp.requestJoin&lxm=org.atgrp.cancelJoinRequest&lxm=org.atgrp.leaveGroup&aud=*',
+	'rpc:org.atgrp.internal.getActorGroups?aud=*'
+];
+const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+/** Before members-only events: the link asks this unit's scopes exactly, and the approval page lists
+ *  no members-space access and withholds nothing. */
+function onlyTheLinkUnitScopes(asked, access, withheld) {
+	return (
+		sameSet(asked.trim().split(/\s+/), LINK_UNIT_GROUP_SCOPES) &&
+		access?.length === 0 &&
+		withheld === ''
+	);
+}
 /** The header: picture, name, badges, handle, description, counts, links, join state. */
 const groupHeader = (page) => page.getByRole('region', { name: 'Group', exact: true });
 /** The one box of tools for someone who linked the group and may act for it. */
@@ -972,10 +1015,12 @@ async function didOfHandle(handle) {
 // =====================================================================================
 // atmo's own local database (the dev server's D1, LOCAL_STATE_DIR in the network file), read for
 // the groups list's event index, which the scheduled job builds.
-const D1_DIR = new URL(
-	'../.wrangler/snowglobe-groups/v3/d1/miniflare-D1DatabaseObject/',
-	import.meta.url
-).pathname;
+// WALK_ATMO_STATE_DIR names it when the dev server runs from another tree or with another one.
+const D1_DIR = path.join(
+	process.env.WALK_ATMO_STATE_DIR?.trim() ||
+		new URL('../.wrangler/snowglobe-groups/', import.meta.url).pathname,
+	'v3/d1/miniflare-D1DatabaseObject/'
+);
 const EVENT_INDEX = 'groups_event_did_starts';
 function withD1(fn, readOnly = true) {
 	const file = fs.existsSync(D1_DIR)
@@ -1229,19 +1274,32 @@ step(
 			);
 			const detail = approval.detail.replace(/\s+/g, ' ');
 			const [granted, withheld = ''] = detail.split(/It would not get/i);
-			check(
-				"an admin's grant keeps the meta read, the repo writes and the one read of the group's space index; atmo asks for no other members or settings scope (held back in this build); only the calendar space's write is withheld, as no such space exists yet",
-				/Repository/.test(granted) &&
-					/org\.atgrp\.declaration/.test(granted) &&
-					/community\.lexicon\.calendar\.event/.test(granted) &&
-					/org\.atgrp\.meta spaces/.test(granted) &&
-					onlyTheSpaceIndexRead(approval.asked, approval.members) &&
-					!/listJoinRequests|denyJoinRequest|org\.atgrp\.about|org\.atgrp\.config/.test(detail) &&
-					(withheld === '' ||
-						(/community\.lexicon\.calendar\.collection/.test(withheld) &&
-							!/org\.atgrp\./.test(withheld))),
-				detail.slice(-900)
-			);
+			if (!has('members-only-events'))
+				check(
+					`${UNIT}: an admin's grant keeps the meta read and the repo writes, and the approval page lists only this unit's permissions: the link asks exactly the meta read, the declaration and event repo writes and image upload; no members or calendar space; nothing withheld`,
+					/Repository/.test(granted) &&
+						/org\.atgrp\.declaration/.test(granted) &&
+						/community\.lexicon\.calendar\.event/.test(granted) &&
+						/org\.atgrp\.meta spaces/.test(granted) &&
+						!/org\.atgrp\.members|calendar\.collection/.test(detail) &&
+						onlyTheLinkUnitScopes(approval.asked, approval.members, withheld) &&
+						!/listJoinRequests|denyJoinRequest|org\.atgrp\.about|org\.atgrp\.config/.test(detail),
+					`${approval.asked.trim()} / ${JSON.stringify(approval.members)} / ${detail.slice(-900)}`
+				);
+			else
+				check(
+					"an admin's grant keeps the meta read, the repo writes and the one read of the group's space index; atmo asks for no other members or settings scope (held back in this build); only the calendar space's write is withheld, as no such space exists yet",
+					/Repository/.test(granted) &&
+						/org\.atgrp\.declaration/.test(granted) &&
+						/community\.lexicon\.calendar\.event/.test(granted) &&
+						/org\.atgrp\.meta spaces/.test(granted) &&
+						onlyTheSpaceIndexRead(approval.asked, approval.members) &&
+						!/listJoinRequests|denyJoinRequest|org\.atgrp\.about|org\.atgrp\.config/.test(detail) &&
+						(withheld === '' ||
+							(/community\.lexicon\.calendar\.collection/.test(withheld) &&
+								!/org\.atgrp\./.test(withheld))),
+					detail.slice(-900)
+				);
 			note(
 				'the blob scope is not listed on the page; the picture upload in post-event-with-picture shows it was kept'
 			);
@@ -2247,12 +2305,19 @@ step(
 				.innerText()
 				.catch(() => '')
 		).replace(/\s+/g, ' ');
-		check(
-			'alice, whose sign-in has not granted the join permissions, sees the private group she linked under "Groups you\'ve linked"',
-			// A private group's name is not kept for the list, so it is shown by its handle.
-			asks && linked.includes(g.handle),
-			`asks for join permissions: ${asks}; ${linked.slice(0, 300)}`
-		);
+		if (has('join'))
+			check(
+				'alice, whose sign-in has not granted the join permissions, sees the private group she linked under "Groups you\'ve linked"',
+				// A private group's name is not kept for the list, so it is shown by its handle.
+				asks && linked.includes(g.handle),
+				`asks for join permissions: ${asks}; ${linked.slice(0, 300)}`
+			);
+		else
+			check(
+				`${UNIT}: alice sees the private group she linked under "Groups you've linked", and /groups asks for no join permissions (no "Allow joining groups")`,
+				!asks && linked.includes(g.handle),
+				`asks for join permissions: ${asks}; ${linked.slice(0, 300)}`
+			);
 		await bob.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
 		await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
 		check(
@@ -2889,22 +2954,47 @@ step(
 		]) {
 			const unknownGroupPage = await answerAt(`/groups/${g.did}/no-such-page`, init);
 			const unknownSite = await answerAt(`/no-such-place-${RUN}`, init);
+			// A held-back address that a group route also matches (/groups/create reads as a group named
+			// "create") answers as a made-up group does, which is a 404 too.
+			const unknownGroup = await answerAt(`/groups/nosuchgroup${RUN}`, init);
 			note(
-				`${who}: a made-up address in the group answers ${unknownGroupPage.status}, one outside groups ${unknownSite.status}`
+				`${who}: a made-up address in the group answers ${unknownGroupPage.status}, one outside groups ${unknownSite.status}, a made-up group ${unknownGroup.status}`
 			);
-			for (const [label, p, like] of [
-				['/groups/create', '/groups/create', unknownSite],
-				['/groups/<did>/settings', `/groups/${g.did}/settings`, unknownGroupPage],
-				['/groups/<did>/members', `/groups/${g.did}/members`, unknownGroupPage]
+			for (const [label, p, likes] of [
+				[
+					'/groups/create',
+					'/groups/create',
+					[
+						['a made-up address outside groups', unknownSite],
+						['a made-up group', unknownGroup]
+					]
+				],
+				[
+					'/groups/<did>/settings',
+					`/groups/${g.did}/settings`,
+					[
+						['a made-up address in the group', unknownGroupPage],
+						['a made-up group', unknownGroup]
+					]
+				],
+				[
+					'/groups/<did>/members',
+					`/groups/${g.did}/members`,
+					[
+						['a made-up address in the group', unknownGroupPage],
+						['a made-up group', unknownGroup]
+					]
+				]
 			]) {
 				const got = await answerAt(p, init);
+				const as = likes.find(([, like]) => got.status === like.status && got.text === like.text);
+				note(
+					`${who}, ${label}: ${got.status}, ${as ? `the same body as ${as[0]}` : 'a body like no made-up address'}${/group not found/i.test(got.text) ? ' ("Group not found")' : ''}`
+				);
 				check(
 					`${who}, ${label} answers exactly as a made-up address does (status and body)`,
-					got.status === 404 &&
-						got.status === like.status &&
-						got.text === like.text &&
-						got.status === unknownSite.status,
-					`${got.status} vs ${like.status}, bodies ${got.text === like.text ? 'same' : `differ (${got.text.length} / ${like.text.length})`}`
+					got.status === 404 && as !== undefined && got.status === unknownSite.status,
+					`${got.status}, bodies ${likes.map(([n, like]) => `${n}: ${like.status} ${got.text === like.text ? 'same' : `differ (${got.text.length} / ${like.text.length})`}`).join('; ')}`
 				);
 			}
 			const posted = await answerAt(`/groups/${g.did}/settings`, {
@@ -5900,21 +5990,60 @@ step(
 		);
 		const HELD_BACK_SCOPES =
 			/org\.atgrp\.members|listJoinRequests|denyJoinRequest|org\.atgrp\.about|org\.atgrp\.config|org\.atgrp\.meta[^ ]*manage=|authManage/;
-		const heldBack = groupScopes.filter((x) => x !== SPACE_INDEX_SCOPE && HELD_BACK_SCOPES.test(x));
-		check(
-			"the group client's metadata asks no membership, join-request or settings permission (held back in this build); of the members space, only the read of the group's space index",
-			heldBack.length === 0 && groupScopes.includes(SPACE_INDEX_SCOPE),
-			heldBack.join(' ') || groupScopes.join(' ')
-		);
-		check(
-			"the group client's calendar scopes name no space key",
-			groupScopes.filter((x) => x.startsWith('space:community.lexicon.calendar.collection'))
-				.length === 2 &&
-				!groupScopes.some(
-					(x) => x.startsWith('space:community.lexicon.calendar.collection') && /skey=/.test(x)
-				),
-			groupScopes.filter((x) => x.includes('calendar.collection')).join(' ')
-		);
+		if (!has('members-only-events')) {
+			check(
+				`${UNIT}: the group client's metadata asks exactly this unit's scopes: the meta read, the declaration and event repo writes, image upload (no members or calendar space)`,
+				groupMeta.status === 200 && sameSet(groupScopes, LINK_UNIT_GROUP_SCOPES),
+				groupScopes.join(' ')
+			);
+		} else {
+			const heldBack = groupScopes.filter(
+				(x) => x !== SPACE_INDEX_SCOPE && HELD_BACK_SCOPES.test(x)
+			);
+			check(
+				"the group client's metadata asks no membership, join-request or settings permission (held back in this build); of the members space, only the read of the group's space index",
+				heldBack.length === 0 && groupScopes.includes(SPACE_INDEX_SCOPE),
+				heldBack.join(' ') || groupScopes.join(' ')
+			);
+			check(
+				"the group client's calendar scopes name no space key",
+				groupScopes.filter((x) => x.startsWith('space:community.lexicon.calendar.collection'))
+					.length === 2 &&
+					!groupScopes.some(
+						(x) => x.startsWith('space:community.lexicon.calendar.collection') && /skey=/.test(x)
+					),
+				groupScopes.filter((x) => x.includes('calendar.collection')).join(' ')
+			);
+		}
+		if (!has('members-only-events')) {
+			// What a person's sign-in may ask for is what their client metadata declares.
+			const fromGroups = has('join') ? JOIN_UNIT_PERSON_SCOPES : [];
+			if (GROUPS_OFF) {
+				const off = await fetch(`${GROUPS_OFF}/oauth-client-metadata.json`);
+				const offScopes = String((await off.json().catch(() => ({}))).scope ?? '').split(' ');
+				const added = personScopes.filter((x) => !offScopes.includes(x));
+				const dropped = offScopes.filter((x) => !personScopes.includes(x));
+				note(`with groups on, a person's client metadata adds: ${added.join(' ') || 'nothing'}`);
+				check(
+					has('join')
+						? `${UNIT}: a person's client metadata with groups on is the one with groups off (${GROUPS_OFF}) plus only the join permissions`
+						: `${UNIT}: a person's client metadata with groups on equals the one with groups off (${GROUPS_OFF}): their sign-in gains no permission from groups`,
+					off.status === 200 &&
+						offScopes.length > 1 &&
+						dropped.length === 0 &&
+						sameSet(added, fromGroups),
+					`added: ${added.join(' ')}; dropped: ${dropped.join(' ')}`
+				);
+			}
+			const atgrp = personScopes.filter((x) => /org\.atgrp/.test(x));
+			check(
+				has('join')
+					? `${UNIT}: of org.atgrp, a person's client metadata holds only the join permissions`
+					: `${UNIT}: a person's client metadata holds no org.atgrp entry`,
+				sameSet(atgrp, fromGroups),
+				atgrp.join(' ') || 'none'
+			);
+		}
 		S.flagsGroup = g;
 	},
 	{ needs: ['people-sign-in'] }
@@ -5956,15 +6085,27 @@ step(
 		await settle(alice);
 		t.shot = alice;
 		note(`the approval page listed: ${(detail ?? '').slice(0, 900)}`);
-		check(
-			"the group host's approval page, for alice (an admin) linking atmo, lists no membership, join-request or settings permission: of the members space, only the read of the group's space index",
-			detail !== null &&
-				onlyTheSpaceIndexRead(asked, members) &&
-				!/join request|listJoinRequests|denyJoinRequest|org\.atgrp\.about|org\.atgrp\.config|settings/i.test(
-					detail
-				),
-			`${asked} / ${JSON.stringify(members)} / ${(detail ?? 'no approval page').slice(0, 400)}`
-		);
+		if (!has('members-only-events'))
+			check(
+				`${UNIT}: the group host's approval page, for alice (an admin) linking atmo, lists only this unit's permissions: the meta read, the declaration and event repo writes and image upload; no members or calendar space, no join-request or settings permission, nothing withheld`,
+				detail !== null &&
+					onlyTheLinkUnitScopes(asked, members, detail.split(/It would not get/i)[1] ?? '') &&
+					!/org\.atgrp\.members|calendar\.collection/.test(detail) &&
+					!/join request|listJoinRequests|denyJoinRequest|org\.atgrp\.about|org\.atgrp\.config|settings/i.test(
+						detail
+					),
+				`${asked} / ${JSON.stringify(members)} / ${(detail ?? 'no approval page').slice(0, 400)}`
+			);
+		else
+			check(
+				"the group host's approval page, for alice (an admin) linking atmo, lists no membership, join-request or settings permission: of the members space, only the read of the group's space index",
+				detail !== null &&
+					onlyTheSpaceIndexRead(asked, members) &&
+					!/join request|listJoinRequests|denyJoinRequest|org\.atgrp\.about|org\.atgrp\.config|settings/i.test(
+						detail
+					),
+				`${asked} / ${JSON.stringify(members)} / ${(detail ?? 'no approval page').slice(0, 400)}`
+			);
 		check(
 			'...and does not show "Something went wrong"',
 			detail !== null && !crashed && !/something went wrong/i.test(detail)
@@ -5999,6 +6140,88 @@ for (const name of [
 	stepNamed(name).todo = HELD_BACK;
 for (const s of defined)
 	if (s.section === 'roster' && s.name !== 'members-address-answers-as-unknown') s.todo = HELD_BACK;
+
+// ---------- a build of one stacked part (WALK_UNIT): the later parts' steps, skipped ----------
+for (const s of defined) {
+	if (s.todo) continue;
+	if (
+		(s.section === 'join' && !has('join')) ||
+		(s.section === 'members-only' && !has('members-only-events'))
+	)
+		s.todo = NOT_IN_UNIT;
+}
+
+/** What of the later parts a page shows: join controls, "Your groups", members-only events. */
+async function laterParts(page) {
+	const count = (l) => l.count().catch(() => 0);
+	return {
+		join: await count(
+			page.getByRole('button', { name: /^(join|ask to join|allow joining groups)$/i })
+		),
+		yourGroups: await count(page.getByRole('heading', { name: /your groups/i })),
+		membersOnly:
+			(await count(moSection(page))) +
+			(await count(page.getByRole('button', { name: /members-only events/i }))) +
+			(await count(page.getByTestId('members-only-setup'))) +
+			(await count(page.getByTestId('members-only-event'))) +
+			(await count(page.getByRole('radio', { name: /^members only/i }))) +
+			(/members-only/i.test(await body(page).catch(() => '')) ? 1 : 0)
+	};
+}
+if (!has('members-only-events'))
+	step(
+		'link',
+		'nothing-of-later-units',
+		async (t) => {
+			const { alice, bob, anon } = S.pages;
+			const g = await indexedGroup(`nl${RUN}`, `Nether ledge ${RUN}`);
+			await reindex(g);
+			const seen = [];
+			for (const [who, page, where] of [
+				['alice, who linked it', alice, groupUrl(g)],
+				['alice, its event editor', alice, `${groupUrl(g)}/events/new`],
+				['alice, /groups', alice, `${ATMO}/groups`],
+				['bob, signed in with no role', bob, groupUrl(g)],
+				['bob, /groups', bob, `${ATMO}/groups`],
+				['a signed-out visitor', anon, groupUrl(g)]
+			]) {
+				const res = await page.goto(where, { waitUntil: 'networkidle' });
+				seen.push({ who, status: res?.status(), ...(await laterParts(page)) });
+			}
+			t.shot = alice;
+			await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+			note(`seen: ${JSON.stringify(seen)}`);
+			check(
+				'each page answered 200, and alice may post an event as the group',
+				seen.every((s) => s.status === 200) &&
+					(await alice.getByRole('link', { name: /^post an event$/i }).count()) === 1,
+				JSON.stringify(seen.map((s) => [s.who, s.status]))
+			);
+			if (!has('join')) {
+				check(
+					`${UNIT}: no Join, Ask to join or "Allow joining groups" control on the group's page or on /groups, for alice, bob or a visitor`,
+					seen.every((s) => s.join === 0),
+					JSON.stringify(seen.filter((s) => s.join).map((s) => s.who))
+				);
+				check(
+					`${UNIT}: no "Your groups" section on /groups`,
+					seen.every((s) => s.yourGroups === 0),
+					JSON.stringify(seen.filter((s) => s.yourGroups).map((s) => s.who))
+				);
+			} else {
+				check(
+					`${UNIT}: bob, with no role, is offered to join (Ask to join, or "Allow joining groups" first)`,
+					seen.find((s) => s.who === 'bob, signed in with no role').join > 0
+				);
+			}
+			check(
+				`${UNIT}: nothing of members-only events: no members-only section, no turn-on control, no "Members only" choice in the event editor, no members-only text`,
+				seen.every((s) => s.membersOnly === 0),
+				JSON.stringify(seen.filter((s) => s.membersOnly).map((s) => s.who))
+			);
+		},
+		{ needs: ['people-sign-in'] }
+	);
 
 // ---------- not yet done by script ----------
 step('private', 'todo-lowered-role-gives-visitor-page', async () => {}, {

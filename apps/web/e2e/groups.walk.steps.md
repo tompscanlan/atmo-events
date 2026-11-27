@@ -37,6 +37,25 @@ admitted there (by script).
 | /groups answers without the event index, and the scheduled job builds it     | setup/groups-list-with-and-without-its-event-index (drops it first with `WALK_EVENT_INDEX_TEST=1`)                    |
 | no membership, join-request or settings permission asked; no createGroup     | link/alice-links-by-handle, flags/index-endpoints-answer, flags/admin-approval-page-asks-nothing-held-back            |
 
+## One stacked part on its own (`WALK_UNIT`)
+
+The feature is also built in stacked parts: `link-group` (link a group, its page, list and unlist,
+browse and search, post public events as it, `/p/<group>`, "Make a group" at the host), then `join`
+(join, ask, cancel, leave, "Your groups", a member seeing a private group), then
+`members-only-events`. With `WALK_UNIT` set to one of the first two, against a dev server built from
+that part's head, the sections of later parts (join, members-only) are skipped as "not in this
+unit", and the checks that name a later part's permissions ask for this part's instead:
+
+| On a build of one part                                                            | Walk step                                                                                                  |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| the group's link asks exactly the meta read, the repo writes and image upload     | link/alice-links-by-handle, flags/index-endpoints-answer, flags/admin-approval-page-asks-nothing-held-back |
+| no join control, no "Your groups" (link-group); nothing of members-only events    | link/nothing-of-later-units, link/private-linked-group-only-for-its-linker                                 |
+| a person's client metadata gains nothing from groups (link-group), or only join's | flags/index-endpoints-answer (against a groups-off server of the same build with `WALK_GROUPS_OFF_URL`)    |
+
+`/groups/create` reads as a group named `create` on these builds, and answers as a made-up group
+does (404, "Group not found"); create/held-back-addresses-answer-as-unknown accepts that body too,
+and notes which one each address matched.
+
 The "another app" is a second loopback OAuth client of the walk's own, signed in as the group by
 alice at the host's console with calendar-space scopes only (`manage=create`, and the event
 collection and `org.example.wiki.page` writes). It makes the space by `com.atproto.space.createSpace`
