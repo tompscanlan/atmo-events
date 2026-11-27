@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import type { SpaceReader } from '#lib/spaces/server/space-read.js';
-import { isMemberAsPerson, readMetaAsPerson } from './person';
+import { isMemberAsPerson, readMetaAsPerson, readRolesAsPerson } from './person';
 
 const GROUP = 'did:plc:group';
 const ALICE = 'did:plc:alice';
@@ -85,5 +85,17 @@ describe('whether the person is a member', () => {
 		await expect(isMemberAsPerson(reader({}, { [MEMBERS]: unclear }), GROUP, ALICE)).rejects.toBe(
 			unclear
 		);
+	});
+});
+
+describe("the person's own roles", () => {
+	it('are read from their membership, and null without one', async () => {
+		const read = reader({
+			[`${MEMBERS} org.atgrp.membership/${ALICE}`]: { roles: ['member', 'admin'], createdAt: 'now' }
+		});
+		expect(await readRolesAsPerson(read, GROUP, ALICE)).toEqual(['member', 'admin']);
+		expect(await readRolesAsPerson(read, GROUP, 'did:plc:bob')).toBeNull();
+		const odd = reader({ [`${MEMBERS} org.atgrp.membership/${ALICE}`]: { roles: 'admin' } });
+		expect(await readRolesAsPerson(odd, GROUP, ALICE)).toBeNull();
 	});
 });

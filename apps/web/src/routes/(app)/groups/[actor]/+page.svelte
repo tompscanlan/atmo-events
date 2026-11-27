@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { Badge, Button, Checkbox, Label, Textarea } from '@atmo-dev/kit';
+	import { Badge, Button, Checkbox, Icon, Label, Textarea } from '@atmo-dev/kit';
+	import { EventCard } from '@atmo-dev/kit/events';
+	import { LockKeyhole } from '@sketchyicons/svelte';
 	import { isHttpError } from '@sveltejs/kit';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -8,7 +10,11 @@
 	import GroupAccessNotice from '#lib/groups/components/GroupAccessNotice.svelte';
 	import GroupHeader from '#lib/groups/components/GroupHeader.svelte';
 	import { JOIN_MESSAGE_MAX } from '#lib/groups/fields.js';
-	import { setGroupListed, unlinkGroupSession } from '#lib/groups/group.remote.js';
+	import {
+		setGroupListed,
+		turnOnMembersOnlyEvents,
+		unlinkGroupSession
+	} from '#lib/groups/group.remote.js';
 	import { cancelJoin, confirmMember, joinGroup, leave } from '#lib/groups/members.remote.js';
 
 	let { data } = $props();
@@ -30,6 +36,10 @@
 			message = '';
 		}
 	});
+	/** Members-only events are on, and this link may post them. */
+	let postsMembersOnly = $derived(
+		data.calendar === 'ready' && Boolean(group.linked?.can.membersOnly)
+	);
 	/** Private as the person or their link reads it; a visitor sees no private group at all. */
 	let isPrivate = $derived(
 		group.linked ? !group.linked.meta.public : group.personal ? !group.personal.public : false
@@ -37,11 +47,20 @@
 	/** Someone who linked the group and may do something with it here gets the tools. */
 	let hasTools = $derived(
 		Boolean(
-			group.linked && (group.linked.can.post || group.linked.can.list || group.linked.reapprove)
+			group.linked &&
+			(group.linked.can.post ||
+				group.linked.can.list ||
+				group.linked.can.turnOnMembersOnly ||
+				group.linked.can.membersOnly ||
+				group.linked.reapprove)
 		)
 	);
+	let membersOnlyEvents = $derived(data.membersOnly?.events ?? []);
 	let hasEvents = $derived(
-		data.ongoingEvents.length > 0 || data.upcomingEvents.length > 0 || data.pastEvents.length > 0
+		data.ongoingEvents.length > 0 ||
+			data.upcomingEvents.length > 0 ||
+			data.pastEvents.length > 0 ||
+			membersOnlyEvents.length > 0
 	);
 
 	/** The person's own membership: the host's refusals come back in words to show. */
@@ -227,7 +246,9 @@
 				<GroupAccessNotice
 					access={data.access}
 					did={data.you}
-					purpose="To join this group, or see it as one of its members, atmo asks your server to act for you in groups."
+					purpose={data.accessForMembersOnly
+						? "To see this group's members-only events and RSVP to them, atmo asks your server to act for you in groups."
+						: 'To join this group, or see it as one of its members, atmo asks your server to act for you in groups.'}
 					spacesServer={data.spacesServer}
 				/>
 			</div>
@@ -242,7 +263,7 @@
 					Group tools
 				</h2>
 				<div class="flex flex-wrap items-center gap-2">
-					{#if group.linked.can.post}
+					{#if group.linked.can.post || postsMembersOnly}
 						<Button
 							href={resolve('/(app)/groups/[actor]/events/new', { actor: group.did })}
 							variant="primary">Post an event</Button
@@ -296,6 +317,53 @@
 					</ul>
 				{/if}
 				{@render managedAtHost()}
+				{#if data.calendar && data.calendar !== 'ready' && data.calendar !== 'missing'}
+					<p class="text-base-600 dark:text-base-400 text-sm" role="status">
+						{data.calendar === 'readable'
+							? "This group's calendar can be read by more than its members, so atmo posts no members-only events to it."
+							: data.calendar === 'unusable'
+								? "This group's calendar wasn't set up for atmo to post members-only events to, so atmo posts none to it, and makes no second one. An admin can let a role post to it at the group host."
+								: data.calendar === 'no-role'
+									? "Your role in this group doesn't let you post to its calendar, so atmo can't post members-only events for you, and approving your link again won't change that. An admin can let your role post to it at the group host."
+									: "Whether members-only events are on couldn't be checked just now. Reload to try again."}
+					</p>
+				{:else if data.calendar && !postsMembersOnly}
+					<!-- Turning them on makes the calendar space; the host gives a link no scope for a space
+					     that was not there when it was approved, so the link is approved once more. -->
+					<section aria-label="Members-only events" data-testid="members-only-setup">
+						<h3 class="text-base-900 dark:text-base-50 text-sm font-semibold">
+							Members-only events
+						</h3>
+						<p class="text-base-700 dark:text-base-300 mt-1 text-sm">
+							Events only this group's members can see, posted from this page as the group.
+						</p>
+						<ol class="text-base-700 dark:text-base-300 mt-2 list-decimal space-y-1 pl-5 text-sm">
+							<li class:font-medium={data.calendar === 'missing'}>
+								Turn them on. atmo uses the calendar the group has for its members, or makes one
+								only they can read.
+							</li>
+							<li class:font-medium={data.calendar === 'ready'}>
+								Approve your link once more, so it may post to that calendar.
+							</li>
+							<li>Post an event, and choose Members only.</li>
+						</ol>
+						{#if data.calendar === 'missing' && group.linked.can.turnOnMembersOnly}
+							<Button
+								class="mt-3"
+								size="sm"
+								variant="secondary"
+								disabled={busy}
+								onclick={() => act(() => turnOnMembersOnlyEvents({ groupDid: group.did }))}
+								>Turn on members-only events</Button
+							>
+						{:else if data.calendar === 'ready'}
+							<form method="POST" action="/oauth/group/link" class="mt-3">
+								<input type="hidden" name="group" value={group.did} />
+								<Button type="submit" size="sm" variant="secondary">Approve once more</Button>
+							</form>
+						{/if}
+					</section>
+				{/if}
 				{#if group.linked.reapprove}
 					<form method="POST" action="/oauth/group/link" class="flex flex-wrap items-center gap-3">
 						<input type="hidden" name="group" value={group.did} />
@@ -359,6 +427,79 @@
 			/>
 		{/if}
 
+		{#if data.membersOnly}
+			{@const membersAlone = data.membersOnly.privacy === 'private'}
+			<!-- Members-only events live in the group's calendar space, not the public index, so they
+			     are a list of their own, each leading to its own page. Each is marked members-only only
+			     while its calendar is still for members alone, as read with them: a calendar made
+			     public since shows its events unmarked, and says so. -->
+			<section class="mb-10" aria-labelledby="members-only-heading">
+				<h2
+					id="members-only-heading"
+					class="text-base-900 dark:text-base-50 mb-4 flex items-center gap-2 text-lg font-semibold"
+				>
+					{#if membersAlone}
+						<Icon img={LockKeyhole} size={16} />Members-only events
+					{:else}
+						Events in the group's calendar
+					{/if}
+				</h2>
+				{#if !data.membersOnly.unread && data.membersOnly.privacy === 'public'}
+					<p class="text-base-600 dark:text-base-400 mb-4 text-sm" role="status">
+						This group's calendar can now be read by more than its members, so these events are no
+						longer members-only.
+					</p>
+				{:else if !data.membersOnly.unread && data.membersOnly.privacy === 'unknown'}
+					<p class="text-base-600 dark:text-base-400 mb-4 text-sm" role="status">
+						Whether this group's calendar is still for its members alone couldn't be checked just
+						now.
+					</p>
+				{/if}
+				{#if data.membersOnly.stoppedAt}
+					<p class="text-base-600 dark:text-base-400 mb-4 text-sm" role="status">
+						atmo stopped reading this group's calendar at {data.membersOnly.stoppedAt} events, so some
+						upcoming ones may be missing here.
+					</p>
+				{/if}
+				{#if data.membersOnly.unread}
+					<p class="text-base-600 dark:text-base-400 text-sm" role="status">
+						Members-only events couldn't be loaded right now. Try again shortly.
+					</p>
+				{:else if membersOnlyEvents.length > 0}
+					<ul class="space-y-5">
+						{#each membersOnlyEvents as event (event.uri)}
+							{@const href = resolve('/(app)/groups/[actor]/events/[rkey]', {
+								actor: group.did,
+								rkey: event.rkey
+							})}
+							<li data-testid="members-only-event">
+								<EventCard {event} {href} />
+								<p class="text-base-600 dark:text-base-400 mt-1 flex gap-3 text-xs">
+									{#if membersAlone}
+										<span>
+											<Icon img={LockKeyhole} size={12} class="mr-1 inline align-[-2px]" />Members
+											only
+										</span>
+									{/if}
+									{#if postsMembersOnly}
+										<a
+											class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 font-medium transition-colors"
+											href={resolve('/(app)/groups/[actor]/events/[rkey]/edit', {
+												actor: group.did,
+												rkey: event.rkey
+											})}>Edit</a
+										>
+									{/if}
+								</p>
+							</li>
+						{/each}
+					</ul>
+				{:else}
+					<p class="text-base-600 dark:text-base-400 text-sm">No upcoming members-only events.</p>
+				{/if}
+			</section>
+		{/if}
+
 		{#if data.pastEvents.length > 0}
 			<HostEventsSection
 				heading="Past Events"
@@ -370,7 +511,7 @@
 			/>
 		{/if}
 
-		{#if !hasEvents}
+		{#if !hasEvents && !data.membersOnly}
 			<div
 				class="border-base-200 dark:border-base-800 bg-base-100 dark:bg-base-950/50 mb-10 rounded-2xl border p-8 text-center"
 			>

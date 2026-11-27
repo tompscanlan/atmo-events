@@ -75,3 +75,26 @@ export async function isMemberAsPerson(
 		throw e;
 	}
 }
+
+/** A membership's roles, each once, in the order written; null for a record without a list. */
+function membershipRoles(value: unknown): string[] | null {
+	const roles = (value as { roles?: unknown } | null)?.roles;
+	if (!Array.isArray(roles)) return null;
+	return [...new Set(roles.filter((role): role is string => typeof role === 'string' && !!role))];
+}
+
+/** The person's own roles, from their membership, read as `isMemberAsPerson` reads it; null when
+ *  they could not be read or they hold none. */
+export async function readRolesAsPerson(
+	reader: SpaceReader,
+	groupDid: string,
+	personDid: string
+): Promise<string[] | null> {
+	const found = await reader.get({
+		space: membersSpaceUri(groupDid),
+		repo: groupDid,
+		collection: GROUP_MEMBERSHIP_COLLECTION,
+		rkey: membershipRkey(personDid)
+	});
+	return found ? membershipRoles(found.value) : null;
+}
