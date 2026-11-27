@@ -87,10 +87,21 @@ function declared(columns: string): string {
 		WHERE d.rkey = 'self' AND ${visibleRecordSql('d')}`;
 }
 
-/** The group's events that count as coming: public, starting from the bound parameter on, shown
- *  in discovery, not a conference's talk, and left visible by moderation. */
+/** How many of a group's events starting from now on the list looks through, at most, for one that
+ *  counts. Those soonest to start are taken by the index alone, then checked: so a group whose next
+ *  NEXT_EVENT_LOOKAHEAD events are all hidden from discovery, a conference's talks, or hidden by
+ *  moderation counts as having no event coming until enough of them have started, however many
+ *  more it has after. No group's future events, however many, are read past that on any view. */
+export const NEXT_EVENT_LOOKAHEAD = 25;
+
+/** The group's events that count as coming: public, starting from the bound parameter on, among the
+ *  first NEXT_EVENT_LOOKAHEAD of them to start, shown in discovery, not a conference's talk, and
+ *  left visible by moderation. */
 function upcomingEvents(groupDid: string): string {
-	return `FROM ${EVENTS} e WHERE e.did = ${groupDid} AND ${startsAt('e')} >= ?
+	return `FROM ${EVENTS} e WHERE e.uri IN (
+			SELECT c.uri FROM ${EVENTS} c WHERE c.did = ${groupDid} AND ${startsAt('c')} >= ?
+			ORDER BY ${startsAt('c')} LIMIT ${NEXT_EVENT_LOOKAHEAD}
+		)
 		AND ${discoverableSql('e.record')} AND NOT ${hasParentEventSql('e.record')}
 		AND ${visibleRecordSql('e')}`;
 }

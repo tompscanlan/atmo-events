@@ -12,6 +12,7 @@ import {
 	groupLabels,
 	groupServers,
 	UPCOMING_PAGE,
+	NEXT_EVENT_LOOKAHEAD,
 	UPCOMING_PER_SERVER,
 	upcomingGroups
 } from '../groups/server/declared';
@@ -225,6 +226,37 @@ describe('the groups with an event coming', () => {
 		]);
 	});
 
+	it(`looks through no more than a group's next ${NEXT_EVENT_LOOKAHEAD} events for one that counts`, async () => {
+		const db = await setup();
+		const unlisted = { preferences: { showInDiscovery: false } };
+		// Many events hidden from discovery first, then one shown: past the look-ahead, not found.
+		await declare(db, 'did:plc:flood');
+		for (let i = 0; i < NEXT_EVENT_LOOKAHEAD; i++) {
+			await event(db, 'did:plc:flood', `hidden${i}`, at(1 + i), unlisted);
+		}
+		await event(db, 'did:plc:flood', 'shown', at(500));
+		// One fewer hidden: the shown one is within it.
+		await declare(db, 'did:plc:within');
+		for (let i = 0; i < NEXT_EVENT_LOOKAHEAD - 1; i++) {
+			await event(db, 'did:plc:within', `hidden${i}`, at(1 + i), unlisted);
+		}
+		await event(db, 'did:plc:within', 'shown', at(500));
+
+		const page = await upcomingGroups(db, NOW);
+		expect(page.groups.map((group) => [group.did, group.next.title])).toEqual([
+			['did:plc:within', 'shown event']
+		]);
+		expect(await groupServers(db, NOW)).toEqual([
+			{ server: 'https://a.example', groups: 2, upcoming: 1 }
+		]);
+		// Once enough of the hidden ones have started, the shown one counts.
+		const later = new Date(Date.parse(at(2))).toISOString();
+		expect((await upcomingGroups(db, later)).groups.map((group) => group.did)).toEqual([
+			'did:plc:flood',
+			'did:plc:within'
+		]);
+	});
+
 	it(`fills a page of ${UPCOMING_PAGE} with at most ${UPCOMING_PER_SERVER} of one server's`, async () => {
 		const db = await setup();
 		const busy = await groupsAt(db, 'https://busy.example', 'b', 20, 1);
@@ -255,10 +287,12 @@ describe('the groups with an event coming', () => {
 		await groupServers(spy, NOW);
 		expect(plans).toHaveLength(2);
 		for (const plan of plans) {
-			expect(plan).toContain('SEARCH e USING INDEX groups_event_did_starts (did=? AND <expr>>?)');
+			// The soonest events by the index alone, then each of those by its key.
+			expect(plan).toContain('SEARCH c USING INDEX groups_event_did_starts (did=? AND <expr>>?)');
+			expect(plan).toContain('SEARCH e USING INDEX sqlite_autoindex_records_event_1 (uri=?)');
 			// Once each: the next event is looked up once per group.
 			expect(plan.filter((step) => step.startsWith('SCAN d'))).toEqual(['SCAN d']);
-			expect(plan.filter((step) => /^SEARCH e USING INDEX groups_/.test(step))).toHaveLength(1);
+			expect(plan.filter((step) => /^SEARCH [ce] USING INDEX groups_/.test(step))).toHaveLength(1);
 			// Events, identities, moderation and profiles only by key.
 			expect(plan.filter((step) => /^SCAN (e|i|mh|p)\b/.test(step))).toEqual([]);
 		}
