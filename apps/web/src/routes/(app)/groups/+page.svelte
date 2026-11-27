@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Avatar, Button, Input, Label } from '@atmo-dev/kit';
+	import { Avatar, Badge, Button, Input, Label } from '@atmo-dev/kit';
 	import { resolve } from '$app/paths';
 	import GroupAccessNotice from '#lib/groups/components/GroupAccessNotice.svelte';
 
@@ -148,6 +148,37 @@
 					You aren't in any group at this site's group host yet.
 				</p>
 			{/if}
+		</section>
+	{/if}
+
+	{#if data.linked.length > 0}
+		<section class="mt-8" aria-labelledby="linked-groups">
+			<h2 id="linked-groups" class="text-base-900 dark:text-base-50 text-lg font-semibold">
+				Groups you've linked
+			</h2>
+			<ul class="divide-base-200 dark:divide-base-800 mt-2 divide-y">
+				{#each data.linked as group (group.did)}
+					<li>
+						<a
+							href={resolve('/(app)/groups/[actor]', { actor: group.did })}
+							class="hover:bg-base-100 dark:hover:bg-base-900/50 -mx-2 flex items-center gap-3 rounded-lg px-2 py-3 transition-colors"
+						>
+							<Avatar name={group.name} size={32} />
+							<span class="min-w-0 flex-1">
+								<span class="text-base-900 dark:text-base-50 flex items-center gap-2 font-medium">
+									<span class="truncate">{group.name}</span>
+									<Badge>Linked</Badge>
+								</span>
+								{#if group.handle}
+									<span class="text-base-600 dark:text-base-400 block truncate text-sm"
+										>@{group.handle}</span
+									>
+								{/if}
+							</span>
+						</a>
+					</li>
+				{/each}
+			</ul>
 		</section>
 	{/if}
 

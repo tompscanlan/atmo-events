@@ -3,12 +3,20 @@
 // server's own list of every group it has. A search finds declared groups by handle, or by name
 // where this site has cached it, across all servers or within one. Names come from the cached
 // group profiles; a group without one shows the handle the index holds for it. All of it is read
-// from the database, with no call to another server.
+// from the database, with no call to another server but for a linked group the database knows
+// nothing of. A signed-in person's linked groups lead the list, for them alone.
 import type { CallerSession } from '#lib/private-events/server/caller.js';
 import { ACTOR_GROUPS_NSID, holdsRpc } from '../scopes';
 import { serverOrigin } from './declared';
-import { listDeclaredGroups, listGroupServers, listUpcomingGroups, readGroupLabels } from './group';
+import {
+	listDeclaredGroups,
+	listGroupServers,
+	listUpcomingGroups,
+	readGroupLabels,
+	resolveGroup
+} from './group';
 import { actorGroups } from './host';
+import { linkedGroups } from './sign-in';
 import { errorKind } from './xrpc';
 
 export interface UpcomingEntry {
@@ -119,6 +127,34 @@ export async function browseDeclared({
 		cursor: page.cursor,
 		unavailable: false
 	};
+}
+
+/** The groups the person has linked, from this site's own record of their links, private and
+ *  unlisted ones too, for that person only. Named from the database; a group it has neither a
+ *  name nor a handle for, as an unlisted one may be, is worth one lookup. */
+export async function browseLinked(personDid: string): Promise<BrowseEntry[]> {
+	const dids = await linkedGroups(personDid).catch((e) => {
+		console.error(`[groups] ${personDid}'s linked groups could not be listed:`, e);
+		return [];
+	});
+	if (dids.length === 0) return [];
+	const labels = await readGroupLabels(dids).catch((e) => {
+		console.error('[groups] the linked groups could not be named from the database:', e);
+		return new Map<string, never>();
+	});
+	return Promise.all(
+		dids.map(async (did) => {
+			const label = labels.get(did);
+			const handle =
+				label?.handle ?? (label?.name ? null : ((await resolveGroup(did))?.handle ?? null));
+			return {
+				did,
+				name: label?.name ?? handle ?? did,
+				handle,
+				description: label?.description ?? null
+			};
+		})
+	);
 }
 
 export interface OwnGroup {

@@ -1,7 +1,12 @@
 import { error } from '@sveltejs/kit';
 import { groupAccess } from '#lib/groups/permissions-asked.js';
 import { holdsParticipate } from '#lib/groups/scopes.js';
-import { browseDeclared, browseUpcoming, yourGroups } from '#lib/groups/server/browse.js';
+import {
+	browseDeclared,
+	browseLinked,
+	browseUpcoming,
+	yourGroups
+} from '#lib/groups/server/browse.js';
 import { unfinishedGroups } from '#lib/groups/server/create.js';
 import { searchTerm, serverOrigin } from '#lib/groups/server/declared.js';
 import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
@@ -16,7 +21,7 @@ const LINK_NOTICES = {
 
 export async function load({ locals, url, setHeaders }) {
 	requireGroupsEnabled();
-	// "Your groups" leads the list, so it depends on who's asking.
+	// The caller's own groups and linked ones lead the list, so it depends on who's asking.
 	setHeaders({ 'cache-control': 'no-store' });
 	const asked = url.searchParams.get('server');
 	const server = serverOrigin(asked);
@@ -29,12 +34,15 @@ export async function load({ locals, url, setHeaders }) {
 	// The person's own groups lead the whole list's first page.
 	const firstPage = !declared && !cursor;
 	const person = firstPage && locals.did ? await callerSession(locals.session ?? null) : null;
-	const [upcoming, found, unfinished, own] = await Promise.all([
+	const [upcoming, found, unfinished, own, linked] = await Promise.all([
 		declared ? null : browseUpcoming(cursor),
 		declared ? browseDeclared({ cursor, server, q }) : null,
 		canLink && locals.did ? unfinishedGroups(locals.did) : [],
-		person ? yourGroups(person) : null
+		person ? yourGroups(person) : null,
+		firstPage && locals.did ? browseLinked(locals.did) : []
 	]);
+	// A group in "Your groups" is shown there only.
+	const ownDids = new Set((own ?? []).map((group) => group.did));
 	const access = person && !holdsParticipate(person.scope) ? groupAccess(url, person.did) : null;
 	const host = server ? new URL(server).host : null;
 	const link = url.searchParams.get('link');
@@ -59,6 +67,9 @@ export async function load({ locals, url, setHeaders }) {
 		you: locals.did,
 		/** The groups the caller is in, at this site's group host; null when not asked. */
 		yourGroups: own,
+		/** The groups the caller has linked, by this site's record of their links, private and
+		 *  unlisted ones too, but for those in yourGroups. */
+		linked: linked.filter((group) => !ownDids.has(group.did)),
 		/** What the caller's own sign-in needs to list their groups and join others. */
 		access,
 		spacesServer: access === 'refused' ? spacesServer() : null,

@@ -45,6 +45,7 @@ import {
 	groupClientMetadata,
 	groupSignInAvailable,
 	linkAskedCurrentScope,
+	linkedGroups,
 	startGroupLink,
 	unlinkGroup
 } from './sign-in';
@@ -308,7 +309,15 @@ describe('finishGroupLink', () => {
 	});
 });
 
-describe('unlinking', () => {
+describe('linked groups', () => {
+	it("lists only the person's own links", async () => {
+		await sessions.put(`group:session:${ALICE}/${GROUP}`, '{}');
+		await sessions.put(`group:session:${BOB}/did:plc:other`, '{}');
+		await sessions.put('group:state:s1', '{}');
+		expect(await linkedGroups(ALICE)).toEqual([GROUP]);
+		expect(await linkedGroups(BOB)).toEqual(['did:plc:other']);
+	});
+
 	it('forgets a link even when the PDS cannot revoke it', async () => {
 		await sessions.put(`group:session:${ALICE}/${GROUP}`, '{}');
 		await sessions.put(`group:asked:${ALICE}/${GROUP}`, GROUP_SESSION_SCOPE);

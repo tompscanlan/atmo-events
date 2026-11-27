@@ -4,6 +4,7 @@ import { env } from 'cloudflare:workers';
 const mocks = vi.hoisted(() => ({
 	browseUpcoming: vi.fn(),
 	browseDeclared: vi.fn(),
+	browseLinked: vi.fn(),
 	yourGroups: vi.fn(),
 	available: vi.fn(),
 	unfinishedGroups: vi.fn(),
@@ -13,6 +14,7 @@ const setHeaders = vi.fn();
 vi.mock('#lib/groups/server/browse.js', () => ({
 	browseUpcoming: mocks.browseUpcoming,
 	browseDeclared: mocks.browseDeclared,
+	browseLinked: mocks.browseLinked,
 	yourGroups: mocks.yourGroups
 }));
 vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.callerSession }));
@@ -39,6 +41,7 @@ beforeEach(() => {
 		servers: [{ server: 'https://pds.example', host: 'pds.example', groups: 4, upcoming: 1 }],
 		unavailable: false
 	});
+	mocks.browseLinked.mockResolvedValue([]);
 	mocks.browseDeclared.mockResolvedValue({
 		groups: [{ did: 'did:plc:found' }],
 		cursor: 'found2',
@@ -171,6 +174,39 @@ describe('making a group from the list', () => {
 		});
 		expect(await load(request('?q=knit', ALICE))).toMatchObject({ yourGroups: null });
 		expect(mocks.yourGroups).not.toHaveBeenCalled();
+	});
+
+	it('shows a linker their linked groups without the membership permission, and no one else', async () => {
+		const BOB = 'did:plc:bob';
+		const linked = {
+			did: 'did:plc:private',
+			name: 'p.example',
+			handle: 'p.example',
+			description: null
+		};
+		mocks.browseLinked.mockImplementation(async (did: string) => (did === ALICE ? [linked] : []));
+		// A sign-in without the permission that lists a person's groups at the host.
+		mocks.callerSession.mockImplementation(async () => ({ scope: 'atproto', handle: vi.fn() }));
+		mocks.yourGroups.mockResolvedValue(null);
+		mocks.unfinishedGroups.mockResolvedValue([]);
+		expect(await load(request('', ALICE))).toMatchObject({ yourGroups: null, linked: [linked] });
+		expect((await load(request('', BOB))).linked).toEqual([]);
+		expect((await load(request())).linked).toEqual([]);
+		expect(mocks.browseLinked.mock.calls.map(([did]) => did)).toEqual([ALICE, BOB]);
+		// Only on the whole list's first page.
+		expect((await load(request('?q=knit', ALICE))).linked).toEqual([]);
+	});
+
+	it('shows a linked group once, in "Your groups", when that lists it', async () => {
+		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: 'atproto', handle: vi.fn() });
+		mocks.unfinishedGroups.mockResolvedValue([]);
+		mocks.yourGroups.mockResolvedValue([{ did: 'did:plc:a', name: 'A', handle: 'a.example' }]);
+		mocks.browseLinked.mockResolvedValue([
+			{ did: 'did:plc:a', name: 'A', handle: 'a.example', description: null },
+			{ did: 'did:plc:b', name: 'B', handle: 'b.example', description: null }
+		]);
+		const page = await load(request('', ALICE));
+		expect(page.linked.map((group) => group.did)).toEqual(['did:plc:b']);
 	});
 
 	it('asks a signed-out visitor nothing', async () => {

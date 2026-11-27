@@ -28,7 +28,7 @@ import {
 	ROSTER_SCOPES
 } from '../scopes';
 import { groupsEnabled } from './enabled';
-import { prefixedKV } from './kv';
+import { listKeys, prefixedKV } from './kv';
 import type { XrpcHandle } from './xrpc';
 
 export const GROUP_CLIENT_METADATA_PATH = '/oauth/group/client-metadata.json';
@@ -254,6 +254,14 @@ export function groupHandle(session: OAuthSession, personDid: string): XrpcHandl
 		}
 		return res;
 	};
+}
+
+/** The groups the person has linked, by DID, from this site's own record of their links. */
+export async function linkedGroups(personDid: string): Promise<string[]> {
+	if (!groupSignInAvailable()) return [];
+	return (await listKeys(env.OAUTH_SESSIONS, personPrefix(personDid))).filter((did) =>
+		did.startsWith('did:')
+	);
 }
 
 /** Revoked at the group's PDS when it answers; forgotten here either way. */

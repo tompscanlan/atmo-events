@@ -5,17 +5,21 @@ const mocks = vi.hoisted(() => ({
 	listGroupServers: vi.fn(),
 	listDeclaredGroups: vi.fn(),
 	readGroupLabels: vi.fn(),
+	resolveGroup: vi.fn(),
+	linkedGroups: vi.fn(),
 	actorGroups: vi.fn()
 }));
 vi.mock('./group', () => ({
 	listUpcomingGroups: mocks.listUpcomingGroups,
 	listGroupServers: mocks.listGroupServers,
 	listDeclaredGroups: mocks.listDeclaredGroups,
-	readGroupLabels: mocks.readGroupLabels
+	readGroupLabels: mocks.readGroupLabels,
+	resolveGroup: mocks.resolveGroup
 }));
 vi.mock('./host', () => ({ actorGroups: mocks.actorGroups }));
+vi.mock('./sign-in', () => ({ linkedGroups: mocks.linkedGroups }));
 
-import { browseDeclared, browseUpcoming, yourGroups } from './browse';
+import { browseDeclared, browseLinked, browseUpcoming, yourGroups } from './browse';
 
 const next = (title: string) => ({
 	uri: `at://x/e/${title}`,
@@ -122,6 +126,24 @@ describe('browseDeclared', () => {
 		mocks.listDeclaredGroups.mockResolvedValue({ dids: ['did:plc:a'], cursor: null });
 		mocks.readGroupLabels.mockRejectedValue(new Error('down'));
 		expect((await browseDeclared({ q: 'knit' })).groups.map((g) => g.name)).toEqual(['did:plc:a']);
+	});
+});
+
+describe('browseLinked', () => {
+	it("lists the person's own links, named from the database, looking up only a group it knows nothing of", async () => {
+		mocks.linkedGroups.mockImplementation(async (did: string) =>
+			did === 'did:plc:alice' ? ['did:plc:public', 'did:plc:unlisted'] : []
+		);
+		mocks.readGroupLabels.mockResolvedValue(
+			new Map([['did:plc:public', { handle: 'p.example', name: 'Knitters', description: null }]])
+		);
+		mocks.resolveGroup.mockResolvedValue({ did: 'did:plc:unlisted', handle: 'u.example' });
+		expect(await browseLinked('did:plc:alice')).toEqual([
+			{ did: 'did:plc:public', name: 'Knitters', handle: 'p.example', description: null },
+			{ did: 'did:plc:unlisted', name: 'u.example', handle: 'u.example', description: null }
+		]);
+		expect(mocks.resolveGroup).toHaveBeenCalledExactlyOnceWith('did:plc:unlisted');
+		expect(await browseLinked('did:plc:bob')).toEqual([]);
 	});
 });
 

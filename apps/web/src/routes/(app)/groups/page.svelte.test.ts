@@ -26,6 +26,7 @@ function page(data: Record<string, unknown>) {
 				upcoming: [upcoming],
 				servers: [],
 				groups: [],
+				linked: [],
 				cursor: null,
 				unavailable: false,
 				canLink: false,
@@ -72,6 +73,19 @@ describe('the groups list', () => {
 		const all = links({ servers }).find((link) => link.text.startsWith('See all'));
 		expect(all?.url.pathname).toBe('/groups');
 		expect([...(all?.url.searchParams ?? [])]).toEqual([['server', 'https://pds.example:8443']]);
+	});
+
+	it('shows the groups the person has linked, above the list', () => {
+		const linked = [
+			{ did: 'did:plc:mine', name: 'Mine', handle: 'mine.example', description: null }
+		];
+		const html = text(page({ linked }));
+		expect(html).toContain("Groups you've linked");
+		expect(html.indexOf('Mine')).toBeLessThan(html.indexOf('Groups with events coming up'));
+		expect(links({ linked }).some((link) => link.url.pathname === '/groups/did:plc:mine')).toBe(
+			true
+		);
+		expect(text(page({}))).not.toContain("Groups you've linked");
 	});
 
 	it('pages the whole list without a server', () => {
