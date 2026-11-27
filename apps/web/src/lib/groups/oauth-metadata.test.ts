@@ -8,6 +8,14 @@ const mocks = vi.hoisted(() => ({
 	create: vi.fn<(config: AtprotoAuthConfig) => unknown>(() => ({ api: {}, handlers: {} }))
 }));
 vi.mock('@svelte-atproto/oauth/server', () => ({ createAtprotoAuth: mocks.create }));
+/** Making groups here is tested in the build, and once without. */
+const build = vi.hoisted(() => ({ create: true }));
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	get CREATE_IN_THIS_BUILD() {
+		return build.create;
+	}
+}));
 
 /** The scope a person's client metadata declares, with these settings. */
 async function declared(settings: { groupHost?: string; privateEvents?: string }) {
@@ -28,6 +36,7 @@ async function declared(settings: { groupHost?: string; privateEvents?: string }
 }
 
 afterEach(async () => {
+	build.create = true;
 	const { env } = await import('cloudflare:workers');
 	Reflect.deleteProperty(env, 'GROUP_HOST_URL');
 	Reflect.deleteProperty(env, 'PRIVATE_EVENTS');
@@ -63,6 +72,20 @@ describe("a person's sign-in permissions, with groups", () => {
 			...HOST_SCOPES,
 			BETA_SCOPE,
 			...groups
+		]);
+	});
+
+	it('add no permission to make a group in a build without making groups here', async () => {
+		build.create = false;
+		const asked = await declared({ groupHost: 'https://host.example' });
+		expect(String(asked)).not.toContain('createGroup');
+		expect(asked).toEqual([
+			...scopes,
+			'space:org.atgrp.meta?authority=*&skey=self&action=read',
+			'space:org.atgrp.members?authority=*&skey=self&collection=org.atgrp.confirmation&action=read&action=create&action=delete',
+			'rpc?lxm=org.atgrp.requestJoin&lxm=org.atgrp.cancelJoinRequest&lxm=org.atgrp.leaveGroup&aud=*',
+			'rpc:org.atgrp.internal.getActorGroups?aud=*',
+			GUEST_SCOPE
 		]);
 	});
 });

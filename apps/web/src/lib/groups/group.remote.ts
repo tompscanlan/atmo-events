@@ -6,6 +6,7 @@ import { EVENT_PLACEMENTS } from './event-placement';
 import { GROUP_EVENT_COLLECTION } from './ids';
 import { requireGroupWriter, requireStoredLink } from './server/context';
 import { finishSetup } from './server/create';
+import { requireCreateInBuild } from './server/enabled';
 import {
 	deleteMembersOnlyEvent,
 	GroupEventRefused,
@@ -112,8 +113,10 @@ export const saveGroupSettings = command(
 	}
 );
 
-/** For a group made here whose first link did not finish setting it up. */
+/** For a group made here whose first link did not finish setting it up; in a build without making
+ *  groups here, the same 404 as groups off. */
 export const finishGroupSetup = command(v.object({ groupDid: didSchema }), async ({ groupDid }) => {
+	requireCreateInBuild();
 	const did = callerDid();
 	const writer = await requireGroupWriter(groupDid, did);
 	try {

@@ -20,6 +20,14 @@ vi.mock('#lib/groups/server/browse.js', () => ({
 vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.callerSession }));
 vi.mock('#lib/groups/server/sign-in.js', () => ({ groupSignInAvailable: mocks.available }));
 vi.mock('#lib/groups/server/create.js', () => ({ unfinishedGroups: mocks.unfinishedGroups }));
+/** Making groups here is tested in the build, and once without. */
+const build = vi.hoisted(() => ({ create: true }));
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	get CREATE_IN_THIS_BUILD() {
+		return build.create;
+	}
+}));
 
 import { load } from './+page.server';
 
@@ -33,6 +41,7 @@ const request = (query = '', did: string | null = null) =>
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	build.create = true;
 	setHeaders.mockClear();
 	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 	mocks.browseUpcoming.mockResolvedValue({
@@ -146,6 +155,14 @@ describe('making a group from the list', () => {
 		mocks.available.mockReturnValue(false);
 		expect(await load(signedIn())).toMatchObject({ canLink: false, unfinished: 0 });
 		expect(await load(request())).toMatchObject({ canLink: false, unfinished: 0 });
+		expect(mocks.unfinishedGroups).not.toHaveBeenCalled();
+	});
+
+	it('looks for none in a build without making groups here', async () => {
+		build.create = false;
+		mocks.available.mockReturnValue(true);
+		mocks.unfinishedGroups.mockResolvedValue([{ did: 'did:plc:g', handle: 'g.example' }]);
+		expect(await load(signedIn())).toMatchObject({ canLink: true, unfinished: 0 });
 		expect(mocks.unfinishedGroups).not.toHaveBeenCalled();
 	});
 

@@ -33,6 +33,7 @@ import {
 	type LinkedMeta
 } from './group';
 import { requireGroupsEnabled } from './enabled';
+import { CREATE_IN_THIS_BUILD } from '../build';
 import { unfinishedGroup } from './create';
 import { confirmAdmitted, hasConfirmation, joinRequested } from './confirmation';
 import { actorGroups } from './host';
@@ -98,7 +99,8 @@ export interface LinkedGroup {
 	 *  again may bring the rest. False once it was approved for all of it, whatever the roles kept. */
 	reapprove: boolean;
 	/** The caller made the group here, and setting it up did not finish at the link: what they asked
-	 *  of it, which says what is left to do. Null for any other group. */
+	 *  of it, which says what is left to do. Null for any other group, and in a build without making
+	 *  groups here. */
 	unfinished: { public: boolean; listed: boolean } | null;
 }
 
@@ -147,7 +149,7 @@ async function readLinked(
 			// As granted at the approval; a refresh would not change it.
 			session.getTokenInfo(false),
 			linkAskedCurrentScope(groupDid, personDid),
-			unfinishedGroup(personDid, groupDid)
+			CREATE_IN_THIS_BUILD ? unfinishedGroup(personDid, groupDid) : null
 		]);
 		const can = groupAbilities(token.scope, groupDid);
 		return {

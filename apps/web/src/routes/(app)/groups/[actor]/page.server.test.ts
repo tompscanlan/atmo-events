@@ -38,6 +38,14 @@ vi.mock('#lib/contrail/ongoing.js', async (importActual) => ({
 }));
 vi.mock('#lib/server/profile-counts.js', () => ({ getProfileCounts: mocks.getProfileCounts }));
 vi.mock('#lib/contrail/index.js', () => ({ getServerClient: () => ({}) }));
+/** Making groups here is tested in the build, and once without. */
+const build = vi.hoisted(() => ({ create: true }));
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	get CREATE_IN_THIS_BUILD() {
+		return build.create;
+	}
+}));
 
 import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 import { load } from './+page.server';
@@ -54,6 +62,7 @@ const request = (query = '', did: string | null = null) =>
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	build.create = true;
 	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 	Reflect.deleteProperty(env, 'SPACES_PDS_URL');
 	mocks.groupView.mockResolvedValue({ did: GROUP, name: 'Knitters', description: null });
@@ -117,6 +126,15 @@ describe('a group page', () => {
 		holder({});
 		expect((await load(request('?link=linked', ALICE))).notice).toBe(
 			'Linked. Your role in this group lets you see it here.'
+		);
+	});
+
+	it('says no group was made here in a build without making groups here', async () => {
+		build.create = false;
+		holder({ post: true });
+		expect((await load(request('?link=created', ALICE))).notice).toBeNull();
+		expect((await load(request('?link=linked', ALICE))).notice).toBe(
+			'Linked. You can now post its events here.'
 		);
 	});
 

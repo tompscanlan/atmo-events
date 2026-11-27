@@ -18,7 +18,7 @@ import {
 } from './ids';
 import { GUEST_SCOPE, GUEST_SCOPES } from '#lib/private-events/scopes.js';
 import { CALENDAR_SPACE_TYPE } from './calendar';
-import { ROSTER_IN_THIS_BUILD } from './build';
+import { CREATE_IN_THIS_BUILD, ROSTER_IN_THIS_BUILD } from './build';
 
 /** The group host's own method for making a group, not the spec's (bluesky-social/group-host's
  *  `org.atgrp.internal.createGroup`). The spec's way is OAuth `prompt=create` at the host, which
@@ -84,12 +84,13 @@ export const JOIN_SCOPES: readonly string[] = [
 ];
 
 /** Declared in the person's client metadata while groups are on; each asked for only when they set
- *  out to make a group, or first act in one, never at sign-in. */
-export const GROUP_PERSON_SCOPES: readonly string[] = [
-	CREATE_GROUP_SCOPE,
-	...PARTICIPATE_SCOPES,
-	GUEST_SCOPE
-];
+ *  out to make a group, or first act in one, never at sign-in. Making a group is declared only in a
+ *  build that has the create page (./build.ts). */
+export function groupPersonScopes(create: boolean): readonly string[] {
+	return [...(create ? [CREATE_GROUP_SCOPE] : []), ...PARTICIPATE_SCOPES, GUEST_SCOPE];
+}
+
+export const GROUP_PERSON_SCOPES: readonly string[] = groupPersonScopes(CREATE_IN_THIS_BUILD);
 
 /** Whether the person's granted scope lets their PDS vouch for them to call `nsid`: an rpc grant
  *  for the method, written `rpc:<method>` or `rpc?lxm=<method>`, for `audience` or any audience;

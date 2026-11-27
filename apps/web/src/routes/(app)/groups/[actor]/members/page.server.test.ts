@@ -17,7 +17,8 @@ vi.mock('#lib/groups/server/context.js', async (importActual) => ({
 vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.callerSession }));
 /** The page is tested with it in the build, and once without. */
 const build = vi.hoisted(() => ({ roster: true }));
-vi.mock('#lib/groups/build.js', () => ({
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
 	get ROSTER_IN_THIS_BUILD() {
 		return build.roster;
 	}

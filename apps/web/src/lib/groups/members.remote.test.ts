@@ -24,7 +24,8 @@ const mocks = vi.hoisted(() => ({
 }));
 /** The members page's commands are tested with it in the build, and once without. */
 const build = vi.hoisted(() => ({ roster: true }));
-vi.mock('./build', () => ({
+vi.mock('./build', async (importOriginal) => ({
+	...(await importOriginal<typeof import('./build')>()),
 	get ROSTER_IN_THIS_BUILD() {
 		return build.roster;
 	}

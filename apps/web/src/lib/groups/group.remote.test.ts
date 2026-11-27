@@ -43,6 +43,14 @@ vi.mock('./server/settings', async (importActual) => ({
 	saveGroupSettings: mocks.saveSettings
 }));
 vi.mock('./server/create', () => ({ finishSetup: mocks.finishSetup }));
+/** Making groups here is tested in the build, and once without. */
+const build = vi.hoisted(() => ({ create: true }));
+vi.mock('./build', async (importOriginal) => ({
+	...(await importOriginal<typeof import('./build')>()),
+	get CREATE_IN_THIS_BUILD() {
+		return build.create;
+	}
+}));
 vi.mock('./server/group-events', async (importActual) => ({
 	...(await importActual<typeof import('./server/group-events')>()),
 	refuseMembersOnlyKey: mocks.refuseMembersOnlyKey,
@@ -65,6 +73,7 @@ const ALICE = 'did:plc:alice';
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	build.create = true;
 	mocks.getRequestEvent.mockReturnValue({ locals: { did: ALICE } });
 	mocks.requireGroupWriter.mockResolvedValue({ did: GROUP, handle: mocks.handle });
 	mocks.handle.mockImplementation(async () => Response.json({ uri: 'at://u', cid: 'c' }));
@@ -326,6 +335,16 @@ describe('finishing a group made here', () => {
 			status: 403,
 			body: { message: 'Your role in this group no longer allows that.' }
 		});
+	});
+
+	it("is groups-off's 404 in a build without making groups here, before looking for a link", async () => {
+		build.create = false;
+		await expect(finishGroupSetup({ groupDid: GROUP })).rejects.toMatchObject({
+			status: 404,
+			body: { message: 'Not Found' }
+		});
+		expect(mocks.requireGroupWriter).not.toHaveBeenCalled();
+		expect(mocks.finishSetup).not.toHaveBeenCalled();
 	});
 });
 

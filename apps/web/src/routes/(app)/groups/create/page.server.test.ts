@@ -28,6 +28,14 @@ vi.mock('#lib/groups/server/create.js', async (importActual) => ({
 	unfinishedGroups: mocks.unfinishedGroups,
 	ownGroupNotNoted: mocks.ownGroupNotNoted
 }));
+/** The page is tested with making groups here in the build, and once without. */
+const build = vi.hoisted(() => ({ create: true }));
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	get CREATE_IN_THIS_BUILD() {
+		return build.create;
+	}
+}));
 
 import { GroupNotCreated } from '#lib/groups/server/create.js';
 import { actions, load } from './+page.server';
@@ -68,6 +76,7 @@ const FORM = {
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	build.create = true;
 	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 	mocks.available.mockReturnValue(true);
 	mocks.groupHostInfo.mockResolvedValue(HOST);
@@ -220,5 +229,17 @@ describe('making a group', () => {
 		mocks.startGroupLink.mockRejectedValue(new Error('no route to the host'));
 		await expect(post(FORM)).rejects.toMatchObject({ status: 303, location: '/groups/create' });
 		expect(mocks.rememberUnfinished).toHaveBeenCalled();
+	});
+});
+
+describe('in a build without making groups here', () => {
+	it("is groups-off's 404, with groups on, for the page and its form alike, and makes nothing", async () => {
+		build.create = false;
+		const notFound = { status: 404, body: { message: 'Not Found' } };
+		await expect(loadAs(ALICE)).rejects.toMatchObject(notFound);
+		await expect(post(FORM)).rejects.toMatchObject(notFound);
+		expect(mocks.createGroupAtHost).not.toHaveBeenCalled();
+		expect(mocks.rememberUnfinished).not.toHaveBeenCalled();
+		expect(mocks.startGroupLink).not.toHaveBeenCalled();
 	});
 });
