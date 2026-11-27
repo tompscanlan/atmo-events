@@ -5,16 +5,19 @@ const mocks = vi.hoisted(() => ({
 	browseUpcoming: vi.fn(),
 	browseDeclared: vi.fn(),
 	browseLinked: vi.fn(),
-	available: vi.fn()
+	yourGroups: vi.fn(),
+	available: vi.fn(),
+	callerSession: vi.fn()
 }));
 const setHeaders = vi.fn();
 vi.mock('#lib/groups/server/browse.js', () => ({
 	browseUpcoming: mocks.browseUpcoming,
 	browseDeclared: mocks.browseDeclared,
-	browseLinked: mocks.browseLinked
+	browseLinked: mocks.browseLinked,
+	yourGroups: mocks.yourGroups
 }));
+vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.callerSession }));
 vi.mock('#lib/groups/server/sign-in.js', () => ({ groupSignInAvailable: mocks.available }));
-
 import { load } from './+page.server';
 
 const ALICE = 'did:plc:alice';
@@ -58,7 +61,7 @@ describe('the groups list', () => {
 		});
 	});
 
-	it('is never stored, since the person’s linked groups lead it', async () => {
+	it('is never stored, since the person’s own groups lead it', async () => {
 		await load(request());
 		expect(setHeaders).toHaveBeenCalledWith({ 'cache-control': 'no-store' });
 		await load(request('?server=https%3A%2F%2Fpds.example&q=knit'));
@@ -134,7 +137,28 @@ describe('making a group from the list', () => {
 		expect(await load(signedIn())).toMatchObject({ newGroupUrl: 'https://host.example/new' });
 	});
 
-	it('shows a linker their linked groups, and no one else', async () => {
+	it("leads with the person's own groups, on the whole list's first page only", async () => {
+		const person = { did: ALICE, scope: 'atproto', handle: vi.fn() };
+		mocks.callerSession.mockResolvedValue(person);
+		mocks.yourGroups.mockResolvedValue([
+			{ did: 'did:plc:group', name: 'Knitters', handle: 'knit.example' }
+		]);
+		expect(await load(request('', ALICE))).toMatchObject({
+			yourGroups: [{ did: 'did:plc:group', name: 'Knitters' }],
+			access: 'ask'
+		});
+		expect(mocks.yourGroups).toHaveBeenCalledWith(person);
+
+		mocks.yourGroups.mockClear();
+		expect(await load(request('?cursor=c', ALICE))).toMatchObject({ yourGroups: null });
+		expect(await load(request('?server=https%3A%2F%2Fpds.example', ALICE))).toMatchObject({
+			yourGroups: null
+		});
+		expect(await load(request('?q=knit', ALICE))).toMatchObject({ yourGroups: null });
+		expect(mocks.yourGroups).not.toHaveBeenCalled();
+	});
+
+	it('shows a linker their linked groups without the membership permission, and no one else', async () => {
 		const BOB = 'did:plc:bob';
 		const linked = {
 			did: 'did:plc:private',
@@ -143,11 +167,30 @@ describe('making a group from the list', () => {
 			description: null
 		};
 		mocks.browseLinked.mockImplementation(async (did: string) => (did === ALICE ? [linked] : []));
-		expect(await load(request('', ALICE))).toMatchObject({ linked: [linked] });
+		// A sign-in without the permission that lists a person's groups at the host.
+		mocks.callerSession.mockImplementation(async () => ({ scope: 'atproto', handle: vi.fn() }));
+		mocks.yourGroups.mockResolvedValue(null);
+		expect(await load(request('', ALICE))).toMatchObject({ yourGroups: null, linked: [linked] });
 		expect((await load(request('', BOB))).linked).toEqual([]);
 		expect((await load(request())).linked).toEqual([]);
 		expect(mocks.browseLinked.mock.calls.map(([did]) => did)).toEqual([ALICE, BOB]);
 		// Only on the whole list's first page.
 		expect((await load(request('?q=knit', ALICE))).linked).toEqual([]);
+	});
+
+	it('shows a linked group once, in "Your groups", when that lists it', async () => {
+		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: 'atproto', handle: vi.fn() });
+		mocks.yourGroups.mockResolvedValue([{ did: 'did:plc:a', name: 'A', handle: 'a.example' }]);
+		mocks.browseLinked.mockResolvedValue([
+			{ did: 'did:plc:a', name: 'A', handle: 'a.example', description: null },
+			{ did: 'did:plc:b', name: 'B', handle: 'b.example', description: null }
+		]);
+		const page = await load(request('', ALICE));
+		expect(page.linked.map((group) => group.did)).toEqual(['did:plc:b']);
+	});
+
+	it('asks a signed-out visitor nothing', async () => {
+		expect(await load(request())).toMatchObject({ yourGroups: null, access: null });
+		expect(mocks.callerSession).not.toHaveBeenCalled();
 	});
 });
