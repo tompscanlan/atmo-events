@@ -17,7 +17,7 @@
 		unlinkGroupSession
 	} from '#lib/groups/group.remote.js';
 	import { cancelJoin, confirmMember, joinGroup, leave } from '#lib/groups/members.remote.js';
-	import { ROSTER_IN_THIS_BUILD } from '#lib/groups/build.js';
+	import { ROSTER_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from '#lib/groups/build.js';
 
 	let { data } = $props();
 
@@ -281,7 +281,7 @@
 							variant="primary">Post an event</Button
 						>
 					{/if}
-					{#if group.linked.can.settings}
+					{#if SETTINGS_IN_THIS_BUILD && group.linked.can.settings}
 						<Button
 							href={resolve('/(app)/groups/[actor]/settings', { actor: group.did })}
 							variant="secondary">Settings</Button

@@ -6,7 +6,7 @@ import { EVENT_PLACEMENTS } from './event-placement';
 import { GROUP_EVENT_COLLECTION } from './ids';
 import { requireGroupWriter, requireStoredLink } from './server/context';
 import { finishSetup } from './server/create';
-import { requireCreateInBuild } from './server/enabled';
+import { requireCreateInBuild, requireSettingsInBuild } from './server/enabled';
 import {
 	deleteMembersOnlyEvent,
 	GroupEventRefused,
@@ -86,10 +86,12 @@ const settingsSchema = v.object({
 	listed: v.boolean()
 });
 
-/** `shownPublic` is the visibility the form showed, so a change made elsewhere since is kept. */
+/** `shownPublic` is the visibility the form showed, so a change made elsewhere since is kept. In a
+ *  build without the settings page, the same 404 as groups off. */
 export const saveGroupSettings = command(
 	v.object({ groupDid: didSchema, shownPublic: v.boolean(), settings: settingsSchema }),
 	async ({ groupDid, shownPublic, settings }) => {
+		requireSettingsInBuild();
 		const writer = await requireGroupWriter(groupDid, callerDid());
 		const parsed = parseGroupSettings(settings);
 		if (!parsed) {

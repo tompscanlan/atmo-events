@@ -1,6 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// Tested with the settings page and making groups here in the build; each check of a build without
+// one names it.
+vi.mock('./build', async (importOriginal) => ({
+	...(await importOriginal<typeof import('./build')>()),
+	CREATE_IN_THIS_BUILD: true,
+	SETTINGS_IN_THIS_BUILD: true
+}));
+
 import {
 	CREATE_GROUP_SCOPE,
+	GROUP_PERSON_SCOPES,
+	groupPersonScopes,
 	grantsRepoWrites,
 	grantsSettings,
 	GROUP_SETTINGS_SCOPES,
@@ -114,6 +125,53 @@ describe('what a group session may do, by the scope its host granted', () => {
 			turnOnMembersOnly: false,
 			membersOnly: false
 		});
+	});
+
+	it('offers no settings, whatever the scope grants, in a build without the settings page', () => {
+		const scope = ['atproto', META_READ, REPO, ...SETTINGS, ...ROSTER, ...MEMBERS_ONLY].join(' ');
+		expect(groupAbilities(scope, GROUP, true, false)).toEqual({
+			post: true,
+			list: true,
+			settings: false,
+			admit: true,
+			assign: true,
+			remove: true,
+			turnOnMembersOnly: true,
+			membersOnly: true
+		});
+		expect(groupAbilities(scope, GROUP, false, false)).toMatchObject({
+			list: true,
+			settings: false,
+			admit: false
+		});
+	});
+
+	it('counts the settings toward holding everything only in a build with the settings page', () => {
+		const allButSettings = ['atproto', META_READ, REPO, ...ROSTER, ...MEMBERS_ONLY].join(' ');
+		expect(holdsEveryAbility(groupAbilities(allButSettings, GROUP, true, true), true, true)).toBe(
+			false
+		);
+		expect(holdsEveryAbility(groupAbilities(allButSettings, GROUP, true, false), true, false)).toBe(
+			true
+		);
+		// Neither the roster's nor the settings': all that is left is posting, listing and members-only.
+		const neither = ['atproto', META_READ, REPO, ...MEMBERS_ONLY].join(' ');
+		expect(holdsEveryAbility(groupAbilities(neither, GROUP, false, false), false, false)).toBe(
+			true
+		);
+		const noListing = ['atproto', META_READ, ...MEMBERS_ONLY].join(' ');
+		expect(holdsEveryAbility(groupAbilities(noListing, GROUP, false, false), false, false)).toBe(
+			false
+		);
+	});
+
+	it('lists a group by its repo grant for the declaration alone, with no settings scope', () => {
+		const scope = ['atproto', META_READ, REPO].join(' ');
+		expect(groupAbilities(scope, GROUP, false, false)).toMatchObject({
+			list: true,
+			settings: false
+		});
+		expect(grantsRepoWrites(scope, 'org.atgrp.declaration')).toBe(true);
 	});
 
 	it('offers no member controls to a link approved before they were asked for', () => {
@@ -352,5 +410,17 @@ describe("a person's group permissions, as their PDS granted them", () => {
 		expect(holdsRpc('rpc?lxm=org.atgrp.leaveGroup&aud=*', 'org.atgrp.leaveGroup')).toBe(true);
 		expect(holdsRpc('rpc?lxm=org.atgrp.leaveGroup', 'org.atgrp.leaveGroup')).toBe(false);
 		expect(holdsRpc(YOUR_GROUPS_SCOPE, 'org.atgrp.requestJoin')).toBe(false);
+	});
+});
+
+describe("the person's permissions for groups", () => {
+	it('include making a group only in a build that makes groups here', () => {
+		expect(GROUP_PERSON_SCOPES).toEqual(groupPersonScopes(true));
+		expect(groupPersonScopes(true)).toEqual([
+			CREATE_GROUP_SCOPE,
+			...PARTICIPATE_SCOPES,
+			GUEST_SCOPE
+		]);
+		expect(groupPersonScopes(false)).toEqual([...PARTICIPATE_SCOPES, GUEST_SCOPE]);
 	});
 });

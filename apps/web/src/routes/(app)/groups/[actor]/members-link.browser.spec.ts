@@ -5,7 +5,11 @@ import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import '../../../../app.css';
 
-vi.mock('#lib/groups/build.js', () => ({ ROSTER_IN_THIS_BUILD: true }));
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	ROSTER_IN_THIS_BUILD: true,
+	SETTINGS_IN_THIS_BUILD: true
+}));
 vi.mock('#lib/groups/group.remote.js', () => ({
 	setGroupListed: vi.fn(),
 	unlinkGroupSession: vi.fn(),

@@ -46,12 +46,15 @@ vi.mock('./sign-in', () => ({
 	linkAskedCurrentScope: mocks.linkAskedCurrentScope
 }));
 vi.mock('./create', () => ({ unfinishedGroup: mocks.unfinishedGroup }));
-/** Making groups here is tested in the build, and once without. */
-const build = vi.hoisted(() => ({ create: true }));
+/** Making groups here and the settings are tested in the build, and once without. */
+const build = vi.hoisted(() => ({ create: true, settings: true }));
 vi.mock('../build', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../build')>()),
 	get CREATE_IN_THIS_BUILD() {
 		return build.create;
+	},
+	get SETTINGS_IN_THIS_BUILD() {
+		return build.settings;
 	}
 }));
 vi.mock('./person', () => ({
@@ -100,6 +103,7 @@ const meta = { profile: { name: 'Knitters', description: 'Yarn' }, public: true 
 beforeEach(() => {
 	vi.resetAllMocks();
 	build.create = true;
+	build.settings = true;
 	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 	mocks.resolveGroup.mockResolvedValue(resolved);
 	mocks.readCachedProfiles.mockResolvedValue(new Map());
@@ -247,6 +251,29 @@ describe('groupView for someone who linked the group', () => {
 		mocks.groupSession.mockResolvedValue(linkedSession(ADMIN_SCOPE));
 		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({ reapprove: false });
 		expect(mocks.linkAskedCurrentScope).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+
+	it('offers no settings in a build without the settings page, nor approving again for them', async () => {
+		build.settings = false;
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		mocks.linkAskedCurrentScope.mockResolvedValue(false);
+		// All the rest of what a link is asked for, but the settings.
+		const allButSettings = ADMIN_SCOPE.split(' ')
+			.filter((token) => !GROUP_SETTINGS_SCOPES.some((s) => token === s.replace('self', GROUP)))
+			.join(' ');
+		expect(allButSettings).not.toContain('manage=update');
+		mocks.groupSession.mockResolvedValue(linkedSession(allButSettings));
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({
+			can: { post: true, list: true, settings: false },
+			reapprove: false
+		});
+		// Whatever the host granted, a link changes no settings here.
+		mocks.groupSession.mockResolvedValue(linkedSession(ADMIN_SCOPE));
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({
+			can: { list: true, settings: false },
+			reapprove: false
+		});
 	});
 
 	it("says when setting up a group the caller made here didn't finish", async () => {

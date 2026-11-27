@@ -18,7 +18,7 @@ import {
 } from './ids';
 import { GUEST_SCOPE, GUEST_SCOPES } from '#lib/private-events/scopes.js';
 import { CALENDAR_SPACE_TYPE } from './calendar';
-import { CREATE_IN_THIS_BUILD, ROSTER_IN_THIS_BUILD } from './build';
+import { CREATE_IN_THIS_BUILD, ROSTER_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from './build';
 
 /** The group host's own method for making a group, not the spec's (bluesky-social/group-host's
  *  `org.atgrp.internal.createGroup`). The spec's way is OAuth `prompt=create` at the host, which
@@ -190,6 +190,10 @@ const META_RECORD_WRITES = 'action=read&action=update';
  *  for the one space, one with the key and one without, break it. */
 export const GROUP_META_READ_SCOPE = `${META_SELF}&action=read`;
 
+/** A write of the meta space's policy, which says whether the group is public: one of the
+ *  settings' scopes, and alone what setting up a group made here needs, to make it public. */
+export const GROUP_POLICY_SCOPE = `${META_SELF}&manage=update`;
+
 /** What a group's settings write as the group, each its own scope, since its host keeps or drops
  *  each whole: the about record, the config (who may join), and the meta space's policy, which says
  *  whether it is public. Only what the settings write: not the spec's `authManageAdmin` set, which
@@ -197,7 +201,7 @@ export const GROUP_META_READ_SCOPE = `${META_SELF}&action=read`;
 export const GROUP_SETTINGS_SCOPES: readonly string[] = [
 	`${META_SELF}&collection=${GROUP_ABOUT_COLLECTION}&${META_RECORD_WRITES}`,
 	`${META_SELF}&collection=${GROUP_CONFIG_COLLECTION}&${META_RECORD_WRITES}`,
-	`${META_SELF}&manage=update`
+	GROUP_POLICY_SCOPE
 ];
 
 /** The meta-space grants in a granted scope, for the group's own meta space: the host gives back
@@ -387,31 +391,37 @@ export interface GroupAbilities extends RosterAbilities, MembersOnlyAbilities {
 
 const NO_ROSTER: RosterAbilities = { admit: false, assign: false, remove: false };
 
-/** `roster`: whether the members page is in this build; without it a link holds none of its acts,
- *  whatever its scope grants. */
+/** `roster` and `settings`: whether the members page and the settings page are in this build;
+ *  without one a link holds none of its acts, whatever its scope grants. */
 export function groupAbilities(
 	scope: string,
 	groupDid: string,
-	roster: boolean = ROSTER_IN_THIS_BUILD
+	roster: boolean = ROSTER_IN_THIS_BUILD,
+	settings: boolean = SETTINGS_IN_THIS_BUILD
 ): GroupAbilities {
 	const list = grantsRepoWrites(scope, GROUP_DECLARATION_COLLECTION);
 	return {
 		post: grantsRepoWrites(scope, GROUP_EVENT_COLLECTION),
 		list,
 		// Making a group public or private moves its listing too.
-		settings: list && grantsSettings(scope, groupDid),
+		settings: settings && list && grantsSettings(scope, groupDid),
 		...(roster ? grantsRoster(scope, groupDid) : NO_ROSTER),
 		...grantsMembersOnly(scope, groupDid)
 	};
 }
 
 /** Whether a link holds every ability this build offers: the roster's count only while the
- *  members page is in it, so a link is never asked to be approved again for what nothing uses. */
+ *  members page is in it, and the settings only while the settings page is, so a link is never
+ *  asked to be approved again for what nothing uses. */
 export function holdsEveryAbility(
 	can: GroupAbilities,
-	roster: boolean = ROSTER_IN_THIS_BUILD
+	roster: boolean = ROSTER_IN_THIS_BUILD,
+	settings: boolean = SETTINGS_IN_THIS_BUILD
 ): boolean {
 	return Object.entries(can).every(
-		([ability, held]) => held || (!roster && Object.hasOwn(NO_ROSTER, ability))
+		([ability, held]) =>
+			held ||
+			(!roster && Object.hasOwn(NO_ROSTER, ability)) ||
+			(!settings && ability === 'settings')
 	);
 }

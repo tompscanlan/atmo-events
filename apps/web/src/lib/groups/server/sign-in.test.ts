@@ -39,6 +39,13 @@ vi.mock('#lib/atproto/network.js', () => ({
 	atprotoNetwork: () => ({ fetch: mocks.networkFetch, isolated: false, assertUrl: () => {} })
 }));
 vi.mock('@svelte-atproto/oauth/network', () => ({ createActorResolver: () => ({}) }));
+// Tested with the settings page and making groups here in the build; each check of a build without
+// one names it.
+vi.mock('../build', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../build')>()),
+	CREATE_IN_THIS_BUILD: true,
+	SETTINGS_IN_THIS_BUILD: true
+}));
 
 import {
 	finishGroupLink,
@@ -168,6 +175,25 @@ describe('the group client', () => {
 			'space:community.lexicon.calendar.collection?authority=self&manage=create',
 			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
 		]);
+	});
+
+	it('asks for none of the settings in a build without them, nor anything for making groups here', () => {
+		expect(groupSessionScope(false, false, false).split(' ')).toEqual([
+			'atproto',
+			'space:org.atgrp.meta?authority=self&skey=self&action=read',
+			'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
+			'blob?accept=image/*',
+			'space:community.lexicon.calendar.collection?authority=self&manage=create',
+			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
+		]);
+	});
+
+	it("asks, without the settings, for the meta space's policy alone while making groups here is in the build", () => {
+		const asked = groupSessionScope(false, false, true).split(' ');
+		expect(asked).toContain('space:org.atgrp.meta?authority=self&skey=self&manage=update');
+		expect(asked.filter((token) => token.includes('org.atgrp.about'))).toEqual([]);
+		expect(asked.filter((token) => token.includes('org.atgrp.config'))).toEqual([]);
+		expect(groupSessionScope(false, true, true)).toBe(groupSessionScope(false, true, false));
 	});
 
 	// The host's approval page lists one row per space type, owner and key, keyed by type and owner

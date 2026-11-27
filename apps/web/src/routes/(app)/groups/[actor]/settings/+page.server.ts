@@ -5,13 +5,14 @@ import {
 	NO_SETTINGS,
 	requireGroupWriter
 } from '#lib/groups/server/context.js';
-import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
+import { requireGroupsEnabled, requireSettingsInBuild } from '#lib/groups/server/enabled.js';
 import { readGroupSettings } from '#lib/groups/server/settings.js';
 import { isLinkBroken, isRoleRefused } from '#lib/groups/server/xrpc.js';
 
 // Writes as the group, so only someone who linked it, with a link that may, gets the form.
 export async function load({ params, locals, setHeaders }) {
 	requireGroupsEnabled();
+	requireSettingsInBuild();
 	setHeaders({ 'cache-control': 'no-store' });
 	const group = await groupView(params.actor, locals.did);
 	if (!group.linked) error(404, GROUP_NOT_FOUND);

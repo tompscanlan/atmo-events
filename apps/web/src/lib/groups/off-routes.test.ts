@@ -5,13 +5,16 @@ import { env } from 'cloudflare:workers';
 
 vi.mock('#lib/atproto/server/oauth.js', () => ({ getAuth: vi.fn() }));
 /** Which parts of groups are in the build; each test says. */
-const build = vi.hoisted(() => ({ roster: false, create: false }));
+const build = vi.hoisted(() => ({ roster: false, create: false, settings: false }));
 vi.mock('./build', () => ({
 	get ROSTER_IN_THIS_BUILD() {
 		return build.roster;
 	},
 	get CREATE_IN_THIS_BUILD() {
 		return build.create;
+	},
+	get SETTINGS_IN_THIS_BUILD() {
+		return build.settings;
 	}
 }));
 type Part = keyof typeof build;
@@ -37,6 +40,14 @@ const MEMBERS_ADDRESSES = [
 	`/groups/${GROUP}/%6Dembers`
 ];
 
+/** Every address of the settings page. */
+const SETTINGS_ADDRESSES = [
+	`/groups/${GROUP}/settings`,
+	`/groups/${GROUP}/settings/`,
+	'/groups/knit.example/settings',
+	`/groups/${GROUP}/%73ettings`
+];
+
 /** Every address of the create page. */
 const CREATE_ADDRESSES = [
 	'/groups/create',
@@ -51,7 +62,7 @@ const GROUP_ADDRESSES = [
 	'/groups/',
 	`/groups/${GROUP}`,
 	...MEMBERS_ADDRESSES,
-	`/groups/${GROUP}/settings`,
+	...SETTINGS_ADDRESSES,
 	`/groups/${GROUP}/events/new`,
 	`/groups/${GROUP}/events/3kabc`,
 	`/groups/${GROUP}/events/3kabc/edit`,
@@ -90,10 +101,20 @@ const NOT_CREATE = [
 	`/groups/${GROUP}/members`
 ];
 
+/** Group addresses beside the settings page's. */
+const NOT_SETTINGS = [
+	`/groups/${GROUP}`,
+	`/groups/${GROUP}/settingsx`,
+	`/groups/${GROUP}/events/settings`,
+	'/groups/settings',
+	`/groups/${GROUP}/members`
+];
+
 /** Each part's addresses, and those beside them that are not its own. */
 const ADDRESSES: Record<Part, { own: string[]; beside: string[] }> = {
 	roster: { own: MEMBERS_ADDRESSES, beside: NOT_MEMBERS },
-	create: { own: CREATE_ADDRESSES, beside: NOT_CREATE }
+	create: { own: CREATE_ADDRESSES, beside: NOT_CREATE },
+	settings: { own: SETTINGS_ADDRESSES, beside: NOT_SETTINGS }
 };
 
 const rerouted = (path: string) =>

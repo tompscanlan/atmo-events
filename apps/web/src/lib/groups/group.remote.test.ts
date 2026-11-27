@@ -43,12 +43,15 @@ vi.mock('./server/settings', async (importActual) => ({
 	saveGroupSettings: mocks.saveSettings
 }));
 vi.mock('./server/create', () => ({ finishSetup: mocks.finishSetup }));
-/** Making groups here is tested in the build, and once without. */
-const build = vi.hoisted(() => ({ create: true }));
+/** Making groups here and the settings are tested in the build, and once without. */
+const build = vi.hoisted(() => ({ create: true, settings: true }));
 vi.mock('./build', async (importOriginal) => ({
 	...(await importOriginal<typeof import('./build')>()),
 	get CREATE_IN_THIS_BUILD() {
 		return build.create;
+	},
+	get SETTINGS_IN_THIS_BUILD() {
+		return build.settings;
 	}
 }));
 vi.mock('./server/group-events', async (importActual) => ({
@@ -74,6 +77,7 @@ const ALICE = 'did:plc:alice';
 beforeEach(() => {
 	vi.resetAllMocks();
 	build.create = true;
+	build.settings = true;
 	mocks.getRequestEvent.mockReturnValue({ locals: { did: ALICE } });
 	mocks.requireGroupWriter.mockResolvedValue({ did: GROUP, handle: mocks.handle });
 	mocks.handle.mockImplementation(async () => Response.json({ uri: 'at://u', cid: 'c' }));
@@ -274,6 +278,15 @@ describe('settings', () => {
 		public: true,
 		listed: false
 	};
+
+	it("is groups-off's 404 in a build without the settings page, before looking for a link", async () => {
+		build.settings = false;
+		await expect(
+			saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings: form })
+		).rejects.toMatchObject({ status: 404, body: { message: 'Not Found' } });
+		expect(mocks.requireGroupWriter).not.toHaveBeenCalled();
+		expect(mocks.saveSettings).not.toHaveBeenCalled();
+	});
 
 	it("saves them as the group, on the caller's own link, keeping what the form showed", async () => {
 		mocks.resolveGroup.mockResolvedValue({

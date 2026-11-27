@@ -7,3 +7,6 @@ export const ROSTER_IN_THIS_BUILD: boolean = false;
 
 /** On brings back making a group here, with its "Finish setting up" and the person's permission. */
 export const CREATE_IN_THIS_BUILD: boolean = false;
+
+/** On brings back the settings page, where a group's name, description and who may join change. */
+export const SETTINGS_IN_THIS_BUILD: boolean = false;

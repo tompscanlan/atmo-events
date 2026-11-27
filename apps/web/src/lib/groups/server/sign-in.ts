@@ -23,11 +23,12 @@ import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 import { GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION } from '../ids';
 import {
 	GROUP_META_READ_SCOPE,
+	GROUP_POLICY_SCOPE,
 	GROUP_SETTINGS_SCOPES,
 	MEMBERS_ONLY_SCOPES,
 	ROSTER_SCOPES
 } from '../scopes';
-import { ROSTER_IN_THIS_BUILD } from '../build';
+import { CREATE_IN_THIS_BUILD, ROSTER_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from '../build';
 import { groupsEnabled } from './enabled';
 import { listKeys, prefixedKV } from './kv';
 import type { XrpcHandle } from './xrpc';
@@ -48,14 +49,21 @@ const STATE_TTL_SECONDS = 600;
  *  survives for a member whose roles grant no writes, and each of the settings', the members
  *  page's and members-only events' writes is its own too. Every scope for one space names the
  *  same key, since the host's approval page cannot show one space as two rows. The members page's
- *  are asked for only in a build that has it (../build.ts). */
-export function groupSessionScope(roster: boolean): string {
+ *  and the settings' are asked for only in a build that has them (../build.ts); without the
+ *  settings, the meta space's policy is still asked for while making a group here is in it, whose
+ *  setting up makes a group public. Listing a group needs none of them: it writes the group's
+ *  declaration, in its repo. */
+export function groupSessionScope(
+	roster: boolean,
+	settings: boolean = SETTINGS_IN_THIS_BUILD,
+	create: boolean = CREATE_IN_THIS_BUILD
+): string {
 	return [
 		'atproto',
 		GROUP_META_READ_SCOPE,
 		scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
 		scope.blob({ accept: ['image/*'] }),
-		...GROUP_SETTINGS_SCOPES,
+		...(settings ? GROUP_SETTINGS_SCOPES : create ? [GROUP_POLICY_SCOPE] : []),
 		...(roster ? ROSTER_SCOPES : []),
 		...MEMBERS_ONLY_SCOPES
 	].join(' ');

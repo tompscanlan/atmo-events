@@ -23,8 +23,13 @@ vi.mock('#lib/groups/group.remote.js', () => mocks);
 vi.mock('#lib/groups/members.remote.js', () => member);
 vi.mock('@svelte-atproto/oauth/client', () => oauth);
 vi.mock('#lib/contrail/events.remote.js', () => ({ loadMoreEvents: vi.fn() }));
-// The members page is not in this build; members-link.browser.spec.ts has it in.
-vi.mock('#lib/groups/build.js', () => ({ ROSTER_IN_THIS_BUILD: false }));
+// The members page is not in this build; members-link.browser.spec.ts has it in. The settings page
+// is; group-host-links.browser.spec.ts has it out.
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	ROSTER_IN_THIS_BUILD: false,
+	SETTINGS_IN_THIS_BUILD: true
+}));
 
 import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 import GroupPage from './+page.svelte';
