@@ -18,6 +18,7 @@ import {
 } from './ids';
 import { GUEST_SCOPE, GUEST_SCOPES } from '#lib/private-events/scopes.js';
 import { CALENDAR_SPACE_TYPE } from './calendar';
+import { CREATE_IN_THIS_BUILD, ROSTER_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from './build';
 
 /** The group host's own method for making a group, not the spec's (bluesky-social/group-host's
  *  `org.atgrp.internal.createGroup`). The spec's way is OAuth `prompt=create` at the host, which
@@ -83,12 +84,13 @@ export const JOIN_SCOPES: readonly string[] = [
 ];
 
 /** Declared in the person's client metadata while groups are on; each asked for only when they set
- *  out to make a group, or first act in one, never at sign-in. */
-export const GROUP_PERSON_SCOPES: readonly string[] = [
-	CREATE_GROUP_SCOPE,
-	...PARTICIPATE_SCOPES,
-	GUEST_SCOPE
-];
+ *  out to make a group, or first act in one, never at sign-in. Making a group is declared only in a
+ *  build that has the create page (./build.ts). */
+export function groupPersonScopes(create: boolean): readonly string[] {
+	return [...(create ? [CREATE_GROUP_SCOPE] : []), ...PARTICIPATE_SCOPES, GUEST_SCOPE];
+}
+
+export const GROUP_PERSON_SCOPES: readonly string[] = groupPersonScopes(CREATE_IN_THIS_BUILD);
 
 /** Whether the person's granted scope lets their PDS vouch for them to call `nsid`: an rpc grant
  *  for the method, written `rpc:<method>` or `rpc?lxm=<method>`, for `audience` or any audience;
@@ -188,6 +190,10 @@ const META_RECORD_WRITES = 'action=read&action=update';
  *  for the one space, one with the key and one without, break it. */
 export const GROUP_META_READ_SCOPE = `${META_SELF}&action=read`;
 
+/** A write of the meta space's policy, which says whether the group is public: one of the
+ *  settings' scopes, and alone what setting up a group made here needs, to make it public. */
+export const GROUP_POLICY_SCOPE = `${META_SELF}&manage=update`;
+
 /** What a group's settings write as the group, each its own scope, since its host keeps or drops
  *  each whole: the about record, the config (who may join), and the meta space's policy, which says
  *  whether it is public. Only what the settings write: not the spec's `authManageAdmin` set, which
@@ -195,7 +201,7 @@ export const GROUP_META_READ_SCOPE = `${META_SELF}&action=read`;
 export const GROUP_SETTINGS_SCOPES: readonly string[] = [
 	`${META_SELF}&collection=${GROUP_ABOUT_COLLECTION}&${META_RECORD_WRITES}`,
 	`${META_SELF}&collection=${GROUP_CONFIG_COLLECTION}&${META_RECORD_WRITES}`,
-	`${META_SELF}&manage=update`
+	GROUP_POLICY_SCOPE
 ];
 
 /** The meta-space grants in a granted scope, for the group's own meta space: the host gives back
@@ -324,15 +330,19 @@ export function grantsRepoWrites(scope: string, collection: string): boolean {
 	);
 }
 
-const CALENDAR_SELF = `space:${CALENDAR_SPACE_TYPE}?authority=self&skey=${SPACE_SKEY}`;
+/** The group's calendar spaces at any key: the one used may be one another app made, under a key
+ *  of its own, and a client's metadata names its scopes once for every group. Both name no key, so
+ *  every scope for the type names the same one, as the host's approval page needs. */
+const CALENDAR_ANY_KEY = `space:${CALENDAR_SPACE_TYPE}?authority=self`;
 
 /** Making the group's calendar space, and its events there, read, written and deleted as the group.
- *  Its own type only, not every space (`space:*`). The host keeps the second only for a calendar
- *  space that is there at the approval, and only as the space's own policy grants it, so a link
- *  approved before the space was made is approved once more after. */
+ *  Its own type only, not every space (`space:*`). The host keeps the second only while one of the
+ *  group's calendar spaces is there at the approval whose own policy lets the approving person's
+ *  roles post events, so a link approved before there was one is approved once more after; each
+ *  write is still checked against the policy of the space it goes to. */
 export const MEMBERS_ONLY_SCOPES: readonly string[] = [
-	`${CALENDAR_SELF}&manage=create`,
-	`${CALENDAR_SELF}&collection=${GROUP_EVENT_COLLECTION}&action=read&action=create&action=update&action=delete`
+	`${CALENDAR_ANY_KEY}&manage=create`,
+	`${CALENDAR_ANY_KEY}&collection=${GROUP_EVENT_COLLECTION}&action=read&action=create&action=update&action=delete`
 ];
 
 /** The calendar-space grants in a granted scope, for the group's own calendar space. */
@@ -379,14 +389,39 @@ export interface GroupAbilities extends RosterAbilities, MembersOnlyAbilities {
 	settings: boolean;
 }
 
-export function groupAbilities(scope: string, groupDid: string): GroupAbilities {
+const NO_ROSTER: RosterAbilities = { admit: false, assign: false, remove: false };
+
+/** `roster` and `settings`: whether the members page and the settings page are in this build;
+ *  without one a link holds none of its acts, whatever its scope grants. */
+export function groupAbilities(
+	scope: string,
+	groupDid: string,
+	roster: boolean = ROSTER_IN_THIS_BUILD,
+	settings: boolean = SETTINGS_IN_THIS_BUILD
+): GroupAbilities {
 	const list = grantsRepoWrites(scope, GROUP_DECLARATION_COLLECTION);
 	return {
 		post: grantsRepoWrites(scope, GROUP_EVENT_COLLECTION),
 		list,
 		// Making a group public or private moves its listing too.
-		settings: list && grantsSettings(scope, groupDid),
-		...grantsRoster(scope, groupDid),
+		settings: settings && list && grantsSettings(scope, groupDid),
+		...(roster ? grantsRoster(scope, groupDid) : NO_ROSTER),
 		...grantsMembersOnly(scope, groupDid)
 	};
+}
+
+/** Whether a link holds every ability this build offers: the roster's count only while the
+ *  members page is in it, and the settings only while the settings page is, so a link is never
+ *  asked to be approved again for what nothing uses. */
+export function holdsEveryAbility(
+	can: GroupAbilities,
+	roster: boolean = ROSTER_IN_THIS_BUILD,
+	settings: boolean = SETTINGS_IN_THIS_BUILD
+): boolean {
+	return Object.entries(can).every(
+		([ability, held]) =>
+			held ||
+			(!roster && Object.hasOwn(NO_ROSTER, ability)) ||
+			(!settings && ability === 'settings')
+	);
 }

@@ -1,10 +1,13 @@
 import { error, isHttpError } from '@sveltejs/kit';
 import { command, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
+import { callerSession } from '#lib/private-events/server/caller.js';
+import { SETTINGS_IN_THIS_BUILD } from './build';
 import { EVENT_PLACEMENTS } from './event-placement';
 import { GROUP_EVENT_COLLECTION } from './ids';
 import { requireGroupWriter, requireStoredLink } from './server/context';
 import { finishSetup } from './server/create';
+import { requireCreateInBuild, requireSettingsInBuild } from './server/enabled';
 import {
 	deleteMembersOnlyEvent,
 	GroupEventRefused,
@@ -26,8 +29,9 @@ function callerDid(): string | null {
 	return getRequestEvent().locals.did;
 }
 
-const ONLY_PUBLIC =
-	'Only a public group can be listed, and this one is private. Make it public in its settings first.';
+/** Where a group is made public: its settings here, or else its group host. */
+const onlyPublic = () =>
+	`Only a public group can be listed, and this one is private. Make it public ${SETTINGS_IN_THIS_BUILD ? 'in its settings' : 'at the group host'} first.`;
 const NO_ROLE = 'Your role in this group no longer allows that.';
 const RELINK = 'Your link to this group stopped working. Link it again from its page.';
 
@@ -50,7 +54,7 @@ export const setGroupListed = command(
 		try {
 			if (listed) {
 				const meta = await readGroupMeta(writer.handle, groupDid);
-				if (!meta.public) error(409, ONLY_PUBLIC);
+				if (!meta.public) error(409, onlyPublic());
 				await listGroup(writer.handle, groupDid);
 			} else {
 				await unlistGroup(writer.handle, groupDid);
@@ -67,7 +71,7 @@ export const setGroupListed = command(
 				e.status === 400 &&
 				e.error === 'InvalidRequest'
 			) {
-				error(409, ONLY_PUBLIC);
+				error(409, onlyPublic());
 			}
 			throw e;
 		}
@@ -84,10 +88,12 @@ const settingsSchema = v.object({
 	listed: v.boolean()
 });
 
-/** `shownPublic` is the visibility the form showed, so a change made elsewhere since is kept. */
+/** `shownPublic` is the visibility the form showed, so a change made elsewhere since is kept. In a
+ *  build without the settings page, the same 404 as groups off. */
 export const saveGroupSettings = command(
 	v.object({ groupDid: didSchema, shownPublic: v.boolean(), settings: settingsSchema }),
 	async ({ groupDid, shownPublic, settings }) => {
+		requireSettingsInBuild();
 		const writer = await requireGroupWriter(groupDid, callerDid());
 		const parsed = parseGroupSettings(settings);
 		if (!parsed) {
@@ -111,8 +117,10 @@ export const saveGroupSettings = command(
 	}
 );
 
-/** For a group made here whose first link did not finish setting it up. */
+/** For a group made here whose first link did not finish setting it up; in a build without making
+ *  groups here, the same 404 as groups off. */
 export const finishGroupSetup = command(v.object({ groupDid: didSchema }), async ({ groupDid }) => {
+	requireCreateInBuild();
 	const did = callerDid();
 	const writer = await requireGroupWriter(groupDid, did);
 	try {
@@ -182,17 +190,20 @@ export const deleteGroupEvent = command(
 	}
 );
 
-/** Makes the group's calendar space. The link then needs approving once more before it may post
- *  there: the host gives a link no scope for a space that was not there at its approval. */
+/** Uses the calendar space the group already has for its members, or makes one. A link approved
+ *  before there was one then needs approving once more before it may post there: the host gives a
+ *  link no scope for a space that was not there at its approval. The person's own sign-in, beside
+ *  the link, may read which calendars the group has. */
 export const turnOnMembersOnlyEvents = command(
 	v.object({ groupDid: didSchema }),
 	async ({ groupDid }) => {
 		const writer = await requireGroupWriter(groupDid, callerDid());
-		await turnOnMembersOnly(writer).catch((e) => {
+		const person = await callerSession(getRequestEvent().locals.session ?? null);
+		await turnOnMembersOnly(writer, person ? [person] : []).catch((e) => {
 			if (e instanceof XrpcError && e.status === 400) {
 				error(409, "The group host didn't take the group's calendar. Nothing was turned on.");
 			}
-			return refusedOr("Members-only events couldn't be turned on")(e);
+			return membersOnlyRefusedOr("Members-only events couldn't be turned on")(e);
 		});
 		return { ok: true };
 	}

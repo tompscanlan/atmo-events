@@ -200,6 +200,26 @@ describe('parseGroupProfile', () => {
 		expect(parseGroupProfile({ description: 'no name' })).toBeNull();
 		expect(parseGroupProfile(null)).toBeNull();
 	});
+
+	it('keeps a website only when it is an http or https URL', () => {
+		const website = (value: unknown) =>
+			parseGroupProfile({ displayName: 'Knitters', website: value })?.website;
+		expect(website(' https://knit.example ')).toBe('https://knit.example/');
+		expect(website('http://knit.example/club')).toBe('http://knit.example/club');
+		for (const unsafe of [
+			'javascript:alert(1)',
+			'JAVASCRIPT:alert(1)',
+			'data:text/html,<script>alert(1)</script>',
+			'ftp://knit.example',
+			'//knit.example',
+			'knit.example',
+			'',
+			42,
+			null
+		]) {
+			expect(website(unsafe), String(unsafe)).toBeUndefined();
+		}
+	});
 });
 
 describe('readGroupMeta', () => {

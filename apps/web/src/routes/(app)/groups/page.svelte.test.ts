@@ -1,6 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
+
+/** Making groups here is tested out of the build, and once in it. */
+const build = vi.hoisted(() => ({ create: false }));
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	get CREATE_IN_THIS_BUILD() {
+		return build.create;
+	}
+}));
+
 import GroupsPage from './+page.svelte';
+
+beforeEach(() => {
+	build.create = false;
+});
 
 const upcoming = {
 	did: 'did:plc:g',
@@ -110,5 +124,39 @@ describe("a server's list, or a search's", () => {
 		expect(html).toContain('Found');
 		expect(html).not.toContain('Purl night');
 		expect(text(page({ q: 'knit', groups: [] }))).toContain('No group matches that.');
+	});
+});
+
+describe('making a group', () => {
+	const signedIn = { canLink: true, signedIn: true, you: 'did:plc:alice', unfinished: 0 };
+	const WHAT_A_GROUP_IS =
+		"A group is a community with its own page that others can find and ask to join, where its admins post as the group. Group events are made from the group's page, as the group.";
+
+	it("opens the group host's own page for it, in a new tab, and says to link the group after", () => {
+		const html = page({ ...signedIn, newGroupUrl: 'https://host.example/new' });
+		const make = html.match(/<a[^>]*href="https:\/\/host\.example\/new"[^>]*>([\s\S]*?)<\/a>/);
+		expect(make?.[0]).toContain('target="_blank"');
+		expect(make?.[0]).toContain('rel="noopener noreferrer"');
+		expect(text(make?.[1] ?? '')).toContain('Make a group');
+		expect(text(html)).toContain('Make the group at the group host, then link it here.');
+		expect(text(html)).toContain(WHAT_A_GROUP_IS);
+		expect(links(signedIn).some((link) => link.url.pathname.startsWith('/groups/create'))).toBe(
+			false
+		);
+		expect(html).toContain('Link a group you help run');
+	});
+
+	it('links the create page instead in a build that makes groups here', () => {
+		build.create = true;
+		const make = links({ ...signedIn, newGroupUrl: null, unfinished: 1 }).filter(
+			(link) => link.url.pathname === '/groups/create'
+		);
+		expect(make.map((link) => link.text)).toEqual([
+			'Make a group',
+			'A group you made is not set up yet →'
+		]);
+		expect(text(page({ ...signedIn, newGroupUrl: null }))).not.toContain(
+			'Make the group at the group host'
+		);
 	});
 });

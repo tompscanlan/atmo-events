@@ -1,13 +1,8 @@
 import { error } from '@sveltejs/kit';
 import { groupAccess } from '#lib/groups/permissions-asked.js';
-import type { JoinRequestView } from '#lib/groups/roster.js';
-import {
-	GROUP_UNCHECKED,
-	groupView,
-	MEMBERS_ONLY,
-	requireGroupWriter
-} from '#lib/groups/server/context.js';
-import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
+import { MEMBERS_ONLY, type JoinRequestView } from '#lib/groups/roster.js';
+import { GROUP_UNCHECKED, groupView, requireGroupWriter } from '#lib/groups/server/context.js';
+import { requireGroupsEnabled, requireRosterInBuild } from '#lib/groups/server/enabled.js';
 import { listJoinRequests, readRoster } from '#lib/groups/server/roster.js';
 import { errorKind } from '#lib/groups/server/xrpc.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
@@ -22,6 +17,7 @@ const CURSOR_MAX = 4096;
 // scope reaches.
 export async function load({ params, locals, url, setHeaders }) {
 	requireGroupsEnabled();
+	requireRosterInBuild();
 	setHeaders({ 'cache-control': 'no-store' });
 	const person = locals.did ? await callerSession(locals.session ?? null) : null;
 	const group = await groupView(params.actor, locals.did, person);

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Avatar, Badge, Button, Input, Label } from '@atmo-dev/kit';
 	import { resolve } from '$app/paths';
+	import { CREATE_IN_THIS_BUILD } from '#lib/groups/build.js';
 	import GroupAccessNotice from '#lib/groups/components/GroupAccessNotice.svelte';
 
 	let { data } = $props();
@@ -86,18 +87,31 @@
 	</form>
 
 	{#if data.canLink}
-		<div class="mt-6 flex flex-wrap items-center gap-3">
-			<Button href={resolve('/(app)/groups/create')} variant="primary">Make a group</Button>
-			{#if data.unfinished > 0}
-				<a
-					href={resolve('/(app)/groups/create')}
-					class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 text-sm font-medium transition-colors"
-					>{data.unfinished === 1
-						? 'A group you made is not set up yet'
-						: `${data.unfinished} groups you made are not set up yet`} &rarr;</a
-				>
-			{/if}
-		</div>
+		{#if CREATE_IN_THIS_BUILD}
+			<div class="mt-6 flex flex-wrap items-center gap-3">
+				<Button href={resolve('/(app)/groups/create')} variant="primary">Make a group</Button>
+				{#if data.unfinished > 0}
+					<a
+						href={resolve('/(app)/groups/create')}
+						class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 text-sm font-medium transition-colors"
+						>{data.unfinished === 1
+							? 'A group you made is not set up yet'
+							: `${data.unfinished} groups you made are not set up yet`} &rarr;</a
+					>
+				{/if}
+			</div>
+		{:else if data.newGroupUrl}
+			<!-- The group host's own page, in a new tab that can't reach back. -->
+			<div class="mt-6 flex flex-wrap items-center gap-3">
+				<!-- eslint-disable svelte/no-navigation-without-resolve -->
+				<Button href={data.newGroupUrl} target="_blank" rel="noopener noreferrer" variant="primary"
+					>Make a group <span aria-hidden="true">&nearr;</span></Button
+				><!-- eslint-enable svelte/no-navigation-without-resolve -->
+				<span class="text-base-600 dark:text-base-400 text-sm">
+					Make the group at the group host, then link it here.
+				</span>
+			</div>
+		{/if}
 		<form method="POST" action="/oauth/group/link" class="mt-6 flex flex-wrap items-end gap-2">
 			<div class="min-w-0 flex-1">
 				<Label for="group-link">Link a group you help run, to post its events</Label>

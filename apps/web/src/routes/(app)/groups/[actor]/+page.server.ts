@@ -1,8 +1,15 @@
 import { env } from 'cloudflare:workers';
 import type { ActorIdentifier } from '@atcute/lexicons';
 import { getServerClient } from '#lib/contrail/index.js';
-import { hostingQuery } from '#lib/contrail/queries.js';
-import type { FlatEventRecord } from '#lib/contrail.js';
+import { EMPTY_ONGOING, ongoingQuery } from '#lib/contrail/ongoing.js';
+import {
+	flattenEventRecords,
+	listAuthoredEventsFromContrail,
+	type FlatEventRecord
+} from '#lib/contrail.js';
+import { hasEnded } from '#lib/past-events.js';
+import { getProfileCounts } from '#lib/server/profile-counts.js';
+import { CREATE_IN_THIS_BUILD } from '#lib/groups/build.js';
 import { groupAccess } from '#lib/groups/permissions-asked.js';
 import {
 	listMembersOnlyEvents,
@@ -47,6 +54,8 @@ function linkAbilities(can: GroupAbilities): string {
  *  may do; a made-up `?link=` is no notice. */
 function linkNotice(link: string | null, linked: LinkedGroup | null): string | null {
 	if (!link || !linked || !Object.hasOwn(LINK_NOTICES, link)) return null;
+	// Only a build that makes groups here makes one.
+	if (link === 'created' && !CREATE_IN_THIS_BUILD) return null;
 	return `${LINK_NOTICES[link as keyof typeof LINK_NOTICES]} ${linkAbilities(linked.can)}`;
 }
 
@@ -78,6 +87,45 @@ async function membersOnlySlice(
 		console.error(`[groups] members-only events unread for a group page: ${errorKind(e)}`);
 		return { events: [], unread: true, stoppedAt: null };
 	}
+}
+
+/** As many of each kind of event as a person's profile shows of theirs. */
+const PREVIEW_LIMIT = 6;
+
+/** The group's public events, read as a person's profile reads theirs: those under way, those
+ *  coming and those past, a few of each, and how many it has made. */
+async function hostedEvents(actor: ActorIdentifier) {
+	const client = getServerClient(env.DB);
+	const now = new Date().toISOString();
+	const authored = (order: 'asc' | 'desc') =>
+		listAuthoredEventsFromContrail(client, {
+			hydrateRsvps: 5,
+			profiles: true,
+			sort: 'startsAt',
+			order,
+			...(order === 'asc' ? { startsAtMin: now } : { startsAtMax: now }),
+			actor,
+			limit: PREVIEW_LIMIT + 1
+		});
+	const [upcomingResponse, pastResponse, ongoing] = await Promise.all([
+		authored('asc'),
+		authored('desc'),
+		// An optional section, so a failure is an empty one, never a failed page.
+		ongoingQuery(client, { actor }).catch(() => EMPTY_ONGOING)
+	]);
+	const upcoming = upcomingResponse ? flattenEventRecords(upcomingResponse.records) : [];
+	const past = (pastResponse ? flattenEventRecords(pastResponse.records) : []).filter((e) =>
+		hasEnded(e, now)
+	);
+	return {
+		ongoingEvents: ongoing.events.slice(0, PREVIEW_LIMIT),
+		ongoingTotal: ongoing.total,
+		ongoingTotalIsFloor: ongoing.totalIsFloor,
+		upcomingEvents: upcoming.slice(0, PREVIEW_LIMIT),
+		hasMoreUpcoming: upcoming.length > PREVIEW_LIMIT,
+		pastEvents: past.slice(0, PREVIEW_LIMIT),
+		hasMorePast: past.length > PREVIEW_LIMIT
+	};
 }
 
 /** `no-role`: the calendar is ready, but the person's roles have no grant in its policy that posts
@@ -117,8 +165,9 @@ export async function load({ params, locals, url, setHeaders }) {
 	/** A member whose own sign-in can't open members-only events. */
 	const needsGuest = group.member === true && person !== null && !holdsGuestGrant(person.scope);
 	const access = (group.askAccess || needsGuest) && person ? groupAccess(url, person.did) : null;
-	const [page, membersOnly, calendar] = await Promise.all([
-		hostingQuery(getServerClient(env.DB), { actor: group.did as ActorIdentifier }, null),
+	const [events, eventCounts, membersOnly, calendar] = await Promise.all([
+		hostedEvents(group.did as ActorIdentifier),
+		getProfileCounts(env.DB, group.did),
 		membersOnlySlice(group, person),
 		calendarState(group, locals.did, person)
 	]);
@@ -126,8 +175,9 @@ export async function load({ params, locals, url, setHeaders }) {
 		pageTitle: group.name,
 		pageDescription: group.description ?? `Events from ${group.name}.`,
 		group,
-		events: page.events,
-		cursor: page.cursor,
+		...events,
+		/** How many public events it has made, as a profile counts a person's. */
+		eventsCreated: eventCounts?.created ?? null,
 		/** Members-only events, only for someone who may see them. */
 		membersOnly,
 		/** Whether members-only events are on, for a link that may turn them on or post them. */

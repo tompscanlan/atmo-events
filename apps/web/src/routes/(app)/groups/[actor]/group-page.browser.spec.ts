@@ -23,6 +23,13 @@ vi.mock('#lib/groups/group.remote.js', () => mocks);
 vi.mock('#lib/groups/members.remote.js', () => member);
 vi.mock('@svelte-atproto/oauth/client', () => oauth);
 vi.mock('#lib/contrail/events.remote.js', () => ({ loadMoreEvents: vi.fn() }));
+// The members page is not in this build; members-link.browser.spec.ts has it in. The settings page
+// is; group-host-links.browser.spec.ts has it out.
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	ROSTER_IN_THIS_BUILD: false,
+	SETTINGS_IN_THIS_BUILD: true
+}));
 
 import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 import GroupPage from './+page.svelte';
@@ -31,9 +38,24 @@ const GROUP = 'did:plc:group';
 
 const EVENT = {
 	uri: `at://${GROUP}/community.lexicon.calendar.event/e1`,
+	did: GROUP,
 	rkey: 'e1',
-	name: 'Night ride'
+	name: 'Night ride',
+	startsAt: '2099-01-01T18:00:00Z',
+	createdAt: '2029-01-01T00:00:00Z'
 };
+
+/** The events part of the page's data, as its load returns it. */
+const events = (upcomingEvents: (typeof EVENT)[] = []) => ({
+	ongoingEvents: [],
+	ongoingTotal: 0,
+	ongoingTotalIsFloor: false,
+	upcomingEvents,
+	hasMoreUpcoming: false,
+	pastEvents: [],
+	hasMorePast: false,
+	eventsCreated: null
+});
 
 /** The page for someone who linked the group, as its load returns it; `can` is what the session's
  *  granted scope allows. */
@@ -45,7 +67,7 @@ function linkedPage(
 		unfinished?: { public: boolean; listed: boolean };
 	},
 	can = { post: true, list: true, settings: true },
-	events: (typeof EVENT)[] = []
+	upcoming: (typeof EVENT)[] = []
 ) {
 	return {
 		pageTitle: 'Knitters',
@@ -55,6 +77,8 @@ function linkedPage(
 			handle: 'knit.example',
 			name: 'Knitters',
 			description: null,
+			website: null,
+			home: 'https://knit.example/',
 			atHost: true,
 			linked: {
 				meta: { profile: { name: 'Knitters', description: null }, public: linked.public },
@@ -66,14 +90,14 @@ function linkedPage(
 			relink: false,
 			hasLink: true
 		},
-		events,
-		cursor: null,
+		...events(upcoming),
 		signedIn: true,
 		notice: null
 	};
 }
 
-const listButton = () => page.getByRole('button', { name: 'Add to the groups list' });
+const listSwitch = () => page.getByRole('switch', { name: 'Show in public group lists' });
+const tools = () => page.getByRole('region', { name: 'Group tools' });
 const shown = () => (document.body.textContent ?? '').replace(/\s+/g, ' ');
 
 afterEach(() => vi.resetAllMocks());
@@ -87,7 +111,9 @@ describe("what a link's granted scope offers", () => {
 		await expect
 			.element(page.getByRole('link', { name: 'Edit' }))
 			.toHaveAttribute('href', `/groups/${encodeURIComponent(GROUP)}/events/e1/edit`);
-		await expect.element(listButton()).toBeVisible();
+		await expect.element(listSwitch()).toBeVisible();
+		await expect.element(listSwitch()).not.toBeChecked();
+		await expect.element(tools()).toBeVisible();
 	});
 
 	it("offers none of it to a member's session, and says why", async () => {
@@ -105,9 +131,10 @@ describe("what a link's granted scope offers", () => {
 			);
 		expect(page.getByRole('link', { name: 'Post an event' }).elements()).toHaveLength(0);
 		expect(page.getByRole('link', { name: 'Edit' }).elements()).toHaveLength(0);
-		expect(listButton().elements()).toHaveLength(0);
+		expect(listSwitch().elements()).toHaveLength(0);
 		expect(page.getByRole('button', { name: 'Unlink' }).elements()).toHaveLength(1);
 		expect(page.getByRole('link', { name: 'Settings' }).elements()).toHaveLength(0);
+		expect(tools().elements()).toHaveLength(0);
 	});
 
 	it("offers the group's settings to a session that may change them", async () => {
@@ -176,40 +203,62 @@ describe("a group whose setup didn't finish", () => {
 	});
 });
 
-describe('where requests to join wait', () => {
+describe('where members, requests to join and roles are managed', () => {
 	const linkedWith = (
 		joinPolicy: string | null,
-		can = { post: true, list: true, settings: true }
+		can = { post: true, list: true, settings: true },
+		home: string | null = 'https://knit.example/'
 	) => {
 		const data = linkedPage({ public: true, listed: true }, can);
 		const linked = { ...data.group.linked, meta: { ...data.group.linked.meta, joinPolicy } };
-		return { ...data, group: { ...data.group, linked } };
+		return { ...data, group: { ...data.group, linked, home } };
 	};
-	const note = 'Requests to join this group are kept at the group host';
+	const note = 'Members, requests to join and roles are managed at the group host';
+	const there = () => page.getByRole('link', { name: "the group's page there" });
 
-	it('is said to an admin who linked a group that approves its members', async () => {
-		render(GroupPage, { data: linkedWith('approval') as never });
+	it.each(['approval', 'open'])(
+		"is said to an admin who linked a group (%s), with a link to the group's page there",
+		async (joinPolicy) => {
+			render(GroupPage, { data: linkedWith(joinPolicy) as never });
+			await expect.poll(shown).toContain(note);
+			await expect.element(there()).toHaveAttribute('href', 'https://knit.example/');
+			await expect.element(there()).toHaveAttribute('target', '_blank');
+			await expect.element(there()).toHaveAttribute('rel', 'noopener noreferrer');
+			expect(tools().element().textContent).toContain('managed at the group host');
+		}
+	);
+
+	it('is said without a link for a group with no home', async () => {
+		render(GroupPage, { data: linkedWith('approval', undefined, null) as never });
 		await expect.poll(shown).toContain(note);
+		expect(there().elements()).toHaveLength(0);
 	});
 
 	it.each([
-		['one open to all', linkedWith('open')],
 		[
 			'a link that manages nothing',
 			linkedWith('approval', { post: true, list: false, settings: false })
-		]
-	])('is not said of %s', async (_what, data) => {
+		],
+		['a member who has not linked the group', personPage({ joinPolicy: 'approval' }, true)]
+	])('is not said to %s', async (_who, data) => {
 		render(GroupPage, { data: data as never });
-		await expect.element(page.getByRole('button', { name: 'Unlink' })).toBeVisible();
+		await expect.element(page.getByRole('heading', { level: 1 })).toBeVisible();
 		expect(shown()).not.toContain(note);
 	});
 });
 
 describe('listing a linked group', () => {
+	it('shows a listed group switched on', async () => {
+		render(GroupPage, { data: linkedPage({ public: true, listed: true }) as never });
+		await expect.element(listSwitch()).toBeChecked();
+		await expect.element(listSwitch()).toBeEnabled();
+	});
+
 	it('offers no listing for a private group, and says why', async () => {
 		render(GroupPage, { data: linkedPage({ public: false, listed: false }) as never });
-		await expect.poll(shown).toContain('Only a public group can be on the groups list.');
-		expect(listButton().elements()).toHaveLength(0);
+		await expect.poll(shown).toContain('Only a public group can be in them.');
+		await expect.element(listSwitch()).toBeDisabled();
+		await expect.element(listSwitch()).not.toBeChecked();
 	});
 
 	it.each([
@@ -218,15 +267,17 @@ describe('listing a linked group', () => {
 	] as const)('shows the reason the server gives with a %i', async (status, message) => {
 		mocks.setGroupListed.mockImplementation(async () => error(status, message));
 		render(GroupPage, { data: linkedPage({ public: true, listed: false }) as never });
-		await listButton().click();
+		await listSwitch().click();
 		await expect.element(page.getByRole('alert')).toHaveTextContent(message);
 		expect(mocks.setGroupListed).toHaveBeenCalledWith({ groupDid: GROUP, listed: true });
+		// It did not take, so the switch shows the group as it is.
+		await expect.element(listSwitch()).not.toBeChecked();
 	});
 
 	it('keeps its own words for any other failure', async () => {
 		mocks.setGroupListed.mockRejectedValue(new Error('the server said something else'));
 		render(GroupPage, { data: linkedPage({ public: true, listed: false }) as never });
-		await listButton().click();
+		await listSwitch().click();
 		await expect
 			.element(page.getByRole('alert'))
 			.toHaveTextContent('That did not work. Try again, or link the group again.');
@@ -247,6 +298,8 @@ function personPage(
 			handle: 'knit.example',
 			name: 'Knitters',
 			description: null,
+			website: null,
+			home: 'https://knit.example/',
 			atHost: true,
 			linked: null,
 			relink: false,
@@ -259,8 +312,7 @@ function personPage(
 			member: isMember,
 			askAccess: access !== null
 		},
-		events: [],
-		cursor: null,
+		...events(),
 		signedIn: true,
 		you: 'did:plc:alice',
 		access,
@@ -271,6 +323,32 @@ function personPage(
 }
 
 describe("a person's own membership", () => {
+	const header = () => page.getByRole('region', { name: 'Group', exact: true });
+
+	it.each([
+		['Join', personPage({ joinPolicy: 'open' }, false)],
+		['Ask to join', personPage({ joinPolicy: 'approval' }, false)],
+		['Leave group', personPage({ joinPolicy: 'approval' }, true)]
+	])("is shown in the group's header: %s", async (name, data) => {
+		render(GroupPage, { data: data as never });
+		await expect.element(header().getByRole('button', { name, exact: true })).toBeVisible();
+	});
+
+	it("shows a visitor who is not signed in no join state, and the header's links", async () => {
+		const data = personPage(null, null);
+		render(GroupPage, {
+			data: {
+				...data,
+				signedIn: false,
+				you: null,
+				group: { ...data.group, askAccess: false }
+			} as never
+		});
+		await expect.element(header().getByRole('link', { name: 'Group home' })).toBeVisible();
+		expect(page.getByRole('region', { name: 'Membership' }).elements()).toHaveLength(0);
+		expect(page.getByRole('button', { name: /join/i }).elements()).toHaveLength(0);
+	});
+
 	it('joins an open group at once', async () => {
 		member.joinGroup.mockResolvedValue({ outcome: 'joined' });
 		render(GroupPage, { data: personPage({ joinPolicy: 'open' }, false) as never });
@@ -361,41 +439,18 @@ describe("a person's own membership", () => {
 		}
 	);
 
-	it('links a member to the members page', async () => {
-		const members = page.getByRole('link', { name: /^Members/ });
+	it('links no one to the members page in a build without it, not a member, nor an admin who may manage members', async () => {
 		render(GroupPage, { data: personPage({ joinPolicy: 'approval' }, true) as never });
-		await expect.element(members).toBeVisible();
-		expect(decodeURIComponent(members.query()?.getAttribute('href') ?? '')).toBe(
-			`/groups/${GROUP}/members`
-		);
-	});
-
-	it.each([
-		[false, 0],
-		[null, 0],
-		[true, 1]
-	])(
-		'links an admin whose link may manage members to the members page only when the host counts them a member (%s)',
-		async (member, links) => {
-			const can = {
-				post: true,
-				list: true,
-				settings: true,
-				admit: true,
-				assign: true,
-				remove: true
-			};
-			const data = linkedPage({ public: true, listed: true }, can);
-			render(GroupPage, { data: { ...data, group: { ...data.group, member } } as never });
-			await expect.element(page.getByRole('link', { name: 'Settings' })).toBeVisible();
-			expect(page.getByRole('link', { name: /^Members/ }).elements()).toHaveLength(links);
-		}
-	);
-
-	it('does not link someone outside the group to the members page', async () => {
-		render(GroupPage, { data: personPage({ joinPolicy: 'approval' }, false) as never });
-		await expect.element(page.getByRole('button', { name: 'Ask to join' })).toBeVisible();
+		await expect.element(page.getByRole('button', { name: 'Leave group' })).toBeVisible();
 		expect(page.getByRole('link', { name: /^Members/ }).elements()).toHaveLength(0);
+		expect(document.querySelector('a[href*="/members"]')).toBeNull();
+
+		const can = { post: true, list: true, settings: true, admit: true, assign: true, remove: true };
+		const data = linkedPage({ public: true, listed: true }, can);
+		render(GroupPage, { data: { ...data, group: { ...data.group, member: true } } as never });
+		await expect.element(page.getByRole('link', { name: 'Settings' })).toBeVisible();
+		expect(page.getByRole('link', { name: /^Members/ }).elements()).toHaveLength(0);
+		expect(document.querySelector('a[href*="/members"]')).toBeNull();
 	});
 
 	it('asks for the group permissions, and says why when their server said no', async () => {
@@ -511,5 +566,74 @@ describe('members-only events', () => {
 		expect(hrefs).toContain(`/groups/${GROUP}/events/3ksupper`);
 		expect(hrefs).toContain(`/groups/${GROUP}/events/3ksupper/edit`);
 		expect(page.getByTestId('members-only-setup').elements()).toHaveLength(0);
+	});
+});
+
+describe("the group's header", () => {
+	const withLinks = (website: string | null, home: string | null) => {
+		const data = personPage({ joinPolicy: 'open' }, false);
+		return { ...data, group: { ...data.group, website, home } };
+	};
+
+	it('shows it as a group, by its name and address', async () => {
+		render(GroupPage, { data: personPage({ joinPolicy: 'open' }, false) as never });
+		await expect.element(page.getByRole('heading', { level: 1, name: 'Knitters' })).toBeVisible();
+		await expect.element(page.getByText('Group', { exact: true })).toBeVisible();
+		await expect.element(page.getByText('@knit.example')).toBeVisible();
+	});
+
+	it("links its website and its home at the group host, each in a new tab that can't reach back", async () => {
+		render(GroupPage, {
+			data: withLinks('https://yarn.example/club', 'https://knit.example/') as never
+		});
+		for (const [name, href] of [
+			[/^Website/, 'https://yarn.example/club'],
+			['Group home', 'https://knit.example/']
+		] as const) {
+			const link = page.getByRole('link', { name });
+			await expect.element(link).toHaveAttribute('href', href);
+			await expect.element(link).toHaveAttribute('target', '_blank');
+			await expect.element(link).toHaveAttribute('rel', 'noopener noreferrer');
+		}
+		// Named by its address, so it can be told from the page's own links.
+		await expect.element(page.getByRole('link', { name: 'Website: yarn.example' })).toBeVisible();
+	});
+
+	it.each(['javascript:alert(1)', 'data:text/html,hi', 'ftp://yarn.example/', 'yarn.example', ''])(
+		'links no website that is not an http(s) URL (%s)',
+		async (website) => {
+			render(GroupPage, { data: withLinks(website, null) as never });
+			await expect.element(page.getByRole('heading', { level: 1 })).toBeVisible();
+			expect(page.getByRole('link', { name: /^Website/ }).elements()).toHaveLength(0);
+			expect(document.querySelector('a[href^="javascript:"], a[href^="data:"]')).toBeNull();
+		}
+	);
+
+	it('links no home for a group without one', async () => {
+		render(GroupPage, { data: withLinks(null, null) as never });
+		await expect.element(page.getByRole('heading', { level: 1 })).toBeVisible();
+		expect(page.getByRole('link', { name: 'Group home' }).elements()).toHaveLength(0);
+	});
+});
+
+describe('the group tools', () => {
+	it('are shown to no visitor and no member who has not linked the group', async () => {
+		render(GroupPage, { data: personPage({ joinPolicy: 'open' }, false) as never });
+		await expect.element(page.getByRole('button', { name: 'Join' })).toBeVisible();
+		expect(tools().elements()).toHaveLength(0);
+		render(GroupPage, { data: personPage({ joinPolicy: 'open' }, true) as never });
+		await expect.element(page.getByRole('button', { name: 'Leave group' })).toBeVisible();
+		expect(tools().elements()).toHaveLength(0);
+		expect(page.getByRole('link', { name: 'Post an event' }).elements()).toHaveLength(0);
+	});
+
+	it('hold, in one box, posting, the listing and the settings for a link that may', async () => {
+		render(GroupPage, { data: linkedPage({ public: true, listed: true }) as never });
+		await expect.element(tools()).toBeVisible();
+		const box = tools().element();
+		expect(box.querySelector('a[href$="/events/new"]')).not.toBeNull();
+		expect(box.querySelector('a[href$="/settings"]')).not.toBeNull();
+		expect(box.querySelector('[role="switch"]')).not.toBeNull();
+		expect(page.getByRole('region', { name: 'Group tools' }).elements()).toHaveLength(1);
 	});
 });

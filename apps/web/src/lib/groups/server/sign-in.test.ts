@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
 import type { OAuthClientOptions, StoredState } from '@atcute/oauth-node-client';
 import { memoryKV, type MemoryKV } from './__fixtures__/kv';
+import { ROSTER_IN_THIS_BUILD } from '../build';
 
 const mocks = vi.hoisted(() => ({
 	networkFetch: vi.fn<typeof fetch>(),
@@ -38,11 +39,19 @@ vi.mock('#lib/atproto/network.js', () => ({
 	atprotoNetwork: () => ({ fetch: mocks.networkFetch, isolated: false, assertUrl: () => {} })
 }));
 vi.mock('@svelte-atproto/oauth/network', () => ({ createActorResolver: () => ({}) }));
+// Tested with the settings page and making groups here in the build; each check of a build without
+// one names it.
+vi.mock('../build', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../build')>()),
+	CREATE_IN_THIS_BUILD: true,
+	SETTINGS_IN_THIS_BUILD: true
+}));
 
 import {
 	finishGroupLink,
 	GROUP_SESSION_SCOPE,
 	groupClientMetadata,
+	groupSessionScope,
 	groupSignInAvailable,
 	linkAskedCurrentScope,
 	linkedGroups,
@@ -134,8 +143,23 @@ describe('the group client', () => {
 		}
 	});
 
-	it("asks for the meta read as its own scope, writes declarations and events, the settings' records and policy, the members page's writes and calls, and members-only events'", () => {
-		expect(GROUP_SESSION_SCOPE.split(' ')).toEqual([
+	it("asks for the meta read as its own scope, writes declarations and events, the settings' records and policy, and members-only events'", () => {
+		expect(GROUP_SESSION_SCOPE).toBe(groupSessionScope(ROSTER_IN_THIS_BUILD));
+		expect(groupSessionScope(false).split(' ')).toEqual([
+			'atproto',
+			'space:org.atgrp.meta?authority=self&skey=self&action=read',
+			'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
+			'blob?accept=image/*',
+			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.about&action=read&action=update',
+			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.config&action=read&action=update',
+			'space:org.atgrp.meta?authority=self&skey=self&manage=update',
+			'space:community.lexicon.calendar.collection?authority=self&manage=create',
+			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
+		]);
+	});
+
+	it("also asks for the members page's writes and calls, in a build that has it", () => {
+		expect(groupSessionScope(true).split(' ')).toEqual([
 			'atproto',
 			'space:org.atgrp.meta?authority=self&skey=self&action=read',
 			'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
@@ -148,17 +172,38 @@ describe('the group client', () => {
 			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.membership&action=read&action=delete',
 			'rpc:org.atgrp.listJoinRequests?aud=*',
 			'rpc:org.atgrp.denyJoinRequest?aud=*',
-			'space:community.lexicon.calendar.collection?authority=self&skey=self&manage=create',
-			'space:community.lexicon.calendar.collection?authority=self&skey=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
+			'space:community.lexicon.calendar.collection?authority=self&manage=create',
+			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
 		]);
+	});
+
+	it('asks for none of the settings in a build without them, nor anything for making groups here', () => {
+		expect(groupSessionScope(false, false, false).split(' ')).toEqual([
+			'atproto',
+			'space:org.atgrp.meta?authority=self&skey=self&action=read',
+			'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
+			'blob?accept=image/*',
+			'space:community.lexicon.calendar.collection?authority=self&manage=create',
+			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
+		]);
+	});
+
+	it("asks, without the settings, for the meta space's policy alone while making groups here is in the build", () => {
+		const asked = groupSessionScope(false, false, true).split(' ');
+		expect(asked).toContain('space:org.atgrp.meta?authority=self&skey=self&manage=update');
+		expect(asked.filter((token) => token.includes('org.atgrp.about'))).toEqual([]);
+		expect(asked.filter((token) => token.includes('org.atgrp.config'))).toEqual([]);
+		expect(groupSessionScope(false, true, true)).toBe(groupSessionScope(false, true, false));
 	});
 
 	// The host's approval page lists one row per space type, owner and key, keyed by type and owner
 	// alone: a space asked for once with its key and once without makes two rows with one key, and
-	// the page fails for anyone whose roles keep both.
+	// the page fails for anyone whose roles keep both. The calendar scopes name none, since the
+	// group's calendar may be one another app made under a key of its own.
 	it('names the same key in every scope for one space', () => {
 		const keys = new Map<string, Set<string | null>>();
-		for (const token of GROUP_SESSION_SCOPE.split(' ').filter((t) => t.startsWith('space:'))) {
+		const asked = groupSessionScope(true).split(' ');
+		for (const token of asked.filter((t) => t.startsWith('space:'))) {
 			const at = token.indexOf('?');
 			const params = new URLSearchParams(at === -1 ? '' : token.slice(at + 1));
 			const space = `${token.slice(0, at === -1 ? undefined : at)} ${params.get('authority')}`;
@@ -166,9 +211,11 @@ describe('the group client', () => {
 			keys.get(space)!.add(params.get('skey'));
 		}
 		expect(keys.size).toBeGreaterThan(1);
+		const calendar = 'space:community.lexicon.calendar.collection self';
 		for (const [space, skeys] of keys) {
-			expect([space, [...skeys]]).toEqual([space, ['self']]);
+			expect([space, [...skeys]]).toEqual([space, [space === calendar ? null : 'self']]);
 		}
+		expect(keys.has(calendar)).toBe(true);
 	});
 
 	it('keeps sign-in state under its prefix in OAUTH_SESSIONS, never in the library store', async () => {

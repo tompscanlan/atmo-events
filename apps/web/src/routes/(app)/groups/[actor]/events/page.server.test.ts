@@ -120,6 +120,7 @@ describe('members-only events, from the editor', () => {
 		const value = {
 			$type: 'community.lexicon.calendar.event',
 			name: 'Supper',
+			createdAt: '2026-11-01T00:00:00.000Z',
 			startsAt: '2099-01-01T18:00:00.000Z',
 			poster: 'kept'
 		};
@@ -129,6 +130,14 @@ describe('members-only events, from the editor', () => {
 			eventData: { name: 'Supper', poster: 'kept', did: GROUP, rkey: 'r' }
 		});
 		mocks.readMembersOnlyEventAsGroup.mockResolvedValue(null);
+		await expect(editEvent(request())).rejects.toMatchObject({ status: 404 });
+	});
+
+	it('opens nothing to edit that is not a valid event, as another app sharing the calendar may write', async () => {
+		mocks.groupView.mockResolvedValue(admin({ membersOnly: true }));
+		mocks.getEventRecordFromContrail.mockResolvedValue(null);
+		const value = { $type: 'community.lexicon.calendar.event', name: 'No start or date' };
+		mocks.readMembersOnlyEventAsGroup.mockResolvedValue({ uri: 'u', cid: 'c', rkey: 'r', value });
 		await expect(editEvent(request())).rejects.toMatchObject({ status: 404 });
 	});
 

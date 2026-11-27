@@ -15,6 +15,7 @@ import {
 	ACTOR_GROUPS_NSID,
 	groupAbilities,
 	holdsConfirmationGrant,
+	holdsEveryAbility,
 	holdsMetaRead,
 	holdsParticipate,
 	holdsRpc,
@@ -32,6 +33,7 @@ import {
 	type LinkedMeta
 } from './group';
 import { requireGroupsEnabled } from './enabled';
+import { CREATE_IN_THIS_BUILD } from '../build';
 import { unfinishedGroup } from './create';
 import { confirmAdmitted, hasConfirmation, joinRequested } from './confirmation';
 import { actorGroups } from './host';
@@ -55,14 +57,16 @@ export const GROUP_UNCHECKED = 'This group could not be checked right now. Try a
 export const NO_POSTING = "Your role in this group doesn't let you post its events.";
 /** The same, for the group's settings. */
 export const NO_SETTINGS = "Your role in this group doesn't let you change its settings.";
-/** Only a member reads who else is in a group. */
-export const MEMBERS_ONLY = 'Only members can see who is in this group.';
 
 export interface GroupView {
 	did: string;
 	handle: string | null;
 	name: string;
 	description: string | null;
+	/** Its website, as its about record gives it: only an http(s) URL. */
+	website: string | null;
+	/** The group's own page at its group host: see `groupHome`. */
+	home: string | null;
 	/** Whether this site may link it: the group is at its group host. */
 	atHost: boolean;
 	/** Present when the caller linked the group and the session still works. */
@@ -95,7 +99,8 @@ export interface LinkedGroup {
 	 *  again may bring the rest. False once it was approved for all of it, whatever the roles kept. */
 	reapprove: boolean;
 	/** The caller made the group here, and setting it up did not finish at the link: what they asked
-	 *  of it, which says what is left to do. Null for any other group. */
+	 *  of it, which says what is left to do. Null for any other group, and in a build without making
+	 *  groups here. */
 	unfinished: { public: boolean; listed: boolean } | null;
 }
 
@@ -144,15 +149,14 @@ async function readLinked(
 			// As granted at the approval; a refresh would not change it.
 			session.getTokenInfo(false),
 			linkAskedCurrentScope(groupDid, personDid),
-			unfinishedGroup(personDid, groupDid)
+			CREATE_IN_THIS_BUILD ? unfinishedGroup(personDid, groupDid) : null
 		]);
 		const can = groupAbilities(token.scope, groupDid);
-		const everything = Object.values(can).every(Boolean);
 		return {
 			meta,
 			listed,
 			can,
-			reapprove: !current && !everything,
+			reapprove: !current && !holdsEveryAbility(can),
 			unfinished: setup && { public: setup.public, listed: setup.listed }
 		};
 	} catch (e) {
@@ -340,6 +344,8 @@ export async function groupView(
 		handle: group.handle,
 		name: profile?.name ?? group.handle ?? group.did,
 		description: profile?.description ?? null,
+		website: profile?.website ?? null,
+		home: groupHome(group.handle),
 		atHost: groupSignInAvailable() && atHost,
 		linked,
 		relink,
@@ -350,6 +356,19 @@ export async function groupView(
 		confirmed: personal.confirmed,
 		askAccess: atHost && caller !== null && !holdsParticipate(caller.scope)
 	};
+}
+
+/** The group's own page, at the address of its handle, which was checked both ways: a group's
+ *  handle is a name its host serves, and a host that has pages for its groups shows a group's at
+ *  its address. That needs no path of any one host's own. Null without a handle. */
+export function groupHome(handle: string | null): string | null {
+	if (!handle) return null;
+	try {
+		const url = new URL(`https://${handle}/`);
+		return url.hostname === handle.toLowerCase() && url.pathname === '/' ? url.href : null;
+	} catch {
+		return null;
+	}
 }
 
 /** Whether the session's PDS, as it was when the link was approved, is this site's group host now:

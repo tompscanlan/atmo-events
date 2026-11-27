@@ -10,7 +10,7 @@ import {
 	unfinishedGroups,
 	type NotCreatedReason
 } from '#lib/groups/server/create.js';
-import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
+import { requireCreateInBuild, requireGroupsEnabled } from '#lib/groups/server/enabled.js';
 import { configuredGroupHostDid, groupHostInfo } from '#lib/groups/server/host-api.js';
 import { groupSignInAvailable, startGroupLink } from '#lib/groups/server/sign-in.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
@@ -33,6 +33,7 @@ const MADE_ALREADY =
 
 export async function load({ locals, url, setHeaders }) {
 	requireGroupsEnabled();
+	requireCreateInBuild();
 	if (!locals.did) redirect(303, '/login');
 	setHeaders({ 'cache-control': 'no-store' });
 	if (!groupSignInAvailable()) {
@@ -62,6 +63,7 @@ export async function load({ locals, url, setHeaders }) {
 export const actions = {
 	default: async ({ request, locals }) => {
 		requireGroupsEnabled();
+		requireCreateInBuild();
 		if (!groupSignInAvailable()) error(404, 'Not Found');
 		if (!locals.did) redirect(303, '/login');
 

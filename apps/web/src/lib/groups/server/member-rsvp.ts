@@ -9,8 +9,9 @@ import { RSVP_COLLECTION, type RsvpStatus } from '#lib/private-events/ids.js';
 import { holdsGuestGrant } from '#lib/private-events/scopes.js';
 import { didSpaceHosts, type SpaceHosts } from '#lib/spaces/server/space-credential.js';
 import { credentialSpaceReader } from '#lib/spaces/server/space-read.js';
-import { calendarSpaceUri, membersOnlyEventUri } from '../calendar';
+import { membersOnlyEventUri } from '../calendar';
 import { readMembersOnlyEvent, readOwnRsvp } from './calendar-read';
+import { chosenCalendar } from './calendar-choice';
 import { errorKind, isRecordNotFound, xrpc } from './xrpc';
 
 const REFUSALS = {
@@ -44,13 +45,14 @@ export async function readMembersOnlyEventPage(
 	hosts: SpaceHosts = didSpaceHosts
 ): Promise<MembersOnlyEventPage | null> {
 	const reader = credentialSpaceReader(caller, hosts);
-	const event = await readMembersOnlyEvent(reader, groupDid, rkey);
+	const space = await chosenCalendar(groupDid);
+	const event = await readMembersOnlyEvent(reader, groupDid, rkey, space);
 	if (!event) return null;
-	return { event, viewerStatus: await readOwnRsvp(reader, groupDid, caller.did, rkey) };
+	return { event, viewerStatus: await readOwnRsvp(reader, groupDid, caller.did, rkey, space) };
 }
 
-function ownRsvp(caller: CallerSession, groupDid: string, rkey: string) {
-	return { space: calendarSpaceUri(groupDid), repo: caller.did, collection: RSVP_COLLECTION, rkey };
+function ownRsvp(caller: CallerSession, space: string, rkey: string) {
+	return { space, repo: caller.did, collection: RSVP_COLLECTION, rkey };
 }
 
 /** `cid` is the event's as the page showed it, so no one answers a version they never saw. */
@@ -62,7 +64,11 @@ export async function putMembersOnlyRsvp(
 ): Promise<void> {
 	if (!holdsGuestGrant(caller.scope)) throw new RsvpRefused('no-grant');
 	const reader = credentialSpaceReader(caller, hosts);
-	const event = await readMembersOnlyEvent(reader, groupDid, input.rkey).catch((e) => {
+	const space = await chosenCalendar(groupDid).catch((e) => {
+		console.error(`[groups] the calendar unread for an RSVP: ${errorKind(e)}`);
+		throw new RsvpRefused('unchecked');
+	});
+	const event = await readMembersOnlyEvent(reader, groupDid, input.rkey, space).catch((e) => {
 		console.error(`[groups] a members-only event unread for an RSVP: ${errorKind(e)}`);
 		throw new RsvpRefused('unchecked');
 	});
@@ -71,11 +77,11 @@ export async function putMembersOnlyRsvp(
 	try {
 		await xrpc(caller.handle, 'com.atproto.space.putRecord', {
 			body: {
-				...ownRsvp(caller, groupDid, input.rkey),
+				...ownRsvp(caller, space, input.rkey),
 				record: {
 					$type: RSVP_COLLECTION,
 					status: `${RSVP_COLLECTION}#${input.status}`,
-					subject: { uri: membersOnlyEventUri(groupDid, input.rkey), cid: event.cid },
+					subject: { uri: membersOnlyEventUri(groupDid, input.rkey, space), cid: event.cid },
 					createdAt: new Date().toISOString()
 				}
 			}
@@ -94,7 +100,7 @@ export async function deleteMembersOnlyRsvp(
 	if (!holdsGuestGrant(caller.scope)) throw new RsvpRefused('no-grant');
 	try {
 		await xrpc(caller.handle, 'com.atproto.space.deleteRecord', {
-			body: ownRsvp(caller, groupDid, rkey)
+			body: ownRsvp(caller, await chosenCalendar(groupDid), rkey)
 		});
 	} catch (e) {
 		if (isRecordNotFound(e)) return;

@@ -14,6 +14,14 @@ vi.mock('#lib/groups/server/context.js', async (importActual) => ({
 	requireGroupWriter: mocks.requireGroupWriter
 }));
 vi.mock('#lib/groups/server/settings.js', () => ({ readGroupSettings: mocks.readGroupSettings }));
+/** The page is tested with it in the build, and once without. */
+const build = vi.hoisted(() => ({ settings: true }));
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	get SETTINGS_IN_THIS_BUILD() {
+		return build.settings;
+	}
+}));
 
 import { load } from './+page.server';
 
@@ -48,6 +56,7 @@ const SETTINGS = {
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	build.settings = true;
 	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 	mocks.requireGroupWriter.mockResolvedValue({ did: GROUP, handle: vi.fn() });
 	mocks.readGroupSettings.mockResolvedValue(SETTINGS);
@@ -96,5 +105,18 @@ describe("a group's settings page", () => {
 			status: 403,
 			body: { message: NO_SETTINGS }
 		});
+	});
+});
+
+describe('in a build without the settings page', () => {
+	it("is groups-off's 404, with groups on, before reading the group", async () => {
+		build.settings = false;
+		mocks.groupView.mockResolvedValue(linked(true));
+		await expect(load(request())).rejects.toMatchObject({
+			status: 404,
+			body: { message: 'Not Found' }
+		});
+		expect(mocks.groupView).not.toHaveBeenCalled();
+		expect(mocks.readGroupSettings).not.toHaveBeenCalled();
 	});
 });

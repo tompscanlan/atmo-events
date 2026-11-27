@@ -1,4 +1,5 @@
 import { error, redirect } from '@sveltejs/kit';
+import { CREATE_IN_THIS_BUILD } from '#lib/groups/build.js';
 import { groupPath } from '#lib/groups/server/context.js';
 import { finishCreatedGroup } from '#lib/groups/server/create.js';
 import { finishGroupLink, groupSignInAvailable } from '#lib/groups/server/sign-in.js';
@@ -14,6 +15,9 @@ export async function GET({ url, locals }) {
 	}
 	console.info(`[groups] ${result.groupDid} linked by ${locals.did}`);
 	// A group they made here is set up as they asked; one that does not finish says so on its page.
-	const made = await finishCreatedGroup(result.groupDid, locals.did as string);
+	// Only a build that makes groups here has any.
+	const made = CREATE_IN_THIS_BUILD
+		? await finishCreatedGroup(result.groupDid, locals.did as string)
+		: null;
 	redirect(303, `${groupPath(result.groupDid)}?link=${made === 'created' ? 'created' : 'linked'}`);
 }

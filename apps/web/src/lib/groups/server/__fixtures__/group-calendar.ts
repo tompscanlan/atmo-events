@@ -1,15 +1,30 @@
 // A group's calendar space at its group host, for tests: the group's session, which writes as the
 // group, a member's session at their own PDS, and the host's credential and its reads, which a test
 // routes its network through. The host gives a credential only to a holder the test lets read.
+// Beside the group's own `self` calendar, it may have others another app made, and an index of
+// them in its members space, as the group host keeps one.
 import { fakeKemHost } from '#lib/spaces/server/__fixtures__/space-mac-host.js';
 import type { SpaceHosts } from '#lib/spaces/server/space-credential.js';
 import type { XrpcHandle } from '../xrpc';
 
 export const GROUP = 'did:plc:group';
-export const CALENDAR = `at:space/${GROUP}/community.lexicon.calendar.collection/self`;
+/** The group's calendar space at `skey`. */
+export const calendarAt = (skey: string) =>
+	`at:space/${GROUP}/community.lexicon.calendar.collection/${skey}`;
+export const CALENDAR = calendarAt('self');
+export const MEMBERS = `at:space/${GROUP}/org.atgrp.members/self`;
 const EVENT = 'community.lexicon.calendar.event';
 const RSVP = 'community.lexicon.calendar.rsvp';
+const INDEX = 'org.atgrp.space';
 const HOST = 'https://host.example';
+
+/** A calendar space as the host keeps it: its policy, the group's events there, and the group's
+ *  other records there, by key, as another app may write them. */
+export interface FakeSpace {
+	policy: Body | null;
+	events: Map<string, Body>;
+	others: Map<string, { collection: string; value: Body }>;
+}
 
 const kem = await fakeKemHost();
 
@@ -26,12 +41,29 @@ export function fakeCalendar() {
 		publicRepo: new Map<string, Body>(),
 		/** Members' RSVPs in the space, by `<did>/<rkey>`. */
 		rsvps: new Map<string, Body>(),
-		/** Who the host gives a credential: `group`, or a person's DID. */
+		/** The group's other records in the `self` space. */
+		others: new Map<string, { collection: string; value: Body }>(),
+		/** The group's calendar spaces but `self`, by URI. */
+		spaces: new Map<string, FakeSpace>(),
+		/** The group's index of its spaces, in its members space: `org.atgrp.space` records. */
+		index: [] as { space: string; createdAt: string }[],
+		/** Who the host gives a credential for the members space, where the index is. */
+		indexReaders: new Set<string>(['group']),
+		/** Who the host gives a credential for a calendar space: `group`, or a person's DID. */
 		readers: new Set<string>(),
 		/** Every call made as the group or a person, as `[who, nsid, body or query]`. */
 		sent: [] as [string, string, Body][],
 		/** What the next call as the group answers instead, by method. */
 		refuse: new Map<string, Response>()
+	};
+
+	/** The calendar space at `uri`, while there is one. */
+	const spaceAt = (uri: unknown): FakeSpace | null => {
+		const space =
+			uri === CALENDAR
+				? { policy: state.policy, events: state.events, others: state.others }
+				: state.spaces.get(String(uri));
+		return space?.policy ? space : null;
 	};
 
 	const pds =
@@ -50,26 +82,39 @@ export function fakeCalendar() {
 			}
 			if (who !== 'group') {
 				const key = `${who}/${body.rkey}`;
-				if (body.space !== CALENDAR || body.repo !== who) return fail(400, 'InvalidRequest');
+				if (!spaceAt(body.space) || body.repo !== who) return fail(400, 'InvalidRequest');
 				if (nsid === 'com.atproto.space.putRecord') state.rsvps.set(key, body.record as Body);
 				else if (nsid === 'com.atproto.space.deleteRecord') state.rsvps.delete(key);
 				return Response.json({});
 			}
 			const rkey = String(body.rkey ?? '');
 			switch (nsid) {
-				case 'com.atproto.space.getSpace':
-					return state.policy
-						? Response.json({ space: body.space, policy: state.policy })
+				case 'com.atproto.space.getSpace': {
+					const space = spaceAt(body.space);
+					return space
+						? Response.json({ space: body.space, policy: space.policy })
 						: fail(400, 'SpaceNotFound');
-				case 'com.atproto.space.createSpace':
-					if (state.policy) return fail(400, 'SpaceAlreadyExists');
-					state.policy = body.policy as Body;
-					return Response.json({ space: CALENDAR });
-				case 'com.atproto.space.putRecord':
-					state.events.set(rkey, body.record as Body);
-					return Response.json({ uri: `${CALENDAR}/${GROUP}/${EVENT}/${rkey}`, cid: 'cid' });
+				}
+				case 'com.atproto.space.createSpace': {
+					const uri = calendarAt(String(body.skey ?? '3lmadehere'));
+					if (spaceAt(uri)) return fail(400, 'SpaceAlreadyExists');
+					if (uri === CALENDAR) state.policy = body.policy as Body;
+					else
+						state.spaces.set(uri, {
+							policy: body.policy as Body,
+							events: new Map(),
+							others: new Map()
+						});
+					return Response.json({ space: uri });
+				}
+				case 'com.atproto.space.putRecord': {
+					const space = spaceAt(body.space);
+					if (!space) return fail(400, 'InvalidRequest');
+					space.events.set(rkey, body.record as Body);
+					return Response.json({ uri: `${body.space}/${GROUP}/${EVENT}/${rkey}`, cid: 'cid' });
+				}
 				case 'com.atproto.space.deleteRecord':
-					state.events.delete(rkey);
+					spaceAt(body.space)?.events.delete(rkey);
 					return Response.json({});
 				case 'com.atproto.repo.getRecord': {
 					const value = state.publicRepo.get(rkey);
@@ -91,18 +136,31 @@ export function fakeCalendar() {
 		if (url.pathname.endsWith('authorizeSpaceSync')) {
 			const { delegationToken, space } = JSON.parse(String(init?.body)) as Body;
 			const who = String(delegationToken).replace('delegation:', '');
-			if (!state.policy || space !== CALENDAR) return fail(400, 'SpaceNotFound');
+			if (space === MEMBERS) {
+				if (!state.indexReaders.has(who)) return fail(403, 'NotAuthorized');
+				return Response.json({ credential: `credential:${who}` });
+			}
+			if (!spaceAt(space)) return fail(400, 'SpaceNotFound');
 			if (!state.readers.has(who)) return fail(403, 'NotAuthorized');
 			return Response.json({ credential: `credential:${who}` });
 		}
 		const q = url.searchParams;
 		if (url.pathname.endsWith('listRecords')) {
-			const records = [...state.events].map(([rkey, value]) => ({
-				collection: EVENT,
-				rkey,
-				cid: `cid-${rkey}`,
-				value
-			}));
+			if (q.get('space') === MEMBERS) {
+				const records = state.index.map((entry, i) => ({
+					collection: INDEX,
+					rkey: `3lindex${i}`,
+					cid: `cid-index-${i}`,
+					value: { $type: INDEX, ...entry }
+				}));
+				return Response.json({ records, cursor: null });
+			}
+			// Every record the group has there, whatever collection was asked for.
+			const space = spaceAt(q.get('space'));
+			const records = [
+				...[...(space?.events ?? [])].map(([rkey, value]) => ({ collection: EVENT, rkey, value })),
+				...[...(space?.others ?? [])].map(([rkey, other]) => ({ rkey, ...other }))
+			].map((record) => ({ ...record, cid: `cid-${record.rkey}` }));
 			return Response.json({ records, cursor: null });
 		}
 		if (url.pathname.endsWith('getRecord')) {
@@ -110,7 +168,7 @@ export function fakeCalendar() {
 			const rkey = q.get('rkey')!;
 			const value =
 				repo === GROUP && q.get('collection') === EVENT
-					? state.events.get(rkey)
+					? spaceAt(q.get('space'))?.events.get(rkey)
 					: q.get('collection') === RSVP
 						? state.rsvps.get(`${repo}/${rkey}`)
 						: undefined;
@@ -122,8 +180,20 @@ export function fakeCalendar() {
 		return fail(404, 'NotFound');
 	}
 
+	/** A calendar space another app made the group under `policy`, at `skey`, and listed in its
+	 *  index at `createdAt`. */
+	function anotherAppsCalendar(skey: string, policy: Body, createdAt = '2026-10-01T00:00:00.000Z') {
+		const uri = calendarAt(skey);
+		const space = { policy, events: new Map(), others: new Map() };
+		if (uri === CALENDAR) state.policy = policy;
+		else state.spaces.set(uri, space);
+		state.index.push({ space: uri, createdAt });
+		return uri === CALENDAR ? spaceAt(uri)! : space;
+	}
+
 	return {
 		state,
+		anotherAppsCalendar,
 		groupHandle: pds('group'),
 		personHandle: (did: string) => pds(did),
 		fetch

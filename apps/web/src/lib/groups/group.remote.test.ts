@@ -18,7 +18,8 @@ const mocks = vi.hoisted(() => ({
 	resolveGroup: vi.fn(),
 	saveSettings: vi.fn(),
 	finishSetup: vi.fn(),
-	refuseMembersOnlyKey: vi.fn()
+	refuseMembersOnlyKey: vi.fn(),
+	turnOnMembersOnly: vi.fn()
 }));
 vi.mock('$app/server', () => ({
 	command: (_schema: unknown, handler: unknown) =>
@@ -42,9 +43,21 @@ vi.mock('./server/settings', async (importActual) => ({
 	saveGroupSettings: mocks.saveSettings
 }));
 vi.mock('./server/create', () => ({ finishSetup: mocks.finishSetup }));
+/** Making groups here and the settings are tested in the build, and once without. */
+const build = vi.hoisted(() => ({ create: true, settings: true }));
+vi.mock('./build', async (importOriginal) => ({
+	...(await importOriginal<typeof import('./build')>()),
+	get CREATE_IN_THIS_BUILD() {
+		return build.create;
+	},
+	get SETTINGS_IN_THIS_BUILD() {
+		return build.settings;
+	}
+}));
 vi.mock('./server/group-events', async (importActual) => ({
 	...(await importActual<typeof import('./server/group-events')>()),
-	refuseMembersOnlyKey: mocks.refuseMembersOnlyKey
+	refuseMembersOnlyKey: mocks.refuseMembersOnlyKey,
+	turnOnMembersOnly: mocks.turnOnMembersOnly
 }));
 
 import {
@@ -53,6 +66,7 @@ import {
 	putGroupEvent,
 	saveGroupSettings,
 	setGroupListed,
+	turnOnMembersOnlyEvents,
 	unlinkGroupSession,
 	uploadGroupBlob
 } from './group.remote';
@@ -62,6 +76,8 @@ const ALICE = 'did:plc:alice';
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	build.create = true;
+	build.settings = true;
 	mocks.getRequestEvent.mockReturnValue({ locals: { did: ALICE } });
 	mocks.requireGroupWriter.mockResolvedValue({ did: GROUP, handle: mocks.handle });
 	mocks.handle.mockImplementation(async () => Response.json({ uri: 'at://u', cid: 'c' }));
@@ -194,6 +210,27 @@ describe('listing', () => {
 		expect(mocks.listGroup).not.toHaveBeenCalled();
 	});
 
+	it('says to make it public in its settings, or at the group host in a build without them', async () => {
+		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: false });
+		await expect(setGroupListed({ groupDid: GROUP, listed: true })).rejects.toMatchObject({
+			body: { message: expect.stringContaining('Make it public in its settings first.') }
+		});
+		build.settings = false;
+		await expect(setGroupListed({ groupDid: GROUP, listed: true })).rejects.toMatchObject({
+			status: 409,
+			body: { message: expect.stringContaining('Make it public at the group host first.') }
+		});
+	});
+
+	it('lists and unlists in a build without the settings page', async () => {
+		build.settings = false;
+		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: true });
+		expect(await setGroupListed({ groupDid: GROUP, listed: true })).toEqual({ listed: true });
+		expect(mocks.listGroup).toHaveBeenCalledWith(mocks.handle, GROUP);
+		expect(await setGroupListed({ groupDid: GROUP, listed: false })).toEqual({ listed: false });
+		expect(mocks.unlistGroup).toHaveBeenCalledWith(mocks.handle, GROUP);
+	});
+
 	it('says the same when the group host refuses the declaration, the group having turned private since it was read', async () => {
 		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: true });
 		mocks.listGroup.mockRejectedValue(
@@ -263,6 +300,15 @@ describe('settings', () => {
 		listed: false
 	};
 
+	it("is groups-off's 404 in a build without the settings page, before looking for a link", async () => {
+		build.settings = false;
+		await expect(
+			saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings: form })
+		).rejects.toMatchObject({ status: 404, body: { message: 'Not Found' } });
+		expect(mocks.requireGroupWriter).not.toHaveBeenCalled();
+		expect(mocks.saveSettings).not.toHaveBeenCalled();
+	});
+
 	it("saves them as the group, on the caller's own link, keeping what the form showed", async () => {
 		mocks.resolveGroup.mockResolvedValue({
 			did: GROUP,
@@ -322,6 +368,35 @@ describe('finishing a group made here', () => {
 		await expect(finishGroupSetup({ groupDid: GROUP })).rejects.toMatchObject({
 			status: 403,
 			body: { message: 'Your role in this group no longer allows that.' }
+		});
+	});
+
+	it("is groups-off's 404 in a build without making groups here, before looking for a link", async () => {
+		build.create = false;
+		await expect(finishGroupSetup({ groupDid: GROUP })).rejects.toMatchObject({
+			status: 404,
+			body: { message: 'Not Found' }
+		});
+		expect(mocks.requireGroupWriter).not.toHaveBeenCalled();
+		expect(mocks.finishSetup).not.toHaveBeenCalled();
+	});
+});
+
+describe('turning members-only events on', () => {
+	it("does it as the group, on the caller's own link", async () => {
+		mocks.turnOnMembersOnly.mockResolvedValue({ state: 'ready', posters: [], space: 's' });
+		expect(await turnOnMembersOnlyEvents({ groupDid: GROUP })).toEqual({ ok: true });
+		expect(mocks.turnOnMembersOnly).toHaveBeenCalledWith({ did: GROUP, handle: mocks.handle }, []);
+	});
+
+	it('says plainly why when the group has a calendar atmo may not post to, and makes none', async () => {
+		mocks.turnOnMembersOnly.mockRejectedValue(new GroupEventRefused('calendar-space-not-granted'));
+		await expect(turnOnMembersOnlyEvents({ groupDid: GROUP })).rejects.toMatchObject({
+			status: 409,
+			body: {
+				message:
+					'This group already has a calendar for its members, but its settings let no role post events to it from atmo, so atmo made no second one. An admin can allow it at the group host.'
+			}
 		});
 	});
 });

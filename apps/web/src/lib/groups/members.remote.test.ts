@@ -22,6 +22,14 @@ const mocks = vi.hoisted(() => ({
 	isMemberAsPerson: vi.fn(),
 	resolveGroup: vi.fn()
 }));
+/** The members page's commands are tested with it in the build, and once without. */
+const build = vi.hoisted(() => ({ roster: true }));
+vi.mock('./build', async (importOriginal) => ({
+	...(await importOriginal<typeof import('./build')>()),
+	get ROSTER_IN_THIS_BUILD() {
+		return build.roster;
+	}
+}));
 vi.mock('./server/group', () => ({
 	resolveGroup: mocks.resolveGroup,
 	atGroupHost: ({ pds }: { pds: string }) => pds === 'https://host.example'
@@ -79,6 +87,7 @@ const writer = { did: GROUP, handle: vi.fn() };
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	build.roster = true;
 	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 	mocks.getRequestEvent.mockReturnValue({ locals: { did: ALICE, session: {} } });
 	mocks.callerSession.mockResolvedValue(caller);
@@ -304,5 +313,36 @@ describe("an admin's acts on the members page", () => {
 		}
 		expect(mocks.requireGroupWriter).not.toHaveBeenCalled();
 		expect(mocks.callerSession).not.toHaveBeenCalled();
+	});
+
+	it("is groups-off's 404 in a build without the members page, with groups on, before looking for a link", async () => {
+		build.roster = false;
+		for (const run of [
+			() => approveRequest({ groupDid: GROUP, did: BOB }),
+			() => denyRequest({ groupDid: GROUP, did: BOB }),
+			() => changeRole({ groupDid: GROUP, did: BOB, admin: true }),
+			() => removeFromGroup({ groupDid: GROUP, did: BOB })
+		]) {
+			await expect(run()).rejects.toMatchObject({ status: 404, body: { message: 'Not Found' } });
+		}
+		expect(mocks.requireGroupWriter).not.toHaveBeenCalled();
+		for (const act of [
+			mocks.admitMember,
+			mocks.denyJoinRequest,
+			mocks.setMemberAdmin,
+			mocks.removeMember
+		]) {
+			expect(act).not.toHaveBeenCalled();
+		}
+	});
+
+	it("leaves a person's own membership as it is in a build without the members page", async () => {
+		build.roster = false;
+		mocks.leaveGroup.mockResolvedValue(undefined);
+		mocks.cancelJoinRequest.mockResolvedValue(undefined);
+		mocks.requestJoin.mockResolvedValue('pending');
+		expect(await joinGroup({ groupDid: GROUP })).toEqual({ outcome: 'pending' });
+		expect(await cancelJoin({ groupDid: GROUP })).toEqual({ ok: true });
+		expect(await leave({ groupDid: GROUP })).toEqual({ ok: true });
 	});
 });

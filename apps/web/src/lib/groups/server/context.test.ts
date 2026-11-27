@@ -46,6 +46,17 @@ vi.mock('./sign-in', () => ({
 	linkAskedCurrentScope: mocks.linkAskedCurrentScope
 }));
 vi.mock('./create', () => ({ unfinishedGroup: mocks.unfinishedGroup }));
+/** Making groups here and the settings are tested in the build, and once without. */
+const build = vi.hoisted(() => ({ create: true, settings: true }));
+vi.mock('../build', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../build')>()),
+	get CREATE_IN_THIS_BUILD() {
+		return build.create;
+	},
+	get SETTINGS_IN_THIS_BUILD() {
+		return build.settings;
+	}
+}));
 vi.mock('./person', () => ({
 	personReader: () => ({}),
 	readMetaAsPerson: mocks.readMetaAsPerson,
@@ -61,6 +72,7 @@ vi.mock('./confirmation', () => ({
 import {
 	GROUP_NOT_FOUND,
 	GROUP_UNCHECKED,
+	groupHome,
 	groupView,
 	LINKED_READ_LIMIT_MS,
 	requireGroupWriter,
@@ -90,6 +102,8 @@ const meta = { profile: { name: 'Knitters', description: 'Yarn' }, public: true 
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	build.create = true;
+	build.settings = true;
 	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 	mocks.resolveGroup.mockResolvedValue(resolved);
 	mocks.readCachedProfiles.mockResolvedValue(new Map());
@@ -140,6 +154,51 @@ describe('groupView for a visitor', () => {
 	it('falls back to the handle when there is no cached profile', async () => {
 		mocks.isDeclared.mockResolvedValue(true);
 		expect((await groupView(GROUP, null)).name).toBe('knit.example');
+	});
+
+	it("gives a declared group's website, as cached, and its home at its handle's address", async () => {
+		mocks.isDeclared.mockResolvedValue(true);
+		mocks.readCachedProfiles.mockResolvedValue(
+			new Map([
+				[
+					GROUP,
+					{
+						name: 'Knitters',
+						description: null,
+						handle: 'knit.example',
+						website: 'https://yarn.example/'
+					}
+				]
+			])
+		);
+		expect(await groupView(GROUP, null)).toMatchObject({
+			website: 'https://yarn.example/',
+			home: 'https://knit.example/'
+		});
+		mocks.readCachedProfiles.mockResolvedValue(new Map());
+		expect(await groupView(GROUP, null)).toMatchObject({ website: null });
+	});
+
+	it('gives no home to a group whose handle did not check out', async () => {
+		mocks.isDeclared.mockResolvedValue(true);
+		mocks.resolveGroup.mockResolvedValue({ ...resolved, handle: null });
+		expect((await groupView(GROUP, null)).home).toBeNull();
+	});
+});
+
+describe('groupHome', () => {
+	it("is the address of the group's handle, and nothing for an address that is not one", () => {
+		expect(groupHome('knit.example')).toBe('https://knit.example/');
+		expect(groupHome('Knit.Example')).toBe('https://knit.example/');
+		expect(groupHome(null)).toBeNull();
+		for (const handle of [
+			'knit.example/evil',
+			'evil.example#knit.example',
+			'a@evil.example',
+			'knit example'
+		]) {
+			expect(groupHome(handle), handle).toBeNull();
+		}
 	});
 });
 
@@ -194,6 +253,29 @@ describe('groupView for someone who linked the group', () => {
 		expect(mocks.linkAskedCurrentScope).toHaveBeenCalledWith(GROUP, ALICE);
 	});
 
+	it('offers no settings in a build without the settings page, nor approving again for them', async () => {
+		build.settings = false;
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		mocks.linkAskedCurrentScope.mockResolvedValue(false);
+		// All the rest of what a link is asked for, but the settings.
+		const allButSettings = ADMIN_SCOPE.split(' ')
+			.filter((token) => !GROUP_SETTINGS_SCOPES.some((s) => token === s.replace('self', GROUP)))
+			.join(' ');
+		expect(allButSettings).not.toContain('manage=update');
+		mocks.groupSession.mockResolvedValue(linkedSession(allButSettings));
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({
+			can: { post: true, list: true, settings: false },
+			reapprove: false
+		});
+		// Whatever the host granted, a link changes no settings here.
+		mocks.groupSession.mockResolvedValue(linkedSession(ADMIN_SCOPE));
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({
+			can: { list: true, settings: false },
+			reapprove: false
+		});
+	});
+
 	it("says when setting up a group the caller made here didn't finish", async () => {
 		mocks.readGroupMeta.mockResolvedValue(meta);
 		mocks.repoHasDeclaration.mockResolvedValue(true);
@@ -207,6 +289,20 @@ describe('groupView for someone who linked the group', () => {
 			unfinished: { public: true, listed: false }
 		});
 		expect(mocks.unfinishedGroup).toHaveBeenCalledWith(ALICE, GROUP);
+	});
+
+	it('reads no note of a group made here in a build without making groups here', async () => {
+		build.create = false;
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		mocks.unfinishedGroup.mockResolvedValue({
+			did: GROUP,
+			handle: 'knit.example',
+			public: true,
+			listed: false
+		});
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({ unfinished: null });
+		expect(mocks.unfinishedGroup).not.toHaveBeenCalled();
 	});
 
 	it('asks to link again when the session cannot say what it was granted', async () => {
