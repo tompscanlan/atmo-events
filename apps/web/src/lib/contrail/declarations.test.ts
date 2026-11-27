@@ -298,6 +298,40 @@ describe('the groups with an event coming', () => {
 		};
 	};
 
+	it('lists no group whose declaration is gone, by the name cached for it before', async () => {
+		const db = await setup();
+		// Made private or unlisted since its name was cached: its group host took the declaration
+		// down, and the index has heard.
+		await event(db, 'did:plc:private', 'e', at(1));
+		await cacheProfile(db, 'did:plc:private', {
+			name: 'Knitters',
+			description: null,
+			handle: null
+		});
+		await run(
+			db,
+			"INSERT INTO identities (did, handle, pds, resolved_at) VALUES ('did:plc:private', 'knit.example', 'https://a.example', 1)"
+		);
+		expect((await upcomingGroups(db, NOW)).groups).toEqual([]);
+		expect(await groupServers(db, NOW)).toEqual([]);
+	});
+
+	it(`counts accounts not resolved yet as one server, ${UPCOMING_PER_SERVER} of them a page`, async () => {
+		const db = await setup();
+		const unresolved = await groupsAt(db, '', 'u', 20, 1);
+		const other = await groupsAt(db, 'https://a.example', 'a', 3, 100);
+		// groupsAt declares an account with no identity when its server is ''.
+		expect(
+			(await db.prepare('SELECT COUNT(*) AS n FROM identities').first<{ n: number }>())!.n
+		).toBe(3);
+		const pages = await allPages(db);
+		expect(pages).toEqual([[...unresolved.slice(0, 15), ...other], unresolved.slice(15)]);
+		// And they have no server row to send anyone to.
+		expect(await groupServers(db, NOW)).toEqual([
+			{ server: 'https://a.example', groups: 3, upcoming: 3 }
+		]);
+	});
+
 	it('shows each group once when a group’s next event starts between one page and the next', async () => {
 		const db = await setup();
 		const busy = await groupsAt(db, 'https://busy.example', 'b', 20, 1);
