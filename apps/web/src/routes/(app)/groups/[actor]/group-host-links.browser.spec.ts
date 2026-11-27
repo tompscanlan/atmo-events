@@ -1,5 +1,5 @@
-// The group page in a build without the settings page; group-page.browser.spec.ts shows it in one
-// that has it.
+// The group page in a build without the settings page, which links to the group host for what it
+// changed; group-page.browser.spec.ts shows it in one that has it.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
@@ -72,6 +72,10 @@ function linkedPage(can: Partial<typeof CAN> = {}, home: string | null = 'https:
 }
 
 const tools = () => page.getByRole('region', { name: 'Group tools' });
+const atHost = () => page.getByRole('link', { name: 'Settings at the group host' });
+const shown = () => (document.body.textContent ?? '').replace(/\s+/g, ' ');
+const SAID =
+	"The group's name, description and who may join are changed at the group host, as are its members, requests to join and roles.";
 
 afterEach(() => vi.resetAllMocks());
 
@@ -86,5 +90,37 @@ describe('in a build without the settings page', () => {
 		await expect
 			.element(page.getByRole('switch', { name: 'Show in public group lists' }))
 			.toBeChecked();
+	});
+
+	it.each([
+		['a link that holds the settings', { settings: true }],
+		['a link that may only post', { list: false }]
+	])(
+		"links %s to the group's page at its host instead, in a new tab, and says what changes there",
+		async (_who, can) => {
+			render(GroupPage, { data: linkedPage(can) as never });
+			await expect.element(atHost()).toHaveAttribute('href', 'https://knit.example/');
+			await expect.element(atHost()).toHaveAttribute('target', '_blank');
+			await expect.element(atHost()).toHaveAttribute('rel', 'noopener noreferrer');
+			expect(tools().element().contains(atHost().element())).toBe(true);
+			expect(tools().element().textContent?.replace(/\s+/g, ' ')).toContain(SAID);
+		}
+	);
+
+	it('still says what changes at the group host for a group with no home, with nothing to link', async () => {
+		render(GroupPage, { data: linkedPage({}, null) as never });
+		await expect.element(tools()).toBeVisible();
+		expect(atHost().elements()).toHaveLength(0);
+		expect(shown()).toContain(SAID);
+	});
+
+	it('says nothing of it to someone who has not linked the group', async () => {
+		const data = linkedPage();
+		render(GroupPage, {
+			data: { ...data, group: { ...data.group, linked: null, hasLink: false } } as never
+		});
+		await expect.element(page.getByRole('heading', { level: 1 })).toBeVisible();
+		expect(atHost().elements()).toHaveLength(0);
+		expect(shown()).not.toContain(SAID);
 	});
 });

@@ -143,9 +143,15 @@
 </script>
 
 <!-- For an admin who linked the group: its members, those asking to join and their roles are
-     kept at the group host, and managed there. -->
+     kept at the group host, and managed there. In a build without the settings page, for anyone who
+     linked it: so are its name, description and who may join, and the tools link there. -->
 {#snippet managedAtHost()}
-	{#if group.linked && (group.linked.can.settings || group.linked.can.admit)}
+	{#if group.linked && !SETTINGS_IN_THIS_BUILD}
+		<p class="text-base-600 dark:text-base-400 text-sm">
+			The group's name, description and who may join are changed at the group host, as are its
+			members, requests to join and roles.
+		</p>
+	{:else if group.linked && (group.linked.can.settings || group.linked.can.admit)}
 		<p class="text-base-600 dark:text-base-400 text-sm">
 			Members, requests to join and roles are managed at the group host{#if group.home}:
 				<!-- The group's own address, from its handle, so there is nothing to resolve. -->
@@ -281,11 +287,20 @@
 							variant="primary">Post an event</Button
 						>
 					{/if}
-					{#if SETTINGS_IN_THIS_BUILD && group.linked.can.settings}
-						<Button
-							href={resolve('/(app)/groups/[actor]/settings', { actor: group.did })}
-							variant="secondary">Settings</Button
-						>
+					{#if SETTINGS_IN_THIS_BUILD}
+						{#if group.linked.can.settings}
+							<Button
+								href={resolve('/(app)/groups/[actor]/settings', { actor: group.did })}
+								variant="secondary">Settings</Button
+							>
+						{/if}
+					{:else if group.home}
+						<!-- The group's own page at its host, from its handle, in a new tab that can't reach
+						     back. -->
+						<!-- eslint-disable svelte/no-navigation-without-resolve -->
+						<Button href={group.home} target="_blank" rel="noopener noreferrer" variant="secondary"
+							>Settings at the group host <span aria-hidden="true">&nearr;</span></Button
+						><!-- eslint-enable svelte/no-navigation-without-resolve -->
 					{/if}
 					<Button variant="ghost" disabled={busy} onclick={unlink}>Unlink</Button>
 				</div>

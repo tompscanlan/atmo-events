@@ -2,6 +2,7 @@ import { error, isHttpError } from '@sveltejs/kit';
 import { command, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
 import { callerSession } from '#lib/private-events/server/caller.js';
+import { SETTINGS_IN_THIS_BUILD } from './build';
 import { EVENT_PLACEMENTS } from './event-placement';
 import { GROUP_EVENT_COLLECTION } from './ids';
 import { requireGroupWriter, requireStoredLink } from './server/context';
@@ -28,8 +29,9 @@ function callerDid(): string | null {
 	return getRequestEvent().locals.did;
 }
 
-const ONLY_PUBLIC =
-	'Only a public group can be listed, and this one is private. Make it public in its settings first.';
+/** Where a group is made public: its settings here, or else its group host. */
+const onlyPublic = () =>
+	`Only a public group can be listed, and this one is private. Make it public ${SETTINGS_IN_THIS_BUILD ? 'in its settings' : 'at the group host'} first.`;
 const NO_ROLE = 'Your role in this group no longer allows that.';
 const RELINK = 'Your link to this group stopped working. Link it again from its page.';
 
@@ -52,7 +54,7 @@ export const setGroupListed = command(
 		try {
 			if (listed) {
 				const meta = await readGroupMeta(writer.handle, groupDid);
-				if (!meta.public) error(409, ONLY_PUBLIC);
+				if (!meta.public) error(409, onlyPublic());
 				await listGroup(writer.handle, groupDid);
 			} else {
 				await unlistGroup(writer.handle, groupDid);
@@ -69,7 +71,7 @@ export const setGroupListed = command(
 				e.status === 400 &&
 				e.error === 'InvalidRequest'
 			) {
-				error(409, ONLY_PUBLIC);
+				error(409, onlyPublic());
 			}
 			throw e;
 		}

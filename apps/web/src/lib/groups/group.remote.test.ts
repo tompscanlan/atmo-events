@@ -210,6 +210,27 @@ describe('listing', () => {
 		expect(mocks.listGroup).not.toHaveBeenCalled();
 	});
 
+	it('says to make it public in its settings, or at the group host in a build without them', async () => {
+		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: false });
+		await expect(setGroupListed({ groupDid: GROUP, listed: true })).rejects.toMatchObject({
+			body: { message: expect.stringContaining('Make it public in its settings first.') }
+		});
+		build.settings = false;
+		await expect(setGroupListed({ groupDid: GROUP, listed: true })).rejects.toMatchObject({
+			status: 409,
+			body: { message: expect.stringContaining('Make it public at the group host first.') }
+		});
+	});
+
+	it('lists and unlists in a build without the settings page', async () => {
+		build.settings = false;
+		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: true });
+		expect(await setGroupListed({ groupDid: GROUP, listed: true })).toEqual({ listed: true });
+		expect(mocks.listGroup).toHaveBeenCalledWith(mocks.handle, GROUP);
+		expect(await setGroupListed({ groupDid: GROUP, listed: false })).toEqual({ listed: false });
+		expect(mocks.unlistGroup).toHaveBeenCalledWith(mocks.handle, GROUP);
+	});
+
 	it('says the same when the group host refuses the declaration, the group having turned private since it was read', async () => {
 		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: true });
 		mocks.listGroup.mockRejectedValue(
