@@ -12,7 +12,7 @@ vi.mock('$app/server', () => ({
 		Object.assign(handler as object, { __: { type: 'command' } }),
 	getRequestEvent: () => ({ locals: { did: 'did:plc:alice' } })
 }));
-vi.mock('./browse', () => ({ browseGroups: vi.fn() }));
+vi.mock('./browse', () => ({ browseUpcoming: vi.fn(), browseDeclared: vi.fn() }));
 vi.mock('./group', () => ({ resolveGroup: vi.fn(), isDeclared: vi.fn() }));
 vi.mock('./sign-in', () => ({ groupSession: vi.fn(), hasGroupSession: vi.fn() }));
 

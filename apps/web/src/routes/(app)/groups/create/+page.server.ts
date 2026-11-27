@@ -11,7 +11,6 @@ import {
 	type NotCreatedReason
 } from '#lib/groups/server/create.js';
 import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
-import { forgetHeldAtGroupHost } from '#lib/groups/server/group.js';
 import { configuredGroupHostDid, groupHostInfo } from '#lib/groups/server/host-api.js';
 import { groupSignInAvailable, startGroupLink } from '#lib/groups/server/sign-in.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
@@ -118,7 +117,6 @@ export const actions = {
 			public: group.public,
 			listed: group.listed
 		});
-		await forgetHeldAtGroupHost();
 
 		let to: URL;
 		try {

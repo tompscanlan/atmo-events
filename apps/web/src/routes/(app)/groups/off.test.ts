@@ -8,7 +8,10 @@ vi.mock('#lib/groups/server/context.js', () => ({
 	GROUP_NOT_FOUND: 'Group not found',
 	groupView: mocks.groupView
 }));
-vi.mock('#lib/groups/server/browse.js', () => ({ browseGroups: vi.fn() }));
+vi.mock('#lib/groups/server/browse.js', () => ({
+	browseUpcoming: vi.fn(),
+	browseDeclared: vi.fn()
+}));
 vi.mock('#lib/contrail/index.js', () => ({ getServerClient: () => ({}) }));
 vi.mock('#lib/contrail/queries.js', () => ({ hostingQuery: vi.fn() }));
 vi.mock('#lib/contrail.js', () => ({
@@ -51,6 +54,8 @@ describe('with groups off', () => {
 	it('answers every group page with a bare 404, before any header of its own', async () => {
 		for (const [path, load] of [
 			['/groups', list],
+			['/groups?server=https%3A%2F%2Fpds.example', list],
+			['/groups?q=knit', list],
 			[`/groups/${GROUP}`, group],
 			[`/groups/${GROUP}/events/new`, newEvent],
 			[`/groups/${GROUP}/events/a/edit`, editEvent],

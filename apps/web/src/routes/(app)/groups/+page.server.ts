@@ -1,9 +1,9 @@
 import { error } from '@sveltejs/kit';
 import { groupAccess } from '#lib/groups/permissions-asked.js';
 import { holdsParticipate } from '#lib/groups/scopes.js';
-import { browseGroups, yourGroups } from '#lib/groups/server/browse.js';
+import { browseDeclared, browseUpcoming, yourGroups } from '#lib/groups/server/browse.js';
 import { unfinishedGroups } from '#lib/groups/server/create.js';
-import { serverOrigin } from '#lib/groups/server/declared.js';
+import { searchTerm, serverOrigin } from '#lib/groups/server/declared.js';
 import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
 import { groupSignInAvailable } from '#lib/groups/server/sign-in.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
@@ -16,17 +16,22 @@ const LINK_NOTICES = {
 
 export async function load({ locals, url, setHeaders }) {
 	requireGroupsEnabled();
-	// Linked groups lead the list, so it depends on who's asking.
+	// "Your groups" leads the list, so it depends on who's asking.
 	setHeaders({ 'cache-control': 'no-store' });
 	const asked = url.searchParams.get('server');
 	const server = serverOrigin(asked);
 	if (asked !== null && !server) error(404, 'Not found');
+	const q = searchTerm(url.searchParams.get('q'));
+	const cursor = url.searchParams.get('cursor');
+	// One server's groups, or a search's, newest first; otherwise those with an event coming.
+	const declared = Boolean(server || q);
 	const canLink = Boolean(locals.did) && groupSignInAvailable();
 	// The person's own groups lead the whole list's first page.
-	const firstPage = !server && !url.searchParams.get('cursor');
+	const firstPage = !declared && !cursor;
 	const person = firstPage && locals.did ? await callerSession(locals.session ?? null) : null;
-	const [{ groups, cursor, declaredUnavailable, crowded }, unfinished, own] = await Promise.all([
-		browseGroups(locals.did, { cursor: url.searchParams.get('cursor'), server }),
+	const [upcoming, found, unfinished, own] = await Promise.all([
+		declared ? null : browseUpcoming(cursor),
+		declared ? browseDeclared({ cursor, server, q }) : null,
 		canLink && locals.did ? unfinishedGroups(locals.did) : [],
 		person ? yourGroups(person) : null
 	]);
@@ -36,11 +41,17 @@ export async function load({ locals, url, setHeaders }) {
 	return {
 		pageTitle: host ? `Groups at ${host}` : 'Groups',
 		pageDescription: 'Groups on atmo and the events they host.',
-		groups,
-		cursor,
-		declaredUnavailable,
 		server: server && host ? { origin: server, host } : null,
-		crowded: crowded.map((entry) => ({ ...entry, host: new URL(entry.server).host })),
+		/** What was searched for, as searched; null for no search. */
+		q,
+		/** The groups with an event coming, on the whole list. */
+		upcoming: upcoming?.groups ?? [],
+		/** On its first page: every server with declared groups, and its counts. */
+		servers: upcoming?.servers ?? [],
+		/** One server's groups, or a search's. */
+		groups: found?.groups ?? [],
+		cursor: (upcoming ?? found)?.cursor ?? null,
+		unavailable: Boolean((upcoming ?? found)?.unavailable),
 		canLink,
 		/** Groups the caller made here and has not linked yet. */
 		unfinished: unfinished.length,

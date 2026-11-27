@@ -9,7 +9,6 @@ const mocks = vi.hoisted(() => ({
 	createGroupAtHost: vi.fn(),
 	rememberUnfinished: vi.fn(),
 	unfinishedGroups: vi.fn(),
-	forgetHeldAtGroupHost: vi.fn(),
 	startGroupLink: vi.fn(),
 	ownGroupNotNoted: vi.fn()
 }));
@@ -21,9 +20,6 @@ vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.ca
 vi.mock('#lib/groups/server/host-api.js', async (importActual) => ({
 	...(await importActual<typeof import('#lib/groups/server/host-api.js')>()),
 	groupHostInfo: mocks.groupHostInfo
-}));
-vi.mock('#lib/groups/server/group.js', () => ({
-	forgetHeldAtGroupHost: mocks.forgetHeldAtGroupHost
 }));
 vi.mock('#lib/groups/server/create.js', async (importActual) => ({
 	...(await importActual<typeof import('#lib/groups/server/create.js')>()),
@@ -151,7 +147,6 @@ describe('making a group', () => {
 			public: true,
 			listed: true
 		});
-		expect(mocks.forgetHeldAtGroupHost).toHaveBeenCalled();
 		expect(mocks.startGroupLink).toHaveBeenCalledWith(GROUP, ALICE);
 	});
 

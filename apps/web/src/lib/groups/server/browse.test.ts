@@ -1,196 +1,127 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+	listUpcomingGroups: vi.fn(),
+	listGroupServers: vi.fn(),
 	listDeclaredGroups: vi.fn(),
-	listCrowdedServers: vi.fn(),
-	readCachedProfiles: vi.fn(),
-	readCachedHandles: vi.fn(),
-	resolveGroup: vi.fn(),
-	linkedGroups: vi.fn(),
+	readGroupLabels: vi.fn(),
 	actorGroups: vi.fn()
 }));
 vi.mock('./group', () => ({
+	listUpcomingGroups: mocks.listUpcomingGroups,
+	listGroupServers: mocks.listGroupServers,
 	listDeclaredGroups: mocks.listDeclaredGroups,
-	listCrowdedServers: mocks.listCrowdedServers,
-	readCachedProfiles: mocks.readCachedProfiles,
-	readCachedHandles: mocks.readCachedHandles,
-	resolveGroup: mocks.resolveGroup
+	readGroupLabels: mocks.readGroupLabels
 }));
-vi.mock('./sign-in', () => ({ linkedGroups: mocks.linkedGroups }));
 vi.mock('./host', () => ({ actorGroups: mocks.actorGroups }));
 
-import { browseGroups, yourGroups } from './browse';
+import { browseDeclared, browseUpcoming, yourGroups } from './browse';
 
-const profile = (name: string) => ({ name, description: null, handle: `${name}.example` });
+const next = (title: string) => ({
+	uri: `at://x/e/${title}`,
+	title,
+	startsAt: '2030-01-01T00:00:00.000Z'
+});
 
 beforeEach(() => {
 	vi.resetAllMocks();
-	mocks.linkedGroups.mockResolvedValue([]);
-	mocks.readCachedProfiles.mockResolvedValue(new Map());
-	mocks.readCachedHandles.mockResolvedValue(new Map());
-	mocks.listCrowdedServers.mockResolvedValue([]);
+	vi.spyOn(console, 'error').mockImplementation(() => {});
+	mocks.listUpcomingGroups.mockResolvedValue({ groups: [], cursor: null });
+	mocks.listGroupServers.mockResolvedValue([]);
+	mocks.readGroupLabels.mockResolvedValue(new Map());
 });
 
-describe('browseGroups', () => {
-	it("puts the caller's linked groups first, once each", async () => {
-		mocks.listDeclaredGroups.mockResolvedValue({
+describe('browseUpcoming', () => {
+	it('names each group by its cached name, else its handle, else its DID', async () => {
+		mocks.listUpcomingGroups.mockResolvedValue({
 			groups: [
-				{ did: 'did:plc:b', indexedAt: 2 },
-				{ did: 'did:plc:a', indexedAt: 1 }
+				{
+					did: 'did:plc:a',
+					server: 'https://a.example',
+					handle: 'a.example',
+					name: 'Knitters',
+					next: next('Purl')
+				},
+				{
+					did: 'did:plc:b',
+					server: 'https://a.example',
+					handle: 'b.example',
+					name: null,
+					next: next('Ride')
+				},
+				{ did: 'did:plc:c', server: '', handle: null, name: null, next: next('Walk') }
 			],
-			cursor: null
+			cursor: 'c2'
 		});
-		mocks.linkedGroups.mockResolvedValue(['did:plc:a', 'did:plc:private']);
-		mocks.readCachedProfiles.mockResolvedValue(
+		const page = await browseUpcoming();
+		expect(page.groups.map((g) => [g.did, g.name, g.next.title])).toEqual([
+			['did:plc:a', 'Knitters', 'Purl'],
+			['did:plc:b', 'b.example', 'Ride'],
+			['did:plc:c', 'did:plc:c', 'Walk']
+		]);
+		expect(page).toMatchObject({ cursor: 'c2', unavailable: false });
+	});
+
+	it("names the servers by host on the first page only, leaving out one it couldn't link to", async () => {
+		mocks.listGroupServers.mockResolvedValue([
+			{ server: 'https://pds.example:8443', groups: 4, upcoming: 1 },
+			{ server: 'https://pds.example:443', groups: 2, upcoming: 0 }
+		]);
+		expect((await browseUpcoming()).servers).toEqual([
+			{ server: 'https://pds.example:8443', host: 'pds.example:8443', groups: 4, upcoming: 1 }
+		]);
+		expect((await browseUpcoming('c2')).servers).toEqual([]);
+		expect(mocks.listGroupServers).toHaveBeenCalledOnce();
+		expect(mocks.listUpcomingGroups).toHaveBeenLastCalledWith('c2');
+	});
+
+	it('says when the index did not answer, and still lists when the servers cannot be read', async () => {
+		mocks.listUpcomingGroups.mockRejectedValueOnce(new Error('down'));
+		expect(await browseUpcoming()).toMatchObject({ groups: [], cursor: null, unavailable: true });
+		mocks.listGroupServers.mockRejectedValueOnce(new Error('down'));
+		expect(await browseUpcoming()).toMatchObject({ servers: [], unavailable: false });
+	});
+});
+
+describe('browseDeclared', () => {
+	it("lists the index's page, named from the database, or by handle or DID", async () => {
+		mocks.listDeclaredGroups.mockResolvedValue({
+			dids: ['did:plc:a', 'did:plc:b', 'did:plc:c'],
+			cursor: 'c2'
+		});
+		mocks.readGroupLabels.mockResolvedValue(
 			new Map([
-				['did:plc:a', profile('a')],
-				['did:plc:b', profile('b')]
+				['did:plc:a', { handle: 'a.example', name: 'Knitters', description: 'Yarn' }],
+				['did:plc:b', { handle: 'b.example', name: null, description: null }]
 			])
 		);
-		mocks.resolveGroup.mockResolvedValue({ did: 'did:plc:private', handle: 'p.example' });
-
-		const { groups } = await browseGroups('did:plc:alice');
-		expect(groups.map((g) => [g.did, g.name, g.linked])).toEqual([
-			['did:plc:a', 'a', true],
-			['did:plc:private', 'p.example', true],
-			['did:plc:b', 'b', false]
-		]);
-		expect(mocks.resolveGroup).toHaveBeenCalledExactlyOnceWith('did:plc:private');
-	});
-
-	it('shows a declared group with no cached profile by the handle the index holds, and looks nothing up', async () => {
-		mocks.listDeclaredGroups.mockResolvedValue({
-			groups: [
-				{ did: 'did:plc:b', indexedAt: 2 },
-				{ did: 'did:plc:a', indexedAt: 1 }
-			],
-			cursor: null
-		});
-		mocks.readCachedProfiles.mockResolvedValue(new Map([['did:plc:a', profile('a')]]));
-		mocks.readCachedHandles.mockResolvedValue(new Map([['did:plc:b', 'knit.example']]));
-		const { groups } = await browseGroups(null);
-		expect(groups).toEqual([
-			{
-				did: 'did:plc:b',
-				name: 'knit.example',
-				handle: 'knit.example',
-				description: null,
-				linked: false
-			},
-			{ did: 'did:plc:a', name: 'a', handle: 'a.example', description: null, linked: false }
-		]);
-		expect(mocks.readCachedHandles).toHaveBeenCalledWith(['did:plc:b', 'did:plc:a']);
-		expect(mocks.resolveGroup).not.toHaveBeenCalled();
-		expect(mocks.linkedGroups).not.toHaveBeenCalled();
-	});
-
-	it('shows a declared group by its DID when neither a cached profile nor the index has a handle', async () => {
-		mocks.listDeclaredGroups.mockResolvedValue({
-			groups: [{ did: 'did:plc:b', indexedAt: 2 }],
-			cursor: null
-		});
-		const { groups } = await browseGroups(null);
-		expect(groups).toEqual([
-			{ did: 'did:plc:b', name: 'did:plc:b', handle: null, description: null, linked: false }
-		]);
-		expect(mocks.resolveGroup).not.toHaveBeenCalled();
-	});
-
-	it('looks up a linked group only when the index has no handle for it', async () => {
-		mocks.listDeclaredGroups.mockResolvedValue({ groups: [], cursor: null });
-		mocks.linkedGroups.mockResolvedValue(['did:plc:known', 'did:plc:unknown']);
-		mocks.readCachedHandles.mockResolvedValue(new Map([['did:plc:known', 'known.example']]));
-		mocks.resolveGroup.mockResolvedValue({ did: 'did:plc:unknown', handle: 'unknown.example' });
-		const { groups } = await browseGroups('did:plc:alice');
-		expect(groups.map((g) => [g.did, g.name])).toEqual([
-			['did:plc:known', 'known.example'],
-			['did:plc:unknown', 'unknown.example']
-		]);
-		expect(mocks.resolveGroup).toHaveBeenCalledExactlyOnceWith('did:plc:unknown');
-	});
-
-	it('still lists, by cached profile or DID, when the handles cannot be read', async () => {
-		mocks.listDeclaredGroups.mockResolvedValue({
-			groups: [
-				{ did: 'did:plc:b', indexedAt: 2 },
-				{ did: 'did:plc:a', indexedAt: 1 }
-			],
-			cursor: null
-		});
-		mocks.readCachedProfiles.mockResolvedValue(new Map([['did:plc:a', profile('a')]]));
-		mocks.readCachedHandles.mockRejectedValue(new Error('down'));
-		const { groups } = await browseGroups(null);
-		expect(groups.map((g) => [g.did, g.name])).toEqual([
-			['did:plc:b', 'did:plc:b'],
-			['did:plc:a', 'a']
-		]);
-	});
-
-	it('pages the declared groups, with the linked ones on the first page only', async () => {
-		mocks.linkedGroups.mockResolvedValue(['did:plc:a']);
-		mocks.listDeclaredGroups.mockResolvedValueOnce({
-			groups: [{ did: 'did:plc:b', indexedAt: 2 }],
-			cursor: 'page2'
-		});
-		const first = await browseGroups('did:plc:alice');
-		expect(first.groups.map((g) => g.did)).toEqual(['did:plc:a', 'did:plc:b']);
-		expect(first.cursor).toBe('page2');
-
-		mocks.listDeclaredGroups.mockResolvedValueOnce({
-			groups: [
-				{ did: 'did:plc:a', indexedAt: 1 },
-				{ did: 'did:plc:c', indexedAt: 1 }
-			],
-			cursor: null
-		});
-		const second = await browseGroups('did:plc:alice', { cursor: 'page2' });
-		expect(mocks.listDeclaredGroups).toHaveBeenLastCalledWith({ cursor: 'page2', server: null });
-		expect(second.groups.map((g) => [g.did, g.linked])).toEqual([['did:plc:c', false]]);
-		expect(second.cursor).toBeNull();
-		// The servers the list leaves groups out of are named once, on its first page.
-		expect(mocks.listCrowdedServers).toHaveBeenCalledOnce();
-	});
-
-	it('names the crowded servers on the first page, and still lists when that read fails', async () => {
-		mocks.listDeclaredGroups.mockResolvedValue({ groups: [], cursor: null });
-		mocks.listCrowdedServers.mockResolvedValueOnce([{ server: 'https://pds.example', more: 3 }]);
-		expect((await browseGroups(null)).crowded).toEqual([
-			{ server: 'https://pds.example', more: 3 }
-		]);
-		mocks.listCrowdedServers.mockRejectedValueOnce(new Error('down'));
-		expect(await browseGroups(null)).toMatchObject({ crowded: [], declaredUnavailable: false });
-	});
-
-	it("lists all of one server's groups, linked ones in place, on that server's page", async () => {
-		mocks.linkedGroups.mockResolvedValue(['did:plc:a', 'did:plc:elsewhere']);
-		mocks.listDeclaredGroups.mockResolvedValue({
-			groups: [
-				{ did: 'did:plc:b', indexedAt: 2 },
-				{ did: 'did:plc:a', indexedAt: 1 }
-			],
-			cursor: null
-		});
-		const page = await browseGroups('did:plc:alice', { server: 'https://pds.example' });
+		const page = await browseDeclared({ server: 'https://pds.example', q: 'knit', cursor: 'c1' });
 		expect(mocks.listDeclaredGroups).toHaveBeenCalledWith({
-			cursor: null,
-			server: 'https://pds.example'
+			server: 'https://pds.example',
+			q: 'knit',
+			cursor: 'c1'
 		});
-		expect(page.groups.map((g) => [g.did, g.linked])).toEqual([
-			['did:plc:b', false],
-			['did:plc:a', true]
-		]);
-		expect(page.crowded).toEqual([]);
-		expect(mocks.listCrowdedServers).not.toHaveBeenCalled();
+		expect(page).toEqual({
+			groups: [
+				{ did: 'did:plc:a', name: 'Knitters', handle: 'a.example', description: 'Yarn' },
+				{ did: 'did:plc:b', name: 'b.example', handle: 'b.example', description: null },
+				{ did: 'did:plc:c', name: 'did:plc:c', handle: null, description: null }
+			],
+			cursor: 'c2',
+			unavailable: false
+		});
 	});
 
-	it('still lists linked groups when the index is down', async () => {
-		mocks.listDeclaredGroups.mockRejectedValue(new Error('down'));
-		mocks.linkedGroups.mockResolvedValue(['did:plc:a']);
-		mocks.readCachedProfiles.mockResolvedValue(new Map([['did:plc:a', profile('a')]]));
-		expect(await browseGroups('did:plc:alice')).toMatchObject({
-			groups: [{ did: 'did:plc:a' }],
-			declaredUnavailable: true
+	it('says when the index did not answer, and lists by DID when the names cannot be read', async () => {
+		mocks.listDeclaredGroups.mockRejectedValueOnce(new Error('down'));
+		expect(await browseDeclared({ q: 'knit' })).toEqual({
+			groups: [],
+			cursor: null,
+			unavailable: true
 		});
+		mocks.listDeclaredGroups.mockResolvedValue({ dids: ['did:plc:a'], cursor: null });
+		mocks.readGroupLabels.mockRejectedValue(new Error('down'));
+		expect((await browseDeclared({ q: 'knit' })).groups.map((g) => g.name)).toEqual(['did:plc:a']);
 	});
 });
 

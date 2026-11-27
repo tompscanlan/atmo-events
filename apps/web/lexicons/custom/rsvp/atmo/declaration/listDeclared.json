@@ -4,7 +4,7 @@
 	"defs": {
 		"main": {
 			"type": "query",
-			"description": "List group declarations at rkey self, one per account and at most 20 per server, except the groups at the site's own group host that it says it holds",
+			"description": "List group declarations at rkey self, one per account, newest first",
 			"parameters": {
 				"type": "params",
 				"properties": {
@@ -24,7 +24,11 @@
 					},
 					"server": {
 						"type": "string",
-						"description": "Only the groups at this server, a PDS origin such as https://pds.example, with no limit"
+						"description": "Only the groups at this server, a PDS origin such as https://pds.example"
+					},
+					"q": {
+						"type": "string",
+						"description": "Only the groups whose handle, or whose name as this site cached it, contains this text, in any case; its first 64 characters, without a leading @"
 					},
 					"profiles": {
 						"type": "boolean",

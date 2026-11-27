@@ -28,8 +28,7 @@ import {
 	ROSTER_SCOPES
 } from '../scopes';
 import { groupsEnabled } from './enabled';
-import { forgetHeldAtGroupHost } from './group';
-import { listKeys, prefixedKV } from './kv';
+import { prefixedKV } from './kv';
 import type { XrpcHandle } from './xrpc';
 
 export const GROUP_CLIENT_METADATA_PATH = '/oauth/group/client-metadata.json';
@@ -218,8 +217,6 @@ export async function finishGroupLink(
 	}
 	await env.OAUTH_SESSIONS.put(askedKey(link.by, link.groupDid), GROUP_SESSION_SCOPE);
 	if (replaced) await revokeReplaced(link.groupDid, link.by, replaced);
-	// A group just linked may be one the cached answer from its host does not hold yet.
-	await forgetHeldAtGroupHost();
 	return { ok: true, groupDid: link.groupDid };
 }
 
@@ -257,14 +254,6 @@ export function groupHandle(session: OAuthSession, personDid: string): XrpcHandl
 		}
 		return res;
 	};
-}
-
-/** The groups the person has linked, by DID. */
-export async function linkedGroups(personDid: string): Promise<string[]> {
-	if (!groupSignInAvailable()) return [];
-	return (await listKeys(env.OAUTH_SESSIONS, personPrefix(personDid))).filter((did) =>
-		did.startsWith('did:')
-	);
 }
 
 /** Revoked at the group's PDS when it answers; forgotten here either way. */

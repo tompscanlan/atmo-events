@@ -32,7 +32,11 @@ const _mainSchema = /*#__PURE__*/ v.query(
 				 */
 				"profiles": /*#__PURE__*/ v.optional(/*#__PURE__*/ v.boolean()),
 				/**
-				 * Only the groups at this server, a PDS origin such as https://pds.example, with no limit
+				 * Only the groups whose handle, or whose name as this site cached it, contains this text, in any case; its first 64 characters, without a leading \@
+				 */
+				"q": /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
+				/**
+				 * Only the groups at this server, a PDS origin such as https://pds.example
 				 */
 				"server": /*#__PURE__*/ v.optional(/*#__PURE__*/ v.string()),
 			}

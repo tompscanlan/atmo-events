@@ -27,13 +27,16 @@ import {
 import { groupJoinPolicy } from '../fields';
 import { groupHostUrl } from './enabled';
 import {
-	cachedHandles,
 	cachedProfiles,
 	cacheProfile,
-	crowdedServers,
+	DECLARED_PAGE,
 	ensureGroupSchema,
-	type CrowdedServer,
-	type DeclaredHome
+	groupLabels,
+	groupServers,
+	upcomingGroups,
+	type GroupLabel,
+	type GroupServer,
+	type UpcomingPage
 } from './declared';
 import { isRecordNotFound, xrpc, type XrpcHandle } from './xrpc';
 
@@ -102,152 +105,55 @@ async function groupsDatabase(): Promise<D1Database> {
 	return env.DB;
 }
 
-export interface DeclaredGroup {
-	did: string;
-	indexedAt: number;
+/** A page of the groups with an event coming, soonest first: see upcomingGroups. Read from the
+ *  index's tables directly, in one query. */
+export async function listUpcomingGroups(cursor: string | null = null): Promise<UpcomingPage> {
+	return upcomingGroups(await groupsDatabase(), new Date().toISOString(), cursor);
+}
+
+/** The servers with declared groups, with how many each has and how many of those have an event
+ *  coming. */
+export async function listGroupServers(): Promise<GroupServer[]> {
+	return groupServers(await groupsDatabase(), new Date().toISOString());
 }
 
 export interface DeclaredGroupsPage {
-	groups: DeclaredGroup[];
+	dids: string[];
 	/** For the next page; null on the last. */
 	cursor: string | null;
 }
 
-const HELD_KEY = 'groups:held-at-host';
-const HELD_TTL_SECONDS = 600;
-/** listRepos pages read at most, 1000 accounts each; groups past them are not counted as there. */
-const HELD_PAGES = 10;
-/** For the whole read, every page in it: a host that hangs costs the list this wait, no more. */
-const HELD_TIME_LIMIT_MS = 8_000;
-/** KV's shortest expiry. */
-const HELD_FAILURE_TTL_SECONDS = 60;
-
-/** The DIDs this site's group host says it holds, from its listRepos, cached for ten minutes.
- *  A DID document can name the host without the host holding the account, so this, not the
- *  document, decides which groups are at the host. Null when there is no host or it did not
- *  answer: then no group counts as at the host, and the host is limited like any server. A host
- *  that did not answer is remembered for a minute, and readers at the same time share one read,
- *  so a host that is down costs one wait, not one per page. */
-export async function heldAtGroupHost(): Promise<string[] | null> {
-	const origin = groupHostOrigin();
-	if (!origin) return null;
-	const cached = await env.OAUTH_SESSIONS?.get<{ origin: string; dids?: string[] }>(
-		HELD_KEY,
-		'json'
-	).catch(() => null);
-	if (cached?.origin === origin) return cached.dids ?? null;
-	heldReading ??= readHeld(origin).finally(() => {
-		heldReading = null;
-	});
-	return heldReading;
-}
-
-let heldReading: Promise<string[] | null> | null = null;
-/** Counts the times the answer was forgotten here, so a read that began before is not cached. */
-let heldForgotten = 0;
-
-/** After this site makes a group at the host, links one or lists one, so the list counts it as at
- *  the host at once rather than after the cached answer expires. A read already under way is not
- *  cached, since it may have begun before the group was there. */
-export async function forgetHeldAtGroupHost(): Promise<void> {
-	heldForgotten++;
-	heldReading = null;
-	await env.OAUTH_SESSIONS?.delete(HELD_KEY).catch((e) => {
-		console.warn('[groups] what the group host holds could not be forgotten:', e);
-	});
-}
-
-async function readHeld(origin: string): Promise<string[] | null> {
-	const kv = env.OAUTH_SESSIONS;
-	const forgotten = heldForgotten;
-	const current = () => forgotten === heldForgotten;
-	try {
-		const signal = AbortSignal.timeout(HELD_TIME_LIMIT_MS);
-		const dids: string[] = [];
-		let cursor: string | null = null;
-		for (let page = 0; page < HELD_PAGES; page++) {
-			const url = new URL('/xrpc/com.atproto.sync.listRepos', origin);
-			url.searchParams.set('limit', '1000');
-			if (cursor) url.searchParams.set('cursor', cursor);
-			const res = await fetch(url, { signal });
-			if (!res.ok) throw new Error(`listRepos answered ${res.status}`);
-			const body = (await res.json()) as {
-				repos?: { did?: unknown; active?: unknown }[];
-				cursor?: unknown;
-			};
-			for (const repo of body.repos ?? []) {
-				if (typeof repo.did === 'string' && repo.active !== false) dids.push(repo.did);
-			}
-			cursor = typeof body.cursor === 'string' && body.cursor ? body.cursor : null;
-			if (!cursor) break;
-		}
-		if (current()) {
-			await kv
-				?.put(HELD_KEY, JSON.stringify({ origin, dids }), { expirationTtl: HELD_TTL_SECONDS })
-				.catch((e) => console.warn('[groups] what the group host holds was not cached:', e));
-		}
-		return dids;
-	} catch (e) {
-		console.warn('[groups] the group host did not say which groups it holds:', e);
-		if (current()) {
-			await kv
-				?.put(HELD_KEY, JSON.stringify({ origin }), { expirationTtl: HELD_FAILURE_TTL_SECONDS })
-				.catch(() => {});
-		}
-		return null;
-	}
-}
-
-/** For the declarations' list: this site's group host, and what it holds, read only when a list
- *  needs it. */
-export function declaredHome(): DeclaredHome | null {
-	const origin = groupHostOrigin();
-	return origin ? { origin, held: heldAtGroupHost } : null;
-}
-
-/** One page, newest first, the index's own order. Only the declaration at rkey `self`
- *  counts, so an account is listed once however many records it writes, and each server gets
- *  at most 20 places, except the groups this site's group host holds; `server` lists one
- *  server's groups. No `actor`, which would backfill that repo on demand, and no `profiles`,
- *  which contrail refetches on every call for an account without a Bluesky profile, as a
- *  group is. */
-export async function listDeclaredGroups(
-	{ cursor = null, server = null }: { cursor?: string | null; server?: string | null } = {},
-	limit = 100
-): Promise<DeclaredGroupsPage> {
-	// The index reads what the group host holds itself: see declaredHome.
+/** One page of declared groups, newest first, the index's own order: one server's with `server`,
+ *  those a search finds with `q`, or both. No `actor`, which would backfill that repo on demand,
+ *  and no `profiles`, which contrail refetches on every call for an account without a Bluesky
+ *  profile, as a group is. */
+export async function listDeclaredGroups({
+	cursor = null,
+	server = null,
+	q = null
+}: {
+	cursor?: string | null;
+	server?: string | null;
+	q?: string | null;
+} = {}): Promise<DeclaredGroupsPage> {
 	const res = await getServerClient(env.DB).get('rsvp.atmo.declaration.listDeclared', {
 		params: {
-			limit: Math.min(Math.max(limit, 1), 100),
+			limit: DECLARED_PAGE,
 			...(cursor ? { cursor } : {}),
-			...(server ? { server } : {})
+			...(server ? { server } : {}),
+			...(q ? { q } : {})
 		}
 	});
 	if (!res.ok) throw new Error(`the declaration index answered ${res.status}`);
 	return {
-		groups: res.data.records.map((record) => ({
-			did: record.did,
-			indexedAt: Math.floor(record.time_us / 1000)
-		})),
+		dids: res.data.records.map((record) => record.did),
 		cursor: res.data.cursor || null
 	};
 }
 
-/** The servers whose other groups the list leaves out, for links to their own pages. The group
- *  host is left out only when the list could be told what it holds. Read from the index's tables
- *  directly, so only once contrail has made them: the declarations' table is made with the rest
- *  when the Worker first uses the index, and only while groups are on. */
-export async function listCrowdedServers(): Promise<CrowdedServer[]> {
-	const home = groupHostOrigin();
-	const [held] = await Promise.all([home ? heldAtGroupHost() : null, ensureInit(env.DB)]);
-	return crowdedServers(env.DB, held ? home : null);
-}
-
-/** The groups' handles as the index last resolved them, for groups with no cached profile. Read
- *  from its identities table directly, so only once contrail has made it. */
-export async function readCachedHandles(dids: string[]): Promise<Map<string, string>> {
-	await ensureInit(env.DB);
-	return cachedHandles(env.DB, dids);
+/** The groups' handles and cached names, read from the database with no network call. */
+export async function readGroupLabels(dids: string[]): Promise<Map<string, GroupLabel>> {
+	return groupLabels(await groupsDatabase(), dids);
 }
 
 export interface GroupProfile {
@@ -390,7 +296,6 @@ export async function listGroup(handle: XrpcHandle, groupDid: string): Promise<v
 		}
 	});
 	await notifyIndex(declarationUri(groupDid));
-	await forgetHeldAtGroupHost();
 }
 
 /** Deletes the declaration, the group host's own included, which it writes again only the next

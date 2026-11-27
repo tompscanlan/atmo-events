@@ -45,7 +45,6 @@ import {
 	groupClientMetadata,
 	groupSignInAvailable,
 	linkAskedCurrentScope,
-	linkedGroups,
 	startGroupLink,
 	unlinkGroup
 } from './sign-in';
@@ -248,21 +247,6 @@ describe('finishGroupLink', () => {
 		expect(await finishGroupLink(params('s1'), ALICE)).toEqual({ ok: true, groupDid: GROUP });
 	});
 
-	it('forgets what the group host was last said to hold, so the group just linked is counted at once', async () => {
-		const held = JSON.stringify({ origin: 'https://host.example', dids: [] });
-		await sessions.put('groups:held-at-host', held);
-		await storedState('s1', { groupDid: GROUP, by: ALICE });
-		await startGroupLink(GROUP, ALICE);
-		latest().client.callback.mockRejectedValue(new Error('access_denied'));
-		await finishGroupLink(params('s1'), ALICE);
-		expect(await sessions.get('groups:held-at-host', 'text')).toBe(held);
-
-		await storedState('s2', { groupDid: GROUP, by: ALICE });
-		latest().client.callback.mockResolvedValue({ session: { did: GROUP }, state: null });
-		expect(await finishGroupLink(params('s2'), ALICE)).toEqual({ ok: true, groupDid: GROUP });
-		expect(await sessions.get('groups:held-at-host', 'text')).toBeNull();
-	});
-
 	it('revokes the link it replaces, through a client that holds only that one', async () => {
 		const old = { tokenSet: { access_token: 'old' } };
 		await sessions.put(`group:session:${ALICE}/${GROUP}`, JSON.stringify(old));
@@ -324,14 +308,7 @@ describe('finishGroupLink', () => {
 	});
 });
 
-describe('linked groups', () => {
-	it("lists only the person's own links", async () => {
-		await sessions.put(`group:session:${ALICE}/${GROUP}`, '{}');
-		await sessions.put(`group:session:${BOB}/did:plc:other`, '{}');
-		await sessions.put('group:state:s1', '{}');
-		expect(await linkedGroups(ALICE)).toEqual([GROUP]);
-	});
-
+describe('unlinking', () => {
 	it('forgets a link even when the PDS cannot revoke it', async () => {
 		await sessions.put(`group:session:${ALICE}/${GROUP}`, '{}');
 		await sessions.put(`group:asked:${ALICE}/${GROUP}`, GROUP_SESSION_SCOPE);
