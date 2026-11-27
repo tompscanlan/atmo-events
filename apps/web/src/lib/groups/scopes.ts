@@ -379,7 +379,10 @@ export const MEMBERS_ONLY_SCOPES: readonly string[] = [
 	GROUP_SPACE_INDEX_SCOPE
 ];
 
-/** The calendar-space grants in a granted scope, for the group's own calendar space. */
+/** The calendar-space grants in a granted scope, for the group's calendar spaces: at any key, or
+ *  at one key, since the calendar used may be one another app made under a key of its own and a
+ *  host may hand the keyless scope asked for back named to it. A grant for a key other than the
+ *  calendar's is still refused by the host at each write, which this site then says. */
 function calendarGrants(scope: string, groupDid: string): URLSearchParams[] {
 	return scope
 		.split(' ')
@@ -388,7 +391,7 @@ function calendarGrants(scope: string, groupDid: string): URLSearchParams[] {
 		.filter((params) => {
 			const authority = params.get('authority') ?? 'self';
 			const skey = params.get('skey') ?? '*';
-			return [groupDid, 'self', '*'].includes(authority) && ['self', '*'].includes(skey);
+			return [groupDid, 'self', '*'].includes(authority) && skey !== '';
 		});
 }
 

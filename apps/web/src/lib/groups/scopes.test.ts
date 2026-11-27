@@ -112,6 +112,27 @@ describe('what a group session may do, by the scope its host granted', () => {
 		});
 	});
 
+	it("recognises the calendar's grants when the host names them to the calendar's own key", () => {
+		const keyed = MEMBERS_ONLY.map((token) =>
+			token.startsWith('space:community.lexicon.calendar.collection?')
+				? token.replace('authority=', 'skey=3lwikicalendar&authority=')
+				: token
+		);
+		expect(keyed.join(' ')).toContain('skey=3lwikicalendar');
+		expect(groupAbilities(['atproto', META_READ, ...keyed].join(' '), GROUP)).toMatchObject({
+			turnOnMembersOnly: true,
+			membersOnly: true
+		});
+		// Another group's calendar, at any key, is still none of this group's.
+		const theirs = keyed.map((token) =>
+			token.replace(`authority=${GROUP}`, 'authority=did:plc:other')
+		);
+		expect(groupAbilities(['atproto', ...theirs].join(' '), GROUP)).toMatchObject({
+			turnOnMembersOnly: false,
+			membersOnly: false
+		});
+	});
+
 	it('offers no settings to a link approved before they were asked for, nor to one that cannot list the group', () => {
 		// Making a group public or private moves its listing too.
 		expect(groupAbilities(['atproto', META_READ, ...SETTINGS].join(' '), GROUP).settings).toBe(
