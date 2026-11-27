@@ -38,11 +38,17 @@ vi.mock('#lib/atproto/network.js', () => ({
 	atprotoNetwork: () => ({ fetch: mocks.networkFetch, isolated: false, assertUrl: () => {} })
 }));
 vi.mock('@svelte-atproto/oauth/network', () => ({ createActorResolver: () => ({}) }));
+// Tested with the settings page in the build; each check of a build without it names it.
+vi.mock('../build', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../build')>()),
+	SETTINGS_IN_THIS_BUILD: true
+}));
 
 import {
 	finishGroupLink,
 	GROUP_SESSION_SCOPE,
 	groupClientMetadata,
+	groupSessionScope,
 	groupSignInAvailable,
 	linkAskedCurrentScope,
 	linkedGroups,
@@ -134,13 +140,41 @@ describe('the group client', () => {
 		}
 	});
 
+	it("asks for the meta read as its own scope, writes events, the settings' records and policy, and members-only events'", () => {
+		expect(GROUP_SESSION_SCOPE).toBe(groupSessionScope());
+		expect(groupSessionScope().split(' ')).toEqual([
+			'atproto',
+			'space:org.atgrp.meta?authority=self&skey=self&action=read',
+			'repo?collection=community.lexicon.calendar.event',
+			'blob?accept=image/*',
+			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.about&action=read&action=update',
+			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.config&action=read&action=update',
+			'space:org.atgrp.meta?authority=self&skey=self&manage=update',
+			'space:community.lexicon.calendar.collection?authority=self&manage=create',
+			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete',
+			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.space&action=read'
+		]);
+	});
+
+	it('asks for none of the settings in a build without them', () => {
+		expect(groupSessionScope(false).split(' ')).toEqual([
+			'atproto',
+			'space:org.atgrp.meta?authority=self&skey=self&action=read',
+			'repo?collection=community.lexicon.calendar.event',
+			'blob?accept=image/*',
+			'space:community.lexicon.calendar.collection?authority=self&manage=create',
+			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete',
+			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.space&action=read'
+		]);
+	});
+
 	// The host's approval page lists one row per space type, owner and key, keyed by type and owner
 	// alone: a space asked for once with its key and once without makes two rows with one key, and
 	// the page fails for anyone whose roles keep both. The calendar scopes name none, since the
 	// group's calendar may be one another app made under a key of its own.
 	it('names the same key in every scope for one space', () => {
 		const keys = new Map<string, Set<string | null>>();
-		const asked = GROUP_SESSION_SCOPE.split(' ');
+		const asked = groupSessionScope().split(' ');
 		for (const token of asked.filter((t) => t.startsWith('space:'))) {
 			const at = token.indexOf('?');
 			const params = new URLSearchParams(at === -1 ? '' : token.slice(at + 1));

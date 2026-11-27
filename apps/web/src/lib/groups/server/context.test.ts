@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { env, waitUntil } from 'cloudflare:workers';
 import { TokenRefreshError } from '@atcute/oauth-node-client';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
-import { GROUP_SPACE_INDEX_SCOPE, MEMBERS_ONLY_SCOPES } from '../scopes';
+import { GROUP_SETTINGS_SCOPES, GROUP_SPACE_INDEX_SCOPE, MEMBERS_ONLY_SCOPES } from '../scopes';
 import { XrpcError } from './xrpc';
 
 const mocks = vi.hoisted(() => ({
@@ -42,6 +42,14 @@ vi.mock('./sign-in', () => ({
 	hasGroupSession: mocks.hasGroupSession,
 	linkAskedCurrentScope: mocks.linkAskedCurrentScope
 }));
+/** The settings are tested in the build, and once without. */
+const build = vi.hoisted(() => ({ settings: true }));
+vi.mock('../build', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../build')>()),
+	get SETTINGS_IN_THIS_BUILD() {
+		return build.settings;
+	}
+}));
 vi.mock('./person', () => ({
 	personReader: () => ({}),
 	readMetaAsPerson: mocks.readMetaAsPerson,
@@ -75,7 +83,9 @@ const ADMIN_SCOPE = [
 	`space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`,
 	'repo?collection=community.lexicon.calendar.event',
 	'blob?accept=image/*',
-	...MEMBERS_ONLY_SCOPES.map((scope) => scope.replace('authority=self', `authority=${GROUP}`))
+	...[...GROUP_SETTINGS_SCOPES, ...MEMBERS_ONLY_SCOPES].map((scope) =>
+		scope.replace('authority=self', `authority=${GROUP}`)
+	)
 ].join(' ');
 const MEMBER_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`;
 const linkedSession = (scope = ADMIN_SCOPE, aud = 'https://host.example') => ({
@@ -87,6 +97,7 @@ const meta = { profile: { name: 'Knitters', description: 'Yarn' }, public: true 
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	build.settings = true;
 	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 	mocks.resolveGroup.mockResolvedValue(resolved);
 	mocks.readCachedProfiles.mockResolvedValue(new Map());
@@ -214,7 +225,7 @@ describe('groupView for someone who linked the group', () => {
 			linked: {
 				meta: { public: false },
 				listed: false,
-				can: { post: true },
+				can: { post: true, settings: true },
 				reapprove: false
 			},
 			relink: false,
@@ -232,7 +243,7 @@ describe('groupView for someone who linked the group', () => {
 		mocks.repoHasDeclaration.mockResolvedValue(false);
 		const view = await groupView(GROUP, ALICE);
 		expect(view.linked).toMatchObject({
-			can: { post: false },
+			can: { post: false, settings: false },
 			reapprove: false
 		});
 		expect(view.relink).toBe(false);
@@ -262,6 +273,29 @@ describe('groupView for someone who linked the group', () => {
 		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({
 			can: { turnOnMembersOnly: true, membersOnly: true, readSpaceIndex: false },
 			reapprove: true
+		});
+	});
+
+	it('offers no settings in a build without the settings page, nor approving again for them', async () => {
+		build.settings = false;
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		mocks.linkAskedCurrentScope.mockResolvedValue(false);
+		// All the rest of what a link is asked for, but the settings.
+		const allButSettings = ADMIN_SCOPE.split(' ')
+			.filter((token) => !GROUP_SETTINGS_SCOPES.some((s) => token === s.replace('self', GROUP)))
+			.join(' ');
+		expect(allButSettings).not.toContain('manage=update');
+		mocks.groupSession.mockResolvedValue(linkedSession(allButSettings));
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({
+			can: { post: true, settings: false },
+			reapprove: false
+		});
+		// Whatever the host granted, a link changes no settings here.
+		mocks.groupSession.mockResolvedValue(linkedSession(ADMIN_SCOPE));
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({
+			can: { post: true, settings: false },
+			reapprove: false
 		});
 	});
 

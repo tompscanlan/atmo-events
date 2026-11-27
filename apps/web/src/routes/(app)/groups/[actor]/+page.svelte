@@ -12,6 +12,7 @@
 	import { JOIN_MESSAGE_MAX } from '#lib/groups/fields.js';
 	import { turnOnMembersOnlyEvents, unlinkGroupSession } from '#lib/groups/group.remote.js';
 	import { cancelJoin, confirmMember, joinGroup, leave } from '#lib/groups/members.remote.js';
+	import { SETTINGS_IN_THIS_BUILD } from '#lib/groups/build.js';
 
 	let { data } = $props();
 
@@ -45,6 +46,7 @@
 		Boolean(
 			group.linked &&
 			(group.linked.can.post ||
+				group.linked.can.settings ||
 				group.linked.can.turnOnMembersOnly ||
 				group.linked.can.membersOnly ||
 				group.linked.reapprove)
@@ -122,10 +124,11 @@
 		);
 </script>
 
-<!-- For anyone who linked the group: its name, description and who may join, its members, those
-     asking to join and their roles are kept at the group host, and managed there, and the tools
-     link there. The link is to the group host's own site, the origin of the group's PDS, named by
-     its host name: never the group's own address, which may be any website. -->
+<!-- For an admin who linked the group: its members, those asking to join and their roles are
+     kept at the group host, and managed there. In a build without the settings page, for anyone who
+     linked it: so are its name, description and who may join, and the tools link there. The link is
+     to the group host's own site, the origin of the group's PDS, named by its host name: never the
+     group's own address, which may be any website. -->
 {#snippet hostLink(site: { url: string; name: string })}
 	<!-- eslint-disable svelte/no-navigation-without-resolve -->
 	<a
@@ -137,10 +140,15 @@
 	><!-- eslint-enable svelte/no-navigation-without-resolve -->
 {/snippet}
 {#snippet managedAtHost()}
-	{#if group.linked}
+	{#if group.linked && !SETTINGS_IN_THIS_BUILD}
 		<p class="text-base-600 dark:text-base-400 text-sm">
 			The group's name, description and who may join are changed at its group host{#if group.hostSite},
 				{@render hostLink(group.hostSite)}{/if}, as are its members, requests to join and roles.
+		</p>
+	{:else if group.linked && group.linked.can.settings}
+		<p class="text-base-600 dark:text-base-400 text-sm">
+			Members, requests to join and roles are managed at its group host{#if group.hostSite},
+				{@render hostLink(group.hostSite)}{/if}.
 		</p>
 	{/if}
 {/snippet}
@@ -258,7 +266,14 @@
 							variant="primary">Post an event</Button
 						>
 					{/if}
-					{#if group.hostSite}
+					{#if SETTINGS_IN_THIS_BUILD}
+						{#if group.linked.can.settings}
+							<Button
+								href={resolve('/(app)/groups/[actor]/settings', { actor: group.did })}
+								variant="secondary">Settings</Button
+							>
+						{/if}
+					{:else if group.hostSite}
 						<!-- The group host's own site, in a new tab that can't reach back. -->
 						<!-- eslint-disable svelte/no-navigation-without-resolve -->
 						<Button

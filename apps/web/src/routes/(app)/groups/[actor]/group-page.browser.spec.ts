@@ -21,6 +21,11 @@ vi.mock('#lib/groups/group.remote.js', () => mocks);
 vi.mock('#lib/groups/members.remote.js', () => member);
 vi.mock('@svelte-atproto/oauth/client', () => oauth);
 vi.mock('#lib/contrail/events.remote.js', () => ({ loadMoreEvents: vi.fn() }));
+// The settings page is in this build; group-host-links.browser.spec.ts has it out.
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	SETTINGS_IN_THIS_BUILD: true
+}));
 
 import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 import GroupPage from './+page.svelte';
@@ -56,7 +61,7 @@ function linkedPage(
 		listed: boolean;
 		reapprove?: boolean;
 	},
-	can = { post: true },
+	can = { post: true, settings: true },
 	upcoming: (typeof EVENT)[] = []
 ) {
 	return {
@@ -105,7 +110,9 @@ describe("what a link's granted scope offers", () => {
 
 	it("offers none of it to a member's session, and says why", async () => {
 		render(GroupPage, {
-			data: linkedPage({ public: true, listed: false }, { post: false }, [EVENT]) as never
+			data: linkedPage({ public: true, listed: false }, { post: false, settings: false }, [
+				EVENT
+			]) as never
 		});
 		await expect
 			.poll(shown)
@@ -113,12 +120,23 @@ describe("what a link's granted scope offers", () => {
 		expect(page.getByRole('link', { name: 'Post an event' }).elements()).toHaveLength(0);
 		expect(page.getByRole('link', { name: 'Edit' }).elements()).toHaveLength(0);
 		expect(page.getByRole('button', { name: 'Unlink' }).elements()).toHaveLength(1);
+		expect(page.getByRole('link', { name: 'Settings' }).elements()).toHaveLength(0);
 		expect(tools().elements()).toHaveLength(0);
+	});
+
+	it("offers the group's settings to a session that may change them", async () => {
+		render(GroupPage, { data: linkedPage({ public: true, listed: true }) as never });
+		await expect
+			.element(page.getByRole('link', { name: 'Settings' }))
+			.toHaveAttribute('href', `/groups/${encodeURIComponent(GROUP)}/settings`);
 	});
 
 	it('offers to approve again a link approved before atmo asked for all it does now', async () => {
 		render(GroupPage, {
-			data: linkedPage({ public: true, listed: true, reapprove: true }, { post: true }) as never
+			data: linkedPage(
+				{ public: true, listed: true, reapprove: true },
+				{ post: true, settings: false }
+			) as never
 		});
 		await expect.element(page.getByRole('button', { name: 'Approve again' })).toBeVisible();
 		const form = page.getByRole('button', { name: 'Approve again' }).element().closest('form');
@@ -137,6 +155,52 @@ describe('a link whose group host could not be reached', () => {
 		expect(page.getByRole('button', { name: 'Link this group' }).elements()).toHaveLength(0);
 		expect(page.getByRole('button', { name: 'Unlink' }).elements()).toHaveLength(1);
 		expect(page.getByRole('link', { name: 'Post an event' }).elements()).toHaveLength(0);
+	});
+});
+
+describe('where members, requests to join and roles are managed', () => {
+	const linkedWith = (
+		joinPolicy: string | null,
+		can = { post: true, settings: true },
+		hostSite: { url: string; name: string } | null = {
+			url: 'https://host.example/',
+			name: 'host.example'
+		}
+	) => {
+		const data = linkedPage({ public: true, listed: true }, can);
+		const linked = { ...data.group.linked, meta: { ...data.group.linked.meta, joinPolicy } };
+		return { ...data, group: { ...data.group, linked, hostSite } };
+	};
+	const note = 'Members, requests to join and roles are managed at its group host';
+	const there = () => page.getByRole('link', { name: 'host.example' });
+
+	it.each(['approval', 'open'])(
+		"is said to an admin who linked a group (%s), with a link to its group host's own site",
+		async (joinPolicy) => {
+			render(GroupPage, { data: linkedWith(joinPolicy) as never });
+			await expect.poll(shown).toContain(`${note}, host.example ↗.`);
+			await expect.element(there()).toHaveAttribute('href', 'https://host.example/');
+			await expect.element(there()).toHaveAttribute('target', '_blank');
+			await expect.element(there()).toHaveAttribute('rel', 'noopener noreferrer');
+			expect(tools().element().textContent).toContain('managed at its group host');
+			// Never at the group's own address, which is the group's to serve.
+			expect(tools().element().querySelector('a[href="https://knit.example/"]')).toBeNull();
+		}
+	);
+
+	it('is said without a link for a group whose host has no site to link', async () => {
+		render(GroupPage, { data: linkedWith('approval', undefined, null) as never });
+		await expect.poll(shown).toContain(`${note}.`);
+		expect(there().elements()).toHaveLength(0);
+	});
+
+	it.each([
+		['a link that manages nothing', linkedWith('approval', { post: true, settings: false })],
+		['a member who has not linked the group', personPage({ joinPolicy: 'approval' }, true)]
+	])('is not said to %s', async (_who, data) => {
+		render(GroupPage, { data: data as never });
+		await expect.element(page.getByRole('heading', { level: 1 })).toBeVisible();
+		expect(shown()).not.toContain(note);
 	});
 });
 
@@ -315,6 +379,7 @@ describe("a person's own membership", () => {
 describe('members-only events', () => {
 	const ADMIN = {
 		post: true,
+		settings: true,
 		turnOnMembersOnly: true,
 		membersOnly: false
 	};
@@ -409,6 +474,7 @@ describe('members-only events', () => {
 describe("members-only events whose calendar isn't for members alone now", () => {
 	const POSTING = {
 		post: true,
+		settings: true,
 		turnOnMembersOnly: true,
 		membersOnly: true
 	};
@@ -514,11 +580,12 @@ describe('the group tools', () => {
 		expect(page.getByRole('link', { name: 'Post an event' }).elements()).toHaveLength(0);
 	});
 
-	it('hold, in one box, posting for a link that may', async () => {
+	it('hold, in one box, posting and the settings for a link that may', async () => {
 		render(GroupPage, { data: linkedPage({ public: true, listed: true }) as never });
 		await expect.element(tools()).toBeVisible();
 		const box = tools().element();
 		expect(box.querySelector('a[href$="/events/new"]')).not.toBeNull();
+		expect(box.querySelector('a[href$="/settings"]')).not.toBeNull();
 		expect(page.getByRole('region', { name: 'Group tools' }).elements()).toHaveLength(1);
 	});
 });
