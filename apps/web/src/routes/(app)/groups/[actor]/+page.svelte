@@ -365,7 +365,8 @@
 						</p>
 						<ol class="text-base-700 dark:text-base-300 mt-2 list-decimal space-y-1 pl-5 text-sm">
 							<li class:font-medium={data.calendar === 'missing'}>
-								Turn them on. atmo uses the calendar the group has for its members, or makes one only they can read.
+								Turn them on. atmo uses the calendar the group has for its members, or makes one
+								only they can read.
 							</li>
 							<li class:font-medium={data.calendar === 'ready'}>
 								Approve your link once more, so it may post to that calendar.

@@ -146,8 +146,8 @@ describe('the group client', () => {
 			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.about&action=read&action=update',
 			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.config&action=read&action=update',
 			'space:org.atgrp.meta?authority=self&skey=self&manage=update',
-			'space:community.lexicon.calendar.collection?authority=self&skey=self&manage=create',
-			'space:community.lexicon.calendar.collection?authority=self&skey=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
+			'space:community.lexicon.calendar.collection?authority=self&manage=create',
+			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
 		]);
 	});
 
