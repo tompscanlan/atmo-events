@@ -772,6 +772,13 @@ async function ensurePublic(g) {
 	if (!back.ok) note(`${g.handle} is not back in the index after ${15 * 2} s`);
 }
 const groupUrl = (g) => `${ATMO}/groups/${g.did}`;
+/** The first label of a group's handle: part of its address, which the groups search finds. */
+const labelOf = (g) => g.handle.split('.')[0];
+/** Signed out, what a search of /groups answers (on one server's page, with `server`): its HTML. */
+const searchGroups = async (term, server) =>
+	(
+		await fetch(`${ATMO}/groups?${new URLSearchParams(server ? { q: term, server } : { q: term })}`)
+	).text();
 
 /** Has alice, linked to the group, open its page, which tells atmo's index what the host's repo now
  *  holds (its declaration added or taken away) without waiting for Jetstream. */
@@ -1158,19 +1165,18 @@ step(
 		const g = S.groups.g1;
 		const listRes = await alice.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
 		t.shot = alice;
-		// Groups linked by an earlier run of the walk are listed too, in the order the store keeps them.
-		const items = (await alice.locator('main ul li').allInnerTexts()).map((x) =>
-			x.replace(/\s+/g, ' ')
-		);
-		const mine = items.find((x) => x.includes(g.handle)) ?? '';
-		const lastLinked = items.map((x) => x.includes('Linked')).lastIndexOf(true);
-		const firstPlain = items.findIndex((x) => !x.includes('Linked'));
+		// Groups linked by an earlier run of the walk are listed there too.
+		const linked = (
+			await alice
+				.locator('section[aria-labelledby=linked-groups] li', { hasText: g.handle })
+				.first()
+				.innerText()
+				.catch(() => '')
+		).replace(/\s+/g, ' ');
 		check(
-			'/groups lists it for alice, marked Linked, by the name the host gave it, among the linked groups that lead the list',
-			mine.includes('Linked') &&
-				mine.includes(NAME) &&
-				(firstPlain === -1 || firstPlain > lastLinked),
-			items.join(' | ').slice(0, 300)
+			'/groups lists it for alice under "Groups you\'ve linked", marked Linked, by the name the host gave it',
+			linked.includes('Linked') && linked.includes(NAME),
+			linked.slice(0, 300)
 		);
 		check('/groups is never stored', listRes?.headers()['cache-control'] === 'no-store');
 		const odd = [
@@ -1203,17 +1209,14 @@ step(
 		// A group linked here counts as at the host at once, so no waiting for atmo's read of the host.
 		const began = Date.now();
 		const shown = await until(
-			() =>
-				fetch(`${ATMO}/groups`)
-					.then((r) => r.text())
-					.then((x) => x.includes(NAME)),
+			() => searchGroups(labelOf(g)).then((x) => x.includes(NAME)),
 			(x) => x === true,
 			20,
 			1000
 		);
 		note(`listed for a visitor after ${Math.round((Date.now() - began) / 1000)} s`);
 		check(
-			"after one linked view, the group is in the index's list: signed out, /groups shows it",
+			'after one linked view, the group is in the index: signed out, a search of /groups by its address finds it',
 			shown.ok
 		);
 		const listed = await getJson(`${ATMO}/xrpc/rsvp.atmo.declaration.listDeclared?limit=50`);
@@ -1232,14 +1235,14 @@ step(
 	async (t) => {
 		const { anon } = S.pages;
 		const g = S.groups.g1;
-		await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+		await anon.goto(`${ATMO}/groups?q=${labelOf(g)}`, { waitUntil: 'networkidle' });
 		await anon.locator(`a[href$="/groups/${g.did}"]`).first().click();
 		await anon.waitForURL((u) => u.pathname === `/groups/${g.did}`);
 		await settle(anon);
 		t.shot = anon;
 		const text = await mainText(anon);
 		check(
-			'a signed-out visitor follows /groups to its page, which names it and offers no controls',
+			'a signed-out visitor follows a search of /groups to its page, which names it and offers no controls',
 			text.includes(NAME) &&
 				(await anon.getByRole('link', { name: /^post an event$/i }).count()) === 0 &&
 				(await anon.getByRole('button', { name: /unlink|groups list/i }).count()) === 0 &&
@@ -1273,14 +1276,14 @@ step(
 		const hidden = await until(
 			async () => {
 				const s = await status(anon, url);
-				await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+				await anon.goto(`${ATMO}/groups?q=${labelOf(g)}`, { waitUntil: 'networkidle' });
 				return { s, listed: (await mainText(anon)).includes(NAME) };
 			},
 			(x) => x.s === 404 && !x.listed,
 			10
 		);
 		check(
-			'unlisted, the signed-out groups list no longer shows it, and its page is a 404 for a visitor',
+			'unlisted, a signed-out search of /groups no longer finds it, and its page is a 404 for a visitor',
 			hidden.ok,
 			JSON.stringify(hidden.last)
 		);
@@ -1298,14 +1301,14 @@ step(
 		const shown = await until(
 			async () => {
 				const s = await status(anon, url);
-				await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+				await anon.goto(`${ATMO}/groups?q=${labelOf(g)}`, { waitUntil: 'networkidle' });
 				return { s, listed: (await mainText(anon)).includes(NAME) };
 			},
 			(x) => x.s === 200 && x.listed,
 			10
 		);
 		check(
-			'listed again, a visitor sees it in /groups and on its page',
+			'listed again, a visitor finds it by a search of /groups and sees its page',
 			shown.ok,
 			JSON.stringify(shown.last)
 		);
@@ -1557,6 +1560,253 @@ step(
 	{ needs: ['delete-event'] }
 );
 
+// ---------- browsing /groups: what is coming up, each server's list, search ----------
+const HOST_NAME = new URL(HOST).host;
+/** The group host's row on /groups: its counts, as shown. */
+async function hostRow(page) {
+	await page.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+	const row = page.locator('section[aria-labelledby=by-server] li', { hasText: HOST_NAME }).first();
+	const text = (await row.innerText().catch(() => '')).replace(/\s+/g, ' ');
+	const m = text.match(/(\d+) groups?, (\d+) with events coming up/);
+	return { text, groups: m ? Number(m[1]) : null, upcoming: m ? Number(m[2]) : null };
+}
+/** A group's row under "Groups with events coming up", through up to `pages` pages; null if absent. */
+async function upcomingRow(page, name, pages = 8) {
+	await page.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+	const section = page.locator('section[aria-labelledby=upcoming]');
+	for (let i = 0; i < pages; i++) {
+		const item = section.locator('li', { hasText: name }).first();
+		if (await item.count())
+			return {
+				text: (await item.innerText()).replace(/\s+/g, ' '),
+				datetime: await item.locator('time').getAttribute('datetime'),
+				page: i + 1
+			};
+		const more = section.getByRole('link', { name: /more groups/i });
+		if (!(await more.count())) return null;
+		await page.goto(new URL(await more.getAttribute('href'), ATMO).href, {
+			waitUntil: 'networkidle'
+		});
+	}
+	return null;
+}
+const hostPageUrl = () => `${ATMO}/groups?${new URLSearchParams({ server: HOST })}`;
+/** Signed out, the DIDs a paged list links to, through every page: the host's own list, or the
+ *  whole list's groups with events coming up. */
+async function listedDids(first) {
+	const dids = new Set();
+	let url = first;
+	for (let i = 0; i < 30 && url; i++) {
+		const html = await (await fetch(url)).text();
+		for (const m of html.matchAll(/\/groups\/(did:[a-z0-9:]+)/g)) dids.add(m[1]);
+		const next = html.match(/[?&;]cursor=([^"&]+)/);
+		url = next ? `${first}${first.includes('?') ? '&' : '?'}cursor=${next[1]}` : null;
+	}
+	return dids;
+}
+async function linkByAlice(g) {
+	if (g.linkedByAlice) return;
+	const { alice } = S.pages;
+	await startLink(alice, g.handle);
+	await through(alice, ALICE, (u) => u.origin === ATMO);
+	await settle(alice);
+	g.linkedByAlice = true;
+}
+
+step(
+	'link',
+	'browse-signed-out',
+	async (t) => {
+		const { alice, anon } = S.pages;
+		const before = await hostRow(anon);
+		const beforeDids = await listedDids(hostPageUrl());
+		note(`the host's row before: ${before.text}; its own list has ${beforeDids.size}`);
+		// Listed, with an event coming up; listed, with none; private; and listed, then unlisted.
+		// Linked by alice, whose view of each page tells the index at once, without waiting for an
+		// ingest cycle to hear of the declarations.
+		const listed = async (label, name) => {
+			const g = await createGroup(ALICE, label, name);
+			await linkByAlice(g);
+			await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+			return g;
+		};
+		const bu = await listed(`bu${RUN}`, `Busy fell ${RUN}`);
+		const bn = await listed(`bn${RUN}`, `Bare fell ${RUN}`);
+		const bp = await createGroup(ALICE, `bp${RUN}`, `Shut fold ${RUN}`, { publicRead: false });
+		const bl = await listed(`bl${RUN}`, `Hidden tarn ${RUN}`);
+		const coming = `Fell race ${RUN}`;
+		await linkByAlice(bu);
+		await alice.goto(`${groupUrl(bu)}/events/new`, { waitUntil: 'networkidle' });
+		await editorPublish(alice, coming);
+		await alice.waitForURL((u) => !u.pathname.endsWith('/events/new'), { timeout: 60_000 });
+		await linkByAlice(bl);
+		await alice.goto(groupUrl(bl), { waitUntil: 'networkidle' });
+		await alice.getByRole('button', { name: /^remove from the groups list$/i }).click();
+		await until(
+			() => repoRecords(bl.did, DECLARATION),
+			(rs) => rs.length === 0
+		);
+		await alice.goto(groupUrl(bl), { waitUntil: 'networkidle' });
+
+		await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+		check(
+			'signed out, /groups starts with the search box',
+			(await anon.locator('#group-search').getAttribute('placeholder')) ===
+				'Search by address or name'
+		);
+		const row = await until(
+			() => upcomingRow(anon, bu.name),
+			(x) => x !== null,
+			10,
+			2000
+		);
+		t.shot = anon;
+		check(
+			'a group with a public event coming up is under "Groups with events coming up", with the event\'s title and date',
+			row.ok && row.last.text.includes(coming) && Boolean(row.last.datetime),
+			JSON.stringify(row.last)
+		);
+		if (row.ok) note(`found on page ${row.last.page}: ${row.last.text}`);
+		const absent = {};
+		for (const g of [bn, bp, bl]) absent[g.name] = (await upcomingRow(anon, g.name)) === null;
+		check(
+			'a listed group with no event, a private one and an unlisted one are not there',
+			Object.values(absent).every(Boolean),
+			JSON.stringify(absent)
+		);
+		const hostPage = await (await fetch(hostPageUrl())).text();
+		check(
+			"the listed group with no event is on its host's page",
+			hostPage.includes(bn.name) && hostPage.includes(bu.name)
+		);
+		check(
+			'...the private and the unlisted ones are not',
+			!hostPage.includes(bp.did) && !hostPage.includes(bl.did)
+		);
+		const found = await searchGroups(labelOf(bn).slice(0, -2));
+		check('a search by part of its address finds the listed group', found.includes(bn.name));
+		const hidden = [
+			await searchGroups(labelOf(bp)),
+			await searchGroups(labelOf(bl)),
+			await searchGroups(bp.name),
+			await searchGroups(bl.name),
+			await searchGroups(labelOf(bp), HOST),
+			await searchGroups(labelOf(bl), HOST)
+		];
+		check(
+			"a search, on the whole list or on the host's page, finds neither the private nor the unlisted group",
+			// By their DIDs, which only a result's link carries: the page repeats what was searched for.
+			hidden.every((h) => !h.includes(bp.did) && !h.includes(bl.did)),
+			hidden.map((h) => `${h.includes(bp.did)}/${h.includes(bl.did)}`).join(' ')
+		);
+		// The counts, against the lists they count: other runs' groups come and go meanwhile.
+		const after = await until(
+			async () => {
+				const row = await hostRow(anon);
+				const all = await listedDids(hostPageUrl());
+				const coming = await listedDids(`${ATMO}/groups`);
+				return { row, all, coming };
+			},
+			(x) => x.row.groups === x.all.size && x.row.upcoming === x.coming.size,
+			10,
+			2000
+		);
+		const { row: rowAfter, all, coming: comingDids } = after.last;
+		const added = [...all].filter((d) => !beforeDids.has(d));
+		const dropped = [...beforeDids].filter((d) => !all.has(d));
+		note(
+			`the host's row after: ${rowAfter.text}; its list has ${all.size}, the coming-up list ${comingDids.size}; new on the list: ${added.join(' ')}; gone from it: ${dropped.join(' ') || 'none'}`
+		);
+		check(
+			"the host's row counts its list (groups) and the coming-up list (events coming up)",
+			after.ok,
+			`${rowAfter.text} / ${all.size} / ${comingDids.size}`
+		);
+		check(
+			'...of which the groups made here are the two listed ones, and only the one with an event is coming up',
+			added.includes(bu.did) &&
+				added.includes(bn.did) &&
+				!all.has(bp.did) &&
+				!all.has(bl.did) &&
+				comingDids.has(bu.did) &&
+				!comingDids.has(bn.did),
+			added.join(' ')
+		);
+		S.browse = { bn };
+	},
+	{ needs: ['people-sign-in'] }
+);
+
+step(
+	'link',
+	'host-page-and-its-search',
+	async (t) => {
+		const { anon } = S.pages;
+		const { bn } = S.browse;
+		await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+		await anon.getByRole('link', { name: `See all groups at ${HOST_NAME}` }).click();
+		await anon.waitForURL((u) => u.searchParams.get('server') !== null, { timeout: 20_000 });
+		await settle(anon);
+		check(
+			'"See all" opens the host\'s own list',
+			new URL(anon.url()).searchParams.get('server') === HOST &&
+				(await mainText(anon)).includes(bn.name),
+			anon.url()
+		);
+		await anon.fill('#group-search', labelOf(bn));
+		await anon.getByRole('button', { name: /^search$/i }).click();
+		await anon.waitForURL((u) => u.searchParams.get('q') !== null, { timeout: 20_000 });
+		await settle(anon);
+		t.shot = anon;
+		const at = new URL(anon.url());
+		check(
+			'searching there stays on that host, and finds the group',
+			at.searchParams.get('server') === HOST &&
+				(await mainText(anon)).includes(bn.name) &&
+				(await mainText(anon)).includes(`Search the groups at ${HOST_NAME}`),
+			anon.url()
+		);
+	},
+	{ needs: ['browse-signed-out'] }
+);
+
+step(
+	'link',
+	'private-linked-group-only-for-its-linker',
+	async (t) => {
+		const { alice, bob, anon } = S.pages;
+		const g = await createGroup(ALICE, `bv${RUN}`, `Walled garth ${RUN}`);
+		Object.assign(g, spacesOf(g.did));
+		await linkByAlice(g);
+		await setMetaPublic(await adminFor(g, ALICE), g, false);
+		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		await alice.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+		t.shot = alice;
+		const asks = (await alice.getByRole('button', { name: /^allow joining groups$/i }).count()) > 0;
+		const linked = (
+			await alice
+				.locator('section[aria-labelledby=linked-groups]')
+				.innerText()
+				.catch(() => '')
+		).replace(/\s+/g, ' ');
+		check(
+			'alice, whose sign-in has not granted the join permissions, sees the private group she linked under "Groups you\'ve linked"',
+			// A private group's name is not kept for the list, so it is shown by its handle.
+			asks && linked.includes(g.handle),
+			`asks for join permissions: ${asks}; ${linked.slice(0, 300)}`
+		);
+		await bob.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+		await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+		check(
+			'bob, signed in, and a signed-out visitor do not see it on /groups, nor by a search',
+			!(await bob.content()).includes(g.did) &&
+				!(await anon.content()).includes(g.did) &&
+				!(await searchGroups(labelOf(g))).includes(g.did)
+		);
+	},
+	{ needs: ['people-sign-in'] }
+);
+
 // ---------- the group made private, and its link broken, at the host ----------
 step(
 	'private',
@@ -1593,13 +1843,13 @@ step(
 		);
 		const gone = await until(
 			async () => {
-				await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+				await anon.goto(`${ATMO}/groups?q=${labelOf(g)}`, { waitUntil: 'networkidle' });
 				return (await mainText(anon)).includes(NAME);
 			},
 			(x) => x === false,
 			15
 		);
-		check('a signed-out visitor no longer finds it in /groups', gone.ok);
+		check('a signed-out visitor no longer finds it by a search of /groups', gone.ok);
 		check(
 			'...and its page is a 404 for a visitor',
 			(await status(anon, `${ATMO}/groups/${g.did}`)) === 404
@@ -1669,13 +1919,13 @@ step(
 		);
 		const shown = await until(
 			async () => {
-				await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+				await anon.goto(`${ATMO}/groups?q=${labelOf(g)}`, { waitUntil: 'networkidle' });
 				return (await mainText(anon)).includes(NAME);
 			},
 			(x) => x,
 			15
 		);
-		check('a signed-out visitor finds it in /groups again', shown.ok);
+		check('a signed-out visitor finds it by a search of /groups again', shown.ok);
 	},
 	{ needs: ['private-at-host'] }
 );
@@ -1823,14 +2073,17 @@ step(
 		await alice.waitForURL((u) => u.pathname === '/groups', { timeout: 30_000 });
 		await settle(alice);
 		t.shot = alice;
-		const items = (await alice.locator('main ul li').allInnerTexts()).map((x) =>
-			x.replace(/\s+/g, ' ')
-		);
-		const mine = items.find((x) => x.includes(g.handle));
+		const linked = (
+			await alice
+				.locator('section[aria-labelledby=linked-groups]')
+				.innerText()
+				.catch(() => '')
+		).replace(/\s+/g, ' ');
+		const found = await searchGroups(labelOf(g));
 		check(
-			'alice unlinks it: it is still on the public list, but no longer marked Linked for her',
-			mine !== undefined && mine.includes(NAME) && !mine.includes('Linked'),
-			mine ?? items.join(' | ').slice(0, 300)
+			'alice unlinks it: it leaves "Groups you\'ve linked", and a search still finds it',
+			!linked.includes(g.handle) && found.includes(NAME),
+			linked.slice(0, 300)
 		);
 		await alice.goto(appsPage, { waitUntil: 'networkidle' });
 		await alice.locator('html[data-hydrated]').waitFor({ state: 'attached', timeout: 30_000 });
@@ -2165,15 +2418,12 @@ step(
 				1
 		);
 		const shown = await until(
-			() =>
-				fetch(`${ATMO}/groups`)
-					.then((r) => r.text())
-					.then((x) => x.includes(NEW.name)),
+			() => searchGroups(NEW.label).then((x) => x.includes(NEW.name)),
 			(x) => x,
 			15,
 			1000
 		);
-		check('the group is on the signed-out list at once', shown.ok);
+		check('a signed-out search of /groups finds it at once', shown.ok);
 		const decl = await repoRecords(did, DECLARATION);
 		check('the host holds its declaration', decl.length === 1);
 	},
@@ -2215,8 +2465,8 @@ step(
 			`${JSON.stringify(early)} / ${earlyDecl.length} declarations`
 		);
 		check(
-			'...and not on the signed-out list',
-			!(await (await fetch(`${ATMO}/groups`)).text()).includes(name)
+			'...and a signed-out search of /groups does not find it',
+			!(await searchGroups(label)).includes(name)
 		);
 		await alice.goto(`${ATMO}/groups/create`, { waitUntil: 'networkidle' });
 		await alice
@@ -2239,8 +2489,8 @@ step(
 		await sleep(3000);
 		const decl = await repoRecords(did, DECLARATION);
 		check('...with no declaration at the host', decl.length === 0, String(decl.length));
-		const list = await (await fetch(`${ATMO}/groups`)).text();
-		check('...and is not on the signed-out list', !list.includes(name));
+		const list = await searchGroups(label);
+		check('...and a signed-out search of /groups does not find it', !list.includes(name));
 		check(
 			'...and its page is a 404 for a visitor',
 			(await status(anon, groupUrl(S.groups.un))) === 404
@@ -2271,8 +2521,8 @@ step(
 			(await status(anon, groupUrl(S.groups.mo))) === 404
 		);
 		check(
-			'...and it is not on the signed-out list',
-			!(await (await fetch(`${ATMO}/groups`)).text()).includes(name)
+			'...and a signed-out search of /groups does not find it',
+			!(await searchGroups(label)).includes(name)
 		);
 		check(
 			'...while its admin reaches it, with the Private badge',
@@ -2525,10 +2775,7 @@ step(
 			`${await alice.inputValue('#group-name')} | ${await alice.inputValue('#group-website')} | ${await alice.locator('#group-join').inputValue()}`
 		);
 		const listed = await until(
-			() =>
-				fetch(`${ATMO}/groups`)
-					.then((r) => r.text())
-					.then((x) => x.includes(S.newName)),
+			() => searchGroups(NEW.label).then((x) => x.includes(S.newName)),
 			(x) => x,
 			10,
 			1000
@@ -2578,7 +2825,7 @@ step(
 		const gone = await until(
 			async () => ({
 				s: await status(anon, groupUrl(g)),
-				listed: (await (await fetch(`${ATMO}/groups`)).text()).includes(S.newName)
+				listed: (await searchGroups(NEW.label)).includes(S.newName)
 			}),
 			(x) => x.s === 404 && !x.listed,
 			15,
@@ -2593,7 +2840,7 @@ step(
 		const back = await until(
 			async () => ({
 				s: await status(anon, groupUrl(g)),
-				listed: (await (await fetch(`${ATMO}/groups`)).text()).includes(S.newName)
+				listed: (await searchGroups(NEW.label)).includes(S.newName)
 			}),
 			(x) => x.s === 200 && x.listed,
 			15,
@@ -3049,6 +3296,32 @@ step(
 	async (t) => {
 		const { alice } = S.pages;
 		const g = S.groups.gj;
+		// A second role the group marks default, written as the group by its admin.
+		const admin = await adminFor(g, ALICE);
+		let roleWritten = null;
+		try {
+			await asGroup(
+				admin,
+				'com.atproto.space.putRecord',
+				post({
+					space: g.members,
+					repo: g.did,
+					collection: 'org.atgrp.role',
+					rkey: 'walker',
+					record: {
+						$type: 'org.atgrp.role',
+						displayName: 'Walker',
+						default: true,
+						permissions: []
+					}
+				})
+			);
+			roleWritten = true;
+		} catch (e) {
+			roleWritten = e.message;
+		}
+		note(`the default role "walker" written as the group: ${roleWritten}`);
+		await alice.reload({ waitUntil: 'networkidle' });
 		await alice
 			.locator('ul[aria-label="Asking to join"] li', { hasText: BOB.handle.split('.')[0] })
 			.getByRole('button', { name: /^approve$/i })
@@ -3085,6 +3358,18 @@ step(
 			members.slice(0, 300)
 		);
 		check('...and no longer in the requests', !(await mainText(alice)).includes(S.rosterMessage));
+		// His row shows each role but member, by its name: member is every row's.
+		const bobRow = (
+			await alice
+				.locator('ul[aria-label="Members"] li', { hasText: handleName })
+				.innerText()
+				.catch(() => '')
+		).replace(/\s+/g, ' ');
+		check(
+			'approved, he has the roles the group marks default: his row shows the "Walker" role written for it',
+			roleWritten === true && bobRow.includes('Walker'),
+			bobRow.slice(0, 200)
+		);
 	},
 	{ needs: ['alice-links-and-sees-the-roster-controls'] }
 );
@@ -3237,6 +3522,49 @@ step(
 	{ needs: ['make-bob-admin-and-back'] }
 );
 
+step(
+	'roster',
+	'deny-a-request-another-admin-approved',
+	async (t) => {
+		const { alice, bob } = S.pages;
+		const g = S.groups.gj;
+		const asked = await hostCall(MALLORY, 'org.atgrp.requestJoin', {
+			group: g.did,
+			message: 'Mallory, once more'
+		});
+		check('mallory asks to join (by script)', asked.status === 200, asked.text.slice(0, 120));
+		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		await bob.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		const row = (page) =>
+			page.locator('ul[aria-label="Asking to join"] li', { hasText: 'mallory' });
+		check(
+			'both admins see her request',
+			(await row(alice).count()) === 1 && (await row(bob).count()) === 1
+		);
+		await row(bob)
+			.getByRole('button', { name: /^approve$/i })
+			.click();
+		await until(
+			async () => (await row(bob).count()) === 0,
+			(x) => x,
+			20,
+			500
+		);
+		await row(alice)
+			.getByRole('button', { name: /^deny$/i })
+			.click();
+		await alice.getByRole('alert').waitFor({ timeout: 20_000 });
+		t.shot = alice;
+		const text = await body(alice);
+		check(
+			'bob approves her; alice, on her older page, denies the same request and is told she is no longer asking',
+			/no longer asking to join/i.test(text),
+			text.slice(0, 300)
+		);
+	},
+	{ needs: ['two-admins-can-demote-each-other'] }
+);
+
 step('roster', 'todo-last-admin-sentence', async () => {}, {
 	todo: "the no-admin sentence needs an action that would leave the group without an admin; the members page offers no controls on one's own row, and demoting or removing another admin leaves the actor as an admin, so no click reaches it (the unit tests cover the host's LastConfigurer answer)"
 });
@@ -3278,6 +3606,11 @@ step(
 		const row = alice.locator('ul[aria-label="Members"] li', {
 			hasText: DANA.handle.split('.')[0]
 		});
+		// Bob, an admin too, has the page open from before.
+		await bob.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		const stale = bob.locator('ul[aria-label="Members"] li', {
+			hasText: DANA.handle.split('.')[0]
+		});
 		await row.getByRole('button', { name: /^remove$/i }).click();
 		await until(
 			async () => (await row.count()) === 0,
@@ -3291,6 +3624,20 @@ step(
 			(await row.count()) === 0,
 			(await mainText(alice)).slice(0, 300)
 		);
+		if (await stale.getByRole('button', { name: /^remove$/i }).count()) {
+			await stale.getByRole('button', { name: /^remove$/i }).click();
+			await bob.waitForTimeout(3000);
+			const said = await bob
+				.getByRole('alert')
+				.allInnerTexts()
+				.catch(() => []);
+			await bob.reload({ waitUntil: 'networkidle' });
+			check(
+				'bob, on his older page, removes her again: it ends cleanly, with no failure, and she is not listed',
+				!said.some((x) => /did not work|try again/i.test(x)) && (await stale.count()) === 0,
+				said.join(' | ') || 'no message'
+			);
+		} else note("bob's older page did not offer to remove her");
 		const { dana } = S.pages;
 		await dana.goto(groupUrl(g), { waitUntil: 'networkidle' });
 		check(
@@ -3345,6 +3692,47 @@ step(
 		);
 	},
 	{ needs: ['remove-a-member'] }
+);
+
+const OLD_GROUP = process.env.WALK_OLD_GROUP?.trim() || '';
+step(
+	'roster',
+	'role-change-through-an-older-link',
+	async (t) => {
+		const { alice } = S.pages;
+		const did = (await (await fetch(`https://${OLD_GROUP}/.well-known/atproto-did`)).text()).trim();
+		const g = { did, handle: OLD_GROUP };
+		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		t.shot = alice;
+		const row = alice.locator('ul[aria-label="Members"] li', { hasText: BOB.handle.split('.')[0] });
+		const [from, to] = (await row.getByRole('button', { name: /^make member$/i }).count())
+			? [/^make member$/i, /^make admin$/i]
+			: [/^make admin$/i, /^make member$/i];
+		check(
+			`alice's link to ${OLD_GROUP}, approved before these changes, still offers role changes for bob`,
+			(await row.getByRole('button', { name: from }).count()) === 1,
+			(await mainText(alice)).slice(0, 300)
+		);
+		const there = async () => {
+			await row.getByRole('button', { name: from }).click();
+			await row.getByRole('button', { name: to }).waitFor({ timeout: 20_000 });
+		};
+		await there();
+		check(
+			'the role change is made, on the page, with no new approval asked for',
+			new URL(alice.url()).origin === ATMO
+		);
+		// And back.
+		await row.getByRole('button', { name: to }).click();
+		await row.getByRole('button', { name: from }).waitFor({ timeout: 20_000 });
+		check('...and back again', new URL(alice.url()).origin === ATMO);
+	},
+	{
+		needs: ['founder-cannot-leave-as-the-only-admin'],
+		todo: OLD_GROUP
+			? null
+			: 'needs WALK_OLD_GROUP, the handle of a group alice linked before the current app code, with bob in it'
+	}
 );
 
 // =====================================================================================
