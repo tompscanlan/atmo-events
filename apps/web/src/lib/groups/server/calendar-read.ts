@@ -63,8 +63,12 @@ export function membersOnlyEvent(groupDid: string, record: SpaceRecord): FlatEve
 }
 
 /** For the edit page: whole, as stored, since the editor saves what it loads, and a field left out
- *  would go. */
-export function storedMembersOnlyEvent(groupDid: string, record: SpaceRecord): FlatEventRecord {
+ *  would go. Null for what isn't an event, as the event's own page has it. */
+export function storedMembersOnlyEvent(
+	groupDid: string,
+	record: SpaceRecord
+): FlatEventRecord | null {
+	if (!membersOnlyEvent(groupDid, record)) return null;
 	return {
 		...(record.value as unknown as FlatEventRecord),
 		cid: record.cid,
