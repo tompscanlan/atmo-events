@@ -30,37 +30,39 @@ const DECLARATIONS = recordsTableName('declaration');
 const EVENTS = recordsTableName('event');
 const PROFILES = 'group_profiles';
 
-/** What groups add to the database, made when a group list or page first needs it, so only while
- *  groups are on: the profiles cached for visitors, and an index that finds a group's next event
- *  without reading its past ones. */
-const SCHEMA = [
-	`CREATE TABLE IF NOT EXISTS ${PROFILES} (
+/** The table groups add to the database, made when a group list or page first needs it, so only
+ *  while groups are on: the profiles cached for visitors. Small, and made in one quick statement,
+ *  so a request may make it. */
+const PROFILES_TABLE = `CREATE TABLE IF NOT EXISTS ${PROFILES} (
 		did TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
 		description TEXT,
 		handle TEXT,
 		website TEXT
-	)`,
-	`CREATE INDEX IF NOT EXISTS groups_event_did_starts
-		ON ${EVENTS}(did, json_extract(record, '$.startsAt'))`
-];
+	)`;
 
-/** Columns added to a table after it was first made, for a database that made it before. */
-const ADDED_COLUMNS = [`ALTER TABLE ${PROFILES} ADD COLUMN website TEXT`];
+/** Columns added to the table after it was first made, for a database that made it before. */
+const ADDED_COLUMNS = [{ name: 'website', type: 'TEXT' }];
 
 const schemaReady = new WeakMap<object, Promise<void>>();
 
-/** Once per database, after contrail has made its tables. */
+/** Once per database, after contrail has made its tables. A column is added only when the table
+ *  lacks it. */
 export function ensureGroupSchema(db: Database): Promise<void> {
 	let ready = schemaReady.get(db);
 	if (!ready) {
 		ready = (async () => {
-			for (const statement of SCHEMA) await db.prepare(statement).run();
-			for (const statement of ADDED_COLUMNS) {
+			await db.prepare(PROFILES_TABLE).run();
+			const { results } = await db
+				.prepare(`SELECT name FROM pragma_table_info('${PROFILES}')`)
+				.all<{ name: string }>();
+			const has = new Set((results ?? []).map((column) => column.name));
+			for (const { name, type } of ADDED_COLUMNS.filter((column) => !has.has(column.name))) {
 				await db
-					.prepare(statement)
+					.prepare(`ALTER TABLE ${PROFILES} ADD COLUMN ${name} ${type}`)
 					.run()
 					.catch((e: unknown) => {
+						// Added by another request in between.
 						if (!/duplicate column/i.test(e instanceof Error ? e.message : String(e))) throw e;
 					});
 			}
@@ -71,6 +73,28 @@ export function ensureGroupSchema(db: Database): Promise<void> {
 		schemaReady.set(db, ready);
 	}
 	return ready;
+}
+
+/** The index that finds a group's next event without reading its past ones. It is built over
+ *  contrail's events table, the largest there is, which can take longer than a visitor's request
+ *  should wait, so only the scheduled job builds it (routes/api/cron), and only while groups are
+ *  on. Until it is there the list answers the same, by contrail's own index on the events' DID,
+ *  reading each group's past events too. */
+export const GROUP_EVENT_INDEX = 'groups_event_did_starts';
+
+const GROUP_EVENT_INDEX_SQL = `CREATE INDEX IF NOT EXISTS ${GROUP_EVENT_INDEX}
+	ON ${EVENTS}(did, json_extract(record, '$.startsAt'))`;
+
+const eventIndexBuilt = new WeakSet<object>();
+
+/** Builds the index unless this isolate saw it built. Turning groups off again leaves it, as it
+ *  leaves the profiles table and the declarations table: unread, but the index is still kept up
+ *  to date on every write to the events table, a cost that stays until it is dropped by hand
+ *  (`DROP INDEX groups_event_did_starts`). */
+export async function ensureGroupEventIndex(db: Database): Promise<void> {
+	if (eventIndexBuilt.has(db)) return;
+	await db.prepare(GROUP_EVENT_INDEX_SQL).run();
+	eventIndexBuilt.add(db);
 }
 
 /** Accounts contrail has not resolved yet count under '', so they share one server's places. */

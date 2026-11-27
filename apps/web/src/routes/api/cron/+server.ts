@@ -4,6 +4,8 @@ import { processBotMentions } from '#lib/bot/process-mentions.js';
 import { refreshTopicCounts } from '#lib/server/topic-counts.js';
 import { refreshCitySnapshot } from '#lib/server/cities.js';
 import { syncEventStarterPacks } from '#lib/starter-packs/runtime.js';
+import { groupsEnabled } from '#lib/groups/server/enabled.js';
+import { ensureGroupEventIndex } from '#lib/groups/server/declared.js';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async ({ request }) => {
@@ -31,6 +33,15 @@ export const POST: RequestHandler = async ({ request }) => {
 			await contrail.retryBackfill({ maxAccounts: 5 }, db);
 		} catch (error) {
 			console.error('[cron] backfill retries failed:', error);
+		}
+		// The groups list's index on the events table, built here rather than in a visitor's
+		// request, and only while groups are on; tried again each tick until it is there.
+		if (groupsEnabled()) {
+			try {
+				await ensureGroupEventIndex(db);
+			} catch (error) {
+				console.error('[cron] the groups event index was not built:', error);
+			}
 		}
 	}
 	// Public bot-owned packs reconcile after ingestion, independently of other jobs.

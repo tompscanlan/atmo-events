@@ -8,6 +8,7 @@ import {
 	cachedProfiles,
 	cacheProfile,
 	DECLARED_PAGE,
+	ensureGroupEventIndex,
 	ensureGroupSchema,
 	groupLabels,
 	groupServers,
@@ -24,12 +25,21 @@ const NOW = '2030-06-01T12:00:00.000Z';
 /** `minutes` from NOW. */
 const at = (minutes: number) => new Date(Date.parse(NOW) + minutes * 60_000).toISOString();
 
-async function setup(): Promise<Database> {
+/** With the groups' index, as the scheduled job builds it, unless `index` is false. */
+async function setup({ index = true } = {}): Promise<Database> {
 	const db = createSqliteDatabase(':memory:');
 	await new Contrail(servedConfig(true)).init(db);
 	await ensureGroupSchema(db);
+	if (index) await ensureGroupEventIndex(db);
 	return db;
 }
+
+const indexes = async (db: Database) =>
+	(
+		await db
+			.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'groups_%'")
+			.all<{ name: string }>()
+	).results?.map((row) => row.name) ?? [];
 
 const run = (db: Database, sql: string, ...values: unknown[]) =>
 	db
@@ -299,6 +309,33 @@ describe('the groups with an event coming', () => {
 	});
 });
 
+describe("before the scheduled job builds the groups' index", () => {
+	it('is not built by a page: the table a page makes comes alone', async () => {
+		const db = await setup({ index: false });
+		expect(await indexes(db)).toEqual([]);
+		await ensureGroupEventIndex(db);
+		expect(await indexes(db)).toEqual(['groups_event_did_starts']);
+	});
+
+	it('answers the list and the counts the same without it, by the events’ DID', async () => {
+		const fill = async (db: Database) => {
+			await groupsAt(db, 'https://busy.example', 'b', 20, 1);
+			await groupsAt(db, 'https://other.example', 'o', 3, 100);
+			await declare(db, 'did:plc:past');
+			await event(db, 'did:plc:past', 'gone', at(-1));
+		};
+		const without = await setup({ index: false });
+		const withIt = await setup();
+		await fill(without);
+		await fill(withIt);
+		expect(await allPages(without)).toEqual(await allPages(withIt));
+		expect(await groupServers(without, NOW)).toEqual(await groupServers(withIt, NOW));
+		const { spy, plans } = planned(without);
+		await upcomingGroups(spy, NOW);
+		expect(plans[0]).toContain('SEARCH c USING INDEX idx_event_did (did=?)');
+	});
+});
+
 describe('the servers with declared groups', () => {
 	it('counts each server’s declared groups and those with an event coming, busiest first', async () => {
 		const db = await setup();
@@ -470,6 +507,21 @@ describe('what a list shows of a group', () => {
 		});
 		await cacheProfile(db, 'did:plc:g', null);
 		expect(await cachedProfiles(db, ['did:plc:g'])).toEqual(new Map());
+	});
+
+	it('adds no column to a table that has it', async () => {
+		const db = createSqliteDatabase(':memory:');
+		await new Contrail(servedConfig(true)).init(db);
+		const sent: string[] = [];
+		await ensureGroupSchema({
+			...db,
+			prepare: (sql: string) => {
+				sent.push(sql);
+				return db.prepare(sql);
+			}
+		});
+		expect(sent.some((sql) => /ALTER TABLE/i.test(sql))).toBe(false);
+		expect(sent.some((sql) => /CREATE INDEX/i.test(sql))).toBe(false);
 	});
 
 	it("keeps a cached profile's website, and adds its column to a table made before it", async () => {
