@@ -10,7 +10,10 @@ describe('the permissions this build asks for', () => {
 				'atproto',
 				'space:org.atgrp.meta?authority=self&skey=self&action=read',
 				'repo?collection=community.lexicon.calendar.event',
-				'blob?accept=image/*'
+				'blob?accept=image/*',
+				'space:community.lexicon.calendar.collection?authority=self&manage=create',
+				'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete',
+				'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.space&action=read'
 			].join(' ')
 		);
 	});

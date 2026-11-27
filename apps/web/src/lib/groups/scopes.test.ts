@@ -6,25 +6,61 @@ import {
 	holdsMetaRead,
 	holdsParticipate,
 	holdsRpc,
+	MEMBERS_ONLY_SCOPES,
+	JOIN_SCOPES,
 	PARTICIPATE_SCOPES,
 	YOUR_GROUPS_SCOPE
 } from './scopes';
+import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 
 const GROUP = 'did:plc:group';
 const META_READ = `space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`;
 const REPO = 'repo?collection=community.lexicon.calendar.event';
+/** Members-only events' scopes, as the host gives them back once the calendar space is there. */
+const MEMBERS_ONLY = MEMBERS_ONLY_SCOPES.map((s) =>
+	s.replace('authority=self', `authority=${GROUP}`)
+);
 
 describe('what a group session may do, by the scope its host granted', () => {
 	it("lets an admin's session, which keeps every grant asked, post", () => {
-		const scope = ['atproto', META_READ, REPO, 'blob?accept=image/*'].join(' ');
-		expect(groupAbilities(scope)).toEqual({
-			post: true
+		const scope = ['atproto', META_READ, REPO, 'blob?accept=image/*', ...MEMBERS_ONLY].join(' ');
+		expect(groupAbilities(scope, GROUP)).toEqual({
+			post: true,
+			turnOnMembersOnly: true,
+			membersOnly: true,
+			readSpaceIndex: true
 		});
 	});
 
 	it("lets a member's session, which keeps only reads, do none of it", () => {
-		expect(groupAbilities(`atproto ${META_READ}`)).toEqual({
-			post: false
+		// The host keeps of the calendar grant only what the space's policy gives a member: a read.
+		const eventsRead = `space:community.lexicon.calendar.collection?authority=${GROUP}&skey=self&collection=community.lexicon.calendar.event&action=read`;
+		expect(groupAbilities(`atproto ${META_READ} ${eventsRead}`, GROUP)).toEqual({
+			post: false,
+			turnOnMembersOnly: false,
+			membersOnly: false,
+			readSpaceIndex: false
+		});
+	});
+
+	it("recognises the calendar's grants when the host names them to the calendar's own key", () => {
+		const keyed = MEMBERS_ONLY.map((token) =>
+			token.startsWith('space:community.lexicon.calendar.collection?')
+				? token.replace('authority=', 'skey=3lwikicalendar&authority=')
+				: token
+		);
+		expect(keyed.join(' ')).toContain('skey=3lwikicalendar');
+		expect(groupAbilities(['atproto', META_READ, ...keyed].join(' '), GROUP)).toMatchObject({
+			turnOnMembersOnly: true,
+			membersOnly: true
+		});
+		// Another group's calendar, at any key, is still none of this group's.
+		const theirs = keyed.map((token) =>
+			token.replace(`authority=${GROUP}`, 'authority=did:plc:other')
+		);
+		expect(groupAbilities(['atproto', ...theirs].join(' '), GROUP)).toMatchObject({
+			turnOnMembersOnly: false,
+			membersOnly: false
 		});
 	});
 
@@ -58,8 +94,23 @@ describe('what a group session may do, by the scope its host granted', () => {
 });
 
 describe("a person's group permissions, as asked", () => {
+	it('are exactly what the code calls, for any group host', () => {
+		expect(PARTICIPATE_SCOPES).toEqual([
+			'space:org.atgrp.meta?authority=*&skey=self&action=read',
+			'space:org.atgrp.members?authority=*&skey=self&collection=org.atgrp.confirmation&action=read&action=create&action=delete',
+			'rpc?lxm=org.atgrp.requestJoin&lxm=org.atgrp.cancelJoinRequest&lxm=org.atgrp.leaveGroup&aud=*',
+			'rpc:org.atgrp.internal.getActorGroups?aud=*'
+		]);
+		expect(JOIN_SCOPES).toEqual([...PARTICIPATE_SCOPES, GUEST_SCOPE]);
+		const all = JOIN_SCOPES.join(' ');
+		expect(all).not.toContain('include:');
+		expect(all).not.toContain('inbox');
+		expect(all).not.toContain('org.atgrp.mod.');
+		expect(PARTICIPATE_SCOPES.join(' ')).not.toContain('action=update');
+	});
+
 	it('are held as asked', () => {
-		const all = ['atproto', ...PARTICIPATE_SCOPES].join(' ');
+		const all = ['atproto', ...JOIN_SCOPES].join(' ');
 		expect(holdsParticipate(all)).toBe(true);
 		// Each method of the membership grant too, not only the grant as a whole.
 		for (const method of ['requestJoin', 'cancelJoinRequest', 'leaveGroup']) {
