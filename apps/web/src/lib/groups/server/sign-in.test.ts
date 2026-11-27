@@ -134,6 +134,28 @@ describe('the group client', () => {
 		}
 	});
 
+	// The host's approval page lists one row per space type, owner and key, keyed by type and owner
+	// alone: a space asked for once with its key and once without makes two rows with one key, and
+	// the page fails for anyone whose roles keep both. The calendar scopes name none, since the
+	// group's calendar may be one another app made under a key of its own.
+	it('names the same key in every scope for one space', () => {
+		const keys = new Map<string, Set<string | null>>();
+		const asked = GROUP_SESSION_SCOPE.split(' ');
+		for (const token of asked.filter((t) => t.startsWith('space:'))) {
+			const at = token.indexOf('?');
+			const params = new URLSearchParams(at === -1 ? '' : token.slice(at + 1));
+			const space = `${token.slice(0, at === -1 ? undefined : at)} ${params.get('authority')}`;
+			if (!keys.has(space)) keys.set(space, new Set());
+			keys.get(space)!.add(params.get('skey'));
+		}
+		expect(keys.size).toBeGreaterThan(1);
+		const calendar = 'space:community.lexicon.calendar.collection self';
+		for (const [space, skeys] of keys) {
+			expect([space, [...skeys]]).toEqual([space, [space === calendar ? null : 'self']]);
+		}
+		expect(keys.has(calendar)).toBe(true);
+	});
+
 	it('keeps sign-in state under its prefix in OAUTH_SESSIONS, never in the library store', async () => {
 		await startGroupLink(GROUP, ALICE);
 		const { options } = latest();

@@ -17,9 +17,19 @@ export type GroupJoinPolicy = (typeof GROUP_JOIN_POLICIES)[number];
 export const MEMBERS_SPACE_TYPE = 'org.atgrp.members';
 /** In the group's repo in the members space, keyed by the member's DID: `{roles, createdAt}`. */
 export const GROUP_MEMBERSHIP_COLLECTION = 'org.atgrp.membership';
+/** Everyone in a group holds `member`; the group host refuses a membership without it. */
+export const MEMBER_ROLE = 'member';
+/** The role a new group gives its founder, with every permission. */
+export const ADMIN_ROLE = 'admin';
 /** In the member's own repo in the members space: `{createdAt}`, their side of the membership. */
 export const GROUP_CONFIRMATION_COLLECTION = 'org.atgrp.confirmation';
 export const GROUP_CONFIRMATION_RKEY = 'self';
+/** In the group's repo in the members space, one for each space the group lists: `{space,
+ *  createdAt}`. The host writes them as it makes, ends and unlists spaces, and takes no other
+ *  writes. A space whose policy is `unlisted` has none. */
+export const GROUP_SPACE_INDEX_COLLECTION = 'org.atgrp.space';
+/** The `$type` of a group space's policy, which `com.atproto.space.updateSpace` takes whole. */
+export const GROUP_POLICY_TYPE = 'org.atgrp.policy';
 /** Where the host publishes a space's `org.atgrp.policy`, which says whether it is public. */
 export const SPACE_POLICY_COLLECTION = 'com.atproto.space.policy';
 export const SPACE_POLICY_RKEY = 'self';
