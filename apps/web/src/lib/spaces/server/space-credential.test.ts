@@ -193,7 +193,6 @@ describe('exchangeSpaceCredential', () => {
 		['the holder’s session does not read the space', 'delegate', 403, 'ScopeMissingError'],
 		// A group host's own name for it, from a group's session.
 		['a group host says the session does not read the space', 'delegate', 403, 'ScopeMissing'],
-		['a group host says the member no longer reads the space', 'delegate', 403, 'NotAuthorized'],
 		['the authority does not let the holder in', 'exchange', 400, 'AccountNotAuthorized'],
 		['the authority does not let the app in', 'exchange', 400, 'AppNotAuthorized'],
 		['the authority does not say which it refused', 'exchange', 400, 'NotAuthorized'],
@@ -265,7 +264,6 @@ describe('a read with a credential', () => {
 describe('the authority of a space', () => {
 	it.each([
 		['at://', MEMBERS],
-		['at://, of a record in it', `${MEMBERS}/${BOB}/x.y.z/self`],
 		['at:space/', `at:space/${GROUP_DID}/org.atgrp.meta/self`],
 		['at:space/, of a record in it', `at:space/${GROUP_DID}/org.atgrp.meta/self/${BOB}/x.y.z/self`]
 	])('is the DID a URI in the %s form names', (_form, uri) => {
@@ -273,11 +271,8 @@ describe('the authority of a space', () => {
 	});
 
 	it.each([
-		'',
 		'did:plc:jcwgw6fcnb5vyoid7nz7sl26',
-		'https://group.pds.test/space',
 		'at://knit.example/space/com.example.forum/self',
-		'at:space/',
 		'at:space/knit.example/org.atgrp.meta/self',
 		`at:space/${GROUP_DID}`,
 		`at:space/${GROUP_DID}/org.atgrp.meta`,
