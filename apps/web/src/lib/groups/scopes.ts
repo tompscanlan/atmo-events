@@ -6,6 +6,8 @@
 // approval is still refused then. Values and pure checks only, so the OAuth config, pages and tests
 // can import them.
 import {
+	GROUP_ABOUT_COLLECTION,
+	GROUP_CONFIG_COLLECTION,
 	GROUP_CONFIRMATION_COLLECTION,
 	GROUP_EVENT_COLLECTION,
 	GROUP_SPACE_INDEX_COLLECTION,
@@ -15,7 +17,7 @@ import {
 } from './ids';
 import { GUEST_SCOPE, GUEST_SCOPES } from '#lib/private-events/scopes.js';
 import { CALENDAR_SPACE_TYPE } from './calendar';
-import { CREATE_IN_THIS_BUILD } from './build';
+import { CREATE_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from './build';
 
 /** The group host's own method for making a group, not the spec's (bluesky-social/group-host's
  *  `org.atgrp.internal.createGroup`). The spec's way is OAuth `prompt=create` at the host, which
@@ -177,12 +179,64 @@ export function holdsParticipate(scope: string): boolean {
 }
 
 const META_SELF = `space:${META_SPACE_TYPE}?authority=self&skey=self`;
+/** No `create`: the host makes a group's about record and config with the group, keeps them, and
+ *  takes a put of a record that is there as its update. */
+const META_RECORD_WRITES = 'action=read&action=update';
 
 /** A group session's read of the group's meta space, its own scope so that a member whose roles
- *  grant no writes keeps it. It names the space's key, which is always `self`: the host's approval
- *  page shows one row per space type, owner and key, and two rows for the one space, one with the
- *  key and one without, break it. */
+ *  grant no writes keeps it. It names the space's key, which is always `self`, as the settings'
+ *  writes do: the host's approval page shows one row per space type, owner and key, and two rows
+ *  for the one space, one with the key and one without, break it. */
 export const GROUP_META_READ_SCOPE = `${META_SELF}&action=read`;
+
+/** A write of the meta space's policy, which says whether the group is public: one of the
+ *  settings' scopes. */
+export const GROUP_POLICY_SCOPE = `${META_SELF}&manage=update`;
+
+/** What a group's settings write as the group, each its own scope, since its host keeps or drops
+ *  each whole: the about record, the config (who may join), and the meta space's policy, which says
+ *  whether it is public. Only what the settings write: not the spec's `authManageAdmin` set, which
+ *  also covers the members space, invites and moderation. */
+export const GROUP_SETTINGS_SCOPES: readonly string[] = [
+	`${META_SELF}&collection=${GROUP_ABOUT_COLLECTION}&${META_RECORD_WRITES}`,
+	`${META_SELF}&collection=${GROUP_CONFIG_COLLECTION}&${META_RECORD_WRITES}`,
+	GROUP_POLICY_SCOPE
+];
+
+/** The meta-space grants in a granted scope, for the group's own meta space: the host gives back
+ *  `authority=self` as the group's DID. */
+function metaGrants(scope: string, groupDid: string): URLSearchParams[] {
+	return scope
+		.split(' ')
+		.filter((token) => token.startsWith(`space:${META_SPACE_TYPE}?`))
+		.map((token) => new URLSearchParams(token.slice(token.indexOf('?') + 1)))
+		.filter((params) => {
+			const authority = params.get('authority') ?? 'self';
+			const skey = params.get('skey') ?? '*';
+			return [groupDid, 'self', '*'].includes(authority) && ['self', '*'].includes(skey);
+		});
+}
+
+function writesMetaRecord(grants: URLSearchParams[], collection: string): boolean {
+	return grants.some((grant) => {
+		const collections = grant.getAll('collection');
+		const actions = grant.getAll('action');
+		return (
+			(collections.includes('*') || collections.includes(collection)) && actions.includes('update')
+		);
+	});
+}
+
+/** Whether the granted scope lets the session change the group's settings: its about record and
+ *  config, and the meta space's policy. */
+export function grantsSettings(scope: string, groupDid: string): boolean {
+	const grants = metaGrants(scope, groupDid);
+	return (
+		writesMetaRecord(grants, GROUP_ABOUT_COLLECTION) &&
+		writesMetaRecord(grants, GROUP_CONFIG_COLLECTION) &&
+		grants.some((grant) => grant.getAll('manage').includes('update'))
+	);
+}
 
 const RECORD_WRITES = ['create', 'update', 'delete'] as const;
 
@@ -304,16 +358,31 @@ export function grantsMembersOnly(scope: string, groupDid: string): MembersOnlyA
 export interface GroupAbilities extends MembersOnlyAbilities {
 	/** Post, edit and delete the group's public events. */
 	post: boolean;
+	/** Change its name, description, website, who may join and whether it is public. */
+	settings: boolean;
 }
 
-export function groupAbilities(scope: string, groupDid: string): GroupAbilities {
+/** `settings`: whether the settings page is in this build; without it a link holds none of its
+ *  acts, whatever its scope grants. */
+export function groupAbilities(
+	scope: string,
+	groupDid: string,
+	settings: boolean = SETTINGS_IN_THIS_BUILD
+): GroupAbilities {
 	return {
 		post: grantsRepoWrites(scope, GROUP_EVENT_COLLECTION),
+		settings: settings && grantsSettings(scope, groupDid),
 		...grantsMembersOnly(scope, groupDid)
 	};
 }
 
-/** Whether a link holds every ability this site offers. */
-export function holdsEveryAbility(can: GroupAbilities): boolean {
-	return Object.values(can).every((held) => held);
+/** Whether a link holds every ability this build offers: the settings only while the settings
+ *  page is in it, so a link is never asked to be approved again for what nothing uses. */
+export function holdsEveryAbility(
+	can: GroupAbilities,
+	settings: boolean = SETTINGS_IN_THIS_BUILD
+): boolean {
+	return Object.entries(can).every(
+		([ability, held]) => held || (!settings && ability === 'settings')
+	);
 }

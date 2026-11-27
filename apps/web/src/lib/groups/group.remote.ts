@@ -5,6 +5,7 @@ import { callerSession } from '#lib/private-events/server/caller.js';
 import { EVENT_PLACEMENTS } from './event-placement';
 import { GROUP_EVENT_COLLECTION } from './ids';
 import { requireGroupWriter, requireLinkedAbilities, requireStoredLink } from './server/context';
+import { requireSettingsInBuild } from './server/enabled';
 import {
 	deleteMembersOnlyEvent,
 	GroupEventRefused,
@@ -12,7 +13,8 @@ import {
 	refuseMembersOnlyKey,
 	turnOnMembersOnly
 } from './server/group-events';
-import { notifyIndex } from './server/group';
+import { notifyIndex, resolveGroup } from './server/group';
+import { parseGroupSettings, saveGroupSettings as saveSettings } from './server/settings';
 import { unlinkGroup } from './server/sign-in';
 import { isLinkBroken, isRoleRefused, xrpc, xrpcBlob, XrpcError } from './server/xrpc';
 
@@ -38,6 +40,43 @@ function refusedOr(outage: string) {
 		error(502, outage);
 	};
 }
+
+const settingsSchema = v.object({
+	name: v.string(),
+	description: v.string(),
+	website: v.string(),
+	joinPolicy: v.string(),
+	public: v.boolean()
+});
+
+/** `shownPublic` is the visibility the form showed, so a change made elsewhere since is kept. In a
+ *  build without the settings page, the same 404 as groups off. */
+export const saveGroupSettings = command(
+	v.object({ groupDid: didSchema, shownPublic: v.boolean(), settings: settingsSchema }),
+	async ({ groupDid, shownPublic, settings }) => {
+		requireSettingsInBuild();
+		const writer = await requireGroupWriter(groupDid, callerDid());
+		const parsed = parseGroupSettings(settings);
+		if (!parsed) {
+			error(
+				400,
+				'Check the settings: a name is needed, up to 64 characters, and a website starts with https://.'
+			);
+		}
+		const group = (await resolveGroup(groupDid)) ?? { did: groupDid, handle: null };
+		try {
+			await saveSettings(writer, group, parsed, shownPublic);
+		} catch (e) {
+			if (isRoleRefused(e)) error(403, NO_ROLE);
+			if (isLinkBroken(e)) error(403, RELINK);
+			if (e instanceof XrpcError && e.status === 400 && e.error === 'InvalidRequest') {
+				error(400, 'The group host did not take these settings. Check them and try again.');
+			}
+			throw e;
+		}
+		return { ok: true };
+	}
+);
 
 export const unlinkGroupSession = command(v.object({ groupDid: didSchema }), async (input) => {
 	const did = await requireStoredLink(input.groupDid, callerDid());

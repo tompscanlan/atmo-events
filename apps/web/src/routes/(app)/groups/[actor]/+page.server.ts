@@ -39,9 +39,10 @@ const LINK_NOTICES = {
 
 /** What a working link lets the person do here, as the page offers it. */
 function linkAbilities(can: GroupAbilities): string {
-	const things = [(can.post || can.membersOnly) && 'post its events'].filter(
-		(thing): thing is string => Boolean(thing)
-	);
+	const things = [
+		(can.post || can.membersOnly) && 'post its events',
+		can.settings && 'change its settings'
+	].filter((thing): thing is string => Boolean(thing));
 	if (things.length === 0) return 'Your role in this group lets you see it here.';
 	const all =
 		things.length === 1 ? things[0] : `${things.slice(0, -1).join(', ')} and ${things.at(-1)}`;

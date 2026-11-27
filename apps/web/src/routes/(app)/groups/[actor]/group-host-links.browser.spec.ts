@@ -1,9 +1,14 @@
-// The group page, which links to the group host's own site for what changes there.
+// The group page in a build without the settings page, which links to the group host's own site
+// for what it changed; group-page.browser.spec.ts shows it in one that has it.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import '../../../../app.css';
 
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	SETTINGS_IN_THIS_BUILD: false
+}));
 vi.mock('#lib/groups/group.remote.js', () => ({
 	unlinkGroupSession: vi.fn(),
 	turnOnMembersOnlyEvents: vi.fn()
@@ -22,6 +27,7 @@ import GroupPage from './+page.svelte';
 const GROUP = 'did:plc:group';
 const CAN = {
 	post: true,
+	settings: false,
 	turnOnMembersOnly: false,
 	membersOnly: false
 };
@@ -71,9 +77,21 @@ const SAID_UNLINKED =
 
 afterEach(() => vi.resetAllMocks());
 
-describe("the group host's own site", () => {
-	it.each([['a link that may only post', {}]])(
-		"links %s to its group host's own site, in a new tab, and says what changes there",
+describe('in a build without the settings page', () => {
+	it('links nothing in the tools to it, even for a link that holds the settings', async () => {
+		render(GroupPage, { data: linkedPage({ settings: true }) as never });
+		await expect.element(tools()).toBeVisible();
+		expect(tools().element().querySelector('a[href$="/settings"]')).toBeNull();
+		expect(document.querySelector('a[href*="/settings"]')).toBeNull();
+		// The rest of the tools stay.
+		expect(tools().element().querySelector('a[href$="/events/new"]')).not.toBeNull();
+	});
+
+	it.each([
+		['a link that holds the settings', { settings: true }],
+		['a link that may only post', {}]
+	])(
+		"links %s to its group host's own site instead, in a new tab, and says what changes there",
 		async (_who, can) => {
 			render(GroupPage, { data: linkedPage(can) as never });
 			await expect.element(atHost()).toHaveAttribute('href', 'https://host.example/');
