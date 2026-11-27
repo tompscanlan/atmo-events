@@ -23,6 +23,7 @@ import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 import { GROUP_EVENT_COLLECTION } from '../ids';
 import { GROUP_META_READ_SCOPE } from '../scopes';
 import { groupsEnabled } from './enabled';
+import { forgetHeldAtGroupHost } from './group';
 import { listKeys, prefixedKV } from './kv';
 import type { XrpcHandle } from './xrpc';
 
@@ -208,6 +209,8 @@ export async function finishGroupLink(
 	}
 	await env.OAUTH_SESSIONS.put(askedKey(link.by, link.groupDid), GROUP_SESSION_SCOPE);
 	if (replaced) await revokeReplaced(link.groupDid, link.by, replaced);
+	// A group just made at the host is in its list at once.
+	await forgetHeldAtGroupHost();
 	return { ok: true, groupDid: link.groupDid };
 }
 
