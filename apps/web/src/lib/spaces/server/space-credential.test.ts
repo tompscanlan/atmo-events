@@ -7,6 +7,7 @@ import {
 	exchangeSpaceCredential,
 	isSpaceAccessDenied,
 	SpaceAccessDenied,
+	spaceAuthority,
 	type SpaceHolder,
 	type SpaceHosts
 } from './space-credential';
@@ -190,6 +191,8 @@ describe('exchangeSpaceCredential', () => {
 
 	it.each([
 		['the holder’s session does not read the space', 'delegate', 403, 'ScopeMissingError'],
+		// A group host's own name for it, from a group's session.
+		['a group host says the session does not read the space', 'delegate', 403, 'ScopeMissing'],
 		['the authority does not let the holder in', 'exchange', 400, 'AccountNotAuthorized'],
 		['the authority does not let the app in', 'exchange', 400, 'AppNotAuthorized'],
 		['the authority does not say which it refused', 'exchange', 400, 'NotAuthorized'],
@@ -255,6 +258,47 @@ describe('a read with a credential', () => {
 		expect(read.headers.get('accept-signature')).toMatch(
 			/^mac=\("atproto-space-record";sf\);keyid="did:key:zDn[1-9A-HJ-NP-Za-km-z]+";tag="atproto-space-record"$/
 		);
+	});
+});
+
+describe('the authority of a space', () => {
+	it('is the DID a URI in the at:space/ form names', () => {
+		expect(spaceAuthority(`at:space/${GROUP_DID}/org.atgrp.meta/self`)).toBe(GROUP_DID);
+	});
+
+	it.each([
+		'did:plc:jcwgw6fcnb5vyoid7nz7sl26',
+		'at://knit.example/space/com.example.forum/self',
+		'at:space/knit.example/org.atgrp.meta/self',
+		`at:space/${GROUP_DID}/org.atgrp.meta`,
+		`at:space//${GROUP_DID}/org.atgrp.meta/self`,
+		`at:space:${GROUP_DID}/org.atgrp.meta/self`
+	])('is no authority for %j', (uri) => {
+		expect(() => spaceAuthority(uri)).toThrow('not a space URI');
+	});
+
+	it('reads a space named the at:space/ way from its authority, with the record’s own URI', async () => {
+		const net = network({});
+		const space = `at:space/${GROUP_DID}/org.atgrp.meta/self`;
+		const asked: string[] = [];
+		const at: SpaceHosts = {
+			...hosts,
+			repoHost: async (did) => {
+				asked.push(did);
+				return GROUP_HOST;
+			}
+		};
+		const read = { space, repo: GROUP_DID, collection: 'org.atgrp.about', rkey: 'self' };
+		expect(await credentialSpaceReader(net.holder, at).get(read)).toMatchObject({
+			uri: `${space}/${GROUP_DID}/org.atgrp.about/self`,
+			value: { n: 1 }
+		});
+		expect(asked).toEqual([GROUP_DID, GROUP_DID]);
+		expect(net.delegations).toEqual([
+			`/xrpc/com.atproto.space.getDelegationToken?${new URLSearchParams({ space })}`
+		]);
+		expect(net.exchanges.map((e) => e.body.space)).toEqual([space]);
+		expect(net.reads[0].url.searchParams.get('space')).toBe(space);
 	});
 });
 

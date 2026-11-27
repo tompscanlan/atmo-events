@@ -46,6 +46,9 @@ export function isSpaceAccessDenied(e: unknown): e is SpaceAccessDenied {
 
 const DENIED: Record<string, true> = {
 	ScopeMissingError: true,
+	// A group host's own name for the same, not the spec's (bluesky-social/group-host): the group's
+	// session does not hold a scope that reads the space.
+	ScopeMissing: true,
 	AccountNotAuthorized: true,
 	AppNotAuthorized: true,
 	NotAuthorized: true,
@@ -110,8 +113,19 @@ export function clearSpaceLookups() {
 	resolved.clear();
 }
 
+const SPACE_SCHEME = 'at:space/';
+
+/** The DID that is a space's authority, from its URI: `at:space/<did>/<type>/<skey>`, as the
+ *  Atmosphere Groups spec and a group host write it. It still reads the older form,
+ *  `at://<did>/space/<type>/<skey>`, because private events build their spaces' URIs that way. */
 export function spaceAuthority(space: string): string {
-	const did = space.startsWith('at://') ? space.slice('at://'.length).split('/')[0] : '';
+	let did = '';
+	if (space.startsWith(SPACE_SCHEME)) {
+		const [authority, type, skey] = space.slice(SPACE_SCHEME.length).split('/');
+		if (type && skey) did = authority;
+	} else if (space.startsWith('at://')) {
+		did = space.slice('at://'.length).split('/')[0];
+	}
 	if (!did.startsWith('did:')) throw new Error(`not a space URI: ${space}`);
 	return did;
 }
