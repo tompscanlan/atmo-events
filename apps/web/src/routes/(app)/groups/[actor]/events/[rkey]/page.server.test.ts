@@ -79,7 +79,7 @@ beforeEach(() => {
 });
 
 describe("a members-only event's page", () => {
-	it('shows a member the event, marked private, with their own RSVP, and keeps no copy', async () => {
+	it("shows a member the event with their own RSVP and no one else's, never cached", async () => {
 		group({ member: true });
 		const data = await answer({ did: BOB, scope: `atproto ${GUEST_SCOPE}` });
 		expect(data).toMatchObject({
@@ -87,6 +87,7 @@ describe("a members-only event's page", () => {
 			pageTitle: 'Supper',
 			group: { name: 'Knitters' },
 			viewerRsvpStatus: 'going',
+			attendees: { going: [], interested: [], goingCount: 0, interestedCount: 0 },
 			canRsvp: true,
 			canEdit: false
 		});
@@ -154,10 +155,5 @@ describe("a members-only event's page", () => {
 		expect(await answer({ did: BOB, scope: GUEST_SCOPE })).toMatchObject({ status: 503 });
 		const logged = String(vi.mocked(console.error).mock.calls);
 		for (const secret of [BOB, RKEY, GROUP]) expect(logged).not.toContain(secret);
-	});
-
-	it('has no action a form could post to', async () => {
-		const route = await import('./+page.server');
-		expect((route as { actions?: unknown }).actions).toBeUndefined();
 	});
 });

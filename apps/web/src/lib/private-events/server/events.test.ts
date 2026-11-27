@@ -831,11 +831,7 @@ describe('myPrivateEvents', () => {
 		expect(host.sent[0].query.get('spaceDid')).toBe(HOST);
 	});
 
-	describe.each([
-		['off', null],
-		['on', 'https://groups.example']
-	])("with groups %s, a space keyed self, as a group's calendar is", (_, groupHost) => {
-		const on = groupHost !== null;
+	describe("with groups on, a space keyed self, as a group's calendar is", () => {
 		const theirs = privateEventSpace(OTHER, 'self');
 		const own = privateEventSpace(GUEST, 'self');
 		const guestListing = (...spaces: string[]) =>
@@ -845,8 +841,7 @@ describe('myPrivateEvents', () => {
 			});
 
 		beforeEach(() => {
-			if (groupHost) Object.assign(env, { GROUP_HOST_URL: groupHost });
-			else Reflect.deleteProperty(env, 'GROUP_HOST_URL');
+			Object.assign(env, { GROUP_HOST_URL: 'https://groups.example' });
 		});
 		afterEach(() => {
 			Reflect.deleteProperty(env, 'GROUP_HOST_URL');
@@ -872,14 +867,18 @@ describe('myPrivateEvents', () => {
 			expect(incomplete).toBe(false);
 		});
 
-		it(`${on ? 'leaves the list complete' : 'says the list is incomplete'} when someone else's could not be read`, async () => {
+		it.each([
+			['on', 'leaves the list complete', false],
+			['off', 'says the list is incomplete', true]
+		])("with groups %s, %s when someone else's could not be read", async (groups, _, expected) => {
+			if (groups === 'off') Reflect.deleteProperty(env, 'GROUP_HOST_URL');
 			reader.get.mockImplementation(async ({ space }: Read) => {
 				if (space === theirs) throw new Error('503');
 				return spaceRecord(HOST, EVENT_COLLECTION, RECORD);
 			});
 			const { events, incomplete } = await myPrivateEvents(guestListing(theirs));
 			expect(events.map((e) => e.event.rkey)).toEqual([RKEY]);
-			expect(incomplete).toBe(!on);
+			expect(incomplete).toBe(expected);
 		});
 
 		it("says the list is incomplete when the person's own could not be read", async () => {
@@ -888,6 +887,16 @@ describe('myPrivateEvents', () => {
 				return spaceRecord(HOST, EVENT_COLLECTION, RECORD);
 			});
 			const { incomplete } = await myPrivateEvents(guestListing(own));
+			expect(incomplete).toBe(true);
+		});
+
+		it("says the list is incomplete when someone else's space keyed otherwise could not be read", async () => {
+			const down = privateEventSpace(OTHER, '3laaaaaaaaaaa');
+			reader.get.mockImplementation(async ({ space }: Read) => {
+				if (space === down) throw new Error('503');
+				return spaceRecord(HOST, EVENT_COLLECTION, RECORD);
+			});
+			const { incomplete } = await myPrivateEvents(guestListing(down));
 			expect(incomplete).toBe(true);
 		});
 

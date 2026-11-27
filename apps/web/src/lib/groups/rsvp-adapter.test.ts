@@ -69,8 +69,17 @@ describe("a member's RSVP to a members-only event", () => {
 	it('writes nothing else, and reloads the page on a refusal', async () => {
 		const adapter = createMembersOnlyRsvpAdapter(GROUP, RKEY, viewer);
 		await expect(
-			adapter.putRecord({ collection: 'community.lexicon.calendar.event', rkey: RKEY, record: {} })
+			adapter.putRecord({
+				collection: 'community.lexicon.calendar.event',
+				rkey: RKEY,
+				record: going
+			})
 		).rejects.toThrow();
+		await expect(
+			adapter.deleteRecord({ collection: 'community.lexicon.calendar.event', rkey: RKEY })
+		).rejects.toThrow();
+		expect(mocks.rsvpToMembersOnlyEvent).not.toHaveBeenCalled();
+		expect(mocks.cancelMembersOnlyRsvp).not.toHaveBeenCalled();
 		mocks.rsvpToMembersOnlyEvent.mockImplementationOnce(async () => error(409, 'changed'));
 		await expect(
 			adapter.putRecord({ collection: RSVP, rkey: RKEY, record: going })
