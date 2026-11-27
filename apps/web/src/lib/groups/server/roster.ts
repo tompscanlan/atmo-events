@@ -201,13 +201,17 @@ export async function readRoster(
 	});
 	const dids = members.map((member) => member.did);
 	const onPage = members.find((member) => member.did === caller.did);
+	// Why confirmations were not read, by kind, never by whose: the DIDs would put a private
+	// group's members in the logs at every view.
+	const unread = new Map<string, number>();
 	const [handles, confirmations, yours] = await Promise.all([
 		handlesOf(dids),
 		Promise.all(
 			dids.map(async (did): Promise<boolean> => {
 				if (did === caller.did && callerConfirmed !== null) return callerConfirmed;
 				return reads.confirmed(did).catch((e) => {
-					console.info(`[groups] ${groupDid}: ${did}'s confirmation was not read: ${errorKind(e)}`);
+					const kind = errorKind(e);
+					unread.set(kind, (unread.get(kind) ?? 0) + 1);
 					return false;
 				});
 			})
@@ -220,6 +224,11 @@ export async function readRoster(
 					() => []
 				)
 	]);
+	if (unread.size > 0) {
+		const count = [...unread.values()].reduce((sum, n) => sum + n, 0);
+		const kinds = [...unread].map(([kind, n]) => `${kind} x${n}`).join(', ');
+		console.info(`[groups] ${groupDid}: ${count} confirmations were not read: ${kinds}`);
+	}
 	const entries = members
 		.map((member, i) => ({
 			...member,

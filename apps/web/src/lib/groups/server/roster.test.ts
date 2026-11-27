@@ -33,6 +33,7 @@ const GROUP = 'did:plc:group';
 const ALICE = 'did:plc:alice';
 const BOB = 'did:plc:bob';
 const CAROL = 'did:web:carol.example%3A8443';
+const DAVE = 'did:plc:dave';
 const MEMBERS = `at:space/${GROUP}/org.atgrp.members/self`;
 const HOSTS: SpaceHosts = {
 	repoHost: async (did) => (did === GROUP ? 'https://host.example' : `https://pds.${did}`),
@@ -179,6 +180,30 @@ describe('the roster, read with the person’s own access', () => {
 				query: expect.objectContaining({ cursor: '1' })
 			})
 		);
+	});
+
+	it('logs how many confirmations went unread and why, for the group, never whose', async () => {
+		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+		space(
+			{
+				'org.atgrp.membership': [
+					[
+						membership(BOB, ['member'], 'x'),
+						membership('did:web:carol.example:8443', ['member'], 'x'),
+						membership(DAVE, ['member'], 'x')
+					]
+				]
+			},
+			{ [BOB]: 'down', [CAROL]: 'down', [DAVE]: 'yes' }
+		);
+		await readRoster(caller, GROUP, true, null, HOSTS);
+		expect(info.mock.calls).toEqual([
+			[`[groups] ${GROUP}: 2 confirmations were not read: com.atproto.space.getRecord 502 x2`]
+		]);
+		info.mockClear();
+		space({ 'org.atgrp.membership': [[membership(DAVE, ['member'], 'x')]] }, { [DAVE]: 'yes' });
+		await readRoster(caller, GROUP, true, null, HOSTS);
+		expect(info).not.toHaveBeenCalled();
 	});
 
 	it('reads the confirmation of every member on a page, past the hundredth member too', async () => {
