@@ -31,6 +31,9 @@ const CAN = {
 	post: true,
 	list: true,
 	settings: false,
+	admit: false,
+	assign: false,
+	remove: false,
 	turnOnMembersOnly: false,
 	membersOnly: false
 };

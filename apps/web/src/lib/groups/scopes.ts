@@ -11,6 +11,7 @@ import {
 	GROUP_CONFIRMATION_COLLECTION,
 	GROUP_DECLARATION_COLLECTION,
 	GROUP_EVENT_COLLECTION,
+	GROUP_MEMBERSHIP_COLLECTION,
 	GROUP_SPACE_INDEX_COLLECTION,
 	MEMBERS_SPACE_TYPE,
 	META_SPACE_TYPE,
@@ -18,7 +19,7 @@ import {
 } from './ids';
 import { GUEST_SCOPE, GUEST_SCOPES } from '#lib/private-events/scopes.js';
 import { CALENDAR_SPACE_TYPE } from './calendar';
-import { CREATE_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from './build';
+import { CREATE_IN_THIS_BUILD, ROSTER_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from './build';
 
 /** The group host's own method for making a group, not the spec's (bluesky-social/group-host's
  *  `org.atgrp.internal.createGroup`). The spec's way is OAuth `prompt=create` at the host, which
@@ -239,6 +240,69 @@ export function grantsSettings(scope: string, groupDid: string): boolean {
 	);
 }
 
+/** The spec's methods a group session calls for its join requests. */
+export const LIST_JOIN_REQUESTS_NSID = 'org.atgrp.listJoinRequests';
+export const DENY_JOIN_REQUEST_NSID = 'org.atgrp.denyJoinRequest';
+
+const MEMBERSHIPS_SELF = `space:${MEMBERS_SPACE_TYPE}?authority=self&skey=self&collection=${GROUP_MEMBERSHIP_COLLECTION}&action=read`;
+
+/** What the members page writes and calls as the group, each its own scope, since the host keeps
+ *  or drops each whole by what the approving person's roles may do: admit (a membership's create,
+ *  with the join requests' two methods), change roles (its update) and remove (its delete). Only
+ *  what the page uses: not the spec's `authManageMembers` set, which also covers invites. Each
+ *  also reads memberships, as the group: a role change reads the membership it rewrites that way,
+ *  and the group host gives a session a credential for the members space only when its scope
+ *  reads it. */
+export const ROSTER_SCOPES: readonly string[] = [
+	`${MEMBERSHIPS_SELF}&action=create`,
+	`${MEMBERSHIPS_SELF}&action=update`,
+	`${MEMBERSHIPS_SELF}&action=delete`,
+	`rpc:${LIST_JOIN_REQUESTS_NSID}?aud=*`,
+	`rpc:${DENY_JOIN_REQUEST_NSID}?aud=*`
+];
+
+/** The members-space grants in a granted scope for memberships in the group's own members space,
+ *  each as the actions it allows. */
+function membershipGrants(scope: string, groupDid: string): (readonly string[])[] {
+	return scope
+		.split(' ')
+		.filter((token) => token.startsWith(`space:${MEMBERS_SPACE_TYPE}?`))
+		.map((token) => new URLSearchParams(token.slice(token.indexOf('?') + 1)))
+		.filter((params) => {
+			const authority = params.get('authority') ?? 'self';
+			const skey = params.get('skey') ?? '*';
+			const collections = params.getAll('collection');
+			return (
+				[groupDid, 'self', '*'].includes(authority) &&
+				['self', '*'].includes(skey) &&
+				(collections.includes('*') || collections.includes(GROUP_MEMBERSHIP_COLLECTION))
+			);
+		})
+		.map(actionsOf);
+}
+
+export interface RosterAbilities {
+	/** Admit or deny those asking to join. */
+	admit: boolean;
+	/** Make a member an admin, or an admin a member again. */
+	assign: boolean;
+	/** Put a member out. */
+	remove: boolean;
+}
+
+export function grantsRoster(scope: string, groupDid: string): RosterAbilities {
+	const grants = membershipGrants(scope, groupDid);
+	const writes = (action: string) => grants.some((actions) => actions.includes(action));
+	return {
+		admit:
+			writes('create') &&
+			holdsRpc(scope, LIST_JOIN_REQUESTS_NSID) &&
+			holdsRpc(scope, DENY_JOIN_REQUEST_NSID),
+		assign: writes('update'),
+		remove: writes('delete')
+	};
+}
+
 const RECORD_WRITES = ['create', 'update', 'delete'] as const;
 
 /** `repo:<collection>` or `repo?collection=…`, with the actions it names: all, when it names none. */
@@ -356,7 +420,7 @@ export function grantsMembersOnly(scope: string, groupDid: string): MembersOnlyA
 }
 
 /** What the page offers someone who linked the group. */
-export interface GroupAbilities extends MembersOnlyAbilities {
+export interface GroupAbilities extends RosterAbilities, MembersOnlyAbilities {
 	/** Post, edit and delete the group's public events. */
 	post: boolean;
 	/** Add the group to the groups list, or take it off. */
@@ -365,11 +429,14 @@ export interface GroupAbilities extends MembersOnlyAbilities {
 	settings: boolean;
 }
 
-/** `settings`: whether the settings page is in this build; without it a link holds none of its
- *  acts, whatever its scope grants. */
+const NO_ROSTER: RosterAbilities = { admit: false, assign: false, remove: false };
+
+/** `roster` and `settings`: whether the members page and the settings page are in this build;
+ *  without one a link holds none of its acts, whatever its scope grants. */
 export function groupAbilities(
 	scope: string,
 	groupDid: string,
+	roster: boolean = ROSTER_IN_THIS_BUILD,
 	settings: boolean = SETTINGS_IN_THIS_BUILD
 ): GroupAbilities {
 	const list = grantsRepoWrites(scope, GROUP_DECLARATION_COLLECTION);
@@ -378,17 +445,23 @@ export function groupAbilities(
 		list,
 		// Making a group public or private moves its listing too.
 		settings: settings && list && grantsSettings(scope, groupDid),
+		...(roster ? grantsRoster(scope, groupDid) : NO_ROSTER),
 		...grantsMembersOnly(scope, groupDid)
 	};
 }
 
-/** Whether a link holds every ability this build offers: the settings only while the settings
- *  page is in it, so a link is never asked to be approved again for what nothing uses. */
+/** Whether a link holds every ability this build offers: the roster's count only while the
+ *  members page is in it, and the settings only while the settings page is, so a link is never
+ *  asked to be approved again for what nothing uses. */
 export function holdsEveryAbility(
 	can: GroupAbilities,
+	roster: boolean = ROSTER_IN_THIS_BUILD,
 	settings: boolean = SETTINGS_IN_THIS_BUILD
 ): boolean {
 	return Object.entries(can).every(
-		([ability, held]) => held || (!settings && ability === 'settings')
+		([ability, held]) =>
+			held ||
+			(!roster && Object.hasOwn(NO_ROSTER, ability)) ||
+			(!settings && ability === 'settings')
 	);
 }

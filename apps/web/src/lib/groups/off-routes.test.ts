@@ -5,8 +5,11 @@ import { env } from 'cloudflare:workers';
 
 vi.mock('#lib/atproto/server/oauth.js', () => ({ getAuth: vi.fn() }));
 /** Which parts of groups are in the build; each test says. */
-const build = vi.hoisted(() => ({ create: false, settings: false }));
+const build = vi.hoisted(() => ({ roster: false, create: false, settings: false }));
 vi.mock('./build', () => ({
+	get ROSTER_IN_THIS_BUILD() {
+		return build.roster;
+	},
 	get CREATE_IN_THIS_BUILD() {
 		return build.create;
 	},
@@ -29,6 +32,14 @@ import { NO_ROUTE } from './reroute';
 
 const GROUP = 'did:plc:group';
 
+/** Every address of the members page. */
+const MEMBERS_ADDRESSES = [
+	`/groups/${GROUP}/members`,
+	`/groups/${GROUP}/members/`,
+	'/groups/knit.example/members',
+	`/groups/${GROUP}/%6Dembers`
+];
+
 /** Every address of the settings page. */
 const SETTINGS_ADDRESSES = [
 	`/groups/${GROUP}/settings`,
@@ -50,6 +61,7 @@ const GROUP_ADDRESSES = [
 	'/groups',
 	'/groups/',
 	`/groups/${GROUP}`,
+	...MEMBERS_ADDRESSES,
 	...SETTINGS_ADDRESSES,
 	`/groups/${GROUP}/events/new`,
 	`/groups/${GROUP}/events/3kabc`,
@@ -69,6 +81,15 @@ const OTHER_ADDRESSES = [
 	'/oauth/groupx',
 	'/oauth-client-metadata.json',
 	'/groups/%zz'
+];
+
+/** Group addresses beside the members page's. */
+const NOT_MEMBERS = [
+	`/groups/${GROUP}`,
+	`/groups/${GROUP}/membersx`,
+	`/groups/${GROUP}/events/members`,
+	'/groups/members',
+	'/groups/create'
 ];
 
 /** Group addresses beside the create page's. */
@@ -91,6 +112,7 @@ const NOT_SETTINGS = [
 
 /** Each part's addresses, and those beside them that are not its own. */
 const ADDRESSES: Record<Part, { own: string[]; beside: string[] }> = {
+	roster: { own: MEMBERS_ADDRESSES, beside: NOT_MEMBERS },
 	create: { own: CREATE_ADDRESSES, beside: NOT_CREATE },
 	settings: { own: SETTINGS_ADDRESSES, beside: NOT_SETTINGS }
 };

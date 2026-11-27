@@ -7,10 +7,7 @@
 import * as v from '@atcute/lexicons/validations';
 import {
 	didSpaceHosts,
-	exchangeSpaceCredential,
-	fetchWithCredential,
 	isSpaceAccessDenied,
-	type SpaceCredential,
 	type SpaceHolder,
 	type SpaceHosts
 } from '#lib/spaces/server/space-credential.js';
@@ -28,7 +25,6 @@ import {
 	GROUP_POLICY_TYPE,
 	GROUP_SPACE_INDEX_COLLECTION,
 	MEMBER_ROLE,
-	membersSpaceUri,
 	SPACE_SKEY
 } from '../ids';
 import {
@@ -39,16 +35,8 @@ import {
 } from './calendar-choice';
 import { readCalendarPrivacy, type CalendarPrivacy } from './calendar-read';
 import type { GroupWriter } from './context';
-import {
-	answerError,
-	errorKind,
-	isLinkBroken,
-	isRecordNotFound,
-	isRoleRefused,
-	readXrpc,
-	xrpc,
-	XrpcError
-} from './xrpc';
+import { membersSpace } from './roster';
+import { errorKind, isLinkBroken, isRecordNotFound, isRoleRefused, xrpc, XrpcError } from './xrpc';
 
 /** The calendar space's policy: private; admins write its events as the group; members read it.
  *  No role has `write`, which says only who is in the space's writer set, whose own records sync
@@ -218,79 +206,6 @@ export async function readCalendarSpace(writer: GroupWriter): Promise<CalendarSp
 
 export async function calendarSpaceState(writer: GroupWriter): Promise<CalendarSpaceState> {
 	return (await readCalendarSpace(writer)).state;
-}
-
-const LIST_RECORDS = 'com.atproto.space.listRecords';
-const LIST_LIMIT = 100;
-const MAX_LIST_PAGES = 10;
-
-interface ListedRecord {
-	rkey: string;
-	value: Record<string, unknown>;
-}
-
-/** The group's members space, read with one credential bought with `holder`'s own access. */
-function membersSpace(holder: SpaceHolder, groupDid: string, hosts: SpaceHosts) {
-	const space = membersSpaceUri(groupDid);
-	let credential: Promise<SpaceCredential> | undefined;
-	const ask = async (
-		host: string,
-		audience: string,
-		nsid: string,
-		query: Record<string, string>
-	) => {
-		credential ??= hosts
-			.repoHost(groupDid)
-			.then((authorityHost) => exchangeSpaceCredential(holder, space, authorityHost));
-		return readXrpc(
-			await fetchWithCredential(await credential, hosts, { host, audience, nsid, query })
-		);
-	};
-
-	/** One page of `collection`'s records in the group's repo there, and the cursor for the next,
-	 *  null on the last; or a throw. Not authenticated: `listRecords` carries no MAC, so nothing
-	 *  here shows the values are the group's, as a record read with `getRecord` is shown. */
-	const page = async (
-		collection: string,
-		cursor: string | null,
-		limit = LIST_LIMIT
-	): Promise<{ records: ListedRecord[]; cursor: string | null }> => {
-		const answer = await ask(await hosts.repoHost(groupDid), groupDid, LIST_RECORDS, {
-			space,
-			repo: groupDid,
-			collection,
-			limit: String(limit),
-			...(cursor ? { cursor } : {})
-		});
-		if (!answer.ok) throw answerError(LIST_RECORDS, answer);
-		const listed = Array.isArray(answer.data.records) ? answer.data.records : [];
-		const records: ListedRecord[] = [];
-		for (const entry of listed) {
-			const { collection: of, rkey, value } = (entry ?? {}) as Record<string, unknown>;
-			// A host that ignored the filter must not turn other records into these.
-			if (of !== collection || typeof rkey !== 'string') continue;
-			const record = value && typeof value === 'object' ? value : {};
-			records.push({ rkey, value: record as Record<string, unknown> });
-		}
-		// The group host answers `cursor: null` on the last page.
-		const next = typeof answer.data.cursor === 'string' && answer.data.cursor;
-		return { records, cursor: next && next !== cursor && listed.length > 0 ? next : null };
-	};
-
-	return {
-		/** Every record of `collection` in the group's repo there, or a throw. */
-		async list(collection: string): Promise<ListedRecord[]> {
-			const records: ListedRecord[] = [];
-			let cursor: string | null = null;
-			for (let at = 0; at < MAX_LIST_PAGES; at++) {
-				const listed = await page(collection, cursor);
-				records.push(...listed.records);
-				if (!listed.cursor) return records;
-				cursor = listed.cursor;
-			}
-			throw new Error(`${LIST_RECORDS} went past ${MAX_LIST_PAGES} pages`);
-		}
-	};
 }
 
 /** How many of the group's calendar spaces turning members-only events on looks at, at most. */

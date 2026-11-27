@@ -17,7 +17,7 @@
 		unlinkGroupSession
 	} from '#lib/groups/group.remote.js';
 	import { cancelJoin, confirmMember, joinGroup, leave } from '#lib/groups/members.remote.js';
-	import { SETTINGS_IN_THIS_BUILD } from '#lib/groups/build.js';
+	import { ROSTER_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from '#lib/groups/build.js';
 
 	let { data } = $props();
 
@@ -42,6 +42,10 @@
 	let postsMembersOnly = $derived(
 		data.calendar === 'ready' && Boolean(group.linked?.can.membersOnly)
 	);
+	/** Members see who else is in the group; an admin who linked it, also those asking to join. As
+	 *  the members page lets in only someone the host's records count a member, so is the link; and
+	 *  only in a build that has the page. */
+	let showMembers = $derived(ROSTER_IN_THIS_BUILD && group.member === true);
 	/** Private as the person or their link reads it; a visitor sees no private group at all. */
 	let isPrivate = $derived(
 		group.linked ? !group.linked.meta.public : group.personal ? !group.personal.public : false
@@ -159,7 +163,7 @@
 			The group's name, description and who may join are changed at its group host{#if group.hostSite},
 				{@render hostLink(group.hostSite)}{/if}, as are its members, requests to join and roles.
 		</p>
-	{:else if group.linked && group.linked.can.settings}
+	{:else if group.linked && (group.linked.can.settings || group.linked.can.admit)}
 		<p class="text-base-600 dark:text-base-400 text-sm">
 			Members, requests to join and roles are managed at its group host{#if group.hostSite},
 				{@render hostLink(group.hostSite)}{/if}.
@@ -235,6 +239,13 @@
 						<p class="text-base-600 dark:text-base-400 text-sm" role="status">
 							This group takes members by invitation only.
 						</p>
+					{/if}
+					{#if showMembers}
+						<a
+							href={resolve('/(app)/groups/[actor]/members', { actor: group.did })}
+							class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 mt-2 inline-block text-sm font-medium transition-colors"
+							>Members &rarr;</a
+						>
 					{/if}
 				</section>
 			{/if}
