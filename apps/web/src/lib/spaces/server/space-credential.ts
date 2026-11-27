@@ -116,8 +116,8 @@ export function clearSpaceLookups() {
 const SPACE_SCHEME = 'at:space/';
 
 /** The DID that is a space's authority, from its URI: `at:space/<did>/<type>/<skey>`, as the
- *  Atmosphere Groups spec and a group host write it. It still reads the older form,
- *  `at://<did>/space/<type>/<skey>`, because private events build their spaces' URIs that way. */
+ *  Atmosphere Groups spec, a group host and private events write it. It still reads the older form,
+ *  `at://<did>/space/<type>/<skey>`, which is deprecated: read only, never written. */
 export function spaceAuthority(space: string): string {
 	let did = '';
 	if (space.startsWith(SPACE_SCHEME)) {
