@@ -278,13 +278,33 @@ describe('admitting, as the group', () => {
 		});
 	});
 
-	it.each([
-		['JoinRequestNotFound', 'no-request'],
-		['InvalidRequest', 'already-member']
-	])('names the host’s %s', async (error, reason) => {
-		await expect(admitMember(writer(refusal(error)), BOB)).rejects.toEqual(
-			new RosterRefused(reason as never)
+	it('names the host’s JoinRequestNotFound', async () => {
+		await expect(admitMember(writer(refusal('JoinRequestNotFound')), BOB)).rejects.toEqual(
+			new RosterRefused('no-request')
 		);
+	});
+
+	it('takes the host’s generic InvalidRequest as already a member only when the membership is there', async () => {
+		const at = new Date();
+		heldMembership({ roles: ['member'], createdAt: '2026-11-01T00:00:00Z' });
+		await expect(admitMember(writer(refusal('InvalidRequest')), BOB, at, HOSTS)).rejects.toEqual(
+			new RosterRefused('already-member')
+		);
+		// Read as the group, through the link.
+		expect(mocks.exchangeSpaceCredential).toHaveBeenCalledWith(
+			{ handle: expect.any(Function) },
+			MEMBERS,
+			'https://host.example'
+		);
+		heldMembership(null);
+		await expect(
+			admitMember(writer(refusal('InvalidRequest')), BOB, at, HOSTS)
+		).rejects.toMatchObject({ status: 400, error: 'InvalidRequest' });
+		// A read that fails says nothing of it either.
+		mocks.fetchWithCredential.mockResolvedValue(new Response(null, { status: 502 }));
+		await expect(
+			admitMember(writer(refusal('InvalidRequest')), BOB, at, HOSTS)
+		).rejects.toMatchObject({ status: 400, error: 'InvalidRequest' });
 	});
 });
 
@@ -367,7 +387,7 @@ describe('changing roles, as the group', () => {
 });
 
 describe('removing, as the group', () => {
-	it('deletes the membership, and takes one already gone as done', async () => {
+	it('deletes the membership', async () => {
 		const g = writer();
 		await removeMember(g, BOB);
 		expect(g.handle).toHaveBeenCalledWith(
@@ -380,7 +400,21 @@ describe('removing, as the group', () => {
 			collection: 'org.atgrp.membership',
 			rkey: BOB
 		});
-		await expect(removeMember(writer(refusal('InvalidRequest')), BOB)).resolves.toBe(undefined);
+	});
+
+	it('takes the host’s generic InvalidRequest as done only when the membership is gone', async () => {
+		heldMembership(null);
+		await expect(removeMember(writer(refusal('InvalidRequest')), BOB, HOSTS)).resolves.toBe(
+			undefined
+		);
+		heldMembership({ roles: ['member'], createdAt: '2026-11-01T00:00:00Z' });
+		await expect(removeMember(writer(refusal('InvalidRequest')), BOB, HOSTS)).rejects.toMatchObject(
+			{ status: 400, error: 'InvalidRequest' }
+		);
+		mocks.fetchWithCredential.mockResolvedValue(new Response(null, { status: 502 }));
+		await expect(removeMember(writer(refusal('InvalidRequest')), BOB, HOSTS)).rejects.toMatchObject(
+			{ status: 400, error: 'InvalidRequest' }
+		);
 	});
 
 	it('names the host’s refusal, such as removing the last admin', async () => {

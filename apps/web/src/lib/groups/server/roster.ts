@@ -213,7 +213,7 @@ export type RosterRefusal =
 	| 'member-role'
 	/** The spec's `JoinRequestNotFound`: nobody by that DID is waiting, so there is no one to admit. */
 	| 'no-request'
-	/** The host's `InvalidRequest` for a membership already written: they are in already. */
+	/** A create the host refused, with their membership there when read after: they are in already. */
 	| 'already-member'
 	/** Their membership is not there to change. */
 	| 'not-member';
@@ -285,12 +285,26 @@ const membershipAt = (writer: GroupWriter, memberDid: string) => ({
 	rkey: membershipRkey(memberDid)
 });
 
+/** `InvalidRequest` is the group host's generic error: a record already at the key is one cause
+ *  among many, so what it means here is told by whether the membership is there once refused. */
+const isInvalidRequest = (e: unknown) =>
+	e instanceof XrpcError && e.status === 400 && e.error === 'InvalidRequest';
+
+/** Whether the membership is there, as the group reads it; null when the read failed, which says
+ *  nothing either way. */
+const membershipThere = (writer: GroupWriter, memberDid: string, hosts: SpaceHosts) =>
+	membershipAsGroup(writer, memberDid, hosts).then(
+		(found) => found !== null,
+		() => null
+	);
+
 /** A create, so it never replaces a member's roles: the host takes it only for someone whose
  *  request waits, and closes the request. As a member; making them an admin is a change after. */
 export async function admitMember(
 	writer: GroupWriter,
 	memberDid: string,
-	now: Date = new Date()
+	now: Date = new Date(),
+	hosts: SpaceHosts = groupHostSpaces
 ): Promise<void> {
 	try {
 		await xrpc(writer.handle, 'com.atproto.space.createRecord', {
@@ -300,8 +314,7 @@ export async function admitMember(
 			}
 		});
 	} catch (e) {
-		// The host's answer for a record already at that key, its message aside.
-		if (e instanceof XrpcError && e.status === 400 && e.error === 'InvalidRequest') {
+		if (isInvalidRequest(e) && (await membershipThere(writer, memberDid, hosts)) === true) {
 			throw new RosterRefused('already-member');
 		}
 		throw refusal(e);
@@ -351,14 +364,20 @@ export async function setMemberAdmin(
 }
 
 /** Deleting the membership puts them out; the host ends their access to the group's spaces. One
- *  already gone is what was asked: the host answers `InvalidRequest` for a record not there. */
-export async function removeMember(writer: GroupWriter, memberDid: string): Promise<void> {
+ *  already gone is what was asked: the group host answers that delete as done, making no change.
+ *  A refusal with the membership gone when read after is taken as done too; with it still there,
+ *  or unread, it is the failure it says. */
+export async function removeMember(
+	writer: GroupWriter,
+	memberDid: string,
+	hosts: SpaceHosts = groupHostSpaces
+): Promise<void> {
 	try {
 		await xrpc(writer.handle, 'com.atproto.space.deleteRecord', {
 			body: membershipAt(writer, memberDid)
 		});
 	} catch (e) {
-		if (e instanceof XrpcError && e.status === 400 && e.error === 'InvalidRequest') return;
+		if (isInvalidRequest(e) && (await membershipThere(writer, memberDid, hosts)) === false) return;
 		throw refusal(e);
 	}
 }
