@@ -46,6 +46,8 @@ function groupPage(member: boolean | null, linked: boolean) {
 			handle: 'knit.example',
 			name: 'Knitters',
 			description: null,
+			website: null,
+			home: null,
 			atHost: true,
 			linked: linked
 				? {
@@ -66,8 +68,10 @@ function groupPage(member: boolean | null, linked: boolean) {
 			member,
 			askAccess: false
 		},
-		events: [],
-		cursor: null,
+		ongoingEvents: [],
+		upcomingEvents: [],
+		pastEvents: [],
+		eventsCreated: null,
 		signedIn: true,
 		you: 'did:plc:alice',
 		access: null,

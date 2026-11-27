@@ -437,4 +437,23 @@ describe('what a list shows of a group', () => {
 		await cacheProfile(db, 'did:plc:g', null);
 		expect(await cachedProfiles(db, ['did:plc:g'])).toEqual(new Map());
 	});
+
+	it("keeps a cached profile's website, and adds its column to a table made before it", async () => {
+		const db = createSqliteDatabase(':memory:');
+		await new Contrail(servedConfig(true)).init(db);
+		await run(
+			db,
+			'CREATE TABLE group_profiles (did TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, handle TEXT)'
+		);
+		await run(db, "INSERT INTO group_profiles VALUES ('did:plc:old', 'Old', NULL, NULL)");
+		await ensureGroupSchema(db);
+		const knitters = { name: 'Knitters', description: null, handle: null };
+		await cacheProfile(db, 'did:plc:g', { ...knitters, website: 'https://knit.example/' });
+		const cached = await cachedProfiles(db, ['did:plc:g', 'did:plc:old']);
+		expect(cached.get('did:plc:g')).toEqual({ ...knitters, website: 'https://knit.example/' });
+		expect(cached.get('did:plc:old')).toEqual({ name: 'Old', description: null, handle: null });
+		// Its website taken away is a change too.
+		await cacheProfile(db, 'did:plc:g', knitters);
+		expect((await cachedProfiles(db, ['did:plc:g'])).get('did:plc:g')).toEqual(knitters);
+	});
 });

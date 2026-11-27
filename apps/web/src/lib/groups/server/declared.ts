@@ -38,11 +38,15 @@ const SCHEMA = [
 		did TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
 		description TEXT,
-		handle TEXT
+		handle TEXT,
+		website TEXT
 	)`,
 	`CREATE INDEX IF NOT EXISTS groups_event_did_starts
 		ON ${EVENTS}(did, json_extract(record, '$.startsAt'))`
 ];
+
+/** Columns added to a table after it was first made, for a database that made it before. */
+const ADDED_COLUMNS = [`ALTER TABLE ${PROFILES} ADD COLUMN website TEXT`];
 
 const schemaReady = new WeakMap<object, Promise<void>>();
 
@@ -52,6 +56,14 @@ export function ensureGroupSchema(db: Database): Promise<void> {
 	if (!ready) {
 		ready = (async () => {
 			for (const statement of SCHEMA) await db.prepare(statement).run();
+			for (const statement of ADDED_COLUMNS) {
+				await db
+					.prepare(statement)
+					.run()
+					.catch((e: unknown) => {
+						if (!/duplicate column/i.test(e instanceof Error ? e.message : String(e))) throw e;
+					});
+			}
 		})().catch((e) => {
 			schemaReady.delete(db);
 			throw e;
@@ -300,6 +312,8 @@ export interface StoredProfile {
 	name: string;
 	description: string | null;
 	handle: string | null;
+	/** Left out when the group has none. */
+	website?: string;
 }
 
 export async function cachedProfiles(
@@ -310,12 +324,14 @@ export async function cachedProfiles(
 	if (dids.length === 0) return profiles;
 	const { results } = await db
 		.prepare(
-			`SELECT did, name, description, handle FROM ${PROFILES}
+			`SELECT did, name, description, handle, website FROM ${PROFILES}
 			WHERE did IN (SELECT value FROM json_each(?))`
 		)
 		.bind(JSON.stringify(dids))
-		.all<StoredProfile & { did: string }>();
-	for (const { did, ...profile } of results ?? []) profiles.set(did, profile);
+		.all<Omit<StoredProfile, 'website'> & { did: string; website: string | null }>();
+	for (const { did, website, ...profile } of results ?? []) {
+		profiles.set(did, { ...profile, ...(website ? { website } : {}) });
+	}
 	return profiles;
 }
 
@@ -332,12 +348,13 @@ export async function cacheProfile(
 	}
 	await db
 		.prepare(
-			`INSERT INTO ${PROFILES} (did, name, description, handle) VALUES (?, ?, ?, ?)
+			`INSERT INTO ${PROFILES} (did, name, description, handle, website) VALUES (?, ?, ?, ?, ?)
 			ON CONFLICT (did) DO UPDATE SET
-				name = excluded.name, description = excluded.description, handle = excluded.handle
+				name = excluded.name, description = excluded.description, handle = excluded.handle,
+				website = excluded.website
 			WHERE name IS NOT excluded.name OR description IS NOT excluded.description
-				OR handle IS NOT excluded.handle`
+				OR handle IS NOT excluded.handle OR website IS NOT excluded.website`
 		)
-		.bind(did, profile.name, profile.description, profile.handle)
+		.bind(did, profile.name, profile.description, profile.handle, profile.website ?? null)
 		.run();
 }

@@ -62,6 +62,10 @@ export interface GroupView {
 	handle: string | null;
 	name: string;
 	description: string | null;
+	/** Its website, as its about record gives it: only an http(s) URL. */
+	website: string | null;
+	/** The group's own page at its group host: see `groupHome`. */
+	home: string | null;
 	/** Whether this site may link it: the group is at its group host. */
 	atHost: boolean;
 	/** Present when the caller linked the group and the session still works. */
@@ -338,6 +342,8 @@ export async function groupView(
 		handle: group.handle,
 		name: profile?.name ?? group.handle ?? group.did,
 		description: profile?.description ?? null,
+		website: profile?.website ?? null,
+		home: groupHome(group.handle),
 		atHost: groupSignInAvailable() && atHost,
 		linked,
 		relink,
@@ -348,6 +354,19 @@ export async function groupView(
 		confirmed: personal.confirmed,
 		askAccess: atHost && caller !== null && !holdsParticipate(caller.scope)
 	};
+}
+
+/** The group's own page, at the address of its handle, which was checked both ways: a group's
+ *  handle is a name its host serves, and a host that has pages for its groups shows a group's at
+ *  its address. That needs no path of any one host's own. Null without a handle. */
+export function groupHome(handle: string | null): string | null {
+	if (!handle) return null;
+	try {
+		const url = new URL(`https://${handle}/`);
+		return url.hostname === handle.toLowerCase() && url.pathname === '/' ? url.href : null;
+	} catch {
+		return null;
+	}
 }
 
 /** Whether the session's PDS, as it was when the link was approved, is this site's group host now:

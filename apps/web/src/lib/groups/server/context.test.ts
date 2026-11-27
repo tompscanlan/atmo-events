@@ -61,6 +61,7 @@ vi.mock('./confirmation', () => ({
 import {
 	GROUP_NOT_FOUND,
 	GROUP_UNCHECKED,
+	groupHome,
 	groupView,
 	LINKED_READ_LIMIT_MS,
 	requireGroupWriter,
@@ -140,6 +141,51 @@ describe('groupView for a visitor', () => {
 	it('falls back to the handle when there is no cached profile', async () => {
 		mocks.isDeclared.mockResolvedValue(true);
 		expect((await groupView(GROUP, null)).name).toBe('knit.example');
+	});
+
+	it("gives a declared group's website, as cached, and its home at its handle's address", async () => {
+		mocks.isDeclared.mockResolvedValue(true);
+		mocks.readCachedProfiles.mockResolvedValue(
+			new Map([
+				[
+					GROUP,
+					{
+						name: 'Knitters',
+						description: null,
+						handle: 'knit.example',
+						website: 'https://yarn.example/'
+					}
+				]
+			])
+		);
+		expect(await groupView(GROUP, null)).toMatchObject({
+			website: 'https://yarn.example/',
+			home: 'https://knit.example/'
+		});
+		mocks.readCachedProfiles.mockResolvedValue(new Map());
+		expect(await groupView(GROUP, null)).toMatchObject({ website: null });
+	});
+
+	it('gives no home to a group whose handle did not check out', async () => {
+		mocks.isDeclared.mockResolvedValue(true);
+		mocks.resolveGroup.mockResolvedValue({ ...resolved, handle: null });
+		expect((await groupView(GROUP, null)).home).toBeNull();
+	});
+});
+
+describe('groupHome', () => {
+	it("is the address of the group's handle, and nothing for an address that is not one", () => {
+		expect(groupHome('knit.example')).toBe('https://knit.example/');
+		expect(groupHome('Knit.Example')).toBe('https://knit.example/');
+		expect(groupHome(null)).toBeNull();
+		for (const handle of [
+			'knit.example/evil',
+			'evil.example#knit.example',
+			'a@evil.example',
+			'knit example'
+		]) {
+			expect(groupHome(handle), handle).toBeNull();
+		}
 	});
 });
 

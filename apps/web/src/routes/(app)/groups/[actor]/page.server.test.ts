@@ -3,7 +3,9 @@ import { env } from 'cloudflare:workers';
 
 const mocks = vi.hoisted(() => ({
 	groupView: vi.fn(),
-	hostingQuery: vi.fn(),
+	listAuthoredEventsFromContrail: vi.fn(),
+	ongoingQuery: vi.fn(),
+	getProfileCounts: vi.fn(),
 	callerSession: vi.fn(),
 	requireGroupWriter: vi.fn(),
 	listMembersOnlyEvents: vi.fn(),
@@ -26,7 +28,15 @@ vi.mock('#lib/groups/server/person.js', () => ({
 	readRolesAsPerson: mocks.readRolesAsPerson
 }));
 vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.callerSession }));
-vi.mock('#lib/contrail/queries.js', () => ({ hostingQuery: mocks.hostingQuery }));
+vi.mock('#lib/contrail.js', () => ({
+	listAuthoredEventsFromContrail: mocks.listAuthoredEventsFromContrail,
+	flattenEventRecords: (records: unknown[]) => records
+}));
+vi.mock('#lib/contrail/ongoing.js', async (importActual) => ({
+	EMPTY_ONGOING: (await importActual<typeof import('#lib/contrail/ongoing.js')>()).EMPTY_ONGOING,
+	ongoingQuery: mocks.ongoingQuery
+}));
+vi.mock('#lib/server/profile-counts.js', () => ({ getProfileCounts: mocks.getProfileCounts }));
 vi.mock('#lib/contrail/index.js', () => ({ getServerClient: () => ({}) }));
 
 import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
@@ -47,7 +57,9 @@ beforeEach(() => {
 	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 	Reflect.deleteProperty(env, 'SPACES_PDS_URL');
 	mocks.groupView.mockResolvedValue({ did: GROUP, name: 'Knitters', description: null });
-	mocks.hostingQuery.mockResolvedValue({ events: [], cursor: null });
+	mocks.listAuthoredEventsFromContrail.mockResolvedValue({ records: [] });
+	mocks.ongoingQuery.mockResolvedValue({ events: [], total: 0, totalIsFloor: false });
+	mocks.getProfileCounts.mockResolvedValue({ created: 0, rsvpd: 0 });
 });
 
 describe('a group page', () => {
@@ -133,6 +145,52 @@ describe('a group page', () => {
 		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: 'atproto', handle: vi.fn() });
 		mocks.groupView.mockResolvedValue({ did: GROUP, name: 'Knitters', askAccess: false });
 		expect((await load(request(`?asked=${ALICE}`, ALICE))).access).toBeNull();
+	});
+});
+
+describe("a group page's public events", () => {
+	const event = (rkey: string, startsAt: string, endsAt?: string) => ({
+		uri: `at://${GROUP}/community.lexicon.calendar.event/${rkey}`,
+		did: GROUP,
+		rkey,
+		name: rkey,
+		startsAt,
+		...(endsAt ? { endsAt } : {}),
+		createdAt: '2020-01-01T00:00:00Z'
+	});
+
+	it("reads them as a person's profile does: under way, coming and past, a few of each", async () => {
+		const coming = Array.from({ length: 7 }, (_, i) =>
+			event(`c${i}`, `2099-01-0${i + 1}T00:00:00Z`)
+		);
+		const over = event('over', '2020-01-01T00:00:00Z', '2020-01-02T00:00:00Z');
+		// Began before now and still running: under way, never past.
+		const running = event('running', '2020-01-01T00:00:00Z', '2099-01-01T00:00:00Z');
+		mocks.listAuthoredEventsFromContrail.mockImplementation(async (_client, params) => ({
+			records: params.order === 'asc' ? coming : [running, over]
+		}));
+		mocks.ongoingQuery.mockResolvedValue({ events: [running], total: 1, totalIsFloor: false });
+		mocks.getProfileCounts.mockResolvedValue({ created: 9, rsvpd: 0 });
+		const page = await load(request());
+		expect(mocks.listAuthoredEventsFromContrail).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ actor: GROUP, order: 'asc', limit: 7 })
+		);
+		expect(mocks.ongoingQuery).toHaveBeenCalledWith(expect.anything(), { actor: GROUP });
+		expect(page).toMatchObject({
+			ongoingEvents: [running],
+			hasMoreUpcoming: true,
+			pastEvents: [over],
+			hasMorePast: false,
+			eventsCreated: 9
+		});
+		expect(page.upcomingEvents.map((e) => e.rkey)).toEqual(['c0', 'c1', 'c2', 'c3', 'c4', 'c5']);
+	});
+
+	it('still shows the page when the events under way, or the count, could not be read', async () => {
+		mocks.ongoingQuery.mockRejectedValue(new Error('down'));
+		mocks.getProfileCounts.mockResolvedValue(undefined);
+		expect(await load(request())).toMatchObject({ ongoingEvents: [], eventsCreated: null });
 	});
 });
 

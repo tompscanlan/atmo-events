@@ -24,7 +24,7 @@ import {
 	SPACE_POLICY_RKEY,
 	type GroupJoinPolicy
 } from '../ids';
-import { groupJoinPolicy } from '../fields';
+import { groupJoinPolicy, groupWebsite } from '../fields';
 import { groupHostUrl } from './enabled';
 import {
 	cachedProfiles,
@@ -159,6 +159,8 @@ export async function readGroupLabels(dids: string[]): Promise<Map<string, Group
 export interface GroupProfile {
 	name: string;
 	description: string | null;
+	/** Its website, only an http(s) URL; left out when it has none, or one that is not. */
+	website?: string;
 }
 
 /** The about record requires `displayName`; a record without one reads as no profile. */
@@ -168,7 +170,8 @@ export function parseGroupProfile(value: unknown): GroupProfile | null {
 	const name = typeof raw.displayName === 'string' ? raw.displayName.trim() : '';
 	if (!name) return null;
 	const description = typeof raw.description === 'string' ? raw.description.trim() : '';
-	return { name, description: description || null };
+	const website = groupWebsite(raw.website);
+	return { name, description: description || null, ...(website ? { website } : {}) };
 }
 
 export interface GroupMeta {
