@@ -370,6 +370,28 @@ describe("a person's own membership", () => {
 		);
 	});
 
+	it.each([
+		[false, 0],
+		[null, 0],
+		[true, 1]
+	])(
+		'links an admin whose link may manage members to the members page only when the host counts them a member (%s)',
+		async (member, links) => {
+			const can = {
+				post: true,
+				list: true,
+				settings: true,
+				admit: true,
+				assign: true,
+				remove: true
+			};
+			const data = linkedPage({ public: true, listed: true }, can);
+			render(GroupPage, { data: { ...data, group: { ...data.group, member } } as never });
+			await expect.element(page.getByRole('link', { name: 'Settings' })).toBeVisible();
+			expect(page.getByRole('link', { name: /^Members/ }).elements()).toHaveLength(links);
+		}
+	);
+
 	it('does not link someone outside the group to the members page', async () => {
 		render(GroupPage, { data: personPage({ joinPolicy: 'approval' }, false) as never });
 		await expect.element(page.getByRole('button', { name: 'Ask to join' })).toBeVisible();
