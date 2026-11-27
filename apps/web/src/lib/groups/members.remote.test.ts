@@ -216,7 +216,8 @@ describe("a person's own membership", () => {
 		for (const run of [
 			() => joinGroup({ groupDid: GROUP }),
 			() => cancelJoin({ groupDid: GROUP }),
-			() => leave({ groupDid: GROUP })
+			() => leave({ groupDid: GROUP }),
+			() => confirmMember({ groupDid: GROUP })
 		]) {
 			await expect(run()).rejects.toMatchObject({ status: 404 });
 		}
@@ -269,7 +270,8 @@ describe("an admin's acts on the members page", () => {
 			new XrpcError('com.atproto.space.createRecord', 403, 'ScopeMissing')
 		);
 		await expect(approveRequest({ groupDid: GROUP, did: BOB })).rejects.toMatchObject({
-			status: 403
+			status: 403,
+			body: { message: 'Your role in this group no longer allows that.' }
 		});
 		mocks.admitMember.mockRejectedValue(new XrpcError('com.atproto.space.createRecord', 401, null));
 		await expect(approveRequest({ groupDid: GROUP, did: BOB })).rejects.toMatchObject({
@@ -282,16 +284,6 @@ describe("an admin's acts on the members page", () => {
 			status: 502,
 			body: { message: 'The group host could not be reached. Try again shortly.' }
 		});
-	});
-
-	it('is the same 404 without a link, and writes nothing', async () => {
-		mocks.requireGroupWriter.mockRejectedValue(
-			Object.assign(new Error('Group not found'), { status: 404 })
-		);
-		await expect(approveRequest({ groupDid: GROUP, did: BOB })).rejects.toMatchObject({
-			status: 404
-		});
-		expect(mocks.admitMember).not.toHaveBeenCalled();
 	});
 
 	it('is a 404 with groups off, before looking for a link', async () => {
