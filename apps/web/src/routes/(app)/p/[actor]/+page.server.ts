@@ -14,7 +14,9 @@ import { getServerClient } from '#lib/contrail/index.js';
 import { EMPTY_ONGOING, ongoingQuery } from '#lib/contrail/ongoing.js';
 import { hasEnded } from '#lib/past-events.js';
 import { isActorIdentifier } from '@atcute/lexicons/syntax';
-import { error } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
+import { resolve } from '$app/paths';
+import { isKnownGroup } from '#lib/groups/server/known-group.js';
 
 const PREVIEW_LIMIT = 6;
 
@@ -27,6 +29,10 @@ export async function load({ params, fetch, locals }) {
 	const did = await getActor(actor);
 
 	if (!did) throw error(404, 'Actor not found');
+	// A group's handle or DID leads to the group's own page, while groups are on.
+	if (await isKnownGroup(did, locals.did ?? null)) {
+		redirect(307, resolve('/(app)/groups/[actor]', { actor: did }));
+	}
 
 	const now = new Date().toISOString();
 
