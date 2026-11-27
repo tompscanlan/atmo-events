@@ -144,7 +144,7 @@ async function readLinked(
 			session.getTokenInfo(false),
 			linkAskedCurrentScope(groupDid, personDid)
 		]);
-		const can = groupAbilities(token.scope);
+		const can = groupAbilities(token.scope, groupDid);
 		return {
 			meta,
 			listed,

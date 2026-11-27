@@ -9,10 +9,13 @@ import {
 	GROUP_CONFIRMATION_COLLECTION,
 	GROUP_DECLARATION_COLLECTION,
 	GROUP_EVENT_COLLECTION,
+	GROUP_SPACE_INDEX_COLLECTION,
 	MEMBERS_SPACE_TYPE,
 	META_SPACE_TYPE,
 	SPACE_SKEY
 } from './ids';
+import { GUEST_SCOPE, GUEST_SCOPES } from '#lib/private-events/scopes.js';
+import { CALENDAR_SPACE_TYPE } from './calendar';
 
 /** The spec's methods for a person's own membership, each by their service auth for the host. */
 export const REQUEST_JOIN_NSID = 'org.atgrp.requestJoin';
@@ -54,9 +57,20 @@ export const PARTICIPATE_SCOPES: readonly string[] = [
 	YOUR_GROUPS_SCOPE
 ];
 
+/** A member reads the group's members-only events, and RSVPs to them in their own repo in its
+ *  calendar space, with private events' guest scope: the calendar space has their type. */
+export const MEMBERS_ONLY_PERSON_SCOPES: readonly string[] = GUEST_SCOPES;
+
+/** What joining a group asks for: the participate grants, and what seeing the group's members-only
+ *  events takes. */
+export const JOIN_SCOPES: readonly string[] = [
+	...PARTICIPATE_SCOPES,
+	...MEMBERS_ONLY_PERSON_SCOPES
+];
+
 /** Declared in the person's client metadata while groups are on; each asked for only when they
  *  first act in a group, never at sign-in. */
-export const GROUP_PERSON_SCOPES: readonly string[] = [...PARTICIPATE_SCOPES];
+export const GROUP_PERSON_SCOPES: readonly string[] = [...PARTICIPATE_SCOPES, GUEST_SCOPE];
 
 /** Whether the person's granted scope lets their PDS vouch for them to call `nsid`: an rpc grant
  *  for the method, written `rpc:<method>` or `rpc?lxm=<method>`, for `audience` or any audience;
@@ -175,18 +189,107 @@ export function grantsRepoWrites(scope: string, collection: string): boolean {
 	);
 }
 
+/** A read of the group's index of its spaces, the `org.atgrp.space` records in its members space,
+ *  for which calendars it already has before turning members-only events on. Read only, and named
+ *  to that collection, though a group host gives a credential for the whole space, so the link
+ *  reads the rest of the members space too. Keyed `self`, as every members-space scope here is, for
+ *  the host's approval page. The host keeps it for a member whose roles read the members space,
+ *  which every member's do, and gives a session a credential for that space only while its scope
+ *  reads it. */
+export const GROUP_SPACE_INDEX_SCOPE = `space:${MEMBERS_SPACE_TYPE}?authority=self&skey=${SPACE_SKEY}&collection=${GROUP_SPACE_INDEX_COLLECTION}&action=read`;
+
+/** Whether a granted scope reads the group's index of its spaces: a members-space read for the
+ *  group, its key, and that collection or every one. */
+export function grantsSpaceIndexRead(scope: string, groupDid: string): boolean {
+	return scope
+		.split(' ')
+		.filter((token) => token.startsWith(`space:${MEMBERS_SPACE_TYPE}?`))
+		.map((token) => new URLSearchParams(token.slice(token.indexOf('?') + 1)))
+		.some((params) => {
+			const authority = params.get('authority') ?? 'self';
+			const skey = params.get('skey') ?? '*';
+			const collections = params.getAll('collection');
+			return (
+				[groupDid, 'self', '*'].includes(authority) &&
+				[SPACE_SKEY, '*'].includes(skey) &&
+				(collections.length === 0 ||
+					collections.includes('*') ||
+					collections.includes(GROUP_SPACE_INDEX_COLLECTION)) &&
+				actionsOf(params).includes('read')
+			);
+		});
+}
+
+/** The group's calendar spaces at any key: the one used may be one another app made, under a key
+ *  of its own, and a client's metadata names its scopes once for every group. Both name no key, so
+ *  every scope for the type names the same one, as the host's approval page needs. */
+const CALENDAR_ANY_KEY = `space:${CALENDAR_SPACE_TYPE}?authority=self`;
+
+/** Making the group's calendar space, and its events there, read, written and deleted as the group;
+ *  and reading which calendar spaces the group has, before making one.
+ *  Its own type only, not every space (`space:*`). The host keeps the second only while one of the
+ *  group's calendar spaces is there at the approval whose own policy lets the approving person's
+ *  roles post events, so a link approved before there was one is approved once more after; each
+ *  write is still checked against the policy of the space it goes to. */
+export const MEMBERS_ONLY_SCOPES: readonly string[] = [
+	`${CALENDAR_ANY_KEY}&manage=create`,
+	`${CALENDAR_ANY_KEY}&collection=${GROUP_EVENT_COLLECTION}&action=read&action=create&action=update&action=delete`,
+	GROUP_SPACE_INDEX_SCOPE
+];
+
+/** The calendar-space grants in a granted scope, for the group's calendar spaces: at any key, or
+ *  at one key, since the calendar used may be one another app made under a key of its own and a
+ *  host may hand the keyless scope asked for back named to it. A grant for a key other than the
+ *  calendar's is still refused by the host at each write, which this site then says. */
+function calendarGrants(scope: string, groupDid: string): URLSearchParams[] {
+	return scope
+		.split(' ')
+		.filter((token) => token.startsWith(`space:${CALENDAR_SPACE_TYPE}?`))
+		.map((token) => new URLSearchParams(token.slice(token.indexOf('?') + 1)))
+		.filter((params) => {
+			const authority = params.get('authority') ?? 'self';
+			const skey = params.get('skey') ?? '*';
+			return [groupDid, 'self', '*'].includes(authority) && skey !== '';
+		});
+}
+
+export interface MembersOnlyAbilities {
+	/** Make the group's calendar space, which turns members-only events on. */
+	turnOnMembersOnly: boolean;
+	/** Read, post, edit and delete the group's members-only events. */
+	membersOnly: boolean;
+	/** Read which calendars the group already has, before turning them on. */
+	readSpaceIndex: boolean;
+}
+
+export function grantsMembersOnly(scope: string, groupDid: string): MembersOnlyAbilities {
+	const grants = calendarGrants(scope, groupDid);
+	return {
+		turnOnMembersOnly: grants.some((grant) => grant.getAll('manage').includes('create')),
+		membersOnly: grants.some((grant) => {
+			const collections = grant.getAll('collection');
+			return (
+				(collections.includes('*') || collections.includes(GROUP_EVENT_COLLECTION)) &&
+				DEFAULT_ACTIONS.every((action) => actionsOf(grant).includes(action))
+			);
+		}),
+		readSpaceIndex: grantsSpaceIndexRead(scope, groupDid)
+	};
+}
+
 /** What the page offers someone who linked the group. */
-export interface GroupAbilities {
+export interface GroupAbilities extends MembersOnlyAbilities {
 	/** Post, edit and delete the group's public events. */
 	post: boolean;
 	/** Add the group to the groups list, or take it off. */
 	list: boolean;
 }
 
-export function groupAbilities(scope: string): GroupAbilities {
+export function groupAbilities(scope: string, groupDid: string): GroupAbilities {
 	return {
 		post: grantsRepoWrites(scope, GROUP_EVENT_COLLECTION),
-		list: grantsRepoWrites(scope, GROUP_DECLARATION_COLLECTION)
+		list: grantsRepoWrites(scope, GROUP_DECLARATION_COLLECTION),
+		...grantsMembersOnly(scope, groupDid)
 	};
 }
 

@@ -3,6 +3,7 @@ import { env, waitUntil } from 'cloudflare:workers';
 import { isHttpError } from '@sveltejs/kit';
 import { TokenRefreshError } from '@atcute/oauth-node-client';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
+import { GROUP_SPACE_INDEX_SCOPE, MEMBERS_ONLY_SCOPES } from '../scopes';
 import { XrpcError } from './xrpc';
 
 const mocks = vi.hoisted(() => ({
@@ -74,7 +75,8 @@ const ADMIN_SCOPE = [
 	'atproto',
 	`space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`,
 	'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
-	'blob?accept=image/*'
+	'blob?accept=image/*',
+	...MEMBERS_ONLY_SCOPES.map((scope) => scope.replace('authority=self', `authority=${GROUP}`))
 ].join(' ');
 const MEMBER_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`;
 const linkedSession = (scope = ADMIN_SCOPE, aud = 'https://host.example') => ({
@@ -252,6 +254,21 @@ describe('groupView for someone who linked the group', () => {
 		mocks.groupSession.mockResolvedValue(linkedSession(ADMIN_SCOPE));
 		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({ reapprove: false });
 		expect(mocks.linkAskedCurrentScope).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+
+	it("offers to approve again a link from before atmo read the group's index of its spaces", async () => {
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(false);
+		mocks.linkAskedCurrentScope.mockResolvedValue(false);
+		const withoutIndex = ADMIN_SCOPE.split(' ')
+			.filter((token) => token !== GROUP_SPACE_INDEX_SCOPE.replace('self', GROUP))
+			.join(' ');
+		expect(withoutIndex).not.toBe(ADMIN_SCOPE);
+		mocks.groupSession.mockResolvedValue(linkedSession(withoutIndex));
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({
+			can: { turnOnMembersOnly: true, membersOnly: true, readSpaceIndex: false },
+			reapprove: true
+		});
 	});
 
 	it('asks to link again when the session cannot say what it was granted', async () => {

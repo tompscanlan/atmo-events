@@ -11,7 +11,10 @@ describe('the permissions this build asks for', () => {
 				'atproto',
 				'space:org.atgrp.meta?authority=self&skey=self&action=read',
 				'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
-				'blob?accept=image/*'
+				'blob?accept=image/*',
+				'space:community.lexicon.calendar.collection?authority=self&manage=create',
+				'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete',
+				'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.space&action=read'
 			].join(' ')
 		);
 	});
@@ -21,7 +24,8 @@ describe('the permissions this build asks for', () => {
 			'space:org.atgrp.meta?authority=*&skey=self&action=read',
 			'space:org.atgrp.members?authority=*&skey=self&collection=org.atgrp.confirmation&action=read&action=create&action=delete',
 			'rpc?lxm=org.atgrp.requestJoin&lxm=org.atgrp.cancelJoinRequest&lxm=org.atgrp.leaveGroup&aud=*',
-			'rpc:org.atgrp.internal.getActorGroups?aud=*'
+			'rpc:org.atgrp.internal.getActorGroups?aud=*',
+			'space:community.lexicon.calendar.collection?authority=*&collection=community.lexicon.calendar.rsvp&action=read&action=create&action=update&action=delete'
 		]);
 	});
 });

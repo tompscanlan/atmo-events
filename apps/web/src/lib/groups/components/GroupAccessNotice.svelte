@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { Button } from '@atmo-dev/kit';
 	import { requestPermissions } from '@svelte-atproto/oauth/client';
-	import { PARTICIPATE_SCOPES } from '../scopes';
+	import { JOIN_SCOPES } from '../scopes';
 	import { askedReturnTo, type GroupAccess } from '../permissions-asked';
 
 	// Shaped on private events' notice (PrivateEventAccessNotice.svelte), for what a person's own
-	// sign-in needs for groups: joining groups, and reading those they are in, with their own access.
+	// sign-in needs for groups: joining groups, and reading those they are in, members-only events
+	// too, with their own access.
 	let {
 		access,
 		did,
@@ -29,7 +30,7 @@
 		failure = null;
 		try {
 			const back = location.pathname + location.search;
-			await requestPermissions([...PARTICIPATE_SCOPES], { returnTo: askedReturnTo(back, did) });
+			await requestPermissions([...JOIN_SCOPES], { returnTo: askedReturnTo(back, did) });
 		} catch {
 			failure = 'That did not work. Try again.';
 		} finally {

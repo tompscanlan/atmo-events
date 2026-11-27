@@ -22,6 +22,7 @@ vi.mock('#lib/groups/members.remote.js', () => member);
 vi.mock('@svelte-atproto/oauth/client', () => oauth);
 vi.mock('#lib/contrail/events.remote.js', () => ({ loadMoreEvents: vi.fn() }));
 
+import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 import GroupPage from './+page.svelte';
 
 const GROUP = 'did:plc:group';
@@ -354,7 +355,8 @@ describe("a person's own membership", () => {
 				'space:org.atgrp.meta?authority=*&skey=self&action=read',
 				'space:org.atgrp.members?authority=*&skey=self&collection=org.atgrp.confirmation&action=read&action=create&action=delete',
 				'rpc?lxm=org.atgrp.requestJoin&lxm=org.atgrp.cancelJoinRequest&lxm=org.atgrp.leaveGroup&aud=*',
-				'rpc:org.atgrp.internal.getActorGroups?aud=*'
+				'rpc:org.atgrp.internal.getActorGroups?aud=*',
+				GUEST_SCOPE
 			]);
 	});
 
