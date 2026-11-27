@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
 	readGroupLabels: vi.fn(),
 	resolveGroup: vi.fn(),
 	linkedGroups: vi.fn(),
+	actorGroups: vi.fn(),
 	heldOf: vi.fn()
 }));
 vi.mock('./group', () => ({
@@ -17,9 +18,10 @@ vi.mock('./group', () => ({
 	resolveGroup: mocks.resolveGroup,
 	heldOf: mocks.heldOf
 }));
+vi.mock('./host', () => ({ actorGroups: mocks.actorGroups }));
 vi.mock('./sign-in', () => ({ linkedGroups: mocks.linkedGroups }));
 
-import { browseDeclared, browseLinked, browseUpcoming } from './browse';
+import { browseDeclared, browseLinked, browseUpcoming, yourGroups } from './browse';
 
 const next = (title: string) => ({
 	uri: `at://x/e/${title}`,
@@ -167,5 +169,31 @@ describe('browseLinked', () => {
 		]);
 		expect(mocks.resolveGroup).toHaveBeenCalledExactlyOnceWith('did:plc:unlisted');
 		expect(await browseLinked('did:plc:bob')).toEqual([]);
+	});
+});
+
+describe('yourGroups', () => {
+	const ALICE = 'did:plc:alice';
+	const YOURS = 'rpc:org.atgrp.internal.getActorGroups?aud=*';
+	const person = (scope = `atproto ${YOURS}`) => ({ did: ALICE, scope, handle: vi.fn() });
+
+	it('names each group as the host shows it to a member, or by its handle', async () => {
+		mocks.actorGroups.mockResolvedValue([
+			{ did: 'did:plc:a', handle: 'a.groups.example', displayName: 'Knitters' },
+			{ did: 'did:plc:b', handle: 'b.groups.example', displayName: null }
+		]);
+		expect(await yourGroups(person())).toEqual([
+			{ did: 'did:plc:a', name: 'Knitters', handle: 'a.groups.example' },
+			{ did: 'did:plc:b', name: 'b.groups.example', handle: 'b.groups.example' }
+		]);
+	});
+
+	it('asks nothing of a sign-in that cannot ask the host, and says nothing when it fails', async () => {
+		expect(await yourGroups(person('atproto'))).toBeNull();
+		expect(mocks.actorGroups).not.toHaveBeenCalled();
+
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		mocks.actorGroups.mockRejectedValue(new Error('host down'));
+		expect(await yourGroups(person())).toBeNull();
 	});
 });
