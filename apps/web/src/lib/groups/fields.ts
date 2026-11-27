@@ -1,6 +1,10 @@
-// A group's fields, checked as the spec's lexicons bound them (org.atgrp.about, org.atgrp.config).
-// Values and pure checks only, so the pages can import them.
+// A group's fields as people type them, checked as the spec's lexicons bound them
+// (org.atgrp.about, org.atgrp.config). Values and pure checks only, so the forms can import them.
 import { GROUP_JOIN_POLICIES, type GroupJoinPolicy } from './ids';
+
+/** A request to join's message. The spec's bound is 2000 graphemes, which 2000 characters never
+ *  pass. */
+export const JOIN_MESSAGE_MAX = 2000;
 
 /** `website`: an http or https URL, as the host requires; empty is none. `undefined` when it is
  *  not one. */
