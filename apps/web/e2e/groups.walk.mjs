@@ -3183,6 +3183,24 @@ step(
 		// Bob, an admin now, links the group, and takes alice's admin role away: the group would
 		// keep bob. Then taking his own away is not offered. The host's refusal is for the last
 		// admin: try to make the only admin a member from a stale page.
+		// Alice founded the group at the host, not here, so nothing of hers wrote her confirmation:
+		// her group page offers it, and until she confirms, others list her as not confirmed.
+		const { alice } = S.pages;
+		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		const confirm = alice.getByRole('button', { name: /^confirm membership$/i });
+		if (await confirm.count()) {
+			await confirm.click();
+			await until(
+				async () => (await confirm.count()) === 0,
+				(x) => x,
+				30,
+				500
+			);
+			check(
+				'alice, who founded it at the host, confirms her membership from the group page',
+				(await confirm.count()) === 0 && (await confirmationsOf(ALICE, g)).count >= 1
+			);
+		}
 		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
 		await bob.getByRole('button', { name: /^link this group$|^link again$/i }).click();
 		await bob.waitForURL((u) => u.origin !== ATMO, { timeout: 30_000 });
