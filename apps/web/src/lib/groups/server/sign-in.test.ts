@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
 import type { OAuthClientOptions, StoredState } from '@atcute/oauth-node-client';
 import { memoryKV, type MemoryKV } from './__fixtures__/kv';
+import { ROSTER_IN_THIS_BUILD } from '../build';
 
 const mocks = vi.hoisted(() => ({
 	networkFetch: vi.fn<typeof fetch>(),
@@ -141,8 +142,8 @@ describe('the group client', () => {
 	});
 
 	it("asks for the meta read as its own scope, writes events, the settings' records and policy, and members-only events'", () => {
-		expect(GROUP_SESSION_SCOPE).toBe(groupSessionScope());
-		expect(groupSessionScope().split(' ')).toEqual([
+		expect(GROUP_SESSION_SCOPE).toBe(groupSessionScope(ROSTER_IN_THIS_BUILD));
+		expect(groupSessionScope(false).split(' ')).toEqual([
 			'atproto',
 			'space:org.atgrp.meta?authority=self&skey=self&action=read',
 			'repo?collection=community.lexicon.calendar.event',
@@ -156,8 +157,28 @@ describe('the group client', () => {
 		]);
 	});
 
+	it("also asks for the members page's writes and calls, in a build that has it", () => {
+		expect(groupSessionScope(true).split(' ')).toEqual([
+			'atproto',
+			'space:org.atgrp.meta?authority=self&skey=self&action=read',
+			'repo?collection=community.lexicon.calendar.event',
+			'blob?accept=image/*',
+			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.about&action=read&action=update',
+			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.config&action=read&action=update',
+			'space:org.atgrp.meta?authority=self&skey=self&manage=update',
+			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.membership&action=read&action=create',
+			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.membership&action=read&action=update',
+			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.membership&action=read&action=delete',
+			'rpc:org.atgrp.listJoinRequests?aud=*',
+			'rpc:org.atgrp.denyJoinRequest?aud=*',
+			'space:community.lexicon.calendar.collection?authority=self&manage=create',
+			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete',
+			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.space&action=read'
+		]);
+	});
+
 	it('asks for none of the settings in a build without them', () => {
-		expect(groupSessionScope(false).split(' ')).toEqual([
+		expect(groupSessionScope(false, false).split(' ')).toEqual([
 			'atproto',
 			'space:org.atgrp.meta?authority=self&skey=self&action=read',
 			'repo?collection=community.lexicon.calendar.event',
@@ -174,7 +195,7 @@ describe('the group client', () => {
 	// group's calendar may be one another app made under a key of its own.
 	it('names the same key in every scope for one space', () => {
 		const keys = new Map<string, Set<string | null>>();
-		const asked = groupSessionScope().split(' ');
+		const asked = groupSessionScope(true).split(' ');
 		for (const token of asked.filter((t) => t.startsWith('space:'))) {
 			const at = token.indexOf('?');
 			const params = new URLSearchParams(at === -1 ? '' : token.slice(at + 1));

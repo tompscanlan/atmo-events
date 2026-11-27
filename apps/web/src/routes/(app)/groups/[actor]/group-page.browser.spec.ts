@@ -21,9 +21,11 @@ vi.mock('#lib/groups/group.remote.js', () => mocks);
 vi.mock('#lib/groups/members.remote.js', () => member);
 vi.mock('@svelte-atproto/oauth/client', () => oauth);
 vi.mock('#lib/contrail/events.remote.js', () => ({ loadMoreEvents: vi.fn() }));
-// The settings page is in this build; group-host-links.browser.spec.ts has it out.
+// The members page is not in this build; members-link.browser.spec.ts has it in. The settings page
+// is; group-host-links.browser.spec.ts has it out.
 vi.mock('#lib/groups/build.js', async (importOriginal) => ({
 	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	ROSTER_IN_THIS_BUILD: false,
 	SETTINGS_IN_THIS_BUILD: true
 }));
 
@@ -352,6 +354,20 @@ describe("a person's own membership", () => {
 			expect(page.getByRole('button', { name: 'Confirm membership' }).elements()).toHaveLength(0);
 		}
 	);
+
+	it('links no one to the members page in a build without it, not a member, nor an admin who may manage members', async () => {
+		render(GroupPage, { data: personPage({ joinPolicy: 'approval' }, true) as never });
+		await expect.element(page.getByRole('button', { name: 'Leave group' })).toBeVisible();
+		expect(page.getByRole('link', { name: /^Members/ }).elements()).toHaveLength(0);
+		expect(document.querySelector('a[href*="/members"]')).toBeNull();
+
+		const can = { post: true, settings: true, admit: true, assign: true, remove: true };
+		const data = linkedPage({ public: true, listed: true }, can);
+		render(GroupPage, { data: { ...data, group: { ...data.group, member: true } } as never });
+		await expect.element(page.getByRole('link', { name: 'Settings' })).toBeVisible();
+		expect(page.getByRole('link', { name: /^Members/ }).elements()).toHaveLength(0);
+		expect(document.querySelector('a[href*="/members"]')).toBeNull();
+	});
 
 	it('asks for the group permissions, and says why when their server said no', async () => {
 		render(GroupPage, { data: personPage(null, null, 'ask') as never });

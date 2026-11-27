@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { env, waitUntil } from 'cloudflare:workers';
 import { TokenRefreshError } from '@atcute/oauth-node-client';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
-import { GROUP_SETTINGS_SCOPES, GROUP_SPACE_INDEX_SCOPE, MEMBERS_ONLY_SCOPES } from '../scopes';
+import {
+	GROUP_SETTINGS_SCOPES,
+	GROUP_SPACE_INDEX_SCOPE,
+	MEMBERS_ONLY_SCOPES,
+	ROSTER_SCOPES
+} from '../scopes';
 import { XrpcError } from './xrpc';
 
 const mocks = vi.hoisted(() => ({
@@ -83,7 +88,7 @@ const ADMIN_SCOPE = [
 	`space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`,
 	'repo?collection=community.lexicon.calendar.event',
 	'blob?accept=image/*',
-	...[...GROUP_SETTINGS_SCOPES, ...MEMBERS_ONLY_SCOPES].map((scope) =>
+	...[...GROUP_SETTINGS_SCOPES, ...ROSTER_SCOPES, ...MEMBERS_ONLY_SCOPES].map((scope) =>
 		scope.replace('authority=self', `authority=${GROUP}`)
 	)
 ].join(' ');

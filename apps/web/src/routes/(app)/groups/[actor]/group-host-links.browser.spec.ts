@@ -28,6 +28,9 @@ const GROUP = 'did:plc:group';
 const CAN = {
 	post: true,
 	settings: false,
+	admit: false,
+	assign: false,
+	remove: false,
 	turnOnMembersOnly: false,
 	membersOnly: false
 };

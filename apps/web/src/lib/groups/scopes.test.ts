@@ -21,10 +21,12 @@ import {
 	holdsCreateGroup,
 	holdsMetaRead,
 	holdsParticipate,
+	grantsRoster,
 	holdsRpc,
 	MEMBERS_ONLY_SCOPES,
 	JOIN_SCOPES,
 	PARTICIPATE_SCOPES,
+	ROSTER_SCOPES,
 	YOUR_GROUPS_SCOPE
 } from './scopes';
 import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
@@ -36,28 +38,60 @@ const REPO = 'repo?collection=community.lexicon.calendar.event';
 const SETTINGS = GROUP_SETTINGS_SCOPES.map((s) =>
 	s.replace('authority=self', `authority=${GROUP}`)
 );
+/** The members page's scopes, as the host gives them back. */
+const ROSTER = ROSTER_SCOPES.map((s) => s.replace('authority=self', `authority=${GROUP}`));
 /** Members-only events' scopes, as the host gives them back once the calendar space is there. */
 const MEMBERS_ONLY = MEMBERS_ONLY_SCOPES.map((s) =>
 	s.replace('authority=self', `authority=${GROUP}`)
 );
 
 describe('what a group session may do, by the scope its host granted', () => {
-	it("lets an admin's session, which keeps every grant asked, post and change settings", () => {
+	it("lets an admin's session, which keeps every grant asked, post, change settings and manage members", () => {
 		const scope = [
 			'atproto',
 			META_READ,
 			REPO,
 			'blob?accept=image/*',
 			...SETTINGS,
+			...ROSTER,
 			...MEMBERS_ONLY
 		].join(' ');
-		expect(groupAbilities(scope, GROUP)).toEqual({
+		// With the members page in the build.
+		expect(groupAbilities(scope, GROUP, true)).toEqual({
 			post: true,
 			settings: true,
+			admit: true,
+			assign: true,
+			remove: true,
 			turnOnMembersOnly: true,
 			membersOnly: true,
 			readSpaceIndex: true
 		});
+	});
+
+	it('gives no member controls, whatever the scope grants, in a build without the members page', () => {
+		const scope = ['atproto', META_READ, REPO, ...SETTINGS, ...ROSTER, ...MEMBERS_ONLY].join(' ');
+		expect(groupAbilities(scope, GROUP, false)).toEqual({
+			post: true,
+			settings: true,
+			admit: false,
+			assign: false,
+			remove: false,
+			turnOnMembersOnly: true,
+			membersOnly: true,
+			readSpaceIndex: true
+		});
+	});
+
+	it("counts a link as holding everything by what the build offers, the members page's acts only with it", () => {
+		const all = ['atproto', META_READ, REPO, ...SETTINGS, ...ROSTER, ...MEMBERS_ONLY].join(' ');
+		const allButRoster = ['atproto', META_READ, REPO, ...SETTINGS, ...MEMBERS_ONLY].join(' ');
+		expect(holdsEveryAbility(groupAbilities(all, GROUP, true), true)).toBe(true);
+		expect(holdsEveryAbility(groupAbilities(allButRoster, GROUP, true), true)).toBe(false);
+		expect(holdsEveryAbility(groupAbilities(allButRoster, GROUP, false), false)).toBe(true);
+		// Whatever else it may do, a link that cannot post is short of something either way.
+		const noPosting = ['atproto', META_READ, ...SETTINGS, ...ROSTER, ...MEMBERS_ONLY].join(' ');
+		expect(holdsEveryAbility(groupAbilities(noPosting, GROUP, false), false)).toBe(false);
 	});
 
 	it("lets a member's session, which keeps only reads, do none of it", () => {
@@ -66,6 +100,9 @@ describe('what a group session may do, by the scope its host granted', () => {
 		expect(groupAbilities(`atproto ${META_READ} ${eventsRead}`, GROUP)).toEqual({
 			post: false,
 			settings: false,
+			admit: false,
+			assign: false,
+			remove: false,
 			turnOnMembersOnly: false,
 			membersOnly: false,
 			readSpaceIndex: false
@@ -98,6 +135,9 @@ describe('what a group session may do, by the scope its host granted', () => {
 		expect(groupAbilities(scope, GROUP)).toEqual({
 			post: true,
 			settings: false,
+			admit: false,
+			assign: false,
+			remove: false,
 			turnOnMembersOnly: false,
 			membersOnly: false,
 			readSpaceIndex: false
@@ -105,22 +145,54 @@ describe('what a group session may do, by the scope its host granted', () => {
 	});
 
 	it('offers no settings, whatever the scope grants, in a build without the settings page', () => {
-		const scope = ['atproto', META_READ, REPO, ...SETTINGS, ...MEMBERS_ONLY].join(' ');
-		expect(groupAbilities(scope, GROUP, false)).toEqual({
+		const scope = ['atproto', META_READ, REPO, ...SETTINGS, ...ROSTER, ...MEMBERS_ONLY].join(' ');
+		expect(groupAbilities(scope, GROUP, true, false)).toEqual({
 			post: true,
 			settings: false,
+			admit: true,
+			assign: true,
+			remove: true,
 			turnOnMembersOnly: true,
 			membersOnly: true,
 			readSpaceIndex: true
 		});
+		expect(groupAbilities(scope, GROUP, false, false)).toMatchObject({
+			settings: false,
+			admit: false
+		});
 	});
 
 	it('counts the settings toward holding everything only in a build with the settings page', () => {
-		const allButSettings = ['atproto', META_READ, REPO, ...MEMBERS_ONLY].join(' ');
-		expect(holdsEveryAbility(groupAbilities(allButSettings, GROUP, true), true)).toBe(false);
-		expect(holdsEveryAbility(groupAbilities(allButSettings, GROUP, false), false)).toBe(true);
+		const allButSettings = ['atproto', META_READ, REPO, ...ROSTER, ...MEMBERS_ONLY].join(' ');
+		expect(holdsEveryAbility(groupAbilities(allButSettings, GROUP, true, true), true, true)).toBe(
+			false
+		);
+		expect(holdsEveryAbility(groupAbilities(allButSettings, GROUP, true, false), true, false)).toBe(
+			true
+		);
+		// Neither the roster's nor the settings': all that is left is posting and members-only.
+		const neither = ['atproto', META_READ, REPO, ...MEMBERS_ONLY].join(' ');
+		expect(holdsEveryAbility(groupAbilities(neither, GROUP, false, false), false, false)).toBe(
+			true
+		);
 		const noPosting = ['atproto', META_READ, ...MEMBERS_ONLY].join(' ');
-		expect(holdsEveryAbility(groupAbilities(noPosting, GROUP, false), false)).toBe(false);
+		expect(holdsEveryAbility(groupAbilities(noPosting, GROUP, false, false), false, false)).toBe(
+			false
+		);
+	});
+
+	it('offers no member controls to a link approved before they were asked for', () => {
+		const scope = ['atproto', META_READ, REPO, 'blob?accept=image/*', ...SETTINGS].join(' ');
+		expect(groupAbilities(scope, GROUP)).toEqual({
+			post: true,
+			settings: true,
+			admit: false,
+			assign: false,
+			remove: false,
+			turnOnMembersOnly: false,
+			membersOnly: false,
+			readSpaceIndex: false
+		});
 	});
 
 	it('reads each form a repo grant takes', () => {
@@ -184,6 +256,58 @@ describe('the settings a group session may change', () => {
 		expect(grantsSettings(older.join(' '), GROUP)).toBe(true);
 		const createOnly = SETTINGS.map((s) => s.replace('action=update', 'action=create'));
 		expect(grantsSettings(createOnly.join(' '), GROUP)).toBe(false);
+	});
+});
+
+describe('the member controls a group session may offer', () => {
+	const [CREATE, UPDATE, DELETE, LIST, DENY] = ROSTER;
+
+	it('admits with a membership create and both join-request methods', () => {
+		expect(grantsRoster(`${CREATE} ${LIST} ${DENY}`, GROUP)).toEqual({
+			admit: true,
+			assign: false,
+			remove: false
+		});
+		expect(grantsRoster(`${CREATE} ${LIST}`, GROUP).admit).toBe(false);
+		expect(grantsRoster(`${LIST} ${DENY}`, GROUP).admit).toBe(false);
+	});
+
+	it('changes roles with an update, and removes with a delete, each kept or dropped alone', () => {
+		expect(grantsRoster(UPDATE, GROUP)).toEqual({ admit: false, assign: true, remove: false });
+		expect(grantsRoster(DELETE, GROUP)).toEqual({ admit: false, assign: false, remove: true });
+	});
+
+	it("counts only this group's memberships", () => {
+		const all = ROSTER.join(' ');
+		expect(grantsRoster(all, 'did:plc:other')).toEqual({
+			admit: false,
+			assign: false,
+			remove: false
+		});
+		expect(grantsRoster(all.replaceAll('org.atgrp.membership', 'org.atgrp.role'), GROUP)).toEqual({
+			admit: false,
+			assign: false,
+			remove: false
+		});
+	});
+
+	it("takes the same from the spec's set, as the host expands it", () => {
+		const expanded = [
+			`space:org.atgrp.members?authority=${GROUP}&skey=self&collection=org.atgrp.membership&action=read&action=create&action=update&action=delete`,
+			'rpc:org.atgrp.listJoinRequests?aud=*',
+			'rpc:org.atgrp.denyJoinRequest?aud=*'
+		].join(' ');
+		expect(grantsRoster(expanded, GROUP)).toEqual({ admit: true, assign: true, remove: true });
+	});
+
+	it('asks for nothing of invites or roles, nor any space but the members space', () => {
+		for (const scope of ROSTER_SCOPES.filter((s) => s.startsWith('space:'))) {
+			expect(scope).toMatch(
+				/^space:org\.atgrp\.members\?authority=self&skey=self&collection=org\.atgrp\.membership&action=read&action=(create|update|delete)$/
+			);
+		}
+		expect(ROSTER_SCOPES.join(' ')).not.toContain('include:');
+		expect(ROSTER_SCOPES.join(' ')).not.toContain('invite');
 	});
 });
 

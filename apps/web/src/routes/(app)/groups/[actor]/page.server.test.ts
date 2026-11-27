@@ -75,6 +75,9 @@ describe('a group page', () => {
 	const NOTHING = {
 		post: false,
 		settings: false,
+		admit: false,
+		assign: false,
+		remove: false,
 		turnOnMembersOnly: false,
 		membersOnly: false
 	};
@@ -111,9 +114,9 @@ describe('a group page', () => {
 	});
 
 	it("words the notice from what the person's link may do", async () => {
-		holder({ post: true, settings: true });
+		holder({ post: true, settings: true, admit: true });
 		expect((await load(request('?link=linked', ALICE))).notice).toBe(
-			'Linked. You can now post its events and change its settings here.'
+			'Linked. You can now post its events, change its settings and manage its members here.'
 		);
 		holder({ post: true });
 		expect((await load(request('?link=created', ALICE))).notice).toBe(

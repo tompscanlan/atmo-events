@@ -41,7 +41,8 @@ const LINK_NOTICES = {
 function linkAbilities(can: GroupAbilities): string {
 	const things = [
 		(can.post || can.membersOnly) && 'post its events',
-		can.settings && 'change its settings'
+		can.settings && 'change its settings',
+		(can.admit || can.assign || can.remove) && 'manage its members'
 	].filter((thing): thing is string => Boolean(thing));
 	if (things.length === 0) return 'Your role in this group lets you see it here.';
 	const all =
