@@ -16,7 +16,7 @@ vi.mock('./group', () => ({ resolveGroup: vi.fn(), isDeclared: vi.fn() }));
 vi.mock('./sign-in', () => ({ groupSession: vi.fn(), hasGroupSession: vi.fn() }));
 
 import ErrorPage from '../../../routes/+error.svelte';
-import { deleteGroupEvent, putGroupEvent } from '../group.remote';
+import { deleteGroupEvent, putGroupEvent, turnOnMembersOnlyEvents } from '../group.remote';
 import { cancelMembersOnlyRsvp, rsvpToMembersOnlyEvent } from '../members-only.remote';
 import { cancelJoin, confirmMember, joinGroup, leave } from '../members.remote';
 import { groupView, requireGroupWriter, requireStoredLink } from './context';
@@ -69,8 +69,9 @@ describe('with groups off', () => {
 		expect(await shown(() => leave({ groupDid: GROUP }))).toBe(expected);
 	});
 
-	it('refuses posting, deleting and RSVPing to members-only events with the same 404', async () => {
+	it('refuses turning on, posting, deleting and RSVPing to members-only events with the same 404', async () => {
 		const expected = unknownAddress();
+		expect(await shown(() => turnOnMembersOnlyEvents({ groupDid: GROUP }))).toBe(expected);
 		const members = { groupDid: GROUP, rkey: 'r', placement: 'members' as const };
 		expect(await shown(() => putGroupEvent({ ...members, record: {} }))).toBe(expected);
 		expect(await shown(() => deleteGroupEvent(members))).toBe(expected);
