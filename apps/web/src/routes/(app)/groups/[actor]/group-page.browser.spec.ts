@@ -198,31 +198,46 @@ describe("a group whose setup didn't finish", () => {
 	});
 });
 
-describe('where requests to join wait', () => {
+describe('where members, requests to join and roles are managed', () => {
 	const linkedWith = (
 		joinPolicy: string | null,
-		can = { post: true, list: true, settings: true }
+		can = { post: true, list: true, settings: true },
+		home: string | null = 'https://knit.example/'
 	) => {
 		const data = linkedPage({ public: true, listed: true }, can);
 		const linked = { ...data.group.linked, meta: { ...data.group.linked.meta, joinPolicy } };
-		return { ...data, group: { ...data.group, linked } };
+		return { ...data, group: { ...data.group, linked, home } };
 	};
-	const note = 'Requests to join this group are kept at the group host';
+	const note = 'Members, requests to join and roles are managed at the group host';
+	const there = () => page.getByRole('link', { name: "the group's page there" });
 
-	it('is said to an admin who linked a group that approves its members', async () => {
-		render(GroupPage, { data: linkedWith('approval') as never });
+	it.each(['approval', 'open'])(
+		"is said to an admin who linked a group (%s), with a link to the group's page there",
+		async (joinPolicy) => {
+			render(GroupPage, { data: linkedWith(joinPolicy) as never });
+			await expect.poll(shown).toContain(note);
+			await expect.element(there()).toHaveAttribute('href', 'https://knit.example/');
+			await expect.element(there()).toHaveAttribute('target', '_blank');
+			await expect.element(there()).toHaveAttribute('rel', 'noopener noreferrer');
+			expect(tools().element().textContent).toContain('managed at the group host');
+		}
+	);
+
+	it('is said without a link for a group with no home', async () => {
+		render(GroupPage, { data: linkedWith('approval', undefined, null) as never });
 		await expect.poll(shown).toContain(note);
+		expect(there().elements()).toHaveLength(0);
 	});
 
 	it.each([
-		['one open to all', linkedWith('open')],
 		[
 			'a link that manages nothing',
 			linkedWith('approval', { post: true, list: false, settings: false })
-		]
-	])('is not said of %s', async (_what, data) => {
+		],
+		['a member who has not linked the group', personPage({ joinPolicy: 'approval' }, true)]
+	])('is not said to %s', async (_who, data) => {
 		render(GroupPage, { data: data as never });
-		await expect.element(page.getByRole('button', { name: 'Unlink' })).toBeVisible();
+		await expect.element(page.getByRole('heading', { level: 1 })).toBeVisible();
 		expect(shown()).not.toContain(note);
 	});
 });
@@ -303,6 +318,32 @@ function personPage(
 }
 
 describe("a person's own membership", () => {
+	const header = () => page.getByRole('region', { name: 'Group', exact: true });
+
+	it.each([
+		['Join', personPage({ joinPolicy: 'open' }, false)],
+		['Ask to join', personPage({ joinPolicy: 'approval' }, false)],
+		['Leave group', personPage({ joinPolicy: 'approval' }, true)]
+	])("is shown in the group's header: %s", async (name, data) => {
+		render(GroupPage, { data: data as never });
+		await expect.element(header().getByRole('button', { name, exact: true })).toBeVisible();
+	});
+
+	it("shows a visitor who is not signed in no join state, and the header's links", async () => {
+		const data = personPage(null, null);
+		render(GroupPage, {
+			data: {
+				...data,
+				signedIn: false,
+				you: null,
+				group: { ...data.group, askAccess: false }
+			} as never
+		});
+		await expect.element(header().getByRole('link', { name: 'Group home' })).toBeVisible();
+		expect(page.getByRole('region', { name: 'Membership' }).elements()).toHaveLength(0);
+		expect(page.getByRole('button', { name: /join/i }).elements()).toHaveLength(0);
+	});
+
 	it('joins an open group at once', async () => {
 		member.joinGroup.mockResolvedValue({ outcome: 'joined' });
 		render(GroupPage, { data: personPage({ joinPolicy: 'open' }, false) as never });

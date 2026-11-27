@@ -142,13 +142,21 @@
 		);
 </script>
 
-<!-- For an admin who linked a group that approves its members: where requests to join wait. One
-     snippet and its one use, to drop wherever the page lists the requests itself. -->
-{#snippet joinRequestsWaitAtHost()}
-	{#if group.linked && group.linked.meta.joinPolicy === 'approval' && (group.linked.can.settings || group.linked.can.admit)}
+<!-- For an admin who linked the group: its members, those asking to join and their roles are
+     kept at the group host, and managed there. -->
+{#snippet managedAtHost()}
+	{#if group.linked && (group.linked.can.settings || group.linked.can.admit)}
 		<p class="text-base-600 dark:text-base-400 text-sm">
-			Requests to join this group are kept at the group host, where its admins admit or decline
-			them.
+			Members, requests to join and roles are managed at the group host{#if group.home}:
+				<!-- The group's own address, from its handle, so there is nothing to resolve. -->
+				<!-- eslint-disable svelte/no-navigation-without-resolve -->
+				<a
+					href={group.home}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 font-medium transition-colors"
+					>the group's page there <span aria-hidden="true">&nearr;</span></a
+				><!-- eslint-enable svelte/no-navigation-without-resolve -->{/if}.
 		</p>
 	{/if}
 {/snippet}
@@ -164,7 +172,74 @@
 			home={group.home}
 			{isPrivate}
 			eventsCreated={data.eventsCreated}
-		/>
+		>
+			{#snippet actions()}
+				{#if group.personal && group.member}
+					<Badge>Member</Badge>
+					<Button size="sm" variant="ghost" disabled={busy} onclick={leaveIt}>Leave group</Button>
+				{:else if group.personal && group.member === false && !requested && group.personal.joinPolicy === 'open'}
+					<Button size="sm" variant="primary" disabled={busy} onclick={join}>Join</Button>
+				{/if}
+			{/snippet}
+			<!-- The person's own place in the group, as far as the host lets them read it. -->
+			{#if group.personal}
+				<section class="mt-4" aria-label="Membership">
+					{#if group.member === null}
+						<p class="text-base-600 dark:text-base-400 text-sm" role="status">
+							Whether you're a member of this group couldn't be checked just now. Try again shortly.
+						</p>
+					{:else if group.member}
+						{#if group.confirmed === false}
+							<!-- Admitted some other way than a request made here: confirming is theirs to do. -->
+							<div class="flex flex-wrap items-center gap-3">
+								<p class="text-base-700 dark:text-base-300 text-sm" role="status">
+									The group counts you a member. Confirm it, so your own account says so too.
+								</p>
+								<Button size="sm" variant="secondary" disabled={busy} onclick={confirm}
+									>Confirm membership</Button
+								>
+							</div>
+						{/if}
+					{:else if requested}
+						<div class="flex flex-wrap items-center gap-3">
+							<p class="text-base-700 dark:text-base-300 text-sm" role="status">
+								Request sent. The group's admins will decide.
+							</p>
+							<Button size="sm" variant="ghost" disabled={busy} onclick={cancel}
+								>Cancel request</Button
+							>
+						</div>
+					{:else if group.personal.joinPolicy === 'approval'}
+						<div class="space-y-2">
+							<Label for="join-message">A message for the group's admins (optional)</Label>
+							<Textarea
+								id="join-message"
+								bind:value={message}
+								rows={3}
+								maxlength={JOIN_MESSAGE_MAX}
+							/>
+							<div class="flex flex-wrap items-center gap-3">
+								<Button variant="secondary" disabled={busy} onclick={join}>Ask to join</Button>
+								<span class="text-base-600 dark:text-base-400 text-sm">
+									The group's admins decide who joins.
+								</span>
+							</div>
+						</div>
+					{:else if group.personal.joinPolicy !== 'open'}
+						<p class="text-base-600 dark:text-base-400 text-sm" role="status">
+							This group takes members by invitation only.
+						</p>
+					{/if}
+					{#if showMembers}
+						<a
+							href={resolve('/(app)/groups/[actor]/members', { actor: group.did })}
+							class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 mt-2 inline-block text-sm font-medium transition-colors"
+							>Members &rarr;</a
+						>
+					{/if}
+				</section>
+			{/if}
+		</GroupHeader>
 
 		{#if data.notice}<p role="status" class="text-base-600 dark:text-base-400 mb-6 text-sm">
 				{data.notice}
@@ -189,69 +264,6 @@
 					spacesServer={data.spacesServer}
 				/>
 			</div>
-		{/if}
-
-		{#if group.personal && group.member === null}
-			<p class="text-base-600 dark:text-base-400 mb-6 text-sm" role="status">
-				Whether you're a member of this group couldn't be checked just now. Try again shortly.
-			</p>
-		{:else if group.personal}
-			<section class="mb-6" aria-label="Membership">
-				{#if group.member}
-					<div class="flex flex-wrap items-center gap-3">
-						<Badge>Member</Badge>
-						<Button variant="ghost" disabled={busy} onclick={leaveIt}>Leave group</Button>
-					</div>
-					{#if group.confirmed === false}
-						<!-- Admitted some other way than a request made here: confirming is theirs to do. -->
-						<div class="mt-3 flex flex-wrap items-center gap-3">
-							<p class="text-base-700 dark:text-base-300 text-sm" role="status">
-								The group counts you a member. Confirm it, so your own account says so too.
-							</p>
-							<Button size="sm" variant="secondary" disabled={busy} onclick={confirm}
-								>Confirm membership</Button
-							>
-						</div>
-					{/if}
-				{:else if requested}
-					<div class="flex flex-wrap items-center gap-3">
-						<p class="text-base-700 dark:text-base-300 text-sm" role="status">
-							Request sent. The group's admins will decide.
-						</p>
-						<Button variant="ghost" disabled={busy} onclick={cancel}>Cancel request</Button>
-					</div>
-				{:else if group.personal.joinPolicy === 'open'}
-					<Button variant="primary" disabled={busy} onclick={join}>Join</Button>
-				{:else if group.personal.joinPolicy === 'approval'}
-					<div class="space-y-2">
-						<Label for="join-message">A message for the group's admins (optional)</Label>
-						<Textarea
-							id="join-message"
-							bind:value={message}
-							rows={3}
-							maxlength={JOIN_MESSAGE_MAX}
-						/>
-						<div class="flex flex-wrap items-center gap-3">
-							<Button variant="secondary" disabled={busy} onclick={join}>Ask to join</Button>
-							<span class="text-base-600 dark:text-base-400 text-sm">
-								The group's admins decide who joins.
-							</span>
-						</div>
-					</div>
-				{:else}
-					<p class="text-base-600 dark:text-base-400 text-sm" role="status">
-						This group takes members by invitation only.
-					</p>
-				{/if}
-			</section>
-		{/if}
-
-		{#if showMembers}
-			<a
-				href={resolve('/(app)/groups/[actor]/members', { actor: group.did })}
-				class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 mb-6 inline-block text-sm font-medium transition-colors"
-				>Members &rarr;</a
-			>
 		{/if}
 
 		{#if group.linked && hasTools}
@@ -311,7 +323,7 @@
 						{/each}
 					</ul>
 				{/if}
-				{@render joinRequestsWaitAtHost()}
+				{@render managedAtHost()}
 				{#if group.linked.unfinished}
 					<div class="flex flex-wrap items-center gap-3">
 						<p class="text-base-700 dark:text-base-300 text-sm" role="status">
