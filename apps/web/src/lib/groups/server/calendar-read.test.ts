@@ -107,7 +107,7 @@ describe("a group's members-only events", () => {
 		await expect(listMembersOnlyEvents(bob(), GROUP, calendarHosts)).rejects.toThrow();
 	});
 
-	it('are read one at a time with a checked MAC, and null for a reader kept out', async () => {
+	it('are read one at a time, and null for one not there and a reader kept out alike', async () => {
 		calendar.state.events.set('r1', event('Supper'));
 		calendar.state.readers.add(BOB);
 		const reader = () => credentialSpaceReader(bob(), calendarHosts);
@@ -139,17 +139,20 @@ describe("a group's members-only events", () => {
 	});
 
 	it('keep only those not over yet, soonest first', () => {
-		const at = (rkey: string, startsAt: string) => ({ rkey, startsAt }) as never;
+		const at = (rkey: string, startsAt: string, endsAt?: string) =>
+			({ rkey, startsAt, endsAt }) as never;
 		const now = Date.parse('2026-06-01T00:00:00Z');
 		expect(
 			upcoming(
 				[
 					at('late', '2026-09-01T00:00:00Z'),
 					at('past', '2026-01-01T00:00:00Z'),
-					at('soon', '2026-07-01T00:00:00Z')
+					at('ended', '2026-05-01T00:00:00Z', '2026-05-02T00:00:00Z'),
+					at('soon', '2026-07-01T00:00:00Z'),
+					at('ongoing', '2026-05-01T00:00:00Z', '2026-06-02T00:00:00Z')
 				],
 				now
 			).map((e: { rkey: string }) => e.rkey)
-		).toEqual(['soon', 'late']);
+		).toEqual(['ongoing', 'soon', 'late']);
 	});
 });

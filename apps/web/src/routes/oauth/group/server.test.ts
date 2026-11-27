@@ -88,6 +88,7 @@ describe('starting a link', () => {
 describe('the callback', () => {
 	it('opens the group once it is linked', async () => {
 		mocks.finishGroupLink.mockResolvedValue({ ok: true, groupDid: GROUP });
+		mocks.finishCreatedGroup.mockResolvedValue(null);
 		await expect(GET(callback(ALICE))).rejects.toMatchObject({
 			location: `/groups/${GROUP}?link=linked`
 		});

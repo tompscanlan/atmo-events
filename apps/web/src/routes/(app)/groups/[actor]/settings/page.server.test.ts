@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
+import { GROUP_NOT_FOUND, NO_SETTINGS } from '#lib/groups/server/context.js';
 import { XrpcError } from '#lib/groups/server/xrpc.js';
 
 const mocks = vi.hoisted(() => ({
@@ -74,11 +75,16 @@ describe("a group's settings page", () => {
 			status: 403,
 			body: { message: "Your role in this group doesn't let you change its settings." }
 		});
+		expect(mocks.readGroupSettings).not.toHaveBeenCalled();
 	});
 
-	it('is the same 404 without a working link', async () => {
+	it('is the 404 of a group that does not exist, without a working link', async () => {
 		mocks.groupView.mockResolvedValue({ ...linked(true), linked: null });
-		await expect(load(request())).rejects.toMatchObject({ status: 404 });
+		await expect(load(request())).rejects.toMatchObject({
+			status: 404,
+			body: { message: GROUP_NOT_FOUND }
+		});
+		expect(mocks.readGroupSettings).not.toHaveBeenCalled();
 	});
 
 	it('says so, rather than failing, when the host refuses the read', async () => {
@@ -86,6 +92,9 @@ describe("a group's settings page", () => {
 		mocks.readGroupSettings.mockRejectedValue(
 			new XrpcError('com.atproto.space.getDelegationToken', 403, 'NotAuthorized')
 		);
-		await expect(load(request())).rejects.toMatchObject({ status: 403 });
+		await expect(load(request())).rejects.toMatchObject({
+			status: 403,
+			body: { message: NO_SETTINGS }
+		});
 	});
 });

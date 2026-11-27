@@ -72,10 +72,10 @@ describe('turning members-only events on', () => {
 		expect(await calendarSpaceState(writer())).toBe('ready');
 	});
 
-	it('takes a space already there as done, and leaves its policy as it is', async () => {
+	it('takes a space already there as done, and sends nothing that would change its policy', async () => {
 		calendar.state.policy = READY_POLICY;
-		await turnOnMembersOnly(writer());
-		expect(calendar.state.policy).toBe(READY_POLICY);
+		await expect(turnOnMembersOnly(writer())).resolves.toBeUndefined();
+		expect(nsids()).toEqual(['com.atproto.space.createSpace']);
 	});
 
 	it('throws any other refusal', async () => {
@@ -160,15 +160,19 @@ describe('a members-only event', () => {
 			uri: `${CALENDAR}/${GROUP}/community.lexicon.calendar.event/r1`,
 			cid: 'cid'
 		});
-		expect(calendar.state.events.get('r1')).toMatchObject({ name: 'Supper' });
 		expect(calendar.state.publicRepo.size).toBe(0);
 		expect(nsids()).not.toContain('com.atproto.repo.putRecord');
-		expect(calendar.state.sent.at(-1)?.[2]).toMatchObject({
-			repo: GROUP,
-			space: CALENDAR,
-			collection: 'community.lexicon.calendar.event',
-			rkey: 'r1'
-		});
+		expect(calendar.state.sent.at(-1)).toEqual([
+			'group',
+			'com.atproto.space.putRecord',
+			{
+				repo: GROUP,
+				space: CALENDAR,
+				collection: 'community.lexicon.calendar.event',
+				rkey: 'r1',
+				record: event('Supper')
+			}
+		]);
 	});
 
 	it.each([

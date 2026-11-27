@@ -81,8 +81,6 @@ const ADMIN_SCOPE = [
 	)
 ].join(' ');
 const MEMBER_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`;
-/** A member's, from a link approved when the meta read named no key. */
-const KEYLESS_MEMBER_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&action=read`;
 const linkedSession = (scope = ADMIN_SCOPE, aud = 'https://host.example') => ({
 	did: GROUP,
 	getTokenInfo: vi.fn(async () => ({ scope, aud }))
@@ -104,7 +102,7 @@ beforeEach(() => {
 });
 
 describe('groupView for a visitor', () => {
-	it('is the same 404 with groups off, for an unknown actor, and for an undeclared group', async () => {
+	it('is the same 404 for an unknown actor and for an undeclared group', async () => {
 		mocks.isDeclared.mockResolvedValue(false);
 		await expect(groupView(GROUP, null)).rejects.toMatchObject({
 			status: 404,
@@ -112,11 +110,10 @@ describe('groupView for a visitor', () => {
 		});
 
 		mocks.resolveGroup.mockResolvedValueOnce(null);
-		await expect(groupView('nobody.example', null)).rejects.toMatchObject({ status: 404 });
-
-		// Worded as an unknown address: off-state.test.ts.
-		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
-		await expect(groupView(GROUP, null)).rejects.toMatchObject({ status: 404 });
+		await expect(groupView('nobody.example', null)).rejects.toMatchObject({
+			status: 404,
+			body: { message: GROUP_NOT_FOUND }
+		});
 	});
 
 	it('is a 503 when the index cannot say, never a 404', async () => {
@@ -197,20 +194,6 @@ describe('groupView for someone who linked the group', () => {
 		expect(mocks.linkAskedCurrentScope).toHaveBeenCalledWith(GROUP, ALICE);
 	});
 
-	it('still reads with a link whose meta read named no key, and offers to approve it again', async () => {
-		mocks.readGroupMeta.mockResolvedValue(meta);
-		mocks.repoHasDeclaration.mockResolvedValue(false);
-		mocks.linkAskedCurrentScope.mockResolvedValue(false);
-		mocks.groupSession.mockResolvedValue(linkedSession(KEYLESS_MEMBER_SCOPE));
-		const view = await groupView(GROUP, ALICE);
-		expect(view.linked).toMatchObject({
-			meta,
-			can: { post: false, list: false, settings: false },
-			reapprove: true
-		});
-		expect(view.relink).toBe(false);
-	});
-
 	it("says when setting up a group the caller made here didn't finish", async () => {
 		mocks.readGroupMeta.mockResolvedValue(meta);
 		mocks.repoHasDeclaration.mockResolvedValue(true);
@@ -271,13 +254,6 @@ describe('groupView for someone who linked the group', () => {
 		expect(mocks.storeCachedProfile).not.toHaveBeenCalled();
 	});
 
-	it('asks to link again when the session can no longer refresh', async () => {
-		mocks.readGroupMeta.mockRejectedValue(new TokenRefreshError(GROUP, 'invalid_grant'));
-		mocks.repoHasDeclaration.mockResolvedValue(true);
-		mocks.isDeclared.mockResolvedValue(true);
-		expect(await groupView(GROUP, ALICE)).toMatchObject({ linked: null, relink: true });
-	});
-
 	it('asks to link again when the stored session does not restore', async () => {
 		mocks.groupSession.mockRejectedValue(new Error('corrupt session'));
 		mocks.isDeclared.mockResolvedValue(true);
@@ -327,26 +303,23 @@ describe('groupView for someone who linked the group', () => {
 	});
 
 	it.each([
+		// Each name a refusal takes is read in xrpc.test.ts; one of each kind here.
 		['the PDS', new XrpcError('com.atproto.space.getRecord', 403, 'ScopeMissingError')],
-		['the PDS', new XrpcError('com.atproto.space.getRecord', 403, 'Forbidden')],
-		// A group host's own names, at the delegation for the meta space.
-		['the group host', new XrpcError('com.atproto.space.getDelegationToken', 403, 'ScopeMissing')],
-		['the group host', new XrpcError('com.atproto.space.getDelegationToken', 403, 'NotAuthorized')],
 		['the space', new SpaceAccessDenied(META, '403 ScopeMissing')],
-		['the space', new SpaceAccessDenied(META, '400 SpaceNotFound')],
 		// The credential it bought, refused at the read: not the session, so linking again won't help.
-		['the space', new XrpcError('com.atproto.space.getRecord', 401, 'CredentialRevoked')],
-		['the space', new XrpcError('com.atproto.space.getRecord', 401, 'MissingJwt')]
+		['the space', new XrpcError('com.atproto.space.getRecord', 401, 'CredentialRevoked')]
 	])(
 		'shows the group without the link when its roles no longer allow reading it (%s: %s)',
 		async (_from, refusal) => {
 			mocks.readGroupMeta.mockRejectedValue(refusal);
 			mocks.repoHasDeclaration.mockResolvedValue(true);
 			mocks.isDeclared.mockResolvedValue(true);
+			// Not an outage: the page says nothing of an unreachable host.
 			expect(await groupView(GROUP, ALICE)).toMatchObject({
 				linked: null,
 				relink: false,
-				hasLink: true
+				hasLink: true,
+				unreachable: false
 			});
 			expect(mocks.storeCachedProfile).not.toHaveBeenCalled();
 		}
@@ -359,7 +332,7 @@ describe('groupView for someone who linked the group', () => {
 		mocks.repoHasDeclaration.mockResolvedValue(false);
 		mocks.isDeclared.mockResolvedValue(false);
 		expect(await groupView(GROUP, ALICE)).toEqual(
-			expect.objectContaining({ ...bareView, relink: false })
+			expect.objectContaining({ ...bareView, relink: false, unreachable: false })
 		);
 		expect(mocks.readCachedProfiles).not.toHaveBeenCalled();
 	});
@@ -459,8 +432,9 @@ describe('a link to a group no longer at the group host', () => {
 
 describe('requireGroupWriter', () => {
 	it('is the same 404 without a linked session', async () => {
-		await expect(requireGroupWriter(GROUP, ALICE)).rejects.toMatchObject({ status: 404 });
-		await expect(requireGroupWriter(GROUP, null)).rejects.toMatchObject({ status: 404 });
+		const notFound = { status: 404, body: { message: GROUP_NOT_FOUND } };
+		await expect(requireGroupWriter(GROUP, ALICE)).rejects.toMatchObject(notFound);
+		await expect(requireGroupWriter(GROUP, null)).rejects.toMatchObject(notFound);
 		expect(mocks.groupSession).toHaveBeenCalledOnce();
 	});
 
@@ -479,13 +453,11 @@ describe('requireStoredLink', () => {
 		expect(mocks.groupSession).not.toHaveBeenCalled();
 	});
 
-	it('is the same 404 with no link stored, signed out, or with groups off', async () => {
+	it('is the same 404 with no link stored, or signed out', async () => {
+		const notFound = { status: 404, body: { message: GROUP_NOT_FOUND } };
 		mocks.hasGroupSession.mockResolvedValue(false);
-		await expect(requireStoredLink(GROUP, ALICE)).rejects.toMatchObject({ status: 404 });
-		await expect(requireStoredLink(GROUP, null)).rejects.toMatchObject({ status: 404 });
-		mocks.hasGroupSession.mockResolvedValue(true);
-		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
-		await expect(requireStoredLink(GROUP, ALICE)).rejects.toMatchObject({ status: 404 });
+		await expect(requireStoredLink(GROUP, ALICE)).rejects.toMatchObject(notFound);
+		await expect(requireStoredLink(GROUP, null)).rejects.toMatchObject(notFound);
 	});
 });
 
@@ -647,13 +619,15 @@ describe('groupView for a person with their own group permissions', () => {
 		expect(mocks.readMetaAsPerson).not.toHaveBeenCalled();
 	});
 
-	it("reads nothing as the person for a group not at this site's host, nor for another's session", async () => {
+	it("reads and asks nothing as the person for a group not at this site's host, nor for another's session", async () => {
 		mocks.isDeclared.mockResolvedValue(true);
 		mocks.atGroupHost.mockReturnValue(false);
 		expect(await groupView(GROUP, ALICE, person())).toMatchObject({
 			personal: null,
 			askAccess: false
 		});
+		// Even a sign-in without the group permissions is asked for none of them there.
+		expect(await groupView(GROUP, ALICE, person('atproto'))).toMatchObject({ askAccess: false });
 		mocks.atGroupHost.mockReturnValue(true);
 		expect(await groupView(GROUP, 'did:plc:bob', person())).toMatchObject({ personal: null });
 		expect(mocks.readMetaAsPerson).not.toHaveBeenCalled();

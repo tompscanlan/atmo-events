@@ -47,9 +47,12 @@ const rosterPage = (manage = { admit: true, assign: true, remove: true }, over =
 	],
 	yours: ['member', 'admin'],
 	manage,
+	next: null,
+	paged: false,
 	requests: manage.admit
 		? [{ did: CAROL, handle: 'carol.example', message: 'I ride at night.', createdAt: 'x' }]
 		: null,
+	moreRequests: false,
 	reapprove: false,
 	...over
 });
@@ -92,6 +95,18 @@ describe("a group's members page", () => {
 			.toHaveBeenCalledWith({ groupDid: GROUP, did: CAROL });
 	});
 
+	it('says older requests wait when the list stopped at its limit, and not otherwise', async () => {
+		render(MembersPage, { data: rosterPage() as never });
+		await expect
+			.poll(() => text(page.getByRole('list', { name: 'Asking to join' })))
+			.toMatch(/I ride/);
+		expect(page.getByText(/Older requests are waiting too/).elements()).toHaveLength(0);
+		render(MembersPage, { data: rosterPage(undefined, { moreRequests: true }) as never });
+		await expect
+			.element(page.getByText(/These are the newest 1\. Older requests are waiting too/))
+			.toBeVisible();
+	});
+
 	it('makes a member an admin, an admin a member, and removes, never for themselves', async () => {
 		mocks.changeRole.mockResolvedValue({ ok: true });
 		mocks.removeFromGroup.mockResolvedValue({ ok: true });
@@ -121,11 +136,16 @@ describe("a group's members page", () => {
 			.toHaveBeenCalledWith({ groupDid: GROUP, did: BOB });
 	});
 
-	it('shows those not confirmed yet to an admin, by DID when there is no handle', async () => {
+	it('lists those not confirmed yet apart from the members, by DID when there is no handle', async () => {
 		render(MembersPage, { data: rosterPage() as never });
 		await expect
 			.poll(() => text(page.getByRole('list', { name: 'Not confirmed yet' })))
 			.toContain(DAVE);
+		expect(text(page.getByRole('list', { name: 'Members' }))).not.toContain(DAVE);
+		// What is so of them; visiting the group's page confirms nothing.
+		const said = (document.body.textContent ?? '').replace(/\s+/g, ' ');
+		expect(said).toContain('Admitted, but they have not confirmed their membership yet');
+		expect(said).not.toMatch(/been back|visited/);
 	});
 
 	it('shows the reason the server gives for a refusal', async () => {
@@ -142,25 +162,36 @@ describe("a group's members page", () => {
 			.toContain('That would leave the group with no admin.');
 	});
 
-	it('offers to approve the link again when it predates the members page', async () => {
+	it('offers to approve the link again, for this group, when it predates the members page', async () => {
 		render(MembersPage, {
 			data: rosterPage({ admit: false, assign: false, remove: false }, { reapprove: true }) as never
 		});
-		await expect.element(page.getByRole('button', { name: 'Approve again' })).toBeVisible();
+		const again = page.getByRole('button', { name: 'Approve again' });
+		await expect.element(again).toBeVisible();
+		const form = (again.element() as HTMLButtonElement).form!;
+		expect(form.getAttribute('action')).toBe('/oauth/group/link');
+		expect(form.method).toBe('post');
+		expect(new FormData(form).get('group')).toBe(GROUP);
 	});
 
-	it('tells someone outside the group that only members see it', async () => {
+	it('links to the next page of members, and back to the first from a later one', async () => {
 		render(MembersPage, {
-			data: {
-				pageTitle: 'Members',
-				group: { did: GROUP, name: 'Night Riders' },
-				you: ALICE,
-				state: 'hidden',
-				message: 'Only members can see who is in this group.'
-			} as never
+			data: rosterPage(undefined, { next: 'at:space/g/next', paged: true }) as never
 		});
-		await expect
-			.element(page.getByText('Only members can see who is in this group.'))
-			.toBeVisible();
+		const more = page.getByRole('link', { name: /^More members/ });
+		await expect.element(more).toBeVisible();
+		const href = new URL(more.element().getAttribute('href') ?? '', 'https://atmo.example');
+		expect(decodeURIComponent(href.pathname)).toBe(`/groups/${GROUP}/members`);
+		expect(href.searchParams.get('cursor')).toBe('at:space/g/next');
+		const first = page.getByRole('link', { name: /First page/ });
+		expect(decodeURIComponent(first.element().getAttribute('href') ?? '')).toBe(
+			`/groups/${GROUP}/members`
+		);
+	});
+
+	it('offers no other page when there is one page', async () => {
+		render(MembersPage, { data: rosterPage() as never });
+		await expect.element(page.getByRole('list', { name: 'Members' })).toBeVisible();
+		expect(page.getByRole('link', { name: /More members|First page/ }).elements()).toHaveLength(0);
 	});
 });

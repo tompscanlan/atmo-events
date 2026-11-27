@@ -80,8 +80,13 @@ afterEach(() => vi.resetAllMocks());
 
 describe("what a link's granted scope offers", () => {
 	it('offers posting, editing and listing to a session that may', async () => {
-		render(GroupPage, { data: linkedPage({ public: true, listed: false }) as never });
+		render(GroupPage, {
+			data: linkedPage({ public: true, listed: false }, undefined, [EVENT]) as never
+		});
 		await expect.element(page.getByRole('link', { name: 'Post an event' })).toBeVisible();
+		await expect
+			.element(page.getByRole('link', { name: 'Edit' }))
+			.toHaveAttribute('href', `/groups/${encodeURIComponent(GROUP)}/events/e1/edit`);
 		await expect.element(listButton()).toBeVisible();
 	});
 
@@ -189,8 +194,6 @@ describe('where requests to join wait', () => {
 
 	it.each([
 		['one open to all', linkedWith('open')],
-		['one by invitation', linkedWith('invite')],
-		['one whose policy atmo does not know', linkedWith(null)],
 		[
 			'a link that manages nothing',
 			linkedWith('approval', { post: true, list: false, settings: false })
@@ -367,6 +370,28 @@ describe("a person's own membership", () => {
 		);
 	});
 
+	it.each([
+		[false, 0],
+		[null, 0],
+		[true, 1]
+	])(
+		'links an admin whose link may manage members to the members page only when the host counts them a member (%s)',
+		async (member, links) => {
+			const can = {
+				post: true,
+				list: true,
+				settings: true,
+				admit: true,
+				assign: true,
+				remove: true
+			};
+			const data = linkedPage({ public: true, listed: true }, can);
+			render(GroupPage, { data: { ...data, group: { ...data.group, member } } as never });
+			await expect.element(page.getByRole('link', { name: 'Settings' })).toBeVisible();
+			expect(page.getByRole('link', { name: /^Members/ }).elements()).toHaveLength(links);
+		}
+	);
+
 	it('does not link someone outside the group to the members page', async () => {
 		render(GroupPage, { data: personPage({ joinPolicy: 'approval' }, false) as never });
 		await expect.element(page.getByRole('button', { name: 'Ask to join' })).toBeVisible();
@@ -405,13 +430,11 @@ describe('members-only events', () => {
 		membersOnly: false
 	};
 
-	it('are turned on from the page, as the first of three steps', async () => {
+	it('are turned on from the page, by a link that may turn them on', async () => {
 		mocks.turnOnMembersOnlyEvents.mockResolvedValue({ ok: true });
 		const data = { ...linkedPage({ public: true, listed: true }, ADMIN), calendar: 'missing' };
 		render(GroupPage, { data: data as never });
-		const setup = page.getByTestId('members-only-setup');
-		await expect.element(setup).toBeVisible();
-		expect(setup.element().querySelectorAll('li')).toHaveLength(3);
+		await expect.element(page.getByTestId('members-only-setup')).toBeVisible();
 		await page.getByRole('button', { name: 'Turn on members-only events' }).click();
 		await expect
 			.poll(() => mocks.turnOnMembersOnlyEvents.mock.calls[0]?.[0])

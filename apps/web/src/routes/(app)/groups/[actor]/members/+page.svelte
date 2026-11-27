@@ -20,6 +20,13 @@
 	const label = (entry: { did: string; handle: string | null }) =>
 		entry.handle ? `@${entry.handle}` : entry.did;
 
+	// Paths are resolved; the query string is appended to them.
+	let moreUrl = $derived(
+		data.state === 'roster' && data.next
+			? `${resolve('/(app)/groups/[actor]/members', { actor: data.group.did })}?${new URLSearchParams({ cursor: data.next })}`
+			: null
+	);
+
 	/** A refusal the host gave comes back in words to show; anything else is generic. */
 	async function act(run: () => Promise<unknown>) {
 		busy = true;
@@ -166,6 +173,10 @@
 							</li>
 						{/each}
 					</ul>
+					{#if data.moreRequests}<p class="text-base-600 dark:text-base-400 mt-3 text-sm">
+							These are the newest {data.requests.length}. Older requests are waiting too, and show
+							here as these are decided.
+						</p>{/if}
 				{/if}
 			{/if}
 
@@ -180,15 +191,34 @@
 					Not confirmed yet
 				</h2>
 				<p class="text-base-600 dark:text-base-400 text-sm">
-					Admitted, but their own server has not confirmed it yet: they have not been back to the
-					group's page to confirm it, or their server has no spaces support. Only those who can
-					admit members see them.
+					Admitted, but they have not confirmed their membership yet, or their confirmation could
+					not be read just now. Only those who can admit members see them.
 				</p>
 				<ul class="mt-4 space-y-2" aria-label="Not confirmed yet">
 					{#each data.unconfirmed as entry (entry.did)}
 						{@render member(entry, true)}
 					{/each}
 				</ul>
+			{/if}
+
+			{#if data.next || data.paged}
+				<nav class="mt-8 flex flex-wrap gap-4 text-sm font-medium" aria-label="More members">
+					{#if data.paged}<a
+							href={resolve('/(app)/groups/[actor]/members', { actor: data.group.did })}
+							class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 transition-colors"
+							>&larr; First page</a
+						>{/if}
+					{#if moreUrl}
+						<!-- `moreUrl` is built from resolve(); the rule can't see through the query string. -->
+						<!-- eslint-disable svelte/no-navigation-without-resolve -->
+						<a
+							href={moreUrl}
+							class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 transition-colors"
+							>More members &rarr;</a
+						>
+						<!-- eslint-enable svelte/no-navigation-without-resolve -->
+					{/if}
+				</nav>
 			{/if}
 		{/if}
 	</div>

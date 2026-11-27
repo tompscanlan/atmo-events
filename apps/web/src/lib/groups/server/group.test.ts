@@ -2,22 +2,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
 import { fakeKemHost } from '#lib/spaces/server/__fixtures__/space-mac-host.js';
 import { SpaceAccessDenied, type SpaceHosts } from '#lib/spaces/server/space-credential.js';
-import { memoryKV, type MemoryKV } from './__fixtures__/kv';
 import { isAuthRefused, isRoleRefused, XrpcError, type XrpcHandle } from './xrpc';
 
 const mocks = vi.hoisted(() => ({
 	get: vi.fn(),
 	post: vi.fn(),
 	resolve: vi.fn(),
-	crowdedServers: vi.fn(),
-	cachedHandles: vi.fn(),
+	upcomingGroups: vi.fn(),
+	groupLabels: vi.fn(),
+	cacheProfile: vi.fn(),
 	ensureInit: vi.fn(),
+	ensureGroupSchema: vi.fn(),
 	/** Calls to other servers: the group host's space methods. */
 	networkFetch: vi.fn<typeof fetch>()
 }));
 vi.mock('./declared', () => ({
-	crowdedServers: mocks.crowdedServers,
-	cachedHandles: mocks.cachedHandles
+	DECLARED_PAGE: 50,
+	upcomingGroups: mocks.upcomingGroups,
+	groupLabels: mocks.groupLabels,
+	groupServers: vi.fn(),
+	cachedProfiles: vi.fn(),
+	cacheProfile: mocks.cacheProfile,
+	ensureGroupSchema: mocks.ensureGroupSchema
 }));
 vi.mock('#lib/contrail/index.js', () => ({
 	ensureInit: mocks.ensureInit,
@@ -36,17 +42,13 @@ vi.mock('@svelte-atproto/oauth/network', () => ({
 
 import {
 	atGroupHost,
-	declaredHome,
-	forgetHeldAtGroupHost,
 	groupHostSpaces,
-	heldAtGroupHost,
 	isDeclared,
-	listCrowdedServers,
 	listDeclaredGroups,
+	listUpcomingGroups,
 	listGroup,
 	parseGroupProfile,
-	readCachedHandles,
-	readCachedProfiles,
+	readGroupLabels,
 	readGroupMeta,
 	readLinkedMeta,
 	resolveGroup,
@@ -60,22 +62,6 @@ const HOST = 'https://host.example';
 const META = `at:space/${GROUP}/org.atgrp.meta/self`;
 const kem = await fakeKemHost();
 const spaceHosts: SpaceHosts = { repoHost: async () => HOST, kemKey: async () => kem.did };
-let kv: MemoryKV;
-const hostFetch = vi.fn<typeof fetch>();
-
-/** The group host's listRepos: one page per entry, each a list of [did, active]. */
-function hostHolds(...pages: [string, boolean][][]) {
-	hostFetch.mockImplementation(async (input) => {
-		const cursor = new URL(String(input)).searchParams.get('cursor');
-		const index = cursor ? Number(cursor) : 0;
-		const repos = (pages[index] ?? []).map(([did, active]) => ({ did, active }));
-		return Response.json({
-			repos,
-			...(index + 1 < pages.length ? { cursor: `${index + 1}` } : {})
-		});
-	});
-}
-
 /** A PDS that answers `getRecord` from `records`, keyed by collection. */
 function pds(records: Record<string, unknown>): ReturnType<typeof vi.fn<XrpcHandle>> {
 	return vi.fn<XrpcHandle>(async (pathname, init) => {
@@ -88,11 +74,8 @@ function pds(records: Record<string, unknown>): ReturnType<typeof vi.fn<XrpcHand
 
 beforeEach(() => {
 	vi.resetAllMocks();
-	kv = memoryKV();
-	Object.assign(env, { OAUTH_SESSIONS: kv, GROUP_HOST_URL: 'https://host.example/' });
+	Object.assign(env, { GROUP_HOST_URL: 'https://host.example/' });
 	mocks.post.mockResolvedValue({ ok: true, data: {} });
-	vi.stubGlobal('fetch', hostFetch);
-	hostHolds([[GROUP, true]]);
 });
 
 describe('resolveGroup', () => {
@@ -142,7 +125,7 @@ describe('the declaration index', () => {
 		await expect(isDeclared(GROUP)).rejects.toThrow();
 	});
 
-	it("lists declared groups in the index's order, newest first, with no profiles", async () => {
+	it('lists a page of declared groups in the order the index gives, asking for no profiles', async () => {
 		mocks.get.mockResolvedValue({
 			ok: true,
 			data: {
@@ -153,83 +136,58 @@ describe('the declaration index', () => {
 				cursor: 'next'
 			}
 		});
-		expect(await listDeclaredGroups()).toEqual({
-			groups: [
-				{ did: 'did:plc:newer', indexedAt: 3000 },
-				{ did: GROUP, indexedAt: 2000 }
-			],
-			cursor: 'next'
-		});
+		expect(await listDeclaredGroups()).toEqual({ dids: ['did:plc:newer', GROUP], cursor: 'next' });
 		const [nsid, { params }] = mocks.get.mock.calls[0];
-		// One per account, at most 20 per server; the index asks what the group host holds itself.
 		expect(nsid).toBe('rsvp.atmo.declaration.listDeclared');
-		expect(params).toEqual({ limit: 100 });
+		expect(params).toEqual({ limit: 50 });
 	});
 
-	it('names the group host to the index, with what it holds, read only when asked', async () => {
-		const home = declaredHome();
-		expect(home?.origin).toBe('https://host.example');
-		expect(hostFetch).not.toHaveBeenCalled();
-		expect(await home?.held()).toEqual([GROUP]);
-		hostFetch.mockResolvedValue(new Response('down', { status: 502 }));
-		await forgetHeldAtGroupHost();
-		expect(await home?.held()).toBeNull();
-		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
-		expect(declaredHome()).toBeNull();
-	});
-
-	it('asks for the page after a cursor, and says when there is none after it', async () => {
+	it("asks for one server's groups, a search's, and the page after a cursor", async () => {
 		mocks.get.mockResolvedValue({ ok: true, data: { records: [] } });
-		expect(await listDeclaredGroups({ cursor: 'page2' })).toEqual({ groups: [], cursor: null });
-		expect(mocks.get.mock.calls[0][1].params).toEqual({ limit: 100, cursor: 'page2' });
-	});
-
-	it("lists one server's groups for its own page", async () => {
-		mocks.get.mockResolvedValue({ ok: true, data: { records: [] } });
-		await listDeclaredGroups({ server: 'https://pds.example' });
+		expect(
+			await listDeclaredGroups({ cursor: 'page2', server: 'https://pds.example', q: 'knit' })
+		).toEqual({ dids: [], cursor: null });
 		expect(mocks.get.mock.calls[0][1].params).toEqual({
-			limit: 100,
-			server: 'https://pds.example'
+			limit: 50,
+			cursor: 'page2',
+			server: 'https://pds.example',
+			q: 'knit'
 		});
-		expect(hostFetch).not.toHaveBeenCalled();
 	});
 
-	it('leaves the group host out of the crowded servers only when it says what it holds', async () => {
-		hostFetch.mockResolvedValue(new Response('down', { status: 502 }));
-		mocks.crowdedServers.mockResolvedValue([]);
-		await listCrowdedServers();
-		expect(mocks.crowdedServers.mock.calls[0][1]).toBeNull();
-	});
-
-	it("reads the index's tables only once contrail has made them, as on a fresh database", async () => {
-		// contrail makes its tables, the declarations' among them, when the Worker first uses it.
-		let made = false;
+	it('reads the tables only once contrail and groups have made them, as on a fresh database', async () => {
+		// contrail makes its tables when the Worker first uses it; groups add theirs after.
+		let contrail = false;
+		let groups = false;
 		let make: () => void = () => {};
 		mocks.ensureInit.mockReturnValue(
 			new Promise<void>((resolve) => (make = resolve)).then(() => {
-				made = true;
+				contrail = true;
 			})
 		);
-		const table = () =>
-			made ? Promise.resolve([]) : Promise.reject(new Error('no such table: records_declaration'));
-		mocks.crowdedServers.mockImplementation(table);
-		mocks.cachedHandles.mockImplementation(() =>
-			made ? Promise.resolve(new Map()) : Promise.reject(new Error('no such table: identities'))
-		);
-		const crowded = listCrowdedServers();
-		const handles = readCachedHandles([GROUP]);
+		// Its index is on contrail's events table.
+		mocks.ensureGroupSchema.mockImplementation(async () => {
+			if (!contrail) throw new Error('no such table: records_event');
+			groups = true;
+		});
+		const ready = () => (groups ? null : new Error('no such table: group_profiles'));
+		mocks.upcomingGroups.mockImplementation(async () => {
+			const missing = ready();
+			if (missing) throw missing;
+			return { groups: [], cursor: null };
+		});
+		mocks.groupLabels.mockImplementation(async () => {
+			const missing = ready();
+			if (missing) throw missing;
+			return new Map();
+		});
+		const upcoming = listUpcomingGroups();
+		const labels = readGroupLabels([GROUP]);
 		await vi.waitFor(() => expect(mocks.ensureInit).toHaveBeenCalledTimes(2));
-		expect(mocks.crowdedServers).not.toHaveBeenCalled();
-		expect(mocks.cachedHandles).not.toHaveBeenCalled();
+		expect(mocks.upcomingGroups).not.toHaveBeenCalled();
 		make();
-		expect(await crowded).toEqual([]);
-		expect(await handles).toEqual(new Map());
-	});
-
-	it("names the crowded servers, with this site's group host left out", async () => {
-		mocks.crowdedServers.mockResolvedValue([{ server: 'https://pds.example', more: 3 }]);
-		expect(await listCrowdedServers()).toEqual([{ server: 'https://pds.example', more: 3 }]);
-		expect(mocks.crowdedServers.mock.calls[0][1]).toBe('https://host.example');
+		expect(await upcoming).toEqual({ groups: [], cursor: null });
+		expect(await labels).toEqual(new Map());
 	});
 });
 
@@ -381,12 +339,11 @@ describe('readGroupMeta', () => {
 		await expect(readGroupMeta(host.handle, GROUP, spaceHosts)).rejects.toThrow('MAC of at:space/');
 	});
 
-	it.each([
-		['the session holds no scope that reads it', 'delegate', 403, 'ScopeMissing'],
-		['its member no longer reads it', 'delegate', 403, 'NotAuthorized'],
-		['the host no longer lets the grant read it', 'exchange', 400, 'SpaceNotFound']
-	] as const)('is a refusal, not an outage, when %s', async (_why, step, status, error) => {
-		const host = groupHost({}, { [step]: () => Response.json({ error }, { status }) });
+	it('is a refusal, not an outage, when the session holds no scope that reads it', async () => {
+		const host = groupHost(
+			{},
+			{ delegate: () => Response.json({ error: 'ScopeMissing' }, { status: 403 }) }
+		);
 		const thrown = await readGroupMeta(host.handle, GROUP, spaceHosts).catch((e: unknown) => e);
 		expect(thrown).toBeInstanceOf(SpaceAccessDenied);
 		expect(isRoleRefused(thrown)).toBe(true);
@@ -475,17 +432,6 @@ describe('listing', () => {
 		});
 	});
 
-	it('forgets what the group host was last said to hold, so the group is counted at once', async () => {
-		hostHolds([['did:plc:other', true]]);
-		expect(await heldAtGroupHost()).toEqual(['did:plc:other']);
-		await listGroup(pds({}), GROUP);
-		hostHolds([
-			['did:plc:other', true],
-			[GROUP, true]
-		]);
-		expect(await heldAtGroupHost()).toEqual(['did:plc:other', GROUP]);
-	});
-
 	it('deletes the declaration to unlist, then tells the index', async () => {
 		const handle = pds({});
 		await unlistGroup(handle, GROUP);
@@ -505,143 +451,16 @@ describe('listing', () => {
 describe('cached group profiles', () => {
 	const group = { did: GROUP, handle: 'knit.example' };
 
-	it("keeps a public group's name for visitors", async () => {
-		await storeCachedProfile(group, {
-			profile: { name: 'Knitters', description: 'Yarn' },
-			public: true
-		});
-		expect((await readCachedProfiles([GROUP, 'did:plc:none'])).get(GROUP)).toEqual({
-			name: 'Knitters',
-			description: 'Yarn',
+	it("keeps a public group's name and handle for visitors, and none of a private group's", async () => {
+		const profile = { name: 'Knitters', description: 'Yarn' };
+		await storeCachedProfile(group, { profile, public: true });
+		expect(mocks.cacheProfile).toHaveBeenLastCalledWith(env.DB, GROUP, {
+			...profile,
 			handle: 'knit.example'
 		});
-		expect(kv.keys()).toEqual([`group:profile:${GROUP}`]);
-	});
-
-	it("removes a group's cached profile once it is private", async () => {
-		await storeCachedProfile(group, {
-			profile: { name: 'Knitters', description: null },
-			public: true
-		});
-		await storeCachedProfile(group, {
-			profile: { name: 'Knitters', description: null },
-			public: false
-		});
-		expect(kv.keys()).toEqual([]);
-	});
-
-	it('writes or removes it only when it changes', async () => {
-		const put = vi.spyOn(kv, 'put');
-		const remove = vi.spyOn(kv, 'delete');
-		const knitters = { profile: { name: 'Knitters', description: 'Yarn' }, public: true };
-		await storeCachedProfile(group, knitters);
-		await storeCachedProfile(group, knitters);
-		await storeCachedProfile(group, { ...knitters, profile: { ...knitters.profile } });
-		expect(put).toHaveBeenCalledOnce();
-
-		await storeCachedProfile(group, {
-			...knitters,
-			profile: { ...knitters.profile, name: 'Purl' }
-		});
-		await storeCachedProfile(
-			{ ...group, handle: 'purl.example' },
-			{
-				...knitters,
-				profile: { ...knitters.profile, name: 'Purl' }
-			}
-		);
-		expect(put).toHaveBeenCalledTimes(3);
-
-		await storeCachedProfile(group, { ...knitters, public: false });
-		await storeCachedProfile(group, { ...knitters, public: false });
+		await storeCachedProfile(group, { profile, public: false });
+		expect(mocks.cacheProfile).toHaveBeenLastCalledWith(env.DB, GROUP, null);
 		await storeCachedProfile(group, { profile: null, public: true });
-		expect(remove).toHaveBeenCalledOnce();
-		expect(kv.keys()).toEqual([]);
-	});
-
-	it('writes it when the cached one could not be read', async () => {
-		vi.spyOn(kv, 'get').mockRejectedValue(new Error('KV down'));
-		const put = vi.spyOn(kv, 'put');
-		await storeCachedProfile(group, {
-			profile: { name: 'Knitters', description: null },
-			public: true
-		});
-		expect(put).toHaveBeenCalledOnce();
-	});
-});
-
-describe('heldAtGroupHost', () => {
-	it("reads every page of the host's listRepos, leaves out inactive accounts, and caches it", async () => {
-		hostHolds(
-			[
-				[GROUP, true],
-				['did:plc:gone', false]
-			],
-			[['did:plc:second', true]]
-		);
-		expect(await heldAtGroupHost()).toEqual([GROUP, 'did:plc:second']);
-		expect(String(hostFetch.mock.calls[0][0])).toBe(
-			'https://host.example/xrpc/com.atproto.sync.listRepos?limit=1000'
-		);
-		expect(hostFetch).toHaveBeenCalledTimes(2);
-		expect(await heldAtGroupHost()).toEqual([GROUP, 'did:plc:second']);
-		expect(hostFetch).toHaveBeenCalledTimes(2);
-	});
-
-	it('gives up on a host that never answers, so the list treats it like any server', async () => {
-		const limit = new AbortController();
-		const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(limit.signal);
-		try {
-			hostFetch.mockImplementation(
-				(_input, init) =>
-					new Promise((_resolve, reject) => {
-						const signal = init?.signal;
-						if (signal?.aborted) reject(signal.reason);
-						signal?.addEventListener('abort', () => reject(signal.reason));
-					})
-			);
-			const held = heldAtGroupHost();
-			limit.abort(new DOMException('The operation timed out.', 'TimeoutError'));
-			expect(await held).toBeNull();
-			expect(kv.ttlOf('groups:held-at-host')).toBe(60);
-		} finally {
-			timeout.mockRestore();
-		}
-	});
-
-	it('remembers for a minute that the host did not answer, so the next page does not wait again', async () => {
-		hostFetch.mockRejectedValueOnce(new Error('offline'));
-		expect(await heldAtGroupHost()).toBeNull();
-		expect(kv.ttlOf('groups:held-at-host')).toBe(60);
-		hostHolds([[GROUP, true]]);
-		expect(await heldAtGroupHost()).toBeNull();
-		expect(hostFetch).toHaveBeenCalledTimes(1);
-	});
-
-	it('asks the host once for two lists that want it at the same time', async () => {
-		expect(await Promise.all([heldAtGroupHost(), heldAtGroupHost()])).toEqual([[GROUP], [GROUP]]);
-		expect(hostFetch).toHaveBeenCalledTimes(1);
-	});
-
-	it('keeps the cached answer otherwise, and caches no read that began before it was forgotten', async () => {
-		let answer: (res: Response) => void = () => {};
-		hostFetch.mockImplementation(() => new Promise((resolve) => (answer = resolve)));
-		const before = heldAtGroupHost();
-		await vi.waitFor(() => expect(hostFetch).toHaveBeenCalled());
-		await forgetHeldAtGroupHost();
-		answer(Response.json({ repos: [{ did: 'did:plc:other', active: true }] }));
-		expect(await before).toEqual(['did:plc:other']);
-		expect(kv.keys()).toEqual([]);
-		hostHolds([[GROUP, true]]);
-		expect(await heldAtGroupHost()).toEqual([GROUP]);
-		hostHolds([['did:plc:later', true]]);
-		expect(await heldAtGroupHost()).toEqual([GROUP]);
-	});
-
-	it('is null with no group host, or when the host does not answer', async () => {
-		hostFetch.mockRejectedValue(new Error('offline'));
-		expect(await heldAtGroupHost()).toBeNull();
-		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
-		expect(await heldAtGroupHost()).toBeNull();
+		expect(mocks.cacheProfile).toHaveBeenLastCalledWith(env.DB, GROUP, null);
 	});
 });

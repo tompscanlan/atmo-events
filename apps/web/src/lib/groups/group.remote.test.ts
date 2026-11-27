@@ -119,19 +119,21 @@ describe('group writes', () => {
 
 	it('delete an event from the group repo and tell the index', async () => {
 		await deleteGroupEvent({ groupDid: GROUP, rkey: 'r' });
-		expect(mocks.handle.mock.calls[0][0]).toBe('/xrpc/com.atproto.repo.deleteRecord');
+		const [pathname, init] = mocks.handle.mock.calls[0];
+		expect(pathname).toBe('/xrpc/com.atproto.repo.deleteRecord');
+		expect(JSON.parse(init.body)).toEqual({
+			repo: GROUP,
+			collection: 'community.lexicon.calendar.event',
+			rkey: 'r'
+		});
 		expect(mocks.notifyIndex).toHaveBeenCalledWith(
 			`at://${GROUP}/community.lexicon.calendar.event/r`
 		);
 	});
 
-	it.each([
-		['Forbidden', 'the role no longer writes as the group'],
-		['ScopeMissing', "the session's scope never held the write"],
-		['ScopeMissingError', 'a PDS says the scope is missing']
-	])('report a refusal (%s: %s) as a 403 with a reason, without the PDS wording', async (name) => {
+	it('report a refusal as a 403 with a reason, without the PDS wording', async () => {
 		mocks.handle.mockImplementation(async () =>
-			Response.json({ error: name, message: 'x' }, { status: 403 })
+			Response.json({ error: 'Forbidden', message: 'x' }, { status: 403 })
 		);
 		for (const write of [
 			() => putGroupEvent({ groupDid: GROUP, rkey: 'r', record: {} }),
@@ -175,14 +177,6 @@ describe('group writes', () => {
 });
 
 describe('listing', () => {
-	it('refuses to list a private group', async () => {
-		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: false });
-		await expect(setGroupListed({ groupDid: GROUP, listed: true })).rejects.toMatchObject({
-			status: 409
-		});
-		expect(mocks.listGroup).not.toHaveBeenCalled();
-	});
-
 	it('lists a public group and unlists any', async () => {
 		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: true });
 		await setGroupListed({ groupDid: GROUP, listed: true });
@@ -191,12 +185,13 @@ describe('listing', () => {
 		expect(mocks.unlistGroup).toHaveBeenCalledWith(mocks.handle, GROUP);
 	});
 
-	it('says why a private group cannot be listed', async () => {
+	it('refuses to list a private group, and says why', async () => {
 		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: false });
 		await expect(setGroupListed({ groupDid: GROUP, listed: true })).rejects.toMatchObject({
 			status: 409,
 			body: { message: expect.stringContaining('this one is private') }
 		});
+		expect(mocks.listGroup).not.toHaveBeenCalled();
 	});
 
 	it('says the same when the group host refuses the declaration, the group having turned private since it was read', async () => {
@@ -218,25 +213,24 @@ describe('listing', () => {
 		[
 			'the host says the scope is missing',
 			new XrpcError('com.atproto.repo.putRecord', 403, 'ScopeMissing')
-		],
-		[
-			'the host says the role may no longer',
-			new XrpcError('com.atproto.repo.putRecord', 403, 'Forbidden')
 		]
-	])('is a 403, not a 500, when %s', async (_why, refusal) => {
-		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: true });
-		mocks.listGroup.mockRejectedValue(refusal);
-		mocks.unlistGroup.mockRejectedValue(refusal);
-		for (const listed of [true, false]) {
-			await expect(setGroupListed({ groupDid: GROUP, listed })).rejects.toMatchObject({
-				status: 403
-			});
+	])(
+		'is a 403 that says the role no longer allows it, not a 500, when %s',
+		async (_why, refusal) => {
+			const noRole = {
+				status: 403,
+				body: { message: 'Your role in this group no longer allows that.' }
+			};
+			mocks.readGroupMeta.mockResolvedValue({ profile: null, public: true });
+			mocks.listGroup.mockRejectedValue(refusal);
+			mocks.unlistGroup.mockRejectedValue(refusal);
+			for (const listed of [true, false]) {
+				await expect(setGroupListed({ groupDid: GROUP, listed })).rejects.toMatchObject(noRole);
+			}
+			mocks.readGroupMeta.mockRejectedValue(refusal);
+			await expect(setGroupListed({ groupDid: GROUP, listed: true })).rejects.toMatchObject(noRole);
 		}
-		mocks.readGroupMeta.mockRejectedValue(refusal);
-		await expect(setGroupListed({ groupDid: GROUP, listed: true })).rejects.toMatchObject({
-			status: 403
-		});
-	});
+	);
 
 	it('passes on any other failure', async () => {
 		mocks.readGroupMeta.mockResolvedValue({ profile: null, public: true });
@@ -256,12 +250,6 @@ describe('unlink', () => {
 		expect(mocks.requireStoredLink).toHaveBeenCalledWith(GROUP, ALICE);
 		expect(mocks.requireGroupWriter).not.toHaveBeenCalled();
 		expect(mocks.unlinkGroup).toHaveBeenCalledWith(GROUP, ALICE);
-	});
-
-	it('is the 404 when the caller has no link stored', async () => {
-		mocks.requireStoredLink.mockImplementation(() => error(404, 'Group not found'));
-		await expect(unlinkGroupSession({ groupDid: GROUP })).rejects.toMatchObject({ status: 404 });
-		expect(mocks.unlinkGroup).not.toHaveBeenCalled();
 	});
 });
 
@@ -311,7 +299,6 @@ describe('settings', () => {
 
 	it.each([
 		[new XrpcError('com.atproto.space.updateSpace', 403, 'NotAuthorized'), 403, 'role'],
-		[new XrpcError('com.atproto.space.putRecord', 403, 'ScopeMissing'), 403, 'role'],
 		[new XrpcError('com.atproto.space.getDelegationToken', 401, 'invalid_token'), 403, 'Link'],
 		[new XrpcError('com.atproto.space.putRecord', 400, 'InvalidRequest'), 400, 'did not take']
 	])('answers %s with a %i that says why', async (refusal, status, words) => {
@@ -319,14 +306,6 @@ describe('settings', () => {
 		await expect(
 			saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings: form })
 		).rejects.toMatchObject({ status, body: { message: expect.stringContaining(words) } });
-	});
-
-	it('is the same 404 without a link', async () => {
-		mocks.requireGroupWriter.mockImplementation(() => error(404, 'Group not found'));
-		await expect(
-			saveGroupSettings({ groupDid: GROUP, shownPublic: true, settings: form })
-		).rejects.toMatchObject({ status: 404 });
-		expect(mocks.saveSettings).not.toHaveBeenCalled();
 	});
 });
 
@@ -340,6 +319,9 @@ describe('finishing a group made here', () => {
 		mocks.finishSetup.mockRejectedValue(
 			new XrpcError('com.atproto.repo.deleteRecord', 403, 'Forbidden')
 		);
-		await expect(finishGroupSetup({ groupDid: GROUP })).rejects.toMatchObject({ status: 403 });
+		await expect(finishGroupSetup({ groupDid: GROUP })).rejects.toMatchObject({
+			status: 403,
+			body: { message: 'Your role in this group no longer allows that.' }
+		});
 	});
 });

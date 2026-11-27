@@ -29,12 +29,8 @@ const shown = () => (document.body.textContent ?? '').replace(/\s+/g, ' ');
 afterEach(() => vi.clearAllMocks());
 
 describe('the make-a-group page', () => {
-	it('says what a group is, and offers the form with the address ending in the host’s domain', async () => {
+	it('offers the form, with the address ending in the host’s domain', async () => {
 		render(CreatePage, { data: data(null) as never, form: null as never });
-		await expect
-			.poll(shown)
-			.toContain('A group is a community with its own page that others can find and ask to join.');
-		expect(shown()).toContain("group events are made from the group's page, as the group.");
 		await expect.element(page.getByLabelText('Name')).toBeVisible();
 		await expect.element(page.getByLabelText('Address')).toBeVisible();
 		expect(shown()).toContain('.groups.example');

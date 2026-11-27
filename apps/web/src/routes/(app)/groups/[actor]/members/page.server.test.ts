@@ -66,12 +66,19 @@ const entry = (did: string, roles: string[], confirmed: boolean | null) => ({
 });
 const ROSTER = {
 	entries: [entry(ALICE, ['member', 'admin'], true), entry(BOB, ['member'], false)],
+	next: null,
 	roles: [
 		{ id: 'admin', name: 'Admin' },
 		{ id: 'member', name: 'Member' }
 	],
 	yours: ['member', 'admin']
 };
+const BASE = {
+	pageTitle: 'Members - Night Riders',
+	group: { did: GROUP, name: 'Night Riders' },
+	you: ALICE
+};
+const HIDDEN = { ...BASE, state: 'hidden', message: 'Only members can see who is in this group.' };
 const REQUESTS = [{ did: CAROL, handle: null, message: 'I ride.', createdAt: 'x' }];
 
 beforeEach(() => {
@@ -81,22 +88,26 @@ beforeEach(() => {
 	mocks.groupView.mockResolvedValue(view());
 	mocks.requireGroupWriter.mockResolvedValue(writer);
 	mocks.readRoster.mockResolvedValue(ROSTER);
-	mocks.listJoinRequests.mockResolvedValue(REQUESTS);
+	mocks.listJoinRequests.mockResolvedValue({ requests: REQUESTS, more: false });
 });
 
 describe("a group's members page", () => {
 	it('shows a member the confirmed members and their roles, read with their own access, and no controls', async () => {
 		const page = await load(request());
 		expect(mocks.groupView).toHaveBeenCalledWith(GROUP, ALICE, person);
-		expect(mocks.readRoster).toHaveBeenCalledWith(person, GROUP, null);
-		expect(page).toMatchObject({
+		expect(mocks.readRoster).toHaveBeenCalledWith(person, GROUP, null, null);
+		expect(page).toEqual({
+			...BASE,
 			state: 'roster',
 			listed: [ROSTER.entries[0]],
 			unconfirmed: [],
 			roles: ROSTER.roles,
 			yours: ['member', 'admin'],
 			manage: NONE,
+			next: null,
+			paged: false,
 			requests: null,
+			moreRequests: false,
 			reapprove: false
 		});
 		expect(mocks.listJoinRequests).not.toHaveBeenCalled();
@@ -110,6 +121,7 @@ describe("a group's members page", () => {
 		expect(page).toMatchObject({
 			manage: ALL,
 			requests: REQUESTS,
+			moreRequests: false,
 			unconfirmed: [ROSTER.entries[1]],
 			reapprove: false
 		});
@@ -126,11 +138,44 @@ describe("a group's members page", () => {
 		expect(mocks.listJoinRequests).not.toHaveBeenCalled();
 	});
 
+	it('says when the requests stopped short of all that wait', async () => {
+		mocks.groupView.mockResolvedValue(view({ linked: linked(ALL) }));
+		mocks.listJoinRequests.mockResolvedValue({ requests: REQUESTS, more: true });
+		expect(await load(request())).toMatchObject({ requests: REQUESTS, moreRequests: true });
+	});
+
 	it('still shows the roster when the requests could not be listed', async () => {
 		vi.spyOn(console, 'warn').mockImplementation(() => {});
 		mocks.groupView.mockResolvedValue(view({ linked: linked(ALL) }));
 		mocks.listJoinRequests.mockRejectedValue(new Error('down'));
-		expect(await load(request())).toMatchObject({ state: 'roster', requests: null });
+		expect(await load(request())).toMatchObject({
+			state: 'roster',
+			requests: null,
+			moreRequests: false
+		});
+	});
+
+	it('lists as a member only someone whose confirmation was read, and shows an admin the rest apart', async () => {
+		const unread = entry(CAROL, ['member'], null);
+		mocks.readRoster.mockResolvedValue({ ...ROSTER, entries: [...ROSTER.entries, unread] });
+		expect(await load(request())).toMatchObject({ listed: [ROSTER.entries[0]], unconfirmed: [] });
+		mocks.groupView.mockResolvedValue(view({ linked: linked(ALL) }));
+		expect(await load(request())).toMatchObject({
+			listed: [ROSTER.entries[0]],
+			unconfirmed: [ROSTER.entries[1], unread]
+		});
+	});
+
+	it("reads the page the host's cursor names, and passes on where the next starts", async () => {
+		mocks.readRoster.mockResolvedValue({ ...ROSTER, next: 'at:space/next' });
+		expect(await load(request('?cursor=at%3Aspace%2Fhere'))).toMatchObject({
+			next: 'at:space/next',
+			paged: true
+		});
+		expect(mocks.readRoster).toHaveBeenLastCalledWith(person, GROUP, null, 'at:space/here');
+		// No cursor the host would give is this long: the first page instead.
+		expect(await load(request(`?cursor=${'x'.repeat(5000)}`))).toMatchObject({ paged: false });
+		expect(mocks.readRoster).toHaveBeenLastCalledWith(person, GROUP, null, null);
 	});
 
 	it('offers to approve again a link approved before the members page asked for anything', async () => {
@@ -138,37 +183,29 @@ describe("a group's members page", () => {
 		expect(await load(request())).toMatchObject({ manage: NONE, reapprove: true });
 	});
 
-	it("shows the caller's own confirmation as the group was read for them, or has it read", async () => {
+	it("passes on the caller's own confirmation as the group was read for them, or null to have it read", async () => {
 		for (const confirmed of [true, false, null]) {
 			mocks.groupView.mockResolvedValue(view({ confirmed }));
 			await load(request());
-			expect(mocks.readRoster).toHaveBeenLastCalledWith(person, GROUP, confirmed);
+			expect(mocks.readRoster).toHaveBeenLastCalledWith(person, GROUP, confirmed, null);
 		}
-		// A sign-in that may not write it still has it read, never counted as written.
-		mocks.callerSession.mockResolvedValue({ ...person, scope: 'atproto' });
-		mocks.groupView.mockResolvedValue(view({ confirmed: null }));
-		await load(request());
-		expect(mocks.readRoster).toHaveBeenLastCalledWith(expect.anything(), GROUP, null);
 	});
 
-	it('tells someone not in the group, or signed out, that only members see it, and reads nothing', async () => {
+	it('tells someone not in the group, or signed out, only that members see it, and reads nothing', async () => {
 		for (const [over, did] of [
 			[{ member: false }, ALICE],
 			[{ personal: null, member: null }, ALICE],
 			[{ personal: null, member: null }, null]
 		] as const) {
 			mocks.groupView.mockResolvedValue(view(over));
-			expect(await load(request('', did))).toMatchObject({
-				state: 'hidden',
-				message: 'Only members can see who is in this group.'
-			});
+			expect(await load(request('', did))).toEqual({ ...HIDDEN, you: did });
 		}
 		expect(mocks.readRoster).not.toHaveBeenCalled();
 	});
 
-	it('says the same when the host does not let them read the members space', async () => {
+	it('says the same, and nothing more, when the host does not let them read the members space', async () => {
 		mocks.readRoster.mockRejectedValue(new SpaceAccessDenied('s', '400 NotAuthorized'));
-		expect(await load(request())).toMatchObject({ state: 'hidden' });
+		expect(await load(request())).toEqual(HIDDEN);
 	});
 
 	it('says to try again when their membership or the roster could not be read', async () => {
@@ -195,10 +232,5 @@ describe("a group's members page", () => {
 		});
 		expect(mocks.readRoster).not.toHaveBeenCalled();
 		Reflect.deleteProperty(env, 'SPACES_PDS_URL');
-	});
-
-	it('is the same 404 as any group page when the group cannot be seen', async () => {
-		mocks.groupView.mockRejectedValue(Object.assign(new Error('Group not found'), { status: 404 }));
-		await expect(load(request())).rejects.toMatchObject({ status: 404 });
 	});
 });

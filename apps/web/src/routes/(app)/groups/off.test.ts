@@ -8,7 +8,10 @@ vi.mock('#lib/groups/server/context.js', () => ({
 	GROUP_NOT_FOUND: 'Group not found',
 	groupView: mocks.groupView
 }));
-vi.mock('#lib/groups/server/browse.js', () => ({ browseGroups: vi.fn() }));
+vi.mock('#lib/groups/server/browse.js', () => ({
+	browseUpcoming: vi.fn(),
+	browseDeclared: vi.fn()
+}));
 vi.mock('#lib/contrail/index.js', () => ({ getServerClient: () => ({}) }));
 vi.mock('#lib/contrail/queries.js', () => ({ hostingQuery: vi.fn() }));
 vi.mock('#lib/contrail.js', () => ({
@@ -27,6 +30,14 @@ import { actions as createActions, load as create } from './create/+page.server'
 import { load as layout } from '../+layout.server';
 
 const GROUP = 'did:plc:group';
+/** What SvelteKit answers for an address with no route. */
+const NOT_FOUND = { status: 404, body: { status: 404, message: 'Not Found' } };
+/** What a load or action threw, or undefined when it did not. */
+const thrownBy = (answer: Promise<unknown>) =>
+	answer.then(
+		() => undefined,
+		(e: unknown) => e as { status?: number; body?: unknown }
+	);
 
 function request(path: string) {
 	const setHeaders = vi.fn();
@@ -48,9 +59,11 @@ beforeEach(() => {
 });
 
 describe('with groups off', () => {
-	it('answers every group page with a bare 404, before any header of its own', async () => {
+	it("answers every group page with SvelteKit's own 404, before any header of its own", async () => {
 		for (const [path, load] of [
 			['/groups', list],
+			['/groups?server=https%3A%2F%2Fpds.example', list],
+			['/groups?q=knit', list],
 			[`/groups/${GROUP}`, group],
 			[`/groups/${GROUP}/events/new`, newEvent],
 			[`/groups/${GROUP}/events/a/edit`, editEvent],
@@ -60,9 +73,8 @@ describe('with groups off', () => {
 			['/groups/create', create]
 		] as const) {
 			const { setHeaders, event } = request(path);
-			await expect((load as (e: never) => Promise<unknown>)(event)).rejects.toMatchObject({
-				status: 404
-			});
+			const thrown = await thrownBy((load as (e: never) => Promise<unknown>)(event));
+			expect({ status: thrown?.status, body: thrown?.body }, path).toEqual(NOT_FOUND);
 			expect(setHeaders, path).not.toHaveBeenCalled();
 		}
 	});
@@ -73,9 +85,10 @@ describe('with groups off', () => {
 			body: new FormData()
 		});
 		const formData = vi.spyOn(request, 'formData');
-		await expect(
+		const thrown = await thrownBy(
 			createActions.default({ request, locals: { did: 'did:plc:alice', session: null } } as never)
-		).rejects.toMatchObject({ status: 404 });
+		);
+		expect({ status: thrown?.status, body: thrown?.body }).toEqual(NOT_FOUND);
 		expect(formData).not.toHaveBeenCalled();
 	});
 

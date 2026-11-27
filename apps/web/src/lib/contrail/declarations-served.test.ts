@@ -12,6 +12,7 @@ const GROUP = 'did:plc:group';
 const DECLARATION = `at://${GROUP}/org.atgrp.declaration/self`;
 const DECLARED = [
 	'rsvp.atmo.declaration.listDeclared',
+	'rsvp.atmo.declaration.listDeclared?q=knit',
 	`rsvp.atmo.declaration.getRecord?${new URLSearchParams({ uri: DECLARATION })}`,
 	'rsvp.atmo.declaration.listRecords'
 ];
@@ -27,10 +28,13 @@ async function serve(paths: string[]) {
 		);
 		answers.push(`${res.status} ${await res.text()}`);
 	}
-	const tables = (await db
-		.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'records_%'")
+	const schema = (await db
+		.prepare(
+			`SELECT name FROM sqlite_schema WHERE (type = 'table' AND name LIKE 'records_%')
+				OR name LIKE 'group%'`
+		)
 		.all()) as { results: { name: string }[] };
-	return { answers, tables: tables.results.map((row) => row.name) };
+	return { answers, tables: schema.results.map((row) => row.name) };
 }
 
 describe('groups declarations as the Worker serves them', () => {
@@ -41,36 +45,23 @@ describe('groups declarations as the Worker serves them', () => {
 		expect(declared).toEqual(DECLARED.map(() => unknown));
 		expect(off.tables).toContain('records_event');
 		expect(off.tables).not.toContain('records_declaration');
+		expect(off.tables).not.toContain('group_profiles');
+		expect(off.tables).not.toContain('groups_event_did_starts');
 	});
 
-	it('serves them with groups on, asking the group host itself what it holds', async () => {
+	it('serves them with groups on, asking no other server, and adds what search needs', async () => {
 		Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
-		const listRepos = vi.fn<typeof fetch>(async () => Response.json({ repos: [{ did: GROUP }] }));
-		vi.stubGlobal('fetch', listRepos);
+		const elsewhere = vi.fn<typeof fetch>();
+		vi.stubGlobal('fetch', elsewhere);
 		try {
-			const on = await serve(DECLARED.slice(0, 1));
-			expect(on.answers[0]).toMatch(/^200 /);
-			expect(on.tables).toContain('records_declaration');
-			expect(String(listRepos.mock.calls[0]?.[0])).toMatch(
-				/^https:\/\/host\.example\/xrpc\/com\.atproto\.sync\.listRepos\?/
+			const on = await serve(DECLARED.slice(0, 2));
+			expect(on.answers).toEqual([expect.stringMatching(/^200 /), expect.stringMatching(/^200 /)]);
+			expect(on.tables).toEqual(
+				expect.arrayContaining(['records_declaration', 'group_profiles', 'groups_event_did_starts'])
 			);
+			expect(elsewhere).not.toHaveBeenCalled();
 		} finally {
 			vi.unstubAllGlobals();
 		}
-	});
-
-	it('reads an empty or blank GROUP_HOST_URL as off', async () => {
-		Object.assign(env, { GROUP_HOST_URL: '  ' });
-		const blank = await serve(['rsvp.atmo.no.suchMethod', ...DECLARED.slice(0, 1)]);
-		expect(blank.answers[1]).toBe(blank.answers[0]);
-	});
-
-	it('reads a GROUP_HOST_URL that is not a URL as off', async () => {
-		vi.spyOn(console, 'error').mockImplementation(() => {});
-		Object.assign(env, { GROUP_HOST_URL: 'host.example' });
-		const wrong = await serve(['rsvp.atmo.no.suchMethod', ...DECLARED]);
-		const [unknown, ...declared] = wrong.answers;
-		expect(declared).toEqual(DECLARED.map(() => unknown));
-		expect(wrong.tables).not.toContain('records_declaration');
 	});
 });

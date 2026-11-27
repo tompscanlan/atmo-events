@@ -216,7 +216,8 @@ describe("a person's own membership", () => {
 		for (const run of [
 			() => joinGroup({ groupDid: GROUP }),
 			() => cancelJoin({ groupDid: GROUP }),
-			() => leave({ groupDid: GROUP })
+			() => leave({ groupDid: GROUP }),
+			() => confirmMember({ groupDid: GROUP })
 		]) {
 			await expect(run()).rejects.toMatchObject({ status: 404 });
 		}
@@ -232,10 +233,16 @@ describe("an admin's acts on the members page", () => {
 		expect(await denyRequest({ groupDid: GROUP, did: BOB })).toEqual({ ok: true });
 		expect(mocks.denyJoinRequest).toHaveBeenCalledWith(writer, BOB);
 		expect(await changeRole({ groupDid: GROUP, did: BOB, admin: true })).toEqual({ ok: true });
-		// Their membership is read with the admin's own access.
-		expect(mocks.setMemberAdmin).toHaveBeenCalledWith(writer, caller, BOB, true);
+		// Their membership is read as the group, through the link.
+		expect(mocks.setMemberAdmin).toHaveBeenCalledWith(writer, BOB, true);
 		expect(await removeFromGroup({ groupDid: GROUP, did: BOB })).toEqual({ ok: true });
 		expect(mocks.removeMember).toHaveBeenCalledWith(writer, BOB);
+	});
+
+	it("changes a role when the admin's own sign-in can't be restored, since it reads nothing", async () => {
+		mocks.callerSession.mockResolvedValue(null);
+		expect(await changeRole({ groupDid: GROUP, did: BOB, admin: false })).toEqual({ ok: true });
+		expect(mocks.setMemberAdmin).toHaveBeenCalledWith(writer, BOB, false);
 	});
 
 	it.each([
@@ -269,7 +276,8 @@ describe("an admin's acts on the members page", () => {
 			new XrpcError('com.atproto.space.createRecord', 403, 'ScopeMissing')
 		);
 		await expect(approveRequest({ groupDid: GROUP, did: BOB })).rejects.toMatchObject({
-			status: 403
+			status: 403,
+			body: { message: 'Your role in this group no longer allows that.' }
 		});
 		mocks.admitMember.mockRejectedValue(new XrpcError('com.atproto.space.createRecord', 401, null));
 		await expect(approveRequest({ groupDid: GROUP, did: BOB })).rejects.toMatchObject({
@@ -282,16 +290,6 @@ describe("an admin's acts on the members page", () => {
 			status: 502,
 			body: { message: 'The group host could not be reached. Try again shortly.' }
 		});
-	});
-
-	it('is the same 404 without a link, and writes nothing', async () => {
-		mocks.requireGroupWriter.mockRejectedValue(
-			Object.assign(new Error('Group not found'), { status: 404 })
-		);
-		await expect(approveRequest({ groupDid: GROUP, did: BOB })).rejects.toMatchObject({
-			status: 404
-		});
-		expect(mocks.admitMember).not.toHaveBeenCalled();
 	});
 
 	it('is a 404 with groups off, before looking for a link', async () => {

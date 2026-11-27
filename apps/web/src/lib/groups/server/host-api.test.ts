@@ -51,12 +51,16 @@ describe('the group host, as it describes itself', () => {
 	});
 
 	it.each([
-		['no DID', { availableUserDomains: ['.groups.example'] }],
-		['no domain', { did: 'did:web:host.example', availableUserDomains: [] }],
-		['a domain without its dot', { did: 'did:web:host.example', availableUserDomains: ['x.y'] }]
-	])('throws for an answer with %s', async (_why, body) => {
+		['no DID', { availableUserDomains: ['.groups.example'] }, 'names no DID'],
+		['no domain', { did: 'did:web:host.example', availableUserDomains: [] }, 'names no domain'],
+		[
+			'a domain without its dot',
+			{ did: 'did:web:host.example', availableUserDomains: ['x.y'] },
+			'names no domain'
+		]
+	])('throws for an answer with %s', async (_why, body, message) => {
 		described(body);
-		await expect(groupHostInfo()).rejects.toThrow();
+		await expect(groupHostInfo()).rejects.toThrow(message);
 	});
 
 	it.each([
@@ -78,7 +82,7 @@ describe('the group host, as it describes itself', () => {
 
 	it('throws when the host does not answer, or there is none', async () => {
 		mocks.networkFetch.mockImplementation(async () => new Response('down', { status: 502 }));
-		await expect(groupHostInfo()).rejects.toThrow();
+		await expect(groupHostInfo()).rejects.toThrow('com.atproto.server.describeServer failed: 502');
 		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
 		await expect(groupHostInfo()).rejects.toThrow('no group host');
 	});

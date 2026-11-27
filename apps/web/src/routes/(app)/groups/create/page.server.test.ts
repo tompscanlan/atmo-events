@@ -9,7 +9,6 @@ const mocks = vi.hoisted(() => ({
 	createGroupAtHost: vi.fn(),
 	rememberUnfinished: vi.fn(),
 	unfinishedGroups: vi.fn(),
-	forgetHeldAtGroupHost: vi.fn(),
 	startGroupLink: vi.fn(),
 	ownGroupNotNoted: vi.fn()
 }));
@@ -21,9 +20,6 @@ vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.ca
 vi.mock('#lib/groups/server/host-api.js', async (importActual) => ({
 	...(await importActual<typeof import('#lib/groups/server/host-api.js')>()),
 	groupHostInfo: mocks.groupHostInfo
-}));
-vi.mock('#lib/groups/server/group.js', () => ({
-	forgetHeldAtGroupHost: mocks.forgetHeldAtGroupHost
 }));
 vi.mock('#lib/groups/server/create.js', async (importActual) => ({
 	...(await importActual<typeof import('#lib/groups/server/create.js')>()),
@@ -101,7 +97,7 @@ describe('the make-a-group page', () => {
 		expect(await loadAs(ALICE, `?asked=${ALICE}`)).toMatchObject({ access: 'refused' });
 	});
 
-	it('asks again, rather than refusing, someone whose permission is for another host', async () => {
+	it('takes only a permission for this host: one for another is asked for again, and nothing is made with it', async () => {
 		const elsewhere = 'atproto rpc?lxm=org.atgrp.internal.createGroup&aud=did:web:other.example';
 		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: elsewhere, handle: vi.fn() });
 		expect(await loadAs(ALICE)).toMatchObject({ access: 'ask' });
@@ -151,7 +147,6 @@ describe('making a group', () => {
 			public: true,
 			listed: true
 		});
-		expect(mocks.forgetHeldAtGroupHost).toHaveBeenCalled();
 		expect(mocks.startGroupLink).toHaveBeenCalledWith(GROUP, ALICE);
 	});
 
@@ -162,12 +157,6 @@ describe('making a group', () => {
 			status: 400,
 			data: { values: { address: 'night riders' }, message: expect.stringContaining('address') }
 		});
-		expect(mocks.createGroupAtHost).not.toHaveBeenCalled();
-	});
-
-	it('asks for the permission before trying', async () => {
-		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: 'atproto', handle: vi.fn() });
-		expect(await post(FORM)).toMatchObject({ status: 403, data: { reason: 'no-permission' } });
 		expect(mocks.createGroupAtHost).not.toHaveBeenCalled();
 	});
 

@@ -39,11 +39,9 @@
 	let postsMembersOnly = $derived(
 		data.calendar === 'ready' && Boolean(group.linked?.can.membersOnly)
 	);
-	/** Members see who else is in the group; an admin who linked it, also those asking to join. */
-	let showMembers = $derived(
-		group.member === true ||
-			Boolean(group.linked && (group.linked.can.admit || group.linked.can.remove))
-	);
+	/** Members see who else is in the group; an admin who linked it, also those asking to join. As
+	 *  the members page lets in only someone the host's records count a member, so is the link. */
+	let showMembers = $derived(group.member === true);
 
 	/** The person's own membership: the host's refusals come back in words to show. */
 	async function asMember(run: () => Promise<unknown>) {

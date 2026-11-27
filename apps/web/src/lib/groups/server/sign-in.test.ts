@@ -92,12 +92,14 @@ describe('availability', () => {
 
 describe('the group client', () => {
 	it('is its own client, sharing only the library key', () => {
-		expect(groupClientMetadata()).toMatchObject({
+		groupClientMetadata();
+		expect(latest().options.metadata).toEqual({
 			client_id: 'https://atmo.example/oauth/group/client-metadata.json',
 			redirect_uris: ['https://atmo.example/oauth/group/callback'],
 			jwks_uri: 'https://atmo.example/oauth/jwks.json',
 			scope: GROUP_SESSION_SCOPE
 		});
+		expect((latest().options as { keyset?: unknown }).keyset).toEqual([{ kty: 'EC', kid: 'k' }]);
 	});
 
 	it('takes the public address as an origin, as the library does', () => {
@@ -248,21 +250,6 @@ describe('finishGroupLink', () => {
 		expect(await finishGroupLink(params('s1'), ALICE)).toEqual({ ok: true, groupDid: GROUP });
 	});
 
-	it('forgets what the group host was last said to hold, so the group just linked is counted at once', async () => {
-		const held = JSON.stringify({ origin: 'https://host.example', dids: [] });
-		await sessions.put('groups:held-at-host', held);
-		await storedState('s1', { groupDid: GROUP, by: ALICE });
-		await startGroupLink(GROUP, ALICE);
-		latest().client.callback.mockRejectedValue(new Error('access_denied'));
-		await finishGroupLink(params('s1'), ALICE);
-		expect(await sessions.get('groups:held-at-host', 'text')).toBe(held);
-
-		await storedState('s2', { groupDid: GROUP, by: ALICE });
-		latest().client.callback.mockResolvedValue({ session: { did: GROUP }, state: null });
-		expect(await finishGroupLink(params('s2'), ALICE)).toEqual({ ok: true, groupDid: GROUP });
-		expect(await sessions.get('groups:held-at-host', 'text')).toBeNull();
-	});
-
 	it('revokes the link it replaces, through a client that holds only that one', async () => {
 		const old = { tokenSet: { access_token: 'old' } };
 		await sessions.put(`group:session:${ALICE}/${GROUP}`, JSON.stringify(old));
@@ -330,6 +317,7 @@ describe('linked groups', () => {
 		await sessions.put(`group:session:${BOB}/did:plc:other`, '{}');
 		await sessions.put('group:state:s1', '{}');
 		expect(await linkedGroups(ALICE)).toEqual([GROUP]);
+		expect(await linkedGroups(BOB)).toEqual(['did:plc:other']);
 	});
 
 	it('forgets a link even when the PDS cannot revoke it', async () => {

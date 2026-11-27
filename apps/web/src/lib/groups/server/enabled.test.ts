@@ -39,7 +39,7 @@ describe('the groups switch', () => {
 		expect(logged).not.toHaveBeenCalled();
 	});
 
-	it("reads a setting as contrail's CLI does", () => {
+	it('takes http as well as https, and no other scheme', () => {
 		expect(parseGroupHostUrl('http://localhost:2583')?.origin).toBe('http://localhost:2583');
 		expect(parseGroupHostUrl('mailto:x@host.example')).toBeNull();
 		expect(parseGroupHostUrl(undefined)).toBeNull();

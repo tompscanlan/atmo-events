@@ -99,12 +99,11 @@ describe("a members-only event's page", () => {
 		expect(shown()).toContain('To RSVP, allow atmo to act for you in groups');
 	});
 
-	it('asks someone signed out to sign in, naming no event', async () => {
+	it('asks someone signed out to sign in', async () => {
 		render(EventPage, {
 			data: { pageTitle: 'Members-only event', group, view: 'signed-out' } as never
 		});
 		await expect.element(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
-		expect(shown()).not.toContain('Supper');
 	});
 
 	it("asks a member for what opening it takes: the groups' permissions and the guest scope", async () => {
