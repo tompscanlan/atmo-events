@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
 import { fakeKemHost } from '#lib/spaces/server/__fixtures__/space-mac-host.js';
 import { SpaceAccessDenied, type SpaceHosts } from '#lib/spaces/server/space-credential.js';
+import { memoryKV, type MemoryKV } from './__fixtures__/kv';
 import { isAuthRefused, isRoleRefused, XrpcError, type XrpcHandle } from './xrpc';
 
 const mocks = vi.hoisted(() => ({
@@ -9,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 	post: vi.fn(),
 	resolve: vi.fn(),
 	upcomingGroups: vi.fn(),
+	groupServers: vi.fn(),
 	groupLabels: vi.fn(),
 	cacheProfile: vi.fn(),
 	ensureInit: vi.fn(),
@@ -20,7 +22,7 @@ vi.mock('./declared', () => ({
 	DECLARED_PAGE: 50,
 	upcomingGroups: mocks.upcomingGroups,
 	groupLabels: mocks.groupLabels,
-	groupServers: vi.fn(),
+	groupServers: mocks.groupServers,
 	cachedProfiles: vi.fn(),
 	cacheProfile: mocks.cacheProfile,
 	ensureGroupSchema: mocks.ensureGroupSchema
@@ -42,9 +44,13 @@ vi.mock('@svelte-atproto/oauth/network', () => ({
 
 import {
 	atGroupHost,
+	forgetHeldAtGroupHost,
 	groupHostSpaces,
+	heldAtGroupHost,
+	heldOf,
 	isDeclared,
 	listDeclaredGroups,
+	listGroupServers,
 	listUpcomingGroups,
 	listGroup,
 	parseGroupProfile,
@@ -482,5 +488,114 @@ describe('cached group profiles', () => {
 		expect(mocks.cacheProfile).toHaveBeenLastCalledWith(env.DB, GROUP, null);
 		await storeCachedProfile(group, { profile: null, public: true });
 		expect(mocks.cacheProfile).toHaveBeenLastCalledWith(env.DB, GROUP, null);
+	});
+});
+
+describe("the accounts this site's group host holds", () => {
+	let kv: MemoryKV;
+	const listRepos = () =>
+		mocks.networkFetch.mock.calls.filter(([input]) => String(input).includes('listRepos'));
+
+	/** The group host's listRepos: one page per entry, each a list of [did, active]. */
+	function hostHolds(...pages: [string, boolean][][]) {
+		mocks.networkFetch.mockImplementation(async (input) => {
+			const cursor = new URL(String(input)).searchParams.get('cursor');
+			const index = cursor ? Number(cursor) : 0;
+			const repos = (pages[index] ?? []).map(([did, active]) => ({ did, active }));
+			return Response.json({
+				repos,
+				...(index + 1 < pages.length ? { cursor: `${index + 1}` } : {})
+			});
+		});
+	}
+
+	beforeEach(async () => {
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		kv = memoryKV();
+		Object.assign(env, { OAUTH_SESSIONS: kv });
+		await forgetHeldAtGroupHost();
+		hostHolds([[GROUP, true]]);
+	});
+
+	it("are read from every page of the host's listRepos, but inactive ones, and cached", async () => {
+		hostHolds(
+			[
+				[GROUP, true],
+				['did:plc:gone', false]
+			],
+			[['did:plc:second', true]]
+		);
+		expect(await heldAtGroupHost()).toEqual([GROUP, 'did:plc:second']);
+		expect(String(listRepos()[0][0])).toBe(
+			'https://host.example/xrpc/com.atproto.sync.listRepos?limit=1000'
+		);
+		expect(listRepos()).toHaveLength(2);
+		expect(await heldAtGroupHost()).toEqual([GROUP, 'did:plc:second']);
+		expect(listRepos()).toHaveLength(2);
+		expect(kv.ttlOf('groups:held-at-host')).toBe(600);
+	});
+
+	it('are none for a host that never answers in time, and that is remembered for a minute', async () => {
+		const limit = new AbortController();
+		const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(limit.signal);
+		try {
+			mocks.networkFetch.mockImplementation(
+				(_input, init) =>
+					new Promise((_resolve, reject) => {
+						const signal = init?.signal;
+						if (signal?.aborted) reject(signal.reason);
+						signal?.addEventListener('abort', () => reject(signal.reason));
+					})
+			);
+			const held = heldAtGroupHost();
+			limit.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+			expect(await held).toBeNull();
+			expect(kv.ttlOf('groups:held-at-host')).toBe(60);
+		} finally {
+			timeout.mockRestore();
+		}
+		hostHolds([[GROUP, true]]);
+		expect(await heldAtGroupHost()).toBeNull();
+	});
+
+	it('are asked for once by two lists that want them at the same time', async () => {
+		expect(await Promise.all([heldAtGroupHost(), heldAtGroupHost()])).toEqual([[GROUP], [GROUP]]);
+		expect(listRepos()).toHaveLength(1);
+	});
+
+	it('are asked for again once a group is listed here, so it counts at once', async () => {
+		hostHolds([['did:plc:other', true]]);
+		expect(await heldAtGroupHost()).toEqual(['did:plc:other']);
+		await listGroup(pds({}), GROUP);
+		hostHolds([
+			['did:plc:other', true],
+			[GROUP, true]
+		]);
+		expect(await heldAtGroupHost()).toEqual(['did:plc:other', GROUP]);
+	});
+
+	it("decide the host's own list and its places, and with the host unreachable none count", async () => {
+		mocks.ensureInit.mockResolvedValue(undefined);
+		mocks.upcomingGroups.mockResolvedValue({ groups: [], cursor: null });
+		mocks.groupServers.mockResolvedValue([]);
+		await listUpcomingGroups();
+		await listGroupServers();
+		const home = { origin: HOST, held: [GROUP] };
+		expect(mocks.upcomingGroups).toHaveBeenCalledWith(env.DB, expect.any(String), null, home);
+		expect(mocks.groupServers).toHaveBeenCalledWith(env.DB, expect.any(String), undefined, home);
+		expect(await heldOf(HOST, [GROUP, 'did:plc:claims'])).toEqual([GROUP]);
+		// Any other server's list is as its accounts name it: nothing there can be asked cheaply.
+		expect(await heldOf('https://elsewhere.example', ['did:plc:claims'])).toEqual([
+			'did:plc:claims'
+		]);
+
+		await forgetHeldAtGroupHost();
+		mocks.networkFetch.mockRejectedValue(new Error('offline'));
+		await listUpcomingGroups();
+		expect(mocks.upcomingGroups).toHaveBeenLastCalledWith(env.DB, expect.any(String), null, {
+			origin: HOST,
+			held: []
+		});
+		expect(await heldOf(HOST, [GROUP])).toEqual([]);
 	});
 });

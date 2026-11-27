@@ -105,12 +105,26 @@ const handleOf = (identity: string) =>
 	`CASE WHEN ${identity}.handle IN ('', 'handle.invalid') THEN NULL ELSE ${identity}.handle END`;
 const startsAt = (event: string) => `json_extract(${event}.record, '$.startsAt')`;
 
-/** The visible declarations at rkey self, each with its account's identity as `i`. Built per
- *  request, since the moderation check inlines the time. */
-function declared(columns: string): string {
-	return `SELECT ${columns} FROM ${DECLARATIONS} d LEFT JOIN identities i ON i.did = d.did
-		WHERE d.rkey = 'self' AND ${visibleRecordSql('d')}`;
+/** This site's own group host, and the accounts it says it holds. */
+export interface GroupHome {
+	origin: string;
+	held: string[];
 }
+
+/** The visible declarations at rkey self, each with its account's identity as `i`. Built per
+ *  request, since the moderation check inlines the time. With `home`, an account that names this
+ *  site's group host is one only when the host holds it, which takes two parameters after those of
+ *  `columns`: the host's origin and the accounts it holds, as JSON. */
+function declared(columns: string, home: GroupHome | null): string {
+	const held = home
+		? `AND (${serverOf('i')} <> ? OR d.did IN (SELECT value FROM json_each(?)))`
+		: '';
+	return `SELECT ${columns} FROM ${DECLARATIONS} d LEFT JOIN identities i ON i.did = d.did
+		WHERE d.rkey = 'self' AND ${visibleRecordSql('d')} ${held}`;
+}
+
+const homeValues = (home: GroupHome | null) =>
+	home ? [home.origin, JSON.stringify(home.held)] : [];
 
 /** How many of a group's events starting from now on the list looks through, at most, for one that
  *  counts. Those soonest to start are taken by the index alone, then checked: so a group whose next
@@ -238,7 +252,8 @@ const after = (a: [string, string], b: [string, string]) =>
 export async function upcomingGroups(
 	db: Database,
 	now: string,
-	cursor: string | null = null
+	cursor: string | null = null,
+	home: GroupHome | null = null
 ): Promise<UpcomingPage> {
 	const place = parsePlace(cursor);
 	const at = place?.at ?? now;
@@ -248,7 +263,8 @@ export async function upcomingGroups(
 		.prepare(
 			`WITH next AS MATERIALIZED (${declared(
 				`d.did, ${serverOf('i')} AS server, ${handleOf('i')} AS handle,
-				(SELECT e.uri ${upcomingEvents('d.did')} ORDER BY ${startsAt('e')}, e.uri LIMIT 1) AS uri`
+				(SELECT e.uri ${upcomingEvents('d.did')} ORDER BY ${startsAt('e')}, e.uri LIMIT 1) AS uri`,
+				home
 			)}),
 			placed AS (
 				SELECT n.did, n.server, n.handle, n.uri,
@@ -268,7 +284,7 @@ export async function upcomingGroups(
 			ORDER BY left_to_show.starts_at, left_to_show.did
 			LIMIT ${UPCOMING_PAGE + 3}`
 		)
-		.bind(at, JSON.stringify(behind), last[0], last[1])
+		.bind(at, ...homeValues(home), JSON.stringify(behind), last[0], last[1])
 		.all<{
 			did: string;
 			server: string;
@@ -346,12 +362,14 @@ export interface GroupServer {
 export async function groupServers(
 	db: Database,
 	now: string,
-	limit = SERVERS_SHOWN
+	limit = SERVERS_SHOWN,
+	home: GroupHome | null = null
 ): Promise<GroupServer[]> {
 	const { results } = await db
 		.prepare(
 			`WITH servers AS MATERIALIZED (${declared(
-				`${serverOf('i')} AS server, EXISTS (SELECT 1 ${upcomingEvents('d.did')}) AS upcoming`
+				`${serverOf('i')} AS server, EXISTS (SELECT 1 ${upcomingEvents('d.did')}) AS upcoming`,
+				home
 			)})
 			SELECT server, COUNT(*) AS groups, SUM(upcoming) AS upcoming FROM servers
 			WHERE server <> ''
@@ -359,7 +377,7 @@ export async function groupServers(
 			ORDER BY upcoming DESC, groups DESC, server
 			LIMIT ?`
 		)
-		.bind(now, limit)
+		.bind(now, ...homeValues(home), limit)
 		.all<GroupServer>();
 	return results ?? [];
 }

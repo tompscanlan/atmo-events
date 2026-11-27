@@ -365,6 +365,45 @@ describe('the groups with an event coming', () => {
 	});
 });
 
+describe("this site's own group host", () => {
+	const HOME = 'https://groups.example';
+
+	it('counts and places only the accounts it holds, of those that name it', async () => {
+		const db = await setup();
+		const real = await groupsAt(db, HOME, 'r', 3, 50);
+		// Accounts whose DID documents name the host, each with an event sooner than any real group.
+		const claims = await groupsAt(db, HOME, 'x', 30, 1);
+		const elsewhere = await groupsAt(db, 'https://other.example', 'o', 2, 60);
+		const home = { origin: HOME, held: real };
+
+		const page = await upcomingGroups(db, NOW, null, home);
+		expect(page.groups.map((group) => group.did)).toEqual([...real, ...elsewhere]);
+		expect(page.cursor).toBeNull();
+		expect(await groupServers(db, NOW, undefined, home)).toEqual([
+			{ server: HOME, groups: 3, upcoming: 3 },
+			{ server: 'https://other.example', groups: 2, upcoming: 2 }
+		]);
+		// Without asking the host, they would have taken its places and its row.
+		const unasked = await upcomingGroups(db, NOW);
+		expect(unasked.groups.slice(0, UPCOMING_PER_SERVER)).toEqual(
+			claims.slice(0, UPCOMING_PER_SERVER).map((did) => expect.objectContaining({ did }))
+		);
+	});
+
+	it('shows none of the groups that name it while it has not said which it holds', async () => {
+		const db = await setup();
+		await groupsAt(db, HOME, 'r', 3, 1);
+		const elsewhere = await groupsAt(db, 'https://other.example', 'o', 2, 60);
+		const home = { origin: HOME, held: [] };
+		expect((await upcomingGroups(db, NOW, null, home)).groups.map((group) => group.did)).toEqual(
+			elsewhere
+		);
+		expect(await groupServers(db, NOW, undefined, home)).toEqual([
+			{ server: 'https://other.example', groups: 2, upcoming: 2 }
+		]);
+	});
+});
+
 describe("before the scheduled job builds the groups' index", () => {
 	it('is not built by a page: the table a page makes comes alone', async () => {
 		const db = await setup({ index: false });

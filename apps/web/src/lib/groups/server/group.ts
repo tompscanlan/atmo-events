@@ -6,7 +6,7 @@ import { env } from 'cloudflare:workers';
 import type { ActorIdentifier } from '@atcute/lexicons';
 import type { ResourceUri } from '@atcute/lexicons/syntax';
 import { createActorResolver } from '@svelte-atproto/oauth/network';
-import { timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
+import { fetchOtherServer, timeLimitedNetwork } from '#lib/spaces/server/other-servers.js';
 import { didSpaceHosts, type SpaceHosts } from '#lib/spaces/server/space-credential.js';
 import { credentialSpaceReader } from '#lib/spaces/server/space-read.js';
 import { ensureInit, getServerClient } from '#lib/contrail/index.js';
@@ -34,6 +34,7 @@ import {
 	groupLabels,
 	groupServers,
 	upcomingGroups,
+	type GroupHome,
 	type GroupLabel,
 	type GroupServer,
 	type UpcomingPage
@@ -105,16 +106,135 @@ async function groupsDatabase(): Promise<D1Database> {
 	return env.DB;
 }
 
+// Which accounts this site's own group host holds. A DID document can name any server as its PDS,
+// so an account can name this site's group host without being held there: the list asks the host
+// itself, by `com.atproto.sync.listRepos`, and counts as its groups only the accounts it lists. For
+// any other server nothing short of asking it would tell, and a server is whatever accounts name
+// it: their groups are shown as naming that server, which is all the list can know of them.
+
+const HELD_KEY = 'groups:held-at-host';
+const HELD_TTL_SECONDS = 600;
+/** listRepos pages read at most, 1000 accounts each; groups past them are not counted as there. */
+const HELD_PAGES = 10;
+/** For the whole read, every page in it: a host that hangs costs the list this wait, no more. */
+const HELD_TIME_LIMIT_MS = 8_000;
+/** KV's shortest expiry. */
+const HELD_FAILURE_TTL_SECONDS = 60;
+
+let heldReading: Promise<string[] | null> | null = null;
+/** Counts the times the answer was forgotten here, so a read that began before is not cached. */
+let heldForgotten = 0;
+
+/** The DIDs this site's group host says it holds, at most HELD_PAGES pages of them, cached for
+ *  ten minutes. Null when there is no host or it did not answer in time: then no account counts
+ *  as one of its groups. A host that did not answer is remembered for a minute, and reads at the
+ *  same time share one, so a host that is down costs one wait, not one per page. */
+export async function heldAtGroupHost(): Promise<string[] | null> {
+	const origin = groupHostOrigin();
+	if (!origin) return null;
+	const cached = await env.OAUTH_SESSIONS?.get<{ origin: string; dids?: string[] }>(
+		HELD_KEY,
+		'json'
+	).catch(() => null);
+	if (cached?.origin === origin) return cached.dids ?? null;
+	heldReading ??= readHeld(origin).finally(() => {
+		heldReading = null;
+	});
+	return heldReading;
+}
+
+/** After this site links a group or lists one, so the list counts it at once rather than once the
+ *  cached answer expires. A read already under way is not cached, since it may have begun before
+ *  the group was there. */
+export async function forgetHeldAtGroupHost(): Promise<void> {
+	heldForgotten++;
+	heldReading = null;
+	await env.OAUTH_SESSIONS?.delete(HELD_KEY).catch((e) => {
+		console.warn('[groups] what the group host holds could not be forgotten:', e);
+	});
+}
+
+async function listHeld(origin: string): Promise<string[]> {
+	const dids: string[] = [];
+	let cursor: string | null = null;
+	for (let page = 0; page < HELD_PAGES; page++) {
+		const url = new URL('/xrpc/com.atproto.sync.listRepos', origin);
+		url.searchParams.set('limit', '1000');
+		if (cursor) url.searchParams.set('cursor', cursor);
+		const res = await fetchOtherServer(url, { method: 'GET' });
+		if (!res.ok) throw new Error(`listRepos answered ${res.status}`);
+		const body = (await res.json()) as {
+			repos?: { did?: unknown; active?: unknown }[];
+			cursor?: unknown;
+		};
+		for (const repo of body.repos ?? []) {
+			if (typeof repo.did === 'string' && repo.active !== false) dids.push(repo.did);
+		}
+		const next = typeof body.cursor === 'string' && body.cursor ? body.cursor : null;
+		if (!next || next === cursor) break;
+		cursor = next;
+	}
+	return dids;
+}
+
+async function readHeld(origin: string): Promise<string[] | null> {
+	const kv = env.OAUTH_SESSIONS;
+	const forgotten = heldForgotten;
+	const current = () => forgotten === heldForgotten;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		const late = new Promise<never>((_, reject) => {
+			timer = setTimeout(
+				() => reject(new Error('listRepos had no answer in time')),
+				HELD_TIME_LIMIT_MS
+			);
+		});
+		const dids = await Promise.race([listHeld(origin), late]);
+		if (current()) {
+			await kv
+				?.put(HELD_KEY, JSON.stringify({ origin, dids }), { expirationTtl: HELD_TTL_SECONDS })
+				.catch((e) => console.warn('[groups] what the group host holds was not cached:', e));
+		}
+		return dids;
+	} catch (e) {
+		console.warn('[groups] the group host did not say which groups it holds:', e);
+		if (current()) {
+			await kv
+				?.put(HELD_KEY, JSON.stringify({ origin }), { expirationTtl: HELD_FAILURE_TTL_SECONDS })
+				.catch(() => {});
+		}
+		return null;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/** This site's group host and the accounts it holds, for the list: none held when it did not say. */
+async function home(): Promise<GroupHome | null> {
+	const origin = groupHostOrigin();
+	return origin ? { origin, held: (await heldAtGroupHost()) ?? [] } : null;
+}
+
 /** A page of the groups with an event coming, soonest first: see upcomingGroups. Read from the
  *  index's tables directly, in one query. */
 export async function listUpcomingGroups(cursor: string | null = null): Promise<UpcomingPage> {
-	return upcomingGroups(await groupsDatabase(), new Date().toISOString(), cursor);
+	const [db, at] = await Promise.all([groupsDatabase(), home()]);
+	return upcomingGroups(db, new Date().toISOString(), cursor, at);
 }
 
 /** The servers with declared groups, with how many each has and how many of those have an event
  *  coming. */
 export async function listGroupServers(): Promise<GroupServer[]> {
-	return groupServers(await groupsDatabase(), new Date().toISOString());
+	const [db, at] = await Promise.all([groupsDatabase(), home()]);
+	return groupServers(db, new Date().toISOString(), undefined, at);
+}
+
+/** Of `dids`, listed as `server`'s, those that server holds: all of them for any server but this
+ *  site's group host, which is asked. */
+export async function heldOf(server: string, dids: string[]): Promise<string[]> {
+	if (server !== groupHostOrigin()) return dids;
+	const held = new Set((await heldAtGroupHost()) ?? []);
+	return dids.filter((did) => held.has(did));
 }
 
 export interface DeclaredGroupsPage {
@@ -299,6 +419,7 @@ export async function listGroup(handle: XrpcHandle, groupDid: string): Promise<v
 		}
 	});
 	await notifyIndex(declarationUri(groupDid));
+	await forgetHeldAtGroupHost();
 }
 
 /** Deletes the declaration, the group host's own included, which it writes again only the next

@@ -30,6 +30,7 @@ import {
 } from '../scopes';
 import { CREATE_IN_THIS_BUILD, ROSTER_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from '../build';
 import { groupsEnabled } from './enabled';
+import { forgetHeldAtGroupHost } from './group';
 import { listKeys, prefixedKV } from './kv';
 import type { XrpcHandle } from './xrpc';
 
@@ -232,6 +233,8 @@ export async function finishGroupLink(
 	}
 	await env.OAUTH_SESSIONS.put(askedKey(link.by, link.groupDid), GROUP_SESSION_SCOPE);
 	if (replaced) await revokeReplaced(link.groupDid, link.by, replaced);
+	// A group just made at the host is in its list at once.
+	await forgetHeldAtGroupHost();
 	return { ok: true, groupDid: link.groupDid };
 }
 
