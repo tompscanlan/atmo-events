@@ -25,9 +25,10 @@ import {
 	GROUP_META_READ_SCOPE,
 	GROUP_POLICY_SCOPE,
 	GROUP_SETTINGS_SCOPES,
-	MEMBERS_ONLY_SCOPES
+	MEMBERS_ONLY_SCOPES,
+	ROSTER_SCOPES
 } from '../scopes';
-import { CREATE_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from '../build';
+import { CREATE_IN_THIS_BUILD, ROSTER_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from '../build';
 import { groupsEnabled } from './enabled';
 import { forgetHeldAtGroupHost } from './group';
 import { listKeys, prefixedKV } from './kv';
@@ -46,14 +47,16 @@ const STATE_PREFIX = 'group:state:';
 const STATE_TTL_SECONDS = 600;
 
 /** The host keeps or drops each scope whole, so the meta read is its own scope and
- *  survives for a member whose roles grant no writes, and each of the settings' and members-only
- *  events' writes is its own too. Every scope for one space names the same key, since the host's
- *  approval page cannot show one space as two rows. The settings' are asked for only in a build
- *  that has them (../build.ts); without the settings, the meta space's policy is still asked for
- *  while making a group here is in it, whose setting up makes a group public. Listing a group
- *  needs none of them: it writes the group's declaration, in its repo. Turning members-only events
- *  on reads the group's index of its spaces, in the members space. */
+ *  survives for a member whose roles grant no writes, and each of the settings', the members
+ *  page's and members-only events' writes is its own too. Every scope for one space names the
+ *  same key, since the host's approval page cannot show one space as two rows. The members page's
+ *  and the settings' are asked for only in a build that has them (../build.ts); without the
+ *  settings, the meta space's policy is still asked for while making a group here is in it, whose
+ *  setting up makes a group public. Listing a group needs none of them: it writes the group's
+ *  declaration, in its repo. Turning members-only events on reads the group's index of its spaces,
+ *  in the members space, which the members page's scopes read too when it is in the build. */
 export function groupSessionScope(
+	roster: boolean,
 	settings: boolean = SETTINGS_IN_THIS_BUILD,
 	create: boolean = CREATE_IN_THIS_BUILD
 ): string {
@@ -63,11 +66,12 @@ export function groupSessionScope(
 		scope.repo({ collection: [GROUP_DECLARATION_COLLECTION, GROUP_EVENT_COLLECTION] }),
 		scope.blob({ accept: ['image/*'] }),
 		...(settings ? GROUP_SETTINGS_SCOPES : create ? [GROUP_POLICY_SCOPE] : []),
+		...(roster ? ROSTER_SCOPES : []),
 		...MEMBERS_ONLY_SCOPES
 	].join(' ');
 }
 
-export const GROUP_SESSION_SCOPE = groupSessionScope();
+export const GROUP_SESSION_SCOPE = groupSessionScope(ROSTER_IN_THIS_BUILD);
 
 /** A loopback client cannot have a second client_id, and only one group host is served. */
 export function groupSignInAvailable(): boolean {

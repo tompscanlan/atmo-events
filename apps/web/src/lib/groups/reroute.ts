@@ -8,10 +8,13 @@
 // too, where the Worker's settings can't be read. So the server hooks hand it the switch with
 // `gateGroupRoutes(groupsEnabled)`; in the browser nothing is handed over and nothing is rerouted
 // but the parts left out of the build.
-import { CREATE_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from './build';
+import { CREATE_IN_THIS_BUILD, ROSTER_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from './build';
 
 /** Every address of `routes/(app)/groups/**` and `routes/oauth/group/**`. */
 const GROUP_ADDRESS = /^\/(?:groups|oauth\/group)(?:\/|$)/;
+
+/** Every address of `routes/(app)/groups/[actor]/members/**`. */
+const MEMBERS_ADDRESS = /^\/groups\/[^/]+\/members(?:\/|$)/;
 
 /** Every address of `routes/(app)/groups/[actor]/settings/**`. */
 const SETTINGS_ADDRESS = /^\/groups\/[^/]+\/settings(?:\/|$)/;
@@ -22,6 +25,7 @@ const CREATE_ADDRESS = /^\/groups\/create(?:\/|$)/;
 /** Whether the address is one of a part left out of this build. */
 function leftOut(path: string): boolean {
 	return (
+		(!ROSTER_IN_THIS_BUILD && MEMBERS_ADDRESS.test(path)) ||
 		(!CREATE_IN_THIS_BUILD && CREATE_ADDRESS.test(path)) ||
 		(!SETTINGS_IN_THIS_BUILD && SETTINGS_ADDRESS.test(path))
 	);

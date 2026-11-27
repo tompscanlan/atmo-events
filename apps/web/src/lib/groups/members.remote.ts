@@ -1,5 +1,7 @@
 // A person's own membership: join, ask to join, cancel the request, leave. Each goes to the group
-// host as the person (./server/host.ts).
+// host as the person (./server/host.ts). And an admin's acts on the members page: admit or deny a
+// request, make a member an admin or a member again, and remove one, each as the group through
+// the session they linked (./server/roster.ts).
 import { error } from '@sveltejs/kit';
 import { command, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
@@ -11,8 +13,8 @@ import {
 	rememberJoinRequest,
 	writeConfirmation
 } from './server/confirmation';
-import { GROUP_NOT_FOUND } from './server/context';
-import { requireGroupsEnabled } from './server/enabled';
+import { GROUP_NOT_FOUND, requireGroupWriter, type GroupWriter } from './server/context';
+import { requireGroupsEnabled, requireRosterInBuild } from './server/enabled';
 import { atGroupHost, resolveGroup } from './server/group';
 import {
 	cancelJoinRequest,
@@ -21,8 +23,16 @@ import {
 	requestJoin,
 	type GroupActionRefusal
 } from './server/host';
+import {
+	admitMember,
+	denyJoinRequest,
+	removeMember,
+	RosterRefused,
+	setMemberAdmin,
+	type RosterRefusal
+} from './server/roster';
 import { isMemberAsPerson, personReader } from './server/person';
-import { errorKind } from './server/xrpc';
+import { errorKind, isLinkBroken, isRoleRefused } from './server/xrpc';
 
 const didSchema = v.pipe(v.string(), v.regex(/^did:[a-z]+:[a-zA-Z0-9._:%-]{1,2048}$/));
 
@@ -121,4 +131,79 @@ export const confirmMember = command(v.object({ groupDid: didSchema }), async ({
 	const written = await atHost(groupDid, () => writeConfirmation(caller, groupDid));
 	if (written === 'skipped') error(...REFUSED['no-permission']);
 	return { ok: true };
+});
+
+/** What the members page shows for each refusal, with its status. */
+const ROSTER_REFUSED: Record<RosterRefusal, [400 | 403 | 409, string]> = {
+	'last-admin': [
+		409,
+		'That would leave the group with no admin. Make someone else an admin first.'
+	],
+	'not-assignable': [403, "Your role in this group doesn't let you give or take that role."],
+	'scope-not-held': [403, "Your role in this group doesn't hold what that role would give."],
+	'member-role': [
+		400,
+		'Everyone in a group keeps the member role. To put someone out, remove them.'
+	],
+	'no-request': [
+		409,
+		'They are no longer asking to join: they withdrew, or someone else decided already.'
+	],
+	'already-member': [409, 'They are a member already.'],
+	'not-member': [409, 'They are no longer a member.']
+};
+
+const NO_ROLE = 'Your role in this group no longer allows that.';
+const RELINK = 'Your link to this group stopped working. Link it again from its page.';
+
+/** The caller's own link to the group, or the same 404 as any group they may not see; and the
+ *  404 of groups off in a build without the members page. */
+function linked(groupDid: string): Promise<GroupWriter> {
+	requireGroupsEnabled();
+	requireRosterInBuild();
+	return requireGroupWriter(groupDid, getRequestEvent().locals.did);
+}
+
+/** As `atHost`, for a write as the group: its refusals in words, a role that no longer allows it
+ *  or a broken link as a 403, and any other failure a 502. */
+async function asGroup(groupDid: string, run: () => Promise<void>): Promise<{ ok: true }> {
+	try {
+		await run();
+		return { ok: true };
+	} catch (e) {
+		if (e instanceof RosterRefused) error(...ROSTER_REFUSED[e.reason]);
+		if (isRoleRefused(e)) error(403, NO_ROLE);
+		if (isLinkBroken(e)) error(403, RELINK);
+		console.error(
+			`[groups] ${groupDid}: an admin's call to the group host failed: ${errorKind(e)}`
+		);
+		error(502, 'The group host could not be reached. Try again shortly.');
+	}
+}
+
+const memberSchema = v.object({ groupDid: didSchema, did: didSchema });
+
+/** Admits someone waiting to join, with the roles the group gives everyone admitted on request. */
+export const approveRequest = command(memberSchema, async ({ groupDid, did }) => {
+	const writer = await linked(groupDid);
+	return asGroup(groupDid, () => admitMember(writer, did));
+});
+
+export const denyRequest = command(memberSchema, async ({ groupDid, did }) => {
+	const writer = await linked(groupDid);
+	return asGroup(groupDid, () => denyJoinRequest(writer, did));
+});
+
+/** Makes a member an admin, or an admin a member again; any other role they hold stays. */
+export const changeRole = command(
+	v.object({ groupDid: didSchema, did: didSchema, admin: v.boolean() }),
+	async ({ groupDid, did, admin: makeAdmin }) => {
+		const writer = await linked(groupDid);
+		return asGroup(groupDid, () => setMemberAdmin(writer, did, makeAdmin));
+	}
+);
+
+export const removeFromGroup = command(memberSchema, async ({ groupDid, did }) => {
+	const writer = await linked(groupDid);
+	return asGroup(groupDid, () => removeMember(writer, did));
 });

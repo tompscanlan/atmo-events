@@ -2,16 +2,17 @@
 // so a switch turned on, or a scope that grows, changes what is asked of every group host and every
 // person, and this test with it.
 import { describe, expect, it } from 'vitest';
-import { CREATE_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from './build';
+import { CREATE_IN_THIS_BUILD, ROSTER_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from './build';
 import { GROUP_PERSON_SCOPES } from './scopes';
 import { GROUP_SESSION_SCOPE } from './server/sign-in';
 
 describe('the permissions this build asks for', () => {
-	it('leaves making groups and the settings out', () => {
+	it('leaves the members page, making groups and the settings out', () => {
 		expect({
+			roster: ROSTER_IN_THIS_BUILD,
 			create: CREATE_IN_THIS_BUILD,
 			settings: SETTINGS_IN_THIS_BUILD
-		}).toEqual({ create: false, settings: false });
+		}).toEqual({ roster: false, create: false, settings: false });
 	});
 
 	it('asks a group host for exactly this, signed in as a group', () => {

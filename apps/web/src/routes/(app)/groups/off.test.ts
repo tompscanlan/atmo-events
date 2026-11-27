@@ -25,6 +25,7 @@ import { load as newEvent } from './[actor]/events/new/+page.server';
 import { load as editEvent } from './[actor]/events/[rkey]/edit/+page.server';
 import { load as membersOnlyEvent } from './[actor]/events/[rkey]/+page.server';
 import { load as settings } from './[actor]/settings/+page.server';
+import { load as members } from './[actor]/members/+page.server';
 import { actions as createActions, load as create } from './create/+page.server';
 import { load as layout } from '../+layout.server';
 
@@ -68,6 +69,7 @@ describe('with groups off', () => {
 			[`/groups/${GROUP}/events/a/edit`, editEvent],
 			[`/groups/${GROUP}/events/a`, membersOnlyEvent],
 			[`/groups/${GROUP}/settings`, settings],
+			[`/groups/${GROUP}/members`, members],
 			['/groups/create', create]
 		] as const) {
 			const { setHeaders, event } = request(path);

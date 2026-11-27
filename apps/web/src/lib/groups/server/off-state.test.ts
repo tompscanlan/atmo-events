@@ -24,7 +24,16 @@ import {
 	turnOnMembersOnlyEvents
 } from '../group.remote';
 import { cancelMembersOnlyRsvp, rsvpToMembersOnlyEvent } from '../members-only.remote';
-import { cancelJoin, confirmMember, joinGroup, leave } from '../members.remote';
+import {
+	approveRequest,
+	cancelJoin,
+	changeRole,
+	confirmMember,
+	denyRequest,
+	joinGroup,
+	leave,
+	removeFromGroup
+} from '../members.remote';
 import { groupView, requireGroupWriter, requireStoredLink } from './context';
 
 const GROUP = 'did:plc:group';
@@ -73,6 +82,15 @@ describe('with groups off', () => {
 		expect(await shown(() => joinGroup({ groupDid: GROUP, message: 'hi' }))).toBe(expected);
 		expect(await shown(() => cancelJoin({ groupDid: GROUP }))).toBe(expected);
 		expect(await shown(() => leave({ groupDid: GROUP }))).toBe(expected);
+	});
+
+	it("refuses an admin's admit, deny, role change and removal with the same 404", async () => {
+		const expected = unknownAddress();
+		const member = { groupDid: GROUP, did: 'did:plc:bob' };
+		expect(await shown(() => approveRequest(member))).toBe(expected);
+		expect(await shown(() => denyRequest(member))).toBe(expected);
+		expect(await shown(() => changeRole({ ...member, admin: true }))).toBe(expected);
+		expect(await shown(() => removeFromGroup(member))).toBe(expected);
 	});
 
 	it("refuses saving a group's settings and finishing its setup with the same 404", async () => {
