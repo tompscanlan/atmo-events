@@ -9,6 +9,11 @@
 // group host's repo or from a fresh page load, not taken from what a page said. It prints statuses,
 // never a password or a token, and it never reads the group host's recovery key page.
 //
+// This build holds back making a group from the app, a group's settings page and its members page
+// (apps/web/src/lib/groups/build.ts). One group is made at the console's own /new page and linked;
+// members are admitted at the host by script; the old create and roster steps stay, skipped as
+// "held back in this build", and their addresses are checked to answer as unknown ones do.
+//
 // The walk is a list of numbered, named steps in sections, so later parts (create a group from the
 // app, join, roster, members-only events) can be added as further sections. A step that needs another
 // runs after it, and is reported as blocked when that one failed. Choose by section or step name:
@@ -32,6 +37,10 @@
 //   WALK_ATMO_LOG       the dev server's log, for the lines the walk looks for
 //   WALK_EVIDENCE_DIR   where walk.txt, walk.har, the screenshots and the server logs are written
 //   WALK_ONLY           sections or step names to run, comma separated
+//   WALK_OLDER_LINK     the DID of a group alice linked on an earlier build, for "Approve again"
+//   WALK_EVENT_INDEX_TEST  set on a dev server whose scheduled job has not run since it started:
+//                       the groups list's event index is dropped from its database first, to see
+//                       the list answer without it and the next ingest cycle build it
 import { execFileSync } from 'node:child_process';
 import dns from 'node:dns/promises';
 import fs from 'node:fs';
@@ -845,34 +854,220 @@ async function confirmationsOf(who, g) {
 	return { status: r.status, count: (r.body?.records ?? []).length, text: r.text.slice(0, 160) };
 }
 
+// ---------- the group page as this build lays it out ----------
+/** Parts of groups this build leaves out: their old steps stay in the file, skipped. */
+const HELD_BACK = 'held back in this build';
+/** The header: picture, name, badges, handle, description, counts, links, join state. */
+const groupHeader = (page) => page.getByRole('region', { name: 'Group', exact: true });
+/** The one box of tools for someone who linked the group and may act for it. */
+const toolsBox = (page) => page.getByRole('region', { name: 'Group tools' });
+/** The switch that lists the group in public group lists (its declaration in its repo). */
+const listSwitch = (page) => page.getByRole('switch', { name: /^show in public group lists$/i });
+/** The one members-space scope the group's link asks for: a read of the group's index of spaces. */
+const SPACE_INDEX_SCOPE =
+	'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.space&action=read';
+/** On the console's approval page: each members-space access it lists, granted or withheld, with
+ *  its data rows (a collection, and how many of create, update and delete are ticked). */
+const membersSpaceAccess = (page) =>
+	page.evaluate(() => {
+		const out = [];
+		for (const ul of document.querySelectorAll('ul.permissions')) {
+			for (const block of ul.querySelectorAll('.space-access')) {
+				const text = block.textContent.replace(/\s+/g, ' ');
+				if (!text.includes('org.atgrp.members')) continue;
+				out.push({
+					withheld: ul.classList.contains('withheld'),
+					manage: /Manage the spaces/i.test(text),
+					rows: [...block.querySelectorAll('tbody tr')].map((tr) => ({
+						collection: tr.querySelector('td')?.textContent.trim(),
+						ticked: tr.querySelectorAll('td:not(:first-child) *').length
+					}))
+				});
+			}
+		}
+		return out;
+	});
+/** Whether, of the members space, the asked scope names only that read, and the approval page
+ *  grants it as a read of that one collection: no create, update or delete ticked, no managing. */
+function onlyTheSpaceIndexRead(asked, access) {
+	const members = asked.split(/\s+/).filter((x) => x.includes('org.atgrp.members'));
+	return (
+		members.length === 1 &&
+		members[0] === SPACE_INDEX_SCOPE &&
+		access?.length === 1 &&
+		!access[0].withheld &&
+		!access[0].manage &&
+		access[0].rows.length === 1 &&
+		access[0].rows[0].collection === 'org.atgrp.space' &&
+		access[0].rows[0].ticked === 0
+	);
+}
+/** The tools box's "Group host: <host>" button, to the group host's own site. */
+const hostButton = (page) => toolsBox(page).getByRole('link', { name: /^group host:/i });
+/** The group's own address, from its handle, which the group host serves its page at. */
+const homeOf = (g) => `https://${g.handle}/`;
+/** Flips the listing switch to `want` on the group's page, and waits for the declaration to follow
+ *  in the group's repo. Whether it did. */
+async function setListedBySwitch(page, g, want) {
+	await page.goto(groupUrl(g), { waitUntil: 'networkidle' });
+	const box = listSwitch(page);
+	if ((await box.isChecked()) !== want) await box.click();
+	const done = await until(
+		() => repoRecords(g.did, DECLARATION),
+		(rs) => rs.some((r) => r.rkey === 'self') === want
+	);
+	await page.goto(groupUrl(g), { waitUntil: 'networkidle' });
+	return done.ok;
+}
+/** What a server answers at an address, with the address itself (and the relative paths that only
+ *  follow from its depth) taken out of the body, so two unknown addresses can be compared. */
+async function answerAt(pathname, init = {}) {
+	const r = await fetch(`${ATMO}${pathname}`, { redirect: 'manual', ...init });
+	const text = (await r.text())
+		.split(pathname)
+		.join('<path>')
+		.replace(/(\.\.\/)+|\.\//g, '')
+		.replace(/new URL\("[./]*", location\)/g, 'new URL(<base>)');
+	return { status: r.status, text };
+}
+// A record key as atproto makes one: a TID, from the time in microseconds.
+const TID_CHARS = '234567abcdefghijklmnopqrstuvwxyz';
+let lastTid = 0n;
+function tid() {
+	let micros = BigInt(Date.now()) * 1000n;
+	if (micros <= lastTid) micros = lastTid + 1n;
+	lastTid = micros;
+	let n = (micros << 10n) | 7n;
+	let out = '';
+	for (let i = 0; i < 13; i++) {
+		out = TID_CHARS[Number(n & 31n)] + out;
+		n >>= 5n;
+	}
+	return out;
+}
+/** Signs `who` in at the group host's console itself (its own sign-in, not an app's). */
+async function consoleSignIn(page, who) {
+	const button = page.getByRole('banner').getByRole('button', { name: /^sign in$/i });
+	if (!(await button.isVisible().catch(() => false))) return;
+	await page.locator('html[data-hydrated]').waitFor({ state: 'attached', timeout: 30_000 });
+	await button.click();
+	const dialog = page.getByRole('dialog', { name: 'Sign in with your Atmosphere account' });
+	const handle = dialog.getByRole('combobox', { name: 'Handle' });
+	await handle.fill(who.handle);
+	await handle.press('Enter');
+	await page.waitForURL((u) => u.origin !== HOST, { timeout: 30_000 });
+	await through(page, who, (u) => u.origin === HOST && !/oauth|callback/.test(u.pathname));
+	await settle(page);
+	await page.locator('html[data-hydrated]').waitFor({ state: 'attached', timeout: 30_000 });
+}
+/** The DID a handle names, as the network serves it. */
+async function didOfHandle(handle) {
+	await makeResolvable(handle);
+	const r = await fetch(`https://${handle}/.well-known/atproto-did`);
+	return r.ok ? (await r.text()).trim() : null;
+}
+
 // =====================================================================================
 // setup
 // =====================================================================================
-step('setup', 'network-answers', async () => {
-	const health = await getJson(`${HOST}/xrpc/_health`);
-	check('the group host answers its health check', health.status === 200, `${health.status}`);
-	const described = await getJson(`${HOST}/xrpc/com.atproto.server.describeServer`);
-	check(
-		"the host's DID is the one atmo is set to (GROUP_HOST_DID)",
-		described.body?.did === HOST_DID,
-		`${described.body?.did} vs ${HOST_DID}`
+// atmo's own local database (the dev server's D1, LOCAL_STATE_DIR in the network file), read for
+// the groups list's event index, which the scheduled job builds.
+const D1_DIR = new URL(
+	'../.wrangler/snowglobe-groups/v3/d1/miniflare-D1DatabaseObject/',
+	import.meta.url
+).pathname;
+const EVENT_INDEX = 'groups_event_did_starts';
+function withD1(fn, readOnly = true) {
+	const file = fs.existsSync(D1_DIR)
+		? fs
+				.readdirSync(D1_DIR)
+				.filter((f) => f.endsWith('.sqlite') && f !== 'metadata.sqlite')
+				.map((f) => path.join(D1_DIR, f))
+				.sort((a, b) => fs.statSync(b).size - fs.statSync(a).size)[0]
+		: null;
+	if (!file) return null;
+	const { DatabaseSync } = require('node:sqlite');
+	const db = new DatabaseSync(file, { readOnly });
+	try {
+		return fn(db);
+	} finally {
+		db.close();
+	}
+}
+const eventIndexThere = () =>
+	withD1(
+		(db) =>
+			db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?").all(EVENT_INDEX)
+				.length > 0
 	);
-	const app = await getJson(`${ATMO}/groups`);
-	check("atmo's dev server answers at its public name", app.status === 200, `${app.status}`);
-	const alpha = await getJson(`${ALPHA}/xrpc/_health`);
-	check("alice's and bob's PDS answers", alpha.status === 200, `${alpha.status}`);
-	// atmo's server looks a handle up at https://<handle>/.well-known/atproto-did. This machine's DNS
-	// does not answer the network's names, so the two people's handles are added to /etc/hosts too.
-	for (const who of [ALICE, BOB, MALLORY, DANA, CAROL])
+/** Signed out, what /groups answers: its status, and whether it drew its lists. */
+async function groupsListAnswers() {
+	const r = await fetch(`${ATMO}/groups`);
+	const html = await r.text();
+	return {
+		status: r.status,
+		drawn: html.includes('group-search') && /Groups by server|Groups with events coming/i.test(html)
+	};
+}
+// With WALK_EVENT_INDEX_TEST=1, on a dev server whose scheduled job has not run since it started
+// (it builds the index once per isolate), the index is dropped first, to see the list answer
+// without it and the next ingest cycle build it.
+step('setup', 'groups-list-with-and-without-its-event-index', async () => {
+	const fresh = Boolean(process.env.WALK_EVENT_INDEX_TEST);
+	if (fresh) {
+		withD1((db) => db.exec(`DROP INDEX IF EXISTS ${EVENT_INDEX}`), false);
 		check(
-			`${who.name}'s handle resolves for atmo's server`,
-			await makeResolvable(who.handle),
-			who.handle
+			"the event index is absent from atmo's database (dropped for this check)",
+			!eventIndexThere()
 		);
-	// Before anything is written, so the index's place in Jetstream comes before this walk's records.
+		const before = await groupsListAnswers();
+		check(
+			'without it, /groups still answers, its lists drawn',
+			before.status === 200 && before.drawn,
+			JSON.stringify(before)
+		);
+	} else
+		note(`the event index is ${eventIndexThere() ? 'there' : 'absent'} before the ingest cycle`);
 	await runCron();
-	note(`run ${RUN}; the index has had one ingest cycle`);
+	check('after one ingest cycle (the scheduled job), the event index is there', eventIndexThere());
+	const after = await groupsListAnswers();
+	check(
+		'...and /groups answers, its lists drawn',
+		after.status === 200 && after.drawn,
+		JSON.stringify(after)
+	);
 });
+
+step(
+	'setup',
+	'network-answers',
+	async () => {
+		const health = await getJson(`${HOST}/xrpc/_health`);
+		check('the group host answers its health check', health.status === 200, `${health.status}`);
+		const described = await getJson(`${HOST}/xrpc/com.atproto.server.describeServer`);
+		check(
+			"the host's DID is the one atmo is set to (GROUP_HOST_DID)",
+			described.body?.did === HOST_DID,
+			`${described.body?.did} vs ${HOST_DID}`
+		);
+		const app = await getJson(`${ATMO}/groups`);
+		check("atmo's dev server answers at its public name", app.status === 200, `${app.status}`);
+		const alpha = await getJson(`${ALPHA}/xrpc/_health`);
+		check("alice's and bob's PDS answers", alpha.status === 200, `${alpha.status}`);
+		// atmo's server looks a handle up at https://<handle>/.well-known/atproto-did. This machine's DNS
+		// does not answer the network's names, so the two people's handles are added to /etc/hosts too.
+		for (const who of [ALICE, BOB, MALLORY, DANA, CAROL])
+			check(
+				`${who.name}'s handle resolves for atmo's server`,
+				await makeResolvable(who.handle),
+				who.handle
+			);
+		// Before anything is written, so the index's place in Jetstream comes before this walk's records.
+		await runCron();
+		note(`run ${RUN}; the index has had one ingest cycle`);
+	},
+	{ needs: ['groups-list-with-and-without-its-event-index'] }
+);
 
 step(
 	'setup',
@@ -984,6 +1179,7 @@ step(
 		await through(alice, ALICE, (u) => u.origin === ATMO, {
 			onApprove: async (page) => {
 				approval = {
+					members: await membersSpaceAccess(page),
 					asked:
 						(await page
 							.locator('pre.scopes')
@@ -1034,12 +1230,13 @@ step(
 			const detail = approval.detail.replace(/\s+/g, ' ');
 			const [granted, withheld = ''] = detail.split(/It would not get/i);
 			check(
-				"an admin's grant keeps the meta read, the repo writes and the members and settings scopes; only the calendar space's write is withheld, as no such space exists yet",
+				"an admin's grant keeps the meta read, the repo writes and the one read of the group's space index; atmo asks for no other members or settings scope (held back in this build); only the calendar space's write is withheld, as no such space exists yet",
 				/Repository/.test(granted) &&
 					/org\.atgrp\.declaration/.test(granted) &&
 					/community\.lexicon\.calendar\.event/.test(granted) &&
 					/org\.atgrp\.meta spaces/.test(granted) &&
-					/org\.atgrp\.members spaces/.test(granted) &&
+					onlyTheSpaceIndexRead(approval.asked, approval.members) &&
+					!/listJoinRequests|denyJoinRequest|org\.atgrp\.about|org\.atgrp\.config/.test(detail) &&
 					(withheld === '' ||
 						(/community\.lexicon\.calendar\.collection/.test(withheld) &&
 							!/org\.atgrp\./.test(withheld))),
@@ -1200,10 +1397,10 @@ step(
 		const g = S.groups.g1;
 		await alice.goto(`${ATMO}/groups/${g.did}`, { waitUntil: 'networkidle' });
 		t.shot = alice;
+		const box = listSwitch(alice);
 		check(
-			'a public group made by createGroup shows as listed: the host wrote its declaration',
-			(await alice.getByRole('button', { name: /^remove from the groups list$/i }).count()) === 1 &&
-				(await alice.getByRole('button', { name: /^add to the groups list$/i }).count()) === 0
+			'a public group made by createGroup shows as listed: the "Show in public group lists" switch is on, and may be turned off',
+			(await box.count()) === 1 && (await box.isChecked()) && (await box.isEnabled())
 		);
 		// One linked view told the index, which does not otherwise hear of the host.
 		// A group linked here counts as at the host at once, so no waiting for atmo's read of the host.
@@ -1246,6 +1443,8 @@ step(
 			text.includes(NAME) &&
 				(await anon.getByRole('link', { name: /^post an event$/i }).count()) === 0 &&
 				(await anon.getByRole('button', { name: /unlink|groups list/i }).count()) === 0 &&
+				(await listSwitch(anon).count()) === 0 &&
+				(await toolsBox(anon).count()) === 0 &&
 				(await anon.getByRole('button', { name: /link this group/i }).count()) === 0,
 			text.slice(0, 200)
 		);
@@ -1260,18 +1459,11 @@ step(
 		const { alice, anon } = S.pages;
 		const g = S.groups.g1;
 		const url = `${ATMO}/groups/${g.did}`;
-		await alice.goto(url, { waitUntil: 'networkidle' });
-		await alice.getByRole('button', { name: /^remove from the groups list$/i }).click();
-		const gone = await until(
-			() => repoRecords(g.did, DECLARATION),
-			(rs) => rs.length === 0
-		);
-		await alice.goto(url, { waitUntil: 'networkidle' });
+		const gone = await setListedBySwitch(alice, g, false);
 		t.shot = alice;
 		check(
-			"alice removes it from the list: the declaration leaves the group's repo and the page offers to add it",
-			gone.ok &&
-				(await alice.getByRole('button', { name: /^add to the groups list$/i }).count()) === 1
+			'alice turns "Show in public group lists" off: the declaration leaves the group\'s repo, and after a reload the switch is off',
+			gone && !(await listSwitch(alice).isChecked()) && (await listSwitch(alice).isEnabled())
 		);
 		const hidden = await until(
 			async () => {
@@ -1287,16 +1479,10 @@ step(
 			hidden.ok,
 			JSON.stringify(hidden.last)
 		);
-		await alice.getByRole('button', { name: /^add to the groups list$/i }).click();
-		const back = await until(
-			() => repoRecords(g.did, DECLARATION),
-			(rs) => rs.some((r) => r.rkey === 'self')
-		);
-		await alice.goto(url, { waitUntil: 'networkidle' });
+		const back = await setListedBySwitch(alice, g, true);
 		check(
-			'alice adds it again: the declaration is back in its repo and the page offers to remove it',
-			back.ok &&
-				(await alice.getByRole('button', { name: /^remove from the groups list$/i }).count()) === 1
+			'alice turns it on again: the declaration is back in its repo, and after a reload the switch is on',
+			back && (await listSwitch(alice).isChecked())
 		);
 		const shown = await until(
 			async () => {
@@ -1423,6 +1609,284 @@ step(
 		check('signed out, the group page shows the event, under its new name', shown.ok);
 	},
 	{ needs: ['edit-event'] }
+);
+
+// ---------- the group page laid out as a profile: its header, its home, its website ----------
+step(
+	'link',
+	'header-for-a-visitor',
+	async (t) => {
+		const { anon } = S.pages;
+		const g = S.groups.g1;
+		await anon.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		t.shot = anon;
+		const header = groupHeader(anon);
+		const text = (await header.innerText()).replace(/\s+/g, ' ');
+		note(`the header, signed out: ${text.slice(0, 300)}`);
+		check(
+			'signed out, the header has the picture, the name, a "Group" badge, the handle and the description',
+			(await header.getByRole('heading', { level: 1, name: NAME }).count()) === 1 &&
+				(await header.locator('img, svg, [data-slot=avatar], span').count()) > 0 &&
+				/\bGroup\b/.test(text) &&
+				text.includes(`@${g.handle}`) &&
+				text.includes('A made-up walking group'),
+			text.slice(0, 300)
+		);
+		const stats = (
+			await header
+				.getByRole('definition')
+				.or(header.locator('dl[aria-label="Group statistics"]'))
+				.first()
+				.innerText()
+				.catch(() => '')
+		).trim();
+		check(
+			'...and "N events created", counting its event',
+			/\d+\s*events created/.test(text) && Number(text.match(/(\d+)\s*events created/)?.[1]) >= 1,
+			`${stats} / ${text.slice(0, 200)}`
+		);
+		const home = header.getByRole('link', { name: /^group home/i });
+		check(
+			'..."Group home" is its own handle address, opened in a new tab',
+			(await home.count()) === 1 &&
+				(await home.getAttribute('href')) === homeOf(g) &&
+				(await home.getAttribute('target')) === '_blank',
+			`${await home.getAttribute('href').catch(() => null)} ${await home.getAttribute('target').catch(() => null)}`
+		);
+		check(
+			'...no Website link, as its about record has no website',
+			(await header.getByRole('link', { name: /^website/i }).count()) === 0
+		);
+		check(
+			'...no join controls for a signed-out visitor, and no group tools',
+			(await header.getByRole('button').count()) === 0 && (await toolsBox(anon).count()) === 0
+		);
+		check(
+			'its events are laid out as on a profile, under "Upcoming Events"',
+			(await anon.getByRole('heading', { name: /^upcoming events$/i }).count()) === 1 &&
+				(await mainText(anon)).includes(RENAMED)
+		);
+		const [tab] = await Promise.all([anon.context().waitForEvent('page'), home.click()]);
+		await tab.waitForLoadState('networkidle').catch(() => {});
+		// The console draws the group once its script has run.
+		await tab
+			.locator('html[data-hydrated]')
+			.waitFor({ state: 'attached', timeout: 30_000 })
+			.catch(() => {});
+		await tab
+			.getByText(NAME)
+			.or(tab.getByText(/sign in/i))
+			.first()
+			.waitFor({ timeout: 20_000 })
+			.catch(() => {});
+		const at = new URL(tab.url());
+		const tabText = await tab
+			.locator('body')
+			.innerText()
+			.catch(() => '');
+		note(`"Group home" opened ${tab.url()}: ${tabText.replace(/\s+/g, ' ').slice(0, 160)}`);
+		check(
+			"following it opens the group host's own page for the group, in a new tab",
+			at.origin === HOST &&
+				decodeURIComponent(at.pathname) === `/g/${g.handle}` &&
+				(tabText.includes(NAME) || tabText.includes(g.handle)),
+			`${tab.url()} ${tabText.slice(0, 160)}`
+		);
+		await tab.close();
+	},
+	{ needs: ['visitor-sees-the-event'] }
+);
+
+// A group alice linked on an earlier build, whose link was approved for less than this build asks.
+const OLDER_LINK = process.env.WALK_OLDER_LINK?.trim() || '';
+step(
+	'link',
+	'an-older-link-is-asked-to-approve-again',
+	async (t) => {
+		const { alice } = S.pages;
+		const url = `${ATMO}/groups/${OLDER_LINK}`;
+		await alice.goto(url, { waitUntil: 'networkidle' });
+		t.shot = alice;
+		const prompt = alice.getByRole('button', { name: /^approve again$/i });
+		const text = await mainText(alice);
+		check(
+			`the group alice linked on an earlier build (${OLDER_LINK}) shows "Approve again", saying her link was approved before atmo asked for all it can do`,
+			(await prompt.count()) === 1 &&
+				text.includes('Your link was approved before atmo asked for all it can do for a group.'),
+			text.slice(0, 400)
+		);
+		let detail = '';
+		await prompt.click();
+		await alice.waitForURL((u) => u.origin !== ATMO, { timeout: 30_000 });
+		await through(alice, ALICE, (u) => u.origin === ATMO, {
+			onApprove: async (page) => {
+				detail = (
+					(await page
+						.locator('main form')
+						.first()
+						.textContent()
+						.catch(() => '')) ?? ''
+				).replace(/\s+/g, ' ');
+			}
+		});
+		await settle(alice);
+		await alice.goto(url, { waitUntil: 'networkidle' });
+		t.shot = alice;
+		check(
+			'she approves at the console; back on the page, the prompt is gone',
+			detail !== '' &&
+				(await alice.getByRole('button', { name: /^approve again$/i }).count()) === 0 &&
+				!(await mainText(alice)).includes('Your link was approved before'),
+			(await mainText(alice)).slice(0, 300)
+		);
+	},
+	{
+		needs: ['people-sign-in'],
+		todo: OLDER_LINK
+			? null
+			: 'needs WALK_OLDER_LINK, the DID of a group alice linked on an earlier build (a link approved for less than this build asks)'
+	}
+);
+
+step(
+	'link',
+	'website-only-when-http',
+	async (t) => {
+		const { alice, anon } = S.pages;
+		const g = await indexedGroup(`ws${RUN}`, `Scar walkers ${RUN}`);
+		S.groups.gs = g;
+		if (!g.linkedByAlice) await reindex(g);
+		const admin = await adminFor(g, ALICE);
+		// The about record as createGroup wrote it (a space's records are read only with a space
+		// credential, which this script does not make): the same name and description.
+		const about = { displayName: g.name, description: `A made-up walking group, run ${RUN}.` };
+		/** Puts the about record with `website`, as the group's admin, at the host; its answer. */
+		const putWebsite = async (website) => {
+			try {
+				await asGroup(
+					admin,
+					'com.atproto.space.putRecord',
+					post({
+						space: g.meta,
+						repo: g.did,
+						collection: 'org.atgrp.about',
+						rkey: 'self',
+						record: { ...about, $type: 'org.atgrp.about', website }
+					})
+				);
+				return 'taken';
+			} catch (e) {
+				return e.message;
+			}
+		};
+		/** The Website link in the header, after alice's linked view has told the index. */
+		const websiteFor = async (page) => {
+			await page.goto(groupUrl(g), { waitUntil: 'networkidle' });
+			const link = groupHeader(page).getByRole('link', { name: /^website/i });
+			return (await link.count()) ? await link.getAttribute('href') : null;
+		};
+		const set = await putWebsite(MADE_UP_SITE);
+		note(`the host answered the about record with an https website: ${set}`);
+		await reindex(g);
+		const shown = await until(
+			async () => ({ alice: await websiteFor(alice), anon: await websiteFor(anon) }),
+			(x) => x.alice !== null && x.anon !== null,
+			10,
+			1000
+		);
+		t.shot = anon;
+		check(
+			'with an https website in its about record (set as its admin at the host), the header links "Website", for alice and for a visitor',
+			set === 'taken' &&
+				new URL(shown.last.alice ?? 'x:').origin === MADE_UP_SITE &&
+				new URL(shown.last.anon ?? 'x:').origin === MADE_UP_SITE,
+			JSON.stringify(shown.last)
+		);
+		const link = groupHeader(anon).getByRole('link', { name: /^website/i });
+		check(
+			'...opened in a new tab, that cannot reach back',
+			(await link.getAttribute('target').catch(() => null)) === '_blank' &&
+				/noopener/.test((await link.getAttribute('rel').catch(() => '')) ?? '')
+		);
+		const bad = await putWebsite('javascript:alert(document.domain)');
+		note(`the host answered the about record with a javascript: website: ${bad}`);
+		await reindex(g);
+		// The host may refuse such a website, so the group keeps its https one; else the link goes.
+		const refused = bad !== 'taken';
+		const now = await until(
+			async () => ({ alice: await websiteFor(alice), anon: await websiteFor(anon) }),
+			(x) =>
+				refused
+					? new URL(x.alice ?? 'x:').origin === MADE_UP_SITE &&
+						new URL(x.anon ?? 'x:').origin === MADE_UP_SITE
+					: x.alice === null && x.anon === null,
+			10,
+			1000
+		);
+		const scripted =
+			(await alice.locator('a[href^="javascript:" i]').count()) +
+			(await anon.locator('a[href^="javascript:" i]').count());
+		check(
+			refused
+				? 'a javascript: website is refused by the host (so the group keeps its https one, still linked), and no javascript: link is anywhere on the page, for alice or a visitor'
+				: 'with a javascript: website, no Website link shows, for alice or a visitor, and no javascript: link anywhere on the page',
+			now.ok && scripted === 0,
+			`${bad} ${JSON.stringify(now.last)}`
+		);
+	},
+	{ needs: ['people-sign-in'] }
+);
+
+step(
+	'link',
+	'profile-address-leads-to-the-group',
+	async (t) => {
+		const { anon, alice } = S.pages;
+		const g = S.groups.g1;
+		const answers = {};
+		for (const key of [g.handle, g.did]) {
+			const r = await fetch(`${ATMO}/p/${key}`, { redirect: 'manual' });
+			answers[key] = `${r.status} ${r.headers.get('location')}`;
+			check(
+				`/p/${key === g.did ? '<the group DID>' : '<the group handle>'} redirects to /groups/<its DID>`,
+				[301, 302, 303, 307, 308].includes(r.status) &&
+					new URL(r.headers.get('location') ?? '/', ATMO).pathname === `/groups/${g.did}`,
+				answers[key]
+			);
+			await anon.goto(`${ATMO}/p/${key}`, { waitUntil: 'networkidle' });
+			check(
+				'...and a browser lands on the group page',
+				new URL(anon.url()).pathname === `/groups/${g.did}` &&
+					(await groupHeader(anon).getByRole('heading', { name: NAME }).count()) === 1,
+				anon.url()
+			);
+		}
+		const signedIn = await fetch(`${ATMO}/p/${g.handle}`, {
+			redirect: 'manual',
+			headers: {
+				cookie: (await alice.context().cookies(ATMO)).map((c) => `${c.name}=${c.value}`).join('; ')
+			}
+		});
+		check(
+			'signed in too',
+			[301, 302, 303, 307, 308].includes(signedIn.status) &&
+				new URL(signedIn.headers.get('location') ?? '/', ATMO).pathname === `/groups/${g.did}`,
+			String(signedIn.status)
+		);
+		const person = await fetch(`${ATMO}/p/${ALICE.handle}`, { redirect: 'manual' });
+		await anon.goto(`${ATMO}/p/${ALICE.handle}`, { waitUntil: 'networkidle' });
+		t.shot = anon;
+		const text = await mainText(anon);
+		check(
+			"a person's /p/ page is not redirected: 200 at its own address, her profile, with no group header",
+			person.status === 200 &&
+				new URL(anon.url()).pathname === `/p/${ALICE.handle}` &&
+				(await groupHeader(anon).count()) === 0 &&
+				(text.includes(ALICE.handle) || /alice/i.test(text)),
+			`${person.status} ${anon.url()} ${text.slice(0, 200)}`
+		);
+	},
+	{ needs: ['listed-by-the-host'] }
 );
 
 step(
@@ -1640,13 +2104,7 @@ step(
 		await editorPublish(alice, coming);
 		await alice.waitForURL((u) => !u.pathname.endsWith('/events/new'), { timeout: 60_000 });
 		await linkByAlice(bl);
-		await alice.goto(groupUrl(bl), { waitUntil: 'networkidle' });
-		await alice.getByRole('button', { name: /^remove from the groups list$/i }).click();
-		await until(
-			() => repoRecords(bl.did, DECLARATION),
-			(rs) => rs.length === 0
-		);
-		await alice.goto(groupUrl(bl), { waitUntil: 'networkidle' });
+		await setListedBySwitch(alice, bl, false);
 
 		await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
 		check(
@@ -1832,14 +2290,15 @@ step(
 		await alice.goto(`${ATMO}/groups/${g.did}`, { waitUntil: 'networkidle' });
 		t.shot = alice;
 		const text = await mainText(alice);
+		const box = listSwitch(alice);
 		check(
-			'the page shows the Private badge, and says only a public group can be on the groups list',
-			text.includes('Private') && /only a public group can be on the groups list/i.test(text),
-			text.slice(0, 250)
-		);
-		check(
-			'...and offers neither to list it nor to remove it from the list',
-			(await alice.getByRole('button', { name: /groups list/i }).count()) === 0
+			'the page shows the Private badge; the "Show in public group lists" switch is off and disabled, with its reason: "Only a public group can be in them."',
+			(await groupHeader(alice).innerText()).includes('Private') &&
+				(await box.count()) === 1 &&
+				!(await box.isChecked()) &&
+				(await box.isDisabled()) &&
+				text.includes('Only a public group can be in them.'),
+			text.slice(0, 400)
 		);
 		const gone = await until(
 			async () => {
@@ -1913,9 +2372,10 @@ step(
 		await alice.goto(`${ATMO}/groups/${g.did}`, { waitUntil: 'networkidle' });
 		t.shot = alice;
 		check(
-			'the page shows it as listed, without the Private badge',
-			(await alice.getByRole('button', { name: /^remove from the groups list$/i }).count()) === 1 &&
-				!(await mainText(alice)).includes('Private')
+			'the page shows it as listed (the switch on, and enabled), without the Private badge',
+			(await listSwitch(alice).isChecked()) &&
+				(await listSwitch(alice).isEnabled()) &&
+				!(await groupHeader(alice).innerText()).includes('Private')
 		);
 		const shown = await until(
 			async () => {
@@ -1976,6 +2436,7 @@ step(
 			"with bob's roles removed at the host, his page is the visitor's: no controls, but still the group",
 			(await bob.getByRole('link', { name: /^post an event$/i }).count()) === 0 &&
 				(await bob.getByRole('button', { name: /groups list/i }).count()) === 0 &&
+				(await listSwitch(bob).count()) === 0 &&
 				text.includes(NAME2),
 			text.slice(0, 250)
 		);
@@ -2194,6 +2655,7 @@ step(
 			'his page offers no Post, list or Settings controls, and no Edit links',
 			(await bob.getByRole('link', { name: /^post an event$/i }).count()) === 0 &&
 				(await bob.getByRole('button', { name: /groups list/i }).count()) === 0 &&
+				(await listSwitch(bob).count()) === 0 &&
 				(await bob
 					.locator('main')
 					.getByRole('button', { name: /^settings$/i })
@@ -2301,8 +2763,200 @@ step(
 );
 
 // =====================================================================================
-// create: make a group from the app, and change its settings
+// create: in this build a group is made at the group host, then linked here. Making one from the
+// app and its settings page are held back; their old steps stay below, skipped.
 // =====================================================================================
+const AT_HOST = { label: `hm${RUN}`, name: `Beck club ${RUN}` };
+step(
+	'create',
+	'make-a-group-goes-to-the-host',
+	async (t) => {
+		const { alice, anon } = S.pages;
+		await alice.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+		t.shot = alice;
+		const make = alice.locator('main').getByRole('link', { name: /^make a group/i });
+		const text = await mainText(alice);
+		check(
+			`signed in, /groups's "Make a group" links to the group host's own ${HOST}/new, in a new tab, with "Make the group at the group host, then link it here."`,
+			(await make.count()) === 1 &&
+				(await make.getAttribute('href')) === `${HOST}/new` &&
+				(await make.getAttribute('target')) === '_blank' &&
+				text.includes('Make the group at the group host, then link it here.'),
+			`${await make.getAttribute('href').catch(() => null)} ${text.slice(0, 200)}`
+		);
+		check(
+			'...and nothing on the page links to /groups/create',
+			(await alice.locator('a[href$="/groups/create"]').count()) === 0
+		);
+		await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
+		check(
+			'signed out, there is no "Make a group"',
+			(await anon
+				.locator('main')
+				.getByRole('link', { name: /^make a group/i })
+				.count()) === 0
+		);
+		const [tab] = await Promise.all([alice.context().waitForEvent('page'), make.click()]);
+		await tab.waitForLoadState('networkidle').catch(() => {});
+		S.newGroupTab = tab;
+		check(
+			"following it opens the group host's /new page in a new tab",
+			tab.url().split('?')[0] === `${HOST}/new`,
+			tab.url()
+		);
+	},
+	{ needs: ['people-sign-in'] }
+);
+
+step(
+	'create',
+	'made-at-the-host-then-linked',
+	async (t) => {
+		const { alice } = S.pages;
+		const tab = S.newGroupTab;
+		t.shot = tab;
+		// The console's own sign-in, if this browser has none there yet, then its form.
+		await consoleSignIn(tab, ALICE);
+		if (tab.url().split('?')[0] !== `${HOST}/new`)
+			await tab.goto(`${HOST}/new`, { waitUntil: 'networkidle' });
+		await tab.locator('html[data-hydrated]').waitFor({ state: 'attached', timeout: 30_000 });
+		await tab.locator('input[name=displayName]').fill(AT_HOST.name);
+		await tab.locator('input[name=label]').fill(AT_HOST.label);
+		await tab
+			.locator('textarea[name=description]')
+			.fill(`A made-up group, made at the host, run ${RUN}.`);
+		await tab.locator('select[name=joinPolicy]').selectOption('approval');
+		await tab.getByRole('button', { name: /start the group/i }).click();
+		await tab.waitForURL((u) => u.pathname.startsWith('/g/'), { timeout: 60_000 });
+		await settle(tab);
+		// Past the recovery key page, unread, if the console shows one.
+		if (await tab.locator('#recovery').count()) {
+			await tab.click('#continue');
+			await tab.locator('#recovery').waitFor({ state: 'detached', timeout: 45_000 });
+		}
+		const handle = decodeURIComponent(new URL(tab.url()).pathname.split('/')[2]);
+		const did = await didOfHandle(handle);
+		check(
+			"alice makes a group with the console's own form; it is at the host under the address she chose",
+			handle === `${AT_HOST.label}.${GROUP_DOMAIN}` && Boolean(did?.startsWith('did:')),
+			`${tab.url()} ${did}`
+		);
+		const g = { did, handle, name: AT_HOST.name, ...spacesOf(did) };
+		S.groups.gh = g;
+		note(`made at the host: ${did} (${handle})`);
+		await tab.close();
+		await startLink(alice, handle);
+		await through(alice, ALICE, (u) => u.origin === ATMO);
+		await settle(alice);
+		t.shot = alice;
+		g.linkedByAlice = true;
+		const landed = new URL(alice.url());
+		check(
+			'she links it here by its handle, and lands on its page with the group tools: "Post an event"',
+			landed.pathname === `/groups/${did}` &&
+				landed.searchParams.get('link') === 'linked' &&
+				(await toolsBox(alice)
+					.getByRole('link', { name: /^post an event$/i })
+					.count()) === 1 &&
+				(await groupHeader(alice).getByRole('heading', { name: AT_HOST.name }).count()) === 1,
+			alice.url()
+		);
+		const declared = await until(
+			() => repoRecords(did, DECLARATION),
+			(r) => r.some((x) => x.rkey === 'self'),
+			20
+		);
+		check(
+			'the host made it public and listed (its declaration is in its repo), and the switch says so',
+			declared.ok && (await listSwitch(alice).isChecked()),
+			JSON.stringify(declared.last?.map((r) => r.rkey))
+		);
+	},
+	{ needs: ['make-a-group-goes-to-the-host'] }
+);
+
+step(
+	'create',
+	'held-back-addresses-answer-as-unknown',
+	async (t) => {
+		const g = S.groups.gh ?? S.groups.g1;
+		const cookie = (await S.pages.alice.context().cookies(ATMO))
+			.map((c) => `${c.name}=${c.value}`)
+			.join('; ');
+		for (const [who, init] of [
+			['signed out', {}],
+			['signed in', { headers: { cookie } }]
+		]) {
+			const unknownGroupPage = await answerAt(`/groups/${g.did}/no-such-page`, init);
+			const unknownSite = await answerAt(`/no-such-place-${RUN}`, init);
+			note(
+				`${who}: a made-up address in the group answers ${unknownGroupPage.status}, one outside groups ${unknownSite.status}`
+			);
+			for (const [label, p, like] of [
+				['/groups/create', '/groups/create', unknownSite],
+				['/groups/<did>/settings', `/groups/${g.did}/settings`, unknownGroupPage],
+				['/groups/<did>/members', `/groups/${g.did}/members`, unknownGroupPage]
+			]) {
+				const got = await answerAt(p, init);
+				check(
+					`${who}, ${label} answers exactly as a made-up address does (status and body)`,
+					got.status === 404 &&
+						got.status === like.status &&
+						got.text === like.text &&
+						got.status === unknownSite.status,
+					`${got.status} vs ${like.status}, bodies ${got.text === like.text ? 'same' : `differ (${got.text.length} / ${like.text.length})`}`
+				);
+			}
+			const posted = await answerAt(`/groups/${g.did}/settings`, {
+				...init,
+				method: 'POST',
+				headers: {
+					...(init.headers ?? {}),
+					'content-type': 'application/x-www-form-urlencoded',
+					origin: ATMO
+				},
+				body: 'name=x'
+			});
+			const postedUnknown = await answerAt(`/groups/${g.did}/no-such-page`, {
+				...init,
+				method: 'POST',
+				headers: {
+					...(init.headers ?? {}),
+					'content-type': 'application/x-www-form-urlencoded',
+					origin: ATMO
+				},
+				body: 'name=x'
+			});
+			check(
+				`${who}, a form post to the settings address answers as one to a made-up address`,
+				posted.status === postedUnknown.status && posted.text === postedUnknown.text,
+				`${posted.status} / ${postedUnknown.status}`
+			);
+		}
+		const { alice } = S.pages;
+		await reindex(g);
+		t.shot = alice;
+		check(
+			'the group page, for alice who linked it, has no Settings or Members link into this site',
+			(await alice.locator(`a[href$="/groups/${g.did}/settings"]`).count()) === 0 &&
+				(await alice.locator(`a[href*="/groups/${g.did}/members"]`).count()) === 0 &&
+				(await alice
+					.locator('main')
+					.getByRole('link', { name: /^(settings|members)\s*→?$/i })
+					.count()) === 0
+		);
+		const atHost = hostButton(alice);
+		check(
+			`...but "Group host: ${HOST_NAME}", to the group host's own site, in a new tab`,
+			(await atHost.count()) === 1 &&
+				new URL((await atHost.getAttribute('href')) ?? 'x:').origin === HOST &&
+				(await atHost.getAttribute('target')) === '_blank',
+			`${await atHost.getAttribute('href').catch(() => null)}`
+		);
+	},
+	{ needs: ['people-sign-in', 'alice-makes-groups'] }
+);
+
 const NEW = { label: `cr${RUN}`, name: `Moor club ${RUN}` };
 async function fillGroupForm(page, { name, address, description, join, visibility, listed }) {
 	await page.fill('#group-name', name);
@@ -2952,8 +3606,88 @@ step(
 			'asking again is a request again',
 			(await joinRequests(admin)).some((r) => r.member === BOB.did)
 		);
+		check(
+			"the request's state, with its Cancel, is in the group's header",
+			(await groupHeader(bob)
+				.getByRole('button', { name: /^cancel request$/i })
+				.count()) === 1 && /request sent/i.test(await groupHeader(bob).innerText())
+		);
 	},
 	{ needs: ['bob-asks-with-a-message-and-sees-it-waiting'] }
+);
+
+step(
+	'join',
+	'linked-admin-is-sent-to-the-host',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups.gj;
+		await reindex(g);
+		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		t.shot = alice;
+		const tools = toolsBox(alice);
+		const text = ((await tools.innerText().catch(() => '')) ?? '').replace(/\s+/g, ' ');
+		check(
+			'alice, an admin who linked it, sees in "Group tools" that its name, description, who may join, members, requests to join and roles are changed at its group host, named',
+			text.includes(
+				`The group's name, description and who may join are changed at its group host, ${HOST_NAME}`
+			) && text.includes('as are its members, requests to join and roles.'),
+			text.slice(0, 500)
+		);
+		const inSentence = tools.locator('p').getByRole('link', { name: new RegExp(`^${HOST_NAME}`) });
+		const there = hostButton(alice);
+		const hrefs = [
+			await inSentence.getAttribute('href').catch(() => null),
+			await there.getAttribute('href').catch(() => null)
+		];
+		check(
+			`...the sentence's link and the "Group host: ${HOST_NAME}" button go to the group host's own site (not the group's address), in a new tab`,
+			(await there.count()) === 1 &&
+				(await inSentence.count()) === 1 &&
+				hrefs.every((h) => h && new URL(h).origin === HOST && h !== homeOf(g)) &&
+				(await there.getAttribute('target')) === '_blank' &&
+				(await inSentence.getAttribute('target')) === '_blank',
+			hrefs.join(' ')
+		);
+		// Followed, the button opens the host's site in a new tab; the header's "Group home" the
+		// group's own address (which the host serves as its page for the group).
+		const [hostTab] = await Promise.all([alice.context().waitForEvent('page'), there.click()]);
+		await hostTab.waitForLoadState('networkidle').catch(() => {});
+		const homeLink = groupHeader(alice).getByRole('link', { name: /^group home/i });
+		const homeName = ((await homeLink.innerText().catch(() => '')) ?? '').replace(/\s+/g, ' ');
+		const [homeTab] = await Promise.all([alice.context().waitForEvent('page'), homeLink.click()]);
+		await homeTab.waitForLoadState('networkidle').catch(() => {});
+		note(`"Group host" opened ${hostTab.url()}; "${homeName}" opened ${homeTab.url()}`);
+		check(
+			`"Group host: ${HOST_NAME}" opens the group host's site; "Group home: ${g.handle}" opens the group's address (the host's page for it)`,
+			new URL(hostTab.url()).origin === HOST &&
+				homeName.includes(g.handle) &&
+				(await homeLink.getAttribute('href')) === homeOf(g) &&
+				new URL(homeTab.url()).origin === HOST &&
+				decodeURIComponent(new URL(homeTab.url()).pathname) === `/g/${g.handle}`,
+			`${hostTab.url()} / ${homeName} -> ${homeTab.url()}`
+		);
+		await hostTab.close();
+		await homeTab.close();
+		const page = await mainText(alice);
+		check(
+			"...and no list of requests here: bob's waiting request and its message are not on the page, and there is no Members link or approve button",
+			!page.includes(S.joinMessage) &&
+				(await alice.locator('ul[aria-label="Asking to join"]').count()) === 0 &&
+				(await alice.getByRole('button', { name: /^(approve|deny|decline)$/i }).count()) === 0 &&
+				(await alice.locator(`a[href*="/groups/${g.did}/members"]`).count()) === 0,
+			page.slice(0, 300)
+		);
+		check(
+			'there is ONE "Group tools" box, holding Post an event, the listing switch, the group host button and Unlink',
+			(await alice.getByRole('heading', { name: /^group tools$/i }).count()) === 1 &&
+				(await tools.getByRole('link', { name: /^post an event$/i }).count()) === 1 &&
+				(await tools.getByRole('switch', { name: /^show in public group lists$/i }).count()) ===
+					1 &&
+				(await tools.getByRole('button', { name: /^unlink$/i }).count()) === 1
+		);
+	},
+	{ needs: ['bob-cancels-and-asks-again'] }
 );
 
 step(
@@ -2966,9 +3700,10 @@ step(
 		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
 		t.shot = bob;
 		check(
-			'the admin admits him at the host; on reload bob sees he is a member, with a way to leave',
-			(await bob.getByRole('button', { name: /^leave group$/i }).count()) === 1 &&
-				(await mainText(bob)).includes('Member')
+			'the admin admits him at the host (by script); on reload bob sees he is a member, with a way to leave, in the header',
+			(await groupHeader(bob)
+				.getByRole('button', { name: /^leave group$/i })
+				.count()) === 1 && /\bMember\b/.test(await groupHeader(bob).innerText())
 		);
 		// His confirmation is written on that visit; the same write again, as the second visit makes it.
 		const jwt = await pdsSession(BOB);
@@ -3238,8 +3973,45 @@ step(
 );
 
 // =====================================================================================
-// roster: the members page, for an admin who linked the group and for a member
+// roster: the members page, for an admin who linked the group and for a member. Held back in this
+// build: every step but the first is skipped (see the end of the file), and the first checks that
+// its address answers as an unknown one.
 // =====================================================================================
+step(
+	'roster',
+	'members-address-answers-as-unknown',
+	async (t) => {
+		const g = S.groups.g1;
+		const cookie = (await S.pages.alice.context().cookies(ATMO))
+			.map((c) => `${c.name}=${c.value}`)
+			.join('; ');
+		const unknown = await answerAt(`/groups/${g.did}/no-such-page`);
+		for (const [who, init] of [
+			['signed out', {}],
+			['signed in as the founder', { headers: { cookie } }]
+		]) {
+			const like = await answerAt(`/groups/${g.did}/no-such-page`, init);
+			for (const p of [`/groups/${g.did}/members`, `/groups/${g.did}/members/requests`]) {
+				const got = await answerAt(p, init);
+				check(
+					`${who}, ${p.replace(g.did, '<did>')} answers as a made-up address in the group does (404, the same body)`,
+					got.status === 404 && got.status === like.status && got.text === like.text,
+					`${got.status} vs ${like.status}`
+				);
+			}
+		}
+		const { alice } = S.pages;
+		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
+		t.shot = alice;
+		check(
+			'in a browser, the members address shows the not-found page, not a roster',
+			(await alice.locator('ul[aria-label="Asking to join"]').count()) === 0 &&
+				unknown.status === 404
+		);
+	},
+	{ needs: ['people-sign-in', 'alice-makes-groups'] }
+);
+
 step('roster', 'todo-approve-again-on-the-members-page', async () => {}, {
 	todo: 'an earlier link showing "Approve again" needs a link whose asked scope is out of date and whose grant lacks something (see create/todo-approve-again-for-an-old-link); a link made in this run asks for the current scope'
 });
@@ -3967,24 +4739,8 @@ step(
 		await bob.fill('#join-message', `Bob for the supper, run ${RUN}`);
 		await bob.getByRole('button', { name: /^ask to join$/i }).click();
 		await bob.getByText(/request sent/i).waitFor({ timeout: 20_000 });
-		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
-		// The members page reads the roster with alice's own sign-in, which may lack the group
-		// permissions in a run where she has not joined anything yet.
-		if (await alice.getByRole('button', { name: /^allow joining groups$/i }).count()) {
-			note("alice's members page asked her own sign-in for the group permissions first");
-			await allowOnPage(alice, ALICE, /^allow joining groups$/i);
-			await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
-		}
-		const row = alice.locator('ul[aria-label="Asking to join"] li', {
-			hasText: BOB.handle.split('.')[0]
-		});
-		await row.getByRole('button', { name: /^approve$/i }).click();
-		await until(
-			async () => (await row.count()) === 0,
-			(x) => x,
-			20,
-			500
-		);
+		// The members page is held back in this build: the admin admits him at the group host.
+		await admitAtHost(await adminFor(g, ALICE), g, BOB.did);
 		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
 		// A member whose own sign-in can't open members-only events is asked for it here.
 		if (await bob.getByRole('button', { name: /^allow joining groups$/i }).count()) {
@@ -3995,7 +4751,7 @@ step(
 		t.shot = bob;
 		const item = bob.getByTestId('members-only-event').filter({ hasText: MO_EVENT });
 		check(
-			'alice approves him; as a member he sees it on the group page, marked Members only with a lock',
+			'admitted at the host; as a member he sees it on the group page, marked Members only with a lock',
 			(await bob.getByRole('button', { name: /^leave group$/i }).count()) === 1 &&
 				(await item.count()) === 1 &&
 				/members only/i.test(await item.innerText()) &&
@@ -4113,15 +4869,7 @@ step(
 		await dana.fill('#join-message', 'Dana for the supper');
 		await dana.getByRole('button', { name: /^ask to join$/i }).click();
 		await dana.getByText(/request sent/i).waitFor({ timeout: 20_000 });
-		await alice.goto(`${groupUrl(g)}/members`, { waitUntil: 'networkidle' });
-		const row = alice.locator('ul[aria-label="Asking to join"] li', { hasText: 'dana' });
-		await row.getByRole('button', { name: /^approve$/i }).click();
-		await until(
-			async () => (await row.count()) === 0,
-			(x) => x,
-			20,
-			500
-		);
+		await admitAtHost(await adminFor(g, ALICE), g, DANA.did);
 		await dana.goto(groupUrl(g), { waitUntil: 'networkidle' });
 		if (await dana.getByRole('button', { name: /^allow joining groups$/i }).count()) {
 			await allowOnPage(dana, DANA, /^allow joining groups$/i);
@@ -4316,6 +5064,568 @@ step(
 		);
 	},
 	{ needs: ['outsider-mallory-gets-not-found', 'private-group-member-still-sees-it'] }
+);
+
+// ---------- a calendar another app made the group first, reused ----------
+// "Another app" is a second loopback OAuth client of the walk's, signed in as the group by alice,
+// with only calendar-space scopes: it makes the group a calendar space keyed `wiki` before atmo
+// turns members-only events on, and writes three records there.
+const CAL_TYPE = 'community.lexicon.calendar.collection';
+const OTHER_COLLECTION = 'org.example.wiki.page';
+const OTHER_APP_SCOPE = [
+	'atproto',
+	`space:${CAL_TYPE}?authority=self&manage=create`,
+	`space:${CAL_TYPE}?authority=self&collection=${EVENTS}&collection=${OTHER_COLLECTION}&action=read&action=create&action=update&action=delete`
+].join(' ');
+const calendarAt = (did, skey) => `at:space/${did}/${CAL_TYPE}/${skey}`;
+/** The policy the other app gives its calendar: private; admins post events as the group; members
+ *  read it. And, so the other app can write its own kind of record there, that collection too. */
+const WIKI_POLICY = {
+	$type: 'org.atgrp.policy',
+	publicRead: false,
+	grants: [
+		{
+			role: 'admin',
+			permissions: [
+				`space:${CAL_TYPE}?collection=${EVENTS}`,
+				`space:${CAL_TYPE}?collection=${OTHER_COLLECTION}`
+			]
+		},
+		{ role: 'member', read: true }
+	]
+};
+/** A calendar its members read where no role may post events. */
+const NO_POSTING_POLICY = {
+	$type: 'org.atgrp.policy',
+	publicRead: false,
+	grants: [
+		{ role: 'admin', read: true },
+		{ role: 'member', read: true }
+	]
+};
+const WIKI_EVENT = `Wiki moor walk ${RUN}`;
+const WIKI_BROKEN = `Wiki notes without a start ${RUN}`;
+const WIKI_OWN_EVENT = `Lantern supper ${RUN}`;
+/** As the other app: the group's calendar space `space`, or the error the host gave (SpaceNotFound
+ *  for one it does not have). */
+async function spaceAsOtherApp(session, space) {
+	try {
+		const r = await asGroup(
+			session,
+			`com.atproto.space.getSpace?${new URLSearchParams({ space })}`,
+			{ method: 'GET' }
+		);
+		return { policy: r.policy };
+	} catch (e) {
+		return { error: e.message };
+	}
+}
+const otherAppPage = async () => S.pages['alice-other-app'] ?? (await pageFor('alice-other-app'));
+/** The group page's "Turn on members-only events", pressed; then what the page shows. */
+async function pressTurnOn(page, g) {
+	await page.goto(groupUrl(g), { waitUntil: 'networkidle' });
+	const turnOn = page.getByRole('button', { name: /^turn on members-only events$/i });
+	const offered = (await turnOn.count()) === 1;
+	if (offered) {
+		await turnOn.click();
+		await page
+			.getByRole('alert')
+			.or(page.getByRole('button', { name: /^approve once more$/i }))
+			.or(page.getByTestId('members-only-setup'))
+			.first()
+			.waitFor({ timeout: 30_000 })
+			.catch(() => {});
+		await settle(page);
+		await sleep(1000);
+	}
+	const alert = (
+		await page
+			.getByRole('alert')
+			.allInnerTexts()
+			.catch(() => [])
+	).join(' ');
+	return { offered, alert };
+}
+
+step(
+	'members-only',
+	'another-app-makes-a-wiki-calendar',
+	async (t) => {
+		const g = await indexedGroup(`wk${RUN}`, `Wiki walkers ${RUN}`);
+		S.groups.gw = g;
+		const page = await otherAppPage();
+		t.shot = page;
+		const maker = await signInAsGroup(page, ALICE, g, OTHER_APP_SCOPE);
+		const made = await asGroup(
+			maker,
+			'com.atproto.space.createSpace',
+			post({ spaceType: CAL_TYPE, skey: 'wiki', policy: WIKI_POLICY })
+		);
+		check(
+			'another app, signed in as the group with calendar scopes only, makes it a calendar space keyed "wiki" (createSpace)',
+			made.space === calendarAt(g.did, 'wiki'),
+			JSON.stringify(made)
+		);
+		// The host grants a link a calendar's record writes only for one that is there at the
+		// approval: the other app is approved once more, now that it is.
+		const writer = await signInAsGroup(page, ALICE, g, OTHER_APP_SCOPE);
+		S.otherApp = writer;
+		const put = (collection, rkey, record) =>
+			asGroup(
+				writer,
+				'com.atproto.space.putRecord',
+				post({ space: calendarAt(g.did, 'wiki'), repo: g.did, collection, rkey, record })
+			)
+				.then(() => 'taken')
+				.catch((e) => e.message);
+		const now = Date.now();
+		const keys = { valid: tid(), noStart: tid(), other: tid() };
+		S.wikiKeys = keys;
+		const answers = {
+			valid: await put(EVENTS, keys.valid, {
+				$type: EVENTS,
+				name: WIKI_EVENT,
+				createdAt: new Date(now).toISOString(),
+				startsAt: new Date(now + 3 * 86_400_000).toISOString()
+			}),
+			noStart: await put(EVENTS, keys.noStart, {
+				$type: EVENTS,
+				name: WIKI_BROKEN,
+				createdAt: new Date(now).toISOString()
+			}),
+			other: await put(OTHER_COLLECTION, keys.other, {
+				$type: OTHER_COLLECTION,
+				title: `Wiki page ${RUN}`,
+				createdAt: new Date(now).toISOString()
+			})
+		};
+		note(`the other app's writes in the wiki calendar: ${JSON.stringify(answers)}`);
+		check(
+			'...and writes one valid event, one event without startsAt, and one record of another collection there',
+			Object.values(answers).every((a) => a === 'taken'),
+			JSON.stringify(answers)
+		);
+		const wiki = await spaceAsOtherApp(writer, calendarAt(g.did, 'wiki'));
+		S.wikiPolicy = wiki.policy;
+		note(`the wiki calendar's policy at the host: ${JSON.stringify(wiki.policy ?? wiki.error)}`);
+		const self = await spaceAsOtherApp(writer, calendarAt(g.did, 'self'));
+		check(
+			'the group has no calendar keyed "self"',
+			/SpaceNotFound/.test(self.error ?? ''),
+			JSON.stringify(self)
+		);
+	},
+	{ needs: ['people-sign-in'] }
+);
+
+step(
+	'members-only',
+	'turning-on-uses-the-wiki-calendar',
+	async (t) => {
+		const g = S.groups.gw;
+		// Alice links the group now, after the wiki calendar was made: an admin's fresh approval.
+		let asked = '';
+		let members = null;
+		await startLink(S.pages.alice, g.handle);
+		await through(S.pages.alice, ALICE, (u) => u.origin === ATMO, {
+			onApprove: async (page) => {
+				members = await membersSpaceAccess(page);
+				asked = (
+					(await page
+						.locator('pre.scopes')
+						.first()
+						.textContent()
+						.catch(() => '')) ?? ''
+				).trim();
+			}
+		});
+		g.linkedByAlice = true;
+		check(
+			"alice's fresh approval as an admin keeps the read of the group's space index",
+			onlyTheSpaceIndexRead(asked, members),
+			`${asked} / ${JSON.stringify(members)}`
+		);
+		// Turned on from a sign-in of alice's own that has not granted the join permissions (a new
+		// one, in a browser of its own), so only the link can read which calendars the group has.
+		const alice = S.pages['alice-own'] ?? (await signInToAtmo(ALICE, 'alice-own'));
+		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		t.shot = alice;
+		const notGranted =
+			(await alice.getByRole('button', { name: /^allow joining groups$/i }).count()) > 0;
+		note(
+			`alice's own new sign-in ${notGranted ? 'is offered "Allow joining groups" on the page (it has not granted the join permissions)' : 'is not offered "Allow joining groups"'}`
+		);
+		check(
+			'alice\'s own new sign-in has not granted the join permissions: the page offers "Allow joining groups"',
+			notGranted,
+			(await mainText(alice)).slice(0, 300)
+		);
+		const before = await mainText(alice);
+		check(
+			'linked, the group page offers "Turn on members-only events" (atmo has chosen no calendar yet)',
+			(await alice.getByRole('button', { name: /^turn on members-only events$/i }).count()) === 1,
+			before.slice(0, 400)
+		);
+		const pressed = await pressTurnOn(alice, g);
+		t.shot = alice;
+		note(`after turning on, alerts: ${pressed.alert || 'none'}`);
+		const setup = alice.getByTestId('members-only-setup');
+		const again = alice.getByRole('button', { name: /^approve once more$/i });
+		const ready = (await again.count()) === 1 || (await setup.count()) === 0;
+		check(
+			'turned on through the link alone, without a refusal: the page asks to approve once more, or the link may post at once',
+			pressed.offered && !pressed.alert && ready,
+			`${pressed.alert} ${(await mainText(alice)).slice(0, 300)}`
+		);
+		if ((await again.count()) === 1) {
+			await again.click();
+			await alice.waitForURL((u) => u.origin !== ATMO, { timeout: 30_000 });
+			await through(alice, ALICE, (u) => u.origin === ATMO);
+			await settle(alice);
+			note('the page asked alice to approve her link once more, and she did');
+		} else note('her link, approved after the wiki calendar was there, could post to it at once');
+		const self = await spaceAsOtherApp(S.otherApp, calendarAt(g.did, 'self'));
+		check(
+			'no calendar keyed "self" was made at the host',
+			/SpaceNotFound/.test(self.error ?? ''),
+			JSON.stringify(self)
+		);
+		const wiki = await spaceAsOtherApp(S.otherApp, calendarAt(g.did, 'wiki'));
+		check(
+			"the wiki calendar's policy is as the other app left it",
+			JSON.stringify(wiki.policy) === JSON.stringify(S.wikiPolicy) && Boolean(wiki.policy),
+			`${JSON.stringify(wiki.policy)} vs ${JSON.stringify(S.wikiPolicy)}`
+		);
+		await alice.goto(`${groupUrl(g)}/events/new`, { waitUntil: 'networkidle' });
+		check(
+			'the new-event page offers Members only',
+			await alice.getByRole('radio', { name: /^members only/i }).isEnabled(),
+			(await mainText(alice)).slice(0, 300)
+		);
+	},
+	{ needs: ['another-app-makes-a-wiki-calendar'] }
+);
+
+step(
+	'members-only',
+	'alice-posts-into-the-wiki-calendar',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.groups.gw;
+		await alice.goto(`${groupUrl(g)}/events/new`, { waitUntil: 'networkidle' });
+		await editorPublish(alice, WIKI_OWN_EVENT, { placement: 'members' });
+		await alice.waitForURL((u) => !u.pathname.endsWith('/events/new'), { timeout: 60_000 });
+		await settle(alice);
+		t.shot = alice;
+		const at = new URL(alice.url()).pathname;
+		S.wikiOwnKey = at.split('/').pop();
+		check(
+			"alice posts a members-only event and lands on its page at the group's address",
+			at === `/groups/${g.did}/events/${S.wikiOwnKey}` &&
+				(await mainText(alice)).includes(WIKI_OWN_EVENT),
+			alice.url()
+		);
+		const self = await spaceAsOtherApp(S.otherApp, calendarAt(g.did, 'self'));
+		check(
+			'there is still no "self" calendar, so it went to the wiki one (its RSVP, next, names that space)',
+			/SpaceNotFound/.test(self.error ?? ''),
+			JSON.stringify(self)
+		);
+		const puts = hostRequests(new Date(Date.now() - 90_000)).filter((r) =>
+			r.route.endsWith('com.atproto.space.putRecord')
+		);
+		note(`the host's putRecord answers in the last 90 s: ${puts.map((r) => r.status).join(' ')}`);
+		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		const listed = await alice.getByTestId('members-only-event').allInnerTexts();
+		check(
+			"the group page lists hers and the other app's valid event under Members-only events, not the one without a start",
+			listed.some((x) => x.includes(WIKI_OWN_EVENT)) &&
+				listed.some((x) => x.includes(WIKI_EVENT)) &&
+				!(await mainText(alice)).includes(WIKI_BROKEN),
+			listed.join(' | ').slice(0, 300)
+		);
+	},
+	{ needs: ['turning-on-uses-the-wiki-calendar'] }
+);
+
+step(
+	'members-only',
+	'a-member-sees-the-wiki-events-and-rsvps-there',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = S.groups.gw;
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		if (await bob.getByRole('button', { name: /^allow joining groups$/i }).count()) {
+			await allowOnPage(bob, BOB, /^allow joining groups$/i);
+			await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		}
+		await bob.fill('#join-message', `Bob for the wiki walk, run ${RUN}`);
+		await bob.getByRole('button', { name: /^ask to join$/i }).click();
+		await bob.getByText(/request sent/i).waitFor({ timeout: 20_000 });
+		await admitAtHost(await adminFor(g, ALICE), g, BOB.did);
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		if (await bob.getByRole('button', { name: /^allow joining groups$/i }).count()) {
+			await allowOnPage(bob, BOB, /^allow joining groups$/i);
+			await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		}
+		t.shot = bob;
+		const listed = await bob.getByTestId('members-only-event').allInnerTexts();
+		check(
+			"admitted at the host, bob sees both valid events (alice's and the other app's), each marked Members only",
+			listed.some((x) => x.includes(WIKI_OWN_EVENT)) &&
+				listed.some((x) => x.includes(WIKI_EVENT)) &&
+				listed.every((x) => /members\s*only/i.test(x)),
+			`${listed.join(' | ').slice(0, 300)} / ${(await mainText(bob)).slice(0, 200)}`
+		);
+		check(
+			'...and not the record without a start, nor the other collection',
+			!(await mainText(bob)).includes(WIKI_BROKEN) &&
+				!(await mainText(bob)).includes(`Wiki page ${RUN}`)
+		);
+		await bob.goto(moEventUrl(g, S.wikiKeys.valid), { waitUntil: 'networkidle' });
+		check(
+			"the other app's event opens on its own page for him",
+			(await mainText(bob)).includes(WIKI_EVENT)
+		);
+		for (const [what, key] of [
+			['the record without a start', S.wikiKeys.noStart],
+			["the other collection's record", S.wikiKeys.other]
+		]) {
+			const seen = await sameAsMadeUp(bob, g, key);
+			check(
+				`for him, ${what}'s key answers as a made-up key does`,
+				seen.same && !seen.realText.includes(WIKI_BROKEN),
+				`${seen.real} / ${seen.fake}`
+			);
+		}
+		await bob.goto(moEventUrl(g, S.wikiOwnKey), { waitUntil: 'networkidle' });
+		await bob.getByRole('button', { name: 'Going', exact: true }).click();
+		await bob.getByText(/you're going/i).waitFor({ timeout: 20_000 });
+		const jwt = await pdsSession(BOB);
+		const inSpace = (skey) =>
+			getJson(
+				`${BOB.pds}/xrpc/com.atproto.space.listRecords?${new URLSearchParams({ space: calendarAt(g.did, skey), repo: BOB.did, collection: 'community.lexicon.calendar.rsvp' })}`,
+				{ headers: { authorization: `Bearer ${jwt}` } }
+			);
+		const listedRsvps = await until(
+			() => inSpace('wiki'),
+			(r) => (r.body?.records ?? []).some((x) => x.rkey === S.wikiOwnKey),
+			20
+		);
+		const rsvp = (listedRsvps.last?.body?.records ?? []).find((x) => x.rkey === S.wikiOwnKey);
+		const subject = String(rsvp?.value?.subject?.uri ?? '');
+		note(`his RSVP names ${subject}`);
+		check(
+			"he answers Going to alice's event: his RSVP is in his own repo in the group's wiki calendar space, naming the event there",
+			Boolean(rsvp) &&
+				/#going$/.test(rsvp.value?.status ?? '') &&
+				subject.includes(`${CAL_TYPE}/wiki`) &&
+				subject.endsWith(`/${S.wikiOwnKey}`),
+			`${listedRsvps.last?.status} ${JSON.stringify(rsvp ?? listedRsvps.last?.text?.slice(0, 200))}`
+		);
+		const self = await inSpace('self');
+		check(
+			'...and none in a "self" calendar',
+			!(self.body?.records ?? []).length,
+			`${self.status} ${self.text.slice(0, 120)}`
+		);
+		t.shot = bob;
+	},
+	{ needs: ['alice-posts-into-the-wiki-calendar'] }
+);
+
+/** From a page of atmo: the group page's own command to turn members-only events on, called as the
+ *  page calls it. Its answer: ok, or the status and message it was refused with. */
+const callTurnOn = (page, g) =>
+	page.evaluate(async (groupDid) => {
+		const { turnOnMembersOnlyEvents } = await import('/src/lib/groups/group.remote.ts');
+		try {
+			await turnOnMembersOnlyEvents({ groupDid });
+			return { ok: true };
+		} catch (e) {
+			return { ok: false, status: e?.status, message: e?.body?.message ?? String(e) };
+		}
+	}, g.did);
+
+step(
+	'members-only',
+	'a-member-who-links-may-not-turn-it-on',
+	async (t) => {
+		const { bob, alice } = S.pages;
+		const g = S.groups.gw;
+		await startLink(bob, g.handle);
+		await through(bob, BOB, (u) => u.origin === ATMO);
+		await settle(bob);
+		await bob.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		t.shot = bob;
+		check(
+			'bob, a plain member, links the group: his page offers no "Turn on members-only events"',
+			(await bob.getByRole('button', { name: /^turn on members-only events$/i }).count()) === 0,
+			(await mainText(bob)).slice(0, 300)
+		);
+		const answer = await callTurnOn(bob, g);
+		note(`the command, called from his page, answered ${JSON.stringify(answer)}`);
+		check(
+			"calling the page's command anyway is refused (403): his role doesn't let him turn them on",
+			!answer.ok &&
+				answer.status === 403 &&
+				/doesn't let you turn on members-only events/i.test(answer.message ?? ''),
+			JSON.stringify(answer)
+		);
+		const self = await spaceAsOtherApp(S.otherApp, calendarAt(g.did, 'self'));
+		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		const listed = await alice.getByTestId('members-only-event').allInnerTexts();
+		check(
+			'the group\'s calendar choice is unchanged: no "self" calendar, and the group page still lists the wiki calendar\'s events',
+			/SpaceNotFound/.test(self.error ?? '') &&
+				listed.some((x) => x.includes(WIKI_OWN_EVENT)) &&
+				listed.some((x) => x.includes(WIKI_EVENT)),
+			`${JSON.stringify(self)} ${listed.join(' | ').slice(0, 200)}`
+		);
+	},
+	{ needs: ['a-member-sees-the-wiki-events-and-rsvps-there'] }
+);
+
+step(
+	'members-only',
+	'an-outsider-gets-not-found-for-every-wiki-key',
+	async (t) => {
+		const g = S.groups.gw;
+		const mallory = S.pages.mallory ?? (await signInToAtmo(MALLORY));
+		await mallory.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		if (await mallory.getByRole('button', { name: /^allow joining groups$/i }).count()) {
+			await allowOnPage(mallory, MALLORY, /^allow joining groups$/i);
+		}
+		const madeUp = madeUpKey(S.wikiKeys.valid);
+		const fake = await status(mallory, moEventUrl(g, madeUp));
+		const fakeText = await mainText(mallory).catch(() => '');
+		t.shot = mallory;
+		const seen = {};
+		for (const [what, key] of [
+			["alice's event", S.wikiOwnKey],
+			["the other app's event", S.wikiKeys.valid],
+			['the record without a start', S.wikiKeys.noStart],
+			["the other collection's record", S.wikiKeys.other]
+		]) {
+			const real = await status(mallory, moEventUrl(g, key));
+			const text = await mainText(mallory).catch(() => '');
+			seen[what] = real;
+			check(
+				`mallory, not a member, gets for ${what}'s key what a made-up key gives (${fake})`,
+				real === fake &&
+					text === fakeText &&
+					!text.includes(WIKI_EVENT) &&
+					!text.includes(WIKI_OWN_EVENT) &&
+					!text.includes(WIKI_BROKEN),
+				`${real} "${text.slice(0, 100)}" / ${fake} "${fakeText.slice(0, 100)}"`
+			);
+		}
+		note(`made-up key ${fake}; ${JSON.stringify(seen)}`);
+	},
+	{ needs: ['a-member-sees-the-wiki-events-and-rsvps-there'] }
+);
+
+step(
+	'members-only',
+	'refused-when-no-role-may-post-to-its-calendar',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = await indexedGroup(`nr${RUN}`, `Notes keepers ${RUN}`);
+		S.groups.gn = g;
+		const maker = await signInAsGroup(await otherAppPage(), ALICE, g, OTHER_APP_SCOPE);
+		const made = await asGroup(
+			maker,
+			'com.atproto.space.createSpace',
+			post({ spaceType: CAL_TYPE, skey: 'notes', policy: NO_POSTING_POLICY })
+		);
+		const kept = (await spaceAsOtherApp(maker, made.space)).policy;
+		check(
+			'another app gives a fresh group a calendar keyed "notes" that its members read and no role may post to',
+			made.space === calendarAt(g.did, 'notes'),
+			JSON.stringify(made)
+		);
+		await reindex(g);
+		const pressed = await pressTurnOn(alice, g);
+		t.shot = alice;
+		note(`alice pressed "Turn on members-only events": ${pressed.alert || 'no alert'}`);
+		check(
+			'turning on is refused, saying an admin can allow it at the group host and no second calendar was made',
+			pressed.offered &&
+				/already has a calendar for its members/i.test(pressed.alert) &&
+				/an admin can allow it at the group host/i.test(pressed.alert) &&
+				/made no second one/i.test(pressed.alert),
+			pressed.alert || (await mainText(alice)).slice(0, 300)
+		);
+		const self = await spaceAsOtherApp(maker, calendarAt(g.did, 'self'));
+		check(
+			'no calendar keyed "self" was made',
+			/SpaceNotFound/.test(self.error ?? ''),
+			JSON.stringify(self)
+		);
+		const after = (await spaceAsOtherApp(maker, made.space)).policy;
+		check(
+			'and the "notes" calendar\'s policy is unchanged',
+			JSON.stringify(after) === JSON.stringify(kept) && Boolean(kept),
+			`${JSON.stringify(after)} vs ${JSON.stringify(kept)}`
+		);
+		await alice.reload({ waitUntil: 'networkidle' });
+		const text = await mainText(alice);
+		check(
+			'after a reload the page says the calendar was not set up for atmo to post to, and offers no Turn on',
+			/wasn.t set up for atmo to post members-only events to/i.test(text) &&
+				(await alice.getByRole('button', { name: /^turn on members-only events$/i }).count()) === 0,
+			text.slice(0, 400)
+		);
+	},
+	{ needs: ['people-sign-in'] }
+);
+
+step(
+	'members-only',
+	'refused-when-its-self-calendar-is-public',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = await indexedGroup(`pc${RUN}`, `Open calendar keepers ${RUN}`);
+		const maker = await signInAsGroup(await otherAppPage(), ALICE, g, OTHER_APP_SCOPE);
+		const made = await asGroup(
+			maker,
+			'com.atproto.space.createSpace',
+			post({ spaceType: CAL_TYPE, skey: 'self', policy: { ...WIKI_POLICY, publicRead: true } })
+		);
+		check(
+			'another app gives a fresh group a calendar keyed "self" that anyone may read',
+			made.space === calendarAt(g.did, 'self'),
+			JSON.stringify(made)
+		);
+		await reindex(g);
+		await alice.goto(groupUrl(g), { waitUntil: 'networkidle' });
+		t.shot = alice;
+		const text = await mainText(alice);
+		check(
+			'the group page, for alice who linked it, says its calendar can be read by more than its members, and offers no Turn on',
+			/can be read by more than its members/i.test(text) &&
+				(await alice.getByRole('button', { name: /^turn on members-only events$/i }).count()) === 0,
+			text.slice(0, 400)
+		);
+		const answer = await callTurnOn(alice, g);
+		note(`the command, called from her page, answered ${JSON.stringify(answer)}`);
+		check(
+			'calling the command anyway is refused (409) with its message, that atmo will not use a calendar the public can read',
+			!answer.ok &&
+				answer.status === 409 &&
+				/can be read by more than its members, so atmo won't use it for members-only events/i.test(
+					answer.message ?? ''
+				),
+			JSON.stringify(answer)
+		);
+		const after = await spaceAsOtherApp(maker, made.space);
+		check(
+			'...and the calendar is as it was: still public',
+			after.policy?.publicRead === true,
+			JSON.stringify(after)
+		);
+	},
+	{ needs: ['people-sign-in'] }
 );
 
 // =====================================================================================
@@ -4583,13 +5893,112 @@ step(
 				!groupScopes.some((x) => PERSON_ONLY.test(x)),
 			groupScopes.filter((x) => PERSON_ONLY.test(x)).join(' ')
 		);
+		check(
+			"a person's client metadata has no createGroup permission (making a group is held back in this build)",
+			personScopes.length > 1 && !personScopes.some((x) => /createGroup/.test(x)),
+			personScopes.filter((x) => /createGroup/.test(x)).join(' ')
+		);
+		const HELD_BACK_SCOPES =
+			/org\.atgrp\.members|listJoinRequests|denyJoinRequest|org\.atgrp\.about|org\.atgrp\.config|org\.atgrp\.meta[^ ]*manage=|authManage/;
+		const heldBack = groupScopes.filter((x) => x !== SPACE_INDEX_SCOPE && HELD_BACK_SCOPES.test(x));
+		check(
+			"the group client's metadata asks no membership, join-request or settings permission (held back in this build); of the members space, only the read of the group's space index",
+			heldBack.length === 0 && groupScopes.includes(SPACE_INDEX_SCOPE),
+			heldBack.join(' ') || groupScopes.join(' ')
+		);
+		check(
+			"the group client's calendar scopes name no space key",
+			groupScopes.filter((x) => x.startsWith('space:community.lexicon.calendar.collection'))
+				.length === 2 &&
+				!groupScopes.some(
+					(x) => x.startsWith('space:community.lexicon.calendar.collection') && /skey=/.test(x)
+				),
+			groupScopes.filter((x) => x.includes('calendar.collection')).join(' ')
+		);
+		S.flagsGroup = g;
 	},
 	{ needs: ['people-sign-in'] }
+);
+
+step(
+	'flags',
+	'admin-approval-page-asks-nothing-held-back',
+	async (t) => {
+		const { alice } = S.pages;
+		const g = S.flagsGroup;
+		let detail = null;
+		let crashed = false;
+		let asked = '';
+		let members = null;
+		await startLink(alice, g.handle);
+		await through(alice, ALICE, (u) => u.origin === ATMO, {
+			onApprove: async (page) => {
+				t.shot = page;
+				detail = (
+					(await page
+						.locator('main form')
+						.first()
+						.textContent()
+						.catch(() => '')) ?? ''
+				).replace(/\s+/g, ' ');
+				crashed = (await page.getByText(/something went wrong/i).count()) > 0;
+				members = await membersSpaceAccess(page);
+				asked = (
+					(await page
+						.locator('pre.scopes')
+						.first()
+						.textContent()
+						.catch(() => '')) ?? ''
+				).trim();
+				await page.screenshot({ path: shotPath('admin-approval-page') }).catch(() => {});
+			}
+		});
+		await settle(alice);
+		t.shot = alice;
+		note(`the approval page listed: ${(detail ?? '').slice(0, 900)}`);
+		check(
+			"the group host's approval page, for alice (an admin) linking atmo, lists no membership, join-request or settings permission: of the members space, only the read of the group's space index",
+			detail !== null &&
+				onlyTheSpaceIndexRead(asked, members) &&
+				!/join request|listJoinRequests|denyJoinRequest|org\.atgrp\.about|org\.atgrp\.config|settings/i.test(
+					detail
+				),
+			`${asked} / ${JSON.stringify(members)} / ${(detail ?? 'no approval page').slice(0, 400)}`
+		);
+		check(
+			'...and does not show "Something went wrong"',
+			detail !== null && !crashed && !/something went wrong/i.test(detail)
+		);
+		check(
+			'she is back on the group page, linked',
+			new URL(alice.url()).pathname === `/groups/${g.did}`,
+			alice.url()
+		);
+	},
+	{ needs: ['index-endpoints-answer'] }
 );
 
 step('flags', 'off-state', async () => {}, {
 	todo: 'the groups-off state needs atmo started without GROUP_HOST_URL, which this run does not restart; check it with a second dev server on another port'
 });
+
+// ---------- the parts this build holds back (lib/groups/build.ts): their steps, skipped ----------
+// Making a group from the app and its settings page (create), and the members page (roster, but
+// for the step that checks its address answers as an unknown one).
+for (const name of [
+	'allow-making-groups',
+	'make-a-public-listed-group',
+	'unlisted-group-has-no-declaration',
+	'members-only-group-is-not-found-signed-out',
+	'same-address-again-is-taken',
+	'double-submit-offers-finish-setting-up',
+	'unfinished-group-can-be-finished',
+	'settings-change-and-records',
+	'settings-members-only-and-back'
+])
+	stepNamed(name).todo = HELD_BACK;
+for (const s of defined)
+	if (s.section === 'roster' && s.name !== 'members-address-answers-as-unknown') s.todo = HELD_BACK;
 
 // ---------- not yet done by script ----------
 step('private', 'todo-lowered-role-gives-visitor-page', async () => {}, {
@@ -4637,6 +6046,8 @@ function selected() {
 	const add = (s) => {
 		if (wanted.has(s)) return;
 		wanted.add(s);
+		// A skipped step runs nothing, so what it needs is not run for it.
+		if (s.todo) return;
 		for (const need of s.needs) add(stepNamed(need));
 	};
 	for (const s of defined) {

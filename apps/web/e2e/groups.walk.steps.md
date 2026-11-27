@@ -4,6 +4,46 @@ The old script is `apps/web/scripts/groups-e2e.mjs` on `test/groups-port-e2e-5` 
 one linear run). The walk is `apps/web/e2e/groups.walk.mjs`: named steps in sections, run all or by
 name or section (`WALK_ONLY=join`). The old checks are quoted from its labels.
 
+## This build
+
+Three parts of groups are held back in this build (`apps/web/src/lib/groups/build.ts`): making a
+group from the app, a group's settings page, and its members page with its admin actions. Their
+steps stay in the walk, skipped with the reason "held back in this build": create/allow-making-groups
+through create/settings-members-only-and-back, and every roster step but
+roster/members-address-answers-as-unknown. Where a table below names one of them, that check is not
+run in this build; groups are made at the host (by script, or at the console's `/new`), and
+admitted there (by script).
+
+| What this build changed                                                      | Walk step                                                                                                             |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| the header, for a visitor: picture, name, badge, handle, counts, home        | link/header-for-a-visitor                                                                                             |
+| "Group home" is the handle address, and opens the host's page for it         | link/header-for-a-visitor                                                                                             |
+| a Website link only for an http(s) website, never `javascript:`              | link/website-only-when-http                                                                                           |
+| `/p/<group handle or DID>` lands on the group page; a person's is as was     | link/profile-address-leads-to-the-group                                                                               |
+| the "Show in public group lists" switch lists and unlists                    | link/listed-by-the-host, link/unlist-and-list, private/public-again-at-host                                           |
+| ...disabled for a private group, with its reason                             | private/private-at-host                                                                                               |
+| "Make a group" opens the host's `/new`; made there, then linked here         | create/make-a-group-goes-to-the-host, create/made-at-the-host-then-linked                                             |
+| `/groups/create`, `…/settings`, `…/members` answer as an unknown address     | create/held-back-addresses-answer-as-unknown, roster/members-address-answers-as-unknown                               |
+| a linked admin is sent to the host for members, requests, roles, settings    | join/linked-admin-is-sent-to-the-host, create/held-back-addresses-answer-as-unknown                                   |
+| members-only events reuse a calendar another app made (key `wiki`)           | members-only/another-app-makes-a-wiki-calendar, turning-on-uses-the-wiki-calendar, alice-posts-into-the-wiki-calendar |
+| ...members see its valid events only, and RSVP into it                       | members-only/a-member-sees-the-wiki-events-and-rsvps-there                                                            |
+| ...an outsider gets "not found" for every key in it                          | members-only/an-outsider-gets-not-found-for-every-wiki-key                                                            |
+| refused, with no second calendar, when no role may post to the one there     | members-only/refused-when-no-role-may-post-to-its-calendar                                                            |
+| an older link is asked to approve again, and the prompt goes once it is      | link/an-older-link-is-asked-to-approve-again (needs `WALK_OLDER_LINK`)                                                |
+| "Group host: <host>" opens the host's site; "Group home" the group's address | join/linked-admin-is-sent-to-the-host                                                                                 |
+| turning on through the link alone (its read of the group's space index)      | members-only/turning-on-uses-the-wiki-calendar                                                                        |
+| a plain member's link may not turn them on (403); the choice is unchanged    | members-only/a-member-who-links-may-not-turn-it-on                                                                    |
+| a `self` calendar anyone may read: turning on is refused (409)               | members-only/refused-when-its-self-calendar-is-public                                                                 |
+| /groups answers without the event index, and the scheduled job builds it     | setup/groups-list-with-and-without-its-event-index (drops it first with `WALK_EVENT_INDEX_TEST=1`)                    |
+| no membership, join-request or settings permission asked; no createGroup     | link/alice-links-by-handle, flags/index-endpoints-answer, flags/admin-approval-page-asks-nothing-held-back            |
+
+The "another app" is a second loopback OAuth client of the walk's own, signed in as the group by
+alice at the host's console with calendar-space scopes only (`manage=create`, and the event
+collection and `org.example.wiki.page` writes). It makes the space by `com.atproto.space.createSpace`
+under a policy where admins post events as the group and members read, with one more admin permission so it may write its own
+kind of record there, is approved once more (the host grants a space's record writes only for a
+space there at the approval), and puts the three records with `com.atproto.space.putRecord`.
+
 ## Old check, and the walk step that now covers it
 
 | Old check                                                                             | Walk step                                                                                               |
@@ -70,7 +110,9 @@ unfinished-group-can-be-finished.
 join: bob-allows-joining-groups, bob-cancels-and-asks-again, your-groups-lists-it, open-group-admits-at-once,
 invitation-only-group-says-so, dana-on-the-other-spaces-pds-asks-and-is-admitted.
 roster: deny-mallorys-request, approving-a-request-already-gone.
-flags: index-endpoints-answer. wrap: groups-page-needs-no-missing-tables, console-approval-page-works.
+flags: index-endpoints-answer, admin-approval-page-asks-nothing-held-back. Of the members space, the
+group's link asks only to read the group's index of spaces (`org.atgrp.space`), which the approval
+page lists as read only. wrap: groups-page-needs-no-missing-tables, console-approval-page-works.
 
 ## Skipped steps, and why
 
@@ -78,3 +120,5 @@ create/todo-approve-again-for-an-old-link, roster/todo-approve-again-on-the-memb
 whose asked scope is out of date, which a fresh database cannot hold.
 roster/todo-last-admin-sentence: no click reaches it. flags/off-state: needs a server without the host.
 private/todo-lowered-role-gives-visitor-page.
+In this build: the create steps for making a group from the app and its settings, and the roster
+section but its first step, held back in this build (see above).
