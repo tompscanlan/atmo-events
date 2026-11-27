@@ -1,20 +1,39 @@
 <script lang="ts">
-	import { Button } from '@atmo-dev/kit';
+	import { Badge, Button, Label, Textarea } from '@atmo-dev/kit';
 	import { isHttpError } from '@sveltejs/kit';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import HappeningNow from '#lib/components/HappeningNow.svelte';
 	import HostEventsSection from '#lib/components/HostEventsSection.svelte';
+	import GroupAccessNotice from '#lib/groups/components/GroupAccessNotice.svelte';
 	import GroupHeader from '#lib/groups/components/GroupHeader.svelte';
+	import { JOIN_MESSAGE_MAX } from '#lib/groups/fields.js';
 	import { unlinkGroupSession } from '#lib/groups/group.remote.js';
+	import { cancelJoin, confirmMember, joinGroup, leave } from '#lib/groups/members.remote.js';
 
 	let { data } = $props();
 
 	let group = $derived(data.group);
 	let busy = $state(false);
 	let failure: string | null = $state(null);
-	/** Private as their link reads it; a visitor sees no private group at all. */
-	let isPrivate = $derived(group.linked ? !group.linked.meta.public : false);
+	/** A request sent from this page, shown until the page is loaded again: the spec has no way to
+	 *  read one back, and asking again is answered with the same request. Kept for the group it was
+	 *  sent to, since moving to another group's page keeps this component. */
+	let requestedOf: string | null = $state(null);
+	let requested = $derived(requestedOf === group.did);
+	let message = $state('');
+	// A message typed for one group is not carried to another's page.
+	let messageOf: string | null = null;
+	$effect.pre(() => {
+		if (group.did !== messageOf) {
+			messageOf = group.did;
+			message = '';
+		}
+	});
+	/** Private as the person or their link reads it; a visitor sees no private group at all. */
+	let isPrivate = $derived(
+		group.linked ? !group.linked.meta.public : group.personal ? !group.personal.public : false
+	);
 	/** Someone who linked the group and may do something with it here gets the tools. */
 	let hasTools = $derived(
 		Boolean(group.linked && (group.linked.can.post || group.linked.reapprove))
@@ -22,6 +41,46 @@
 	let hasEvents = $derived(
 		data.ongoingEvents.length > 0 || data.upcomingEvents.length > 0 || data.pastEvents.length > 0
 	);
+
+	/** The person's own membership: the host's refusals come back in words to show. */
+	async function asMember(run: () => Promise<unknown>) {
+		busy = true;
+		failure = null;
+		try {
+			await run();
+		} catch (e) {
+			failure = isHttpError(e) ? e.body.message : 'That did not work. Try again.';
+		} finally {
+			busy = false;
+		}
+	}
+
+	const join = () =>
+		asMember(async () => {
+			const { outcome } = await joinGroup({ groupDid: group.did, message: message || undefined });
+			if (outcome === 'pending') requestedOf = group.did;
+			else await invalidateAll();
+		});
+
+	const cancel = () =>
+		asMember(async () => {
+			await cancelJoin({ groupDid: group.did });
+			requestedOf = null;
+			// Admitted meanwhile, perhaps.
+			await invalidateAll();
+		});
+
+	const confirm = () =>
+		asMember(async () => {
+			await confirmMember({ groupDid: group.did });
+			await invalidateAll();
+		});
+
+	const leaveIt = () =>
+		asMember(async () => {
+			await leave({ groupDid: group.did });
+			await invalidateAll();
+		});
 
 	async function act(run: () => Promise<unknown>, after: () => Promise<void> = invalidateAll) {
 		busy = true;
@@ -81,7 +140,67 @@
 			home={group.home}
 			{isPrivate}
 			eventsCreated={data.eventsCreated}
-		/>
+		>
+			{#snippet actions()}
+				{#if group.personal && group.member}
+					<Badge>Member</Badge>
+					<Button size="sm" variant="ghost" disabled={busy} onclick={leaveIt}>Leave group</Button>
+				{:else if group.personal && group.member === false && !requested && group.personal.joinPolicy === 'open'}
+					<Button size="sm" variant="primary" disabled={busy} onclick={join}>Join</Button>
+				{/if}
+			{/snippet}
+			<!-- The person's own place in the group, as far as the host lets them read it. -->
+			{#if group.personal}
+				<section class="mt-4" aria-label="Membership">
+					{#if group.member === null}
+						<p class="text-base-600 dark:text-base-400 text-sm" role="status">
+							Whether you're a member of this group couldn't be checked just now. Try again shortly.
+						</p>
+					{:else if group.member}
+						{#if group.confirmed === false}
+							<!-- Admitted some other way than a request made here: confirming is theirs to do. -->
+							<div class="flex flex-wrap items-center gap-3">
+								<p class="text-base-700 dark:text-base-300 text-sm" role="status">
+									The group counts you a member. Confirm it, so your own account says so too.
+								</p>
+								<Button size="sm" variant="secondary" disabled={busy} onclick={confirm}
+									>Confirm membership</Button
+								>
+							</div>
+						{/if}
+					{:else if requested}
+						<div class="flex flex-wrap items-center gap-3">
+							<p class="text-base-700 dark:text-base-300 text-sm" role="status">
+								Request sent. The group's admins will decide.
+							</p>
+							<Button size="sm" variant="ghost" disabled={busy} onclick={cancel}
+								>Cancel request</Button
+							>
+						</div>
+					{:else if group.personal.joinPolicy === 'approval'}
+						<div class="space-y-2">
+							<Label for="join-message">A message for the group's admins (optional)</Label>
+							<Textarea
+								id="join-message"
+								bind:value={message}
+								rows={3}
+								maxlength={JOIN_MESSAGE_MAX}
+							/>
+							<div class="flex flex-wrap items-center gap-3">
+								<Button variant="secondary" disabled={busy} onclick={join}>Ask to join</Button>
+								<span class="text-base-600 dark:text-base-400 text-sm">
+									The group's admins decide who joins.
+								</span>
+							</div>
+						</div>
+					{:else if group.personal.joinPolicy !== 'open'}
+						<p class="text-base-600 dark:text-base-400 text-sm" role="status">
+							This group takes members by invitation only.
+						</p>
+					{/if}
+				</section>
+			{/if}
+		</GroupHeader>
 
 		{#if data.notice}<p role="status" class="text-base-600 dark:text-base-400 mb-6 text-sm">
 				{data.notice}
@@ -93,6 +212,17 @@
 		{#if failure}<p role="alert" class="text-base-950 dark:text-base-50 mb-6 text-sm">
 				{failure}
 			</p>{/if}
+
+		{#if data.access && data.you}
+			<div class="mb-6">
+				<GroupAccessNotice
+					access={data.access}
+					did={data.you}
+					purpose="To join this group, or see it as one of its members, atmo asks your server to act for you in groups."
+					spacesServer={data.spacesServer}
+				/>
+			</div>
+		{/if}
 
 		{#if group.linked && hasTools}
 			<section

@@ -7,10 +7,16 @@ const { page } = vi.hoisted(() => ({
 	page: { status: 404, error: null as { message: string } | null }
 }));
 vi.mock('$app/state', () => ({ page }));
+vi.mock('$app/server', () => ({
+	command: (_schema: unknown, handler: unknown) =>
+		Object.assign(handler as object, { __: { type: 'command' } }),
+	getRequestEvent: () => ({ locals: { did: 'did:plc:alice' } })
+}));
 vi.mock('./group', () => ({ resolveGroup: vi.fn(), isDeclared: vi.fn() }));
 vi.mock('./sign-in', () => ({ groupSession: vi.fn(), hasGroupSession: vi.fn() }));
 
 import ErrorPage from '../../../routes/+error.svelte';
+import { cancelJoin, confirmMember, joinGroup, leave } from '../members.remote';
 import { groupView, requireGroupWriter, requireStoredLink } from './context';
 
 const GROUP = 'did:plc:group';
@@ -51,5 +57,13 @@ describe('with groups off', () => {
 		const expected = unknownAddress();
 		expect(await shown(() => requireGroupWriter(GROUP, ALICE))).toBe(expected);
 		expect(await shown(() => requireStoredLink(GROUP, ALICE))).toBe(expected);
+	});
+
+	it("refuses a person's join, cancel, leave and confirming with the same 404", async () => {
+		const expected = unknownAddress();
+		expect(await shown(() => confirmMember({ groupDid: GROUP }))).toBe(expected);
+		expect(await shown(() => joinGroup({ groupDid: GROUP, message: 'hi' }))).toBe(expected);
+		expect(await shown(() => cancelJoin({ groupDid: GROUP }))).toBe(expected);
+		expect(await shown(() => leave({ groupDid: GROUP }))).toBe(expected);
 	});
 });

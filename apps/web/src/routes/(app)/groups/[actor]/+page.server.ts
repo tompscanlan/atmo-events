@@ -5,9 +5,12 @@ import { EMPTY_ONGOING, ongoingQuery } from '#lib/contrail/ongoing.js';
 import { flattenEventRecords, listAuthoredEventsFromContrail } from '#lib/contrail.js';
 import { hasEnded } from '#lib/past-events.js';
 import { getProfileCounts } from '#lib/server/profile-counts.js';
+import { groupAccess } from '#lib/groups/permissions-asked.js';
 import { groupView, type LinkedGroup } from '#lib/groups/server/context.js';
 import type { GroupAbilities } from '#lib/groups/scopes.js';
 import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
+import { callerSession } from '#lib/private-events/server/caller.js';
+import { spacesServer } from '#lib/private-events/server/enabled.js';
 
 const LINK_NOTICES = {
 	linked: 'Linked.'
@@ -72,7 +75,9 @@ export async function load({ params, locals, url, setHeaders }) {
 	requireGroupsEnabled();
 	// What's on it depends on who's asking.
 	setHeaders({ 'cache-control': 'no-store' });
-	const group = await groupView(params.actor, locals.did);
+	const person = locals.did ? await callerSession(locals.session ?? null) : null;
+	const group = await groupView(params.actor, locals.did, person);
+	const access = group.askAccess && person ? groupAccess(url, person.did) : null;
 	const [events, eventCounts] = await Promise.all([
 		hostedEvents(group.did as ActorIdentifier),
 		getProfileCounts(env.DB, group.did)
@@ -85,6 +90,10 @@ export async function load({ params, locals, url, setHeaders }) {
 		/** How many public events it has made, as a profile counts a person's. */
 		eventsCreated: eventCounts?.created ?? null,
 		signedIn: Boolean(locals.did),
+		you: locals.did,
+		/** What the person's own sign-in needs before they can join or see the group as a member. */
+		access,
+		spacesServer: access === 'refused' ? spacesServer() : null,
 		notice: linkNotice(url.searchParams.get('link'), group.linked)
 	};
 }
