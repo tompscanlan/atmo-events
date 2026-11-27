@@ -8,6 +8,13 @@ vi.mock('#lib/groups/group.remote.js', () => ({
 	setGroupListed: vi.fn(),
 	unlinkGroupSession: vi.fn()
 }));
+vi.mock('#lib/groups/members.remote.js', () => ({
+	joinGroup: vi.fn(),
+	cancelJoin: vi.fn(),
+	leave: vi.fn(),
+	confirmMember: vi.fn()
+}));
+vi.mock('@svelte-atproto/oauth/client', () => ({ requestPermissions: vi.fn() }));
 vi.mock('#lib/contrail/events.remote.js', () => ({ loadMoreEvents: vi.fn() }));
 
 import GroupPage from './+page.svelte';

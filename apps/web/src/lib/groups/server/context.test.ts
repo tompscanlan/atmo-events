@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { env } from 'cloudflare:workers';
+import { env, waitUntil } from 'cloudflare:workers';
 import { isHttpError } from '@sveltejs/kit';
 import { TokenRefreshError } from '@atcute/oauth-node-client';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
@@ -17,7 +17,13 @@ const mocks = vi.hoisted(() => ({
 	groupSession: vi.fn(),
 	groupSignInAvailable: vi.fn(),
 	hasGroupSession: vi.fn(),
-	linkAskedCurrentScope: vi.fn()
+	linkAskedCurrentScope: vi.fn(),
+	readMetaAsPerson: vi.fn(),
+	isMemberAsPerson: vi.fn(),
+	actorGroups: vi.fn(),
+	confirmAdmitted: vi.fn(),
+	hasConfirmation: vi.fn(),
+	joinRequested: vi.fn()
 }));
 vi.mock('./group', () => ({
 	resolveGroup: mocks.resolveGroup,
@@ -37,8 +43,21 @@ vi.mock('./sign-in', () => ({
 	hasGroupSession: mocks.hasGroupSession,
 	linkAskedCurrentScope: mocks.linkAskedCurrentScope
 }));
+vi.mock('./person', () => ({
+	personReader: () => ({}),
+	readMetaAsPerson: mocks.readMetaAsPerson,
+	isMemberAsPerson: mocks.isMemberAsPerson
+}));
+vi.mock('./host', () => ({ actorGroups: mocks.actorGroups }));
+vi.mock('./confirmation', () => ({
+	confirmAdmitted: mocks.confirmAdmitted,
+	hasConfirmation: mocks.hasConfirmation,
+	joinRequested: mocks.joinRequested
+}));
+
 import {
 	GROUP_NOT_FOUND,
+	GROUP_UNCHECKED,
 	groupHome,
 	groupHostSite,
 	groupView,
@@ -484,5 +503,178 @@ describe('requireStoredLink', () => {
 		mocks.hasGroupSession.mockResolvedValue(false);
 		await expect(requireStoredLink(GROUP, ALICE)).rejects.toMatchObject(notFound);
 		await expect(requireStoredLink(GROUP, null)).rejects.toMatchObject(notFound);
+	});
+});
+
+describe('groupView for a person with their own group permissions', () => {
+	/** The participate set as a PDS hands it back expanded, with "your groups". */
+	const PARTICIPATE = [
+		'atproto',
+		'space:org.atgrp.meta?authority=*&skey=self&action=read',
+		'space:org.atgrp.members?authority=*&skey=self&collection=org.atgrp.confirmation',
+		'rpc?lxm=org.atgrp.requestJoin&lxm=org.atgrp.cancelJoinRequest&lxm=org.atgrp.leaveGroup&aud=*',
+		'rpc:org.atgrp.internal.getActorGroups?aud=*'
+	].join(' ');
+	const person = (scope = PARTICIPATE) => ({ did: ALICE, scope, handle: vi.fn() });
+	const personal = { ...meta, joinPolicy: 'approval' };
+
+	beforeEach(() => {
+		vi.mocked(waitUntil).mockClear();
+		mocks.readMetaAsPerson.mockResolvedValue(personal);
+		mocks.isMemberAsPerson.mockResolvedValue(false);
+		mocks.joinRequested.mockResolvedValue(false);
+		mocks.hasConfirmation.mockResolvedValue(true);
+	});
+
+	it('reads the group as they may see it, with how it takes members, and asks nothing more', async () => {
+		mocks.isDeclared.mockResolvedValue(true);
+		expect(await groupView(GROUP, ALICE, person())).toMatchObject({
+			name: 'Knitters',
+			personal: { public: true, joinPolicy: 'approval' },
+			member: false,
+			askAccess: false
+		});
+		expect(mocks.storeCachedProfile).toHaveBeenCalledWith(resolved, personal);
+		expect(waitUntil).not.toHaveBeenCalled();
+	});
+
+	it('shows a private group to its member without a declaration, and writes nothing for the visit', async () => {
+		mocks.isDeclared.mockResolvedValue(false);
+		mocks.readMetaAsPerson.mockResolvedValue({ ...personal, public: false });
+		mocks.isMemberAsPerson.mockResolvedValue(true);
+		const caller = person();
+		expect(await groupView(GROUP, ALICE, caller)).toMatchObject({
+			name: 'Knitters',
+			personal: { public: false },
+			member: true,
+			confirmed: true
+		});
+		expect(mocks.isDeclared).not.toHaveBeenCalled();
+		expect(waitUntil).not.toHaveBeenCalled();
+		expect(mocks.confirmAdmitted).not.toHaveBeenCalled();
+	});
+
+	it("says when a member admitted some other way hasn't confirmed, and writes nothing for them", async () => {
+		mocks.isDeclared.mockResolvedValue(true);
+		mocks.isMemberAsPerson.mockResolvedValue(true);
+		mocks.hasConfirmation.mockResolvedValue(false);
+		expect(await groupView(GROUP, ALICE, person())).toMatchObject({
+			member: true,
+			confirmed: false
+		});
+		expect(mocks.joinRequested).toHaveBeenCalledWith(ALICE, GROUP);
+		expect(waitUntil).not.toHaveBeenCalled();
+		expect(mocks.confirmAdmitted).not.toHaveBeenCalled();
+	});
+
+	it('writes the confirmation on the first visit after a request made here was admitted', async () => {
+		mocks.isDeclared.mockResolvedValue(true);
+		mocks.isMemberAsPerson.mockResolvedValue(true);
+		mocks.joinRequested.mockResolvedValue(true);
+		const caller = person();
+		expect(await groupView(GROUP, ALICE, caller)).toMatchObject({ member: true, confirmed: true });
+		expect(waitUntil).toHaveBeenCalledOnce();
+		expect(mocks.confirmAdmitted).toHaveBeenCalledWith(caller, GROUP);
+		expect(mocks.hasConfirmation).not.toHaveBeenCalled();
+	});
+
+	it('writes nothing for a request still waiting', async () => {
+		mocks.isDeclared.mockResolvedValue(true);
+		mocks.joinRequested.mockResolvedValue(true);
+		expect(await groupView(GROUP, ALICE, person())).toMatchObject({
+			member: false,
+			confirmed: null
+		});
+		expect(mocks.confirmAdmitted).not.toHaveBeenCalled();
+	});
+
+	it('writes no confirmation for a member whose sign-in cannot write it', async () => {
+		mocks.isMemberAsPerson.mockResolvedValue(true);
+		const scope = PARTICIPATE.split(' ')
+			.filter((token) => !token.startsWith('space:org.atgrp.members'))
+			.join(' ');
+		mocks.joinRequested.mockResolvedValue(true);
+		expect(await groupView(GROUP, ALICE, person(scope))).toMatchObject({
+			member: true,
+			confirmed: null,
+			askAccess: true
+		});
+		expect(mocks.confirmAdmitted).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		[
+			'the host lists them in it',
+			[{ did: GROUP, handle: 'knit.example', displayName: null }],
+			null
+		],
+		['the host did not answer', null, null],
+		['the host lists them in other groups only', [], false]
+	] as const)(
+		'settles a members space their PDS could not open by the host’s list: %s',
+		async (_why, listed, member) => {
+			mocks.isDeclared.mockResolvedValue(true);
+			mocks.isMemberAsPerson.mockRejectedValue(
+				new SpaceAccessDenied(`at:space/${GROUP}/org.atgrp.members/self`, '400 SpaceNotFound')
+			);
+			if (listed) mocks.actorGroups.mockResolvedValue(listed);
+			else mocks.actorGroups.mockRejectedValue(new Error('host down'));
+			vi.spyOn(console, 'warn').mockImplementation(() => {});
+			expect(await groupView(GROUP, ALICE, person())).toMatchObject({ member, personal: personal });
+		}
+	);
+
+	it('says it could not tell when the membership read fails', async () => {
+		mocks.isMemberAsPerson.mockRejectedValue(new Error('host down'));
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		expect(await groupView(GROUP, ALICE, person())).toMatchObject({ member: null });
+	});
+
+	it('is the same 404 for a private group the host keeps them out of', async () => {
+		mocks.isDeclared.mockResolvedValue(false);
+		mocks.readMetaAsPerson.mockRejectedValue(new SpaceAccessDenied(META, '400 NotAuthorized'));
+		await expect(groupView(GROUP, ALICE, person())).rejects.toMatchObject({
+			status: 404,
+			body: { message: GROUP_NOT_FOUND }
+		});
+	});
+
+	it("is a 503, not a 404, when the host's answer is unclear for a group they are in", async () => {
+		mocks.isDeclared.mockResolvedValue(false);
+		mocks.readMetaAsPerson.mockRejectedValue(new SpaceAccessDenied(META, '400 SpaceNotFound'));
+		mocks.actorGroups.mockResolvedValue([
+			{ did: GROUP, handle: 'knit.example', displayName: null }
+		]);
+		await expect(groupView(GROUP, ALICE, person())).rejects.toMatchObject({
+			status: 503,
+			body: { message: GROUP_UNCHECKED }
+		});
+
+		mocks.actorGroups.mockResolvedValue([]);
+		await expect(groupView(GROUP, ALICE, person())).rejects.toMatchObject({ status: 404 });
+	});
+
+	it('asks for the permissions a sign-in lacks, and reads nothing with it', async () => {
+		mocks.isDeclared.mockResolvedValue(true);
+		expect(await groupView(GROUP, ALICE, person('atproto'))).toMatchObject({
+			personal: null,
+			member: null,
+			askAccess: true
+		});
+		expect(mocks.readMetaAsPerson).not.toHaveBeenCalled();
+	});
+
+	it("reads and asks nothing as the person for a group not at this site's host, nor for another's session", async () => {
+		mocks.isDeclared.mockResolvedValue(true);
+		mocks.atGroupHost.mockReturnValue(false);
+		expect(await groupView(GROUP, ALICE, person())).toMatchObject({
+			personal: null,
+			askAccess: false
+		});
+		// Even a sign-in without the group permissions is asked for none of them there.
+		expect(await groupView(GROUP, ALICE, person('atproto'))).toMatchObject({ askAccess: false });
+		mocks.atGroupHost.mockReturnValue(true);
+		expect(await groupView(GROUP, 'did:plc:bob', person())).toMatchObject({ personal: null });
+		expect(mocks.readMetaAsPerson).not.toHaveBeenCalled();
 	});
 });

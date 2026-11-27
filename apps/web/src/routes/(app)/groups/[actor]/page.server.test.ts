@@ -5,9 +5,11 @@ const mocks = vi.hoisted(() => ({
 	groupView: vi.fn(),
 	listAuthoredEventsFromContrail: vi.fn(),
 	ongoingQuery: vi.fn(),
-	getProfileCounts: vi.fn()
+	getProfileCounts: vi.fn(),
+	callerSession: vi.fn()
 }));
 vi.mock('#lib/groups/server/context.js', () => ({ groupView: mocks.groupView }));
+vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.callerSession }));
 vi.mock('#lib/contrail.js', () => ({
 	listAuthoredEventsFromContrail: mocks.listAuthoredEventsFromContrail,
 	flattenEventRecords: (records: unknown[]) => records
@@ -34,6 +36,7 @@ const request = (query = '', did: string | null = null) =>
 beforeEach(() => {
 	vi.resetAllMocks();
 	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
+	Reflect.deleteProperty(env, 'SPACES_PDS_URL');
 	mocks.groupView.mockResolvedValue({ did: GROUP, name: 'Knitters', description: null });
 	mocks.listAuthoredEventsFromContrail.mockResolvedValue({ records: [] });
 	mocks.ongoingQuery.mockResolvedValue({ events: [], total: 0, totalIsFloor: false });
@@ -46,6 +49,7 @@ describe('a group page', () => {
 		list: false
 	};
 	const holder = (can: Partial<typeof NOTHING>) => {
+		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: 'atproto', handle: vi.fn() });
 		mocks.groupView.mockResolvedValue({
 			did: GROUP,
 			name: 'Knitters',
@@ -65,6 +69,7 @@ describe('a group page', () => {
 	it('says it is linked only to the person who holds a working link', async () => {
 		// Signed out, a person without a link, and one whose link no longer reads the group.
 		expect((await load(request('?link=linked'))).notice).toBeNull();
+		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: 'atproto', handle: vi.fn() });
 		mocks.groupView.mockResolvedValue({
 			did: GROUP,
 			name: 'Knitters',
@@ -83,6 +88,33 @@ describe('a group page', () => {
 		expect((await load(request('?link=linked', ALICE))).notice).toBe(
 			'Linked. Your role in this group lets you see it here.'
 		);
+	});
+
+	it("reads the group with the person's own session, and asks for what it lacks", async () => {
+		const person = { did: ALICE, scope: 'atproto', handle: vi.fn() };
+		mocks.callerSession.mockResolvedValue(person);
+		mocks.groupView.mockResolvedValue({ did: GROUP, name: 'Knitters', askAccess: true });
+		const page = await load(request('', ALICE));
+		expect(mocks.groupView).toHaveBeenCalledWith(GROUP, ALICE, person);
+		expect(page).toMatchObject({ you: ALICE, access: 'ask', spacesServer: null });
+	});
+
+	it('points someone whose server said no at the spaces server, when there is one', async () => {
+		Object.assign(env, { SPACES_PDS_URL: 'https://spaces.example' });
+		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: 'atproto', handle: vi.fn() });
+		mocks.groupView.mockResolvedValue({ did: GROUP, name: 'Knitters', askAccess: true });
+		expect(await load(request(`?asked=${ALICE}`, ALICE))).toMatchObject({
+			access: 'refused',
+			spacesServer: { url: 'https://spaces.example/', host: 'spaces.example' }
+		});
+	});
+
+	it('asks nothing of someone signed out, or who holds the permissions', async () => {
+		expect((await load(request())).access).toBeNull();
+		expect(mocks.groupView).toHaveBeenCalledWith(GROUP, null, null);
+		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: 'atproto', handle: vi.fn() });
+		mocks.groupView.mockResolvedValue({ did: GROUP, name: 'Knitters', askAccess: false });
+		expect((await load(request(`?asked=${ALICE}`, ALICE))).access).toBeNull();
 	});
 });
 
