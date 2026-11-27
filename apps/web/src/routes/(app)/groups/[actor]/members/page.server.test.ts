@@ -88,7 +88,7 @@ describe("a group's members page", () => {
 	it('shows a member the confirmed members and their roles, read with their own access, and no controls', async () => {
 		const page = await load(request());
 		expect(mocks.groupView).toHaveBeenCalledWith(GROUP, ALICE, person);
-		expect(mocks.readRoster).toHaveBeenCalledWith(person, GROUP, true);
+		expect(mocks.readRoster).toHaveBeenCalledWith(person, GROUP, null);
 		expect(page).toMatchObject({
 			state: 'roster',
 			listed: [ROSTER.entries[0]],
@@ -138,10 +138,17 @@ describe("a group's members page", () => {
 		expect(await load(request())).toMatchObject({ manage: NONE, reapprove: true });
 	});
 
-	it("doesn't count the caller's own confirmation as written when their server could not write it", async () => {
+	it("shows the caller's own confirmation as the group was read for them, or has it read", async () => {
+		for (const confirmed of [true, false, null]) {
+			mocks.groupView.mockResolvedValue(view({ confirmed }));
+			await load(request());
+			expect(mocks.readRoster).toHaveBeenLastCalledWith(person, GROUP, confirmed);
+		}
+		// A sign-in that may not write it still has it read, never counted as written.
 		mocks.callerSession.mockResolvedValue({ ...person, scope: 'atproto' });
+		mocks.groupView.mockResolvedValue(view({ confirmed: null }));
 		await load(request());
-		expect(mocks.readRoster).toHaveBeenCalledWith(expect.anything(), GROUP, false);
+		expect(mocks.readRoster).toHaveBeenLastCalledWith(expect.anything(), GROUP, null);
 	});
 
 	it('tells someone not in the group, or signed out, that only members see it, and reads nothing', async () => {

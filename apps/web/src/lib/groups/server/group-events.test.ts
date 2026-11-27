@@ -23,7 +23,9 @@ import {
 	deleteMembersOnlyEvent,
 	GroupEventRefused,
 	putMembersOnlyEvent,
+	readCalendarSpace,
 	readMembersOnlyEventAsGroup,
+	refuseMembersOnlyKey,
 	turnOnMembersOnly
 } from './group-events';
 
@@ -58,15 +60,15 @@ describe('turning members-only events on', () => {
 			grants: [
 				{
 					role: 'admin',
-					read: true,
-					write: true,
 					permissions: [
 						'space:community.lexicon.calendar.collection?collection=community.lexicon.calendar.event'
 					]
 				},
-				{ role: 'member', read: true, write: true }
+				{ role: 'member', read: true }
 			]
 		});
+		// No one is put in its writer set, so no member's RSVP reaches another member.
+		expect(CALENDAR_POLICY.grants.some((grant) => 'write' in grant)).toBe(false);
 		expect(await calendarSpaceState(writer())).toBe('ready');
 	});
 
@@ -90,10 +92,50 @@ describe("the calendar space's state", () => {
 		['missing', null],
 		['ready', READY_POLICY],
 		['readable', { ...READY_POLICY, publicRead: true }],
-		['readable', { $type: 'com.atproto.memberspace.policy' }]
+		['readable', { $type: 'com.atproto.memberspace.policy' }],
+		['unusable', { ...READY_POLICY, grants: [{ role: 'member', read: true }] }],
+		['unusable', { ...READY_POLICY, grants: [READY_POLICY.grants[0]] }],
+		[
+			'unusable',
+			{
+				...READY_POLICY,
+				grants: [
+					{
+						role: 'admin',
+						permissions: ['space:community.lexicon.calendar.collection?collection=x']
+					},
+					{ role: 'member', read: true }
+				]
+			}
+		]
 	])('is %s', async (expected, policy) => {
 		calendar.state.policy = policy;
 		expect(await calendarSpaceState(writer())).toBe(expected);
+	});
+
+	it('names the roles its policy lets post events as the group', async () => {
+		calendar.state.policy = {
+			...READY_POLICY,
+			grants: [
+				...READY_POLICY.grants,
+				{
+					role: 'organizer',
+					permissions: [
+						'space:community.lexicon.calendar.collection?collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
+					]
+				},
+				{
+					role: 'helper',
+					permissions: [
+						'space:community.lexicon.calendar.collection?collection=community.lexicon.calendar.event&action=read'
+					]
+				}
+			]
+		};
+		expect(await readCalendarSpace(writer())).toEqual({
+			state: 'ready',
+			posters: ['admin', 'organizer']
+		});
 	});
 
 	it('is unchecked in an outage, and throws a refused link, as a write would', async () => {
@@ -131,7 +173,12 @@ describe('a members-only event', () => {
 
 	it.each([
 		['missing', null, "Members-only events aren't turned on"],
-		['readable', { ...READY_POLICY, publicRead: true }, 'can be read by more than its members']
+		['readable', { ...READY_POLICY, publicRead: true }, 'can be read by more than its members'],
+		[
+			'unusable',
+			{ ...READY_POLICY, grants: [{ role: 'member', read: true }] },
+			"wasn't set up for atmo"
+		]
 	])('is refused, unsent, when the space is %s', async (_, policy, words) => {
 		calendar.state.policy = policy;
 		const put = putMembersOnlyEvent(writer(), { rkey: 'r1', record: event('Supper') });
@@ -159,6 +206,13 @@ describe('a members-only event', () => {
 		expect(calendar.state.events.size).toBe(0);
 	});
 
+	it('is refused under the key self, which private events read as their own', async () => {
+		await expect(
+			putMembersOnlyEvent(writer(), { rkey: 'self', record: event('Supper') })
+		).rejects.toMatchObject({ reason: 'reserved-key' });
+		expect(calendar.state.sent).toEqual([]);
+	});
+
 	it('is deleted from the space', async () => {
 		calendar.state.events.set('r1', event('Supper'));
 		await deleteMembersOnlyEvent(writer(), 'r1');
@@ -174,5 +228,45 @@ describe('a members-only event', () => {
 		expect(nsids()).toEqual(['com.atproto.space.getDelegationToken']);
 		calendar.state.readers.clear();
 		expect(await readMembersOnlyEventAsGroup(writer(), 'r1', calendarHosts)).toBeNull();
+	});
+});
+
+describe('a public save over a members-only key', () => {
+	beforeEach(() => {
+		calendar.state.policy = READY_POLICY;
+		calendar.state.readers.add('group');
+	});
+
+	it('is refused when the calendar space has an event under that key', async () => {
+		calendar.state.events.set('r1', event('Supper'));
+		await expect(refuseMembersOnlyKey(writer(), 'r1', calendarHosts)).rejects.toMatchObject({
+			reason: 'members-only'
+		});
+	});
+
+	it('goes ahead under a key the space does not have, with no space, or a link that may not read it', async () => {
+		calendar.state.events.set('r1', event('Supper'));
+		await expect(refuseMembersOnlyKey(writer(), 'r2', calendarHosts)).resolves.toBeUndefined();
+		calendar.state.readers.clear();
+		await expect(refuseMembersOnlyKey(writer(), 'r1', calendarHosts)).resolves.toBeUndefined();
+		calendar.state.policy = null;
+		await expect(refuseMembersOnlyKey(writer(), 'r1', calendarHosts)).resolves.toBeUndefined();
+	});
+
+	it('is refused when the space could not be checked, and throws a refused link', async () => {
+		calendar.state.refuse.set(
+			'com.atproto.space.getDelegationToken',
+			new Response('', { status: 502 })
+		);
+		await expect(refuseMembersOnlyKey(writer(), 'r1', calendarHosts)).rejects.toMatchObject({
+			reason: 'key-unchecked'
+		});
+		calendar.state.refuse.set(
+			'com.atproto.space.getDelegationToken',
+			Response.json({ error: 'invalid_token' }, { status: 401 })
+		);
+		await expect(refuseMembersOnlyKey(writer(), 'r1', calendarHosts)).rejects.not.toBeInstanceOf(
+			GroupEventRefused
+		);
 	});
 });

@@ -20,6 +20,7 @@ vi.mock('#lib/atproto/network.js', () => ({
 import { credentialSpaceReader } from '#lib/spaces/server/space-read.js';
 import {
 	listMembersOnlyEvents,
+	MEMBERS_ONLY_LIST_LIMIT,
 	readMembersOnlyEvent,
 	readOwnRsvp,
 	upcoming
@@ -46,18 +47,21 @@ describe("a group's members-only events", () => {
 			uris: [{ uri: 'https://elsewhere.example/i.png', name: 'Event Image' }]
 		});
 		calendar.state.events.set('r2', { name: 'Not an event' });
-		const events = await listMembersOnlyEvents(bob(), GROUP, calendarHosts);
-		expect(events).toEqual([
-			expect.objectContaining({
-				name: 'Supper',
-				rkey: 'r1',
-				did: GROUP,
-				uri: `${CALENDAR}/${GROUP}/community.lexicon.calendar.event/r1`,
-				uris: []
-			})
-		]);
-		expect(events?.[0]).not.toHaveProperty('poster');
-		expect(events?.[0]).not.toHaveProperty('media');
+		const list = await listMembersOnlyEvents(bob(), GROUP, calendarHosts);
+		expect(list).toEqual({
+			events: [
+				expect.objectContaining({
+					name: 'Supper',
+					rkey: 'r1',
+					did: GROUP,
+					uri: `${CALENDAR}/${GROUP}/community.lexicon.calendar.event/r1`,
+					uris: []
+				})
+			],
+			cutOff: false
+		});
+		expect(list?.events[0]).not.toHaveProperty('poster');
+		expect(list?.events[0]).not.toHaveProperty('media');
 		// The member's own PDS signs the delegation for the group's calendar space.
 		expect(calendar.state.sent).toEqual([
 			[BOB, 'com.atproto.space.getDelegationToken', { space: CALENDAR }]
@@ -70,6 +74,27 @@ describe("a group's members-only events", () => {
 		calendar.state.readers.add(BOB);
 		calendar.state.policy = null;
 		expect(await listMembersOnlyEvents(bob(), GROUP, calendarHosts)).toBeNull();
+	});
+
+	it('say so when they stop at the limit with more to read, rather than stopping quietly', async () => {
+		calendar.state.readers.add(BOB);
+		let page = 0;
+		mocks.networkFetch.mockImplementation(async (input, init) => {
+			if (!String(input).includes('listRecords')) return calendar.fetch(input, init);
+			page++;
+			const records = Array.from({ length: 100 }, (_, i) => ({
+				collection: 'community.lexicon.calendar.event',
+				rkey: `p${page}r${i}`,
+				cid: 'c',
+				value: event(`Event ${page}.${i}`)
+			}));
+			return Response.json({ records, cursor: `after-${page}` });
+		});
+		const list = await listMembersOnlyEvents(bob(), GROUP, calendarHosts);
+		expect(page).toBe(MEMBERS_ONLY_LIST_LIMIT / 100);
+		expect(list?.events).toHaveLength(MEMBERS_ONLY_LIST_LIMIT);
+		expect(list?.cutOff).toBe(true);
+		expect(MEMBERS_ONLY_LIST_LIMIT).toBe(500);
 	});
 
 	it('throw in an outage, rather than read as none', async () => {

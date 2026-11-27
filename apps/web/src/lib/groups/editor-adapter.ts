@@ -34,7 +34,7 @@ export function createGroupAdapter(
 ): EditorAdapter {
 	const base = createInAppAdapter({ viewer });
 	const membersOnly = placement === 'members';
-	// A public event's calls are as they were before there was a choice.
+	// A public event's calls carry no placement, which the server takes as public.
 	const where = membersOnly ? { placement } : {};
 	const explained = async <T>(write: Promise<T>): Promise<T> => {
 		try {

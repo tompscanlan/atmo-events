@@ -7,6 +7,7 @@ import type { CallerSession } from '#lib/private-events/server/caller.js';
 import { isSpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 import { credentialSpaceReader, type SpaceReader } from '#lib/spaces/server/space-read.js';
 import { groupJoinPolicy } from '../fields';
+import { membershipRoles } from '../roster';
 import {
 	GROUP_ABOUT_COLLECTION,
 	GROUP_ABOUT_RKEY,
@@ -74,4 +75,20 @@ export async function isMemberAsPerson(
 		if (isSpaceAccessDenied(e) && !e.reason.endsWith('SpaceNotFound')) return false;
 		throw e;
 	}
+}
+
+/** The person's own roles, from their membership, read as `isMemberAsPerson` reads it; null when
+ *  they could not be read or they hold none. */
+export async function readRolesAsPerson(
+	reader: SpaceReader,
+	groupDid: string,
+	personDid: string
+): Promise<string[] | null> {
+	const found = await reader.get({
+		space: membersSpaceUri(groupDid),
+		repo: groupDid,
+		collection: GROUP_MEMBERSHIP_COLLECTION,
+		rkey: membershipRkey(personDid)
+	});
+	return found ? membershipRoles(found.value) : null;
 }

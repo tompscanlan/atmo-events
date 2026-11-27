@@ -112,7 +112,7 @@ describe('the roster, read with the person’s own access', () => {
 				handle: 'alice.example',
 				roles: ['member', 'admin'],
 				createdAt: '2026-11-02T00:00:00Z',
-				// Their own, which their visit writes.
+				// Their own, as the group was read for them.
 				confirmed: true
 			},
 			{
@@ -146,10 +146,21 @@ describe('the roster, read with the person’s own access', () => {
 		});
 	});
 
-	it("reads the caller's own confirmation when they could not write it", async () => {
+	it("shows the caller's own confirmation as it was read, never as written for them", async () => {
+		space({ 'org.atgrp.membership': [[membership(ALICE, ['member'], 'x')]] }, { [ALICE]: 'yes' });
+		expect((await readRoster(caller, GROUP, false, HOSTS)).entries[0].confirmed).toBe(false);
+		expect(mocks.fetchWithCredential).not.toHaveBeenCalledWith(
+			expect.anything(),
+			HOSTS,
+			expect.objectContaining({ audience: ALICE })
+		);
+	});
+
+	it("reads the caller's own confirmation when it was not read already", async () => {
 		space({ 'org.atgrp.membership': [[membership(ALICE, ['member'], 'x')]] });
-		const roster = await readRoster(caller, GROUP, false, HOSTS);
-		expect(roster.entries[0].confirmed).toBe(false);
+		expect((await readRoster(caller, GROUP, null, HOSTS)).entries[0].confirmed).toBe(false);
+		space({ 'org.atgrp.membership': [[membership(ALICE, ['member'], 'x')]] }, { [ALICE]: 'yes' });
+		expect((await readRoster(caller, GROUP, null, HOSTS)).entries[0].confirmed).toBe(true);
 	});
 
 	it('leaves out records of another collection, and memberships with no roles', async () => {

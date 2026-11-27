@@ -4,7 +4,11 @@ import { getServerClient } from '#lib/contrail/index.js';
 import { hostingQuery } from '#lib/contrail/queries.js';
 import type { FlatEventRecord } from '#lib/contrail.js';
 import { groupAccess } from '#lib/groups/permissions-asked.js';
-import { listMembersOnlyEvents, upcoming } from '#lib/groups/server/calendar-read.js';
+import {
+	listMembersOnlyEvents,
+	MEMBERS_ONLY_LIST_LIMIT,
+	upcoming
+} from '#lib/groups/server/calendar-read.js';
 import {
 	groupView,
 	requireGroupWriter,
@@ -13,7 +17,8 @@ import {
 } from '#lib/groups/server/context.js';
 import type { GroupAbilities } from '#lib/groups/scopes.js';
 import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
-import { calendarSpaceState, type CalendarSpaceState } from '#lib/groups/server/group-events.js';
+import { readCalendarSpace, type CalendarSpaceState } from '#lib/groups/server/group-events.js';
+import { personReader, readRolesAsPerson } from '#lib/groups/server/person.js';
 import { callerSession, type CallerSession } from '#lib/private-events/server/caller.js';
 import { spacesServer } from '#lib/private-events/server/enabled.js';
 import { holdsGuestGrant } from '#lib/private-events/scopes.js';
@@ -45,10 +50,12 @@ function linkNotice(link: string | null, linked: LinkedGroup | null): string | n
 	return `${LINK_NOTICES[link as keyof typeof LINK_NOTICES]} ${linkAbilities(linked.can)}`;
 }
 
-/** `unread` says why `events` is empty when they could not be read. */
+/** `unread` says why `events` is empty when they could not be read; `stoppedAt`, the limit the list
+ *  stopped at with more to read, so an upcoming event may be missing. */
 interface MembersOnlySlice {
 	events: FlatEventRecord[];
 	unread: boolean;
+	stoppedAt: number | null;
 }
 
 /** The group's members-only events, for a member whose own sign-in may read them, or else through
@@ -63,28 +70,42 @@ async function membersOnlySlice(
 	if (!own && !link) return null;
 	try {
 		const holder = own ?? (await requireGroupWriter(group.did, link));
-		const events = await listMembersOnlyEvents(holder, group.did);
-		return events && { events: upcoming(events), unread: false };
+		const list = await listMembersOnlyEvents(holder, group.did);
+		if (!list) return null;
+		const stoppedAt = list.cutOff ? MEMBERS_ONLY_LIST_LIMIT : null;
+		return { events: upcoming(list.events), unread: false, stoppedAt };
 	} catch (e) {
 		console.error(`[groups] members-only events unread for a group page: ${errorKind(e)}`);
-		return { events: [], unread: true };
+		return { events: [], unread: true, stoppedAt: null };
 	}
 }
+
+/** `no-role`: the calendar is ready, but the person's roles have no grant in its policy that posts
+ *  there, so approving their link again would not let it. */
+type CalendarSetup = CalendarSpaceState | 'no-role';
 
 /** Whether members-only events are on, for a link that may turn them on or post them; null for any
  *  other caller, and for a link the host refuses now. */
 async function calendarState(
 	group: GroupView,
-	callerDid: string | null
-): Promise<CalendarSpaceState | null> {
+	callerDid: string | null,
+	person: CallerSession | null
+): Promise<CalendarSetup | null> {
 	const can = group.linked?.can;
 	if (!can || !(can.turnOnMembersOnly || can.membersOnly)) return null;
+	let space;
 	try {
-		return await calendarSpaceState(await requireGroupWriter(group.did, callerDid));
+		space = await readCalendarSpace(await requireGroupWriter(group.did, callerDid));
 	} catch (e) {
 		console.warn(`[groups] the calendar space was not checked for a link: ${errorKind(e)}`);
 		return null;
 	}
+	if (space.state !== 'ready' || can.membersOnly || !person) return space.state;
+	const roles = await readRolesAsPerson(personReader(person), group.did, person.did).catch((e) => {
+		console.info(`[groups] roles unread for the calendar's setup: ${errorKind(e)}`);
+		return null;
+	});
+	return roles && !roles.some((role) => space.posters.includes(role)) ? 'no-role' : 'ready';
 }
 
 export async function load({ params, locals, url, setHeaders }) {
@@ -99,7 +120,7 @@ export async function load({ params, locals, url, setHeaders }) {
 	const [page, membersOnly, calendar] = await Promise.all([
 		hostingQuery(getServerClient(env.DB), { actor: group.did as ActorIdentifier }, null),
 		membersOnlySlice(group, person),
-		calendarState(group, locals.did)
+		calendarState(group, locals.did, person)
 	]);
 	return {
 		pageTitle: group.name,

@@ -147,12 +147,13 @@ const byAge = (a: RosterEntry, b: RosterEntry) =>
 
 /** Read with the caller's own access, which the group host gives only to its members: throws
  *  `SpaceAccessDenied` for anyone else. A member's confirmation that could not be read counts as
- *  not there, as for a member whose PDS has no spaces; the caller's own counts as there when they
- *  may write it, since a visit to the group writes it. */
+ *  not there, as for a member whose PDS has no spaces. `callerConfirmed` is the caller's own as
+ *  already read for the group's page; when that is null it is read here like anyone's, past the
+ *  limit too, since nothing writes it on a visit. */
 export async function readRoster(
 	caller: CallerSession,
 	groupDid: string,
-	callerConfirms: boolean,
+	callerConfirmed: boolean | null,
 	hosts: SpaceHosts = didSpaceHosts
 ): Promise<Roster> {
 	const reads = membersSpace(caller, groupDid, hosts);
@@ -171,8 +172,9 @@ export async function readRoster(
 		handlesOf(dids),
 		Promise.all(
 			dids.map(async (did, i): Promise<boolean | null> => {
-				if (did === caller.did && callerConfirms) return true;
-				if (i >= MAX_CONFIRMATION_READS) return null;
+				const own = did === caller.did;
+				if (own && callerConfirmed !== null) return callerConfirmed;
+				if (!own && i >= MAX_CONFIRMATION_READS) return null;
 				return reads.confirmed(did).catch((e) => {
 					console.info(`[groups] ${groupDid}: ${did}'s confirmation was not read: ${errorKind(e)}`);
 					return false;

@@ -1,7 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { groupAccess } from '#lib/groups/permissions-asked.js';
 import type { JoinRequestView } from '#lib/groups/roster.js';
-import { holdsConfirmationGrant } from '#lib/groups/scopes.js';
 import {
 	GROUP_UNCHECKED,
 	groupView,
@@ -40,10 +39,10 @@ export async function load({ params, locals, url, setHeaders }) {
 		return { ...base, state: 'hidden' as const, message: MEMBERS_ONLY };
 	}
 
-	const confirms = holdsConfirmationGrant(person.scope, 'create', group.did);
 	let roster;
 	try {
-		roster = await readRoster(person, group.did, confirms);
+		// Their own confirmation as the group read for them found it, or read with the rest.
+		roster = await readRoster(person, group.did, group.confirmed ?? null);
 	} catch (e) {
 		if (isSpaceAccessDenied(e)) return { ...base, state: 'hidden' as const, message: MEMBERS_ONLY };
 		console.error(`[groups] ${group.did}: the roster could not be read: ${errorKind(e)}`);

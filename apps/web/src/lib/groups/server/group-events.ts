@@ -19,23 +19,25 @@ import {
 	MEMBER_ROLE,
 	SPACE_SKEY
 } from '../ids';
+import { grantsMembersOnly } from '../scopes';
 import type { GroupWriter } from './context';
 import { errorKind, isLinkBroken, isRecordNotFound, isRoleRefused, xrpc, XrpcError } from './xrpc';
 
-/** The calendar space's policy: private; admins write its events as the group; every role reads
- *  it, and writes its own records there (a member's RSVP, in their own repo), which puts them in
- *  its writer set so other readers see them. */
+/** The calendar space's policy: private; admins write its events as the group; members read it.
+ *  No role has `write`, which says only who is in the space's writer set, whose own records sync
+ *  to every reader: a member's RSVP goes into their own repo in the space through their own PDS,
+ *  and is read back from there, so it needs no `write`, and with it every member's RSVPs would
+ *  reach every other member. Writing as the group takes only `permissions`. Admins need no `read`
+ *  of their own: everyone in a group holds `member`. */
 export const CALENDAR_POLICY = {
 	$type: GROUP_POLICY_TYPE,
 	publicRead: false,
 	grants: [
 		{
 			role: ADMIN_ROLE,
-			read: true,
-			write: true,
 			permissions: [`space:${CALENDAR_SPACE_TYPE}?collection=${GROUP_EVENT_COLLECTION}`]
 		},
-		{ role: MEMBER_ROLE, read: true, write: true }
+		{ role: MEMBER_ROLE, read: true }
 	]
 };
 
@@ -48,7 +50,14 @@ const REFUSALS = {
 		"This group's calendar can be read by more than its members, so the members-only event was not saved.",
 	'calendar-space-unchecked':
 		"The group's calendar couldn't be checked, so the members-only event was not saved. Try again shortly.",
-	moved: 'This event is public, and a public event stays public. Nothing was saved.'
+	'calendar-space-unusable':
+		"This group's calendar wasn't set up for atmo to post members-only events to, so the event was not saved.",
+	moved: 'This event is public, and a public event stays public. Nothing was saved.',
+	'members-only':
+		'This event is members-only, and a members-only event stays members-only. Nothing was saved.',
+	'key-unchecked':
+		"The group's calendar couldn't be checked for this event, so it was not saved. Try again shortly.",
+	'reserved-key': 'A members-only event cannot be saved under that key. Nothing was saved.'
 } as const;
 
 export type GroupEventRefusal = keyof typeof REFUSALS;
@@ -68,26 +77,68 @@ function isSpaceNotFound(e: unknown): boolean {
 }
 
 /** `ready` when members-only events can go in: the space is there and its policy, as the host keeps
- *  it, does not let anyone read it. */
-export type CalendarSpaceState = 'ready' | 'missing' | 'readable' | 'unchecked';
+ *  it, does not let anyone read it, lets members read it and lets some role post its events as the
+ *  group. `unusable` for a private space whose policy does not, such as one made some other way. */
+export type CalendarSpaceState = 'ready' | 'missing' | 'readable' | 'unusable' | 'unchecked';
 
-/** Read as the group, by `com.atproto.space.getSpace`, which the group host serves a group's session
- *  as a PDS serves its account's. A refused or broken link throws, as any write would; an outage is
- *  `unchecked`. */
-export async function calendarSpaceState(writer: GroupWriter): Promise<CalendarSpaceState> {
+export interface CalendarSpace {
+	state: CalendarSpaceState;
+	/** The roles whose grant in the policy lets a link post events as the group; empty unless
+	 *  `ready`. */
+	posters: string[];
+}
+
+interface PolicyGrant {
+	role?: unknown;
+	read?: unknown;
+	permissions?: unknown;
+}
+
+/** What posting needs of the policy: a grant whose permissions write events there as the group, as
+ *  the host gives a link at its approval from the approving person's roles' grants, and members
+ *  reading the space, for whom the events are. */
+function checkedPolicy(groupDid: string, policy: unknown): CalendarSpace {
+	const kept = policy as { $type?: unknown; publicRead?: unknown; grants?: unknown } | undefined;
+	if (kept?.$type !== GROUP_POLICY_TYPE || kept.publicRead === true) {
+		return { state: 'readable', posters: [] };
+	}
+	const grants = (Array.isArray(kept.grants) ? kept.grants : []) as PolicyGrant[];
+	const posters = grants.flatMap((grant) => {
+		const permissions = Array.isArray(grant.permissions)
+			? grant.permissions.filter((p): p is string => typeof p === 'string')
+			: [];
+		return typeof grant.role === 'string' &&
+			grantsMembersOnly(permissions.join(' '), groupDid).membersOnly
+			? [grant.role]
+			: [];
+	});
+	const membersRead = grants.some((grant) => grant.role === MEMBER_ROLE && grant.read === true);
+	return membersRead && posters.length > 0
+		? { state: 'ready', posters }
+		: { state: 'unusable', posters: [] };
+}
+
+/** Read as the group, by `com.atproto.space.getSpace`. Not the spec's: the group host's own, which it
+ *  serves a group's session as a PDS serves its account's. The spec's way to read a policy is the
+ *  `com.atproto.space.policy` record the host publishes in the space. A refused or broken link
+ *  throws, as any write would; an outage is `unchecked`. */
+export async function readCalendarSpace(writer: GroupWriter): Promise<CalendarSpace> {
 	let found: Record<string, unknown>;
 	try {
 		found = await xrpc(writer.handle, 'com.atproto.space.getSpace', {
 			query: { space: calendarSpaceUri(writer.did) }
 		});
 	} catch (e) {
-		if (isSpaceNotFound(e)) return 'missing';
+		if (isSpaceNotFound(e)) return { state: 'missing', posters: [] };
 		if (isLinkBroken(e) || isRoleRefused(e)) throw e;
 		console.error(`[groups] the calendar space could not be checked: ${errorKind(e)}`);
-		return 'unchecked';
+		return { state: 'unchecked', posters: [] };
 	}
-	const policy = found.policy as { $type?: unknown; publicRead?: unknown } | undefined;
-	return policy?.$type === GROUP_POLICY_TYPE && policy.publicRead !== true ? 'ready' : 'readable';
+	return checkedPolicy(writer.did, found.policy);
+}
+
+export async function calendarSpaceState(writer: GroupWriter): Promise<CalendarSpaceState> {
+	return (await readCalendarSpace(writer)).state;
 }
 
 /** Makes the group's calendar space. One already there is not a failure, so turning it on again
@@ -104,9 +155,12 @@ export async function turnOnMembersOnly(writer: GroupWriter): Promise<void> {
 	}
 }
 
+const RESERVED_RKEY = 'self';
+
 const SPACE_REFUSALS = {
 	missing: 'no-calendar-space',
 	readable: 'calendar-space-readable',
+	unusable: 'calendar-space-unusable',
 	unchecked: 'calendar-space-unchecked'
 } as const;
 
@@ -132,6 +186,9 @@ export async function putMembersOnlyEvent(
 	writer: GroupWriter,
 	input: { rkey: string; record: Record<string, unknown> }
 ): Promise<{ uri: string; cid: string }> {
+	// `self` is the key private events give the one event in a space of their own; a group event
+	// under it would read there as someone's private event.
+	if (input.rkey === RESERVED_RKEY) throw new GroupEventRefused('reserved-key');
 	const record: Record<string, unknown> = { ...input.record, $type: GROUP_EVENT_COLLECTION };
 	// A space record is not validated at all.
 	if (!v.safeParse(eventSchema, record).ok) throw new GroupEventRefused('not-an-event');
@@ -153,6 +210,25 @@ export async function putMembersOnlyEvent(
 		}
 	});
 	return { uri: membersOnlyEventUri(writer.did, input.rkey), cid: String(result.cid) };
+}
+
+/** Before a public save: refused when the calendar space already has a members-only event under
+ *  `rkey`, which stays members-only, so no public copy is made under its key. A link that may not
+ *  read the space, or a group with no calendar space, has none to find. Fails closed otherwise. */
+export async function refuseMembersOnlyKey(
+	writer: GroupWriter,
+	rkey: string,
+	hosts: SpaceHosts = didSpaceHosts
+): Promise<void> {
+	let found: SpaceRecord | null;
+	try {
+		found = await readMembersOnlyEventAsGroup(writer, rkey, hosts);
+	} catch (e) {
+		if (isLinkBroken(e) || isRoleRefused(e)) throw e;
+		console.error(`[groups] a public event's key could not be checked: ${errorKind(e)}`);
+		throw new GroupEventRefused('key-unchecked');
+	}
+	if (found) throw new GroupEventRefused('members-only');
 }
 
 /** The host answers the same for an event already gone. Members' RSVPs to it stay in their own

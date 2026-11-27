@@ -431,6 +431,33 @@ describe('members-only events', () => {
 		).toHaveLength(0);
 	});
 
+	it.each([
+		['no-role', /Your role in this group doesn.t let you post to its calendar/],
+		['unusable', /wasn.t set up for atmo to post members-only events to/]
+	])(
+		'say why atmo will not post there (%s), rather than to approve once more',
+		async (calendar, words) => {
+			const data = { ...linkedPage({ public: true, listed: true }, ADMIN), calendar };
+			render(GroupPage, { data: data as never });
+			await expect.element(page.getByText(words)).toBeVisible();
+			expect(page.getByRole('button', { name: 'Approve once more' }).elements()).toHaveLength(0);
+			expect(page.getByTestId('members-only-setup').elements()).toHaveLength(0);
+		}
+	);
+
+	it('say where the list stopped, when it stopped at its limit', async () => {
+		const posting = { ...ADMIN, membersOnly: true };
+		const data = {
+			...linkedPage({ public: true, listed: true }, posting),
+			calendar: 'ready',
+			membersOnly: { unread: false, stoppedAt: 500, events: [] }
+		};
+		render(GroupPage, { data: data as never });
+		await expect
+			.element(page.getByText(/atmo stopped reading this group.s calendar at 500 events/))
+			.toBeVisible();
+	});
+
 	it('are listed for those who may see them, marked members only, each to its own page', async () => {
 		const posting = { ...ADMIN, membersOnly: true };
 		const data = {
@@ -438,6 +465,7 @@ describe('members-only events', () => {
 			calendar: 'ready',
 			membersOnly: {
 				unread: false,
+				stoppedAt: null,
 				events: [
 					{
 						name: 'Supper',
