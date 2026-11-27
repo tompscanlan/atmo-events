@@ -61,6 +61,12 @@ declare global {
 			GEOCODER_USER_AGENT?: string;
 			/** The Atmosphere Groups host whose groups people may link; unset hides groups. */
 			GROUP_HOST_URL?: string;
+			/** How many servers the groups list names; 50 unset. */
+			GROUP_SERVERS_SHOWN?: string;
+			/** How many of the group host's accounts count as its groups; 10000 unset. */
+			GROUP_HOST_ACCOUNTS_READ?: string;
+			/** Seconds the group host's groups don't count after it fails to answer; 60 unset. */
+			GROUP_HOST_RETRY_SECONDS?: string;
 		}
 	}
 }
