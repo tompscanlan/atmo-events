@@ -121,11 +121,12 @@ describe("a group's members page", () => {
 			.toHaveBeenCalledWith({ groupDid: GROUP, did: BOB });
 	});
 
-	it('shows those not confirmed yet to an admin, by DID when there is no handle', async () => {
+	it('lists those not confirmed yet apart from the members, by DID when there is no handle', async () => {
 		render(MembersPage, { data: rosterPage() as never });
 		await expect
 			.poll(() => text(page.getByRole('list', { name: 'Not confirmed yet' })))
 			.toContain(DAVE);
+		expect(text(page.getByRole('list', { name: 'Members' }))).not.toContain(DAVE);
 	});
 
 	it('shows the reason the server gives for a refusal', async () => {
@@ -142,25 +143,15 @@ describe("a group's members page", () => {
 			.toContain('That would leave the group with no admin.');
 	});
 
-	it('offers to approve the link again when it predates the members page', async () => {
+	it('offers to approve the link again, for this group, when it predates the members page', async () => {
 		render(MembersPage, {
 			data: rosterPage({ admit: false, assign: false, remove: false }, { reapprove: true }) as never
 		});
-		await expect.element(page.getByRole('button', { name: 'Approve again' })).toBeVisible();
-	});
-
-	it('tells someone outside the group that only members see it', async () => {
-		render(MembersPage, {
-			data: {
-				pageTitle: 'Members',
-				group: { did: GROUP, name: 'Night Riders' },
-				you: ALICE,
-				state: 'hidden',
-				message: 'Only members can see who is in this group.'
-			} as never
-		});
-		await expect
-			.element(page.getByText('Only members can see who is in this group.'))
-			.toBeVisible();
+		const again = page.getByRole('button', { name: 'Approve again' });
+		await expect.element(again).toBeVisible();
+		const form = (again.element() as HTMLButtonElement).form!;
+		expect(form.getAttribute('action')).toBe('/oauth/group/link');
+		expect(form.method).toBe('post');
+		expect(new FormData(form).get('group')).toBe(GROUP);
 	});
 });

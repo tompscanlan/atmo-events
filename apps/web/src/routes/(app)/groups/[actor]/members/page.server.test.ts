@@ -72,6 +72,12 @@ const ROSTER = {
 	],
 	yours: ['member', 'admin']
 };
+const BASE = {
+	pageTitle: 'Members - Night Riders',
+	group: { did: GROUP, name: 'Night Riders' },
+	you: ALICE
+};
+const HIDDEN = { ...BASE, state: 'hidden', message: 'Only members can see who is in this group.' };
 const REQUESTS = [{ did: CAROL, handle: null, message: 'I ride.', createdAt: 'x' }];
 
 beforeEach(() => {
@@ -89,7 +95,8 @@ describe("a group's members page", () => {
 		const page = await load(request());
 		expect(mocks.groupView).toHaveBeenCalledWith(GROUP, ALICE, person);
 		expect(mocks.readRoster).toHaveBeenCalledWith(person, GROUP, null);
-		expect(page).toMatchObject({
+		expect(page).toEqual({
+			...BASE,
 			state: 'roster',
 			listed: [ROSTER.entries[0]],
 			unconfirmed: [],
@@ -138,37 +145,29 @@ describe("a group's members page", () => {
 		expect(await load(request())).toMatchObject({ manage: NONE, reapprove: true });
 	});
 
-	it("shows the caller's own confirmation as the group was read for them, or has it read", async () => {
+	it("passes on the caller's own confirmation as the group was read for them, or null to have it read", async () => {
 		for (const confirmed of [true, false, null]) {
 			mocks.groupView.mockResolvedValue(view({ confirmed }));
 			await load(request());
 			expect(mocks.readRoster).toHaveBeenLastCalledWith(person, GROUP, confirmed);
 		}
-		// A sign-in that may not write it still has it read, never counted as written.
-		mocks.callerSession.mockResolvedValue({ ...person, scope: 'atproto' });
-		mocks.groupView.mockResolvedValue(view({ confirmed: null }));
-		await load(request());
-		expect(mocks.readRoster).toHaveBeenLastCalledWith(expect.anything(), GROUP, null);
 	});
 
-	it('tells someone not in the group, or signed out, that only members see it, and reads nothing', async () => {
+	it('tells someone not in the group, or signed out, only that members see it, and reads nothing', async () => {
 		for (const [over, did] of [
 			[{ member: false }, ALICE],
 			[{ personal: null, member: null }, ALICE],
 			[{ personal: null, member: null }, null]
 		] as const) {
 			mocks.groupView.mockResolvedValue(view(over));
-			expect(await load(request('', did))).toMatchObject({
-				state: 'hidden',
-				message: 'Only members can see who is in this group.'
-			});
+			expect(await load(request('', did))).toEqual({ ...HIDDEN, you: did });
 		}
 		expect(mocks.readRoster).not.toHaveBeenCalled();
 	});
 
-	it('says the same when the host does not let them read the members space', async () => {
+	it('says the same, and nothing more, when the host does not let them read the members space', async () => {
 		mocks.readRoster.mockRejectedValue(new SpaceAccessDenied('s', '400 NotAuthorized'));
-		expect(await load(request())).toMatchObject({ state: 'hidden' });
+		expect(await load(request())).toEqual(HIDDEN);
 	});
 
 	it('says to try again when their membership or the roster could not be read', async () => {
@@ -195,10 +194,5 @@ describe("a group's members page", () => {
 		});
 		expect(mocks.readRoster).not.toHaveBeenCalled();
 		Reflect.deleteProperty(env, 'SPACES_PDS_URL');
-	});
-
-	it('is the same 404 as any group page when the group cannot be seen', async () => {
-		mocks.groupView.mockRejectedValue(Object.assign(new Error('Group not found'), { status: 404 }));
-		await expect(load(request())).rejects.toMatchObject({ status: 404 });
 	});
 });

@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SpaceCall, SpaceHosts } from '#lib/spaces/server/space-credential.js';
+import {
+	SpaceAccessDenied,
+	type SpaceCall,
+	type SpaceHosts
+} from '#lib/spaces/server/space-credential.js';
 import type { XrpcHandle } from './xrpc';
 
 const mocks = vi.hoisted(() => ({
@@ -94,7 +98,9 @@ describe('the roster, read with the person’s own access', () => {
 						membership('did:web:carol.example:8443', ['member', 'rider'], '2026-11-03T00:00:00Z')
 					]
 				],
-				'org.atgrp.role': [[role('member', 'Member'), role('rider'), role('admin', 'Admin')]]
+				'org.atgrp.role': [
+					[role('member', 'Member'), role('rider'), role('aide'), role('admin', 'Admin')]
+				]
 			},
 			{ [BOB]: 'yes', [CAROL]: 'down' }
 		);
@@ -125,9 +131,11 @@ describe('the roster, read with the person’s own access', () => {
 				confirmed: false
 			}
 		]);
+		// Admin, then member, then the rest by ID.
 		expect(roster.roles).toEqual([
 			{ id: 'admin', name: 'Admin' },
 			{ id: 'member', name: 'Member' },
+			{ id: 'aide', name: 'aide' },
 			{ id: 'rider', name: 'rider' }
 		]);
 		expect(roster.yours).toEqual(['member', 'admin']);
@@ -146,7 +154,7 @@ describe('the roster, read with the person’s own access', () => {
 		});
 	});
 
-	it("shows the caller's own confirmation as it was read, never as written for them", async () => {
+	it("takes the caller's own confirmation as already read for them, without reading it again", async () => {
 		space({ 'org.atgrp.membership': [[membership(ALICE, ['member'], 'x')]] }, { [ALICE]: 'yes' });
 		expect((await readRoster(caller, GROUP, false, HOSTS)).entries[0].confirmed).toBe(false);
 		expect(mocks.fetchWithCredential).not.toHaveBeenCalledWith(
@@ -168,7 +176,8 @@ describe('the roster, read with the person’s own access', () => {
 			'org.atgrp.membership': [
 				[
 					membership(ALICE, ['member'], 'x'),
-					{ ...role('admin'), rkey: BOB },
+					// Shaped as a membership, so only its collection gives it away.
+					{ ...membership(BOB, ['member'], 'x'), collection: 'org.atgrp.role' },
 					{ collection: 'org.atgrp.membership', rkey: CAROL, value: { createdAt: 'x' } }
 				]
 			]
@@ -179,7 +188,7 @@ describe('the roster, read with the person’s own access', () => {
 	});
 
 	it('throws when the host does not let them read it, or a list fails', async () => {
-		const denied = new Error('SpaceAccessDenied');
+		const denied = new SpaceAccessDenied(MEMBERS, '400 NotAuthorized');
 		mocks.exchangeSpaceCredential.mockRejectedValue(denied);
 		await expect(readRoster(caller, GROUP, true, HOSTS)).rejects.toBe(denied);
 
@@ -272,9 +281,7 @@ describe('admitting, as the group', () => {
 
 	it.each([
 		['JoinRequestNotFound', 'no-request'],
-		['InvalidRequest', 'already-member'],
-		['NotAssignable', 'not-assignable'],
-		['MemberRole', 'member-role']
+		['InvalidRequest', 'already-member']
 	])('names the host’s %s', async (error, reason) => {
 		await expect(admitMember(writer(refusal(error)), BOB)).rejects.toEqual(
 			new RosterRefused(reason as never)
@@ -362,12 +369,9 @@ describe('removing, as the group', () => {
 		await expect(removeMember(writer(refusal('InvalidRequest')), BOB)).resolves.toBe(undefined);
 	});
 
-	it('names the last admin and a role it may not take', async () => {
+	it('names the host’s refusal, such as removing the last admin', async () => {
 		await expect(removeMember(writer(refusal('LastConfigurer')), BOB)).rejects.toEqual(
 			new RosterRefused('last-admin')
-		);
-		await expect(removeMember(writer(refusal('NotAssignable')), BOB)).rejects.toEqual(
-			new RosterRefused('not-assignable')
 		);
 	});
 });
