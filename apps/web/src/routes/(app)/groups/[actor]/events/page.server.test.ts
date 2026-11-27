@@ -50,8 +50,11 @@ beforeEach(() => {
 describe('posting and editing as the group', () => {
 	it('opens the editor for a link whose scope posts', async () => {
 		mocks.groupView.mockResolvedValue(linked(true));
-		expect(await newEvent(request())).toMatchObject({ group: { did: GROUP } });
-		expect(await editEvent(request())).toMatchObject({ rkey: 'r' });
+		expect(await newEvent(request())).toMatchObject({ group: { did: GROUP }, postsPublic: true });
+		expect(await editEvent(request())).toMatchObject({
+			eventData: { name: 'Meet' },
+			placement: 'everyone'
+		});
 	});
 
 	it("says so, rather than opening an editor that can't save, for a link that may not post", async () => {

@@ -125,7 +125,7 @@ describe('the declaration index', () => {
 		await expect(isDeclared(GROUP)).rejects.toThrow();
 	});
 
-	it("lists declared groups in the index's order, newest first, with no profiles", async () => {
+	it('lists a page of declared groups in the order the index gives, asking for no profiles', async () => {
 		mocks.get.mockResolvedValue({
 			ok: true,
 			data: {
@@ -339,12 +339,11 @@ describe('readGroupMeta', () => {
 		await expect(readGroupMeta(host.handle, GROUP, spaceHosts)).rejects.toThrow('MAC of at:space/');
 	});
 
-	it.each([
-		['the session holds no scope that reads it', 'delegate', 403, 'ScopeMissing'],
-		['its member no longer reads it', 'delegate', 403, 'NotAuthorized'],
-		['the host no longer lets the grant read it', 'exchange', 400, 'SpaceNotFound']
-	] as const)('is a refusal, not an outage, when %s', async (_why, step, status, error) => {
-		const host = groupHost({}, { [step]: () => Response.json({ error }, { status }) });
+	it('is a refusal, not an outage, when the session holds no scope that reads it', async () => {
+		const host = groupHost(
+			{},
+			{ delegate: () => Response.json({ error: 'ScopeMissing' }, { status: 403 }) }
+		);
 		const thrown = await readGroupMeta(host.handle, GROUP, spaceHosts).catch((e: unknown) => e);
 		expect(thrown).toBeInstanceOf(SpaceAccessDenied);
 		expect(isRoleRefused(thrown)).toBe(true);

@@ -12,18 +12,10 @@ vi.mock('$app/server', () => ({
 		Object.assign(handler as object, { __: { type: 'command' } }),
 	getRequestEvent: () => ({ locals: { did: 'did:plc:alice' } })
 }));
-vi.mock('./browse', () => ({ browseUpcoming: vi.fn(), browseDeclared: vi.fn() }));
 vi.mock('./group', () => ({ resolveGroup: vi.fn(), isDeclared: vi.fn() }));
 vi.mock('./sign-in', () => ({ groupSession: vi.fn(), hasGroupSession: vi.fn() }));
 
 import ErrorPage from '../../../routes/+error.svelte';
-import { load as listGroups } from '../../../routes/(app)/groups/+page.server';
-import {
-	actions as createActions,
-	load as createPage
-} from '../../../routes/(app)/groups/create/+page.server';
-import { load as settingsPage } from '../../../routes/(app)/groups/[actor]/settings/+page.server';
-import { load as membersPage } from '../../../routes/(app)/groups/[actor]/members/+page.server';
 import {
 	deleteGroupEvent,
 	finishGroupSetup,
@@ -32,7 +24,6 @@ import {
 	turnOnMembersOnlyEvents
 } from '../group.remote';
 import { cancelMembersOnlyRsvp, rsvpToMembersOnlyEvent } from '../members-only.remote';
-import { load as membersOnlyEventPage } from '../../../routes/(app)/groups/[actor]/events/[rkey]/+page.server';
 import {
 	approveRequest,
 	cancelJoin,
@@ -67,20 +58,14 @@ function unknownAddress(): string {
 	return render(ErrorPage).body;
 }
 
-const listRequest = {
-	locals: { did: null },
-	url: new URL('https://atmo.example/groups'),
-	setHeaders: vi.fn()
-} as unknown as Parameters<typeof listGroups>[0];
-
 beforeEach(() => {
 	Reflect.deleteProperty(env, 'GROUP_HOST_URL');
 });
 
 describe('with groups off', () => {
-	it('shows the groups list and a group page as an unknown address', async () => {
+	// The pages' own loads and the form action: routes/(app)/groups/off.test.ts.
+	it('shows a group, to a visitor or a signed-in person, as an unknown address', async () => {
 		const expected = unknownAddress();
-		expect(await shown(() => listGroups(listRequest))).toBe(expected);
 		expect(await shown(() => groupView(GROUP, null))).toBe(expected);
 		expect(await shown(() => groupView(GROUP, ALICE))).toBe(expected);
 	});
@@ -108,34 +93,8 @@ describe('with groups off', () => {
 		expect(await shown(() => removeFromGroup(member))).toBe(expected);
 	});
 
-	it('shows the members page as an unknown address', async () => {
-		const request = {
-			locals: { did: ALICE, session: null },
-			url: new URL(`https://atmo.example/groups/${GROUP}/members`),
-			params: { actor: GROUP },
-			setHeaders: vi.fn()
-		} as never;
-		expect(await shown(() => membersPage(request))).toBe(unknownAddress());
-	});
-
-	it('shows making a group and the settings as unknown addresses, and saves nothing', async () => {
+	it("refuses saving a group's settings and finishing its setup with the same 404", async () => {
 		const expected = unknownAddress();
-		const request = {
-			locals: { did: ALICE, session: null },
-			url: new URL('https://atmo.example/groups/create'),
-			params: { actor: GROUP },
-			setHeaders: vi.fn()
-		} as never;
-		expect(await shown(() => createPage(request))).toBe(expected);
-		expect(await shown(() => settingsPage(request))).toBe(expected);
-		const post = {
-			request: new Request('https://atmo.example/groups/create', {
-				method: 'POST',
-				body: new FormData()
-			}),
-			locals: { did: ALICE, session: null }
-		} as never;
-		expect(await shown(() => createActions.default(post))).toBe(expected);
 		const settings = {
 			name: 'x',
 			description: '',
@@ -150,15 +109,8 @@ describe('with groups off', () => {
 		expect(await shown(() => finishGroupSetup({ groupDid: GROUP }))).toBe(expected);
 	});
 
-	it('shows a members-only event as an unknown address, and turns on, posts and RSVPs nothing', async () => {
+	it('refuses turning on, posting, deleting and RSVPing to members-only events with the same 404', async () => {
 		const expected = unknownAddress();
-		const request = {
-			locals: { did: ALICE, session: null },
-			url: new URL(`https://atmo.example/groups/${GROUP}/events/r`),
-			params: { actor: GROUP, rkey: 'r' },
-			setHeaders: vi.fn()
-		} as never;
-		expect(await shown(() => membersOnlyEventPage(request))).toBe(expected);
 		expect(await shown(() => turnOnMembersOnlyEvents({ groupDid: GROUP }))).toBe(expected);
 		const members = { groupDid: GROUP, rkey: 'r', placement: 'members' as const };
 		expect(await shown(() => putGroupEvent({ ...members, record: {} }))).toBe(expected);

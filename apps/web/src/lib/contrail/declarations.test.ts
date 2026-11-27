@@ -171,7 +171,17 @@ describe('the groups with an event coming', () => {
 				name: 'Riders',
 				next: { uri: `at://did:plc:soon/${EVENT}/one`, title: 'one event', startsAt: at(5) }
 			},
-			expect.objectContaining({ did: 'did:plc:unresolved', server: '', handle: null }),
+			{
+				did: 'did:plc:unresolved',
+				server: '',
+				handle: null,
+				name: null,
+				next: {
+					uri: `at://did:plc:unresolved/${EVENT}/one`,
+					title: 'one event',
+					startsAt: at(10)
+				}
+			},
 			{
 				did: 'did:plc:later',
 				server: 'https://a.example',

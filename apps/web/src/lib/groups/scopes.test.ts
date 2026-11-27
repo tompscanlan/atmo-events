@@ -56,8 +56,10 @@ describe('what a group session may do, by the scope its host granted', () => {
 		});
 	});
 
-	it("lets a member's session, which keeps only the meta read, do none of it", () => {
-		expect(groupAbilities(`atproto ${META_READ}`, GROUP)).toEqual({
+	it("lets a member's session, which keeps only reads, do none of it", () => {
+		// The host keeps of the calendar grant only what the space's policy gives a member: a read.
+		const eventsRead = `space:community.lexicon.calendar.collection?authority=${GROUP}&skey=self&collection=community.lexicon.calendar.event&action=read`;
+		expect(groupAbilities(`atproto ${META_READ} ${eventsRead}`, GROUP)).toEqual({
 			post: false,
 			list: false,
 			settings: false,
@@ -69,9 +71,22 @@ describe('what a group session may do, by the scope its host granted', () => {
 		});
 	});
 
-	it('offers no settings to a link approved before they were asked for', () => {
+	it('offers no settings to a link approved before they were asked for, nor to one that cannot list the group', () => {
+		// Making a group public or private moves its listing too.
+		expect(groupAbilities(['atproto', META_READ, ...SETTINGS].join(' '), GROUP).settings).toBe(
+			false
+		);
 		const scope = `atproto ${META_READ} ${REPO} blob?accept=image/*`;
-		expect(groupAbilities(scope, GROUP)).toMatchObject({ post: true, list: true, settings: false });
+		expect(groupAbilities(scope, GROUP)).toEqual({
+			post: true,
+			list: true,
+			settings: false,
+			admit: false,
+			assign: false,
+			remove: false,
+			turnOnMembersOnly: false,
+			membersOnly: false
+		});
 	});
 
 	it('offers no member controls to a link approved before they were asked for', () => {
@@ -177,9 +192,11 @@ describe('the member controls a group session may offer', () => {
 			assign: false,
 			remove: false
 		});
-		expect(
-			grantsRoster(all.replaceAll('org.atgrp.membership', 'org.atgrp.role'), GROUP)
-		).toMatchObject({ assign: false, remove: false });
+		expect(grantsRoster(all.replaceAll('org.atgrp.membership', 'org.atgrp.role'), GROUP)).toEqual({
+			admit: false,
+			assign: false,
+			remove: false
+		});
 	});
 
 	it("takes the same from the spec's set, as the host expands it", () => {
@@ -242,7 +259,12 @@ describe("a person's group permissions, as asked", () => {
 	});
 
 	it('are held as asked', () => {
-		expect(holdsParticipate(['atproto', ...JOIN_SCOPES].join(' '))).toBe(true);
+		const all = ['atproto', ...JOIN_SCOPES].join(' ');
+		expect(holdsParticipate(all)).toBe(true);
+		// Each method of the membership grant too, not only the grant as a whole.
+		for (const method of ['requestJoin', 'cancelJoinRequest', 'leaveGroup']) {
+			expect(holdsParticipate(all.replace(`lxm=org.atgrp.${method}&`, '')), method).toBe(false);
+		}
 		for (const left of PARTICIPATE_SCOPES) {
 			const rest = PARTICIPATE_SCOPES.filter((scope) => scope !== left);
 			expect(holdsParticipate(['atproto', ...rest].join(' ')), left).toBe(false);

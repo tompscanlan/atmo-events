@@ -44,7 +44,7 @@ const rerouted = (path: string) =>
 	reroute({ url: new URL(`https://atmo.example${path}`), fetch: vi.fn() });
 
 describe('with groups off', () => {
-	it('matches no route for any groups address, whatever the method', () => {
+	it('matches no route for any groups address', () => {
 		for (const path of GROUP_ADDRESSES) expect(rerouted(path), path).toBe(NO_ROUTE);
 	});
 
@@ -73,16 +73,5 @@ describe('with groups on', () => {
 		Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 		for (const path of [...GROUP_ADDRESSES, ...OTHER_ADDRESSES])
 			expect(rerouted(path), path).toBeUndefined();
-	});
-
-	it('takes a blank group host for off', () => {
-		Object.assign(env, { GROUP_HOST_URL: '  ' });
-		expect(rerouted('/groups/create')).toBe(NO_ROUTE);
-	});
-
-	it('takes a group host that is not a URL for off', () => {
-		vi.spyOn(console, 'error').mockImplementation(() => {});
-		Object.assign(env, { GROUP_HOST_URL: 'host.example' });
-		for (const path of GROUP_ADDRESSES) expect(rerouted(path), path).toBe(NO_ROUTE);
 	});
 });

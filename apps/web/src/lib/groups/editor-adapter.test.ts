@@ -16,6 +16,7 @@ import { createGroupAdapter, groupViewer } from './editor-adapter';
 const GROUP = 'did:plc:group';
 const viewer = groupViewer({ did: GROUP, handle: 'knit.example', name: 'Knitters' });
 const REASON = 'Your role in this group no longer allows that.';
+const MOVED = 'This event is public, and a public event stays public. Nothing was saved.';
 
 beforeEach(() => vi.resetAllMocks());
 
@@ -32,7 +33,10 @@ describe('the group editor adapter', () => {
 		await expect(adapter.uploadBlob(new Blob([new Uint8Array([1])]))).rejects.toMatchObject({
 			status: 403
 		});
-		expect(refused.mock.calls).toEqual([[REASON], [REASON], [REASON]]);
+		// A members-only event the server would not save.
+		mocks.putGroupEvent.mockImplementation(async () => error(409, MOVED));
+		await expect(adapter.putRecord(record)).rejects.toMatchObject({ status: 409 });
+		expect(refused.mock.calls).toEqual([[REASON], [REASON], [REASON], [MOVED]]);
 	});
 
 	it('leaves any other failure to the editor', async () => {
@@ -45,7 +49,7 @@ describe('the group editor adapter', () => {
 		expect(refused).not.toHaveBeenCalled();
 	});
 
-	it('writes as the group', async () => {
+	it("sends a public event's write for the group, with no placement", async () => {
 		mocks.putGroupEvent.mockResolvedValue({ uri: 'at://u', cid: 'c' });
 		const adapter = createGroupAdapter(GROUP, viewer);
 		await adapter.putRecord({

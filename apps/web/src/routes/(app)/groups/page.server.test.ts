@@ -125,11 +125,6 @@ describe('the groups list', () => {
 			expect((await load(request(`?link=${link}`))).notice).toBeNull();
 		}
 	});
-
-	it('is a 404 with groups off', async () => {
-		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
-		await expect(load(request())).rejects.toMatchObject({ status: 404 });
-	});
 });
 
 describe('making a group from the list', () => {

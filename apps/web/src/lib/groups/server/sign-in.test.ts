@@ -92,12 +92,14 @@ describe('availability', () => {
 
 describe('the group client', () => {
 	it('is its own client, sharing only the library key', () => {
-		expect(groupClientMetadata()).toMatchObject({
+		groupClientMetadata();
+		expect(latest().options.metadata).toEqual({
 			client_id: 'https://atmo.example/oauth/group/client-metadata.json',
 			redirect_uris: ['https://atmo.example/oauth/group/callback'],
 			jwks_uri: 'https://atmo.example/oauth/jwks.json',
 			scope: GROUP_SESSION_SCOPE
 		});
+		expect((latest().options as { keyset?: unknown }).keyset).toEqual([{ kty: 'EC', kid: 'k' }]);
 	});
 
 	it('takes the public address as an origin, as the library does', () => {

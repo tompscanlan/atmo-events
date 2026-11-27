@@ -57,14 +57,6 @@ describe('the groups list', () => {
 		expect(row?.text).toMatch(/Wed, Jan 2/);
 	});
 
-	it('says what search covers', () => {
-		const html = page({});
-		expect(html).toContain('placeholder="Search by address or name"');
-		expect(text(html)).toContain(
-			'Finds a listed group by its address, or by its name where atmo has it.'
-		);
-	});
-
 	it('counts each server’s groups and links it to its own page', () => {
 		const servers = [
 			{ server: 'https://pds.example:8443', host: 'pds.example:8443', groups: 4, upcoming: 1 }

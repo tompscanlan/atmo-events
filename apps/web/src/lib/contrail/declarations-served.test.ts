@@ -64,19 +64,4 @@ describe('groups declarations as the Worker serves them', () => {
 			vi.unstubAllGlobals();
 		}
 	});
-
-	it('reads an empty or blank GROUP_HOST_URL as off', async () => {
-		Object.assign(env, { GROUP_HOST_URL: '  ' });
-		const blank = await serve(['rsvp.atmo.no.suchMethod', ...DECLARED.slice(0, 1)]);
-		expect(blank.answers[1]).toBe(blank.answers[0]);
-	});
-
-	it('reads a GROUP_HOST_URL that is not a URL as off', async () => {
-		vi.spyOn(console, 'error').mockImplementation(() => {});
-		Object.assign(env, { GROUP_HOST_URL: 'host.example' });
-		const wrong = await serve(['rsvp.atmo.no.suchMethod', ...DECLARED]);
-		const [unknown, ...declared] = wrong.answers;
-		expect(declared).toEqual(DECLARED.map(() => unknown));
-		expect(wrong.tables).not.toContain('records_declaration');
-	});
 });

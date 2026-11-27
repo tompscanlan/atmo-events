@@ -132,14 +132,18 @@ describe('browseDeclared', () => {
 describe('browseLinked', () => {
 	it("lists the person's own links, named from the database, looking up only a group it knows nothing of", async () => {
 		mocks.linkedGroups.mockImplementation(async (did: string) =>
-			did === 'did:plc:alice' ? ['did:plc:public', 'did:plc:unlisted'] : []
+			did === 'did:plc:alice' ? ['did:plc:public', 'did:plc:named', 'did:plc:unlisted'] : []
 		);
 		mocks.readGroupLabels.mockResolvedValue(
-			new Map([['did:plc:public', { handle: 'p.example', name: 'Knitters', description: null }]])
+			new Map([
+				['did:plc:public', { handle: 'p.example', name: 'Knitters', description: null }],
+				['did:plc:named', { handle: null, name: 'Riders', description: null }]
+			])
 		);
 		mocks.resolveGroup.mockResolvedValue({ did: 'did:plc:unlisted', handle: 'u.example' });
 		expect(await browseLinked('did:plc:alice')).toEqual([
 			{ did: 'did:plc:public', name: 'Knitters', handle: 'p.example', description: null },
+			{ did: 'did:plc:named', name: 'Riders', handle: null, description: null },
 			{ did: 'did:plc:unlisted', name: 'u.example', handle: 'u.example', description: null }
 		]);
 		expect(mocks.resolveGroup).toHaveBeenCalledExactlyOnceWith('did:plc:unlisted');
