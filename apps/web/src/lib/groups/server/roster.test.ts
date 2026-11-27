@@ -243,13 +243,14 @@ describe('the join requests, as the group', () => {
 		]);
 	});
 
-	it('denies by the member alone, and takes a request already gone as done', async () => {
+	it('denies by the member alone, and refuses a request no longer waiting as approving does', async () => {
 		const g = writer();
 		await denyJoinRequest(g, BOB);
 		expect(g.handle).toHaveBeenCalledWith('/xrpc/org.atgrp.denyJoinRequest', expect.anything());
 		expect(body(g.handle)).toEqual({ member: BOB });
-		await expect(denyJoinRequest(writer(refusal('JoinRequestNotFound')), BOB)).resolves.toBe(
-			undefined
+		// Another admin may have approved them meanwhile: not reported as turned down.
+		await expect(denyJoinRequest(writer(refusal('JoinRequestNotFound')), BOB)).rejects.toEqual(
+			new RosterRefused('no-request')
 		);
 		await expect(denyJoinRequest(writer(refusal('Forbidden', 403)), BOB)).rejects.toMatchObject({
 			status: 403,

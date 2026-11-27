@@ -267,13 +267,13 @@ export async function listJoinRequests(writer: GroupWriter): Promise<JoinRequest
 	return requests.map((request) => ({ ...request, handle: handles.get(request.did) ?? null }));
 }
 
-/** Gone either way: turned down now, or already decided or withdrawn (`JoinRequestNotFound`). */
+/** Turns the request down. One no longer waiting (`JoinRequestNotFound`) is refused as approving
+ *  it is: they withdrew, or another admin decided already, perhaps by approving them. */
 export async function denyJoinRequest(writer: GroupWriter, memberDid: string): Promise<void> {
 	try {
 		await xrpc(writer.handle, DENY_JOIN_REQUEST_NSID, { body: { member: memberDid } });
 	} catch (e) {
-		if (e instanceof XrpcError && e.error === 'JoinRequestNotFound') return;
-		throw e;
+		throw refusal(e);
 	}
 }
 
