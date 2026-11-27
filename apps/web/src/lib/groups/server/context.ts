@@ -389,11 +389,33 @@ export async function requireGroupWriter(
 	groupDid: string,
 	callerDid: string | null
 ): Promise<GroupWriter> {
+	return (await linkedWriter(groupDid, callerDid)).writer;
+}
+
+async function linkedWriter(
+	groupDid: string,
+	callerDid: string | null
+): Promise<{ writer: GroupWriter; session: OAuthSession }> {
 	requireGroupsEnabled();
 	if (!callerDid) error(404, GROUP_NOT_FOUND);
 	const session = await groupSession(groupDid, callerDid).catch(() => null);
 	if (!session || !(await linkAtGroupHost(session))) error(404, GROUP_NOT_FOUND);
-	return { did: groupDid, handle: groupHandle(session, callerDid) };
+	return { writer: { did: groupDid, handle: groupHandle(session, callerDid) }, session };
+}
+
+/** As `requireGroupWriter`, with what the scope the host granted the link lets it do, as the page
+ *  reads it to offer its controls: for a command that only some links may run, which the host
+ *  alone would not refuse. A scope that cannot be read holds nothing. */
+export async function requireLinkedAbilities(
+	groupDid: string,
+	callerDid: string | null
+): Promise<{ writer: GroupWriter; can: GroupAbilities }> {
+	const { writer, session } = await linkedWriter(groupDid, callerDid);
+	const scope = await session.getTokenInfo(false).then(
+		(token) => token.scope,
+		() => ''
+	);
+	return { writer, can: groupAbilities(scope, groupDid) };
 }
 
 /** For unlinking: the caller's stored link, working or not, or the same 404. It is not

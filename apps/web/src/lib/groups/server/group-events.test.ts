@@ -232,9 +232,56 @@ describe('turning members-only events on where the group has a calendar already'
 		expect((await turnOnMembersOnly(writer(), [], calendarHosts)).space).toBe(
 			calendarAt('3lolder')
 		);
+		await kv.delete(`group:calendar:${GROUP}`);
 		calendar.anotherAppsCalendar('self', WIKI_POLICY, '2026-11-01T00:00:00.000Z');
 		expect((await turnOnMembersOnly(writer(), [], calendarHosts)).space).toBe(CALENDAR);
 		expect(made()).toEqual([]);
+	});
+
+	it('keeps the calendar already chosen while it is ready, though a `self` one appears later', async () => {
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		await turnOnMembersOnly(writer(), [], calendarHosts);
+		calendar.anotherAppsCalendar('self', READY_POLICY, '2026-11-01T00:00:00.000Z');
+		calendar.state.sent.length = 0;
+		expect(await turnOnMembersOnly(writer(), [], calendarHosts)).toEqual({
+			state: 'ready',
+			posters: ['admin'],
+			space: WIKI
+		});
+		expect(await chosen()).toBe(WIKI);
+		// Only the chosen one was looked at: not the index, and not `self`.
+		expect(calendar.state.sent).toEqual([['group', 'com.atproto.space.getSpace', { space: WIKI }]]);
+	});
+
+	it.each([
+		['gone', () => calendar.state.spaces.delete(WIKI)],
+		[
+			'no longer one atmo may post to',
+			() =>
+				calendar.state.spaces.set(WIKI, {
+					policy: { ...WIKI_POLICY, grants: [{ role: 'member', read: true }] },
+					events: new Map(),
+					others: new Map()
+				})
+		]
+	])('chooses again once the chosen calendar is %s', async (_, change) => {
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		await turnOnMembersOnly(writer(), [], calendarHosts);
+		calendar.anotherAppsCalendar('self', READY_POLICY, '2026-11-01T00:00:00.000Z');
+		change();
+		expect((await turnOnMembersOnly(writer(), [], calendarHosts)).space).toBe(CALENDAR);
+		expect(await chosen()).toBe(CALENDAR);
+	});
+
+	it('changes nothing when the chosen calendar could not be checked', async () => {
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		await turnOnMembersOnly(writer(), [], calendarHosts);
+		calendar.anotherAppsCalendar('self', READY_POLICY, '2026-11-01T00:00:00.000Z');
+		calendar.state.refuse.set('com.atproto.space.getSpace', new Response('', { status: 502 }));
+		await expect(turnOnMembersOnly(writer(), [], calendarHosts)).rejects.toMatchObject({
+			reason: 'calendar-space-unchecked'
+		});
+		expect(await chosen()).toBe(WIKI);
 	});
 
 	it('takes a calendar some role may post to over an older one where none may', async () => {

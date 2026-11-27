@@ -252,12 +252,22 @@ function candidates(groupDid: string, indexed: Map<string, string>): string[] {
  *  public calendar, or one members cannot read, is no calendar for members-only events, and is
  *  left as it is. Never changes a policy. `holders` are tried in turn to read the index after the
  *  link: the person's own sign-in, which a member reads it with. A `self` space already there that
- *  members may not use is not a failure, so turning them on again finishes what stopped partway. */
+ *  members may not use is not a failure, so turning them on again finishes what stopped partway.
+ *
+ *  The calendar already chosen is kept while it is still ready, whatever else the group has made
+ *  since: the group's members-only events and their RSVPs are there, and choosing another would
+ *  leave them behind. It is chosen again only once it is gone or no longer ready. */
 export async function turnOnMembersOnly(
 	writer: GroupWriter,
 	holders: SpaceHolder[] = [],
 	hosts: SpaceHosts = didSpaceHosts
 ): Promise<CalendarSpace> {
+	const remembered = await rememberedCalendar(writer.did);
+	if (remembered) {
+		const kept = await checkSpace(writer, remembered);
+		if (kept.state === 'unchecked') throw new GroupEventRefused('calendar-space-unchecked');
+		if (kept.state === 'ready') return shown(kept);
+	}
 	const indexed = await indexedCalendars(writer.did, [writer, ...holders], hosts);
 	const checked: CheckedSpace[] = [];
 	for (const space of candidates(writer.did, indexed)) {
