@@ -4565,10 +4565,12 @@ step(
 		const personScopes = String(JSON.parse(meta.text || '{}').scope ?? '').split(' ');
 		const groupMeta = await anon('GET', '/oauth/group/client-metadata.json');
 		const groupScopes = String(JSON.parse(groupMeta.text || '{}').scope ?? '').split(' ');
+		// The group client's are the group's own (authority=self); a person reads any group's meta
+		// space and keeps their own confirmation in any group's members space (authority=*).
 		const GROUP_CLIENT_ONLY =
-			/^(repo\?collection=org\.atgrp\.declaration|space:org\.atgrp\.(meta|members)|rpc:org\.atgrp\.(listJoinRequests|denyJoinRequest))/;
+			/^(repo\?collection=org\.atgrp\.declaration|space:org\.atgrp\.(meta|members)\?authority=self|rpc:org\.atgrp\.(listJoinRequests|denyJoinRequest))/;
 		const PERSON_ONLY =
-			/^(rpc:org\.atgrp\.internal\.(createGroup|getActorGroups)|include:org\.atgrp\.authParticipate)/;
+			/^(rpc:org\.atgrp\.internal\.(createGroup|getActorGroups)|rpc\?lxm=org\.atgrp\.requestJoin|space:org\.atgrp\.(meta|members)\?authority=\*|include:org\.atgrp\.authParticipate)/;
 		check(
 			"a person's client metadata asks for none of the group client's scopes",
 			meta.status === 200 && !personScopes.some((x) => GROUP_CLIENT_ONLY.test(x)),
