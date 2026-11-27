@@ -31,7 +31,8 @@ describe('the group host, as it describes itself', () => {
 		const expected = {
 			origin: 'https://host.example',
 			did: 'did:web:host.example',
-			domain: '.groups.example'
+			domain: '.groups.example',
+			newGroupUrl: 'https://host.example/new'
 		};
 		expect(await groupHostInfo()).toEqual(expected);
 		expect(await groupHostInfo()).toEqual(expected);

@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { error } from '@sveltejs/kit';
 import { parseGroupHostUrl } from '../host-url';
+import { CREATE_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from '../build';
 
 /** The setting last found not to be a URL, so each wrong value is logged once per isolate, not on
  *  every request. */
@@ -33,4 +34,16 @@ export function groupsEnabled(): boolean {
  *  not parse and its 500 for a GET, where an address this site never had answers 404. */
 export function requireGroupsEnabled(): void {
 	if (!groupsEnabled()) error(404, 'Not Found');
+}
+
+/** The create page, its form and the commands only making a group uses, outside a build that has
+ *  them (../build.ts): the same answer as groups off. */
+export function requireCreateInBuild(): void {
+	if (!CREATE_IN_THIS_BUILD) error(404, 'Not Found');
+}
+
+/** The settings page and the command that saves them, outside a build that has them (../build.ts):
+ *  the same answer as groups off. */
+export function requireSettingsInBuild(): void {
+	if (!SETTINGS_IN_THIS_BUILD) error(404, 'Not Found');
 }

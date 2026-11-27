@@ -1,8 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// Tested with the settings page and making groups here in the build; each check of a build without
+// one names it.
+vi.mock('./build', async (importOriginal) => ({
+	...(await importOriginal<typeof import('./build')>()),
+	CREATE_IN_THIS_BUILD: true,
+	SETTINGS_IN_THIS_BUILD: true
+}));
+
 import {
+	CREATE_GROUP_SCOPE,
+	GROUP_PERSON_SCOPES,
+	groupPersonScopes,
 	grantsRepoWrites,
+	grantsSettings,
+	GROUP_SETTINGS_SCOPES,
 	groupAbilities,
 	holdsConfirmationGrant,
+	holdsEveryAbility,
+	holdsCreateGroup,
 	holdsMetaRead,
 	holdsParticipate,
 	holdsRpc,
@@ -16,16 +32,28 @@ import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 const GROUP = 'did:plc:group';
 const META_READ = `space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`;
 const REPO = 'repo?collection=community.lexicon.calendar.event';
+/** The settings scopes as the host gives them back: `authority=self` made the group's DID. */
+const SETTINGS = GROUP_SETTINGS_SCOPES.map((s) =>
+	s.replace('authority=self', `authority=${GROUP}`)
+);
 /** Members-only events' scopes, as the host gives them back once the calendar space is there. */
 const MEMBERS_ONLY = MEMBERS_ONLY_SCOPES.map((s) =>
 	s.replace('authority=self', `authority=${GROUP}`)
 );
 
 describe('what a group session may do, by the scope its host granted', () => {
-	it("lets an admin's session, which keeps every grant asked, post", () => {
-		const scope = ['atproto', META_READ, REPO, 'blob?accept=image/*', ...MEMBERS_ONLY].join(' ');
+	it("lets an admin's session, which keeps every grant asked, post and change settings", () => {
+		const scope = [
+			'atproto',
+			META_READ,
+			REPO,
+			'blob?accept=image/*',
+			...SETTINGS,
+			...MEMBERS_ONLY
+		].join(' ');
 		expect(groupAbilities(scope, GROUP)).toEqual({
 			post: true,
+			settings: true,
 			turnOnMembersOnly: true,
 			membersOnly: true,
 			readSpaceIndex: true
@@ -37,6 +65,7 @@ describe('what a group session may do, by the scope its host granted', () => {
 		const eventsRead = `space:community.lexicon.calendar.collection?authority=${GROUP}&skey=self&collection=community.lexicon.calendar.event&action=read`;
 		expect(groupAbilities(`atproto ${META_READ} ${eventsRead}`, GROUP)).toEqual({
 			post: false,
+			settings: false,
 			turnOnMembersOnly: false,
 			membersOnly: false,
 			readSpaceIndex: false
@@ -62,6 +91,36 @@ describe('what a group session may do, by the scope its host granted', () => {
 			turnOnMembersOnly: false,
 			membersOnly: false
 		});
+	});
+
+	it('offers no settings to a link approved before they were asked for', () => {
+		const scope = `atproto ${META_READ} ${REPO} blob?accept=image/*`;
+		expect(groupAbilities(scope, GROUP)).toEqual({
+			post: true,
+			settings: false,
+			turnOnMembersOnly: false,
+			membersOnly: false,
+			readSpaceIndex: false
+		});
+	});
+
+	it('offers no settings, whatever the scope grants, in a build without the settings page', () => {
+		const scope = ['atproto', META_READ, REPO, ...SETTINGS, ...MEMBERS_ONLY].join(' ');
+		expect(groupAbilities(scope, GROUP, false)).toEqual({
+			post: true,
+			settings: false,
+			turnOnMembersOnly: true,
+			membersOnly: true,
+			readSpaceIndex: true
+		});
+	});
+
+	it('counts the settings toward holding everything only in a build with the settings page', () => {
+		const allButSettings = ['atproto', META_READ, REPO, ...MEMBERS_ONLY].join(' ');
+		expect(holdsEveryAbility(groupAbilities(allButSettings, GROUP, true), true)).toBe(false);
+		expect(holdsEveryAbility(groupAbilities(allButSettings, GROUP, false), false)).toBe(true);
+		const noPosting = ['atproto', META_READ, ...MEMBERS_ONLY].join(' ');
+		expect(holdsEveryAbility(groupAbilities(noPosting, GROUP, false), false)).toBe(false);
 	});
 
 	it('reads each form a repo grant takes', () => {
@@ -93,6 +152,64 @@ describe('what a group session may do, by the scope its host granted', () => {
 	});
 });
 
+describe('the settings a group session may change', () => {
+	it('needs the about and config writes and the meta policy, for this group', () => {
+		expect(grantsSettings(SETTINGS.join(' '), GROUP)).toBe(true);
+		for (const left of SETTINGS) {
+			const rest = SETTINGS.filter((s) => s !== left).join(' ');
+			expect(grantsSettings(rest, GROUP)).toBe(false);
+		}
+		expect(grantsSettings(SETTINGS.join(' '), 'did:plc:other')).toBe(false);
+	});
+
+	it('takes the same writes from a wider grant, as a permission set expands to', () => {
+		const wide = [
+			`space:org.atgrp.meta?authority=${GROUP}&skey=self&collection=org.atgrp.about&collection=org.atgrp.config&collection=com.atproto.label.record&action=read&action=create&action=update&action=delete`,
+			`space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read&manage=update`
+		].join(' ');
+		expect(grantsSettings(wide, GROUP)).toBe(true);
+	});
+
+	it('asks for nothing wider than the settings write', () => {
+		for (const scope of GROUP_SETTINGS_SCOPES) {
+			expect(scope).toMatch(/^space:org\.atgrp\.meta\?authority=self&skey=self&/);
+			expect(scope).not.toContain('delete');
+			// The host makes the about record and config with the group; a put of either is an update.
+			expect(scope).not.toContain('action=create');
+		}
+	});
+
+	it('still takes a link approved when the settings asked for create too', () => {
+		const older = SETTINGS.map((s) => s.replace('action=update', 'action=create&action=update'));
+		expect(grantsSettings(older.join(' '), GROUP)).toBe(true);
+		const createOnly = SETTINGS.map((s) => s.replace('action=update', 'action=create'));
+		expect(grantsSettings(createOnly.join(' '), GROUP)).toBe(false);
+	});
+});
+
+describe("the person's own permission to make a group", () => {
+	const HOST = 'did:web:host.example';
+
+	it('is the rpc grant for the host’s createGroup, for any audience or the host', () => {
+		expect(CREATE_GROUP_SCOPE).toBe('rpc:org.atgrp.internal.createGroup?aud=*');
+		expect(holdsCreateGroup(`atproto ${CREATE_GROUP_SCOPE}`, HOST)).toBe(true);
+		expect(
+			holdsCreateGroup('rpc?lxm=org.atgrp.internal.createGroup&aud=did:web:host.example', HOST)
+		).toBe(true);
+	});
+
+	it('is not held without it, for another method, or for another audience', () => {
+		expect(holdsCreateGroup('atproto include:community.lexicon.calendar.authFull', HOST)).toBe(
+			false
+		);
+		expect(holdsCreateGroup('rpc:org.atgrp.requestJoin?aud=*', HOST)).toBe(false);
+		expect(holdsCreateGroup('rpc:org.atgrp.internal.createGroup', HOST)).toBe(false);
+		expect(
+			holdsCreateGroup('rpc?lxm=org.atgrp.internal.createGroup&aud=did:web:other.example', HOST)
+		).toBe(false);
+	});
+});
+
 describe("a person's group permissions, as asked", () => {
 	it('are exactly what the code calls, for any group host', () => {
 		expect(PARTICIPATE_SCOPES).toEqual([
@@ -102,7 +219,7 @@ describe("a person's group permissions, as asked", () => {
 			'rpc:org.atgrp.internal.getActorGroups?aud=*'
 		]);
 		expect(JOIN_SCOPES).toEqual([...PARTICIPATE_SCOPES, GUEST_SCOPE]);
-		const all = JOIN_SCOPES.join(' ');
+		const all = [CREATE_GROUP_SCOPE, ...JOIN_SCOPES].join(' ');
 		expect(all).not.toContain('include:');
 		expect(all).not.toContain('inbox');
 		expect(all).not.toContain('org.atgrp.mod.');
@@ -167,5 +284,17 @@ describe("a person's group permissions, as their PDS granted them", () => {
 		expect(holdsRpc('rpc?lxm=org.atgrp.leaveGroup&aud=*', 'org.atgrp.leaveGroup')).toBe(true);
 		expect(holdsRpc('rpc?lxm=org.atgrp.leaveGroup', 'org.atgrp.leaveGroup')).toBe(false);
 		expect(holdsRpc(YOUR_GROUPS_SCOPE, 'org.atgrp.requestJoin')).toBe(false);
+	});
+});
+
+describe("the person's permissions for groups", () => {
+	it('include making a group only in a build that makes groups here', () => {
+		expect(GROUP_PERSON_SCOPES).toEqual(groupPersonScopes(true));
+		expect(groupPersonScopes(true)).toEqual([
+			CREATE_GROUP_SCOPE,
+			...PARTICIPATE_SCOPES,
+			GUEST_SCOPE
+		]);
+		expect(groupPersonScopes(false)).toEqual([...PARTICIPATE_SCOPES, GUEST_SCOPE]);
 	});
 });

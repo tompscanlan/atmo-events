@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
 	browseLinked: vi.fn(),
 	yourGroups: vi.fn(),
 	available: vi.fn(),
+	unfinishedGroups: vi.fn(),
 	callerSession: vi.fn()
 }));
 const setHeaders = vi.fn();
@@ -18,6 +19,16 @@ vi.mock('#lib/groups/server/browse.js', () => ({
 }));
 vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.callerSession }));
 vi.mock('#lib/groups/server/sign-in.js', () => ({ groupSignInAvailable: mocks.available }));
+vi.mock('#lib/groups/server/create.js', () => ({ unfinishedGroups: mocks.unfinishedGroups }));
+/** Making groups here is tested in the build, and once without. */
+const build = vi.hoisted(() => ({ create: true }));
+vi.mock('#lib/groups/build.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/groups/build.js')>()),
+	get CREATE_IN_THIS_BUILD() {
+		return build.create;
+	}
+}));
+
 import { load } from './+page.server';
 
 const ALICE = 'did:plc:alice';
@@ -30,6 +41,7 @@ const request = (query = '', did: string | null = null) =>
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	build.create = true;
 	setHeaders.mockClear();
 	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 	mocks.browseUpcoming.mockResolvedValue({
@@ -132,14 +144,40 @@ describe('making a group from the list', () => {
 			setHeaders
 		}) as unknown as Parameters<typeof load>[0];
 
-	it("points at the group host's own page for making one", async () => {
+	it('counts the groups the caller made and has not linked yet', async () => {
 		mocks.available.mockReturnValue(true);
+		mocks.unfinishedGroups.mockResolvedValue([{ did: 'did:plc:g', handle: 'g.example' }]);
+		expect(await load(signedIn())).toMatchObject({ canLink: true, unfinished: 1 });
+		expect(mocks.unfinishedGroups).toHaveBeenCalledWith('did:plc:alice');
+	});
+
+	it('looks for none signed out, or without a group sign-in', async () => {
+		mocks.available.mockReturnValue(false);
+		expect(await load(signedIn())).toMatchObject({ canLink: false, unfinished: 0 });
+		expect(await load(request())).toMatchObject({ canLink: false, unfinished: 0 });
+		expect(mocks.unfinishedGroups).not.toHaveBeenCalled();
+	});
+
+	it('looks for none in a build without making groups here', async () => {
+		build.create = false;
+		mocks.available.mockReturnValue(true);
+		mocks.unfinishedGroups.mockResolvedValue([{ did: 'did:plc:g', handle: 'g.example' }]);
+		expect(await load(signedIn())).toMatchObject({ canLink: true, unfinished: 0 });
+		expect(mocks.unfinishedGroups).not.toHaveBeenCalled();
+	});
+
+	it("points at the group host's own page for making one in a build without making groups here", async () => {
+		mocks.available.mockReturnValue(true);
+		mocks.unfinishedGroups.mockResolvedValue([]);
+		expect(await load(signedIn())).toMatchObject({ newGroupUrl: null });
+		build.create = false;
 		expect(await load(signedIn())).toMatchObject({ newGroupUrl: 'https://host.example/new' });
 	});
 
 	it("leads with the person's own groups, on the whole list's first page only", async () => {
 		const person = { did: ALICE, scope: 'atproto', handle: vi.fn() };
 		mocks.callerSession.mockResolvedValue(person);
+		mocks.unfinishedGroups.mockResolvedValue([]);
 		mocks.yourGroups.mockResolvedValue([
 			{ did: 'did:plc:group', name: 'Knitters', handle: 'knit.example' }
 		]);
@@ -170,6 +208,7 @@ describe('making a group from the list', () => {
 		// A sign-in without the permission that lists a person's groups at the host.
 		mocks.callerSession.mockImplementation(async () => ({ scope: 'atproto', handle: vi.fn() }));
 		mocks.yourGroups.mockResolvedValue(null);
+		mocks.unfinishedGroups.mockResolvedValue([]);
 		expect(await load(request('', ALICE))).toMatchObject({ yourGroups: null, linked: [linked] });
 		expect((await load(request('', BOB))).linked).toEqual([]);
 		expect((await load(request())).linked).toEqual([]);
@@ -180,6 +219,7 @@ describe('making a group from the list', () => {
 
 	it('shows a linked group once, in "Your groups", when that lists it', async () => {
 		mocks.callerSession.mockResolvedValue({ did: ALICE, scope: 'atproto', handle: vi.fn() });
+		mocks.unfinishedGroups.mockResolvedValue([]);
 		mocks.yourGroups.mockResolvedValue([{ did: 'did:plc:a', name: 'A', handle: 'a.example' }]);
 		mocks.browseLinked.mockResolvedValue([
 			{ did: 'did:plc:a', name: 'A', handle: 'a.example', description: null },

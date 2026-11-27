@@ -1,9 +1,18 @@
-// What this build asks for, as it ships, so a scope that grows changes what is asked of every group
-// host, and this test with it.
+// What this build asks for, as it ships: with its own switches (./build.ts), none of them mocked,
+// so a switch turned on, or a scope that grows, changes what is asked of every group host and every
+// person, and this test with it.
 import { describe, expect, it } from 'vitest';
+import { CREATE_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from './build';
 import { GROUP_SESSION_SCOPE } from './server/sign-in';
 
 describe('the permissions this build asks for', () => {
+	it('leaves making groups and the settings out', () => {
+		expect({
+			create: CREATE_IN_THIS_BUILD,
+			settings: SETTINGS_IN_THIS_BUILD
+		}).toEqual({ create: false, settings: false });
+	});
+
 	it('asks a group host for exactly this, signed in as a group', () => {
 		expect(GROUP_SESSION_SCOPE).toBe(
 			[

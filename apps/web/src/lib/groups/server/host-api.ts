@@ -14,6 +14,9 @@ export interface GroupHostInfo {
 	did: string;
 	/** What a group's address ends in, with its leading dot: `.groups.example`. */
 	domain: string;
+	/** The host's console page for making a group. The host serves its console at its own address
+	 *  unless it is set up elsewhere. */
+	newGroupUrl: string;
 }
 
 const DESCRIBE_SERVER = 'com.atproto.server.describeServer';
@@ -35,6 +38,13 @@ let described: { at: number; info: GroupHostInfo } | null = null;
 /** The did:web of the group host's own address: its host, with a port's colon encoded. */
 export function groupHostDid(url: URL): string {
 	return `did:web:${url.host.replace(':', '%3A')}`;
+}
+
+/** The group host's DID, from GROUP_HOST_URL alone, with no call to the host; null with groups
+ *  off. */
+export function configuredGroupHostDid(): string | null {
+	const url = groupHostUrl();
+	return url ? groupHostDid(url) : null;
 }
 
 /** Throws when there is no group host, it does not answer as one, or it names a DID other than
@@ -64,7 +74,12 @@ export async function groupHostInfo(): Promise<GroupHostInfo> {
 	if (typeof domain !== 'string' || !/^\.[a-z0-9.-]+$/i.test(domain)) {
 		throw new Error(`${DESCRIBE_SERVER} at ${origin} names no domain for groups`);
 	}
-	const info = { origin, did: own, domain: domain.toLowerCase() };
+	const info = {
+		origin,
+		did: own,
+		domain: domain.toLowerCase(),
+		newGroupUrl: new URL(NEW_GROUP_PATH, origin).href
+	};
 	described = { at: Date.now(), info };
 	return info;
 }

@@ -1,11 +1,13 @@
-// The permissions groups need: the person's own sign-in, to join a group, and a session signed in
-// as a group, read from the scope its group host granted it. The host narrows what this site asks
-// for to what the approving person's roles allow, and gives back a concrete scope (`authority=self`
-// becomes the group's DID), so the granted scope, not the asked one, says which controls a page
-// offers. The host checks the person's roles again at each write, so a role taken away since the
+// The permissions groups need: the person's own sign-in, to make a group and to join one, and a
+// session signed in as a group, read from the scope its group host granted it. The host narrows
+// what this site asks for to what the approving person's roles allow, and gives back a concrete
+// scope (`authority=self` becomes the group's DID), so the granted scope, not the asked one, says
+// which controls a page offers. The host checks the person's roles again at each write, so a role taken away since the
 // approval is still refused then. Values and pure checks only, so the OAuth config, pages and tests
 // can import them.
 import {
+	GROUP_ABOUT_COLLECTION,
+	GROUP_CONFIG_COLLECTION,
 	GROUP_CONFIRMATION_COLLECTION,
 	GROUP_EVENT_COLLECTION,
 	GROUP_SPACE_INDEX_COLLECTION,
@@ -15,6 +17,12 @@ import {
 } from './ids';
 import { GUEST_SCOPE, GUEST_SCOPES } from '#lib/private-events/scopes.js';
 import { CALENDAR_SPACE_TYPE } from './calendar';
+import { CREATE_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from './build';
+
+/** The group host's own method for making a group, not the spec's (bluesky-social/group-host's
+ *  `org.atgrp.internal.createGroup`). The spec's way is OAuth `prompt=create` at the host, which
+ *  this host does not take. */
+export const CREATE_GROUP_NSID = 'org.atgrp.internal.createGroup';
 
 /** The spec's methods for a person's own membership, each by their service auth for the host. */
 export const REQUEST_JOIN_NSID = 'org.atgrp.requestJoin';
@@ -34,12 +42,15 @@ export const ACTOR_GROUPS_NSID = 'org.atgrp.internal.getActorGroups';
 // any group host; each call's service auth is still minted for the one host being called, its
 // did:web (./server/host-api.ts).
 
+/** Their server vouches for them to the group host when they make a group. */
+export const CREATE_GROUP_SCOPE = `rpc:${CREATE_GROUP_NSID}?aud=*`;
+
 /** Any group's meta space, read with their own access: its name, how it takes members, and whether
  *  it is public. */
 export const PERSON_META_SCOPE = `space:${META_SPACE_TYPE}?authority=*&skey=${SPACE_SKEY}&action=read`;
 
 /** Their own confirmation in any group's members space: written when they join, deleted when they
- *  leave; and that space read, for whether they are a member. */
+ *  leave; and that space read, for whether they are a member and who else is. */
 export const PERSON_CONFIRMATION_SCOPE = `space:${MEMBERS_SPACE_TYPE}?authority=*&skey=${SPACE_SKEY}&collection=${GROUP_CONFIRMATION_COLLECTION}&action=read&action=create&action=delete`;
 
 /** The spec's join, cancel a request and leave. */
@@ -47,6 +58,10 @@ export const MEMBERSHIP_RPC_SCOPE = `rpc?lxm=${REQUEST_JOIN_NSID}&lxm=${CANCEL_J
 
 /** "Your groups", by the host's own method, which the spec does not have. */
 export const YOUR_GROUPS_SCOPE = `rpc:${ACTOR_GROUPS_NSID}?aud=*`;
+
+/** What making a group asks for: making it, and the person's groups at the host, by which a group
+ *  they made whose answer never came is told from someone else's. */
+export const CREATE_SCOPES: readonly string[] = [CREATE_GROUP_SCOPE, YOUR_GROUPS_SCOPE];
 
 /** What a person is asked for at their first group action: joining, or seeing their groups. */
 export const PARTICIPATE_SCOPES: readonly string[] = [
@@ -67,9 +82,14 @@ export const JOIN_SCOPES: readonly string[] = [
 	...MEMBERS_ONLY_PERSON_SCOPES
 ];
 
-/** Declared in the person's client metadata while groups are on; each asked for only when they
- *  first act in a group, never at sign-in. */
-export const GROUP_PERSON_SCOPES: readonly string[] = [...PARTICIPATE_SCOPES, GUEST_SCOPE];
+/** Declared in the person's client metadata while groups are on; each asked for only when they set
+ *  out to make a group, or first act in one, never at sign-in. Making a group is declared only in a
+ *  build that has the create page (./build.ts). */
+export function groupPersonScopes(create: boolean): readonly string[] {
+	return [...(create ? [CREATE_GROUP_SCOPE] : []), ...PARTICIPATE_SCOPES, GUEST_SCOPE];
+}
+
+export const GROUP_PERSON_SCOPES: readonly string[] = groupPersonScopes(CREATE_IN_THIS_BUILD);
 
 /** Whether the person's granted scope lets their PDS vouch for them to call `nsid`: an rpc grant
  *  for the method, written `rpc:<method>` or `rpc?lxm=<method>`, for `audience` or any audience;
@@ -90,6 +110,12 @@ export function holdsRpc(scope: string, nsid: string, audience?: string): boolea
 				: auds.some((aud) => aud === '*' || aud.toLowerCase() === audience.toLowerCase());
 		return methods.includes(nsid) && forAudience;
 	});
+}
+
+/** For the group host at `audience`: a grant for another audience is not one this site can use, so
+ *  the person is asked again. */
+export function holdsCreateGroup(scope: string, audience: string): boolean {
+	return holdsRpc(scope, CREATE_GROUP_NSID, audience);
 }
 
 // A PDS drops each parameter left at its default, as it hands an `include:` back expanded too: no
@@ -153,12 +179,64 @@ export function holdsParticipate(scope: string): boolean {
 }
 
 const META_SELF = `space:${META_SPACE_TYPE}?authority=self&skey=self`;
+/** No `create`: the host makes a group's about record and config with the group, keeps them, and
+ *  takes a put of a record that is there as its update. */
+const META_RECORD_WRITES = 'action=read&action=update';
 
 /** A group session's read of the group's meta space, its own scope so that a member whose roles
- *  grant no writes keeps it. It names the space's key, which is always `self`: the host's approval
- *  page shows one row per space type, owner and key, and two rows for the one space, one with the
- *  key and one without, break it. */
+ *  grant no writes keeps it. It names the space's key, which is always `self`, as the settings'
+ *  writes do: the host's approval page shows one row per space type, owner and key, and two rows
+ *  for the one space, one with the key and one without, break it. */
 export const GROUP_META_READ_SCOPE = `${META_SELF}&action=read`;
+
+/** A write of the meta space's policy, which says whether the group is public: one of the
+ *  settings' scopes. */
+export const GROUP_POLICY_SCOPE = `${META_SELF}&manage=update`;
+
+/** What a group's settings write as the group, each its own scope, since its host keeps or drops
+ *  each whole: the about record, the config (who may join), and the meta space's policy, which says
+ *  whether it is public. Only what the settings write: not the spec's `authManageAdmin` set, which
+ *  also covers the members space, invites and moderation. */
+export const GROUP_SETTINGS_SCOPES: readonly string[] = [
+	`${META_SELF}&collection=${GROUP_ABOUT_COLLECTION}&${META_RECORD_WRITES}`,
+	`${META_SELF}&collection=${GROUP_CONFIG_COLLECTION}&${META_RECORD_WRITES}`,
+	GROUP_POLICY_SCOPE
+];
+
+/** The meta-space grants in a granted scope, for the group's own meta space: the host gives back
+ *  `authority=self` as the group's DID. */
+function metaGrants(scope: string, groupDid: string): URLSearchParams[] {
+	return scope
+		.split(' ')
+		.filter((token) => token.startsWith(`space:${META_SPACE_TYPE}?`))
+		.map((token) => new URLSearchParams(token.slice(token.indexOf('?') + 1)))
+		.filter((params) => {
+			const authority = params.get('authority') ?? 'self';
+			const skey = params.get('skey') ?? '*';
+			return [groupDid, 'self', '*'].includes(authority) && ['self', '*'].includes(skey);
+		});
+}
+
+function writesMetaRecord(grants: URLSearchParams[], collection: string): boolean {
+	return grants.some((grant) => {
+		const collections = grant.getAll('collection');
+		const actions = grant.getAll('action');
+		return (
+			(collections.includes('*') || collections.includes(collection)) && actions.includes('update')
+		);
+	});
+}
+
+/** Whether the granted scope lets the session change the group's settings: its about record and
+ *  config, and the meta space's policy. */
+export function grantsSettings(scope: string, groupDid: string): boolean {
+	const grants = metaGrants(scope, groupDid);
+	return (
+		writesMetaRecord(grants, GROUP_ABOUT_COLLECTION) &&
+		writesMetaRecord(grants, GROUP_CONFIG_COLLECTION) &&
+		grants.some((grant) => grant.getAll('manage').includes('update'))
+	);
+}
 
 const RECORD_WRITES = ['create', 'update', 'delete'] as const;
 
@@ -280,16 +358,31 @@ export function grantsMembersOnly(scope: string, groupDid: string): MembersOnlyA
 export interface GroupAbilities extends MembersOnlyAbilities {
 	/** Post, edit and delete the group's public events. */
 	post: boolean;
+	/** Change its name, description, website, who may join and whether it is public. */
+	settings: boolean;
 }
 
-export function groupAbilities(scope: string, groupDid: string): GroupAbilities {
+/** `settings`: whether the settings page is in this build; without it a link holds none of its
+ *  acts, whatever its scope grants. */
+export function groupAbilities(
+	scope: string,
+	groupDid: string,
+	settings: boolean = SETTINGS_IN_THIS_BUILD
+): GroupAbilities {
 	return {
 		post: grantsRepoWrites(scope, GROUP_EVENT_COLLECTION),
+		settings: settings && grantsSettings(scope, groupDid),
 		...grantsMembersOnly(scope, groupDid)
 	};
 }
 
-/** Whether a link holds every ability this site offers. */
-export function holdsEveryAbility(can: GroupAbilities): boolean {
-	return Object.values(can).every((held) => held);
+/** Whether a link holds every ability this build offers: the settings only while the settings
+ *  page is in it, so a link is never asked to be approved again for what nothing uses. */
+export function holdsEveryAbility(
+	can: GroupAbilities,
+	settings: boolean = SETTINGS_IN_THIS_BUILD
+): boolean {
+	return Object.entries(can).every(
+		([ability, held]) => held || (!settings && ability === 'settings')
+	);
 }
