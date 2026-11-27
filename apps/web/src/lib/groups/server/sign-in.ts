@@ -52,7 +52,8 @@ const STATE_TTL_SECONDS = 600;
  *  and the settings' are asked for only in a build that has them (../build.ts); without the
  *  settings, the meta space's policy is still asked for while making a group here is in it, whose
  *  setting up makes a group public. Listing a group needs none of them: it writes the group's
- *  declaration, in its repo. */
+ *  declaration, in its repo. Turning members-only events on reads the group's index of its spaces,
+ *  in the members space, which the members page's scopes read too when it is in the build. */
 export function groupSessionScope(
 	roster: boolean,
 	settings: boolean = SETTINGS_IN_THIS_BUILD,

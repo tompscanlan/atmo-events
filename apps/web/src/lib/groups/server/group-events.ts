@@ -69,7 +69,9 @@ const REFUSALS = {
 	'calendar-space-not-granted':
 		'This group already has a calendar for its members, but its settings let no role post events to it from atmo, so atmo made no second one. An admin can allow it at the group host.',
 	'calendar-index-unread':
-		"atmo couldn't check which calendars this group already has, so it made none rather than risk a second one.",
+		"The group host didn't let atmo see which calendars this group already has, so atmo made none rather than risk a second one.",
+	'calendar-index-not-granted':
+		"Your link doesn't yet let atmo see which calendars this group already has, so atmo made none rather than risk a second one. Approve your link once more, then turn them on again.",
 	moved: 'This event is public, and a public event stays public. Nothing was saved.',
 	'members-only':
 		'This event is members-only, and a members-only event stays members-only. Nothing was saved.',
@@ -207,20 +209,24 @@ export async function calendarSpaceState(writer: GroupWriter): Promise<CalendarS
 export const MAX_CALENDAR_CANDIDATES = 20;
 
 /** The group's calendar spaces its index lists, each with when it was listed, read with the first
- *  of `holders` the host lets read the members space, where the index is. The spec's index, which
- *  leaves out a space whose policy is `unlisted`. Refused when none may read it; an outage throws. */
+ *  of `holders` the host lets read the members space, where the index is: the link first, whose
+ *  scope reads it once approved for it. The spec's index, which leaves out a space whose policy is
+ *  `unlisted`. Refused when none may read it, saying so plainly when the link's scope is what
+ *  lacks it (the group host's own `ScopeMissing`); an outage throws. */
 async function indexedCalendars(
 	groupDid: string,
 	holders: SpaceHolder[],
 	hosts: SpaceHosts
 ): Promise<Map<string, string>> {
-	for (const holder of holders) {
+	let notGranted = false;
+	for (const [i, holder] of holders.entries()) {
 		let entries;
 		try {
 			entries = await membersSpace(holder, groupDid, hosts).list(GROUP_SPACE_INDEX_COLLECTION);
 		} catch (e) {
-			if (isSpaceAccessDenied(e)) continue;
-			throw e;
+			if (!isSpaceAccessDenied(e)) throw e;
+			if (i === 0 && e.reason.endsWith('ScopeMissing')) notGranted = true;
+			continue;
 		}
 		const calendars = new Map<string, string>();
 		for (const { value } of entries) {
@@ -231,7 +237,7 @@ async function indexedCalendars(
 		}
 		return calendars;
 	}
-	throw new GroupEventRefused('calendar-index-unread');
+	throw new GroupEventRefused(notGranted ? 'calendar-index-not-granted' : 'calendar-index-unread');
 }
 
 /** `self` first, then the oldest listed: the one this site would have made, else the first made. */

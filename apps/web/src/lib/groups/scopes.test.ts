@@ -65,7 +65,8 @@ describe('what a group session may do, by the scope its host granted', () => {
 			assign: true,
 			remove: true,
 			turnOnMembersOnly: true,
-			membersOnly: true
+			membersOnly: true,
+			readSpaceIndex: true
 		});
 	});
 
@@ -79,7 +80,8 @@ describe('what a group session may do, by the scope its host granted', () => {
 			assign: false,
 			remove: false,
 			turnOnMembersOnly: true,
-			membersOnly: true
+			membersOnly: true,
+			readSpaceIndex: true
 		});
 	});
 
@@ -105,7 +107,8 @@ describe('what a group session may do, by the scope its host granted', () => {
 			assign: false,
 			remove: false,
 			turnOnMembersOnly: false,
-			membersOnly: false
+			membersOnly: false,
+			readSpaceIndex: false
 		});
 	});
 
@@ -123,7 +126,8 @@ describe('what a group session may do, by the scope its host granted', () => {
 			assign: false,
 			remove: false,
 			turnOnMembersOnly: false,
-			membersOnly: false
+			membersOnly: false,
+			readSpaceIndex: false
 		});
 	});
 
@@ -137,7 +141,8 @@ describe('what a group session may do, by the scope its host granted', () => {
 			assign: true,
 			remove: true,
 			turnOnMembersOnly: true,
-			membersOnly: true
+			membersOnly: true,
+			readSpaceIndex: true
 		});
 		expect(groupAbilities(scope, GROUP, false, false)).toMatchObject({
 			list: true,
@@ -184,7 +189,8 @@ describe('what a group session may do, by the scope its host granted', () => {
 			assign: false,
 			remove: false,
 			turnOnMembersOnly: false,
-			membersOnly: false
+			membersOnly: false,
+			readSpaceIndex: false
 		});
 	});
 

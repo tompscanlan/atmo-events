@@ -154,7 +154,8 @@ describe('the group client', () => {
 			'space:org.atgrp.meta?authority=self&skey=self&collection=org.atgrp.config&action=read&action=update',
 			'space:org.atgrp.meta?authority=self&skey=self&manage=update',
 			'space:community.lexicon.calendar.collection?authority=self&manage=create',
-			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
+			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete',
+			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.space&action=read'
 		]);
 	});
 
@@ -173,7 +174,8 @@ describe('the group client', () => {
 			'rpc:org.atgrp.listJoinRequests?aud=*',
 			'rpc:org.atgrp.denyJoinRequest?aud=*',
 			'space:community.lexicon.calendar.collection?authority=self&manage=create',
-			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
+			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete',
+			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.space&action=read'
 		]);
 	});
 
@@ -184,7 +186,8 @@ describe('the group client', () => {
 			'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
 			'blob?accept=image/*',
 			'space:community.lexicon.calendar.collection?authority=self&manage=create',
-			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
+			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete',
+			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.space&action=read'
 		]);
 	});
 

@@ -5,6 +5,7 @@
 // them in its members space, as the group host keeps one.
 import { fakeKemHost } from '#lib/spaces/server/__fixtures__/space-mac-host.js';
 import type { SpaceHosts } from '#lib/spaces/server/space-credential.js';
+import { GROUP_META_READ_SCOPE, MEMBERS_ONLY_SCOPES } from '../../scopes';
 import type { XrpcHandle } from '../xrpc';
 
 export const GROUP = 'did:plc:group';
@@ -31,6 +32,41 @@ const kem = await fakeKemHost();
 type Body = Record<string, unknown>;
 const fail = (status: number, error: string) => Response.json({ error }, { status });
 
+/** The scope a group host grants a session as the group, from what this site asks for: its
+ *  `authority=self` made the group's DID, as the host makes it. */
+export const grantedAsGroup = (asked: string) =>
+	asked.replaceAll('authority=self', `authority=${GROUP}`);
+
+/** As the group host reads a session's scope for a space (`at:space/<did>/<type>/<skey>`): a
+ *  `space:` scope of its type or any, for its authority (none is the group's own) or any, at its
+ *  key or any (none is any), granting `action`, every one when it names none. A read is never
+ *  limited by the collections a scope names. `manage` asks for that instead of an action. */
+export function scopeHolds(
+	scope: string,
+	space: string,
+	want: { action?: string; manage?: string }
+) {
+	const [authority, type, skey] = space.replace('at:space/', '').split('/');
+	return scope.split(' ').some((token) => {
+		if (!token.startsWith('space:')) return false;
+		const at = token.indexOf('?');
+		const kind = token.slice('space:'.length, at === -1 ? undefined : at);
+		const params = new URLSearchParams(at === -1 ? '' : token.slice(at + 1));
+		const by = params.get('authority') ?? 'self';
+		const actions = params.getAll('action');
+		const granted = actions.length > 0 ? actions : ['read', 'create', 'update', 'delete'];
+		const holds = want.manage
+			? params.getAll('manage').includes(want.manage)
+			: granted.includes(want.action!) || (want.action === 'read_self' && granted.includes('read'));
+		return (
+			[type, '*'].includes(kind) &&
+			[authority, '*'].includes(by === 'self' ? GROUP : by) &&
+			[skey, '*'].includes(params.get('skey') ?? '*') &&
+			holds
+		);
+	});
+}
+
 export function fakeCalendar() {
 	const state = {
 		/** The space's policy as kept, or null while there is no space. */
@@ -47,7 +83,13 @@ export function fakeCalendar() {
 		spaces: new Map<string, FakeSpace>(),
 		/** The group's index of its spaces, in its members space: `org.atgrp.space` records. */
 		index: [] as { space: string; createdAt: string }[],
-		/** Who the host gives a credential for the members space, where the index is. */
+		/** The scope the host granted the group's session: by default the space scopes this site
+		 *  asks a group's session for (../sign-in.ts), as an admin's approval keeps them. The host
+		 *  gives the session no delegation token for a space its scope does not read, nor that
+		 *  space's policy, and makes no space it does not manage. */
+		groupScope: grantedAsGroup([GROUP_META_READ_SCOPE, ...MEMBERS_ONLY_SCOPES].join(' ')),
+		/** Who the host gives a credential for the members space, where the index is, as their roles
+		 *  read it: the group's session for the member who approved it, or a person's DID. */
 		indexReaders: new Set<string>(['group']),
 		/** Who the host gives a credential for a calendar space: `group`, or a person's DID. */
 		readers: new Set<string>(),
@@ -78,6 +120,11 @@ export function fakeCalendar() {
 			const refused = state.refuse.get(nsid);
 			if (refused) return refused;
 			if (nsid === 'com.atproto.space.getDelegationToken') {
+				if (
+					who === 'group' &&
+					!scopeHolds(state.groupScope, String(body.space), { action: 'read' })
+				)
+					return fail(403, 'ScopeMissing');
 				return Response.json({ token: `delegation:${who}` });
 			}
 			if (who !== 'group') {
@@ -91,12 +138,16 @@ export function fakeCalendar() {
 			switch (nsid) {
 				case 'com.atproto.space.getSpace': {
 					const space = spaceAt(body.space);
+					if (space && !scopeHolds(state.groupScope, String(body.space), { action: 'read_self' }))
+						return fail(403, 'ScopeMissing');
 					return space
 						? Response.json({ space: body.space, policy: space.policy })
 						: fail(400, 'SpaceNotFound');
 				}
 				case 'com.atproto.space.createSpace': {
 					const uri = calendarAt(String(body.skey ?? '3lmadehere'));
+					if (!scopeHolds(state.groupScope, uri, { manage: 'create' }))
+						return fail(403, 'ScopeMissing');
 					if (spaceAt(uri)) return fail(400, 'SpaceAlreadyExists');
 					if (uri === CALENDAR) state.policy = body.policy as Body;
 					else

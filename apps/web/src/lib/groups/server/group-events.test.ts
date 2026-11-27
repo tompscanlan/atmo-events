@@ -305,11 +305,42 @@ describe('turning members-only events on where the group has a calendar already'
 		expect(made()).toEqual([]);
 	});
 
+	/** A link approved before this site asked to read the index: the host grants no such scope. */
+	const approvedBefore = () => {
+		calendar.state.groupScope = calendar.state.groupScope
+			.split(' ')
+			.filter((scope) => !scope.startsWith('space:org.atgrp.members?'))
+			.join(' ');
+	};
+
+	it("is refused the index by the host for a link approved before it asked to read it, so the person's own sign-in reads it", async () => {
+		approvedBefore();
+		calendar.state.indexReaders.add('did:plc:admin');
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		const person = { handle: calendar.personHandle('did:plc:admin') };
+		expect((await turnOnMembersOnly(writer(), [person], calendarHosts)).space).toBe(WIKI);
+		expect(calendar.state.sent.slice(0, 2)).toEqual([
+			['group', 'com.atproto.space.getDelegationToken', { space: MEMBERS }],
+			['did:plc:admin', 'com.atproto.space.getDelegationToken', { space: MEMBERS }]
+		]);
+		expect(made()).toEqual([]);
+	});
+
+	it('says plainly that the link needs approving once more when nothing else may read the index', async () => {
+		approvedBefore();
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		const on = turnOnMembersOnly(writer(), [], calendarHosts);
+		await expect(on).rejects.toMatchObject({ reason: 'calendar-index-not-granted' });
+		await expect(on).rejects.toThrow('Approve your link once more, then turn them on again.');
+		expect(made()).toEqual([]);
+		expect(await chosen()).toBeNull();
+	});
+
 	it('makes nothing when no one may read the index, or a calendar could not be checked', async () => {
 		calendar.state.indexReaders.clear();
-		await expect(turnOnMembersOnly(writer(), [], calendarHosts)).rejects.toMatchObject({
-			reason: 'calendar-index-unread'
-		});
+		const unread = turnOnMembersOnly(writer(), [], calendarHosts);
+		await expect(unread).rejects.toMatchObject({ reason: 'calendar-index-unread' });
+		await expect(unread).rejects.toThrow("The group host didn't let atmo see which calendars");
 		calendar.state.indexReaders.add('group');
 		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
 		calendar.state.refuse.set('com.atproto.space.getSpace', new Response('', { status: 502 }));

@@ -3,7 +3,12 @@ import { env, waitUntil } from 'cloudflare:workers';
 import { isHttpError } from '@sveltejs/kit';
 import { TokenRefreshError } from '@atcute/oauth-node-client';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
-import { GROUP_SETTINGS_SCOPES, MEMBERS_ONLY_SCOPES, ROSTER_SCOPES } from '../scopes';
+import {
+	GROUP_SETTINGS_SCOPES,
+	GROUP_SPACE_INDEX_SCOPE,
+	MEMBERS_ONLY_SCOPES,
+	ROSTER_SCOPES
+} from '../scopes';
 import { XrpcError } from './xrpc';
 
 const mocks = vi.hoisted(() => ({
@@ -252,6 +257,21 @@ describe('groupView for someone who linked the group', () => {
 		mocks.groupSession.mockResolvedValue(linkedSession(ADMIN_SCOPE));
 		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({ reapprove: false });
 		expect(mocks.linkAskedCurrentScope).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+
+	it("offers to approve again a link from before atmo read the group's index of its spaces", async () => {
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(false);
+		mocks.linkAskedCurrentScope.mockResolvedValue(false);
+		const withoutIndex = ADMIN_SCOPE.split(' ')
+			.filter((token) => token !== GROUP_SPACE_INDEX_SCOPE.replace('self', GROUP))
+			.join(' ');
+		expect(withoutIndex).not.toBe(ADMIN_SCOPE);
+		mocks.groupSession.mockResolvedValue(linkedSession(withoutIndex));
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({
+			can: { turnOnMembersOnly: true, membersOnly: true, readSpaceIndex: false },
+			reapprove: true
+		});
 	});
 
 	it('offers no settings in a build without the settings page, nor approving again for them', async () => {

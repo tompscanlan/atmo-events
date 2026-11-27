@@ -12,6 +12,7 @@ import {
 	GROUP_DECLARATION_COLLECTION,
 	GROUP_EVENT_COLLECTION,
 	GROUP_MEMBERSHIP_COLLECTION,
+	GROUP_SPACE_INDEX_COLLECTION,
 	MEMBERS_SPACE_TYPE,
 	META_SPACE_TYPE,
 	SPACE_SKEY
@@ -330,19 +331,52 @@ export function grantsRepoWrites(scope: string, collection: string): boolean {
 	);
 }
 
+/** A read of the group's index of its spaces, the `org.atgrp.space` records in its members space,
+ *  for which calendars it already has before turning members-only events on. Read only, and named
+ *  to that collection, though a group host gives a credential for the whole space, so the link
+ *  reads the rest of the members space too. Keyed `self`, as every members-space scope here is, for
+ *  the host's approval page. The host keeps it for a member whose roles read the members space,
+ *  which every member's do, and gives a session a credential for that space only while its scope
+ *  reads it. */
+export const GROUP_SPACE_INDEX_SCOPE = `space:${MEMBERS_SPACE_TYPE}?authority=self&skey=${SPACE_SKEY}&collection=${GROUP_SPACE_INDEX_COLLECTION}&action=read`;
+
+/** Whether a granted scope reads the group's index of its spaces: a members-space read for the
+ *  group, its key, and that collection or every one. */
+export function grantsSpaceIndexRead(scope: string, groupDid: string): boolean {
+	return scope
+		.split(' ')
+		.filter((token) => token.startsWith(`space:${MEMBERS_SPACE_TYPE}?`))
+		.map((token) => new URLSearchParams(token.slice(token.indexOf('?') + 1)))
+		.some((params) => {
+			const authority = params.get('authority') ?? 'self';
+			const skey = params.get('skey') ?? '*';
+			const collections = params.getAll('collection');
+			return (
+				[groupDid, 'self', '*'].includes(authority) &&
+				[SPACE_SKEY, '*'].includes(skey) &&
+				(collections.length === 0 ||
+					collections.includes('*') ||
+					collections.includes(GROUP_SPACE_INDEX_COLLECTION)) &&
+				actionsOf(params).includes('read')
+			);
+		});
+}
+
 /** The group's calendar spaces at any key: the one used may be one another app made, under a key
  *  of its own, and a client's metadata names its scopes once for every group. Both name no key, so
  *  every scope for the type names the same one, as the host's approval page needs. */
 const CALENDAR_ANY_KEY = `space:${CALENDAR_SPACE_TYPE}?authority=self`;
 
-/** Making the group's calendar space, and its events there, read, written and deleted as the group.
+/** Making the group's calendar space, and its events there, read, written and deleted as the group;
+ *  and reading which calendar spaces the group has, before making one.
  *  Its own type only, not every space (`space:*`). The host keeps the second only while one of the
  *  group's calendar spaces is there at the approval whose own policy lets the approving person's
  *  roles post events, so a link approved before there was one is approved once more after; each
  *  write is still checked against the policy of the space it goes to. */
 export const MEMBERS_ONLY_SCOPES: readonly string[] = [
 	`${CALENDAR_ANY_KEY}&manage=create`,
-	`${CALENDAR_ANY_KEY}&collection=${GROUP_EVENT_COLLECTION}&action=read&action=create&action=update&action=delete`
+	`${CALENDAR_ANY_KEY}&collection=${GROUP_EVENT_COLLECTION}&action=read&action=create&action=update&action=delete`,
+	GROUP_SPACE_INDEX_SCOPE
 ];
 
 /** The calendar-space grants in a granted scope, for the group's own calendar space. */
@@ -363,6 +397,8 @@ export interface MembersOnlyAbilities {
 	turnOnMembersOnly: boolean;
 	/** Read, post, edit and delete the group's members-only events. */
 	membersOnly: boolean;
+	/** Read which calendars the group already has, before turning them on. */
+	readSpaceIndex: boolean;
 }
 
 export function grantsMembersOnly(scope: string, groupDid: string): MembersOnlyAbilities {
@@ -375,7 +411,8 @@ export function grantsMembersOnly(scope: string, groupDid: string): MembersOnlyA
 				(collections.includes('*') || collections.includes(GROUP_EVENT_COLLECTION)) &&
 				DEFAULT_ACTIONS.every((action) => actionsOf(grant).includes(action))
 			);
-		})
+		}),
+		readSpaceIndex: grantsSpaceIndexRead(scope, groupDid)
 	};
 }
 
