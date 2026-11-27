@@ -75,6 +75,7 @@
 			<Button class="mt-4" onclick={() => atProtoLoginModalState.show()}>Sign in</Button>
 		{:else}
 			<GroupAccessNotice
+				kind="participate"
 				access={data.access}
 				did={data.did}
 				purpose="A group's members-only events are kept at its group host. atmo needs your permission to open them for you and save your RSVP in your own account."

@@ -46,8 +46,8 @@ export function getAuth(): AtprotoAuth {
 		// Settings, or first hosts or opens one.
 		scope: [
 			...(privateEventsEnabled() ? [...scopes, ...HOST_SCOPES, BETA_SCOPE] : scopes),
-			// Likewise groups' (acting in one), requested when someone sets out to. Private events'
-			// guest scope, which groups also ask for, once.
+			// Likewise groups' (making one at the group host, and acting in one), requested when
+			// someone sets out to. Private events' guest scope, which groups also ask for, once.
 			...(groupsEnabled()
 				? GROUP_PERSON_SCOPES.filter(
 						(scope) => !(privateEventsEnabled() && HOST_SCOPES.includes(scope))

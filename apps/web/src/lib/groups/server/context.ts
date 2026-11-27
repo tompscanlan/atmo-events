@@ -33,6 +33,8 @@ import {
 	type LinkedMeta
 } from './group';
 import { requireGroupsEnabled } from './enabled';
+import { CREATE_IN_THIS_BUILD } from '../build';
+import { unfinishedGroup } from './create';
 import { confirmAdmitted, hasConfirmation, joinRequested } from './confirmation';
 import { actorGroups } from './host';
 import { isMemberAsPerson, personReader, readMetaAsPerson, type PersonalMeta } from './person';
@@ -96,6 +98,10 @@ export interface LinkedGroup {
 	/** The link was approved for less than this site asks for now, and lacks some of it: approving
 	 *  again may bring the rest. False once it was approved for all of it, whatever the roles kept. */
 	reapprove: boolean;
+	/** The caller made the group here, and setting it up did not finish at the link: what they asked
+	 *  of it, which says what is left to do. Null for any other group, and in a build without making
+	 *  groups here. */
+	unfinished: { public: boolean; listed: boolean } | null;
 }
 
 export interface GroupWriter {
@@ -137,19 +143,21 @@ async function readLinked(
 ): Promise<LinkedRead> {
 	const handle = groupHandle(session, personDid);
 	try {
-		const [meta, listed, token, current] = await Promise.all([
+		const [meta, listed, token, current, setup] = await Promise.all([
 			readLinkedMeta(handle, groupDid),
 			repoHasDeclaration(handle, groupDid),
 			// As granted at the approval; a refresh would not change it.
 			session.getTokenInfo(false),
-			linkAskedCurrentScope(groupDid, personDid)
+			linkAskedCurrentScope(groupDid, personDid),
+			CREATE_IN_THIS_BUILD ? unfinishedGroup(personDid, groupDid) : null
 		]);
 		const can = groupAbilities(token.scope, groupDid);
 		return {
 			meta,
 			listed,
 			can,
-			reapprove: !current && !holdsEveryAbility(can)
+			reapprove: !current && !holdsEveryAbility(can),
+			unfinished: setup && { public: setup.public, listed: setup.listed }
 		};
 	} catch (e) {
 		if (isLinkBroken(e)) return 'refused';

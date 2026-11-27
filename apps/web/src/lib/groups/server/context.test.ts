@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 	groupSignInAvailable: vi.fn(),
 	hasGroupSession: vi.fn(),
 	linkAskedCurrentScope: vi.fn(),
+	unfinishedGroup: vi.fn(),
 	readMetaAsPerson: vi.fn(),
 	isMemberAsPerson: vi.fn(),
 	actorGroups: vi.fn(),
@@ -43,6 +44,15 @@ vi.mock('./sign-in', () => ({
 	groupSignInAvailable: mocks.groupSignInAvailable,
 	hasGroupSession: mocks.hasGroupSession,
 	linkAskedCurrentScope: mocks.linkAskedCurrentScope
+}));
+vi.mock('./create', () => ({ unfinishedGroup: mocks.unfinishedGroup }));
+/** Making groups here is tested in the build, and once without. */
+const build = vi.hoisted(() => ({ create: true }));
+vi.mock('../build', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../build')>()),
+	get CREATE_IN_THIS_BUILD() {
+		return build.create;
+	}
 }));
 vi.mock('./person', () => ({
 	personReader: () => ({}),
@@ -89,6 +99,7 @@ const meta = { profile: { name: 'Knitters', description: 'Yarn' }, public: true 
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	build.create = true;
 	Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 	mocks.resolveGroup.mockResolvedValue(resolved);
 	mocks.readCachedProfiles.mockResolvedValue(new Map());
@@ -97,6 +108,7 @@ beforeEach(() => {
 	mocks.groupSignInAvailable.mockReturnValue(true);
 	mocks.atGroupHost.mockReturnValue(true);
 	mocks.linkAskedCurrentScope.mockResolvedValue(true);
+	mocks.unfinishedGroup.mockResolvedValue(null);
 });
 
 describe('groupView for a visitor', () => {
@@ -222,7 +234,8 @@ describe('groupView for someone who linked the group', () => {
 				meta: { public: false },
 				listed: false,
 				can: { post: true, list: true },
-				reapprove: false
+				reapprove: false,
+				unfinished: null
 			},
 			relink: false,
 			hasLink: true
@@ -270,6 +283,35 @@ describe('groupView for someone who linked the group', () => {
 			can: { turnOnMembersOnly: true, membersOnly: true, readSpaceIndex: false },
 			reapprove: true
 		});
+	});
+
+	it("says when setting up a group the caller made here didn't finish", async () => {
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		mocks.unfinishedGroup.mockResolvedValue({
+			did: GROUP,
+			handle: 'knit.example',
+			public: true,
+			listed: false
+		});
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({
+			unfinished: { public: true, listed: false }
+		});
+		expect(mocks.unfinishedGroup).toHaveBeenCalledWith(ALICE, GROUP);
+	});
+
+	it('reads no note of a group made here in a build without making groups here', async () => {
+		build.create = false;
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(true);
+		mocks.unfinishedGroup.mockResolvedValue({
+			did: GROUP,
+			handle: 'knit.example',
+			public: true,
+			listed: false
+		});
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({ unfinished: null });
+		expect(mocks.unfinishedGroup).not.toHaveBeenCalled();
 	});
 
 	it('asks to link again when the session cannot say what it was granted', async () => {

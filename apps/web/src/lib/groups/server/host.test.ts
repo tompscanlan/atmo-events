@@ -31,7 +31,8 @@ const GROUP = 'did:plc:group';
 const HOST: GroupHostInfo = {
 	origin: 'https://host.example',
 	did: 'did:web:host.example',
-	domain: '.groups.example'
+	domain: '.groups.example',
+	newGroupUrl: 'https://host.example/new'
 };
 
 /** The person's own session at their PDS, which answers getServiceAuth. */

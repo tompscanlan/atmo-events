@@ -7,6 +7,7 @@ import '../../../../app.css';
 const mocks = vi.hoisted(() => ({
 	setGroupListed: vi.fn(),
 	unlinkGroupSession: vi.fn(),
+	finishGroupSetup: vi.fn(),
 	turnOnMembersOnlyEvents: vi.fn()
 }));
 const member = vi.hoisted(() => ({
@@ -56,6 +57,7 @@ function linkedPage(
 		public: boolean;
 		listed: boolean;
 		reapprove?: boolean;
+		unfinished?: { public: boolean; listed: boolean };
 	},
 	can = { post: true, list: true },
 	upcoming: (typeof EVENT)[] = []
@@ -76,7 +78,8 @@ function linkedPage(
 				meta: { profile: { name: 'Knitters', description: null }, public: linked.public },
 				listed: linked.listed,
 				can,
-				reapprove: linked.reapprove ?? false
+				reapprove: linked.reapprove ?? false,
+				unfinished: linked.unfinished ?? null
 			},
 			relink: false,
 			hasLink: true
@@ -137,6 +140,24 @@ describe("what a link's granted scope offers", () => {
 		expect(form?.getAttribute('action')).toBe('/oauth/group/link');
 		expect(new FormData(form as HTMLFormElement).get('group')).toBe(GROUP);
 	});
+
+	it("finishes setting up a group made here when its link didn't", async () => {
+		mocks.finishGroupSetup.mockResolvedValue({ ok: true });
+		render(GroupPage, {
+			data: linkedPage({
+				public: false,
+				listed: false,
+				unfinished: { public: true, listed: false }
+			}) as never
+		});
+		await expect
+			.poll(shown)
+			.toContain(
+				"Setting up this group didn't finish: it isn't yet public and off the groups list"
+			);
+		await page.getByRole('button', { name: 'Finish setting up' }).click();
+		await expect.poll(() => mocks.finishGroupSetup).toHaveBeenCalledWith({ groupDid: GROUP });
+	});
 });
 
 describe('a link whose group host could not be reached', () => {
@@ -149,6 +170,20 @@ describe('a link whose group host could not be reached', () => {
 		expect(page.getByRole('button', { name: 'Link this group' }).elements()).toHaveLength(0);
 		expect(page.getByRole('button', { name: 'Unlink' }).elements()).toHaveLength(1);
 		expect(page.getByRole('link', { name: 'Post an event' }).elements()).toHaveLength(0);
+	});
+});
+
+describe("a group whose setup didn't finish", () => {
+	it.each([
+		['listed', { public: true, listed: true }],
+		['members-only', { public: false, listed: false }]
+	])('says no more than that of a %s group, which is as it was made', async (_kind, asked) => {
+		render(GroupPage, {
+			data: linkedPage({ public: asked.public, listed: asked.listed, unfinished: asked }) as never
+		});
+		await expect.poll(shown).toContain("Setting up this group here didn't finish.");
+		expect(shown()).not.toContain('groups list, as you asked');
+		expect(shown()).not.toContain('still on the groups list');
 	});
 });
 

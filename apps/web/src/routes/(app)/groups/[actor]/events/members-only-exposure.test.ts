@@ -49,6 +49,7 @@ vi.mock('#lib/spaces/server/space-credential.js', async (importActual) => ({
 	...(await importActual<typeof import('#lib/spaces/server/space-credential.js')>()),
 	didSpaceHosts: (await import('#lib/groups/server/__fixtures__/group-calendar.js')).calendarHosts
 }));
+vi.mock('#lib/groups/server/create.js', () => ({ finishSetup: vi.fn() }));
 vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.callerSession }));
 // The index fetches what it is told of from the group's public repo, and keeps it if it is there.
 vi.mock('#lib/groups/server/group.js', () => ({

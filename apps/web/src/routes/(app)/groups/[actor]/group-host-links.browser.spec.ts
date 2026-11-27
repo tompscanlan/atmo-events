@@ -7,6 +7,7 @@ import '../../../../app.css';
 vi.mock('#lib/groups/group.remote.js', () => ({
 	setGroupListed: vi.fn(),
 	unlinkGroupSession: vi.fn(),
+	finishGroupSetup: vi.fn(),
 	turnOnMembersOnlyEvents: vi.fn()
 }));
 vi.mock('#lib/groups/members.remote.js', () => ({
@@ -49,7 +50,8 @@ function linkedPage(can: Partial<typeof CAN> = {}, hostSite: typeof HOST_SITE | 
 				meta: { profile: { name: 'Knitters', description: null }, public: true },
 				listed: true,
 				can: { ...CAN, ...can },
-				reapprove: false
+				reapprove: false,
+				unfinished: null
 			},
 			relink: false,
 			hasLink: true

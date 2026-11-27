@@ -11,6 +11,7 @@
 	import GroupHeader from '#lib/groups/components/GroupHeader.svelte';
 	import { JOIN_MESSAGE_MAX } from '#lib/groups/fields.js';
 	import {
+		finishGroupSetup,
 		setGroupListed,
 		turnOnMembersOnlyEvents,
 		unlinkGroupSession
@@ -52,7 +53,8 @@
 				group.linked.can.list ||
 				group.linked.can.turnOnMembersOnly ||
 				group.linked.can.membersOnly ||
-				group.linked.reapprove)
+				group.linked.reapprove ||
+				group.linked.unfinished)
 		)
 	);
 	let membersOnlyEvents = $derived(data.membersOnly?.events ?? []);
@@ -244,6 +246,7 @@
 		{#if data.access && data.you}
 			<div class="mb-6">
 				<GroupAccessNotice
+					kind="participate"
 					access={data.access}
 					did={data.you}
 					purpose={data.accessForMembersOnly
@@ -317,6 +320,25 @@
 					</ul>
 				{/if}
 				{@render managedAtHost()}
+				{#if group.linked.unfinished}
+					<div class="flex flex-wrap items-center gap-3">
+						<p class="text-base-700 dark:text-base-300 text-sm" role="status">
+							{#if group.linked.unfinished.public && !group.linked.unfinished.listed}
+								Setting up this group didn't finish: it isn't yet public and off the groups list, as
+								you asked.
+							{:else}
+								Setting up this group here didn't finish.
+							{/if}
+						</p>
+						<Button
+							size="sm"
+							variant="secondary"
+							disabled={busy}
+							onclick={() => act(() => finishGroupSetup({ groupDid: group.did }))}
+							>Finish setting up</Button
+						>
+					</div>
+				{/if}
 				{#if data.calendar && data.calendar !== 'ready' && data.calendar !== 'missing'}
 					<p class="text-base-600 dark:text-base-400 text-sm" role="status">
 						{data.calendar === 'readable'

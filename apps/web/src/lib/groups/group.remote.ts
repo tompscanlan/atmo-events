@@ -5,6 +5,8 @@ import { callerSession } from '#lib/private-events/server/caller.js';
 import { EVENT_PLACEMENTS } from './event-placement';
 import { GROUP_EVENT_COLLECTION } from './ids';
 import { requireGroupWriter, requireLinkedAbilities, requireStoredLink } from './server/context';
+import { finishSetup } from './server/create';
+import { requireCreateInBuild } from './server/enabled';
 import {
 	deleteMembersOnlyEvent,
 	GroupEventRefused,
@@ -74,6 +76,22 @@ export const setGroupListed = command(
 		return { listed };
 	}
 );
+
+/** For a group made here whose first link did not finish setting it up; in a build without making
+ *  groups here, the same 404 as groups off. */
+export const finishGroupSetup = command(v.object({ groupDid: didSchema }), async ({ groupDid }) => {
+	requireCreateInBuild();
+	const did = callerDid();
+	const writer = await requireGroupWriter(groupDid, did);
+	try {
+		await finishSetup(writer, did as string);
+	} catch (e) {
+		if (isRoleRefused(e)) error(403, NO_ROLE);
+		if (isLinkBroken(e)) error(403, RELINK);
+		throw e;
+	}
+	return { ok: true };
+});
 
 export const unlinkGroupSession = command(v.object({ groupDid: didSchema }), async (input) => {
 	const did = await requireStoredLink(input.groupDid, callerDid());

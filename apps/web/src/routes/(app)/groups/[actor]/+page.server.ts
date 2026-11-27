@@ -9,6 +9,7 @@ import {
 } from '#lib/contrail.js';
 import { hasEnded } from '#lib/past-events.js';
 import { getProfileCounts } from '#lib/server/profile-counts.js';
+import { CREATE_IN_THIS_BUILD } from '#lib/groups/build.js';
 import { groupAccess } from '#lib/groups/permissions-asked.js';
 import {
 	listMembersOnlyEvents,
@@ -32,7 +33,8 @@ import { holdsGuestGrant } from '#lib/private-events/scopes.js';
 import { errorKind } from '#lib/spaces/server/xrpc.js';
 
 const LINK_NOTICES = {
-	linked: 'Linked.'
+	linked: 'Linked.',
+	created: 'Your group is made, and linked.'
 } as const;
 
 /** What a working link lets the person do here, as the page offers it. */
@@ -50,6 +52,8 @@ function linkAbilities(can: GroupAbilities): string {
  *  may do; a made-up `?link=` is no notice. */
 function linkNotice(link: string | null, linked: LinkedGroup | null): string | null {
 	if (!link || !linked || !Object.hasOwn(LINK_NOTICES, link)) return null;
+	// Only a build that makes groups here makes one.
+	if (link === 'created' && !CREATE_IN_THIS_BUILD) return null;
 	return `${LINK_NOTICES[link as keyof typeof LINK_NOTICES]} ${linkAbilities(linked.can)}`;
 }
 
