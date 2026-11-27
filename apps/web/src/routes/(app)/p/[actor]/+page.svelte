@@ -4,6 +4,7 @@
 	import { Button, UserProfile, blueskyProfileToProfileData } from '@atmo-dev/kit';
 	import { EventCard, getLocalProfileUrl } from '@atmo-dev/kit/events';
 	import HappeningNow from '#lib/components/HappeningNow.svelte';
+	import HostEventsSection from '#lib/components/HostEventsSection.svelte';
 	import ProfileEvents from '#lib/components/ProfileEvents.svelte';
 	import { resolve } from '$app/paths';
 
@@ -97,24 +98,14 @@
 			/>
 
 			{#if (data.upcomingEvents?.length ?? 0) > 0}
-				<section class="mb-10">
-					<div class="mb-4 flex items-baseline justify-between">
-						<h2 class="text-base-900 dark:text-base-50 text-lg font-semibold">Upcoming Events</h2>
-						{#if data.hasMoreUpcoming}
-							<a
-								href={resolve('/(app)/p/[actor]/hosting', { actor: data.actor })}
-								class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 text-sm font-medium transition-colors"
-							>
-								See all &rarr;
-							</a>
-						{/if}
-					</div>
-					<div class="space-y-5">
-						{#each data.upcomingEvents as event (event.uri)}
-							<EventCard {event} actor={data.actor} />
-						{/each}
-					</div>
-				</section>
+				<HostEventsSection
+					heading="Upcoming Events"
+					events={data.upcomingEvents}
+					actor={data.actor}
+					seeAllHref={data.hasMoreUpcoming
+						? resolve('/(app)/p/[actor]/hosting', { actor: data.actor })
+						: null}
+				/>
 			{/if}
 
 			<!-- Attending -->
@@ -131,24 +122,14 @@
 
 			<!-- Past Events -->
 			{#if (data.pastEvents?.length ?? 0) > 0}
-				<section class="mb-10">
-					<div class="mb-4 flex items-baseline justify-between">
-						<h2 class="text-base-900 dark:text-base-50 text-lg font-semibold">Past Events</h2>
-						{#if data.hasMorePast}
-							<a
-								href={resolve('/(app)/p/[actor]/past-events', { actor: data.actor })}
-								class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 text-sm font-medium transition-colors"
-							>
-								See all &rarr;
-							</a>
-						{/if}
-					</div>
-					<div class="space-y-5">
-						{#each data.pastEvents as event (event.uri)}
-							<EventCard {event} actor={data.actor} />
-						{/each}
-					</div>
-				</section>
+				<HostEventsSection
+					heading="Past Events"
+					events={data.pastEvents}
+					actor={data.actor}
+					seeAllHref={data.hasMorePast
+						? resolve('/(app)/p/[actor]/past-events', { actor: data.actor })
+						: null}
+				/>
 			{/if}
 
 			<!-- `ongoingEvents` counts here too. A host whose only event is running RIGHT
