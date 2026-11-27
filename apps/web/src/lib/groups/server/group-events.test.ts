@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { env } from 'cloudflare:workers';
 import {
 	CALENDAR,
+	calendarAt,
 	calendarHosts,
 	event,
 	fakeCalendar,
 	GROUP,
+	MEMBERS,
 	READY_POLICY
 } from './__fixtures__/group-calendar';
+import { memoryKV, type MemoryKV } from './__fixtures__/kv';
 
 const mocks = vi.hoisted(() => ({ networkFetch: vi.fn<typeof fetch>() }));
 vi.mock('#lib/atproto/network.js', () => ({
@@ -30,20 +34,26 @@ import {
 } from './group-events';
 
 let calendar: ReturnType<typeof fakeCalendar>;
+let kv: MemoryKV;
 const writer = () => ({ did: GROUP, handle: calendar.groupHandle });
 const nsids = () => calendar.state.sent.map(([, nsid]) => nsid);
+const made = () => calendar.state.sent.filter(([, nsid]) => nsid.endsWith('createSpace'));
+const policyChanges = () => calendar.state.sent.filter(([, nsid]) => nsid.endsWith('updateSpace'));
+const chosen = () => kv.get(`group:calendar:${GROUP}`, 'text');
 
 beforeEach(() => {
 	vi.resetAllMocks();
 	vi.spyOn(console, 'error').mockImplementation(() => {});
 	calendar = fakeCalendar();
 	mocks.networkFetch.mockImplementation(calendar.fetch);
+	kv = memoryKV();
+	Object.assign(env, { OAUTH_SESSIONS: kv });
 });
 
 describe('turning members-only events on', () => {
 	it("makes the group's one calendar space, private, with the policy the host needs", async () => {
-		await turnOnMembersOnly(writer());
-		expect(calendar.state.sent).toEqual([
+		await turnOnMembersOnly(writer(), [], calendarHosts);
+		expect(made()).toEqual([
 			[
 				'group',
 				'com.atproto.space.createSpace',
@@ -54,6 +64,12 @@ describe('turning members-only events on', () => {
 				}
 			]
 		]);
+		// It looked first, at the group's index and at `self`.
+		expect(nsids().slice(0, 2)).toEqual([
+			'com.atproto.space.getDelegationToken',
+			'com.atproto.space.getSpace'
+		]);
+		expect(await chosen()).toBe(CALENDAR);
 		expect(CALENDAR_POLICY).toEqual({
 			$type: 'org.atgrp.policy',
 			publicRead: false,
@@ -74,8 +90,12 @@ describe('turning members-only events on', () => {
 
 	it('takes a space already there as done, and sends nothing that would change its policy', async () => {
 		calendar.state.policy = READY_POLICY;
-		await expect(turnOnMembersOnly(writer())).resolves.toBeUndefined();
-		expect(nsids()).toEqual(['com.atproto.space.createSpace']);
+		await expect(turnOnMembersOnly(writer(), [], calendarHosts)).resolves.toMatchObject({
+			state: 'ready',
+			space: CALENDAR
+		});
+		expect(made()).toEqual([]);
+		expect(policyChanges()).toEqual([]);
 	});
 
 	it('throws any other refusal', async () => {
@@ -83,7 +103,191 @@ describe('turning members-only events on', () => {
 			'com.atproto.space.createSpace',
 			Response.json({ error: 'NotAuthorized' }, { status: 403 })
 		);
-		await expect(turnOnMembersOnly(writer())).rejects.toMatchObject({ error: 'NotAuthorized' });
+		await expect(turnOnMembersOnly(writer(), [], calendarHosts)).rejects.toMatchObject({
+			error: 'NotAuthorized'
+		});
+	});
+});
+
+// Another app, a wiki that also keeps events, made the group a calendar first, under a key of its
+// own and a policy of its own.
+const WIKI = calendarAt('3lwikicalendar');
+const WIKI_POLICY = {
+	$type: 'org.atgrp.policy',
+	publicRead: false,
+	grants: [
+		{
+			role: 'admin',
+			permissions: [
+				'space:community.lexicon.calendar.collection?collection=community.lexicon.calendar.event&collection=com.example.wiki.page'
+			]
+		},
+		{ role: 'member', read: true }
+	]
+};
+
+describe('turning members-only events on where the group has a calendar already', () => {
+	it('uses the one another app made, makes none, and posts there from then on', async () => {
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		expect(await turnOnMembersOnly(writer(), [], calendarHosts)).toEqual({
+			state: 'ready',
+			posters: ['admin'],
+			space: WIKI
+		});
+		expect(made()).toEqual([]);
+		expect(policyChanges()).toEqual([]);
+		expect(await chosen()).toBe(WIKI);
+		// The index was read as the group, in its members space.
+		expect(calendar.state.sent[0]).toEqual([
+			'group',
+			'com.atproto.space.getDelegationToken',
+			{ space: MEMBERS }
+		]);
+
+		calendar.state.sent.length = 0;
+		const saved = await putMembersOnlyEvent(writer(), { rkey: 'r1', record: event('Supper') });
+		expect(saved.uri).toBe(`${WIKI}/${GROUP}/community.lexicon.calendar.event/r1`);
+		expect(calendar.state.spaces.get(WIKI)?.events.get('r1')).toMatchObject({ name: 'Supper' });
+		expect(calendar.state.events.size).toBe(0);
+		expect(calendar.state.sent.filter(([, nsid]) => nsid === 'com.atproto.space.getSpace')).toEqual(
+			[['group', 'com.atproto.space.getSpace', { space: WIKI }]]
+		);
+
+		await deleteMembersOnlyEvent(writer(), 'r1');
+		expect(calendar.state.spaces.get(WIKI)?.events.size).toBe(0);
+	});
+
+	it('makes its own when the group has none its members could use, nor any at all', async () => {
+		calendar.anotherAppsCalendar('3lpublic', { ...WIKI_POLICY, publicRead: true });
+		calendar.anotherAppsCalendar('3lboard', {
+			...WIKI_POLICY,
+			grants: [WIKI_POLICY.grants[0]]
+		});
+		await turnOnMembersOnly(writer(), [], calendarHosts);
+		expect(made()).toHaveLength(1);
+		expect(made()[0][2]).toMatchObject({ skey: 'self', policy: CALENDAR_POLICY });
+		expect(await chosen()).toBe(CALENDAR);
+		// Neither of the others was changed.
+		expect(policyChanges()).toEqual([]);
+	});
+
+	it.each([
+		['no role at all', { ...WIKI_POLICY, grants: [{ role: 'member', read: true }] }],
+		[
+			'only reading',
+			{
+				...WIKI_POLICY,
+				grants: [
+					{
+						role: 'admin',
+						permissions: [
+							'space:community.lexicon.calendar.collection?collection=community.lexicon.calendar.event&action=read'
+						]
+					},
+					{ role: 'member', read: true }
+				]
+			}
+		],
+		[
+			'another key only',
+			{
+				...WIKI_POLICY,
+				grants: [
+					{
+						role: 'admin',
+						permissions: [
+							'space:community.lexicon.calendar.collection?skey=self&collection=community.lexicon.calendar.event'
+						]
+					},
+					{ role: 'member', read: true }
+				]
+			}
+		]
+	])(
+		'makes no second calendar beside one whose policy lets %s post, and says so',
+		async (_, policy) => {
+			calendar.anotherAppsCalendar('3lwikicalendar', policy);
+			const on = turnOnMembersOnly(writer(), [], calendarHosts);
+			await expect(on).rejects.toMatchObject({ reason: 'calendar-space-not-granted' });
+			await expect(on).rejects.toThrow('atmo made no second one. An admin can allow it');
+			expect(made()).toEqual([]);
+			expect(policyChanges()).toEqual([]);
+			// Remembered, so the page says why, and posting is refused there.
+			expect(await chosen()).toBe(WIKI);
+			expect(await readCalendarSpace(writer())).toEqual({
+				state: 'unusable',
+				posters: [],
+				space: WIKI
+			});
+			await expect(
+				putMembersOnlyEvent(writer(), { rkey: 'r1', record: event('Supper') })
+			).rejects.toMatchObject({ reason: 'calendar-space-unusable' });
+		}
+	);
+
+	it('takes `self` first among several, else the oldest listed', async () => {
+		calendar.anotherAppsCalendar('3lnewer', WIKI_POLICY, '2026-10-02T00:00:00.000Z');
+		calendar.anotherAppsCalendar('3lolder', WIKI_POLICY, '2026-09-01T00:00:00.000Z');
+		calendar.anotherAppsCalendar('3lundated', WIKI_POLICY, '');
+		expect((await turnOnMembersOnly(writer(), [], calendarHosts)).space).toBe(
+			calendarAt('3lolder')
+		);
+		calendar.anotherAppsCalendar('self', WIKI_POLICY, '2026-11-01T00:00:00.000Z');
+		expect((await turnOnMembersOnly(writer(), [], calendarHosts)).space).toBe(CALENDAR);
+		expect(made()).toEqual([]);
+	});
+
+	it('takes a calendar some role may post to over an older one where none may', async () => {
+		calendar.anotherAppsCalendar(
+			'3lungranted',
+			{
+				...WIKI_POLICY,
+				grants: [{ role: 'member', read: true }]
+			},
+			'2026-01-01T00:00:00.000Z'
+		);
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY, '2026-10-01T00:00:00.000Z');
+		expect((await turnOnMembersOnly(writer(), [], calendarHosts)).space).toBe(WIKI);
+	});
+
+	it("reads the index with the person's own sign-in when the link may not", async () => {
+		const person = { handle: calendar.personHandle('did:plc:admin') };
+		calendar.state.indexReaders = new Set(['did:plc:admin']);
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		expect((await turnOnMembersOnly(writer(), [person], calendarHosts)).space).toBe(WIKI);
+		expect(made()).toEqual([]);
+	});
+
+	it('makes nothing when no one may read the index, or a calendar could not be checked', async () => {
+		calendar.state.indexReaders.clear();
+		await expect(turnOnMembersOnly(writer(), [], calendarHosts)).rejects.toMatchObject({
+			reason: 'calendar-index-unread'
+		});
+		calendar.state.indexReaders.add('group');
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		calendar.state.refuse.set('com.atproto.space.getSpace', new Response('', { status: 502 }));
+		await expect(turnOnMembersOnly(writer(), [], calendarHosts)).rejects.toMatchObject({
+			reason: 'calendar-space-unchecked'
+		});
+		expect(made()).toEqual([]);
+		expect(await chosen()).toBeNull();
+	});
+
+	it('notices a chosen calendar that is gone, and goes back to `self` without making one', async () => {
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		await turnOnMembersOnly(writer(), [], calendarHosts);
+		calendar.state.spaces.delete(WIKI);
+		calendar.state.sent.length = 0;
+		expect(await readCalendarSpace(writer())).toEqual({
+			state: 'missing',
+			posters: [],
+			space: CALENDAR
+		});
+		expect(await chosen()).toBeNull();
+		expect(made()).toEqual([]);
+		await expect(
+			putMembersOnlyEvent(writer(), { rkey: 'r1', record: event('Supper') })
+		).rejects.toMatchObject({ reason: 'no-calendar-space' });
 	});
 });
 
@@ -134,7 +338,8 @@ describe("the calendar space's state", () => {
 		};
 		expect(await readCalendarSpace(writer())).toEqual({
 			state: 'ready',
-			posters: ['admin', 'organizer']
+			posters: ['admin', 'organizer'],
+			space: CALENDAR
 		});
 	});
 

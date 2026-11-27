@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { env } from 'cloudflare:workers';
+import { memoryKV } from './__fixtures__/kv';
 import {
 	CALENDAR,
+	calendarAt,
 	calendarHosts,
 	event,
 	fakeCalendar,
@@ -35,6 +38,7 @@ beforeEach(() => {
 	calendar = fakeCalendar();
 	calendar.state.policy = READY_POLICY;
 	mocks.networkFetch.mockImplementation(calendar.fetch);
+	Object.assign(env, { OAUTH_SESSIONS: memoryKV() });
 });
 
 describe("a group's members-only events", () => {
@@ -111,10 +115,12 @@ describe("a group's members-only events", () => {
 		calendar.state.events.set('r1', event('Supper'));
 		calendar.state.readers.add(BOB);
 		const reader = () => credentialSpaceReader(bob(), calendarHosts);
-		expect(await readMembersOnlyEvent(reader(), GROUP, 'r1')).toMatchObject({ name: 'Supper' });
-		expect(await readMembersOnlyEvent(reader(), GROUP, 'nope')).toBeNull();
+		expect(await readMembersOnlyEvent(reader(), GROUP, 'r1', CALENDAR)).toMatchObject({
+			name: 'Supper'
+		});
+		expect(await readMembersOnlyEvent(reader(), GROUP, 'nope', CALENDAR)).toBeNull();
 		calendar.state.readers.clear();
-		expect(await readMembersOnlyEvent(reader(), GROUP, 'r1')).toBeNull();
+		expect(await readMembersOnlyEvent(reader(), GROUP, 'r1', CALENDAR)).toBeNull();
 	});
 
 	it("read a member's own RSVP only when it answers this event", async () => {
@@ -130,12 +136,41 @@ describe("a group's members-only events", () => {
 			`${BOB}/r1`,
 			rsvp(`${CALENDAR}/${GROUP}/community.lexicon.calendar.event/r1`)
 		);
-		expect(await readOwnRsvp(reader(), GROUP, BOB, 'r1')).toBe('going');
+		expect(await readOwnRsvp(reader(), GROUP, BOB, 'r1', CALENDAR)).toBe('going');
 		calendar.state.rsvps.set(
 			`${BOB}/r1`,
 			rsvp(`at://${GROUP}/community.lexicon.calendar.event/r1`)
 		);
-		expect(await readOwnRsvp(reader(), GROUP, BOB, 'r1')).toBeNull();
+		expect(await readOwnRsvp(reader(), GROUP, BOB, 'r1', CALENDAR)).toBeNull();
+	});
+
+	it("are read from the calendar the group uses, another app's, skipping all that is not a valid event of the group's", async () => {
+		const WIKI = calendarAt('3lwikicalendar');
+		const wiki = calendar.anotherAppsCalendar('3lwikicalendar', READY_POLICY);
+		await env.OAUTH_SESSIONS.put(`group:calendar:${GROUP}`, WIKI);
+		calendar.state.readers.add(BOB);
+		calendar.state.events.set('mine', event('In self, not used'));
+		wiki.events.set('w1', event('Wiki supper'));
+		// What the other app writes there besides events, and events it wrote wrong.
+		wiki.others.set('page1', {
+			collection: 'com.example.wiki.page',
+			value: { $type: 'com.example.wiki.page', title: 'Minutes', startsAt: '2099-01-01T00:00:00Z' }
+		});
+		wiki.events.set('w2', { $type: 'community.lexicon.calendar.event', name: 'No start' });
+		wiki.events.set('w3', { ...event('Bad start'), startsAt: 7 });
+		wiki.events.set('w4', { ...event('Bad mode'), mode: { not: 'a string' } });
+		wiki.events.set('w5', { ...event('Not a record type'), $type: 'com.example.wiki.page' });
+		const list = await listMembersOnlyEvents(bob(), GROUP, calendarHosts);
+		expect(list?.events.map((e) => [e.rkey, e.uri])).toEqual([
+			['w1', `${WIKI}/${GROUP}/community.lexicon.calendar.event/w1`]
+		]);
+		expect(calendar.state.sent).toEqual([
+			[BOB, 'com.atproto.space.getDelegationToken', { space: WIKI }]
+		]);
+		const reader = () => credentialSpaceReader(bob(), calendarHosts);
+		for (const rkey of ['w2', 'w3', 'w4', 'w5', 'page1']) {
+			expect(await readMembersOnlyEvent(reader(), GROUP, rkey, WIKI)).toBeNull();
+		}
 	});
 
 	it('keep only those not over yet, soonest first', () => {

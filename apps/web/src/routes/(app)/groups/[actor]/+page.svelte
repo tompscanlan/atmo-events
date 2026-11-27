@@ -348,9 +348,9 @@
 						{data.calendar === 'readable'
 							? "This group's calendar can be read by more than its members, so atmo posts no members-only events to it."
 							: data.calendar === 'unusable'
-								? "This group's calendar wasn't set up for atmo to post members-only events to, so atmo posts none to it."
+								? "This group's calendar wasn't set up for atmo to post members-only events to, so atmo posts none to it, and makes no second one. An admin can let a role post to it at the group host."
 								: data.calendar === 'no-role'
-									? "Your role in this group doesn't let you post to its calendar, so atmo can't post members-only events for you, and approving your link again won't change that."
+									? "Your role in this group doesn't let you post to its calendar, so atmo can't post members-only events for you, and approving your link again won't change that. An admin can let your role post to it at the group host."
 									: "Whether members-only events are on couldn't be checked just now. Reload to try again."}
 					</p>
 				{:else if data.calendar && !postsMembersOnly}
@@ -365,7 +365,7 @@
 						</p>
 						<ol class="text-base-700 dark:text-base-300 mt-2 list-decimal space-y-1 pl-5 text-sm">
 							<li class:font-medium={data.calendar === 'missing'}>
-								Turn them on. atmo makes the group a calendar only its members can read.
+								Turn them on. atmo uses the calendar the group has for its members, or makes one only they can read.
 							</li>
 							<li class:font-medium={data.calendar === 'ready'}>
 								Approve your link once more, so it may post to that calendar.

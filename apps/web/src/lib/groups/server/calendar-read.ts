@@ -1,7 +1,9 @@
 // A group's members-only events, read from its calendar space with a space credential: a member's
 // own, which the group host gives only to the group's roles, so the host decides who sees them; or
-// the group's, through a link that may post them. Nothing is kept between requests, and the index
-// never learns of one. Each log names an operation, never a person or an event.
+// the group's, through a link that may post them. The space may be one another app made and
+// writes to as well, so only the group's own records of the event collection that are valid
+// events are shown. Nothing is kept between requests, and the index never learns of one. Each log
+// names an operation, never a person or an event.
 import * as v from '@atcute/lexicons/validations';
 import type { FlatEventRecord } from '#lib/contrail.js';
 import { RSVP_COLLECTION, RSVP_STATUSES, type RsvpStatus } from '#lib/private-events/ids.js';
@@ -21,29 +23,42 @@ import {
 	readXrpc
 } from '#lib/spaces/server/xrpc.js';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
-import { calendarSpaceUri, membersOnlyEventUri } from '../calendar';
+import { eventCalendarSpace, membersOnlyEventUri } from '../calendar';
 import { GROUP_EVENT_COLLECTION } from '../ids';
+import { chosenCalendar } from './calendar-choice';
 
 /** A link that would load an outside image by itself, as the kit takes one named so. */
 function isEventImage(link: unknown): boolean {
 	return (link as { name?: unknown } | null)?.name === 'Event Image';
 }
 
+/** The event's address: in the calendar space its URI names, which a read checks; else `self`. */
+function eventUri(groupDid: string, record: SpaceRecord): string {
+	const space = eventCalendarSpace(groupDid, record.uri) ?? undefined;
+	return membersOnlyEventUri(groupDid, record.rkey, space);
+}
+
+/** Whether the record is a valid event with a start, which every page needs. Another app writing
+ *  to the same calendar may have written anything. */
+function isEvent(value: Record<string, unknown>): boolean {
+	return typeof value.startsAt === 'string' && v.safeParse(eventSchema, value).ok;
+}
+
 /** As the event components take it: the record, its address beside it. No picture of any kind: a
  *  page would load it from wherever it points, telling a third party someone is reading it. Null for
- *  what isn't an event, and with no start, which every page needs. */
+ *  what isn't an event, and with no start. */
 export function membersOnlyEvent(groupDid: string, record: SpaceRecord): FlatEventRecord | null {
 	const value = { ...record.value };
 	delete value.media;
 	delete value.poster;
 	if (Array.isArray(value.uris)) value.uris = value.uris.filter((link) => !isEventImage(link));
-	if (typeof value.startsAt !== 'string' || !v.safeParse(eventSchema, value).ok) return null;
+	if (!isEvent(value)) return null;
 	return {
 		...(value as unknown as FlatEventRecord),
 		cid: record.cid,
 		did: groupDid,
 		rkey: record.rkey,
-		uri: membersOnlyEventUri(groupDid, record.rkey)
+		uri: eventUri(groupDid, record)
 	};
 }
 
@@ -55,7 +70,7 @@ export function storedMembersOnlyEvent(groupDid: string, record: SpaceRecord): F
 		cid: record.cid,
 		did: groupDid,
 		rkey: record.rkey,
-		uri: membersOnlyEventUri(groupDid, record.rkey)
+		uri: eventUri(groupDid, record)
 	};
 }
 
@@ -85,7 +100,7 @@ export async function listMembersOnlyEvents(
 	groupDid: string,
 	hosts: SpaceHosts = didSpaceHosts
 ): Promise<MembersOnlyList | null> {
-	const space = calendarSpaceUri(groupDid);
+	const space = await chosenCalendar(groupDid);
 	const events: FlatEventRecord[] = [];
 	try {
 		// The group's repo is at its host, which is also the space's authority.
@@ -115,7 +130,7 @@ export async function listMembersOnlyEvents(
 				if (collection !== GROUP_EVENT_COLLECTION || typeof rkey !== 'string') continue;
 				if (!value || typeof value !== 'object') continue;
 				const record = {
-					uri: membersOnlyEventUri(groupDid, rkey),
+					uri: membersOnlyEventUri(groupDid, rkey, space),
 					cid: typeof cid === 'string' ? cid : '',
 					rkey,
 					value: value as Record<string, unknown>
@@ -140,11 +155,12 @@ export async function listMembersOnlyEvents(
 export async function readMembersOnlyEvent(
 	reader: SpaceReader,
 	groupDid: string,
-	rkey: string
+	rkey: string,
+	space: string
 ): Promise<FlatEventRecord | null> {
 	try {
 		const found = await reader.get({
-			space: calendarSpaceUri(groupDid),
+			space,
 			repo: groupDid,
 			collection: GROUP_EVENT_COLLECTION,
 			rkey
@@ -162,16 +178,17 @@ export async function readOwnRsvp(
 	reader: SpaceReader,
 	groupDid: string,
 	memberDid: string,
-	rkey: string
+	rkey: string,
+	space: string
 ): Promise<RsvpStatus | null> {
 	const found = await reader
-		.get({ space: calendarSpaceUri(groupDid), repo: memberDid, collection: RSVP_COLLECTION, rkey })
+		.get({ space, repo: memberDid, collection: RSVP_COLLECTION, rkey })
 		.catch((e) => {
 			if (!isSpaceAccessDenied(e)) console.info(`[groups] an RSVP unread: ${errorKind(e)}`);
 			return null;
 		});
 	const value = found?.value as { status?: unknown; subject?: { uri?: unknown } } | undefined;
-	if (!value || value.subject?.uri !== membersOnlyEventUri(groupDid, rkey)) return null;
+	if (!value || value.subject?.uri !== membersOnlyEventUri(groupDid, rkey, space)) return null;
 	return RSVP_STATUSES.find((s) => value.status === `${RSVP_COLLECTION}#${s}`) ?? null;
 }
 

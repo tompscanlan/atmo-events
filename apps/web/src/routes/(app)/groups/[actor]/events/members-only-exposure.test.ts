@@ -5,18 +5,23 @@
 // group's link and a member read it, so each public address is checked against a store a loader
 // could find it in: one that read the space, as the group or as the member asking, would show it.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { env } from 'cloudflare:workers';
 import {
+	calendarAt,
 	fakeCalendar,
 	GROUP,
 	READY_POLICY,
 	event
 } from '#lib/groups/server/__fixtures__/group-calendar.js';
+import { memoryKV } from '#lib/groups/server/__fixtures__/kv.js';
+import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
 
 const EVENT = 'community.lexicon.calendar.event';
 const mocks = vi.hoisted(() => ({
 	index: new Map<string, Record<string, unknown>>(),
 	notified: [] as string[],
 	requireGroupWriter: vi.fn(),
+	groupView: vi.fn(),
 	callerSession: vi.fn()
 }));
 let calendar: ReturnType<typeof fakeCalendar>;
@@ -28,7 +33,8 @@ vi.mock('$app/server', () => ({
 }));
 vi.mock('#lib/groups/server/context.js', () => ({
 	requireGroupWriter: mocks.requireGroupWriter,
-	requireStoredLink: vi.fn()
+	requireStoredLink: vi.fn(),
+	groupView: mocks.groupView
 }));
 vi.mock('#lib/groups/server/sign-in.js', () => ({ unlinkGroup: vi.fn() }));
 // Reads of the calendar space go to the group's host as the fake keeps it.
@@ -92,6 +98,7 @@ const { load: eventPage } = await import('../../../p/[actor]/e/[rkey]/+page.serv
 const { GET: eventJson } = await import('../../../p/[actor]/e/[rkey]/data.json/+server');
 const { GET: eventCard } = await import('../../../p/[actor]/e/[rkey]/og.png/+server');
 const { GET: calendarFeed } = await import('../../../p/[actor]/e/calendar/+server');
+const { load: membersOnlyPage } = await import('./[rkey]/+page.server');
 
 const MEMBER = 'did:plc:member';
 const SECRET = '3lsecret';
@@ -109,6 +116,7 @@ const answer = async (run: () => unknown) =>
 beforeEach(async () => {
 	mocks.index.clear();
 	mocks.notified.length = 0;
+	Object.assign(env, { OAUTH_SESSIONS: memoryKV(), GROUP_HOST_URL: 'https://host.example' });
 	calendar = fakeCalendar();
 	calendar.state.policy = READY_POLICY;
 	calendar.state.readers.add('group');
@@ -192,5 +200,90 @@ describe('a members-only event and the public index', () => {
 		expect(feed).toContain('Open day');
 		expect(feed).not.toContain('Members supper');
 		expect(feed).not.toContain(SECRET);
+	});
+});
+
+// The group uses a calendar a wiki made it first, where the wiki also writes records of its own,
+// and events of its own that are not valid ones.
+describe('a calendar another app made, which the group uses', () => {
+	const WIKI = calendarAt('3lwikicalendar');
+	const WIKI_EVENT = '3lwikisupper';
+	const BROKEN = '3lbroken';
+	const PAGE = '3lwikipage';
+	const OUTSIDER = 'did:plc:carol';
+
+	beforeEach(async () => {
+		const wiki = calendar.anotherAppsCalendar('3lwikicalendar', READY_POLICY);
+		await env.OAUTH_SESSIONS.put(`group:calendar:${GROUP}`, WIKI);
+		wiki.events.set(WIKI_EVENT, event('Wiki supper'));
+		wiki.events.set(BROKEN, { $type: EVENT, name: 'No start' });
+		wiki.others.set(PAGE, {
+			collection: 'com.example.wiki.page',
+			value: { $type: 'com.example.wiki.page', name: 'Minutes', startsAt: '2099-01-01T00:00:00Z' }
+		});
+	});
+
+	const asPerson = (did: string | null, member: boolean | null) => (rkey: string) => {
+		mocks.callerSession.mockResolvedValue(
+			did && { did, scope: `atproto ${GUEST_SCOPE}`, handle: calendar.personHandle(did) }
+		);
+		mocks.groupView.mockResolvedValue({
+			did: GROUP,
+			handle: 'knit.example',
+			name: 'Knitters',
+			member,
+			linked: null,
+			askAccess: false
+		});
+		return membersOnlyPage({
+			params: { actor: GROUP, rkey },
+			locals: { did, session: did ? {} : null },
+			url: new URL(`https://atmo.example/groups/${GROUP}/events/${rkey}`),
+			setHeaders: () => {}
+		} as never);
+	};
+
+	it("shows a member the group's valid events there, and the rest as a key never used", async () => {
+		const member = asPerson(MEMBER, true);
+		expect(await answer(() => member(WIKI_EVENT))).toMatchObject({
+			view: 'event',
+			eventData: {
+				name: 'Wiki supper',
+				uri: `${WIKI}/${GROUP}/${EVENT}/${WIKI_EVENT}`
+			}
+		});
+		const made = await answer(() => member(MADE_UP));
+		expect(made).toMatchObject({ status: 404 });
+		// The members-only event written to `self` before is not in the calendar the group uses.
+		for (const rkey of [BROKEN, PAGE, SECRET])
+			expect(await answer(() => member(rkey))).toEqual(made);
+	});
+
+	it.each([
+		['someone outside the group', OUTSIDER, null],
+		['a member the host no longer lets in', 'did:plc:dana', true],
+		['someone signed out', null, null]
+	])('tells %s what it tells them at a made-up key', async (_, did, member) => {
+		const read = asPerson(did, member);
+		const made = await answer(() => read(MADE_UP));
+		for (const rkey of [WIKI_EVENT, BROKEN, PAGE])
+			expect(await answer(() => read(rkey))).toEqual(made);
+	});
+
+	it.each([
+		[
+			'its public page',
+			(rkey: string) =>
+				eventPage({
+					params: { actor: GROUP, rkey },
+					locals: { did: null, session: null },
+					url: new URL(`https://atmo.example/p/${GROUP}/e/${rkey}`)
+				} as never)
+		],
+		['its JSON', (rkey: string) => eventJson({ params: { actor: GROUP, rkey } } as never)]
+	])('answers at %s for each of its records as for a key never used', async (_, read) => {
+		const made = await answer(() => read(MADE_UP));
+		for (const rkey of [WIKI_EVENT, BROKEN, PAGE])
+			expect(await answer(() => read(rkey))).toEqual(made);
 	});
 });

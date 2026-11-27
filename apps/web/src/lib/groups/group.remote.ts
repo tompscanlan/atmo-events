@@ -1,6 +1,7 @@
 import { error, isHttpError } from '@sveltejs/kit';
 import { command, getRequestEvent } from '$app/server';
 import * as v from 'valibot';
+import { callerSession } from '#lib/private-events/server/caller.js';
 import { EVENT_PLACEMENTS } from './event-placement';
 import { GROUP_EVENT_COLLECTION } from './ids';
 import { requireGroupWriter, requireStoredLink } from './server/context';
@@ -182,17 +183,20 @@ export const deleteGroupEvent = command(
 	}
 );
 
-/** Makes the group's calendar space. The link then needs approving once more before it may post
- *  there: the host gives a link no scope for a space that was not there at its approval. */
+/** Uses the calendar space the group already has for its members, or makes one. A link approved
+ *  before there was one then needs approving once more before it may post there: the host gives a
+ *  link no scope for a space that was not there at its approval. The person's own sign-in, beside
+ *  the link, may read which calendars the group has. */
 export const turnOnMembersOnlyEvents = command(
 	v.object({ groupDid: didSchema }),
 	async ({ groupDid }) => {
 		const writer = await requireGroupWriter(groupDid, callerDid());
-		await turnOnMembersOnly(writer).catch((e) => {
+		const person = await callerSession(getRequestEvent().locals.session ?? null);
+		await turnOnMembersOnly(writer, person ? [person] : []).catch((e) => {
 			if (e instanceof XrpcError && e.status === 400) {
 				error(409, "The group host didn't take the group's calendar. Nothing was turned on.");
 			}
-			return refusedOr("Members-only events couldn't be turned on")(e);
+			return membersOnlyRefusedOr("Members-only events couldn't be turned on")(e);
 		});
 		return { ok: true };
 	}

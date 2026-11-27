@@ -7,7 +7,7 @@ import {
 } from '#lib/components/editor/adapter.js';
 import { RSVP_COLLECTION, RSVP_STATUSES, type RsvpStatus } from '#lib/private-events/ids.js';
 import { spaceRecordUri } from '#lib/spaces/uri.js';
-import { calendarSpaceUri } from './calendar';
+import { calendarSpaceUri, eventCalendarSpace } from './calendar';
 import { cancelMembersOnlyRsvp, rsvpToMembersOnlyEvent } from './members-only.remote';
 
 const isRefusal = (e: unknown) => (e as { status?: unknown } | null)?.status === 409;
@@ -41,14 +41,18 @@ export function createMembersOnlyRsvpAdapter(
 			if (collection !== RSVP_COLLECTION) nothingElse();
 			const status = String(record.status).split('#')[1] as RsvpStatus;
 			if (!RSVP_STATUSES.includes(status)) throw new Error(`unknown RSVP ${record.status}`);
-			const subject = record.subject as { cid?: unknown } | undefined;
+			const subject = record.subject as { uri?: unknown; cid?: unknown } | undefined;
 			const cid = typeof subject?.cid === 'string' ? subject.cid : null;
+			// In the calendar space the event is in, which the server chose.
+			const space =
+				(typeof subject?.uri === 'string' && eventCalendarSpace(groupDid, subject.uri)) ||
+				calendarSpaceUri(groupDid);
 			await rsvpToMembersOnlyEvent({ groupDid, rkey, status, cid }).catch(async (e) => {
 				if (isRefusal(e)) await invalidateAll();
 				throw e;
 			});
 			return {
-				uri: spaceRecordUri(calendarSpaceUri(groupDid), viewer.did ?? '', collection, rkey)
+				uri: spaceRecordUri(space, viewer.did ?? '', collection, rkey)
 			};
 		},
 		async deleteRecord({ collection }) {

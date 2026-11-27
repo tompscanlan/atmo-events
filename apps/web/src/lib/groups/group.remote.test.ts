@@ -18,7 +18,8 @@ const mocks = vi.hoisted(() => ({
 	resolveGroup: vi.fn(),
 	saveSettings: vi.fn(),
 	finishSetup: vi.fn(),
-	refuseMembersOnlyKey: vi.fn()
+	refuseMembersOnlyKey: vi.fn(),
+	turnOnMembersOnly: vi.fn()
 }));
 vi.mock('$app/server', () => ({
 	command: (_schema: unknown, handler: unknown) =>
@@ -44,7 +45,8 @@ vi.mock('./server/settings', async (importActual) => ({
 vi.mock('./server/create', () => ({ finishSetup: mocks.finishSetup }));
 vi.mock('./server/group-events', async (importActual) => ({
 	...(await importActual<typeof import('./server/group-events')>()),
-	refuseMembersOnlyKey: mocks.refuseMembersOnlyKey
+	refuseMembersOnlyKey: mocks.refuseMembersOnlyKey,
+	turnOnMembersOnly: mocks.turnOnMembersOnly
 }));
 
 import {
@@ -53,6 +55,7 @@ import {
 	putGroupEvent,
 	saveGroupSettings,
 	setGroupListed,
+	turnOnMembersOnlyEvents,
 	unlinkGroupSession,
 	uploadGroupBlob
 } from './group.remote';
@@ -322,6 +325,25 @@ describe('finishing a group made here', () => {
 		await expect(finishGroupSetup({ groupDid: GROUP })).rejects.toMatchObject({
 			status: 403,
 			body: { message: 'Your role in this group no longer allows that.' }
+		});
+	});
+});
+
+describe('turning members-only events on', () => {
+	it("does it as the group, on the caller's own link", async () => {
+		mocks.turnOnMembersOnly.mockResolvedValue({ state: 'ready', posters: [], space: 's' });
+		expect(await turnOnMembersOnlyEvents({ groupDid: GROUP })).toEqual({ ok: true });
+		expect(mocks.turnOnMembersOnly).toHaveBeenCalledWith({ did: GROUP, handle: mocks.handle }, []);
+	});
+
+	it('says plainly why when the group has a calendar atmo may not post to, and makes none', async () => {
+		mocks.turnOnMembersOnly.mockRejectedValue(new GroupEventRefused('calendar-space-not-granted'));
+		await expect(turnOnMembersOnlyEvents({ groupDid: GROUP })).rejects.toMatchObject({
+			status: 409,
+			body: {
+				message:
+					'This group already has a calendar for its members, but its settings let no role post events to it from atmo, so atmo made no second one. An admin can allow it at the group host.'
+			}
 		});
 	});
 });

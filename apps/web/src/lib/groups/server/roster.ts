@@ -56,7 +56,7 @@ interface ListedRecord {
 }
 
 /** The group's members space, read with one credential bought with `holder`'s own access. */
-function membersSpace(holder: SpaceHolder, groupDid: string, hosts: SpaceHosts) {
+export function membersSpace(holder: SpaceHolder, groupDid: string, hosts: SpaceHosts) {
 	const space = membersSpaceUri(groupDid);
 	let credential: Promise<SpaceCredential> | undefined;
 	const ask = async (

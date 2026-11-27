@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { env } from 'cloudflare:workers';
 import { GUEST_SCOPE } from '#lib/private-events/scopes.js';
+import { memoryKV } from './__fixtures__/kv';
 import {
 	CALENDAR,
+	calendarAt,
 	calendarHosts,
 	event,
 	fakeCalendar,
@@ -45,6 +48,7 @@ beforeEach(() => {
 	calendar.state.events.set('r1', event('Supper'));
 	calendar.state.readers.add(BOB);
 	mocks.networkFetch.mockImplementation(calendar.fetch);
+	Object.assign(env, { OAUTH_SESSIONS: memoryKV() });
 });
 
 async function shownCid(): Promise<string> {
@@ -99,5 +103,53 @@ describe("a member's RSVP to a members-only event", () => {
 			reason: 'no-grant'
 		});
 		expect(writes()).toEqual([]);
+	});
+});
+
+describe('an RSVP in a calendar another app made, which the group uses', () => {
+	const WIKI = calendarAt('3lwikicalendar');
+
+	it('goes into that space, naming the event there, and is read and taken back from there', async () => {
+		const wiki = calendar.anotherAppsCalendar('3lwikicalendar', READY_POLICY);
+		wiki.events.set('r2', event('Wiki supper'));
+		await env.OAUTH_SESSIONS.put(`group:calendar:${GROUP}`, WIKI);
+		const page = await readMembersOnlyEventPage(bob(), GROUP, 'r2', calendarHosts);
+		expect(page?.event).toMatchObject({
+			name: 'Wiki supper',
+			uri: `${WIKI}/${GROUP}/community.lexicon.calendar.event/r2`
+		});
+		// The group's own `self` calendar beside it is not read.
+		expect(await readMembersOnlyEventPage(bob(), GROUP, 'r1', calendarHosts)).toBeNull();
+
+		await putMembersOnlyRsvp(
+			bob(),
+			GROUP,
+			{ rkey: 'r2', status: 'going', cid: page!.event.cid! },
+			calendarHosts
+		);
+		expect(writes()).toEqual([
+			[
+				BOB,
+				'com.atproto.space.putRecord',
+				expect.objectContaining({
+					space: WIKI,
+					record: expect.objectContaining({
+						subject: {
+							uri: `${WIKI}/${GROUP}/community.lexicon.calendar.event/r2`,
+							cid: page!.event.cid
+						}
+					})
+				})
+			]
+		]);
+		expect((await readMembersOnlyEventPage(bob(), GROUP, 'r2', calendarHosts))?.viewerStatus).toBe(
+			'going'
+		);
+		await deleteMembersOnlyRsvp(bob(), GROUP, 'r2');
+		expect(writes().at(-1)).toEqual([
+			BOB,
+			'com.atproto.space.deleteRecord',
+			{ space: WIKI, repo: BOB, collection: 'community.lexicon.calendar.rsvp', rkey: 'r2' }
+		]);
 	});
 });
