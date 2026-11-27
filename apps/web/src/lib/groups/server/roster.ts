@@ -44,8 +44,9 @@ import { answerError, answerIsRecordNotFound, errorKind, readXrpc, xrpc, XrpcErr
 const LIST_RECORDS = 'com.atproto.space.listRecords';
 const LIST_LIMIT = 100;
 const MAX_LIST_PAGES = 10;
-/** Each confirmation is a read at the member's own PDS; past these, a member's is not read. */
-const MAX_CONFIRMATION_READS = 100;
+/** Memberships on one page of the roster, each with a confirmation read at the member's own PDS,
+ *  so a page view makes a bounded number of reads at any size of group. */
+const MEMBERS_PER_PAGE = 100;
 /** Handles looked up for one page, at most. */
 const MAX_HANDLES = 200;
 
@@ -72,37 +73,62 @@ function membersSpace(holder: SpaceHolder, groupDid: string, hosts: SpaceHosts) 
 		);
 	};
 
+	/** One page of `collection`'s records in the group's repo there, and the cursor for the next,
+	 *  null on the last; or a throw. Not authenticated: `listRecords` carries no MAC, so nothing
+	 *  here shows the values are the group's, as a record read with `getRecord` is shown. */
+	const page = async (
+		collection: string,
+		cursor: string | null,
+		limit = LIST_LIMIT
+	): Promise<{ records: ListedRecord[]; cursor: string | null }> => {
+		const answer = await ask(await hosts.repoHost(groupDid), groupDid, LIST_RECORDS, {
+			space,
+			repo: groupDid,
+			collection,
+			limit: String(limit),
+			...(cursor ? { cursor } : {})
+		});
+		if (!answer.ok) throw answerError(LIST_RECORDS, answer);
+		const listed = Array.isArray(answer.data.records) ? answer.data.records : [];
+		const records: ListedRecord[] = [];
+		for (const entry of listed) {
+			const { collection: of, rkey, value } = (entry ?? {}) as Record<string, unknown>;
+			// A host that ignored the filter must not turn other records into these.
+			if (of !== collection || typeof rkey !== 'string') continue;
+			const record = value && typeof value === 'object' ? value : {};
+			records.push({ rkey, value: record as Record<string, unknown> });
+		}
+		// The group host answers `cursor: null` on the last page.
+		const next = typeof answer.data.cursor === 'string' && answer.data.cursor;
+		return { records, cursor: next && next !== cursor && listed.length > 0 ? next : null };
+	};
+
 	return {
-		/** Every record of `collection` in the group's repo there, or a throw. Not authenticated:
-		 *  `listRecords` carries no MAC, so nothing here shows the values are the group's, as a
-		 *  record read with `getRecord` is shown. */
+		page,
+		/** Every record of `collection` in the group's repo there, or a throw. */
 		async list(collection: string): Promise<ListedRecord[]> {
-			const host = await hosts.repoHost(groupDid);
 			const records: ListedRecord[] = [];
-			let cursor: string | undefined;
-			for (let page = 0; page < MAX_LIST_PAGES; page++) {
-				const answer = await ask(host, groupDid, LIST_RECORDS, {
-					space,
-					repo: groupDid,
-					collection,
-					limit: String(LIST_LIMIT),
-					...(cursor ? { cursor } : {})
-				});
-				if (!answer.ok) throw answerError(LIST_RECORDS, answer);
-				const listed = Array.isArray(answer.data.records) ? answer.data.records : [];
-				for (const entry of listed) {
-					const { collection: of, rkey, value } = (entry ?? {}) as Record<string, unknown>;
-					// A host that ignored the filter must not turn other records into these.
-					if (of !== collection || typeof rkey !== 'string') continue;
-					const record = value && typeof value === 'object' ? value : {};
-					records.push({ rkey, value: record as Record<string, unknown> });
-				}
-				// The group host answers `cursor: null` on the last page.
-				const next = typeof answer.data.cursor === 'string' ? answer.data.cursor : undefined;
-				if (!next || next === cursor || listed.length === 0) return records;
-				cursor = next;
+			let cursor: string | null = null;
+			for (let at = 0; at < MAX_LIST_PAGES; at++) {
+				const listed = await page(collection, cursor);
+				records.push(...listed.records);
+				if (!listed.cursor) return records;
+				cursor = listed.cursor;
 			}
 			throw new Error(`${LIST_RECORDS} went past ${MAX_LIST_PAGES} pages`);
+		},
+		/** A membership in the group's repo, read with its MAC; null when there is none. */
+		async membership(memberDid: string): Promise<Record<string, unknown> | null> {
+			const answer = await ask(await hosts.repoHost(groupDid), groupDid, GET_RECORD, {
+				space,
+				repo: groupDid,
+				collection: GROUP_MEMBERSHIP_COLLECTION,
+				rkey: membershipRkey(memberDid)
+			});
+			if (answerIsRecordNotFound(answer)) return null;
+			if (!answer.ok) throw answerError(GET_RECORD, answer);
+			const { value } = answer.data;
+			return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 		},
 		/** Whether the member's own confirmation is in their repo, read at their PDS with its MAC. */
 		async confirmed(memberDid: string): Promise<boolean> {
@@ -136,8 +162,10 @@ export async function handlesOf(dids: readonly string[]): Promise<Map<string, st
 }
 
 export interface Roster {
-	/** Oldest membership first. */
+	/** One page of memberships, in the group host's order across pages, oldest first within it. */
 	entries: RosterEntry[];
+	/** The group host's cursor for the next page; null on the last. */
+	next: string | null;
 	/** The group's roles, `admin` and `member` and any others it made. */
 	roles: RosterRole[];
 	/** The caller's own roles; empty when they hold none. */
@@ -147,42 +175,50 @@ export interface Roster {
 const byAge = (a: RosterEntry, b: RosterEntry) =>
 	(a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.did.localeCompare(b.did);
 
-/** Read with the caller's own access, which the group host gives only to its members: throws
- *  `SpaceAccessDenied` for anyone else. A member's confirmation that could not be read counts as
+/** One page of the roster, from the group host's cursor `after`, or its first page. Read with the
+ *  caller's own access, which the group host gives only to its members: throws
+ *  `SpaceAccessDenied` for anyone else. Every member's confirmation on the page is read, so whether
+ *  each is listed never rests on a confirmation left unread; one that could not be read counts as
  *  not there, as for a member whose PDS has no spaces. `callerConfirmed` is the caller's own as
- *  already read for the group's page; when that is null it is read here like anyone's, past the
- *  limit too, since nothing writes it on a visit. */
+ *  already read for the group's page; when that is null it is read here like anyone's. */
 export async function readRoster(
 	caller: CallerSession,
 	groupDid: string,
 	callerConfirmed: boolean | null,
+	after: string | null = null,
 	hosts: SpaceHosts = didSpaceHosts
 ): Promise<Roster> {
 	const reads = membersSpace(caller, groupDid, hosts);
 	const [memberships, roleRecords] = await Promise.all([
-		reads.list(GROUP_MEMBERSHIP_COLLECTION),
+		reads.page(GROUP_MEMBERSHIP_COLLECTION, after, MEMBERS_PER_PAGE),
 		reads.list(GROUP_ROLE_COLLECTION)
 	]);
-	const members = memberships.flatMap(({ rkey, value }) => {
+	const members = memberships.records.flatMap(({ rkey, value }) => {
 		const roles = membershipRoles(value);
 		if (!roles) return [];
 		const createdAt = typeof value.createdAt === 'string' ? value.createdAt : null;
 		return [{ did: membershipDid(rkey), roles, createdAt }];
 	});
 	const dids = members.map((member) => member.did);
-	const [handles, confirmations] = await Promise.all([
+	const onPage = members.find((member) => member.did === caller.did);
+	const [handles, confirmations, yours] = await Promise.all([
 		handlesOf(dids),
 		Promise.all(
-			dids.map(async (did, i): Promise<boolean | null> => {
-				const own = did === caller.did;
-				if (own && callerConfirmed !== null) return callerConfirmed;
-				if (!own && i >= MAX_CONFIRMATION_READS) return null;
+			dids.map(async (did): Promise<boolean> => {
+				if (did === caller.did && callerConfirmed !== null) return callerConfirmed;
 				return reads.confirmed(did).catch((e) => {
 					console.info(`[groups] ${groupDid}: ${did}'s confirmation was not read: ${errorKind(e)}`);
 					return false;
 				});
 			})
-		)
+		),
+		// Their own roles, from another page's membership when not on this one.
+		onPage
+			? onPage.roles
+			: reads.membership(caller.did).then(
+					(value) => (value && membershipRoles(value)) ?? [],
+					() => []
+				)
 	]);
 	const entries = members
 		.map((member, i) => ({
@@ -195,11 +231,7 @@ export async function readRoster(
 	const roles = roleRecords
 		.map(({ rkey, value }) => roleOf(value, rkey))
 		.sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id));
-	return {
-		entries,
-		roles,
-		yours: members.find((member) => member.did === caller.did)?.roles ?? []
-	};
+	return { entries, next: memberships.cursor, roles, yours };
 }
 
 /** Why the group host did not do what an admin asked, each worded for them on the members page. */

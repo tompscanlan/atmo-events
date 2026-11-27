@@ -40,8 +40,8 @@ const HOSTS: SpaceHosts = {
 };
 const caller = { did: ALICE, scope: 'atproto', handle: vi.fn() };
 
-/** The members space as the credential reads it: pages of records by collection, and the
- *  confirmations in members' own repos. */
+/** The members space as the credential reads it: pages of records by collection, a membership
+ *  read on its own, and the confirmations in members' own repos. */
 function space(
 	pages: Record<string, unknown[][]>,
 	confirmed: Record<string, 'yes' | 'no' | 'down'> = {}
@@ -54,6 +54,13 @@ function space(
 				// The group host's `cursor: null` on the last page.
 				const cursor = at + 1 < all.length ? String(at + 1) : null;
 				return Response.json({ records: all[at], cursor });
+			}
+			if (call.query.collection === 'org.atgrp.membership') {
+				const found = (pages['org.atgrp.membership'] ?? [])
+					.flat()
+					.find((record) => (record as { rkey: string }).rkey === call.query.rkey);
+				if (!found) return Response.json({ error: 'RecordNotFound' }, { status: 400 });
+				return Response.json({ uri: 'u', cid: 'c', value: (found as { value: unknown }).value });
 			}
 			const state = confirmed[call.query.repo] ?? 'no';
 			if (state === 'yes') return Response.json({ uri: 'u', cid: 'c', value: { createdAt: 'x' } });
@@ -86,15 +93,15 @@ beforeEach(() => {
 });
 
 describe('the roster, read with the person’s own access', () => {
-	it('lists every membership across pages, with roles, handles and confirmations, oldest first', async () => {
+	it('lists one page of memberships, with roles, handles and confirmations, oldest first, and where the next starts', async () => {
 		space(
 			{
 				'org.atgrp.membership': [
-					[membership(ALICE, ['member', 'admin'], '2026-11-02T00:00:00Z')],
 					[
-						membership(BOB, ['member'], '2026-11-01T00:00:00Z'),
-						membership('did:web:carol.example:8443', ['member', 'rider'], '2026-11-03T00:00:00Z')
-					]
+						membership('did:web:carol.example:8443', ['member', 'rider'], '2026-11-03T00:00:00Z'),
+						membership(BOB, ['member'], '2026-11-01T00:00:00Z')
+					],
+					[membership(ALICE, ['member', 'admin'], '2026-11-02T00:00:00Z')]
 				],
 				'org.atgrp.role': [
 					[role('member', 'Member'), role('rider'), role('aide'), role('admin', 'Admin')]
@@ -102,21 +109,13 @@ describe('the roster, read with the person’s own access', () => {
 			},
 			{ [BOB]: 'yes', [CAROL]: 'down' }
 		);
-		const roster = await readRoster(caller, GROUP, true, HOSTS);
+		const roster = await readRoster(caller, GROUP, true, null, HOSTS);
 		expect(roster.entries).toEqual([
 			{
 				did: BOB,
 				handle: null,
 				roles: ['member'],
 				createdAt: '2026-11-01T00:00:00Z',
-				confirmed: true
-			},
-			{
-				did: ALICE,
-				handle: 'alice.example',
-				roles: ['member', 'admin'],
-				createdAt: '2026-11-02T00:00:00Z',
-				// Their own, as the group was read for them.
 				confirmed: true
 			},
 			{
@@ -129,6 +128,7 @@ describe('the roster, read with the person’s own access', () => {
 				confirmed: false
 			}
 		]);
+		expect(roster.next).toBe('1');
 		// Admin, then member, then the rest by ID.
 		expect(roster.roles).toEqual([
 			{ id: 'admin', name: 'Admin' },
@@ -136,6 +136,7 @@ describe('the roster, read with the person’s own access', () => {
 			{ id: 'aide', name: 'aide' },
 			{ id: 'rider', name: 'rider' }
 		]);
+		// Their own, from their membership on another page.
 		expect(roster.yours).toEqual(['member', 'admin']);
 		// One credential for the members space, bought with the person's own session, at the host.
 		expect(mocks.exchangeSpaceCredential).toHaveBeenCalledTimes(1);
@@ -145,16 +146,66 @@ describe('the roster, read with the person’s own access', () => {
 			'https://host.example'
 		);
 		expect(mocks.fetchWithCredential).toHaveBeenCalledWith(expect.anything(), HOSTS, {
+			host: 'https://host.example',
+			audience: GROUP,
+			nsid: 'com.atproto.space.listRecords',
+			query: { space: MEMBERS, repo: GROUP, collection: 'org.atgrp.membership', limit: '100' }
+		});
+		expect(mocks.fetchWithCredential).toHaveBeenCalledWith(expect.anything(), HOSTS, {
 			host: 'https://pds.did:plc:bob',
 			audience: BOB,
 			nsid: 'com.atproto.space.getRecord',
 			query: { space: MEMBERS, repo: BOB, collection: 'org.atgrp.confirmation', rkey: 'self' }
 		});
+
+		const last = await readRoster(caller, GROUP, true, '1', HOSTS);
+		expect(last.entries).toEqual([
+			{
+				did: ALICE,
+				handle: 'alice.example',
+				roles: ['member', 'admin'],
+				createdAt: '2026-11-02T00:00:00Z',
+				// Their own, as the group was read for them.
+				confirmed: true
+			}
+		]);
+		expect(last.next).toBeNull();
+		expect(last.yours).toEqual(['member', 'admin']);
+		expect(mocks.fetchWithCredential).toHaveBeenCalledWith(
+			expect.anything(),
+			HOSTS,
+			expect.objectContaining({
+				nsid: 'com.atproto.space.listRecords',
+				query: expect.objectContaining({ cursor: '1' })
+			})
+		);
+	});
+
+	it('reads the confirmation of every member on a page, past the hundredth member too', async () => {
+		const dids = Array.from({ length: 150 }, (_, i) => `did:plc:m${String(i).padStart(3, '0')}`);
+		const records = dids.map((did, i) =>
+			membership(did, ['member'], `2026-11-01T00:00:${String(i % 60).padStart(2, '0')}Z`)
+		);
+		const confirmed: Record<string, 'yes' | 'no'> = Object.fromEntries(
+			dids.map((did) => [did, 'yes'])
+		);
+		confirmed[dids[120]] = 'no';
+		space({ 'org.atgrp.membership': [records.slice(0, 100), records.slice(100)] }, confirmed);
+
+		const later = await readRoster(caller, GROUP, true, '1', HOSTS);
+		expect(later.entries).toHaveLength(50);
+		const shown = new Map(later.entries.map((entry) => [entry.did, entry.confirmed]));
+		expect(shown.get(dids[120])).toBe(false);
+		expect(dids.slice(100).filter((did) => shown.get(did) !== (did !== dids[120]))).toEqual([]);
+		const reads = mocks.fetchWithCredential.mock.calls.filter(
+			([, , call]) => (call as SpaceCall).query.collection === 'org.atgrp.confirmation'
+		);
+		expect(reads).toHaveLength(50);
 	});
 
 	it("takes the caller's own confirmation as already read for them, without reading it again", async () => {
 		space({ 'org.atgrp.membership': [[membership(ALICE, ['member'], 'x')]] }, { [ALICE]: 'yes' });
-		expect((await readRoster(caller, GROUP, false, HOSTS)).entries[0].confirmed).toBe(false);
+		expect((await readRoster(caller, GROUP, false, null, HOSTS)).entries[0].confirmed).toBe(false);
 		expect(mocks.fetchWithCredential).not.toHaveBeenCalledWith(
 			expect.anything(),
 			HOSTS,
@@ -164,9 +215,9 @@ describe('the roster, read with the person’s own access', () => {
 
 	it("reads the caller's own confirmation when it was not read already", async () => {
 		space({ 'org.atgrp.membership': [[membership(ALICE, ['member'], 'x')]] });
-		expect((await readRoster(caller, GROUP, null, HOSTS)).entries[0].confirmed).toBe(false);
+		expect((await readRoster(caller, GROUP, null, null, HOSTS)).entries[0].confirmed).toBe(false);
 		space({ 'org.atgrp.membership': [[membership(ALICE, ['member'], 'x')]] }, { [ALICE]: 'yes' });
-		expect((await readRoster(caller, GROUP, null, HOSTS)).entries[0].confirmed).toBe(true);
+		expect((await readRoster(caller, GROUP, null, null, HOSTS)).entries[0].confirmed).toBe(true);
 	});
 
 	it('leaves out records of another collection, and memberships with no roles', async () => {
@@ -180,7 +231,7 @@ describe('the roster, read with the person’s own access', () => {
 				]
 			]
 		});
-		expect((await readRoster(caller, GROUP, true, HOSTS)).entries.map((e) => e.did)).toEqual([
+		expect((await readRoster(caller, GROUP, true, null, HOSTS)).entries.map((e) => e.did)).toEqual([
 			ALICE
 		]);
 	});
@@ -188,11 +239,11 @@ describe('the roster, read with the person’s own access', () => {
 	it('throws when the host does not let them read it, or a list fails', async () => {
 		const denied = new SpaceAccessDenied(MEMBERS, '400 NotAuthorized');
 		mocks.exchangeSpaceCredential.mockRejectedValue(denied);
-		await expect(readRoster(caller, GROUP, true, HOSTS)).rejects.toBe(denied);
+		await expect(readRoster(caller, GROUP, true, null, HOSTS)).rejects.toBe(denied);
 
 		mocks.exchangeSpaceCredential.mockResolvedValue({ token: 't', signer: {} });
 		mocks.fetchWithCredential.mockResolvedValue(new Response(null, { status: 500 }));
-		await expect(readRoster(caller, GROUP, true, HOSTS)).rejects.toBeInstanceOf(XrpcError);
+		await expect(readRoster(caller, GROUP, true, null, HOSTS)).rejects.toBeInstanceOf(XrpcError);
 	});
 });
 

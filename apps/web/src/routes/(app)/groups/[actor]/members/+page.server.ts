@@ -14,8 +14,12 @@ import { callerSession } from '#lib/private-events/server/caller.js';
 import { spacesServer } from '#lib/private-events/server/enabled.js';
 import { isSpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
 
-// Who is in the group, for its members, read with their own access. An admin who linked the group
-// also gets the waiting requests and the controls, as far as the link's granted scope reaches.
+/** Longer than any cursor the group host gives, which names a record by its URI. */
+const CURSOR_MAX = 4096;
+
+// Who is in the group, for its members, read with their own access, a page at a time. An admin who
+// linked the group also gets the waiting requests and the controls, as far as the link's granted
+// scope reaches.
 export async function load({ params, locals, url, setHeaders }) {
 	requireGroupsEnabled();
 	setHeaders({ 'cache-control': 'no-store' });
@@ -39,10 +43,12 @@ export async function load({ params, locals, url, setHeaders }) {
 		return { ...base, state: 'hidden' as const, message: MEMBERS_ONLY };
 	}
 
+	const asked = url.searchParams.get('cursor');
+	const cursor = asked && asked.length <= CURSOR_MAX ? asked : null;
 	let roster;
 	try {
 		// Their own confirmation as the group read for them found it, or read with the rest.
-		roster = await readRoster(person, group.did, group.confirmed ?? null);
+		roster = await readRoster(person, group.did, group.confirmed ?? null, cursor);
 	} catch (e) {
 		if (isSpaceAccessDenied(e)) return { ...base, state: 'hidden' as const, message: MEMBERS_ONLY };
 		console.error(`[groups] ${group.did}: the roster could not be read: ${errorKind(e)}`);
@@ -63,10 +69,11 @@ export async function load({ params, locals, url, setHeaders }) {
 			return null;
 		});
 	}
-	// Someone who may admit sees who has not confirmed yet; everyone else sees only the confirmed.
-	const listed = roster.entries.filter((entry) => entry.confirmed !== false);
+	// Only a member whose own confirmation was read is listed as one. Someone who may admit also
+	// sees the rest, apart; nobody else sees them at all.
+	const listed = roster.entries.filter((entry) => entry.confirmed === true);
 	const unconfirmed = manage.admit
-		? roster.entries.filter((entry) => entry.confirmed === false)
+		? roster.entries.filter((entry) => entry.confirmed !== true)
 		: [];
 	return {
 		...base,
@@ -76,6 +83,9 @@ export async function load({ params, locals, url, setHeaders }) {
 		roles: roster.roles,
 		yours: roster.yours,
 		manage,
+		/** The group host's cursor for the next page of members, and whether this is a later one. */
+		next: roster.next,
+		paged: cursor !== null,
 		requests,
 		/** A link approved before atmo asked for the members page: approving again may bring it. */
 		reapprove: Boolean(group.linked?.reapprove) && !manage.admit && !manage.assign && !manage.remove

@@ -66,6 +66,7 @@ const entry = (did: string, roles: string[], confirmed: boolean | null) => ({
 });
 const ROSTER = {
 	entries: [entry(ALICE, ['member', 'admin'], true), entry(BOB, ['member'], false)],
+	next: null,
 	roles: [
 		{ id: 'admin', name: 'Admin' },
 		{ id: 'member', name: 'Member' }
@@ -94,7 +95,7 @@ describe("a group's members page", () => {
 	it('shows a member the confirmed members and their roles, read with their own access, and no controls', async () => {
 		const page = await load(request());
 		expect(mocks.groupView).toHaveBeenCalledWith(GROUP, ALICE, person);
-		expect(mocks.readRoster).toHaveBeenCalledWith(person, GROUP, null);
+		expect(mocks.readRoster).toHaveBeenCalledWith(person, GROUP, null, null);
 		expect(page).toEqual({
 			...BASE,
 			state: 'roster',
@@ -103,6 +104,8 @@ describe("a group's members page", () => {
 			roles: ROSTER.roles,
 			yours: ['member', 'admin'],
 			manage: NONE,
+			next: null,
+			paged: false,
 			requests: null,
 			reapprove: false
 		});
@@ -140,6 +143,29 @@ describe("a group's members page", () => {
 		expect(await load(request())).toMatchObject({ state: 'roster', requests: null });
 	});
 
+	it('lists as a member only someone whose confirmation was read, and shows an admin the rest apart', async () => {
+		const unread = entry(CAROL, ['member'], null);
+		mocks.readRoster.mockResolvedValue({ ...ROSTER, entries: [...ROSTER.entries, unread] });
+		expect(await load(request())).toMatchObject({ listed: [ROSTER.entries[0]], unconfirmed: [] });
+		mocks.groupView.mockResolvedValue(view({ linked: linked(ALL) }));
+		expect(await load(request())).toMatchObject({
+			listed: [ROSTER.entries[0]],
+			unconfirmed: [ROSTER.entries[1], unread]
+		});
+	});
+
+	it("reads the page the host's cursor names, and passes on where the next starts", async () => {
+		mocks.readRoster.mockResolvedValue({ ...ROSTER, next: 'at:space/next' });
+		expect(await load(request('?cursor=at%3Aspace%2Fhere'))).toMatchObject({
+			next: 'at:space/next',
+			paged: true
+		});
+		expect(mocks.readRoster).toHaveBeenLastCalledWith(person, GROUP, null, 'at:space/here');
+		// No cursor the host would give is this long: the first page instead.
+		expect(await load(request(`?cursor=${'x'.repeat(5000)}`))).toMatchObject({ paged: false });
+		expect(mocks.readRoster).toHaveBeenLastCalledWith(person, GROUP, null, null);
+	});
+
 	it('offers to approve again a link approved before the members page asked for anything', async () => {
 		mocks.groupView.mockResolvedValue(view({ linked: linked(NONE, true) }));
 		expect(await load(request())).toMatchObject({ manage: NONE, reapprove: true });
@@ -149,7 +175,7 @@ describe("a group's members page", () => {
 		for (const confirmed of [true, false, null]) {
 			mocks.groupView.mockResolvedValue(view({ confirmed }));
 			await load(request());
-			expect(mocks.readRoster).toHaveBeenLastCalledWith(person, GROUP, confirmed);
+			expect(mocks.readRoster).toHaveBeenLastCalledWith(person, GROUP, confirmed, null);
 		}
 	});
 

@@ -47,6 +47,8 @@ const rosterPage = (manage = { admit: true, assign: true, remove: true }, over =
 	],
 	yours: ['member', 'admin'],
 	manage,
+	next: null,
+	paged: false,
 	requests: manage.admit
 		? [{ did: CAROL, handle: 'carol.example', message: 'I ride at night.', createdAt: 'x' }]
 		: null,
@@ -153,5 +155,26 @@ describe("a group's members page", () => {
 		expect(form.getAttribute('action')).toBe('/oauth/group/link');
 		expect(form.method).toBe('post');
 		expect(new FormData(form).get('group')).toBe(GROUP);
+	});
+
+	it('links to the next page of members, and back to the first from a later one', async () => {
+		render(MembersPage, {
+			data: rosterPage(undefined, { next: 'at:space/g/next', paged: true }) as never
+		});
+		const more = page.getByRole('link', { name: /^More members/ });
+		await expect.element(more).toBeVisible();
+		const href = new URL(more.element().getAttribute('href') ?? '', 'https://atmo.example');
+		expect(decodeURIComponent(href.pathname)).toBe(`/groups/${GROUP}/members`);
+		expect(href.searchParams.get('cursor')).toBe('at:space/g/next');
+		const first = page.getByRole('link', { name: /First page/ });
+		expect(decodeURIComponent(first.element().getAttribute('href') ?? '')).toBe(
+			`/groups/${GROUP}/members`
+		);
+	});
+
+	it('offers no other page when there is one page', async () => {
+		render(MembersPage, { data: rosterPage() as never });
+		await expect.element(page.getByRole('list', { name: 'Members' })).toBeVisible();
+		expect(page.getByRole('link', { name: /More members|First page/ }).elements()).toHaveLength(0);
 	});
 });

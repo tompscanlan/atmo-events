@@ -20,6 +20,13 @@
 	const label = (entry: { did: string; handle: string | null }) =>
 		entry.handle ? `@${entry.handle}` : entry.did;
 
+	// Paths are resolved; the query string is appended to them.
+	let moreUrl = $derived(
+		data.state === 'roster' && data.next
+			? `${resolve('/(app)/groups/[actor]/members', { actor: data.group.did })}?${new URLSearchParams({ cursor: data.next })}`
+			: null
+	);
+
 	/** A refusal the host gave comes back in words to show; anything else is generic. */
 	async function act(run: () => Promise<unknown>) {
 		busy = true;
@@ -189,6 +196,26 @@
 						{@render member(entry, true)}
 					{/each}
 				</ul>
+			{/if}
+
+			{#if data.next || data.paged}
+				<nav class="mt-8 flex flex-wrap gap-4 text-sm font-medium" aria-label="More members">
+					{#if data.paged}<a
+							href={resolve('/(app)/groups/[actor]/members', { actor: data.group.did })}
+							class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 transition-colors"
+							>&larr; First page</a
+						>{/if}
+					{#if moreUrl}
+						<!-- `moreUrl` is built from resolve(); the rule can't see through the query string. -->
+						<!-- eslint-disable svelte/no-navigation-without-resolve -->
+						<a
+							href={moreUrl}
+							class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 transition-colors"
+							>More members &rarr;</a
+						>
+						<!-- eslint-enable svelte/no-navigation-without-resolve -->
+					{/if}
+				</nav>
 			{/if}
 		{/if}
 	</div>
