@@ -272,7 +272,14 @@ describe('saving the settings', () => {
 		});
 		expect(mocks.storeCachedProfile).toHaveBeenCalledWith(
 			{ did: GROUP, handle: null },
-			{ profile: { name: 'Night Riders', description: 'We ride at night.' }, public: false }
+			{
+				profile: {
+					name: 'Night Riders',
+					description: 'We ride at night.',
+					website: 'https://riders.example/'
+				},
+				public: false
+			}
 		);
 	});
 
@@ -320,6 +327,11 @@ describe('saving the settings', () => {
 			$type: 'org.atgrp.about',
 			displayName: 'Night Riders'
 		});
+		// And from the profile cached for visitors.
+		expect(mocks.storeCachedProfile).toHaveBeenCalledWith(
+			{ did: GROUP, handle: null },
+			{ profile: { name: 'Night Riders', description: null }, public: true }
+		);
 	});
 
 	it('keeps a visibility someone changed since the form was shown, and its listing', async () => {
