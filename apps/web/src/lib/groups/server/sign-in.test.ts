@@ -165,14 +165,15 @@ describe('the group client', () => {
 			'space:org.atgrp.members?authority=self&skey=self&collection=org.atgrp.membership&action=read&action=delete',
 			'rpc:org.atgrp.listJoinRequests?aud=*',
 			'rpc:org.atgrp.denyJoinRequest?aud=*',
-			'space:community.lexicon.calendar.collection?authority=self&skey=self&manage=create',
-			'space:community.lexicon.calendar.collection?authority=self&skey=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
+			'space:community.lexicon.calendar.collection?authority=self&manage=create',
+			'space:community.lexicon.calendar.collection?authority=self&collection=community.lexicon.calendar.event&action=read&action=create&action=update&action=delete'
 		]);
 	});
 
 	// The host's approval page lists one row per space type, owner and key, keyed by type and owner
 	// alone: a space asked for once with its key and once without makes two rows with one key, and
-	// the page fails for anyone whose roles keep both.
+	// the page fails for anyone whose roles keep both. The calendar scopes name none, since the
+	// group's calendar may be one another app made under a key of its own.
 	it('names the same key in every scope for one space', () => {
 		const keys = new Map<string, Set<string | null>>();
 		const asked = groupSessionScope(true).split(' ');
@@ -184,9 +185,11 @@ describe('the group client', () => {
 			keys.get(space)!.add(params.get('skey'));
 		}
 		expect(keys.size).toBeGreaterThan(1);
+		const calendar = 'space:community.lexicon.calendar.collection self';
 		for (const [space, skeys] of keys) {
-			expect([space, [...skeys]]).toEqual([space, ['self']]);
+			expect([space, [...skeys]]).toEqual([space, [space === calendar ? null : 'self']]);
 		}
+		expect(keys.has(calendar)).toBe(true);
 	});
 
 	it('keeps sign-in state under its prefix in OAUTH_SESSIONS, never in the library store', async () => {

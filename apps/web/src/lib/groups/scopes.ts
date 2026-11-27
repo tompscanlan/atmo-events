@@ -325,15 +325,19 @@ export function grantsRepoWrites(scope: string, collection: string): boolean {
 	);
 }
 
-const CALENDAR_SELF = `space:${CALENDAR_SPACE_TYPE}?authority=self&skey=${SPACE_SKEY}`;
+/** The group's calendar spaces at any key: the one used may be one another app made, under a key
+ *  of its own, and a client's metadata names its scopes once for every group. Both name no key, so
+ *  every scope for the type names the same one, as the host's approval page needs. */
+const CALENDAR_ANY_KEY = `space:${CALENDAR_SPACE_TYPE}?authority=self`;
 
 /** Making the group's calendar space, and its events there, read, written and deleted as the group.
- *  Its own type only, not every space (`space:*`). The host keeps the second only for a calendar
- *  space that is there at the approval, and only as the space's own policy grants it, so a link
- *  approved before the space was made is approved once more after. */
+ *  Its own type only, not every space (`space:*`). The host keeps the second only while one of the
+ *  group's calendar spaces is there at the approval whose own policy lets the approving person's
+ *  roles post events, so a link approved before there was one is approved once more after; each
+ *  write is still checked against the policy of the space it goes to. */
 export const MEMBERS_ONLY_SCOPES: readonly string[] = [
-	`${CALENDAR_SELF}&manage=create`,
-	`${CALENDAR_SELF}&collection=${GROUP_EVENT_COLLECTION}&action=read&action=create&action=update&action=delete`
+	`${CALENDAR_ANY_KEY}&manage=create`,
+	`${CALENDAR_ANY_KEY}&collection=${GROUP_EVENT_COLLECTION}&action=read&action=create&action=update&action=delete`
 ];
 
 /** The calendar-space grants in a granted scope, for the group's own calendar space. */
