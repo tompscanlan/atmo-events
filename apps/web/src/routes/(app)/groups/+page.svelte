@@ -100,6 +100,17 @@
 					>
 				{/if}
 			</div>
+		{:else if data.newGroupUrl}
+			<!-- The group host's own page, in a new tab that can't reach back. -->
+			<div class="mt-6 flex flex-wrap items-center gap-3">
+				<!-- eslint-disable svelte/no-navigation-without-resolve -->
+				<Button href={data.newGroupUrl} target="_blank" rel="noopener noreferrer" variant="primary"
+					>Make a group <span aria-hidden="true">&nearr;</span></Button
+				><!-- eslint-enable svelte/no-navigation-without-resolve -->
+				<span class="text-base-600 dark:text-base-400 text-sm">
+					Make the group at the group host, then link it here.
+				</span>
+			</div>
 		{/if}
 		<form method="POST" action="/oauth/group/link" class="mt-6 flex flex-wrap items-end gap-2">
 			<div class="min-w-0 flex-1">

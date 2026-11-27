@@ -166,6 +166,14 @@ describe('making a group from the list', () => {
 		expect(mocks.unfinishedGroups).not.toHaveBeenCalled();
 	});
 
+	it("points at the group host's own page for making one in a build without making groups here", async () => {
+		mocks.available.mockReturnValue(true);
+		mocks.unfinishedGroups.mockResolvedValue([]);
+		expect(await load(signedIn())).toMatchObject({ newGroupUrl: null });
+		build.create = false;
+		expect(await load(signedIn())).toMatchObject({ newGroupUrl: 'https://host.example/new' });
+	});
+
 	it("leads with the person's own groups, on the whole list's first page only", async () => {
 		const person = { did: ALICE, scope: 'atproto', handle: vi.fn() };
 		mocks.callerSession.mockResolvedValue(person);

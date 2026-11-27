@@ -10,7 +10,7 @@ vi.mock('#lib/atproto/network.js', () => ({
 	})
 }));
 
-import { forgetGroupHostInfo, groupHostInfo } from './host-api';
+import { forgetGroupHostInfo, groupHostInfo, newGroupUrl } from './host-api';
 
 const described = (body: Record<string, unknown>) =>
 	mocks.networkFetch.mockImplementation(async () => Response.json(body));
@@ -85,5 +85,19 @@ describe('the group host, as it describes itself', () => {
 		await expect(groupHostInfo()).rejects.toThrow('com.atproto.server.describeServer failed: 502');
 		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
 		await expect(groupHostInfo()).rejects.toThrow('no group host');
+	});
+});
+
+describe("the group host's page for making a group", () => {
+	it("is its console's page at its own address, from the setting alone, with no call to it", () => {
+		expect(newGroupUrl()).toBe('https://host.example/new');
+		Object.assign(env, { GROUP_HOST_URL: 'https://host.example:8443/some/path?x=1' });
+		expect(newGroupUrl()).toBe('https://host.example:8443/new');
+		expect(mocks.networkFetch).not.toHaveBeenCalled();
+	});
+
+	it('is none with groups off', () => {
+		Object.assign(env, { GROUP_HOST_URL: ' ' });
+		expect(newGroupUrl()).toBeNull();
 	});
 });

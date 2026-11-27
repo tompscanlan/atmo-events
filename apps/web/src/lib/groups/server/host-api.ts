@@ -20,6 +20,17 @@ export interface GroupHostInfo {
 }
 
 const DESCRIBE_SERVER = 'com.atproto.server.describeServer';
+
+/** The path of the page for making a group in bluesky-social/group-host's console, which that host
+ *  serves at its own address. It is that host's own path: the spec names no such page. */
+export const NEW_GROUP_PATH = '/new';
+
+/** The group host's own page for making a group, from GROUP_HOST_URL alone, with no call to the
+ *  host; null with groups off. */
+export function newGroupUrl(): string | null {
+	const url = groupHostUrl();
+	return url ? new URL(NEW_GROUP_PATH, url.origin).href : null;
+}
 const DESCRIBED_TTL_MS = 10 * 60 * 1000;
 
 let described: { at: number; info: GroupHostInfo } | null = null;
@@ -63,7 +74,12 @@ export async function groupHostInfo(): Promise<GroupHostInfo> {
 	if (typeof domain !== 'string' || !/^\.[a-z0-9.-]+$/i.test(domain)) {
 		throw new Error(`${DESCRIBE_SERVER} at ${origin} names no domain for groups`);
 	}
-	const info = { origin, did: own, domain: domain.toLowerCase(), newGroupUrl: `${origin}/new` };
+	const info = {
+		origin,
+		did: own,
+		domain: domain.toLowerCase(),
+		newGroupUrl: new URL(NEW_GROUP_PATH, origin).href
+	};
 	described = { at: Date.now(), info };
 	return info;
 }

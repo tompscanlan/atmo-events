@@ -11,6 +11,7 @@ import { unfinishedGroups } from '#lib/groups/server/create.js';
 import { searchTerm, serverOrigin } from '#lib/groups/server/declared.js';
 import { CREATE_IN_THIS_BUILD } from '#lib/groups/build.js';
 import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
+import { newGroupUrl } from '#lib/groups/server/host-api.js';
 import { groupSignInAvailable } from '#lib/groups/server/sign-in.js';
 import { callerSession } from '#lib/private-events/server/caller.js';
 import { spacesServer } from '#lib/private-events/server/enabled.js';
@@ -62,6 +63,8 @@ export async function load({ locals, url, setHeaders }) {
 		cursor: (upcoming ?? found)?.cursor ?? null,
 		unavailable: Boolean((upcoming ?? found)?.unavailable),
 		canLink,
+		/** Where a group is made, in a build without making them here: the group host's own page. */
+		newGroupUrl: CREATE_IN_THIS_BUILD ? null : newGroupUrl(),
 		/** Groups the caller made here and has not linked yet; none in a build without making them. */
 		unfinished: unfinished.length,
 		signedIn: Boolean(locals.did),
