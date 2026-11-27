@@ -11,7 +11,9 @@ import {
 	didSpaceHosts,
 	exchangeSpaceCredential,
 	fetchWithCredential,
+	GET_RECORD,
 	isSpaceAccessDenied,
+	type SpaceCredential,
 	type SpaceHolder,
 	type SpaceHosts
 } from '#lib/spaces/server/space-credential.js';
@@ -24,8 +26,48 @@ import {
 } from '#lib/spaces/server/xrpc.js';
 import { mainSchema as eventSchema } from '../../../lexicon-types/types/community/lexicon/calendar/event';
 import { eventCalendarSpace, membersOnlyEventUri } from '../calendar';
-import { GROUP_EVENT_COLLECTION } from '../ids';
+import {
+	GROUP_EVENT_COLLECTION,
+	GROUP_POLICY_TYPE,
+	SPACE_POLICY_COLLECTION,
+	SPACE_POLICY_RKEY
+} from '../ids';
 import { chosenCalendar } from './calendar-choice';
+
+/** Whether the calendar space is still for its members alone, as its authority publishes its
+ *  policy in it (the group's `com.atproto.space.policy/self`), read with the same credential as
+ *  its events, at the time they are shown. `public` for a policy that lets anyone read it, or one
+ *  of a kind this site does not read, which may; `unknown` when it could not be read. Only
+ *  `private` is shown as members-only. */
+export type CalendarPrivacy = 'private' | 'public' | 'unknown';
+
+export function calendarPrivacy(published: Record<string, unknown> | null): CalendarPrivacy {
+	if (!published) return 'unknown';
+	const policy = published.policy as { $type?: unknown; publicRead?: unknown } | undefined;
+	return policy?.$type === GROUP_POLICY_TYPE && policy.publicRead !== true ? 'private' : 'public';
+}
+
+const policyQuery = (groupDid: string, space: string) => ({
+	space,
+	repo: groupDid,
+	collection: SPACE_POLICY_COLLECTION,
+	rkey: SPACE_POLICY_RKEY
+});
+
+/** The calendar space's privacy, read with `reader`; `unknown`, never a throw, when it could not
+ *  be. */
+export async function readCalendarPrivacy(
+	reader: SpaceReader,
+	groupDid: string,
+	space: string
+): Promise<CalendarPrivacy> {
+	try {
+		return calendarPrivacy((await reader.get(policyQuery(groupDid, space)))?.value ?? null);
+	} catch (e) {
+		console.info(`[groups] a calendar's policy unread: ${errorKind(e)}`);
+		return 'unknown';
+	}
+}
 
 /** A link that would load an outside image by itself, as the kit takes one named so. */
 function isEventImage(link: unknown): boolean {
@@ -90,6 +132,8 @@ export interface MembersOnlyList {
 	/** It stopped at `MEMBERS_ONLY_LIST_LIMIT` records with more to read, in whatever order the host
 	 *  lists them, so an upcoming event may be missing. */
 	cutOff: boolean;
+	/** Whether the space is still for members alone, read beside the events. */
+	privacy: CalendarPrivacy;
 }
 
 /** The group's events in its calendar space, every page up to a limit. Null when the holder may not
@@ -110,6 +154,8 @@ export async function listMembersOnlyEvents(
 		// The group's repo is at its host, which is also the space's authority.
 		const host = await hosts.repoHost(groupDid);
 		const credential = await exchangeSpaceCredential(holder, space, host);
+		const privacy = readPolicy(credential, hosts, host, groupDid, space);
+		const done = async (cutOff: boolean) => ({ events, cutOff, privacy: await privacy });
 		let cursor: string | undefined;
 		for (let page = 0; page < MAX_PAGES; page++) {
 			const res = await fetchWithCredential(credential, hosts, {
@@ -126,7 +172,7 @@ export async function listMembersOnlyEvents(
 			});
 			const answer = await readXrpc(res);
 			// The group has written nothing there yet.
-			if (answerIsRecordNotFound(answer)) return { events, cutOff: false };
+			if (answerIsRecordNotFound(answer)) return done(false);
 			if (!answer.ok) throw answerError(LIST_RECORDS, answer);
 			const records = Array.isArray(answer.data.records) ? answer.data.records : [];
 			for (const entry of records) {
@@ -144,13 +190,41 @@ export async function listMembersOnlyEvents(
 			}
 			// The group host ends its last page with a `cursor` of null, its own way: the spec says none.
 			const next = typeof answer.data.cursor === 'string' ? answer.data.cursor : undefined;
-			if (!next || next === cursor || records.length === 0) return { events, cutOff: false };
+			if (!next || next === cursor || records.length === 0) return done(false);
 			cursor = next;
 		}
-		return { events, cutOff: true };
+		return done(true);
 	} catch (e) {
 		if (isSpaceAccessDenied(e)) return null;
 		throw e;
+	}
+}
+
+/** The space's privacy, read with the credential its events are listed with; `unknown` when it
+ *  could not be. The record's MAC is checked as any record read's is. */
+async function readPolicy(
+	credential: SpaceCredential,
+	hosts: SpaceHosts,
+	host: string,
+	groupDid: string,
+	space: string
+): Promise<CalendarPrivacy> {
+	try {
+		const res = await fetchWithCredential(credential, hosts, {
+			host,
+			audience: groupDid,
+			nsid: GET_RECORD,
+			query: policyQuery(groupDid, space)
+		});
+		const answer = await readXrpc(res);
+		if (!answer.ok) return 'unknown';
+		const value = answer.data.value;
+		return calendarPrivacy(
+			value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+		);
+	} catch (e) {
+		console.info(`[groups] a calendar's policy unread: ${errorKind(e)}`);
+		return 'unknown';
 	}
 }
 

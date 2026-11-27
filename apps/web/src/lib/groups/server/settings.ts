@@ -170,8 +170,13 @@ export async function saveGroupSettings(
 	}
 	await putMeta(writer, GROUP_ABOUT_COLLECTION, GROUP_ABOUT_RKEY, next);
 
+	// As a read of the about record would cache it, its website too.
 	await storeCachedProfile(group, {
-		profile: { name: settings.name, description: settings.description },
+		profile: {
+			name: settings.name,
+			description: settings.description,
+			...(settings.website ? { website: settings.website } : {})
+		},
 		public: isPublic
 	}).catch((e) =>
 		console.warn(`[groups] ${writer.did}: the cached profile could not be stored:`, e)

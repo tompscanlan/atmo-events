@@ -30,6 +30,7 @@ import {
 } from '../scopes';
 import { CREATE_IN_THIS_BUILD, ROSTER_IN_THIS_BUILD, SETTINGS_IN_THIS_BUILD } from '../build';
 import { groupsEnabled } from './enabled';
+import { forgetHeldAtGroupHost } from './group';
 import { listKeys, prefixedKV } from './kv';
 import type { XrpcHandle } from './xrpc';
 
@@ -52,7 +53,8 @@ const STATE_TTL_SECONDS = 600;
  *  and the settings' are asked for only in a build that has them (../build.ts); without the
  *  settings, the meta space's policy is still asked for while making a group here is in it, whose
  *  setting up makes a group public. Listing a group needs none of them: it writes the group's
- *  declaration, in its repo. */
+ *  declaration, in its repo. Turning members-only events on reads the group's index of its spaces,
+ *  in the members space, which the members page's scopes read too when it is in the build. */
 export function groupSessionScope(
 	roster: boolean,
 	settings: boolean = SETTINGS_IN_THIS_BUILD,
@@ -231,6 +233,8 @@ export async function finishGroupLink(
 	}
 	await env.OAUTH_SESSIONS.put(askedKey(link.by, link.groupDid), GROUP_SESSION_SCOPE);
 	if (replaced) await revokeReplaced(link.groupDid, link.by, replaced);
+	// A group just made at the host is in its list at once.
+	await forgetHeldAtGroupHost();
 	return { ok: true, groupDid: link.groupDid };
 }
 

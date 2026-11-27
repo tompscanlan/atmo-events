@@ -49,16 +49,16 @@ describe('groups declarations as the Worker serves them', () => {
 		expect(off.tables).not.toContain('groups_event_did_starts');
 	});
 
-	it('serves them with groups on, asking no other server, and adds what search needs', async () => {
+	it('serves them with groups on, asking no other server, and adds the table search needs', async () => {
 		Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
 		const elsewhere = vi.fn<typeof fetch>();
 		vi.stubGlobal('fetch', elsewhere);
 		try {
 			const on = await serve(DECLARED.slice(0, 2));
 			expect(on.answers).toEqual([expect.stringMatching(/^200 /), expect.stringMatching(/^200 /)]);
-			expect(on.tables).toEqual(
-				expect.arrayContaining(['records_declaration', 'group_profiles', 'groups_event_did_starts'])
-			);
+			expect(on.tables).toEqual(expect.arrayContaining(['records_declaration', 'group_profiles']));
+			// The index on the events is the scheduled job's to build, never a request's.
+			expect(on.tables).not.toContain('groups_event_did_starts');
 			expect(elsewhere).not.toHaveBeenCalled();
 		} finally {
 			vi.unstubAllGlobals();

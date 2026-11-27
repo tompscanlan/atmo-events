@@ -7,14 +7,16 @@ const mocks = vi.hoisted(() => ({
 	readGroupLabels: vi.fn(),
 	resolveGroup: vi.fn(),
 	linkedGroups: vi.fn(),
-	actorGroups: vi.fn()
+	actorGroups: vi.fn(),
+	heldOf: vi.fn()
 }));
 vi.mock('./group', () => ({
 	listUpcomingGroups: mocks.listUpcomingGroups,
 	listGroupServers: mocks.listGroupServers,
 	listDeclaredGroups: mocks.listDeclaredGroups,
 	readGroupLabels: mocks.readGroupLabels,
-	resolveGroup: mocks.resolveGroup
+	resolveGroup: mocks.resolveGroup,
+	heldOf: mocks.heldOf
 }));
 vi.mock('./host', () => ({ actorGroups: mocks.actorGroups }));
 vi.mock('./sign-in', () => ({ linkedGroups: mocks.linkedGroups }));
@@ -33,6 +35,7 @@ beforeEach(() => {
 	mocks.listUpcomingGroups.mockResolvedValue({ groups: [], cursor: null });
 	mocks.listGroupServers.mockResolvedValue([]);
 	mocks.readGroupLabels.mockResolvedValue(new Map());
+	mocks.heldOf.mockImplementation(async (_server: string, dids: string[]) => dids);
 });
 
 describe('browseUpcoming', () => {
@@ -114,6 +117,24 @@ describe('browseDeclared', () => {
 			cursor: 'c2',
 			unavailable: false
 		});
+	});
+
+	it("lists of a server's page only the accounts it holds, as far as that can be asked", async () => {
+		mocks.listDeclaredGroups.mockResolvedValue({
+			dids: ['did:plc:a', 'did:plc:claims'],
+			cursor: null
+		});
+		mocks.heldOf.mockResolvedValue(['did:plc:a']);
+		const page = await browseDeclared({ server: 'https://groups.example' });
+		expect(mocks.heldOf).toHaveBeenCalledWith('https://groups.example', [
+			'did:plc:a',
+			'did:plc:claims'
+		]);
+		expect(page.groups.map((group) => group.did)).toEqual(['did:plc:a']);
+		// A search across every server is not a server's list.
+		mocks.heldOf.mockClear();
+		await browseDeclared({ q: 'knit' });
+		expect(mocks.heldOf).not.toHaveBeenCalled();
 	});
 
 	it('says when the index did not answer, and lists by DID when the names cannot be read', async () => {

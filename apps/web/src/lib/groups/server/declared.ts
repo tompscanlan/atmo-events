@@ -5,9 +5,10 @@
 // name it.
 //
 // The default list is of groups with an upcoming event, soonest first. Any account can declare
-// itself a group, so one server could fill that list: a server's groups take their places in turns
-// of UPCOMING_PER_SERVER, by their next event, and a page holds at most that many of any server's.
-// Every group, with an event coming or not, is on its server's own list and found by search.
+// itself a group, so one server could fill that list: a page holds at most UPCOMING_PER_SERVER of
+// any server's, and the rest of that server's follow on the next page, while other servers' groups
+// fill the page. Every group, with an event coming or not, is on its server's own list and found by
+// search.
 import {
 	recordsTableName,
 	visibleRecordSql,
@@ -30,37 +31,39 @@ const DECLARATIONS = recordsTableName('declaration');
 const EVENTS = recordsTableName('event');
 const PROFILES = 'group_profiles';
 
-/** What groups add to the database, made when a group list or page first needs it, so only while
- *  groups are on: the profiles cached for visitors, and an index that finds a group's next event
- *  without reading its past ones. */
-const SCHEMA = [
-	`CREATE TABLE IF NOT EXISTS ${PROFILES} (
+/** The table groups add to the database, made when a group list or page first needs it, so only
+ *  while groups are on: the profiles cached for visitors. Small, and made in one quick statement,
+ *  so a request may make it. */
+const PROFILES_TABLE = `CREATE TABLE IF NOT EXISTS ${PROFILES} (
 		did TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
 		description TEXT,
 		handle TEXT,
 		website TEXT
-	)`,
-	`CREATE INDEX IF NOT EXISTS groups_event_did_starts
-		ON ${EVENTS}(did, json_extract(record, '$.startsAt'))`
-];
+	)`;
 
-/** Columns added to a table after it was first made, for a database that made it before. */
-const ADDED_COLUMNS = [`ALTER TABLE ${PROFILES} ADD COLUMN website TEXT`];
+/** Columns added to the table after it was first made, for a database that made it before. */
+const ADDED_COLUMNS = [{ name: 'website', type: 'TEXT' }];
 
 const schemaReady = new WeakMap<object, Promise<void>>();
 
-/** Once per database, after contrail has made its tables. */
+/** Once per database, after contrail has made its tables. A column is added only when the table
+ *  lacks it. */
 export function ensureGroupSchema(db: Database): Promise<void> {
 	let ready = schemaReady.get(db);
 	if (!ready) {
 		ready = (async () => {
-			for (const statement of SCHEMA) await db.prepare(statement).run();
-			for (const statement of ADDED_COLUMNS) {
+			await db.prepare(PROFILES_TABLE).run();
+			const { results } = await db
+				.prepare(`SELECT name FROM pragma_table_info('${PROFILES}')`)
+				.all<{ name: string }>();
+			const has = new Set((results ?? []).map((column) => column.name));
+			for (const { name, type } of ADDED_COLUMNS.filter((column) => !has.has(column.name))) {
 				await db
-					.prepare(statement)
+					.prepare(`ALTER TABLE ${PROFILES} ADD COLUMN ${name} ${type}`)
 					.run()
 					.catch((e: unknown) => {
+						// Added by another request in between.
 						if (!/duplicate column/i.test(e instanceof Error ? e.message : String(e))) throw e;
 					});
 			}
@@ -73,6 +76,28 @@ export function ensureGroupSchema(db: Database): Promise<void> {
 	return ready;
 }
 
+/** The index that finds a group's next event without reading its past ones. It is built over
+ *  contrail's events table, the largest there is, which can take longer than a visitor's request
+ *  should wait, so only the scheduled job builds it (routes/api/cron), and only while groups are
+ *  on. Until it is there the list answers the same, by contrail's own index on the events' DID,
+ *  reading each group's past events too. */
+export const GROUP_EVENT_INDEX = 'groups_event_did_starts';
+
+const GROUP_EVENT_INDEX_SQL = `CREATE INDEX IF NOT EXISTS ${GROUP_EVENT_INDEX}
+	ON ${EVENTS}(did, json_extract(record, '$.startsAt'))`;
+
+const eventIndexBuilt = new WeakSet<object>();
+
+/** Builds the index unless this isolate saw it built. Turning groups off again leaves it, as it
+ *  leaves the profiles table and the declarations table: unread, but the index is still kept up
+ *  to date on every write to the events table, a cost that stays until it is dropped by hand
+ *  (`DROP INDEX groups_event_did_starts`). */
+export async function ensureGroupEventIndex(db: Database): Promise<void> {
+	if (eventIndexBuilt.has(db)) return;
+	await db.prepare(GROUP_EVENT_INDEX_SQL).run();
+	eventIndexBuilt.add(db);
+}
+
 /** Accounts contrail has not resolved yet count under '', so they share one server's places. */
 const serverOf = (identity: string) => `COALESCE(RTRIM(LOWER(${identity}.pds), '/'), '')`;
 /** A handle that failed its two-way check is no handle. */
@@ -80,17 +105,42 @@ const handleOf = (identity: string) =>
 	`CASE WHEN ${identity}.handle IN ('', 'handle.invalid') THEN NULL ELSE ${identity}.handle END`;
 const startsAt = (event: string) => `json_extract(${event}.record, '$.startsAt')`;
 
-/** The visible declarations at rkey self, each with its account's identity as `i`. Built per
- *  request, since the moderation check inlines the time. */
-function declared(columns: string): string {
-	return `SELECT ${columns} FROM ${DECLARATIONS} d LEFT JOIN identities i ON i.did = d.did
-		WHERE d.rkey = 'self' AND ${visibleRecordSql('d')}`;
+/** This site's own group host, and the accounts it says it holds. */
+export interface GroupHome {
+	origin: string;
+	held: string[];
 }
 
-/** The group's events that count as coming: public, starting from the bound parameter on, shown
- *  in discovery, not a conference's talk, and left visible by moderation. */
+/** The visible declarations at rkey self, each with its account's identity as `i`. Built per
+ *  request, since the moderation check inlines the time. With `home`, an account that names this
+ *  site's group host is one only when the host holds it, which takes two parameters after those of
+ *  `columns`: the host's origin and the accounts it holds, as JSON. */
+function declared(columns: string, home: GroupHome | null): string {
+	const held = home
+		? `AND (${serverOf('i')} <> ? OR d.did IN (SELECT value FROM json_each(?)))`
+		: '';
+	return `SELECT ${columns} FROM ${DECLARATIONS} d LEFT JOIN identities i ON i.did = d.did
+		WHERE d.rkey = 'self' AND ${visibleRecordSql('d')} ${held}`;
+}
+
+const homeValues = (home: GroupHome | null) =>
+	home ? [home.origin, JSON.stringify(home.held)] : [];
+
+/** How many of a group's events starting from now on the list looks through, at most, for one that
+ *  counts. Those soonest to start are taken by the index alone, then checked: so a group whose next
+ *  NEXT_EVENT_LOOKAHEAD events are all hidden from discovery, a conference's talks, or hidden by
+ *  moderation counts as having no event coming until enough of them have started, however many
+ *  more it has after. No group's future events, however many, are read past that on any view. */
+export const NEXT_EVENT_LOOKAHEAD = 25;
+
+/** The group's events that count as coming: public, starting from the bound parameter on, among the
+ *  first NEXT_EVENT_LOOKAHEAD of them to start, shown in discovery, not a conference's talk, and
+ *  left visible by moderation. */
 function upcomingEvents(groupDid: string): string {
-	return `FROM ${EVENTS} e WHERE e.did = ${groupDid} AND ${startsAt('e')} >= ?
+	return `FROM ${EVENTS} e WHERE e.uri IN (
+			SELECT c.uri FROM ${EVENTS} c WHERE c.did = ${groupDid} AND ${startsAt('c')} >= ?
+			ORDER BY ${startsAt('c')} LIMIT ${NEXT_EVENT_LOOKAHEAD}
+		)
 		AND ${discoverableSql('e.record')} AND NOT ${hasParentEventSql('e.record')}
 		AND ${visibleRecordSql('e')}`;
 }
@@ -157,49 +207,84 @@ export interface UpcomingPage {
 	cursor: string | null;
 }
 
-/** A place in the list: the server's turn, then the next event's start, then the group. A DID has
- *  no '~' in it; the start, which comes last, may. */
-type Place = [turn: number, did: string, startsAt: string];
+/** Where the next page starts: the time the first page was read at, which every later page reads
+ *  at too, so an event that starts in between moves nothing; the last group shown, by its next
+ *  event's start and its DID; and, for each server with groups left out of a page because it held
+ *  UPCOMING_PER_SERVER of them already, the last of its groups shown. Each place is a group's own
+ *  next event and DID, so a group or an event added in between moves no other group: one placed
+ *  after these shows once, one placed before them not at all. A group not shown yet whose own next
+ *  event is moved, or added, to before them in between is missed. */
+interface Place {
+	at: string;
+	last: [startsAt: string, did: string];
+	behind: Record<string, [startsAt: string, did: string]>;
+}
 
-function placeCursor([turn, did, starts]: Place): string {
-	return `${turn}~${did}~${starts}`;
+const isKey = (value: unknown): value is [string, string] =>
+	Array.isArray(value) && value.length === 2 && value.every((part) => typeof part === 'string');
+
+function placeCursor(place: Place): string {
+	return btoa(JSON.stringify(place)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function parsePlace(cursor: string | null): Place | null {
-	const match = cursor?.match(/^(\d{1,9})~(did:[^~]+)~(.*)$/s);
-	return match ? [Number(match[1]), match[2], match[3]] : null;
+	if (!cursor || cursor.length > 4096) return null;
+	try {
+		const place = JSON.parse(atob(cursor.replace(/-/g, '+').replace(/_/g, '/'))) as Place;
+		if (typeof place?.at !== 'string' || Number.isNaN(Date.parse(place.at))) return null;
+		if (!isKey(place.last) || !place.behind || typeof place.behind !== 'object') return null;
+		if (!Object.values(place.behind).every(isKey)) return null;
+		return { at: place.at, last: place.last, behind: place.behind };
+	} catch {
+		return null;
+	}
 }
 
-/** One page of the groups with an event coming, by the start of their next one, soonest first.
- *  Each server's groups are numbered by their next event, and take their places in turns of
- *  UPCOMING_PER_SERVER: all servers' first turn, then their second, and so on. A page ends early
- *  rather than hold more than UPCOMING_PER_SERVER of one server's. One query: each group's next
- *  event is one step along groups_event_did_starts. */
+const after = (a: [string, string], b: [string, string]) =>
+	a[0] > b[0] || (a[0] === b[0] && a[1] > b[1]);
+
+/** One page of the groups with an event coming, by the start of their next one, soonest first,
+ *  as of `now` on the first page and as of the first page's time on the pages after it. A page
+ *  holds at most UPCOMING_PER_SERVER of one server's groups: a server's groups past those are
+ *  left for the next page, which shows them first among those after the last group shown, and
+ *  other servers' groups take the rest of the page meanwhile. One query: each group's next event
+ *  is one step along groups_event_did_starts. */
 export async function upcomingGroups(
 	db: Database,
 	now: string,
-	cursor: string | null = null
+	cursor: string | null = null,
+	home: GroupHome | null = null
 ): Promise<UpcomingPage> {
-	const [turn, did, starts] = parsePlace(cursor) ?? [-1, '', ''];
+	const place = parsePlace(cursor);
+	const at = place?.at ?? now;
+	const last = place?.last ?? ['', ''];
+	const behind = place?.behind ?? {};
 	const { results } = await db
 		.prepare(
 			`WITH next AS MATERIALIZED (${declared(
 				`d.did, ${serverOf('i')} AS server, ${handleOf('i')} AS handle,
-				(SELECT e.uri ${upcomingEvents('d.did')} ORDER BY ${startsAt('e')}, e.uri LIMIT 1) AS uri`
+				(SELECT e.uri ${upcomingEvents('d.did')} ORDER BY ${startsAt('e')}, e.uri LIMIT 1) AS uri`,
+				home
 			)}),
 			placed AS (
 				SELECT n.did, n.server, n.handle, n.uri,
-					json_extract(e.record, '$.name') AS title, ${startsAt('e')} AS starts_at,
-					(ROW_NUMBER() OVER (PARTITION BY n.server ORDER BY ${startsAt('e')}, n.did) - 1)
-						/ ${UPCOMING_PER_SERVER} AS turn
+					json_extract(e.record, '$.name') AS title, ${startsAt('e')} AS starts_at
 				FROM next n JOIN ${EVENTS} e ON e.uri = n.uri
+			),
+			left_to_show AS (
+				SELECT placed.*,
+					ROW_NUMBER() OVER (PARTITION BY placed.server ORDER BY placed.starts_at, placed.did) AS rn
+				FROM placed LEFT JOIN json_each(?) b ON b.key = placed.server
+				WHERE (placed.starts_at, placed.did) > (
+					COALESCE(json_extract(b.value, '$[0]'), ?), COALESCE(json_extract(b.value, '$[1]'), ?)
+				)
 			)
-			SELECT placed.*, p.name FROM placed LEFT JOIN ${PROFILES} p ON p.did = placed.did
-			WHERE (placed.turn, placed.starts_at, placed.did) > (?, ?, ?)
-			ORDER BY placed.turn, placed.starts_at, placed.did
-			LIMIT ${UPCOMING_PAGE + 1}`
+			SELECT left_to_show.*, p.name FROM left_to_show LEFT JOIN ${PROFILES} p ON p.did = left_to_show.did
+			WHERE rn <= ${UPCOMING_PER_SERVER + 1}
+			ORDER BY left_to_show.starts_at, left_to_show.did
+			LIMIT ${UPCOMING_PAGE + 3}`
 		)
-		.bind(now, turn, starts, did)
+		.bind(at, ...homeValues(home), JSON.stringify(behind), last[0], last[1])
 		.all<{
 			did: string;
 			server: string;
@@ -208,18 +293,45 @@ export async function upcomingGroups(
 			uri: string;
 			title: unknown;
 			starts_at: string;
-			turn: number;
 		}>();
 	const rows = results ?? [];
 	const page: typeof rows = [];
-	const perServer = new Map<string, number>();
+	const shown = new Map<string, number>();
+	/** The last of each server's groups shown on this page. */
+	const lastOf = new Map<string, [string, string]>();
+	/** Servers with groups left for the next page: at most two, since each showed a full share. */
+	const full = new Set<string>();
+	let more = false;
 	for (const row of rows) {
-		const count = (perServer.get(row.server) ?? 0) + 1;
-		if (page.length === UPCOMING_PAGE || count > UPCOMING_PER_SERVER) break;
-		perServer.set(row.server, count);
+		if (page.length === UPCOMING_PAGE) {
+			more = true;
+			break;
+		}
+		const count = shown.get(row.server) ?? 0;
+		if (count === UPCOMING_PER_SERVER) {
+			full.add(row.server);
+			continue;
+		}
+		shown.set(row.server, count + 1);
+		lastOf.set(row.server, [row.starts_at, row.did]);
 		page.push(row);
 	}
-	const last = page.at(-1);
+	more ||= full.size > 0;
+	const end = page.at(-1);
+	let next: string | null = null;
+	if (more && end) {
+		const pageEnd: [string, string] = [end.starts_at, end.did];
+		const nextLast = after(pageEnd, last) ? pageEnd : last;
+		const nextBehind: Place['behind'] = {};
+		// A server left behind before stays so until a page reaches its place; one whose groups this
+		// page left out waits at the last of its shown.
+		for (const [server, key] of Object.entries(behind)) {
+			const reached = after(pageEnd, key) ? pageEnd : key;
+			if (after(nextLast, reached)) nextBehind[server] = reached;
+		}
+		for (const server of full) nextBehind[server] = lastOf.get(server)!;
+		next = placeCursor({ at, last: nextLast, behind: nextBehind });
+	}
 	return {
 		groups: page.map((row) => ({
 			did: row.did,
@@ -232,8 +344,7 @@ export async function upcomingGroups(
 				startsAt: row.starts_at
 			}
 		})),
-		cursor:
-			last && page.length < rows.length ? placeCursor([last.turn, last.did, last.starts_at]) : null
+		cursor: next
 	};
 }
 
@@ -251,12 +362,14 @@ export interface GroupServer {
 export async function groupServers(
 	db: Database,
 	now: string,
-	limit = SERVERS_SHOWN
+	limit = SERVERS_SHOWN,
+	home: GroupHome | null = null
 ): Promise<GroupServer[]> {
 	const { results } = await db
 		.prepare(
 			`WITH servers AS MATERIALIZED (${declared(
-				`${serverOf('i')} AS server, EXISTS (SELECT 1 ${upcomingEvents('d.did')}) AS upcoming`
+				`${serverOf('i')} AS server, EXISTS (SELECT 1 ${upcomingEvents('d.did')}) AS upcoming`,
+				home
 			)})
 			SELECT server, COUNT(*) AS groups, SUM(upcoming) AS upcoming FROM servers
 			WHERE server <> ''
@@ -264,7 +377,7 @@ export async function groupServers(
 			ORDER BY upcoming DESC, groups DESC, server
 			LIMIT ?`
 		)
-		.bind(now, limit)
+		.bind(now, ...homeValues(home), limit)
 		.all<GroupServer>();
 	return results ?? [];
 }

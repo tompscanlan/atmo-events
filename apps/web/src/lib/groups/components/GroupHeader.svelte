@@ -22,7 +22,7 @@
 		description: string | null;
 		/** The group's website: linked only when it is an http(s) URL. */
 		website: string | null;
-		/** The group's own page at its group host. */
+		/** The group's own address, from its verified handle. */
 		home: string | null;
 		isPrivate?: boolean;
 		eventsCreated?: number | null;
@@ -96,6 +96,7 @@
 				</li>
 			{/if}
 			{#if homeUrl}
+				<!-- The group's own address, named as such: what is served there is the group's. -->
 				<li class="max-w-full min-w-0">
 					<Button
 						href={homeUrl.href}
@@ -103,8 +104,12 @@
 						rel="noopener noreferrer"
 						variant="secondary"
 						size="sm"
-						class="max-w-full">Group home <span aria-hidden="true">&nearr;</span></Button
+						class="max-w-full"
 					>
+						<span class="min-w-0 wrap-anywhere">Group home: {homeUrl.hostname}</span><span
+							aria-hidden="true">&nearr;</span
+						>
+					</Button>
 				</li>
 			{/if}
 		</ul>

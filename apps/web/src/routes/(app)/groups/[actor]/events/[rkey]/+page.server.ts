@@ -3,7 +3,10 @@ import { groupAccess } from '#lib/groups/permissions-asked.js';
 import { membersOnlyEvent } from '#lib/groups/server/calendar-read.js';
 import { groupView, requireGroupWriter } from '#lib/groups/server/context.js';
 import { requireGroupsEnabled } from '#lib/groups/server/enabled.js';
-import { readMembersOnlyEventAsGroup } from '#lib/groups/server/group-events.js';
+import {
+	calendarPrivacyAsGroup,
+	readMembersOnlyEventAsGroup
+} from '#lib/groups/server/group-events.js';
 import {
 	readMembersOnlyEventPage,
 	type MembersOnlyEventPage
@@ -55,7 +58,8 @@ export async function load({ params, locals, url, setHeaders }) {
 			const writer = await requireGroupWriter(group.did, locals.did);
 			const stored = await readMembersOnlyEventAsGroup(writer, params.rkey);
 			const event = stored && membersOnlyEvent(group.did, stored);
-			found = event ? { event, viewerStatus: null } : null;
+			const privacy = event ? await calendarPrivacyAsGroup(writer) : 'unknown';
+			found = event ? { event, viewerStatus: null, privacy } : null;
 		}
 	} catch (e) {
 		console.error(`[groups] a members-only event unread for its page: ${errorKind(e)}`);
@@ -63,7 +67,7 @@ export async function load({ params, locals, url, setHeaders }) {
 	}
 	if (!found) error(404, EVENT_NOT_FOUND);
 
-	const { event, viewerStatus } = found;
+	const { event, viewerStatus, privacy } = found;
 	return {
 		...base,
 		view: 'event' as const,
@@ -76,6 +80,8 @@ export async function load({ params, locals, url, setHeaders }) {
 		// No one else's answers are read: each sits in its member's own repo.
 		attendees: { going: [], interested: [], goingCount: 0, interestedCount: 0 },
 		viewerRsvpStatus: viewerStatus,
+		/** Shown as members-only only while its calendar is, as read now. */
+		calendarPrivacy: privacy,
 		viewerRsvpRkey: viewerStatus ? params.rkey : null,
 		loggedIn: true,
 		/** Their own sign-in may RSVP; a link's admin without it is told how. */

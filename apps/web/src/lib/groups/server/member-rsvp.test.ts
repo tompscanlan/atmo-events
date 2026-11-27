@@ -80,6 +80,7 @@ describe("a member's RSVP to a members-only event", () => {
 		]);
 		const page = await readMembersOnlyEventPage(bob(), GROUP, 'r1', calendarHosts);
 		expect(page?.viewerStatus).toBe('going');
+		expect(page?.privacy).toBe('private');
 		await deleteMembersOnlyRsvp(bob(), GROUP, 'r1');
 		expect(calendar.state.rsvps.size).toBe(0);
 	});
@@ -96,6 +97,13 @@ describe("a member's RSVP to a members-only event", () => {
 		calendar.state.readers.clear();
 		expect(await refused(bob(), 'r1', cid)).toBe('no-event');
 		expect(writes()).toEqual([]);
+	});
+
+	it("shows the event's calendar as no longer private once anyone may read it", async () => {
+		calendar.state.policy = { ...READY_POLICY, publicRead: true };
+		const page = await readMembersOnlyEventPage(bob(), GROUP, 'r1', calendarHosts);
+		expect(page?.event).toMatchObject({ name: 'Supper' });
+		expect(page?.privacy).toBe('public');
 	});
 
 	it('cannot be taken back without the guest grant', async () => {

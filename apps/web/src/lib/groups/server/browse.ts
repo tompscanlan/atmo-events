@@ -9,6 +9,7 @@ import type { CallerSession } from '#lib/private-events/server/caller.js';
 import { ACTOR_GROUPS_NSID, holdsRpc } from '../scopes';
 import { serverOrigin } from './declared';
 import {
+	heldOf,
 	listDeclaredGroups,
 	listGroupServers,
 	listUpcomingGroups,
@@ -105,6 +106,8 @@ export async function browseDeclared({
 	let page: Awaited<ReturnType<typeof listDeclaredGroups>>;
 	try {
 		page = await listDeclaredGroups({ cursor, server, q });
+		// This site's group host's own list: only the accounts it holds, of those that name it.
+		if (server) page = { ...page, dids: await heldOf(server, page.dids) };
 	} catch (e) {
 		console.error('[groups] the declaration index did not answer:', e);
 		return { groups: [], cursor: null, unavailable: true };

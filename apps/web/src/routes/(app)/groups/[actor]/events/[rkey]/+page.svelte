@@ -31,9 +31,18 @@
 	<!-- It has no public page to share, so the page offers no Bluesky post. -->
 	<EventView {data} {adapter} {viewer} pageUrl={new URL(page.url.href)} share={false}>
 		{#snippet extraActions()}
+			<!-- Private only while its calendar is still for members alone, as read now. -->
 			<p class="text-base-600 dark:text-base-400 text-sm" data-testid="private-note">
-				<Icon img={LockKeyhole} size={12} class="mr-1 inline align-[-2px]" />Private event. Only
-				members of {data.group.name} can see it.
+				{#if data.calendarPrivacy === 'private'}
+					<Icon img={LockKeyhole} size={12} class="mr-1 inline align-[-2px]" />Private event. Only
+					members of {data.group.name} can see it.
+				{:else if data.calendarPrivacy === 'public'}
+					This event's calendar can now be read by more than the members of {data.group.name}, so it
+					is no longer private.
+				{:else}
+					Whether this event is still for the members of {data.group.name} alone couldn't be checked just
+					now.
+				{/if}
 			</p>
 			{#if !data.canRsvp}
 				<p class="text-base-600 dark:text-base-400 text-sm" role="status">

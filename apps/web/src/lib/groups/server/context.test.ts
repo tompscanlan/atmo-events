@@ -3,7 +3,12 @@ import { env, waitUntil } from 'cloudflare:workers';
 import { isHttpError } from '@sveltejs/kit';
 import { TokenRefreshError } from '@atcute/oauth-node-client';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
-import { GROUP_SETTINGS_SCOPES, MEMBERS_ONLY_SCOPES, ROSTER_SCOPES } from '../scopes';
+import {
+	GROUP_SETTINGS_SCOPES,
+	GROUP_SPACE_INDEX_SCOPE,
+	MEMBERS_ONLY_SCOPES,
+	ROSTER_SCOPES
+} from '../scopes';
 import { XrpcError } from './xrpc';
 
 const mocks = vi.hoisted(() => ({
@@ -73,9 +78,11 @@ import {
 	GROUP_NOT_FOUND,
 	GROUP_UNCHECKED,
 	groupHome,
+	groupHostSite,
 	groupView,
 	LINKED_READ_LIMIT_MS,
 	requireGroupWriter,
+	requireLinkedAbilities,
 	requireStoredLink
 } from './context';
 
@@ -173,7 +180,9 @@ describe('groupView for a visitor', () => {
 		);
 		expect(await groupView(GROUP, null)).toMatchObject({
 			website: 'https://yarn.example/',
-			home: 'https://knit.example/'
+			home: 'https://knit.example/',
+			// Its group host's own site, from the PDS its DID document names, not its address.
+			hostSite: { url: 'https://host.example/', name: 'host.example' }
 		});
 		mocks.readCachedProfiles.mockResolvedValue(new Map());
 		expect(await groupView(GROUP, null)).toMatchObject({ website: null });
@@ -198,6 +207,25 @@ describe('groupHome', () => {
 			'knit example'
 		]) {
 			expect(groupHome(handle), handle).toBeNull();
+		}
+	});
+});
+
+describe('groupHostSite', () => {
+	it("is the origin of the group's PDS, named by its host, whatever path the PDS has", () => {
+		expect(groupHostSite('https://groups.example')).toEqual({
+			url: 'https://groups.example/',
+			name: 'groups.example'
+		});
+		expect(groupHostSite('https://groups.example:8443/pds/')).toEqual({
+			url: 'https://groups.example:8443/',
+			name: 'groups.example:8443'
+		});
+	});
+
+	it('is none for a PDS address that is not a web address', () => {
+		for (const pds of ['', null, 'javascript:alert(1)', 'ftp://groups.example', 'groups.example']) {
+			expect(groupHostSite(pds), String(pds)).toBeNull();
 		}
 	});
 });
@@ -251,6 +279,21 @@ describe('groupView for someone who linked the group', () => {
 		mocks.groupSession.mockResolvedValue(linkedSession(ADMIN_SCOPE));
 		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({ reapprove: false });
 		expect(mocks.linkAskedCurrentScope).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+
+	it("offers to approve again a link from before atmo read the group's index of its spaces", async () => {
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(false);
+		mocks.linkAskedCurrentScope.mockResolvedValue(false);
+		const withoutIndex = ADMIN_SCOPE.split(' ')
+			.filter((token) => token !== GROUP_SPACE_INDEX_SCOPE.replace('self', GROUP))
+			.join(' ');
+		expect(withoutIndex).not.toBe(ADMIN_SCOPE);
+		mocks.groupSession.mockResolvedValue(linkedSession(withoutIndex));
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({
+			can: { turnOnMembersOnly: true, membersOnly: true, readSpaceIndex: false },
+			reapprove: true
+		});
 	});
 
 	it('offers no settings in a build without the settings page, nor approving again for them', async () => {
@@ -538,6 +581,41 @@ describe('requireGroupWriter', () => {
 		mocks.groupSession.mockResolvedValue(linkedSession());
 		expect(await requireGroupWriter(GROUP, ALICE)).toMatchObject({ did: GROUP });
 		expect(mocks.groupSession).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+});
+
+describe('requireLinkedAbilities', () => {
+	it('says what the scope the host granted the link lets it do', async () => {
+		mocks.groupSession.mockResolvedValue(linkedSession());
+		const admin = await requireLinkedAbilities(GROUP, ALICE);
+		expect(admin.writer).toMatchObject({ did: GROUP });
+		expect(admin.can).toMatchObject({ turnOnMembersOnly: true, membersOnly: true });
+		mocks.groupSession.mockResolvedValue(linkedSession(MEMBER_SCOPE));
+		expect((await requireLinkedAbilities(GROUP, ALICE)).can).toMatchObject({
+			turnOnMembersOnly: false,
+			membersOnly: false,
+			post: false
+		});
+	});
+
+	it('holds nothing when the scope cannot be read, and is the same 404 without a link', async () => {
+		mocks.groupSession.mockResolvedValue({
+			did: GROUP,
+			// The first read, for the session's host, is taken as at the host, so the second decides.
+			getTokenInfo: vi
+				.fn()
+				.mockRejectedValueOnce(new Error('unreadable'))
+				.mockRejectedValueOnce(new Error('unreadable'))
+		});
+		expect((await requireLinkedAbilities(GROUP, ALICE)).can).toMatchObject({
+			turnOnMembersOnly: false,
+			membersOnly: false
+		});
+		mocks.groupSession.mockResolvedValue(null);
+		await expect(requireLinkedAbilities(GROUP, ALICE)).rejects.toMatchObject({
+			status: 404,
+			body: { message: GROUP_NOT_FOUND }
+		});
 	});
 });
 

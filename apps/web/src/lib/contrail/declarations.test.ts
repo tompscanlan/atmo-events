@@ -8,10 +8,12 @@ import {
 	cachedProfiles,
 	cacheProfile,
 	DECLARED_PAGE,
+	ensureGroupEventIndex,
 	ensureGroupSchema,
 	groupLabels,
 	groupServers,
 	UPCOMING_PAGE,
+	NEXT_EVENT_LOOKAHEAD,
 	UPCOMING_PER_SERVER,
 	upcomingGroups
 } from '../groups/server/declared';
@@ -23,12 +25,21 @@ const NOW = '2030-06-01T12:00:00.000Z';
 /** `minutes` from NOW. */
 const at = (minutes: number) => new Date(Date.parse(NOW) + minutes * 60_000).toISOString();
 
-async function setup(): Promise<Database> {
+/** With the groups' index, as the scheduled job builds it, unless `index` is false. */
+async function setup({ index = true } = {}): Promise<Database> {
 	const db = createSqliteDatabase(':memory:');
 	await new Contrail(servedConfig(true)).init(db);
 	await ensureGroupSchema(db);
+	if (index) await ensureGroupEventIndex(db);
 	return db;
 }
+
+const indexes = async (db: Database) =>
+	(
+		await db
+			.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'groups_%'")
+			.all<{ name: string }>()
+	).results?.map((row) => row.name) ?? [];
 
 const run = (db: Database, sql: string, ...values: unknown[]) =>
 	db
@@ -225,6 +236,37 @@ describe('the groups with an event coming', () => {
 		]);
 	});
 
+	it(`looks through no more than a group's next ${NEXT_EVENT_LOOKAHEAD} events for one that counts`, async () => {
+		const db = await setup();
+		const unlisted = { preferences: { showInDiscovery: false } };
+		// Many events hidden from discovery first, then one shown: past the look-ahead, not found.
+		await declare(db, 'did:plc:flood');
+		for (let i = 0; i < NEXT_EVENT_LOOKAHEAD; i++) {
+			await event(db, 'did:plc:flood', `hidden${i}`, at(1 + i), unlisted);
+		}
+		await event(db, 'did:plc:flood', 'shown', at(500));
+		// One fewer hidden: the shown one is within it.
+		await declare(db, 'did:plc:within');
+		for (let i = 0; i < NEXT_EVENT_LOOKAHEAD - 1; i++) {
+			await event(db, 'did:plc:within', `hidden${i}`, at(1 + i), unlisted);
+		}
+		await event(db, 'did:plc:within', 'shown', at(500));
+
+		const page = await upcomingGroups(db, NOW);
+		expect(page.groups.map((group) => [group.did, group.next.title])).toEqual([
+			['did:plc:within', 'shown event']
+		]);
+		expect(await groupServers(db, NOW)).toEqual([
+			{ server: 'https://a.example', groups: 2, upcoming: 1 }
+		]);
+		// Once enough of the hidden ones have started, the shown one counts.
+		const later = new Date(Date.parse(at(2))).toISOString();
+		expect((await upcomingGroups(db, later)).groups.map((group) => group.did)).toEqual([
+			'did:plc:flood',
+			'did:plc:within'
+		]);
+	});
+
 	it(`fills a page of ${UPCOMING_PAGE} with at most ${UPCOMING_PER_SERVER} of one server's`, async () => {
 		const db = await setup();
 		const busy = await groupsAt(db, 'https://busy.example', 'b', 20, 1);
@@ -238,13 +280,103 @@ describe('the groups with an event coming', () => {
 		]);
 	});
 
-	it("ends a page before a server's groups pass the limit, and pages through the rest", async () => {
+	it("leaves a server's groups past the limit for the next page, and pages through the rest", async () => {
 		const db = await setup();
 		const busy = await groupsAt(db, 'https://busy.example', 'b', 40, 1);
 		const quiet = await groupsAt(db, 'https://quiet.example', 'q', 3, 500);
 
 		const pages = await allPages(db);
 		expect(pages).toEqual([[...busy.slice(0, 15), ...quiet], busy.slice(15, 30), busy.slice(30)]);
+	});
+
+	/** Every group on the pages, once each: what repeats, and what is missing of `expected`. */
+	const onceEach = (pages: string[][], expected: string[]) => {
+		const seen = pages.flat();
+		return {
+			repeated: seen.filter((did, i) => seen.indexOf(did) !== i),
+			missing: expected.filter((did) => !seen.includes(did))
+		};
+	};
+
+	it('lists no group whose declaration is gone, by the name cached for it before', async () => {
+		const db = await setup();
+		// Made private or unlisted since its name was cached: its group host took the declaration
+		// down, and the index has heard.
+		await event(db, 'did:plc:private', 'e', at(1));
+		await cacheProfile(db, 'did:plc:private', {
+			name: 'Knitters',
+			description: null,
+			handle: null
+		});
+		await run(
+			db,
+			"INSERT INTO identities (did, handle, pds, resolved_at) VALUES ('did:plc:private', 'knit.example', 'https://a.example', 1)"
+		);
+		expect((await upcomingGroups(db, NOW)).groups).toEqual([]);
+		expect(await groupServers(db, NOW)).toEqual([]);
+	});
+
+	it(`counts accounts not resolved yet as one server, ${UPCOMING_PER_SERVER} of them a page`, async () => {
+		const db = await setup();
+		const unresolved = await groupsAt(db, '', 'u', 20, 1);
+		const other = await groupsAt(db, 'https://a.example', 'a', 3, 100);
+		// groupsAt declares an account with no identity when its server is ''.
+		expect(
+			(await db.prepare('SELECT COUNT(*) AS n FROM identities').first<{ n: number }>())!.n
+		).toBe(3);
+		const pages = await allPages(db);
+		expect(pages).toEqual([[...unresolved.slice(0, 15), ...other], unresolved.slice(15)]);
+		// And they have no server row to send anyone to.
+		expect(await groupServers(db, NOW)).toEqual([
+			{ server: 'https://a.example', groups: 3, upcoming: 3 }
+		]);
+	});
+
+	it('shows each group once when a group’s next event starts between one page and the next', async () => {
+		const db = await setup();
+		const busy = await groupsAt(db, 'https://busy.example', 'b', 20, 1);
+		const other = await groupsAt(db, 'https://other.example', 'o', 20, 100);
+		const first = await upcomingGroups(db, NOW);
+		expect(first.groups.map((group) => group.did)).toEqual([
+			...busy.slice(0, 15),
+			...other.slice(0, 15)
+		]);
+		// The first two of the busy server's events have started by the time page 2 is read.
+		const second = await upcomingGroups(db, at(2.5), first.cursor);
+		expect(second.groups.map((group) => group.did)).toEqual([
+			...busy.slice(15),
+			...other.slice(15)
+		]);
+		expect(second.cursor).toBeNull();
+		const pages = [first, second].map((page) => page.groups.map((group) => group.did));
+		expect(onceEach(pages, [...busy, ...other])).toEqual({ repeated: [], missing: [] });
+	});
+
+	it('shows each group once when groups and events are added between one page and the next', async () => {
+		const db = await setup();
+		const busy = await groupsAt(db, 'https://busy.example', 'b', 20, 1);
+		const other = await groupsAt(db, 'https://other.example', 'o', 20, 100);
+		const first = await upcomingGroups(db, NOW);
+		// A group of the busy server's with an event sooner than all of them, and one later.
+		await declare(db, 'did:plc:b-sooner', { pds: 'https://busy.example' });
+		await event(db, 'did:plc:b-sooner', 'e', at(0.5));
+		await declare(db, 'did:plc:o-later', { pds: 'https://other.example' });
+		await event(db, 'did:plc:o-later', 'e', at(500));
+		// And a new event sooner than its next for a group page 1 showed.
+		await event(db, busy[3], 'sooner', at(0.25));
+		const pages = [first.groups.map((group) => group.did)];
+		let cursor = first.cursor;
+		while (cursor && pages.length < 5) {
+			const page = await upcomingGroups(db, NOW, cursor);
+			pages.push(page.groups.map((group) => group.did));
+			cursor = page.cursor;
+		}
+		expect(onceEach(pages, [...busy, ...other, 'did:plc:o-later'])).toEqual({
+			repeated: [],
+			missing: []
+		});
+		// One placed before where page 1 ended shows on none of the pages after it.
+		expect(pages.flat()).not.toContain('did:plc:b-sooner');
 	});
 
 	it('finds each next event in one step of an index, and reads only the declarations whole', async () => {
@@ -255,13 +387,81 @@ describe('the groups with an event coming', () => {
 		await groupServers(spy, NOW);
 		expect(plans).toHaveLength(2);
 		for (const plan of plans) {
-			expect(plan).toContain('SEARCH e USING INDEX groups_event_did_starts (did=? AND <expr>>?)');
+			// The soonest events by the index alone, then each of those by its key.
+			expect(plan).toContain('SEARCH c USING INDEX groups_event_did_starts (did=? AND <expr>>?)');
+			expect(plan).toContain('SEARCH e USING INDEX sqlite_autoindex_records_event_1 (uri=?)');
 			// Once each: the next event is looked up once per group.
 			expect(plan.filter((step) => step.startsWith('SCAN d'))).toEqual(['SCAN d']);
-			expect(plan.filter((step) => /^SEARCH e USING INDEX groups_/.test(step))).toHaveLength(1);
+			expect(plan.filter((step) => /^SEARCH [ce] USING INDEX groups_/.test(step))).toHaveLength(1);
 			// Events, identities, moderation and profiles only by key.
 			expect(plan.filter((step) => /^SCAN (e|i|mh|p)\b/.test(step))).toEqual([]);
 		}
+	});
+});
+
+describe("this site's own group host", () => {
+	const HOME = 'https://groups.example';
+
+	it('counts and places only the accounts it holds, of those that name it', async () => {
+		const db = await setup();
+		const real = await groupsAt(db, HOME, 'r', 3, 50);
+		// Accounts whose DID documents name the host, each with an event sooner than any real group.
+		const claims = await groupsAt(db, HOME, 'x', 30, 1);
+		const elsewhere = await groupsAt(db, 'https://other.example', 'o', 2, 60);
+		const home = { origin: HOME, held: real };
+
+		const page = await upcomingGroups(db, NOW, null, home);
+		expect(page.groups.map((group) => group.did)).toEqual([...real, ...elsewhere]);
+		expect(page.cursor).toBeNull();
+		expect(await groupServers(db, NOW, undefined, home)).toEqual([
+			{ server: HOME, groups: 3, upcoming: 3 },
+			{ server: 'https://other.example', groups: 2, upcoming: 2 }
+		]);
+		// Without asking the host, they would have taken its places and its row.
+		const unasked = await upcomingGroups(db, NOW);
+		expect(unasked.groups.slice(0, UPCOMING_PER_SERVER)).toEqual(
+			claims.slice(0, UPCOMING_PER_SERVER).map((did) => expect.objectContaining({ did }))
+		);
+	});
+
+	it('shows none of the groups that name it while it has not said which it holds', async () => {
+		const db = await setup();
+		await groupsAt(db, HOME, 'r', 3, 1);
+		const elsewhere = await groupsAt(db, 'https://other.example', 'o', 2, 60);
+		const home = { origin: HOME, held: [] };
+		expect((await upcomingGroups(db, NOW, null, home)).groups.map((group) => group.did)).toEqual(
+			elsewhere
+		);
+		expect(await groupServers(db, NOW, undefined, home)).toEqual([
+			{ server: 'https://other.example', groups: 2, upcoming: 2 }
+		]);
+	});
+});
+
+describe("before the scheduled job builds the groups' index", () => {
+	it('is not built by a page: the table a page makes comes alone', async () => {
+		const db = await setup({ index: false });
+		expect(await indexes(db)).toEqual([]);
+		await ensureGroupEventIndex(db);
+		expect(await indexes(db)).toEqual(['groups_event_did_starts']);
+	});
+
+	it('answers the list and the counts the same without it, by the events’ DID', async () => {
+		const fill = async (db: Database) => {
+			await groupsAt(db, 'https://busy.example', 'b', 20, 1);
+			await groupsAt(db, 'https://other.example', 'o', 3, 100);
+			await declare(db, 'did:plc:past');
+			await event(db, 'did:plc:past', 'gone', at(-1));
+		};
+		const without = await setup({ index: false });
+		const withIt = await setup();
+		await fill(without);
+		await fill(withIt);
+		expect(await allPages(without)).toEqual(await allPages(withIt));
+		expect(await groupServers(without, NOW)).toEqual(await groupServers(withIt, NOW));
+		const { spy, plans } = planned(without);
+		await upcomingGroups(spy, NOW);
+		expect(plans[0]).toContain('SEARCH c USING INDEX idx_event_did (did=?)');
 	});
 });
 
@@ -436,6 +636,21 @@ describe('what a list shows of a group', () => {
 		});
 		await cacheProfile(db, 'did:plc:g', null);
 		expect(await cachedProfiles(db, ['did:plc:g'])).toEqual(new Map());
+	});
+
+	it('adds no column to a table that has it', async () => {
+		const db = createSqliteDatabase(':memory:');
+		await new Contrail(servedConfig(true)).init(db);
+		const sent: string[] = [];
+		await ensureGroupSchema({
+			...db,
+			prepare: (sql: string) => {
+				sent.push(sql);
+				return db.prepare(sql);
+			}
+		});
+		expect(sent.some((sql) => /ALTER TABLE/i.test(sql))).toBe(false);
+		expect(sent.some((sql) => /CREATE INDEX/i.test(sql))).toBe(false);
 	});
 
 	it("keeps a cached profile's website, and adds its column to a table made before it", async () => {

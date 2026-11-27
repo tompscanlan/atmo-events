@@ -144,25 +144,29 @@
 
 <!-- For an admin who linked the group: its members, those asking to join and their roles are
      kept at the group host, and managed there. In a build without the settings page, for anyone who
-     linked it: so are its name, description and who may join, and the tools link there. -->
+     linked it: so are its name, description and who may join, and the tools link there. The link is
+     to the group host's own site, the origin of the group's PDS, named by its host name: never the
+     group's own address, which may be any website. -->
+{#snippet hostLink(site: { url: string; name: string })}
+	<!-- eslint-disable svelte/no-navigation-without-resolve -->
+	<a
+		href={site.url}
+		target="_blank"
+		rel="noopener noreferrer"
+		class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 font-medium transition-colors"
+		>{site.name} <span aria-hidden="true">&nearr;</span></a
+	><!-- eslint-enable svelte/no-navigation-without-resolve -->
+{/snippet}
 {#snippet managedAtHost()}
 	{#if group.linked && !SETTINGS_IN_THIS_BUILD}
 		<p class="text-base-600 dark:text-base-400 text-sm">
-			The group's name, description and who may join are changed at the group host, as are its
-			members, requests to join and roles.
+			The group's name, description and who may join are changed at its group host{#if group.hostSite},
+				{@render hostLink(group.hostSite)}{/if}, as are its members, requests to join and roles.
 		</p>
 	{:else if group.linked && (group.linked.can.settings || group.linked.can.admit)}
 		<p class="text-base-600 dark:text-base-400 text-sm">
-			Members, requests to join and roles are managed at the group host{#if group.home}:
-				<!-- The group's own address, from its handle, so there is nothing to resolve. -->
-				<!-- eslint-disable svelte/no-navigation-without-resolve -->
-				<a
-					href={group.home}
-					target="_blank"
-					rel="noopener noreferrer"
-					class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 font-medium transition-colors"
-					>the group's page there <span aria-hidden="true">&nearr;</span></a
-				><!-- eslint-enable svelte/no-navigation-without-resolve -->{/if}.
+			Members, requests to join and roles are managed at its group host{#if group.hostSite},
+				{@render hostLink(group.hostSite)}{/if}.
 		</p>
 	{/if}
 {/snippet}
@@ -294,12 +298,15 @@
 								variant="secondary">Settings</Button
 							>
 						{/if}
-					{:else if group.home}
-						<!-- The group's own page at its host, from its handle, in a new tab that can't reach
-						     back. -->
+					{:else if group.hostSite}
+						<!-- The group host's own site, in a new tab that can't reach back. -->
 						<!-- eslint-disable svelte/no-navigation-without-resolve -->
-						<Button href={group.home} target="_blank" rel="noopener noreferrer" variant="secondary"
-							>Settings at the group host <span aria-hidden="true">&nearr;</span></Button
+						<Button
+							href={group.hostSite.url}
+							target="_blank"
+							rel="noopener noreferrer"
+							variant="secondary"
+							>Group host: {group.hostSite.name} <span aria-hidden="true">&nearr;</span></Button
 						><!-- eslint-enable svelte/no-navigation-without-resolve -->
 					{/if}
 					<Button variant="ghost" disabled={busy} onclick={unlink}>Unlink</Button>
@@ -469,15 +476,33 @@
 		{/if}
 
 		{#if data.membersOnly}
+			{@const membersAlone = data.membersOnly.privacy === 'private'}
 			<!-- Members-only events live in the group's calendar space, not the public index, so they
-			     are a list of their own, each marked and leading to its own page. -->
+			     are a list of their own, each leading to its own page. Each is marked members-only only
+			     while its calendar is still for members alone, as read with them: a calendar made
+			     public since shows its events unmarked, and says so. -->
 			<section class="mb-10" aria-labelledby="members-only-heading">
 				<h2
 					id="members-only-heading"
 					class="text-base-900 dark:text-base-50 mb-4 flex items-center gap-2 text-lg font-semibold"
 				>
-					<Icon img={LockKeyhole} size={16} />Members-only events
+					{#if membersAlone}
+						<Icon img={LockKeyhole} size={16} />Members-only events
+					{:else}
+						Events in the group's calendar
+					{/if}
 				</h2>
+				{#if !data.membersOnly.unread && data.membersOnly.privacy === 'public'}
+					<p class="text-base-600 dark:text-base-400 mb-4 text-sm" role="status">
+						This group's calendar can now be read by more than its members, so these events are no
+						longer members-only.
+					</p>
+				{:else if !data.membersOnly.unread && data.membersOnly.privacy === 'unknown'}
+					<p class="text-base-600 dark:text-base-400 mb-4 text-sm" role="status">
+						Whether this group's calendar is still for its members alone couldn't be checked just
+						now.
+					</p>
+				{/if}
 				{#if data.membersOnly.stoppedAt}
 					<p class="text-base-600 dark:text-base-400 mb-4 text-sm" role="status">
 						atmo stopped reading this group's calendar at {data.membersOnly.stoppedAt} events, so some
@@ -498,10 +523,12 @@
 							<li data-testid="members-only-event">
 								<EventCard {event} {href} />
 								<p class="text-base-600 dark:text-base-400 mt-1 flex gap-3 text-xs">
-									<span>
-										<Icon img={LockKeyhole} size={12} class="mr-1 inline align-[-2px]" />Members
-										only
-									</span>
+									{#if membersAlone}
+										<span>
+											<Icon img={LockKeyhole} size={12} class="mr-1 inline align-[-2px]" />Members
+											only
+										</span>
+									{/if}
 									{#if postsMembersOnly}
 										<a
 											class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 font-medium transition-colors"

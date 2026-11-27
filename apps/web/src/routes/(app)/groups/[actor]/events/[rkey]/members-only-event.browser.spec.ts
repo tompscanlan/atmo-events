@@ -64,6 +64,7 @@ function memberView(more: Record<string, unknown> = {}) {
 		loggedIn: true,
 		canRsvp: true,
 		canEdit: false,
+		calendarPrivacy: 'private',
 		...more
 	};
 }
@@ -84,6 +85,29 @@ describe("a members-only event's page", () => {
 		expect(document.querySelector('meta[name="robots"]')?.getAttribute('content')).toBe('noindex');
 		expect(page.getByRole('link', { name: 'Edit event' }).elements()).toHaveLength(0);
 	});
+
+	it.each([
+		[
+			'public',
+			'This event’s calendar can now be read by more than the members of Night Knitters, so it is no longer private.'
+		],
+		[
+			'unknown',
+			'Whether this event is still for the members of Night Knitters alone couldn’t be checked just now.'
+		]
+	])(
+		'says nothing of it being private, nor shows the lock, when its calendar is %s',
+		async (calendarPrivacy, words) => {
+			render(EventPage, { data: memberView({ calendarPrivacy }) as never });
+			const note = page.getByTestId('private-note');
+			await expect.element(note).toBeVisible();
+			expect(note.element().textContent?.replace(/\s+/g, ' ').trim()).toBe(
+				words.replaceAll('’', "'")
+			);
+			expect(note.element().querySelector('svg')).toBeNull();
+			expect(shown()).not.toContain('Private event');
+		}
+	);
 
 	it("saves a member's RSVP through the server, with the event as they saw it", async () => {
 		render(EventPage, { data: memberView() as never });

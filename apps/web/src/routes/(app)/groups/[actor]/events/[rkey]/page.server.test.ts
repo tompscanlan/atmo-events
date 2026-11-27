@@ -9,7 +9,8 @@ const mocks = vi.hoisted(() => ({
 	requireGroupWriter: vi.fn(),
 	callerSession: vi.fn(),
 	readPage: vi.fn(),
-	readAsGroup: vi.fn()
+	readAsGroup: vi.fn(),
+	privacyAsGroup: vi.fn()
 }));
 vi.mock('#lib/groups/server/context.js', () => ({
 	groupView: mocks.groupView,
@@ -18,7 +19,8 @@ vi.mock('#lib/groups/server/context.js', () => ({
 vi.mock('#lib/private-events/server/caller.js', () => ({ callerSession: mocks.callerSession }));
 vi.mock('#lib/groups/server/member-rsvp.js', () => ({ readMembersOnlyEventPage: mocks.readPage }));
 vi.mock('#lib/groups/server/group-events.js', () => ({
-	readMembersOnlyEventAsGroup: mocks.readAsGroup
+	readMembersOnlyEventAsGroup: mocks.readAsGroup,
+	calendarPrivacyAsGroup: mocks.privacyAsGroup
 }));
 
 import { load } from './+page.server';
@@ -60,12 +62,17 @@ const group = (view: Record<string, unknown> = {}) =>
 function theCalendarHolds(readers: string[]) {
 	mocks.readPage.mockImplementation(async (caller: { did: string }, _g: string, rkey: string) =>
 		readers.includes(caller.did) && rkey === RKEY
-			? { event: { ...EVENT, rkey, did: GROUP, uri: 'u', cid: 'c' }, viewerStatus: 'going' }
+			? {
+					event: { ...EVENT, rkey, did: GROUP, uri: 'u', cid: 'c' },
+					viewerStatus: 'going',
+					privacy: 'private'
+				}
 			: null
 	);
 	mocks.readAsGroup.mockImplementation(async (_w: unknown, rkey: string) =>
 		rkey === RKEY ? { uri: 'u', cid: 'c', rkey, value: EVENT } : null
 	);
+	mocks.privacyAsGroup.mockResolvedValue('private');
 }
 
 const answer = (viewer: Viewer, rkey?: string) =>
@@ -87,6 +94,7 @@ describe("a members-only event's page", () => {
 			pageTitle: 'Supper',
 			group: { name: 'Knitters' },
 			viewerRsvpStatus: 'going',
+			calendarPrivacy: 'private',
 			attendees: { going: [], interested: [], goingCount: 0, interestedCount: 0 },
 			canRsvp: true,
 			canEdit: false
@@ -100,8 +108,14 @@ describe("a members-only event's page", () => {
 		mocks.requireGroupWriter.mockResolvedValue({ did: GROUP, handle: vi.fn() });
 		expect(await answer({ did: BOB, scope: 'atproto' })).toMatchObject({
 			view: 'event',
+			calendarPrivacy: 'private',
 			canRsvp: false,
 			canEdit: true
+		});
+		// Its calendar, made public since, is said to be so.
+		mocks.privacyAsGroup.mockResolvedValue('public');
+		expect(await answer({ did: BOB, scope: 'atproto' })).toMatchObject({
+			calendarPrivacy: 'public'
 		});
 	});
 

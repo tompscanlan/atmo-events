@@ -98,6 +98,31 @@ describe('turning members-only events on', () => {
 		expect(policyChanges()).toEqual([]);
 	});
 
+	const refusedAsPublic = async (on: Promise<unknown>) => {
+		await expect(on).rejects.toMatchObject({ reason: 'calendar-space-public' });
+		await expect(on).rejects.toThrow(
+			"This group's calendar can be read by more than its members, so atmo won't use it for members-only events. Nothing was turned on."
+		);
+		expect(await chosen()).toBeNull();
+	};
+
+	it('refuses, choosing nothing and making nothing, when its `self` calendar is one anyone may read', async () => {
+		calendar.state.policy = { ...READY_POLICY, publicRead: true };
+		await refusedAsPublic(turnOnMembersOnly(writer(), [], calendarHosts));
+		expect(made()).toEqual([]);
+	});
+
+	it('refuses, choosing nothing, a calendar it made that anyone may read after all', async () => {
+		const handle: typeof calendar.groupHandle = async (pathname, init) => {
+			const res = await calendar.groupHandle(pathname, init);
+			if (pathname.includes('createSpace')) {
+				calendar.state.policy = { ...READY_POLICY, publicRead: true };
+			}
+			return res;
+		};
+		await refusedAsPublic(turnOnMembersOnly({ did: GROUP, handle }, [], calendarHosts));
+	});
+
 	it('throws any other refusal', async () => {
 		calendar.state.refuse.set(
 			'com.atproto.space.createSpace',
@@ -232,9 +257,56 @@ describe('turning members-only events on where the group has a calendar already'
 		expect((await turnOnMembersOnly(writer(), [], calendarHosts)).space).toBe(
 			calendarAt('3lolder')
 		);
+		await kv.delete(`group:calendar:${GROUP}`);
 		calendar.anotherAppsCalendar('self', WIKI_POLICY, '2026-11-01T00:00:00.000Z');
 		expect((await turnOnMembersOnly(writer(), [], calendarHosts)).space).toBe(CALENDAR);
 		expect(made()).toEqual([]);
+	});
+
+	it('keeps the calendar already chosen while it is ready, though a `self` one appears later', async () => {
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		await turnOnMembersOnly(writer(), [], calendarHosts);
+		calendar.anotherAppsCalendar('self', READY_POLICY, '2026-11-01T00:00:00.000Z');
+		calendar.state.sent.length = 0;
+		expect(await turnOnMembersOnly(writer(), [], calendarHosts)).toEqual({
+			state: 'ready',
+			posters: ['admin'],
+			space: WIKI
+		});
+		expect(await chosen()).toBe(WIKI);
+		// Only the chosen one was looked at: not the index, and not `self`.
+		expect(calendar.state.sent).toEqual([['group', 'com.atproto.space.getSpace', { space: WIKI }]]);
+	});
+
+	it.each([
+		['gone', () => calendar.state.spaces.delete(WIKI)],
+		[
+			'no longer one atmo may post to',
+			() =>
+				calendar.state.spaces.set(WIKI, {
+					policy: { ...WIKI_POLICY, grants: [{ role: 'member', read: true }] },
+					events: new Map(),
+					others: new Map()
+				})
+		]
+	])('chooses again once the chosen calendar is %s', async (_, change) => {
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		await turnOnMembersOnly(writer(), [], calendarHosts);
+		calendar.anotherAppsCalendar('self', READY_POLICY, '2026-11-01T00:00:00.000Z');
+		change();
+		expect((await turnOnMembersOnly(writer(), [], calendarHosts)).space).toBe(CALENDAR);
+		expect(await chosen()).toBe(CALENDAR);
+	});
+
+	it('changes nothing when the chosen calendar could not be checked', async () => {
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		await turnOnMembersOnly(writer(), [], calendarHosts);
+		calendar.anotherAppsCalendar('self', READY_POLICY, '2026-11-01T00:00:00.000Z');
+		calendar.state.refuse.set('com.atproto.space.getSpace', new Response('', { status: 502 }));
+		await expect(turnOnMembersOnly(writer(), [], calendarHosts)).rejects.toMatchObject({
+			reason: 'calendar-space-unchecked'
+		});
+		expect(await chosen()).toBe(WIKI);
 	});
 
 	it('takes a calendar some role may post to over an older one where none may', async () => {
@@ -258,11 +330,42 @@ describe('turning members-only events on where the group has a calendar already'
 		expect(made()).toEqual([]);
 	});
 
+	/** A link approved before this site asked to read the index: the host grants no such scope. */
+	const approvedBefore = () => {
+		calendar.state.groupScope = calendar.state.groupScope
+			.split(' ')
+			.filter((scope) => !scope.startsWith('space:org.atgrp.members?'))
+			.join(' ');
+	};
+
+	it("is refused the index by the host for a link approved before it asked to read it, so the person's own sign-in reads it", async () => {
+		approvedBefore();
+		calendar.state.indexReaders.add('did:plc:admin');
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		const person = { handle: calendar.personHandle('did:plc:admin') };
+		expect((await turnOnMembersOnly(writer(), [person], calendarHosts)).space).toBe(WIKI);
+		expect(calendar.state.sent.slice(0, 2)).toEqual([
+			['group', 'com.atproto.space.getDelegationToken', { space: MEMBERS }],
+			['did:plc:admin', 'com.atproto.space.getDelegationToken', { space: MEMBERS }]
+		]);
+		expect(made()).toEqual([]);
+	});
+
+	it('says plainly that the link needs approving once more when nothing else may read the index', async () => {
+		approvedBefore();
+		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
+		const on = turnOnMembersOnly(writer(), [], calendarHosts);
+		await expect(on).rejects.toMatchObject({ reason: 'calendar-index-not-granted' });
+		await expect(on).rejects.toThrow('Approve your link once more, then turn them on again.');
+		expect(made()).toEqual([]);
+		expect(await chosen()).toBeNull();
+	});
+
 	it('makes nothing when no one may read the index, or a calendar could not be checked', async () => {
 		calendar.state.indexReaders.clear();
-		await expect(turnOnMembersOnly(writer(), [], calendarHosts)).rejects.toMatchObject({
-			reason: 'calendar-index-unread'
-		});
+		const unread = turnOnMembersOnly(writer(), [], calendarHosts);
+		await expect(unread).rejects.toMatchObject({ reason: 'calendar-index-unread' });
+		await expect(unread).rejects.toThrow("The group host didn't let atmo see which calendars");
 		calendar.state.indexReaders.add('group');
 		calendar.anotherAppsCalendar('3lwikicalendar', WIKI_POLICY);
 		calendar.state.refuse.set('com.atproto.space.getSpace', new Response('', { status: 502 }));

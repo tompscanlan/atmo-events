@@ -8,6 +8,7 @@ import { XrpcError } from './server/xrpc';
 const mocks = vi.hoisted(() => ({
 	getRequestEvent: vi.fn(),
 	requireGroupWriter: vi.fn(),
+	requireLinkedAbilities: vi.fn(),
 	requireStoredLink: vi.fn(),
 	readGroupMeta: vi.fn(),
 	listGroup: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock('$app/server', () => ({
 }));
 vi.mock('./server/context', () => ({
 	requireGroupWriter: mocks.requireGroupWriter,
+	requireLinkedAbilities: mocks.requireLinkedAbilities,
 	requireStoredLink: mocks.requireStoredLink
 }));
 vi.mock('./server/group', () => ({
@@ -383,10 +385,34 @@ describe('finishing a group made here', () => {
 });
 
 describe('turning members-only events on', () => {
+	beforeEach(() => {
+		mocks.requireLinkedAbilities.mockResolvedValue({
+			writer: { did: GROUP, handle: mocks.handle },
+			can: { turnOnMembersOnly: true, membersOnly: false }
+		});
+	});
+
 	it("does it as the group, on the caller's own link", async () => {
 		mocks.turnOnMembersOnly.mockResolvedValue({ state: 'ready', posters: [], space: 's' });
 		expect(await turnOnMembersOnlyEvents({ groupDid: GROUP })).toEqual({ ok: true });
+		expect(mocks.requireLinkedAbilities).toHaveBeenCalledWith(GROUP, ALICE);
 		expect(mocks.turnOnMembersOnly).toHaveBeenCalledWith({ did: GROUP, handle: mocks.handle }, []);
+	});
+
+	it.each([
+		['may only read', { turnOnMembersOnly: false, membersOnly: false }],
+		['may post there, but not make the calendar', { turnOnMembersOnly: false, membersOnly: true }]
+	])('is refused, with nothing read or chosen, for a link that %s', async (_, can) => {
+		mocks.requireLinkedAbilities.mockResolvedValue({
+			writer: { did: GROUP, handle: mocks.handle },
+			can
+		});
+		await expect(turnOnMembersOnlyEvents({ groupDid: GROUP })).rejects.toMatchObject({
+			status: 403,
+			body: { message: "Your role in this group doesn't let you turn on members-only events." }
+		});
+		expect(mocks.turnOnMembersOnly).not.toHaveBeenCalled();
+		expect(mocks.handle).not.toHaveBeenCalled();
 	});
 
 	it('says plainly why when the group has a calendar atmo may not post to, and makes none', async () => {

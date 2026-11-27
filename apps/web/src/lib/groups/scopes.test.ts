@@ -65,7 +65,8 @@ describe('what a group session may do, by the scope its host granted', () => {
 			assign: true,
 			remove: true,
 			turnOnMembersOnly: true,
-			membersOnly: true
+			membersOnly: true,
+			readSpaceIndex: true
 		});
 	});
 
@@ -79,7 +80,8 @@ describe('what a group session may do, by the scope its host granted', () => {
 			assign: false,
 			remove: false,
 			turnOnMembersOnly: true,
-			membersOnly: true
+			membersOnly: true,
+			readSpaceIndex: true
 		});
 	});
 
@@ -105,6 +107,28 @@ describe('what a group session may do, by the scope its host granted', () => {
 			assign: false,
 			remove: false,
 			turnOnMembersOnly: false,
+			membersOnly: false,
+			readSpaceIndex: false
+		});
+	});
+
+	it("recognises the calendar's grants when the host names them to the calendar's own key", () => {
+		const keyed = MEMBERS_ONLY.map((token) =>
+			token.startsWith('space:community.lexicon.calendar.collection?')
+				? token.replace('authority=', 'skey=3lwikicalendar&authority=')
+				: token
+		);
+		expect(keyed.join(' ')).toContain('skey=3lwikicalendar');
+		expect(groupAbilities(['atproto', META_READ, ...keyed].join(' '), GROUP)).toMatchObject({
+			turnOnMembersOnly: true,
+			membersOnly: true
+		});
+		// Another group's calendar, at any key, is still none of this group's.
+		const theirs = keyed.map((token) =>
+			token.replace(`authority=${GROUP}`, 'authority=did:plc:other')
+		);
+		expect(groupAbilities(['atproto', ...theirs].join(' '), GROUP)).toMatchObject({
+			turnOnMembersOnly: false,
 			membersOnly: false
 		});
 	});
@@ -123,7 +147,8 @@ describe('what a group session may do, by the scope its host granted', () => {
 			assign: false,
 			remove: false,
 			turnOnMembersOnly: false,
-			membersOnly: false
+			membersOnly: false,
+			readSpaceIndex: false
 		});
 	});
 
@@ -137,7 +162,8 @@ describe('what a group session may do, by the scope its host granted', () => {
 			assign: true,
 			remove: true,
 			turnOnMembersOnly: true,
-			membersOnly: true
+			membersOnly: true,
+			readSpaceIndex: true
 		});
 		expect(groupAbilities(scope, GROUP, false, false)).toMatchObject({
 			list: true,
@@ -184,7 +210,8 @@ describe('what a group session may do, by the scope its host granted', () => {
 			assign: false,
 			remove: false,
 			turnOnMembersOnly: false,
-			membersOnly: false
+			membersOnly: false,
+			readSpaceIndex: false
 		});
 	});
 
