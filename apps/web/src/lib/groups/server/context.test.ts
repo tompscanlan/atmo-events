@@ -78,6 +78,7 @@ import {
 	GROUP_NOT_FOUND,
 	GROUP_UNCHECKED,
 	groupHome,
+	groupHostSite,
 	groupView,
 	LINKED_READ_LIMIT_MS,
 	requireGroupWriter,
@@ -179,7 +180,9 @@ describe('groupView for a visitor', () => {
 		);
 		expect(await groupView(GROUP, null)).toMatchObject({
 			website: 'https://yarn.example/',
-			home: 'https://knit.example/'
+			home: 'https://knit.example/',
+			// Its group host's own site, from the PDS its DID document names, not its address.
+			hostSite: { url: 'https://host.example/', name: 'host.example' }
 		});
 		mocks.readCachedProfiles.mockResolvedValue(new Map());
 		expect(await groupView(GROUP, null)).toMatchObject({ website: null });
@@ -204,6 +207,25 @@ describe('groupHome', () => {
 			'knit example'
 		]) {
 			expect(groupHome(handle), handle).toBeNull();
+		}
+	});
+});
+
+describe('groupHostSite', () => {
+	it("is the origin of the group's PDS, named by its host, whatever path the PDS has", () => {
+		expect(groupHostSite('https://groups.example')).toEqual({
+			url: 'https://groups.example/',
+			name: 'groups.example'
+		});
+		expect(groupHostSite('https://groups.example:8443/pds/')).toEqual({
+			url: 'https://groups.example:8443/',
+			name: 'groups.example:8443'
+		});
+	});
+
+	it('is none for a PDS address that is not a web address', () => {
+		for (const pds of ['', null, 'javascript:alert(1)', 'ftp://groups.example', 'groups.example']) {
+			expect(groupHostSite(pds), String(pds)).toBeNull();
 		}
 	});
 });

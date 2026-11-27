@@ -144,25 +144,29 @@
 
 <!-- For an admin who linked the group: its members, those asking to join and their roles are
      kept at the group host, and managed there. In a build without the settings page, for anyone who
-     linked it: so are its name, description and who may join, and the tools link there. -->
+     linked it: so are its name, description and who may join, and the tools link there. The link is
+     to the group host's own site, the origin of the group's PDS, named by its host name: never the
+     group's own address, which may be any website. -->
+{#snippet hostLink(site: { url: string; name: string })}
+	<!-- eslint-disable svelte/no-navigation-without-resolve -->
+	<a
+		href={site.url}
+		target="_blank"
+		rel="noopener noreferrer"
+		class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 font-medium transition-colors"
+		>{site.name} <span aria-hidden="true">&nearr;</span></a
+	><!-- eslint-enable svelte/no-navigation-without-resolve -->
+{/snippet}
 {#snippet managedAtHost()}
 	{#if group.linked && !SETTINGS_IN_THIS_BUILD}
 		<p class="text-base-600 dark:text-base-400 text-sm">
-			The group's name, description and who may join are changed at the group host, as are its
-			members, requests to join and roles.
+			The group's name, description and who may join are changed at its group host{#if group.hostSite},
+				{@render hostLink(group.hostSite)}{/if}, as are its members, requests to join and roles.
 		</p>
 	{:else if group.linked && (group.linked.can.settings || group.linked.can.admit)}
 		<p class="text-base-600 dark:text-base-400 text-sm">
-			Members, requests to join and roles are managed at the group host{#if group.home}:
-				<!-- The group's own address, from its handle, so there is nothing to resolve. -->
-				<!-- eslint-disable svelte/no-navigation-without-resolve -->
-				<a
-					href={group.home}
-					target="_blank"
-					rel="noopener noreferrer"
-					class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 font-medium transition-colors"
-					>the group's page there <span aria-hidden="true">&nearr;</span></a
-				><!-- eslint-enable svelte/no-navigation-without-resolve -->{/if}.
+			Members, requests to join and roles are managed at its group host{#if group.hostSite},
+				{@render hostLink(group.hostSite)}{/if}.
 		</p>
 	{/if}
 {/snippet}
@@ -294,12 +298,15 @@
 								variant="secondary">Settings</Button
 							>
 						{/if}
-					{:else if group.home}
-						<!-- The group's own page at its host, from its handle, in a new tab that can't reach
-						     back. -->
+					{:else if group.hostSite}
+						<!-- The group host's own site, in a new tab that can't reach back. -->
 						<!-- eslint-disable svelte/no-navigation-without-resolve -->
-						<Button href={group.home} target="_blank" rel="noopener noreferrer" variant="secondary"
-							>Settings at the group host <span aria-hidden="true">&nearr;</span></Button
+						<Button
+							href={group.hostSite.url}
+							target="_blank"
+							rel="noopener noreferrer"
+							variant="secondary"
+							>Group host: {group.hostSite.name} <span aria-hidden="true">&nearr;</span></Button
 						><!-- eslint-enable svelte/no-navigation-without-resolve -->
 					{/if}
 					<Button variant="ghost" disabled={busy} onclick={unlink}>Unlink</Button>

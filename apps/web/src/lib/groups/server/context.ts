@@ -65,8 +65,10 @@ export interface GroupView {
 	description: string | null;
 	/** Its website, as its about record gives it: only an http(s) URL. */
 	website: string | null;
-	/** The group's own page at its group host: see `groupHome`. */
+	/** The group's own address, from its verified handle: see `groupHome`. */
 	home: string | null;
+	/** Its group host's own site: the origin of the PDS its DID document names. */
+	hostSite: GroupHostSite | null;
 	/** Whether this site may link it: the group is at its group host. */
 	atHost: boolean;
 	/** Present when the caller linked the group and the session still works. */
@@ -346,6 +348,7 @@ export async function groupView(
 		description: profile?.description ?? null,
 		website: profile?.website ?? null,
 		home: groupHome(group.handle),
+		hostSite: groupHostSite(group.pds),
 		atHost: groupSignInAvailable() && atHost,
 		linked,
 		relink,
@@ -358,14 +361,38 @@ export async function groupView(
 	};
 }
 
-/** The group's own page, at the address of its handle, which was checked both ways: a group's
- *  handle is a name its host serves, and a host that has pages for its groups shows a group's at
- *  its address. That needs no path of any one host's own. Null without a handle. */
+/** The group's own address: its handle, which was checked both ways, as a web address. Whatever
+ *  is served there is the group's to say: a group host may send a visitor at a group's address on
+ *  to the group's page there (bluesky-social/group-host does), and a handle on a domain of the
+ *  group's own may serve anything. So it is only ever shown as the group's own address, never as
+ *  its group host. Null without a handle. */
 export function groupHome(handle: string | null): string | null {
 	if (!handle) return null;
 	try {
 		const url = new URL(`https://${handle}/`);
 		return url.hostname === handle.toLowerCase() && url.pathname === '/' ? url.href : null;
+	} catch {
+		return null;
+	}
+}
+
+export interface GroupHostSite {
+	/** The origin, as a link. */
+	url: string;
+	/** Its host name, as the link is labelled. */
+	name: string;
+}
+
+/** The group host's own site, where its groups' members, requests to join and roles are managed:
+ *  the origin of the PDS the group's DID document names, which for a group at this site's group
+ *  host is the host this site was set up with. Only its origin, since no path is the same at every
+ *  group host. Null for one that is not an https (or, for a local host, http) address. */
+export function groupHostSite(pds: string | null | undefined): GroupHostSite | null {
+	if (!pds) return null;
+	try {
+		const url = new URL(pds);
+		if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+		return { url: `${url.origin}/`, name: url.host };
 	} catch {
 		return null;
 	}
