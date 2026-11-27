@@ -10,7 +10,12 @@ import { holdsGuestGrant } from '#lib/private-events/scopes.js';
 import { didSpaceHosts, type SpaceHosts } from '#lib/spaces/server/space-credential.js';
 import { credentialSpaceReader } from '#lib/spaces/server/space-read.js';
 import { membersOnlyEventUri } from '../calendar';
-import { readMembersOnlyEvent, readOwnRsvp } from './calendar-read';
+import {
+	readCalendarPrivacy,
+	readMembersOnlyEvent,
+	readOwnRsvp,
+	type CalendarPrivacy
+} from './calendar-read';
 import { chosenCalendar } from './calendar-choice';
 import { errorKind, isRecordNotFound, xrpc } from './xrpc';
 
@@ -34,6 +39,8 @@ export class RsvpRefused extends Error {
 export interface MembersOnlyEventPage {
 	event: FlatEventRecord;
 	viewerStatus: RsvpStatus | null;
+	/** Whether its calendar is still for members alone, as read now. */
+	privacy: CalendarPrivacy;
 }
 
 /** Null when the member may not see it, or it is not there, alike. Only their own RSVP is read: each
@@ -48,7 +55,11 @@ export async function readMembersOnlyEventPage(
 	const space = await chosenCalendar(groupDid);
 	const event = await readMembersOnlyEvent(reader, groupDid, rkey, space);
 	if (!event) return null;
-	return { event, viewerStatus: await readOwnRsvp(reader, groupDid, caller.did, rkey, space) };
+	const [viewerStatus, privacy] = await Promise.all([
+		readOwnRsvp(reader, groupDid, caller.did, rkey, space),
+		readCalendarPrivacy(reader, groupDid, space)
+	]);
+	return { event, viewerStatus, privacy };
 }
 
 function ownRsvp(caller: CallerSession, space: string, rkey: string) {

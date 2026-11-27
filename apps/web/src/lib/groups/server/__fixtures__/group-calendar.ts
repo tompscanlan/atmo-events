@@ -17,6 +17,7 @@ export const MEMBERS = `at:space/${GROUP}/org.atgrp.members/self`;
 const EVENT = 'community.lexicon.calendar.event';
 const RSVP = 'community.lexicon.calendar.rsvp';
 const INDEX = 'org.atgrp.space';
+const POLICY = 'com.atproto.space.policy';
 const HOST = 'https://host.example';
 
 /** A calendar space as the host keeps it: its policy, the group's events there, and the group's
@@ -217,12 +218,16 @@ export function fakeCalendar() {
 		if (url.pathname.endsWith('getRecord')) {
 			const repo = q.get('repo')!;
 			const rkey = q.get('rkey')!;
+			const policy = spaceAt(q.get('space'))?.policy;
 			const value =
 				repo === GROUP && q.get('collection') === EVENT
 					? spaceAt(q.get('space'))?.events.get(rkey)
 					: q.get('collection') === RSVP
 						? state.rsvps.get(`${repo}/${rkey}`)
-						: undefined;
+						: // The space's policy, as the host publishes it there as the group's.
+							repo === GROUP && q.get('collection') === POLICY && rkey === 'self' && policy
+							? { $type: POLICY, policy }
+							: undefined;
 			if (!value) return fail(400, 'RecordNotFound');
 			const uri = `${q.get('space')}/${repo}/${q.get('collection')}/${rkey}`;
 			const answered = await kem.recordAnswer(new Headers(init?.headers), { uri, cid: 'c', value });

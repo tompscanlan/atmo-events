@@ -33,6 +33,7 @@ import {
 	rememberCalendar,
 	rememberedCalendar
 } from './calendar-choice';
+import { readCalendarPrivacy, type CalendarPrivacy } from './calendar-read';
 import type { GroupWriter } from './context';
 import { membersSpace } from './roster';
 import { errorKind, isLinkBroken, isRecordNotFound, isRoleRefused, xrpc, XrpcError } from './xrpc';
@@ -68,6 +69,8 @@ const REFUSALS = {
 		"This group's calendar wasn't set up for atmo to post members-only events to, so the event was not saved.",
 	'calendar-space-not-granted':
 		'This group already has a calendar for its members, but its settings let no role post events to it from atmo, so atmo made no second one. An admin can allow it at the group host.',
+	'calendar-space-public':
+		"This group's calendar can be read by more than its members, so atmo won't use it for members-only events. Nothing was turned on.",
 	'calendar-index-unread':
 		"The group host didn't let atmo see which calendars this group already has, so atmo made none rather than risk a second one.",
 	'calendar-index-not-granted':
@@ -256,7 +259,8 @@ function candidates(groupDid: string, indexed: Map<string, string>): string[] {
  *  every later read and write. A calendar its members read whose policy lets no role post is not
  *  passed over for a second one: it is remembered, so the page says so, and this is refused. A
  *  public calendar, or one members cannot read, is no calendar for members-only events, and is
- *  left as it is. Never changes a policy. `holders` are tried in turn to read the index after the
+ *  left as it is; when the group's `self` calendar is public, so that none can be made, this is
+ *  refused. Never changes a policy. `holders` are tried in turn to read the index after the
  *  link: the person's own sign-in, which a member reads it with. A `self` space already there that
  *  members may not use is not a failure, so turning them on again finishes what stopped partway.
  *
@@ -292,6 +296,12 @@ export async function turnOnMembersOnly(
 		throw new GroupEventRefused('calendar-space-not-granted');
 	}
 	const own = calendarSpaceUri(writer.did);
+	// A `self` calendar anyone may read is one atmo would have to post into, since it cannot make
+	// another under that key: members-only events never go into a public space, so nothing is
+	// turned on, and nothing is remembered.
+	if (checked.some((found) => found.space === own && found.state === 'readable')) {
+		throw new GroupEventRefused('calendar-space-public');
+	}
 	try {
 		await xrpc(writer.handle, 'com.atproto.space.createSpace', {
 			body: { spaceType: CALENDAR_SPACE_TYPE, skey: SPACE_SKEY, policy: CALENDAR_POLICY }
@@ -300,8 +310,10 @@ export async function turnOnMembersOnly(
 		// The group host's name, as the reference PDS's; the spec names none.
 		if (!(e instanceof XrpcError && e.error === 'SpaceAlreadyExists')) throw e;
 	}
+	const made = await checkSpace(writer, own);
+	if (made.state === 'readable') throw new GroupEventRefused('calendar-space-public');
 	await rememberCalendar(writer.did, own);
-	return shown(await checkSpace(writer, own));
+	return shown(made);
 }
 
 const RESERVED_RKEY = 'self';
@@ -405,4 +417,14 @@ export async function readMembersOnlyEventAsGroup(
 		if (isSpaceAccessDenied(e)) return null;
 		throw e;
 	}
+}
+
+/** Whether the group's calendar is still for its members alone, read as the group, for a page that
+ *  shows one of its events as members-only. */
+export async function calendarPrivacyAsGroup(
+	writer: GroupWriter,
+	hosts: SpaceHosts = didSpaceHosts
+): Promise<CalendarPrivacy> {
+	const reader = credentialSpaceReader({ handle: writer.handle }, hosts);
+	return readCalendarPrivacy(reader, writer.did, await chosenCalendar(writer.did));
 }

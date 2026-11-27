@@ -469,15 +469,33 @@
 		{/if}
 
 		{#if data.membersOnly}
+			{@const membersAlone = data.membersOnly.privacy === 'private'}
 			<!-- Members-only events live in the group's calendar space, not the public index, so they
-			     are a list of their own, each marked and leading to its own page. -->
+			     are a list of their own, each leading to its own page. Each is marked members-only only
+			     while its calendar is still for members alone, as read with them: a calendar made
+			     public since shows its events unmarked, and says so. -->
 			<section class="mb-10" aria-labelledby="members-only-heading">
 				<h2
 					id="members-only-heading"
 					class="text-base-900 dark:text-base-50 mb-4 flex items-center gap-2 text-lg font-semibold"
 				>
-					<Icon img={LockKeyhole} size={16} />Members-only events
+					{#if membersAlone}
+						<Icon img={LockKeyhole} size={16} />Members-only events
+					{:else}
+						Events in the group's calendar
+					{/if}
 				</h2>
+				{#if !data.membersOnly.unread && data.membersOnly.privacy === 'public'}
+					<p class="text-base-600 dark:text-base-400 mb-4 text-sm" role="status">
+						This group's calendar can now be read by more than its members, so these events are no
+						longer members-only.
+					</p>
+				{:else if !data.membersOnly.unread && data.membersOnly.privacy === 'unknown'}
+					<p class="text-base-600 dark:text-base-400 mb-4 text-sm" role="status">
+						Whether this group's calendar is still for its members alone couldn't be checked just
+						now.
+					</p>
+				{/if}
 				{#if data.membersOnly.stoppedAt}
 					<p class="text-base-600 dark:text-base-400 mb-4 text-sm" role="status">
 						atmo stopped reading this group's calendar at {data.membersOnly.stoppedAt} events, so some
@@ -498,10 +516,12 @@
 							<li data-testid="members-only-event">
 								<EventCard {event} {href} />
 								<p class="text-base-600 dark:text-base-400 mt-1 flex gap-3 text-xs">
-									<span>
-										<Icon img={LockKeyhole} size={12} class="mr-1 inline align-[-2px]" />Members
-										only
-									</span>
+									{#if membersAlone}
+										<span>
+											<Icon img={LockKeyhole} size={12} class="mr-1 inline align-[-2px]" />Members
+											only
+										</span>
+									{/if}
 									{#if postsMembersOnly}
 										<a
 											class="text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300 font-medium transition-colors"

@@ -217,7 +217,11 @@ describe("a group page's members-only events", () => {
 	const person = (scope: string) => ({ did: ALICE, scope, handle: vi.fn() });
 
 	beforeEach(() => {
-		mocks.listMembersOnlyEvents.mockResolvedValue({ events: [SUPPER], cutOff: false });
+		mocks.listMembersOnlyEvents.mockResolvedValue({
+			events: [SUPPER],
+			cutOff: false,
+			privacy: 'private'
+		});
 		mocks.readCalendarSpace.mockResolvedValue({ state: 'ready', posters: ['admin'] });
 	});
 
@@ -226,7 +230,12 @@ describe("a group page's members-only events", () => {
 		mocks.callerSession.mockResolvedValue(caller);
 		mocks.groupView.mockResolvedValue({ did: GROUP, name: 'Knitters', member: true });
 		const page = await load(request('', ALICE));
-		expect(page.membersOnly).toEqual({ events: [SUPPER], unread: false, stoppedAt: null });
+		expect(page.membersOnly).toEqual({
+			events: [SUPPER],
+			unread: false,
+			stoppedAt: null,
+			privacy: 'private'
+		});
 		expect(mocks.listMembersOnlyEvents).toHaveBeenCalledWith(caller, GROUP);
 		expect(page).toMatchObject({ access: null, calendar: null });
 	});
@@ -300,18 +309,24 @@ describe("a group page's members-only events", () => {
 		expect((await load(request('', ALICE))).membersOnly).toEqual({
 			events: [],
 			unread: true,
-			stoppedAt: null
+			stoppedAt: null,
+			privacy: 'unknown'
 		});
 	});
 
 	it('say where the list stopped when it stopped at its limit', async () => {
 		mocks.callerSession.mockResolvedValue(person(`atproto ${GUEST_SCOPE}`));
 		mocks.groupView.mockResolvedValue({ did: GROUP, name: 'Knitters', member: true });
-		mocks.listMembersOnlyEvents.mockResolvedValue({ events: [SUPPER], cutOff: true });
+		mocks.listMembersOnlyEvents.mockResolvedValue({
+			events: [SUPPER],
+			cutOff: true,
+			privacy: 'public'
+		});
 		expect((await load(request('', ALICE))).membersOnly).toEqual({
 			events: [SUPPER],
 			unread: false,
-			stoppedAt: 500
+			stoppedAt: 500,
+			privacy: 'public'
 		});
 	});
 });

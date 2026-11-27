@@ -528,7 +528,7 @@ describe('members-only events', () => {
 		const data = {
 			...linkedPage({ public: true, listed: true }, posting),
 			calendar: 'ready',
-			membersOnly: { unread: false, stoppedAt: 500, events: [] }
+			membersOnly: { unread: false, stoppedAt: 500, privacy: 'private', events: [] }
 		};
 		render(GroupPage, { data: data as never });
 		await expect
@@ -544,6 +544,7 @@ describe('members-only events', () => {
 			membersOnly: {
 				unread: false,
 				stoppedAt: null,
+				privacy: 'private',
 				events: [
 					{
 						name: 'Supper',
@@ -560,6 +561,8 @@ describe('members-only events', () => {
 		const listed = page.getByTestId('members-only-event');
 		await expect.element(listed).toBeVisible();
 		expect(listed.element().textContent?.replace(/\s+/g, ' ')).toContain('Members only');
+		expect(listed.element().querySelector(':scope > p svg')).not.toBeNull();
+		await expect.element(page.getByRole('heading', { name: 'Members-only events' })).toBeVisible();
 		const hrefs = [...listed.element().querySelectorAll('a')].map((a) =>
 			decodeURIComponent(a.getAttribute('href') ?? '')
 		);
@@ -567,6 +570,55 @@ describe('members-only events', () => {
 		expect(hrefs).toContain(`/groups/${GROUP}/events/3ksupper/edit`);
 		expect(page.getByTestId('members-only-setup').elements()).toHaveLength(0);
 	});
+});
+
+describe("members-only events whose calendar isn't for members alone now", () => {
+	const POSTING = {
+		post: true,
+		list: true,
+		settings: true,
+		turnOnMembersOnly: true,
+		membersOnly: true
+	};
+	const SUPPER = {
+		name: 'Supper',
+		rkey: '3ksupper',
+		did: GROUP,
+		startsAt: '2030-01-01T18:00:00Z',
+		createdAt: '2029-01-01T00:00:00Z',
+		uri: `at:space/${GROUP}/community.lexicon.calendar.collection/self/${GROUP}/community.lexicon.calendar.event/3ksupper`
+	};
+
+	it.each([
+		[
+			'public',
+			"This group's calendar can now be read by more than its members, so these events are no longer members-only."
+		],
+		[
+			'unknown',
+			"Whether this group's calendar is still for its members alone couldn't be checked just now."
+		]
+	])(
+		'are listed unmarked, without the lock, when it is %s, and say why',
+		async (privacy, words) => {
+			const data = {
+				...linkedPage({ public: true, listed: true }, POSTING),
+				calendar: 'ready',
+				membersOnly: { unread: false, stoppedAt: null, privacy, events: [SUPPER] }
+			};
+			render(GroupPage, { data: data as never });
+			const listed = page.getByTestId('members-only-event');
+			await expect.element(listed).toBeVisible();
+			expect(listed.element().textContent).not.toContain('Members only');
+			// The card's own icons stay; the lock under it goes.
+			expect(listed.element().querySelector(':scope > p svg')).toBeNull();
+			await expect
+				.element(page.getByRole('heading', { name: "Events in the group's calendar" }))
+				.toBeVisible();
+			expect(page.getByRole('heading', { name: 'Members-only events' }).elements()).toHaveLength(0);
+			await expect.element(page.getByText(words)).toBeVisible();
+		}
+	);
 });
 
 describe("the group's header", () => {

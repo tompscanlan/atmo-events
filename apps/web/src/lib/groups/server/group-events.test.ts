@@ -98,6 +98,31 @@ describe('turning members-only events on', () => {
 		expect(policyChanges()).toEqual([]);
 	});
 
+	const refusedAsPublic = async (on: Promise<unknown>) => {
+		await expect(on).rejects.toMatchObject({ reason: 'calendar-space-public' });
+		await expect(on).rejects.toThrow(
+			"This group's calendar can be read by more than its members, so atmo won't use it for members-only events. Nothing was turned on."
+		);
+		expect(await chosen()).toBeNull();
+	};
+
+	it('refuses, choosing nothing and making nothing, when its `self` calendar is one anyone may read', async () => {
+		calendar.state.policy = { ...READY_POLICY, publicRead: true };
+		await refusedAsPublic(turnOnMembersOnly(writer(), [], calendarHosts));
+		expect(made()).toEqual([]);
+	});
+
+	it('refuses, choosing nothing, a calendar it made that anyone may read after all', async () => {
+		const handle: typeof calendar.groupHandle = async (pathname, init) => {
+			const res = await calendar.groupHandle(pathname, init);
+			if (pathname.includes('createSpace')) {
+				calendar.state.policy = { ...READY_POLICY, publicRead: true };
+			}
+			return res;
+		};
+		await refusedAsPublic(turnOnMembersOnly({ did: GROUP, handle }, [], calendarHosts));
+	});
+
 	it('throws any other refusal', async () => {
 		calendar.state.refuse.set(
 			'com.atproto.space.createSpace',

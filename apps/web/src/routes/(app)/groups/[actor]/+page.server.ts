@@ -14,7 +14,8 @@ import { groupAccess } from '#lib/groups/permissions-asked.js';
 import {
 	listMembersOnlyEvents,
 	MEMBERS_ONLY_LIST_LIMIT,
-	upcoming
+	upcoming,
+	type CalendarPrivacy
 } from '#lib/groups/server/calendar-read.js';
 import {
 	groupView,
@@ -65,6 +66,8 @@ interface MembersOnlySlice {
 	events: FlatEventRecord[];
 	unread: boolean;
 	stoppedAt: number | null;
+	/** Whether their calendar is still for members alone, as read with them. */
+	privacy: CalendarPrivacy;
 }
 
 /** The group's members-only events, for a member whose own sign-in may read them, or else through
@@ -82,10 +85,10 @@ async function membersOnlySlice(
 		const list = await listMembersOnlyEvents(holder, group.did);
 		if (!list) return null;
 		const stoppedAt = list.cutOff ? MEMBERS_ONLY_LIST_LIMIT : null;
-		return { events: upcoming(list.events), unread: false, stoppedAt };
+		return { events: upcoming(list.events), unread: false, stoppedAt, privacy: list.privacy };
 	} catch (e) {
 		console.error(`[groups] members-only events unread for a group page: ${errorKind(e)}`);
-		return { events: [], unread: true, stoppedAt: null };
+		return { events: [], unread: true, stoppedAt: null, privacy: 'unknown' };
 	}
 }
 

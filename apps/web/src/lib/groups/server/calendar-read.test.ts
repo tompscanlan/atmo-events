@@ -62,7 +62,8 @@ describe("a group's members-only events", () => {
 					uris: []
 				})
 			],
-			cutOff: false
+			cutOff: false,
+			privacy: 'private'
 		});
 		expect(list?.events[0]).not.toHaveProperty('poster');
 		expect(list?.events[0]).not.toHaveProperty('media');
@@ -70,6 +71,30 @@ describe("a group's members-only events", () => {
 		expect(calendar.state.sent).toEqual([
 			[BOB, 'com.atproto.space.getDelegationToken', { space: CALENDAR }]
 		]);
+	});
+
+	it('say their calendar is no longer for members alone once anyone may read it, as read now', async () => {
+		calendar.state.readers.add(BOB);
+		calendar.state.events.set('r1', event('Supper'));
+		calendar.state.policy = { ...READY_POLICY, publicRead: true };
+		expect((await listMembersOnlyEvents(bob(), GROUP, calendarHosts))?.privacy).toBe('public');
+		// A policy of a kind this site does not read may let anyone read it.
+		calendar.state.policy = { $type: 'com.example.policy' };
+		expect((await listMembersOnlyEvents(bob(), GROUP, calendarHosts))?.privacy).toBe('public');
+	});
+
+	it("are listed, but not as members-only, when their calendar's policy could not be read", async () => {
+		vi.spyOn(console, 'info').mockImplementation(() => {});
+		calendar.state.readers.add(BOB);
+		calendar.state.events.set('r1', event('Supper'));
+		mocks.networkFetch.mockImplementation(async (input, init) =>
+			String(input).includes('com.atproto.space.policy')
+				? new Response('', { status: 502 })
+				: calendar.fetch(input, init)
+		);
+		const list = await listMembersOnlyEvents(bob(), GROUP, calendarHosts);
+		expect(list?.events).toHaveLength(1);
+		expect(list?.privacy).toBe('unknown');
 	});
 
 	it('are null for someone the host keeps out, and while there is no space, alike', async () => {
