@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { env, waitUntil } from 'cloudflare:workers';
 import { TokenRefreshError } from '@atcute/oauth-node-client';
 import { SpaceAccessDenied } from '#lib/spaces/server/space-credential.js';
+import { GROUP_SPACE_INDEX_SCOPE, MEMBERS_ONLY_SCOPES } from '../scopes';
 import { XrpcError } from './xrpc';
 
 const mocks = vi.hoisted(() => ({
@@ -61,6 +62,7 @@ import {
 	groupView,
 	LINKED_READ_LIMIT_MS,
 	requireGroupWriter,
+	requireLinkedAbilities,
 	requireStoredLink
 } from './context';
 
@@ -72,7 +74,8 @@ const ADMIN_SCOPE = [
 	'atproto',
 	`space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`,
 	'repo?collection=community.lexicon.calendar.event',
-	'blob?accept=image/*'
+	'blob?accept=image/*',
+	...MEMBERS_ONLY_SCOPES.map((scope) => scope.replace('authority=self', `authority=${GROUP}`))
 ].join(' ');
 const MEMBER_SCOPE = `atproto space:org.atgrp.meta?authority=${GROUP}&skey=self&action=read`;
 const linkedSession = (scope = ADMIN_SCOPE, aud = 'https://host.example') => ({
@@ -245,6 +248,21 @@ describe('groupView for someone who linked the group', () => {
 		mocks.groupSession.mockResolvedValue(linkedSession(ADMIN_SCOPE));
 		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({ reapprove: false });
 		expect(mocks.linkAskedCurrentScope).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+
+	it("offers to approve again a link from before atmo read the group's index of its spaces", async () => {
+		mocks.readGroupMeta.mockResolvedValue(meta);
+		mocks.repoHasDeclaration.mockResolvedValue(false);
+		mocks.linkAskedCurrentScope.mockResolvedValue(false);
+		const withoutIndex = ADMIN_SCOPE.split(' ')
+			.filter((token) => token !== GROUP_SPACE_INDEX_SCOPE.replace('self', GROUP))
+			.join(' ');
+		expect(withoutIndex).not.toBe(ADMIN_SCOPE);
+		mocks.groupSession.mockResolvedValue(linkedSession(withoutIndex));
+		expect((await groupView(GROUP, ALICE)).linked).toMatchObject({
+			can: { turnOnMembersOnly: true, membersOnly: true, readSpaceIndex: false },
+			reapprove: true
+		});
 	});
 
 	it('asks to link again when the session cannot say what it was granted', async () => {
@@ -464,6 +482,41 @@ describe('requireGroupWriter', () => {
 		mocks.groupSession.mockResolvedValue(linkedSession());
 		expect(await requireGroupWriter(GROUP, ALICE)).toMatchObject({ did: GROUP });
 		expect(mocks.groupSession).toHaveBeenCalledWith(GROUP, ALICE);
+	});
+});
+
+describe('requireLinkedAbilities', () => {
+	it('says what the scope the host granted the link lets it do', async () => {
+		mocks.groupSession.mockResolvedValue(linkedSession());
+		const admin = await requireLinkedAbilities(GROUP, ALICE);
+		expect(admin.writer).toMatchObject({ did: GROUP });
+		expect(admin.can).toMatchObject({ turnOnMembersOnly: true, membersOnly: true });
+		mocks.groupSession.mockResolvedValue(linkedSession(MEMBER_SCOPE));
+		expect((await requireLinkedAbilities(GROUP, ALICE)).can).toMatchObject({
+			turnOnMembersOnly: false,
+			membersOnly: false,
+			post: false
+		});
+	});
+
+	it('holds nothing when the scope cannot be read, and is the same 404 without a link', async () => {
+		mocks.groupSession.mockResolvedValue({
+			did: GROUP,
+			// The first read, for the session's host, is taken as at the host, so the second decides.
+			getTokenInfo: vi
+				.fn()
+				.mockRejectedValueOnce(new Error('unreadable'))
+				.mockRejectedValueOnce(new Error('unreadable'))
+		});
+		expect((await requireLinkedAbilities(GROUP, ALICE)).can).toMatchObject({
+			turnOnMembersOnly: false,
+			membersOnly: false
+		});
+		mocks.groupSession.mockResolvedValue(null);
+		await expect(requireLinkedAbilities(GROUP, ALICE)).rejects.toMatchObject({
+			status: 404,
+			body: { message: GROUP_NOT_FOUND }
+		});
 	});
 });
 

@@ -46,8 +46,13 @@ export function getAuth(): AtprotoAuth {
 		// Settings, or first hosts or opens one.
 		scope: [
 			...(privateEventsEnabled() ? [...scopes, ...HOST_SCOPES, BETA_SCOPE] : scopes),
-			// Likewise groups' (acting in one), requested when someone sets out to.
-			...(groupsEnabled() ? GROUP_PERSON_SCOPES : [])
+			// Likewise groups' (acting in one), requested when someone sets out to. Private events'
+			// guest scope, which groups also ask for, once.
+			...(groupsEnabled()
+				? GROUP_PERSON_SCOPES.filter(
+						(scope) => !(privateEventsEnabled() && HOST_SCOPES.includes(scope))
+					)
+				: [])
 		],
 		signupPDS: ALLOW_SIGNUP
 			? (PUBLIC_SIGNUP_PDS_URL ?? signUpPDS[dev ? 'development' : 'production'])
