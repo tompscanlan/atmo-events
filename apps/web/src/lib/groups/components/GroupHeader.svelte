@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { Avatar, Badge, Button } from '@atmo-dev/kit';
 
 	// A group's header, as a person's profile header is laid out (the kit's UserProfile), for a
@@ -12,7 +13,9 @@
 		website,
 		home,
 		isPrivate = false,
-		eventsCreated = null
+		eventsCreated = null,
+		actions,
+		children
 	}: {
 		name: string;
 		handle: string | null;
@@ -23,6 +26,10 @@
 		home: string | null;
 		isPrivate?: boolean;
 		eventsCreated?: number | null;
+		/** Beside the picture, after the badges. */
+		actions?: Snippet;
+		/** Under the links. */
+		children?: Snippet;
 	} = $props();
 
 	/** Only an http(s) URL is ever a link, whatever reached the page. */
@@ -46,6 +53,7 @@
 		<div class="flex flex-wrap items-center gap-2">
 			<Badge>Group</Badge>
 			{#if isPrivate}<Badge>Private</Badge>{/if}
+			{@render actions?.()}
 		</div>
 	</div>
 	<div class="mt-4 min-w-0">
@@ -106,4 +114,5 @@
 			{/if}
 		</ul>
 	{/if}
+	{@render children?.()}
 </section>
