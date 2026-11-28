@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // What this route guarantees about the live band: it is an OPTIONAL section
 // gathered by the same Promise.all as the reads a profile cannot render without,
@@ -29,8 +29,15 @@ vi.mock('#lib/contrail/ongoing.js', async () => {
 });
 vi.mock('#lib/actor', () => ({ getActor: vi.fn(async () => 'did:plc:alice') }));
 vi.mock('#lib/past-events.js', () => ({ hasEnded: vi.fn(() => true) }));
+// Whether the account is a group this site knows: its declaration in the index, or a link to it
+// the viewer holds.
+vi.mock('#lib/groups/server/group.js', () => ({ isDeclared: vi.fn() }));
+vi.mock('#lib/groups/server/sign-in.js', () => ({ hasGroupSession: vi.fn() }));
 
+import { env } from 'cloudflare:workers';
 import { load } from './+page.server';
+import { isDeclared } from '#lib/groups/server/group.js';
+import { hasGroupSession } from '#lib/groups/server/sign-in.js';
 import { getBlueskyProfile } from '#lib/server/bluesky-profile.js';
 import { getProfileCounts } from '#lib/server/profile-counts.js';
 import { getPersonalEvents } from '#lib/server/personal-events.js';
@@ -167,5 +174,59 @@ describe('profile page load', () => {
 		mockProfile.mockRejectedValue(new Error('D1 unavailable'));
 
 		await expect(load(request())).rejects.toThrow('D1 unavailable');
+	});
+});
+
+describe("a group's handle or DID at a person's profile address", () => {
+	const declared = vi.mocked(isDeclared);
+	const linked = vi.mocked(hasGroupSession);
+	const TO_GROUP = { status: 307, location: '/groups/did:plc:alice' };
+
+	beforeEach(() => {
+		Reflect.deleteProperty(env, 'GROUP_HOST_URL');
+		declared.mockResolvedValue(false);
+		linked.mockResolvedValue(false);
+	});
+	afterEach(() => Reflect.deleteProperty(env, 'GROUP_HOST_URL'));
+	const groupsOn = () => Object.assign(env, { GROUP_HOST_URL: 'https://host.example' });
+
+	it('shows the profile, looking nothing up, with groups off', async () => {
+		declared.mockResolvedValue(true);
+		linked.mockResolvedValue(true);
+		const data = await load(request('did:plc:viewer'));
+		expect(data?.actorDid).toBe('did:plc:alice');
+		expect(declared).not.toHaveBeenCalled();
+		expect(linked).not.toHaveBeenCalled();
+	});
+
+	it("leads to the group's page for an account the index holds a declaration of, before reading the profile", async () => {
+		groupsOn();
+		declared.mockResolvedValue(true);
+		await expect(load(request())).rejects.toMatchObject(TO_GROUP);
+		expect(declared).toHaveBeenCalledWith('did:plc:alice');
+		expect(mockProfile).not.toHaveBeenCalled();
+		expect(getBlueskyProfile).not.toHaveBeenCalled();
+	});
+
+	it("leads to the group's page for a viewer who holds a link to it, though it is not declared", async () => {
+		groupsOn();
+		linked.mockResolvedValue(true);
+		await expect(load(request('did:plc:viewer'))).rejects.toMatchObject(TO_GROUP);
+		expect(linked).toHaveBeenCalledWith('did:plc:alice', 'did:plc:viewer');
+	});
+
+	it('shows the profile of an account that is no group this site knows', async () => {
+		groupsOn();
+		expect((await load(request('did:plc:viewer')))?.actorDid).toBe('did:plc:alice');
+		// Signed out, there is no link to look for.
+		expect((await load(request()))?.actorDid).toBe('did:plc:alice');
+		expect(linked).toHaveBeenCalledTimes(1);
+	});
+
+	it('shows the profile when the index or the links cannot say', async () => {
+		groupsOn();
+		declared.mockRejectedValue(new Error('index down'));
+		linked.mockRejectedValue(new Error('store down'));
+		expect((await load(request('did:plc:viewer')))?.actorDid).toBe('did:plc:alice');
 	});
 });
