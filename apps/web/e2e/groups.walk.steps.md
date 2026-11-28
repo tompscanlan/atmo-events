@@ -20,8 +20,8 @@ admitted there (by script).
 | "Group home" is the handle address, and opens the host's page for it         | link/header-for-a-visitor                                                                                             |
 | a Website link only for an http(s) website, never `javascript:`              | link/website-only-when-http                                                                                           |
 | `/p/<group handle or DID>` lands on the group page; a person's is as was     | link/profile-address-leads-to-the-group                                                                               |
-| the "Show in public group lists" switch lists and unlists                    | link/listed-by-the-host, link/unlist-and-list, private/public-again-at-host                                           |
-| ...disabled for a private group, with its reason                             | private/private-at-host                                                                                               |
+| no listing switch: a group is in the lists while the host's declaration is   | link/listed-by-the-host, link/browse-signed-out, private/private-at-host, private/public-again-at-host                |
+| the group's link asks no declaration write, only the event writes            | link/alice-links-by-handle, flags/index-endpoints-answer                                                              |
 | "Make a group" opens the host's `/new`; made there, then linked here         | create/make-a-group-goes-to-the-host, create/made-at-the-host-then-linked                                             |
 | `/groups/create`, `…/settings`, `…/members` answer as an unknown address     | create/held-back-addresses-answer-as-unknown, roster/members-address-answers-as-unknown                               |
 | a linked admin is sent to the host for members, requests, roles, settings    | join/linked-admin-is-sent-to-the-host, create/held-back-addresses-answer-as-unknown                                   |
@@ -39,7 +39,7 @@ admitted there (by script).
 
 ## One stacked part on its own (`WALK_UNIT`)
 
-The feature is also built in stacked parts: `link-group` (link a group, its page, list and unlist,
+The feature is also built in stacked parts: `link-group` (link a group, its page, the lists,
 browse and search, post public events as it, `/p/<group>`, "Make a group" at the host), then `join`
 (join, ask, cancel, leave, "Your groups", a member seeing a private group), then
 `members-only-events`. With `WALK_UNIT` set to one of the first two, against a dev server built from
@@ -48,7 +48,7 @@ unit", and the checks that name a later part's permissions ask for this part's i
 
 | On a build of one part                                                            | Walk step                                                                                                  |
 | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| the group's link asks exactly the meta read, the repo writes and image upload     | link/alice-links-by-handle, flags/index-endpoints-answer, flags/admin-approval-page-asks-nothing-held-back |
+| the group's link asks exactly the meta read, the event writes and image upload    | link/alice-links-by-handle, flags/index-endpoints-answer, flags/admin-approval-page-asks-nothing-held-back |
 | no join control, no "Your groups" (link-group); nothing of members-only events    | link/nothing-of-later-units, link/private-linked-group-only-for-its-linker                                 |
 | a person's client metadata gains nothing from groups (link-group), or only join's | flags/index-endpoints-answer (against a groups-off server of the same build with `WALK_GROUPS_OFF_URL`)    |
 
@@ -122,7 +122,7 @@ approving is used), "an event the new admin posts", and carol's members page.
 
 link: member-links-the-group-and-can-do-little, lowered-role-refuses-the-save, the host-side live checks
 (client metadata, token exchange, delegation and credential calls), unlink-revokes-at-host.
-private: private-at-host, private-group-cannot-be-listed, public-again-at-host, roles-removed-ends-the-link,
+private: private-at-host, public-again-at-host, roles-removed-ends-the-link,
 revoke-at-host-shows-link-again.
 create: allow-making-groups, unlisted-group-has-no-declaration, same-address-again-is-taken,
 unfinished-group-can-be-finished.

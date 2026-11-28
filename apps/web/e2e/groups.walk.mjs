@@ -5,7 +5,8 @@
 // Groups are made at the host by script, the host's own createGroup, as their founder's PDS vouches
 // for it. Everything else goes through the pages: signing in to atmo at the person's own PDS,
 // linking a group through the host's console approval page (where the person signs in again at their
-// own PDS), listing and unlisting, posting events as the group. Each write is read back from the
+// own PDS), the lists following the declaration the host writes while a group is public, posting
+// events as the group. Each write is read back from the
 // group host's repo or from a fresh page load, not taken from what a page said. It prints statuses,
 // never a password or a token, and it never reads the group host's recovery key page.
 //
@@ -874,12 +875,12 @@ if (!UNITS.includes(UNIT)) throw new Error(`WALK_UNIT is one of ${UNITS.join(', 
 const has = (unit) => UNITS.indexOf(UNIT) >= UNITS.indexOf(unit);
 const NOT_IN_UNIT = 'not in this unit';
 const GROUPS_OFF = process.env.WALK_GROUPS_OFF_URL?.trim().replace(/\/$/, '') || '';
-/** What the group's link asks for before members-only events: the meta read, the declaration and
- *  event repo writes, image upload. */
+/** What the group's link asks for before members-only events: the meta read, the event repo writes,
+ *  image upload. Never the declaration: the group host writes it while the group is public. */
 const LINK_UNIT_GROUP_SCOPES = [
 	'atproto',
 	'space:org.atgrp.meta?authority=self&skey=self&action=read',
-	'repo?collection=org.atgrp.declaration&collection=community.lexicon.calendar.event',
+	'repo?collection=community.lexicon.calendar.event',
 	'blob?accept=image/*'
 ];
 /** What the join unit adds to a person's client metadata: any group's meta read, their own
@@ -904,7 +905,7 @@ function onlyTheLinkUnitScopes(asked, access, withheld) {
 const groupHeader = (page) => page.getByRole('region', { name: 'Group', exact: true });
 /** The one box of tools for someone who linked the group and may act for it. */
 const toolsBox = (page) => page.getByRole('region', { name: 'Group tools' });
-/** The switch that lists the group in public group lists (its declaration in its repo). */
+/** The listing switch this site once had; lists now follow the declaration the host writes. */
 const listSwitch = (page) => page.getByRole('switch', { name: /^show in public group lists$/i });
 /** The one members-space scope the group's link asks for: a read of the group's index of spaces. */
 const SPACE_INDEX_SCOPE =
@@ -949,19 +950,6 @@ function onlyTheSpaceIndexRead(asked, access) {
 const hostButton = (page) => toolsBox(page).getByRole('link', { name: /^group host:/i });
 /** The group's own address, from its handle, which the group host serves its page at. */
 const homeOf = (g) => `https://${g.handle}/`;
-/** Flips the listing switch to `want` on the group's page, and waits for the declaration to follow
- *  in the group's repo. Whether it did. */
-async function setListedBySwitch(page, g, want) {
-	await page.goto(groupUrl(g), { waitUntil: 'networkidle' });
-	const box = listSwitch(page);
-	if ((await box.isChecked()) !== want) await box.click();
-	const done = await until(
-		() => repoRecords(g.did, DECLARATION),
-		(rs) => rs.some((r) => r.rkey === 'self') === want
-	);
-	await page.goto(groupUrl(g), { waitUntil: 'networkidle' });
-	return done.ok;
-}
 /** What a server answers at an address, with the address itself (and the relative paths that only
  *  follow from its depth) taken out of the body, so two unknown addresses can be compared. */
 async function answerAt(pathname, init = {}) {
@@ -1175,7 +1163,7 @@ step(
 );
 
 // =====================================================================================
-// link: link a group through the host's console, see it, list and unlist it, post events as it
+// link: link a group through the host's console, see it, find it in the lists, post events as it
 // =====================================================================================
 step(
 	'link',
@@ -1265,9 +1253,9 @@ step(
 			// The host keeps or drops each scope whole: an admin's grant keeps all four.
 			const asked = approval.asked;
 			check(
-				'atmo asked for the meta read, the declaration and event repo scopes, and image blobs',
+				'atmo asked for the meta read, the event repo scope and image blobs, and no write of the declaration (the group host writes it while the group is public)',
 				/space:org\.atgrp\.meta\?authority=self&(skey=self&)?action=read/.test(asked) &&
-					/repo\?collection=org\.atgrp\.declaration|repo:org\.atgrp\.declaration/.test(asked) &&
+					!/org\.atgrp\.declaration/.test(asked) &&
 					/community\.lexicon\.calendar\.event/.test(asked) &&
 					/blob\?accept=image|blob:image/.test(asked),
 				asked.trim().replace(/\s+/g, ' ')
@@ -1276,9 +1264,9 @@ step(
 			const [granted, withheld = ''] = detail.split(/It would not get/i);
 			if (!has('members-only-events'))
 				check(
-					`${UNIT}: an admin's grant keeps the meta read and the repo writes, and the approval page lists only this unit's permissions: the link asks exactly the meta read, the declaration and event repo writes and image upload; no members or calendar space; nothing withheld`,
+					`${UNIT}: an admin's grant keeps the meta read and the event writes, and the approval page lists only this unit's permissions: the link asks exactly the meta read, the event repo writes and image upload; no declaration, no members or calendar space; nothing withheld`,
 					/Repository/.test(granted) &&
-						/org\.atgrp\.declaration/.test(granted) &&
+						!/org\.atgrp\.declaration/.test(detail) &&
 						/community\.lexicon\.calendar\.event/.test(granted) &&
 						/org\.atgrp\.meta spaces/.test(granted) &&
 						!/org\.atgrp\.members|calendar\.collection/.test(detail) &&
@@ -1288,9 +1276,9 @@ step(
 				);
 			else
 				check(
-					"an admin's grant keeps the meta read, the repo writes and the one read of the group's space index; atmo asks for no other members or settings scope (held back in this build); only the calendar space's write is withheld, as no such space exists yet",
+					"an admin's grant keeps the meta read, the event repo writes and the one read of the group's space index; atmo asks for no declaration write, and no other members or settings scope; only the calendar space's write is withheld, as no such space exists yet",
 					/Repository/.test(granted) &&
-						/org\.atgrp\.declaration/.test(granted) &&
+						!/org\.atgrp\.declaration/.test(detail) &&
 						/community\.lexicon\.calendar\.event/.test(granted) &&
 						/org\.atgrp\.meta spaces/.test(granted) &&
 						onlyTheSpaceIndexRead(approval.asked, approval.members) &&
@@ -1455,10 +1443,11 @@ step(
 		const g = S.groups.g1;
 		await alice.goto(`${ATMO}/groups/${g.did}`, { waitUntil: 'networkidle' });
 		t.shot = alice;
-		const box = listSwitch(alice);
 		check(
-			'a public group made by createGroup shows as listed: the "Show in public group lists" switch is on, and may be turned off',
-			(await box.count()) === 1 && (await box.isChecked()) && (await box.isEnabled())
+			"a public group made by createGroup has the declaration the host wrote in its repo, and the page offers no listing control: lists follow the host",
+			(await repoRecords(g.did, DECLARATION)).some((r) => r.rkey === 'self') &&
+				(await listSwitch(alice).count()) === 0 &&
+				!(await mainText(alice)).includes('Show in public group lists')
 		);
 		// One linked view told the index, which does not otherwise hear of the host.
 		// A group linked here counts as at the host at once, so no waiting for atmo's read of the host.
@@ -1501,60 +1490,9 @@ step(
 			text.includes(NAME) &&
 				(await anon.getByRole('link', { name: /^post an event$/i }).count()) === 0 &&
 				(await anon.getByRole('button', { name: /unlink|groups list/i }).count()) === 0 &&
-				(await listSwitch(anon).count()) === 0 &&
 				(await toolsBox(anon).count()) === 0 &&
 				(await anon.getByRole('button', { name: /link this group/i }).count()) === 0,
 			text.slice(0, 200)
-		);
-	},
-	{ needs: ['listed-by-the-host'] }
-);
-
-step(
-	'link',
-	'unlist-and-list',
-	async (t) => {
-		const { alice, anon } = S.pages;
-		const g = S.groups.g1;
-		const url = `${ATMO}/groups/${g.did}`;
-		const gone = await setListedBySwitch(alice, g, false);
-		t.shot = alice;
-		check(
-			'alice turns "Show in public group lists" off: the declaration leaves the group\'s repo, and after a reload the switch is off',
-			gone && !(await listSwitch(alice).isChecked()) && (await listSwitch(alice).isEnabled())
-		);
-		const hidden = await until(
-			async () => {
-				const s = await status(anon, url);
-				await anon.goto(`${ATMO}/groups?q=${labelOf(g)}`, { waitUntil: 'networkidle' });
-				return { s, listed: (await mainText(anon)).includes(NAME) };
-			},
-			(x) => x.s === 404 && !x.listed,
-			10
-		);
-		check(
-			'unlisted, a signed-out search of /groups no longer finds it, and its page is a 404 for a visitor',
-			hidden.ok,
-			JSON.stringify(hidden.last)
-		);
-		const back = await setListedBySwitch(alice, g, true);
-		check(
-			'alice turns it on again: the declaration is back in its repo, and after a reload the switch is on',
-			back && (await listSwitch(alice).isChecked())
-		);
-		const shown = await until(
-			async () => {
-				const s = await status(anon, url);
-				await anon.goto(`${ATMO}/groups?q=${labelOf(g)}`, { waitUntil: 'networkidle' });
-				return { s, listed: (await mainText(anon)).includes(NAME) };
-			},
-			(x) => x.s === 200 && x.listed,
-			10
-		);
-		check(
-			'listed again, a visitor finds it by a search of /groups and sees its page',
-			shown.ok,
-			JSON.stringify(shown.last)
 		);
 	},
 	{ needs: ['listed-by-the-host'] }
@@ -2143,9 +2081,9 @@ step(
 		const before = await hostRow(anon);
 		const beforeDids = await listedDids(hostPageUrl());
 		note(`the host's row before: ${before.text}; its own list has ${beforeDids.size}`);
-		// Listed, with an event coming up; listed, with none; private; and listed, then unlisted.
-		// Linked by alice, whose view of each page tells the index at once, without waiting for an
-		// ingest cycle to hear of the declarations.
+		// Listed, with an event coming up; listed, with none; private; and listed, then made private at
+		// the host, which takes its declaration away. Linked by alice, whose view of each page tells the
+		// index at once, without waiting for an ingest cycle to hear of the declarations.
 		const listed = async (label, name) => {
 			const g = await createGroup(ALICE, label, name);
 			await linkByAlice(g);
@@ -2161,8 +2099,18 @@ step(
 		await alice.goto(`${groupUrl(bu)}/events/new`, { waitUntil: 'networkidle' });
 		await editorPublish(alice, coming);
 		await alice.waitForURL((u) => !u.pathname.endsWith('/events/new'), { timeout: 60_000 });
-		await linkByAlice(bl);
-		await setListedBySwitch(alice, bl, false);
+		Object.assign(bl, spacesOf(bl.did));
+		await setMetaPublic(await adminFor(bl, ALICE), bl, false);
+		const withdrawn = await until(
+			() => repoRecords(bl.did, DECLARATION),
+			(rs) => rs.length === 0,
+			20
+		);
+		await alice.goto(groupUrl(bl), { waitUntil: 'networkidle' });
+		check(
+			'a listed group made private at the host loses the declaration the host wrote',
+			withdrawn.ok
+		);
 
 		await anon.goto(`${ATMO}/groups`, { waitUntil: 'networkidle' });
 		check(
@@ -2186,7 +2134,7 @@ step(
 		const absent = {};
 		for (const g of [bn, bp, bl]) absent[g.name] = (await upcomingRow(anon, g.name)) === null;
 		check(
-			'a listed group with no event, a private one and an unlisted one are not there',
+			'a listed group with no event, a private one and one made private after it was listed are not there',
 			Object.values(absent).every(Boolean),
 			JSON.stringify(absent)
 		);
@@ -2196,7 +2144,7 @@ step(
 			hostPage.includes(bn.name) && hostPage.includes(bu.name)
 		);
 		check(
-			'...the private and the unlisted ones are not',
+			'...the two private ones are not',
 			!hostPage.includes(bp.did) && !hostPage.includes(bl.did)
 		);
 		const found = await searchGroups(labelOf(bn).slice(0, -2));
@@ -2210,7 +2158,7 @@ step(
 			await searchGroups(labelOf(bl), HOST)
 		];
 		check(
-			"a search, on the whole list or on the host's page, finds neither the private nor the unlisted group",
+			"a search, on the whole list or on the host's page, finds neither private group",
 			// By their DIDs, which only a result's link carries: the page repeats what was searched for.
 			hidden.every((h) => !h.includes(bp.did) && !h.includes(bl.did)),
 			hidden.map((h) => `${h.includes(bp.did)}/${h.includes(bl.did)}`).join(' ')
@@ -2239,7 +2187,7 @@ step(
 			`${rowAfter.text} / ${all.size} / ${comingDids.size}`
 		);
 		check(
-			'...of which the groups made here are the two listed ones, and only the one with an event is coming up',
+			'...of which the groups made here are the two still public, and only the one with an event is coming up',
 			added.includes(bu.did) &&
 				added.includes(bn.did) &&
 				!all.has(bp.did) &&
@@ -2355,14 +2303,12 @@ step(
 		await alice.goto(`${ATMO}/groups/${g.did}`, { waitUntil: 'networkidle' });
 		t.shot = alice;
 		const text = await mainText(alice);
-		const box = listSwitch(alice);
 		check(
-			'the page shows the Private badge; the "Show in public group lists" switch is off and disabled, with its reason: "Only a public group can be in them."',
+			'for alice, who linked it, the page shows the Private badge, and still the group tools',
 			(await groupHeader(alice).innerText()).includes('Private') &&
-				(await box.count()) === 1 &&
-				!(await box.isChecked()) &&
-				(await box.isDisabled()) &&
-				text.includes('Only a public group can be in them.'),
+				(await toolsBox(alice)
+					.getByRole('link', { name: /^post an event$/i })
+					.count()) === 1,
 			text.slice(0, 400)
 		);
 		const gone = await until(
@@ -2378,47 +2324,17 @@ step(
 			'...and its page is a 404 for a visitor',
 			(await status(anon, `${ATMO}/groups/${g.did}`)) === 404
 		);
+		const declared = await getJson(
+			`${ATMO}/xrpc/rsvp.atmo.declaration.listDeclared?actor=${g.did}`
+		);
+		check(
+			"...and atmo's declaration index no longer names it (listDeclared)",
+			declared.status === 200 && !declared.text.includes(g.did),
+			`${declared.status} ${declared.text.slice(0, 160)}`
+		);
 		note(`host requests since: ${hostRequests(since).length}`);
 	},
-	{ needs: ['delete-event', 'link-follows-alice', 'bob-cannot-link-it', 'unlist-and-list'] }
-);
-
-step(
-	'private',
-	'private-group-cannot-be-listed',
-	async (t) => {
-		const { alice } = S.pages;
-		const g = S.groups.g1;
-		// The page offers no way to list it, so ask for the listing as the page's own code does.
-		await alice.goto(`${ATMO}/groups/${g.did}`, { waitUntil: 'networkidle' });
-		t.shot = alice;
-		const result = await alice.evaluate(async (did) => {
-			const mod = await import('/src/lib/groups/group.remote.ts');
-			try {
-				await mod.setGroupListed({ groupDid: did, listed: true });
-				return { ok: true };
-			} catch (e) {
-				return {
-					ok: false,
-					status: e?.status,
-					message: e?.body?.message ?? String(e?.message ?? e)
-				};
-			}
-		}, g.did);
-		note(`listing a private group answered: ${JSON.stringify(result)}`);
-		check(
-			'asking to list the private group is refused with the reason: only a public group can be listed',
-			result.ok === false &&
-				result.status === 409 &&
-				/only a public group can be listed/i.test(result.message ?? ''),
-			JSON.stringify(result)
-		);
-		check(
-			"...and the group's repo still holds no declaration",
-			(await repoRecords(g.did, DECLARATION)).length === 0
-		);
-	},
-	{ needs: ['private-at-host'] }
+	{ needs: ['delete-event', 'link-follows-alice', 'bob-cannot-link-it', 'listed-by-the-host'] }
 );
 
 step(
@@ -2437,10 +2353,8 @@ step(
 		await alice.goto(`${ATMO}/groups/${g.did}`, { waitUntil: 'networkidle' });
 		t.shot = alice;
 		check(
-			'the page shows it as listed (the switch on, and enabled), without the Private badge',
-			(await listSwitch(alice).isChecked()) &&
-				(await listSwitch(alice).isEnabled()) &&
-				!(await groupHeader(alice).innerText()).includes('Private')
+			'the page no longer shows the Private badge',
+			!(await groupHeader(alice).innerText()).includes('Private')
 		);
 		const shown = await until(
 			async () => {
@@ -2451,6 +2365,18 @@ step(
 			15
 		);
 		check('a signed-out visitor finds it by a search of /groups again', shown.ok);
+		check(
+			'...and its page is there for a visitor again',
+			(await status(anon, `${ATMO}/groups/${g.did}`)) === 200
+		);
+		const declared = await getJson(
+			`${ATMO}/xrpc/rsvp.atmo.declaration.listDeclared?actor=${g.did}`
+		);
+		check(
+			"...and atmo's declaration index names it again (listDeclared)",
+			declared.status === 200 && declared.text.includes(g.did),
+			`${declared.status} ${declared.text.slice(0, 160)}`
+		);
 	},
 	{ needs: ['private-at-host'] }
 );
@@ -2501,7 +2427,6 @@ step(
 			"with bob's roles removed at the host, his page is the visitor's: no controls, but still the group",
 			(await bob.getByRole('link', { name: /^post an event$/i }).count()) === 0 &&
 				(await bob.getByRole('button', { name: /groups list/i }).count()) === 0 &&
-				(await listSwitch(bob).count()) === 0 &&
 				text.includes(NAME2),
 			text.slice(0, 250)
 		);
@@ -2717,10 +2642,9 @@ step(
 		);
 		const text = await mainText(bob);
 		check(
-			'his page offers no Post, list or Settings controls, and no Edit links',
+			'his page offers no Post or Settings controls, and no Edit links',
 			(await bob.getByRole('link', { name: /^post an event$/i }).count()) === 0 &&
 				(await bob.getByRole('button', { name: /groups list/i }).count()) === 0 &&
-				(await listSwitch(bob).count()) === 0 &&
 				(await bob
 					.locator('main')
 					.getByRole('button', { name: /^settings$/i })
@@ -2739,7 +2663,7 @@ step(
 		check(
 			'...and says what his role lets him do',
 			text.includes(
-				'Your role in this group lets you see it here, but not post its events or list it.'
+				'Your role in this group lets you see it here, but not post its events.'
 			),
 			text.slice(0, 300)
 		);
@@ -2932,10 +2856,17 @@ step(
 			20
 		);
 		check(
-			'the host made it public and listed (its declaration is in its repo), and the switch says so',
-			declared.ok && (await listSwitch(alice).isChecked()),
+			'the host made it public and listed: its declaration is in its repo',
+			declared.ok,
 			JSON.stringify(declared.last?.map((r) => r.rkey))
 		);
+		const found = await until(
+			() => searchGroups(AT_HOST.label).then((x) => x.includes(did)),
+			(x) => x === true,
+			15,
+			1000
+		);
+		check('...and, after her linked view, a signed-out search of /groups finds it', found.ok);
 	},
 	{ needs: ['make-a-group-goes-to-the-host'] }
 );
@@ -3769,11 +3700,10 @@ step(
 			page.slice(0, 300)
 		);
 		check(
-			'there is ONE "Group tools" box, holding Post an event, the listing switch, the group host button and Unlink',
+			'there is ONE "Group tools" box, holding Post an event, the group host button and Unlink',
 			(await alice.getByRole('heading', { name: /^group tools$/i }).count()) === 1 &&
 				(await tools.getByRole('link', { name: /^post an event$/i }).count()) === 1 &&
-				(await tools.getByRole('switch', { name: /^show in public group lists$/i }).count()) ===
-					1 &&
+				(await hostButton(alice).count()) === 1 &&
 				(await tools.getByRole('button', { name: /^unlink$/i }).count()) === 1
 		);
 	},
@@ -5988,11 +5918,18 @@ step(
 			personScopes.length > 1 && !personScopes.some((x) => /createGroup/.test(x)),
 			personScopes.filter((x) => /createGroup/.test(x)).join(' ')
 		);
+		check(
+			"the group client's metadata asks no write of the declaration: the group host writes it itself while the group is public",
+			groupMeta.status === 200 &&
+				groupScopes.some((x) => x.includes('community.lexicon.calendar.event')) &&
+				!groupScopes.some((x) => /org\.atgrp\.declaration/.test(x)),
+			groupScopes.filter((x) => /declaration/.test(x)).join(' ') || groupScopes.join(' ')
+		);
 		const HELD_BACK_SCOPES =
 			/org\.atgrp\.members|listJoinRequests|denyJoinRequest|org\.atgrp\.about|org\.atgrp\.config|org\.atgrp\.meta[^ ]*manage=|authManage/;
 		if (!has('members-only-events')) {
 			check(
-				`${UNIT}: the group client's metadata asks exactly this unit's scopes: the meta read, the declaration and event repo writes, image upload (no members or calendar space)`,
+				`${UNIT}: the group client's metadata asks exactly this unit's scopes: the meta read, the event repo writes, image upload (no declaration, no members or calendar space)`,
 				groupMeta.status === 200 && sameSet(groupScopes, LINK_UNIT_GROUP_SCOPES),
 				groupScopes.join(' ')
 			);
@@ -6087,7 +6024,7 @@ step(
 		note(`the approval page listed: ${(detail ?? '').slice(0, 900)}`);
 		if (!has('members-only-events'))
 			check(
-				`${UNIT}: the group host's approval page, for alice (an admin) linking atmo, lists only this unit's permissions: the meta read, the declaration and event repo writes and image upload; no members or calendar space, no join-request or settings permission, nothing withheld`,
+				`${UNIT}: the group host's approval page, for alice (an admin) linking atmo, lists only this unit's permissions: the meta read, the event repo writes and image upload; no declaration, no members or calendar space, no join-request or settings permission, nothing withheld`,
 				detail !== null &&
 					onlyTheLinkUnitScopes(asked, members, detail.split(/It would not get/i)[1] ?? '') &&
 					!/org\.atgrp\.members|calendar\.collection/.test(detail) &&
