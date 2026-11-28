@@ -22,6 +22,7 @@ admitted there (by script).
 | `/p/<group handle or DID>` lands on the group page; a person's is as was     | link/profile-address-leads-to-the-group                                                                               |
 | no listing switch: a group is in the lists while the host's declaration is   | link/listed-by-the-host, link/browse-signed-out, private/private-at-host, private/public-again-at-host                |
 | the group's link asks no declaration write, only the event writes            | link/alice-links-by-handle, flags/index-endpoints-answer                                                              |
+| a role granted only event writes links and posts; a plain member beside it   | link/event-writer-role-links-and-posts, link/plain-member-beside-the-role-cannot-post                                 |
 | "Make a group" opens the host's `/new`; made there, then linked here         | create/make-a-group-goes-to-the-host, create/made-at-the-host-then-linked                                             |
 | `/groups/create`, `…/settings`, `…/members` answer as an unknown address     | create/held-back-addresses-answer-as-unknown, roster/members-address-answers-as-unknown                               |
 | a linked admin is sent to the host for members, requests, roles, settings    | join/linked-admin-is-sent-to-the-host, create/held-back-addresses-answer-as-unknown                                   |
@@ -89,7 +90,7 @@ space there at the approval), and puts the three records with `com.atproto.space
 | the former member asks again, the owner approves, and they are a member again         | roster/approve-bobs-request (bob asks again after leaving)                                              |
 | the owner makes the member an admin                                                   | roster/make-bob-admin-and-back                                                                          |
 | the new admin links the group and gets the roster controls                            | roster/two-admins-can-demote-each-other                                                                 |
-| an event the new admin posts lands in the group's repo                                | none yet (the admin's posting is covered for the founder)                                               |
+| an event the new admin posts lands in the group's repo                                | link/event-writer-role-links-and-posts (a role granted event writes, not admin)                         |
 | made a member again, they lose the roster controls                                    | roster/make-bob-admin-and-back (back to member), roster/a-plain-member-sees-the-roster-without-controls |
 | an event posted through their old link is refused and never reaches the group         | link/lowered-role-refuses-the-save                                                                      |
 | the owner removes them, and the roster drops them                                     | roster/remove-a-member                                                                                  |
@@ -116,11 +117,12 @@ approve-once-more-at-the-console, alice-posts-a-members-only-event, carol-is-tol
 ## Old checks with no counterpart yet
 
 The old "admin adds a member by handle" (the walk's members page has no add-by-handle; asking and
-approving is used), "an event the new admin posts", and carol's members page.
+approving is used), and carol's members page.
 
 ## Steps with no old counterpart
 
-link: member-links-the-group-and-can-do-little, lowered-role-refuses-the-save, the host-side live checks
+link: member-links-the-group-and-can-do-little, lowered-role-refuses-the-save,
+event-writer-role-links-and-posts, plain-member-beside-the-role-cannot-post, the host-side live checks
 (client metadata, token exchange, delegation and credential calls), unlink-revokes-at-host.
 private: private-at-host, public-again-at-host, roles-removed-ends-the-link,
 revoke-at-host-shows-link-again.

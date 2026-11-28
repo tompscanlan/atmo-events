@@ -6,7 +6,7 @@
 // for it. Everything else goes through the pages: signing in to atmo at the person's own PDS,
 // linking a group through the host's console approval page (where the person signs in again at their
 // own PDS), the lists following the declaration the host writes while a group is public, posting
-// events as the group. Each write is read back from the
+// events as the group, and as a role granted only event writes. Each write is read back from the
 // group host's repo or from a fresh page load, not taken from what a page said. It prints statuses,
 // never a password or a token, and it never reads the group host's recovery key page.
 //
@@ -734,7 +734,7 @@ async function adminFor(group, who = ALICE) {
 	}
 	return adminSessions.get(key);
 }
-async function admitAtHost(session, group, did) {
+async function admitAtHost(session, group, did, roles = ['member']) {
 	await asGroup(
 		session,
 		'com.atproto.space.createRecord',
@@ -745,7 +745,7 @@ async function admitAtHost(session, group, did) {
 			rkey: did,
 			record: {
 				$type: 'org.atgrp.membership',
-				roles: ['member'],
+				roles,
 				createdAt: new Date().toISOString()
 			}
 		})
@@ -762,6 +762,13 @@ const metaRecord = async (session, group, collection) =>
 			{ method: 'GET' }
 		)
 	).value;
+/** One of the host's queries, as `who`'s own PDS vouches for it (service auth). */
+async function hostGet(who, nsid, params) {
+	const token = await serviceAuth(who, nsid);
+	return getJson(`${HOST}/xrpc/${nsid}?${new URLSearchParams(params)}`, {
+		headers: { authorization: `Bearer ${token}` }
+	});
+}
 /** The host's own account of a group (its about and config records, as it reads them), for `who`. */
 async function hostGroup(who, did) {
 	const token = await serviceAuth(who, 'org.atgrp.internal.getGroup');
@@ -2749,6 +2756,175 @@ step(
 		);
 	},
 	{ needs: ['more-groups', 'people-sign-in'] }
+);
+
+// =====================================================================================
+// link, additions: a role between member and admin, granted writing the group's events only
+// =====================================================================================
+/** A role of the group's own, not admin: its one permission writes events in the group's repo. */
+const EVENT_WRITER = 'event-writer';
+step(
+	'link',
+	'event-writer-role-links-and-posts',
+	async (t) => {
+		const { bob } = S.pages;
+		const g = await createGroup(ALICE, `gw${RUN}`, `Fell wardens ${RUN}`);
+		Object.assign(g, spacesOf(g.did));
+		S.groups.gw = g;
+		const admin = await adminFor(g, ALICE);
+		await asGroup(
+			admin,
+			'com.atproto.space.createRecord',
+			post({
+				space: g.members,
+				repo: g.did,
+				collection: 'org.atgrp.role',
+				rkey: EVENT_WRITER,
+				record: {
+					$type: 'org.atgrp.role',
+					displayName: 'Event writer',
+					description: "Posts the group's events.",
+					permissions: [`repo:${EVENTS}`],
+					canAssign: []
+				}
+			})
+		);
+		// Read back as the host shows it to alice: a space read takes a credential, not this session.
+		const shown = await hostGet(ALICE, 'org.atgrp.internal.getGroup', { group: g.did });
+		const binding = (shown.body?.bindings ?? []).find((b) => b.role === EVENT_WRITER);
+		check(
+			`alice, its founder, makes a role "${EVENT_WRITER}" at the host whose only permission writes events in the group's repo, and no action`,
+			// Each permission as the host reads it: its scope, and the actions it grants (none here).
+			JSON.stringify((binding?.permissions ?? []).map((p) => p.scope)) ===
+				JSON.stringify([`repo:${EVENTS}`]) &&
+				JSON.stringify((binding?.repoCollections ?? []).map((c) => c.collection)) ===
+					JSON.stringify([EVENTS]) &&
+				(binding?.actions ?? []).length === 0,
+			`${shown.status} ${JSON.stringify(binding ?? shown.text.slice(0, 300))}`
+		);
+		const asked = await hostCall(BOB, 'org.atgrp.requestJoin', { group: g.did });
+		check(
+			'bob asks to join the group, as his PDS vouches for him (by script)',
+			asked.status === 200 && asked.body?.status === 'pending',
+			`${asked.status} ${asked.text.slice(0, 120)}`
+		);
+		await admitAtHost(admin, g, BOB.did, ['member', EVENT_WRITER]);
+		const members = await hostGet(ALICE, 'org.atgrp.internal.listMembers', { group: g.did });
+		const held = (members.body?.members ?? [])
+			.find((m) => m.actor?.did === BOB.did)
+			?.roles?.map((r) => r.role);
+		check(
+			`she admits him at the host as a member who also holds ${EVENT_WRITER}, not admin`,
+			sameSet(held ?? [], ['member', EVENT_WRITER]),
+			`${members.status} ${JSON.stringify(held ?? members.text.slice(0, 300))}`
+		);
+		let detail = '';
+		await startLink(bob, g.handle);
+		await through(bob, BOB, (u) => u.origin === ATMO, {
+			onApprove: async (page) => {
+				detail = (
+					(await page
+						.locator('main form')
+						.first()
+						.textContent()
+						.catch(() => '')) ?? ''
+				).replace(/\s+/g, ' ');
+				await page.screenshot({ path: shotPath('event-writer-approval') }).catch(() => {});
+			}
+		});
+		await settle(bob);
+		t.shot = bob;
+		note(`the console offered bob: ${detail.slice(0, 600)}`);
+		const [granted] = detail.split(/It would not get/i);
+		check(
+			"at the console, bob's grant keeps the event writes in the group's repo, and none of the admin's settings",
+			/community\.lexicon\.calendar\.event/.test(granted) &&
+				!/org\.atgrp\.about|org\.atgrp\.config|listJoinRequests/.test(granted),
+			detail.slice(0, 600)
+		);
+		const landed = new URL(bob.url());
+		check(
+			'bob links it and lands on its page with the group tools: "Post an event", and no "Approve again"',
+			landed.pathname === `/groups/${g.did}` &&
+				landed.searchParams.get('link') === 'linked' &&
+				(await toolsBox(bob)
+					.getByRole('link', { name: /^post an event$/i })
+					.count()) === 1 &&
+				(await bob.getByRole('button', { name: /^approve again$/i }).count()) === 0,
+			bob.url()
+		);
+		if (has('members-only-events'))
+			check(
+				'...but not "Turn on members-only events": his role may not make the group a calendar space',
+				(await bob.getByRole('button', { name: /^turn on members-only events$/i }).count()) === 0
+			);
+		const title = `Warden walk ${RUN}`;
+		await bob.goto(`${groupUrl(g)}/events/new`, { waitUntil: 'networkidle' });
+		await editorPublish(bob, title);
+		await bob.waitForURL((u) => !u.pathname.endsWith('/events/new'), { timeout: 60_000 });
+		const rkey = new URL(bob.url()).pathname.split('/').pop();
+		const posted = await until(
+			() => repoRecords(g.did, EVENTS),
+			(rs) => rs.some((r) => r.rkey === rkey && r.value?.name === title)
+		);
+		check(
+			"bob, holding the role, posts an event as the group: it lands in the group's repo",
+			posted.ok,
+			`${bob.url()} ${JSON.stringify(posted.last?.map((r) => r.rkey))}`
+		);
+		// Bob's linked view told the index of the group; the event follows from the group's repo.
+		const seen = await until(
+			async () => {
+				const s = await status(S.pages.anon, groupUrl(g));
+				return s === 200 && (await mainText(S.pages.anon)).includes(title);
+			},
+			(x) => x === true,
+			15,
+			2000
+		);
+		check('...and a signed-out visitor sees it on the group page', seen.ok);
+		S.eventWriter = { g, rkey, title };
+	},
+	{ needs: ['people-sign-in'] }
+);
+
+step(
+	'link',
+	'plain-member-beside-the-role-cannot-post',
+	async (t) => {
+		const { g } = S.eventWriter;
+		const asked = await hostCall(MALLORY, 'org.atgrp.requestJoin', { group: g.did });
+		check(
+			'mallory asks to join the same group (by script)',
+			asked.status === 200 && asked.body?.status === 'pending',
+			`${asked.status} ${asked.text.slice(0, 120)}`
+		);
+		await admitAtHost(await adminFor(g, ALICE), g, MALLORY.did);
+		check(`its founder admits her as a plain member, without ${EVENT_WRITER}`, true);
+		const mallory = S.pages.mallory ?? (await signInToAtmo(MALLORY));
+		await startLink(mallory, g.handle);
+		await through(mallory, MALLORY, (u) => u.origin === ATMO);
+		await settle(mallory);
+		t.shot = mallory;
+		const text = await mainText(mallory);
+		check(
+			'mallory links it too, but her page offers no "Post an event", and says her role lets her see it only',
+			new URL(mallory.url()).pathname === `/groups/${g.did}` &&
+				new URL(mallory.url()).searchParams.get('link') === 'linked' &&
+				(await mallory.getByRole('link', { name: /^post an event$/i }).count()) === 0 &&
+				text.includes('Your role in this group lets you see it here, but not post its events.'),
+			text.slice(0, 300)
+		);
+		const res = await mallory.goto(`${groupUrl(g)}/events/new`, { waitUntil: 'networkidle' });
+		const reason = await body(mallory);
+		check(
+			'the new-event page answers her 403 with the reason',
+			res?.status() === 403 && /doesn.t let you post/i.test(reason),
+			`${res?.status()} ${reason.slice(0, 200)}`
+		);
+		await mallory.goto(groupUrl(g), { waitUntil: 'networkidle' });
+	},
+	{ needs: ['event-writer-role-links-and-posts'] }
 );
 
 // =====================================================================================
